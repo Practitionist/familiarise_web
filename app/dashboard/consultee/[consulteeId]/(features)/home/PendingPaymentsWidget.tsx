@@ -30,6 +30,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import type { ConsulteeFailedRefund } from "@/lib/data/consultee-payments";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
@@ -62,6 +63,8 @@ interface PendingPayment {
 export interface PendingPaymentsPayload {
   pendingPayments: PendingPayment[];
   lapsedPayLinks: LapsedPayLink[];
+  /** #1527 — recent refunds the gateway rejected, for Home's Needs you. */
+  failedRefunds: ConsulteeFailedRefund[];
 }
 
 export async function fetchPendingPayments(
@@ -77,6 +80,7 @@ export async function fetchPendingPayments(
   return {
     pendingPayments: data.pendingPayments || [],
     lapsedPayLinks: data.lapsedPayLinks || [],
+    failedRefunds: data.failedRefunds || [],
   };
 }
 

@@ -19,10 +19,7 @@ const inMinutes = (m: number) => new Date(Date.now() + m * 60_000);
 describe("imminentSessionItem", () => {
   it("surfaces nothing when the next session is beyond the hour", () => {
     expect(
-      imminentSessionItem(
-        [{ startsAt: inMinutes(90), title: "Later" }],
-        "/x",
-      ),
+      imminentSessionItem([{ startsAt: inMinutes(90), title: "Later" }], "/x"),
     ).toBeNull();
   });
 
@@ -211,7 +208,7 @@ describe("deriveConsulteeActionItems", () => {
     });
     expect(item.severity).toBe("critical");
     expect(item.title).toContain("₹1,240");
-    expect(item.ctaHref).toBe(`${CONSULTEE_BASE}/payments`);
+    expect(item.ctaHref).toBe(`${CONSULTEE_BASE}/payments?tab=needs-you`);
   });
 
   it("omits the amount when it isn't known", () => {

@@ -9,7 +9,7 @@
  * carries the "Request again" link. U2: a FAILED refund gets the support line,
  * a SUCCEEDED one does not. X-1: the payments route still answers 403 for a
  * foreign consulteeId now that the read lives in lib/data. X-4: the Needs-you
- * band is absent for an empty payload and present with one DUE row.
+ * tab says "Nothing needs you" for an empty payload and lists one DUE row.
  */
 
 jest.mock("../../lib/auth-helpers", () => ({
@@ -129,6 +129,7 @@ describe("X-4 — the Needs-you band", () => {
   const renderBand = (payload: {
     pendingPayments: unknown[];
     lapsedPayLinks: unknown[];
+    failedRefunds?: unknown[];
   }) => {
     const client = new QueryClient();
     client.setQueryData(["pending-payments", "c-1"], payload);
@@ -142,11 +143,13 @@ describe("X-4 — the Needs-you band", () => {
     return html;
   };
 
-  it("is absent when nothing needs the consultee", () => {
-    expect(renderBand({ pendingPayments: [], lapsedPayLinks: [] })).toBe("");
+  it("says so when nothing needs the consultee", () => {
+    expect(renderBand({ pendingPayments: [], lapsedPayLinks: [] })).toContain(
+      "Nothing needs you",
+    );
   });
 
-  it("shows the DUE row under a 'Needs you' heading", () => {
+  it("shows the DUE row in the Needs you section", () => {
     const html = renderBand({
       pendingPayments: [
         {

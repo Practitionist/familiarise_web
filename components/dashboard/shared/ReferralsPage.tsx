@@ -29,6 +29,8 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
 import { QUALIFICATION_WINDOW_DAYS } from "@/lib/referrals/constants";
+import { creditSourceLabel } from "@/lib/labels/credit-source";
+import Link from "next/link";
 
 interface ReferralCode {
   id: string;
@@ -65,12 +67,6 @@ interface CreditData {
   }[];
 }
 
-const creditSourceLabels: Record<string, string> = {
-  REFERRAL_BONUS: "Referral Bonus",
-  REFEREE_BONUS: "Referee Bonus",
-  MANUAL_ADJUSTMENT: "Manual Adjustment",
-};
-
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-IN", {
     day: "numeric",
@@ -95,9 +91,14 @@ export interface ReferralsPageProps {
    * booking.
    */
   role: "CONSULTANT" | "CONSULTEE";
+  /**
+   * #1527 — where the tree already lists credits (the consultee's Payments ›
+   * Credits). When set, the page links there instead of repeating the table.
+   */
+  creditsHref?: string;
 }
 
-export function ReferralsPage({ role }: ReferralsPageProps) {
+export function ReferralsPage({ role, creditsHref }: ReferralsPageProps) {
   const isConsultant = role === "CONSULTANT";
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -166,9 +167,8 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
 
-  const referralLink = code && origin
-    ? `${origin}/r/${code.customCode || code.code}`
-    : "";
+  const referralLink =
+    code && origin ? `${origin}/r/${code.customCode || code.code}` : "";
 
   const shareMessage = referralLink
     ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatAmount(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
@@ -277,8 +277,7 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
       key: "source",
       header: "Source",
       primary: true,
-      cell: (credit) =>
-        creditSourceLabels[credit.source] ?? credit.source.replace(/_/g, " "),
+      cell: (credit) => creditSourceLabel(credit.source),
     },
     {
       key: "amount",
@@ -304,7 +303,7 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
   return (
     <>
       <DashboardHeader
-        title="Referrals"
+        title="Invite & earn"
         subtitle={
           isConsultant
             ? "Invite others and earn credits when they make their first booking"
@@ -417,7 +416,12 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
                     </a>
                   </Button>
                 ) : (
-                  <Button variant="outline" size="icon" disabled aria-label="Share on WhatsApp">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled
+                    aria-label="Share on WhatsApp"
+                  >
                     <WhatsAppIcon className="h-4 w-4" />
                   </Button>
                 )}
@@ -436,7 +440,12 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
                     </a>
                   </Button>
                 ) : (
-                  <Button variant="outline" size="icon" disabled aria-label="Share via email">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled
+                    aria-label="Share via email"
+                  >
                     <Mail className="h-4 w-4" />
                   </Button>
                 )}
@@ -503,44 +512,68 @@ export function ReferralsPage({ role }: ReferralsPageProps) {
           )}
         </div>
 
-        {/* Credit History */}
-        {creditsError ? (
-          <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-zinc-200">
-              <h3 className="text-sm font-medium text-zinc-900">
-                Credit History
-              </h3>
-            </div>
-            <EmptyState
-              icon={AlertTriangle}
-              title="Couldn't load your credits"
-              description="Retry, or come back later."
-              action={
-                <Button variant="outline" onClick={() => refetchCredits()}>
-                  Retry
-                </Button>
-              }
-            />
-          </div>
+        {/* Credit History — one ledger view per tree (#1527): link to it
+            where the tree has one, else list it here. */}
+        {creditsHref ? (
+          <p className="mt-6 text-sm text-muted-foreground">
+            Your credits and how you used them are in{" "}
+            <Link
+              href={creditsHref}
+              className="font-medium text-foreground underline underline-offset-4"
+            >
+              Payments › Credits
+            </Link>
+            .
+          </p>
         ) : (
-          credits?.history &&
-          credits.history.length > 0 && (
-            <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-zinc-200">
-                <h3 className="text-sm font-medium text-zinc-900">
-                  Credit History
-                </h3>
-              </div>
-              <ResponsiveTable
-                columns={creditColumns}
-                rows={credits.history}
-                getRowId={(credit) => credit.id}
-                className="[&>ul]:p-3"
-              />
-            </div>
-          )
+          <CreditHistory
+            error={!!creditsError}
+            onRetry={() => void refetchCredits()}
+            rows={credits?.history ?? []}
+            columns={creditColumns}
+          />
         )}
       </DashboardContent>
     </>
+  );
+}
+
+function CreditHistory({
+  error,
+  onRetry,
+  rows,
+  columns,
+}: Readonly<{
+  error: boolean;
+  onRetry: () => void;
+  rows: CreditData["history"];
+  columns: ResponsiveColumn<CreditData["history"][number]>[];
+}>) {
+  if (!error && rows.length === 0) return null;
+  return (
+    <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-zinc-200">
+        <h3 className="text-sm font-medium text-zinc-900">Credit History</h3>
+      </div>
+      {error ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="Couldn't load your credits"
+          description="Retry, or come back later."
+          action={
+            <Button variant="outline" onClick={onRetry}>
+              Retry
+            </Button>
+          }
+        />
+      ) : (
+        <ResponsiveTable
+          columns={columns}
+          rows={rows}
+          getRowId={(credit) => credit.id}
+          className="[&>ul]:p-3"
+        />
+      )}
+    </div>
   );
 }

@@ -110,11 +110,10 @@ describe("PaymentsHistoryList", () => {
   const rowHtml = (id: string) =>
     html.split("<li").find((part) => part.includes(`Plan ${id}`)) ?? "";
 
-  it("groups under a month header and links each row to its detail page", () => {
+  it("groups under a month header and links each row to its payment page", () => {
     expect(html).toContain("September 2026");
-    expect(html).toContain(
-      'href="/dashboard/consultee/c-1/appointments/appt-paid"',
-    );
+    // #1527 Q5 — the row opens the charge, not the booking.
+    expect(html).toContain('href="/dashboard/consultee/c-1/payments/paid"');
   });
 
   it("paid and refunded rows carry the rail; sponsored carries the org and no amount", () => {

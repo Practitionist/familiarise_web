@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import {
   Upload,
   FileText,
@@ -362,45 +363,38 @@ export function DocumentUpload({
     }
   };
 
+  // #1527 — runs from a ConfirmDialog: a thrown Error's message is shown in
+  // the dialog, so every failure is worded for the user.
   const handleDeleteDocument = async (documentId: string) => {
+    let response: Response;
     try {
-      const response = await fetch(
+      response = await fetch(
         `/api/appointments/${appointmentId}/documents/${documentId}`,
-        {
-          method: "DELETE",
-        },
+        { method: "DELETE" },
       );
-
-      const result: ApiResponse | ApiError = await response.json();
-
-      if (!response.ok) {
-        const errorResult = result as ApiError;
-        toast({
-          title: "Delete failed",
-          description:
-            errorResult.message ||
-            "Failed to delete document. Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      toast({
-        title: "Document deleted",
-        description: "Document has been deleted successfully",
-      });
-
-      // Refresh documents list
-      fetchDocuments();
     } catch (error) {
       console.error("Error deleting document:", error);
-      toast({
-        title: "Network error",
-        description:
-          "Delete failed due to a connection issue. Please try again.",
-        variant: "destructive",
-      });
+      throw new Error(
+        "Delete failed due to a connection issue. Please try again.",
+      );
     }
+
+    if (!response.ok) {
+      const errorResult = (await response
+        .json()
+        .catch(() => ({}))) as Partial<ApiError>;
+      throw new Error(
+        errorResult.message || "Failed to delete document. Please try again.",
+      );
+    }
+
+    toast({
+      title: "Document deleted",
+      description: "Document has been deleted successfully",
+    });
+
+    // Refresh documents list
+    fetchDocuments();
   };
 
   const getErrorIcon = (errorCode?: string) => {
@@ -776,15 +770,24 @@ export function DocumentUpload({
                               <Download className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
                             {doc.reviewStatus === "PENDING" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDeleteDocument(doc.id)}
-                                className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 h-7 w-7 sm:h-9 sm:w-9 p-0"
-                                title="Delete document (only available for pending documents)"
-                              >
-                                <X className="h-3 w-3 sm:h-4 sm:w-4" />
-                              </Button>
+                              <ConfirmDialog
+                                trigger={
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 h-7 w-7 sm:h-9 sm:w-9 p-0"
+                                    title="Delete document (only available for pending documents)"
+                                    aria-label={`Delete ${doc.originalName}`}
+                                  >
+                                    <X className="h-3 w-3 sm:h-4 sm:w-4" />
+                                  </Button>
+                                }
+                                title="Delete this document?"
+                                description={`${doc.originalName} will be removed from this booking. Your expert will no longer see it.`}
+                                confirmLabel="Delete"
+                                tone="destructive"
+                                onConfirm={() => handleDeleteDocument(doc.id)}
+                              />
                             )}
                           </div>
                         </div>
@@ -810,7 +813,8 @@ export function DocumentUpload({
                                       ),
                                     );
                                     const n = doc.responseDocuments.length;
-                                    if (kinds.size > 1) return "Follow-up documents";
+                                    if (kinds.size > 1)
+                                      return "Follow-up documents";
                                     return kinds.has("revision")
                                       ? `Your revision${n > 1 ? "s" : ""}`
                                       : `Consultant response${n > 1 ? "s" : ""}`;

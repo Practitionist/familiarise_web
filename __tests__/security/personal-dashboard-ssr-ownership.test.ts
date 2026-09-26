@@ -34,6 +34,9 @@ const GUARDED_PAGES: Array<[string, "consultee" | "consultant", string]> = [
   [`${CE}/home/page.tsx`, "consultee", "consulteeId"],
   [`${CE}/appointments/page.tsx`, "consultee", "consulteeId"],
   [`${CE}/appointments/[appointmentId]/page.tsx`, "consultee", "consulteeId"],
+  [`${CE}/payments/page.tsx`, "consultee", "consulteeId"],
+  // #1527 Q5 — the payment detail page reads one charge by URL id.
+  [`${CE}/payments/[paymentId]/page.tsx`, "consultee", "consulteeId"],
   [`${CA}/home/page.tsx`, "consultant", "consultantId"],
   [`${CA}/appointments/page.tsx`, "consultant", "consultantId"],
   // Analytics stopped being its own route when it folded onto Earnings as a
@@ -47,15 +50,18 @@ const GUARDED_PAGES: Array<[string, "consultee" | "consultant", string]> = [
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 describe("server pages verify profile ownership before reading", () => {
-  it.each(GUARDED_PAGES)("%s calls the guard for its own id", (rel, kind, param) => {
-    const src = read(rel);
-    // `await` is part of the assertion: a bare call satisfies "the guard is
-    // present" while letting the page start its read before the async
-    // ownership check settles — which is the bug, not the fix.
-    expect(src).toContain(
-      `await requirePersonalProfileAccess("${kind}", ${param})`,
-    );
-  });
+  it.each(GUARDED_PAGES)(
+    "%s calls the guard for its own id",
+    (rel, kind, param) => {
+      const src = read(rel);
+      // `await` is part of the assertion: a bare call satisfies "the guard is
+      // present" while letting the page start its read before the async
+      // ownership check settles — which is the bug, not the fix.
+      expect(src).toContain(
+        `await requirePersonalProfileAccess("${kind}", ${param})`,
+      );
+    },
+  );
 
   it.each(GUARDED_PAGES)("%s guards BEFORE it reads any data", (rel) => {
     const src = read(rel);
@@ -64,8 +70,12 @@ describe("server pages verify profile ownership before reading", () => {
 
     // A guard placed after the prefetch would still redirect, but the query
     // would already have run against someone else's rows. Collect first, then
-    // assert once — every page reads via one of these two.
-    const readsAt = ["prefetchQuery", "readAppointmentDetail("]
+    // assert once — every page reads via one of these.
+    const readsAt = [
+      "prefetchQuery",
+      "readAppointmentDetail(",
+      "readConsulteePaymentDetail(",
+    ]
       .map((call) => src.indexOf(call))
       .filter((at) => at > -1);
 

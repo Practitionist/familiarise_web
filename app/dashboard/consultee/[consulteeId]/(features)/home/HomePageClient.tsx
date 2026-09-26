@@ -1,11 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarX2 } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { EmptyState } from "@/components/dashboard/DataCard";
-import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import HomeTab from "./HomeTab";
 import type { ViewerZone } from "@/lib/time/viewer-zone";
@@ -35,14 +33,10 @@ export default function HomePageClient({
 
   if (error && !eventsData) {
     return (
-      <EmptyState
-        icon={CalendarX2}
+      <ErrorState
         title="Couldn't load your sessions"
-        description={
-          (error as Error)?.message ||
-          "Failed to load events data. Please try again."
-        }
-        action={<Button onClick={() => refetch()}>Retry</Button>}
+        error={error}
+        onRetry={() => void refetch()}
       />
     );
   }
@@ -53,12 +47,6 @@ export default function HomePageClient({
 
   return (
     <DashboardErrorBoundary>
-      {/* Show subtle loading indicator when refreshing */}
-      {isLoading && eventsData && (
-        <div className="fixed top-4 right-4 bg-foreground text-background px-3 py-1 rounded-md text-sm z-50">
-          Refreshing...
-        </div>
-      )}
       <HomeTab
         eventsData={eventsData}
         viewerZone={viewerZone}
@@ -74,7 +62,6 @@ export default function HomePageClient({
               }
             : null
         }
-        isRefreshing={isLoading && !!eventsData}
         consulteeId={consulteeId}
       />
     </DashboardErrorBoundary>

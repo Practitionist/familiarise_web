@@ -205,13 +205,37 @@ export interface ConsulteeActionInput {
   pendingPaymentTotalPaise?: number;
   upcomingSessions: ImminentSession[];
   basePath: string;
+  /** #1527 — pay links that lapsed recently; the fix is asking again. */
+  lapsedPayLinks?: { id: string; consultantName: string; href: string }[];
+  /** #1527 — an expert proposed new times and is waiting on this learner. */
+  rescheduleProposals?: {
+    appointmentId: string;
+    title: string;
+    counterpartName: string;
+  }[];
+  /** #1300 — held sessions with no review yet; the prompt lives here, not in the room. */
+  sessionsToRate?: { key: string; consultantName: string; href: string }[];
+  /** The expert asked for a revised upload (review status NEEDS_REVISION). */
+  documentsToRevise?: { id: string; name: string; appointmentId: string }[];
+  /** A refund the gateway rejected; staff re-issue it, the learner can follow up. */
+  failedRefunds?: { paymentId: string; amountText: string }[];
 }
 
+/**
+ * The consultee's "Needs you" inbox (#1527 §7.1). A request still waiting on
+ * the expert (PENDING_APPROVAL) is deliberately absent: the learner cannot
+ * move it, and Appointments › Waiting on expert already lists it.
+ */
 export function deriveConsulteeActionItems({
   pendingPaymentCount,
   pendingPaymentTotalPaise = 0,
   upcomingSessions,
   basePath,
+  lapsedPayLinks = [],
+  rescheduleProposals = [],
+  sessionsToRate = [],
+  documentsToRevise = [],
+  failedRefunds = [],
 }: ConsulteeActionInput): ActionItem[] {
   const items: ActionItem[] = [];
 
@@ -232,7 +256,62 @@ export function deriveConsulteeActionItems({
       title: `${pendingPaymentCount} ${pluralise(pendingPaymentCount, "payment is", "payments are")} outstanding${amount}`,
       body: "Your booking isn't confirmed until payment clears.",
       ctaLabel: "Pay",
-      ctaHref: `${basePath}/payments`,
+      ctaHref: `${basePath}/payments?tab=needs-you`,
+    });
+  }
+
+  for (const proposal of rescheduleProposals) {
+    items.push({
+      key: `reschedule:${proposal.appointmentId}`,
+      severity: "warning",
+      title: `${proposal.counterpartName} proposed new times`,
+      body: proposal.title,
+      ctaLabel: "Answer",
+      ctaHref: `${basePath}/appointments/${proposal.appointmentId}`,
+    });
+  }
+
+  for (const doc of documentsToRevise) {
+    items.push({
+      key: `document:${doc.id}`,
+      severity: "warning",
+      title: "Your expert asked for a revised document",
+      body: doc.name,
+      ctaLabel: "Upload",
+      ctaHref: `${basePath}/appointments/${doc.appointmentId}`,
+    });
+  }
+
+  for (const refund of failedRefunds) {
+    items.push({
+      key: `failed-refund:${refund.paymentId}`,
+      severity: "critical",
+      title: `We couldn't return ${refund.amountText}`,
+      body: "Our team re-issues failed refunds by hand. Open the charge to follow up.",
+      ctaLabel: "View",
+      ctaHref: `${basePath}/payments/${refund.paymentId}`,
+    });
+  }
+
+  for (const link of lapsedPayLinks) {
+    items.push({
+      key: `lapsed:${link.id}`,
+      severity: "info",
+      title: `Your payment link for ${link.consultantName} expired`,
+      body: "Ask for a new link, or book another time.",
+      ctaLabel: "Request again",
+      ctaHref: link.href,
+    });
+  }
+
+  for (const session of sessionsToRate) {
+    items.push({
+      key: `rate:${session.key}`,
+      severity: "info",
+      title: `How was your session with ${session.consultantName}?`,
+      body: "A short review helps other learners choose.",
+      ctaLabel: "Rate",
+      ctaHref: session.href,
     });
   }
 

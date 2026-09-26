@@ -174,6 +174,10 @@ export type ClassPlanRecordingWithDetails = Prisma.Result<
 // Used by: RecordingService.getConsulteeRecordings()
 // ============================================================================
 
+const recordingHostSelect = {
+  select: { user: { select: { name: true, image: true } } },
+} as const;
+
 export const consulteeRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meeting: {
@@ -182,12 +186,15 @@ export const consulteeRecordingInclude =
           include: {
             appointment: {
               include: {
+                // #1527 — the host rides along so the Recordings page can
+                // name who ran the session.
                 webinar: {
                   include: {
                     webinarPlan: {
                       select: {
                         id: true,
                         title: true,
+                        consultantProfile: recordingHostSelect,
                       },
                     },
                   },
@@ -198,6 +205,7 @@ export const consulteeRecordingInclude =
                       select: {
                         id: true,
                         title: true,
+                        consultantProfile: recordingHostSelect,
                       },
                     },
                   },
