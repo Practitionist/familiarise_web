@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Loader2 } from "lucide-react";
 import {
@@ -79,6 +79,7 @@ export function RescheduleProposalCard({
   proposal,
   role,
 }: Readonly<RescheduleProposalCardProps>) {
+  const format = useZonedFormat();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: session } = useSession();
@@ -236,8 +237,8 @@ export function RescheduleProposalCard({
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>
-                  You are only turning down these times — you are not
-                  cancelling the booking.
+                  You are only turning down these times — you are not cancelling
+                  the booking.
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {role === "consultee"

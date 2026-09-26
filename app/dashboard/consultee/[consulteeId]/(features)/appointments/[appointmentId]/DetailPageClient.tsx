@@ -19,6 +19,7 @@ import { buildIcs } from "@/lib/appointments/ics";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
 function calendarSessions(vm: AppointmentVM) {
@@ -79,46 +80,54 @@ function ConsulteeExtraActions({ vm }: Readonly<{ vm: AppointmentVM }>) {
 export default function DetailPageClient({
   consulteeId,
   appointmentId,
-}: Readonly<{ consulteeId: string; appointmentId: string }>) {
+  viewerZone,
+}: Readonly<{
+  consulteeId: string;
+  appointmentId: string;
+  /** Server-read viewer zone, so SSR and hydration agree (#418). */
+  viewerZone: string;
+}>) {
   const adapter = useConsulteeAppointmentsAdapter();
 
   return (
-    <AppointmentDetailClient
-      appointmentId={appointmentId}
-      role="consultee"
-      adapter={adapter}
-      backHref={`/dashboard/consultee/${consulteeId}/appointments`}
-      joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
-      renderExtraActions={(vm) => <ConsulteeExtraActions vm={vm} />}
-      renderDocuments={(vm) => {
-        if (!supportsDocuments(vm.kind)) return null;
-        // #1527 P0 — a finished booking keeps its files: read-only, the
-        // learner's uploads beside the expert's responses.
-        if (isCompletedLikeStatus(vm.status)) {
+    <DisplayZoneProvider zone={viewerZone}>
+      <AppointmentDetailClient
+        appointmentId={appointmentId}
+        role="consultee"
+        adapter={adapter}
+        backHref={`/dashboard/consultee/${consulteeId}/appointments`}
+        joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
+        renderExtraActions={(vm) => <ConsulteeExtraActions vm={vm} />}
+        renderDocuments={(vm) => {
+          if (!supportsDocuments(vm.kind)) return null;
+          // #1527 P0 — a finished booking keeps its files: read-only, the
+          // learner's uploads beside the expert's responses.
+          if (isCompletedLikeStatus(vm.status)) {
+            return (
+              <AppointmentDocumentsList
+                appointmentId={appointmentId}
+                viewer="consultee"
+              />
+            );
+          }
+          if (isConfirmedStatus(vm.status)) {
+            return (
+              <DocumentUpload
+                appointmentId={appointmentId}
+                appointmentTitle={vm.title}
+                appointmentType={
+                  vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()
+                }
+              />
+            );
+          }
           return (
-            <AppointmentDocumentsList
-              appointmentId={appointmentId}
-              viewer="consultee"
-            />
+            <p className="text-xs text-muted-foreground">
+              Documents can be shared once the booking is confirmed.
+            </p>
           );
-        }
-        if (isConfirmedStatus(vm.status)) {
-          return (
-            <DocumentUpload
-              appointmentId={appointmentId}
-              appointmentTitle={vm.title}
-              appointmentType={
-                vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()
-              }
-            />
-          );
-        }
-        return (
-          <p className="text-xs text-muted-foreground">
-            Documents can be shared once the booking is confirmed.
-          </p>
-        );
-      }}
-    />
+        }}
+      />
+    </DisplayZoneProvider>
   );
 }

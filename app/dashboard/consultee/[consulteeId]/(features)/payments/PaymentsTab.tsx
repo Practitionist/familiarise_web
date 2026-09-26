@@ -45,10 +45,13 @@ const RANGE_OPTIONS = [
   { value: "year", label: "This year" },
 ];
 
+// Pinned like History's dates: a runtime-zone formatter printed different
+// days on Netlify (UTC) and in the browser — hydration #418 (#1527 QA).
 const DATE = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
   month: "short",
   year: "numeric",
+  timeZone: "Asia/Kolkata",
 });
 const formatDate = (date: Date | string) => DATE.format(new Date(date));
 

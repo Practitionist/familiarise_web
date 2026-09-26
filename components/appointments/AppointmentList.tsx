@@ -9,7 +9,7 @@ import type {
   AppointmentBucket,
   AppointmentVM,
 } from "@/lib/appointments/view-model";
-import type { ViewerZone } from "@/lib/time/viewer-zone";
+import { formatInViewerZone, type ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentRow } from "./AppointmentRow";
 import { DayGroupHeader } from "./DayGroupHeader";
 
@@ -21,9 +21,10 @@ interface DayGroup {
   vms: AppointmentVM[];
 }
 
-function dayKey(date: Date | null): string {
+// The viewer's calendar day, not the runtime's (#418, #1527 QA).
+function dayKey(date: Date | null, zone: string): string {
   if (!date) return "unscheduled";
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  return formatInViewerZone(date, zone, "yyyy-MM-dd");
 }
 
 /**
@@ -69,11 +70,11 @@ function orderVms(
   });
 }
 
-function groupByDay(vms: AppointmentVM[]): DayGroup[] {
+function groupByDay(vms: AppointmentVM[], zone: string): DayGroup[] {
   const groups: DayGroup[] = [];
   let current: DayGroup | null = null;
   for (const vm of vms) {
-    const key = dayKey(vm.nextAt);
+    const key = dayKey(vm.nextAt, zone);
     if (!current || current.key !== key) {
       current = { key, date: vm.nextAt, vms: [] };
       groups.push(current);
@@ -121,7 +122,10 @@ export function AppointmentList({
     [vms, bucket],
   );
   const visible = ordered.slice(0, visibleCount);
-  const groups = useMemo(() => groupByDay(visible), [visible]);
+  const groups = useMemo(
+    () => groupByDay(visible, viewerZone.zone),
+    [visible, viewerZone.zone],
+  );
   const hiddenCount = ordered.length - visible.length;
 
   if (ordered.length === 0) {
@@ -138,7 +142,7 @@ export function AppointmentList({
     <div className="space-y-3">
       {groups.map((group) => (
         <div key={group.key} className="space-y-2">
-          <DayGroupHeader date={group.date} />
+          <DayGroupHeader date={group.date} zone={viewerZone.zone} />
           {group.vms.map((vm) => (
             <AppointmentRow
               key={vm.id}

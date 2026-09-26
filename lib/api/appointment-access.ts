@@ -54,7 +54,7 @@ export type ParticipantAuthz = {
 export async function authorizeAppointment(
   appointmentId: string,
   orgParty: true,
-): Promise<CodedAuthz | PartyAuthz>;
+): Promise<CodedAuthz | PartyAuthz | ParticipantAuthz>;
 export async function authorizeAppointment(
   appointmentId: string,
   orgParty?: false,
@@ -85,6 +85,22 @@ export async function authorizeAppointment(
       isOrgParty: false,
       organizationId,
       detail,
+    };
+  }
+  // #1527 QA — the support routes (the only `orgParty` callers) also admit
+  // the PAYER: "Problem with this charge" opens a thread on the booking, and
+  // a released or never-rostered seat must not lock the buyer out of asking
+  // about their own money. Threads are keyed by (appointment, user), so this
+  // reads only the payer's own conversation; group payments stay scoped.
+  if (
+    orgParty &&
+    detail.appointment.payment.some((p) => p.userId === session.user.id)
+  ) {
+    return {
+      userId: session.user.id,
+      isOrgParty: false,
+      organizationId,
+      detail: scopeAppointmentDetail(detail, session.user.id, false),
     };
   }
   // #support-hub — org-party branch. Grants the operator their OWN thread on

@@ -75,6 +75,7 @@ import {
   processAllEvents,
   getUpcomingEvents,
   getMonthlyEvents,
+  selectNextUp,
   groupSlotsIntoSessions,
 } from "./event-processor";
 
@@ -489,11 +490,9 @@ export default function HomeTab({
     () => getUpcomingEvents(processedEvents),
     [processedEvents],
   );
-  // #1527 — Next up is scheduled sessions only: an unpaid request is in Needs
-  // you and a request waiting on the expert is Appointments' concern.
-  const nextUp = upcomingEvents
-    .filter((e) => e.startsAt !== null)
-    .slice(0, NEXT_UP_LIMIT);
+  // #1527 — Next up is live scheduled sessions only: an unpaid request is in
+  // Needs you and a request waiting on the expert is Appointments' concern.
+  const nextUp = selectNextUp(upcomingEvents, NEXT_UP_LIMIT);
 
   // Same key (and cache entry) as the Payments page's Needs-you band.
   const { data: money } = useQuery({

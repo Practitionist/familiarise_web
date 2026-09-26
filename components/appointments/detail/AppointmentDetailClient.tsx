@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -144,6 +144,7 @@ type MoneyRow = PaymentDisplayLike & {
 
 /** One line per charge: amount, status, the rail it rode, the date — and the receipt. */
 function MoneyLine({ payment }: { payment: MoneyRow }) {
+  const format = useZonedFormat();
   const rail = paymentRailLabel(payment);
   const receipt = receiptHref(payment);
   return (
@@ -259,6 +260,7 @@ export function AppointmentDetailClient({
   consultantId,
   renderExtraActions,
 }: AppointmentDetailClientProps) {
+  const format = useZonedFormat();
   const { data: session } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();

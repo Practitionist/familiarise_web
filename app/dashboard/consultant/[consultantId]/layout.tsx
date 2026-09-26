@@ -15,7 +15,6 @@ import {
   PersonalDashboardLayoutCore,
   type PersonalDashboardExtras,
   type PersonalDashboardExtrasCtx,
-  type PersonalDashboardUser,
 } from "@/components/dashboard/PersonalDashboardLayoutCore";
 import { consultantFetchers } from "@/lib/dashboard-queries";
 import {
@@ -207,15 +206,6 @@ interface ConsultantDetails {
   verificationStatus?: VerificationStatus;
 }
 
-async function fetchConsultantUser(
-  userId: string,
-): Promise<PersonalDashboardUser | null> {
-  const response = await fetch(`/api/user/${userId}`);
-  if (!response.ok) throw new Error("Failed to fetch user details");
-  const result = await response.json();
-  return result.data as PersonalDashboardUser | null;
-}
-
 // Verification state + reviewer feedback as shell extras. The consultant-data
 // payload carries the coarse status; the verification query adds the latest
 // submission's rejectionReason / feedbackDetails / per-document feedback so
@@ -310,7 +300,6 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
       pageLabels={CONSULTANT_PAGE_LABELS}
       pathlessSegments={CONSULTANT_PATHLESS_SEGMENTS}
       offeringsConfig={OFFERINGS_CRUMBS}
-      fetchUser={fetchConsultantUser}
       profileQueryKey={["consultant-data", consultantId]}
       fetchProfile={() =>
         consultantFetchers.details(

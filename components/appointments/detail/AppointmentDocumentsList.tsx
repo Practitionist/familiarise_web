@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,6 +37,7 @@ export function AppointmentDocumentsList({
   appointmentId: string;
   viewer?: "consultee" | "consultant";
 }) {
+  const format = useZonedFormat();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["appointment-documents", appointmentId] as const,
     queryFn: async (): Promise<AppointmentDocument[]> => {

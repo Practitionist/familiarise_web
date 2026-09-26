@@ -63,7 +63,7 @@ export function ConsulteeRecordingsPage({
         data={data}
         artifact="recordings"
         title="Recordings"
-        subtitle="Session recordings from the events you've attended"
+        subtitle="Recordings of the sessions you've attended"
       />
     </DashboardErrorBoundary>
   );

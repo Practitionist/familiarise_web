@@ -35,6 +35,8 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { accountSettingsHref } from "@/lib/dashboard/account-href";
+import { personalAccessDecision } from "@/lib/dashboard/personal-access";
+import { fetchUserDetails } from "@/lib/user";
 import type { DashboardNav } from "@/lib/dashboard/nav/types";
 
 /** Minimal user shape the core reads. Fetchers return richer types. */
@@ -74,7 +76,6 @@ export interface PersonalDashboardCoreProps<P> {
   pageLabels: Record<string, string>;
   pathlessSegments?: ReadonlySet<string>;
   offeringsConfig?: OfferingsCrumbConfig;
-  fetchUser: (userId: string) => Promise<PersonalDashboardUser | null>;
   profileQueryKey: readonly unknown[];
   fetchProfile: () => Promise<P | null>;
   /** False for the consultee tree, whose profile gates on the route param. */
@@ -198,7 +199,6 @@ export function PersonalDashboardLayoutCore<P>({
   pageLabels,
   pathlessSegments,
   offeringsConfig,
-  fetchUser,
   profileQueryKey,
   fetchProfile,
   profileGatesOnUser = true,
@@ -226,13 +226,18 @@ export function PersonalDashboardLayoutCore<P>({
   const serverUserId = useServerUserId();
   const userId = getEffectiveUserId(session) ?? serverUserId;
 
+  // One fetcher for both trees (#1527): the key is shared with the server
+  // seed in app/dashboard/layout.tsx, so it must hold one shape everywhere.
   const {
     data: userDetails,
     error: userQueryError,
     isLoading: isLoadingUserDetails,
-  } = useQuery({
+    isFetching: isFetchingUserDetails,
+    isFetchedAfterMount: userVerified,
+    refetch: refetchUser,
+  } = useQuery<PersonalDashboardUser | null>({
     queryKey: ["user-details", userId],
-    queryFn: () => fetchUser(userId!),
+    queryFn: () => fetchUserDetails(userId!),
     enabled: !!userId && !isSessionLoading,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
@@ -263,6 +268,13 @@ export function PersonalDashboardLayoutCore<P>({
   });
 
   const hasCoreAccess = hasAccess(userDetails, routeParam);
+  const access = personalAccessDecision({
+    hasUser: !!userDetails,
+    hasAccess: hasCoreAccess,
+    verified: userVerified,
+    pathname,
+    basePath,
+  });
 
   // Redirect unauthorized users to their appropriate dashboard. Guarded:
   // without it a stale `user-details` payload (≤5-min React-Query cache, or a
@@ -282,7 +294,11 @@ export function PersonalDashboardLayoutCore<P>({
   useEffect(() => {
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
-    if (userDetails && !hasCoreAccess) {
+    if (access === "verify") {
+      if (!isFetchingUserDetails) void refetchUser();
+      return;
+    }
+    if (access === "redirect" && userDetails) {
       const target = resolveTargetRef.current(userDetails);
       // Never replace to the URL we are already on, and never queue the same
       // pathname→target pair twice (Strict-Mode double effects / duplicate
@@ -298,7 +314,9 @@ export function PersonalDashboardLayoutCore<P>({
     }
   }, [
     userDetails,
-    hasCoreAccess,
+    access,
+    isFetchingUserDetails,
+    refetchUser,
     isLoadingUserDetails,
     isSessionLoading,
     userId,
@@ -371,8 +389,13 @@ export function PersonalDashboardLayoutCore<P>({
     );
   }
 
+  // Leaving this tree, or re-reading the viewer before a denial.
+  if (access === "hold" || access === "verify") {
+    return <DashboardShellSkeleton />;
+  }
+
   // Access denied — before the skeleton so unauthorized users never see it
-  if (userDetails && !hasCoreAccess) {
+  if (access === "redirect") {
     return (
       <AccessCard Icon={Lock} title="Access Denied">
         <p className="text-zinc-600">
