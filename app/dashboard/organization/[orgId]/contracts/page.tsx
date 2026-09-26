@@ -2,8 +2,17 @@
 
 import { use, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, FileText, Loader2, Check, X, Eye, Pencil, Lock } from "lucide-react";
-import type { ContractStatus } from "@prisma/client";
+import {
+  Plus,
+  FileText,
+  Loader2,
+  Check,
+  X,
+  Eye,
+  Pencil,
+  Lock,
+} from "lucide-react";
+import type { ContractStatus, FundingSource } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
@@ -14,6 +23,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   Card,
   CardContent,
@@ -87,13 +100,17 @@ interface BillingAccount {
 // API layer
 // ---------------------------------------------------------------------------
 
-async function fetchContracts(orgId: string): Promise<{ data: ContractItem[] }> {
+async function fetchContracts(
+  orgId: string,
+): Promise<{ data: ContractItem[] }> {
   const res = await fetch(`/api/organizations/${orgId}/contracts`);
   if (!res.ok) throw new Error("Failed to load contracts");
   return res.json();
 }
 
-async function fetchBillingAccount(orgId: string): Promise<{ billingAccount: BillingAccount }> {
+async function fetchBillingAccount(
+  orgId: string,
+): Promise<{ billingAccount: BillingAccount }> {
   const res = await fetch(`/api/organizations/${orgId}/billing-account`);
   if (!res.ok) throw new Error("Failed to load billing account");
   return res.json();
@@ -119,7 +136,9 @@ async function createContract(
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((json as { error?: string }).error ?? "Failed to create contract");
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to create contract",
+    );
   }
   return json;
 }
@@ -129,25 +148,35 @@ async function patchContract(
   contractId: string,
   body: { status?: ContractStatus; signedAt?: string | null },
 ) {
-  const res = await fetch(`/api/organizations/${orgId}/contracts/${contractId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await fetch(
+    `/api/organizations/${orgId}/contracts/${contractId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((json as { error?: string }).error ?? "Failed to update contract");
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to update contract",
+    );
   }
   return json;
 }
 
 async function deleteContract(orgId: string, contractId: string) {
-  const res = await fetch(`/api/organizations/${orgId}/contracts/${contractId}`, {
-    method: "DELETE",
-  });
+  const res = await fetch(
+    `/api/organizations/${orgId}/contracts/${contractId}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!res.ok) {
     const json = await res.json().catch(() => ({}));
-    throw new Error((json as { error?: string }).error ?? "Failed to delete contract");
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to delete contract",
+    );
   }
 }
 
@@ -160,7 +189,9 @@ async function fetchContract(
   orgId: string,
   contractId: string,
 ): Promise<{ contract: ContractDetail }> {
-  const res = await fetch(`/api/organizations/${orgId}/contracts/${contractId}`);
+  const res = await fetch(
+    `/api/organizations/${orgId}/contracts/${contractId}`,
+  );
   if (!res.ok) throw new Error("Failed to load contract");
   return res.json();
 }
@@ -178,14 +209,19 @@ async function editContract(
     paymentTermsDays?: number;
   },
 ) {
-  const res = await fetch(`/api/organizations/${orgId}/contracts/${contractId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await fetch(
+    `/api/organizations/${orgId}/contracts/${contractId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((json as { error?: string }).error ?? "Failed to update contract");
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to update contract",
+    );
   }
   return json;
 }
@@ -202,15 +238,36 @@ function fmtDate(iso: string) {
   });
 }
 
-const STATUS_BADGE: Record<ContractStatus, string> = {
-  DRAFT: "bg-muted text-muted-foreground border-border",
-  ACTIVE:
-    "bg-green-50 text-green-800 border-green-300 dark:bg-green-950 dark:text-green-300 dark:border-green-800",
-  EXPIRED:
-    "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800",
-  TERMINATED:
-    "bg-red-50 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
+// #1762-4 — labels + tones instead of the raw enum.
+const CONTRACT_STATUS: Record<ContractStatus, { label: string; tone: Tone }> = {
+  DRAFT: { label: "Draft", tone: "neutral" },
+  ACTIVE: { label: "Active", tone: "success" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
+  TERMINATED: { label: "Terminated", tone: "neutral" },
 };
+
+const CYCLE_NOUN: Record<string, string> = {
+  MONTHLY: "month",
+  QUARTERLY: "quarter",
+  ANNUAL: "year",
+};
+
+function fundingLabel(source: string | undefined): string {
+  if (!source) return "—";
+  return FUNDING_SOURCE_LABEL[source as FundingSource] ?? humanizeEnum(source);
+}
+
+function fmtSubscription(sub: {
+  model: string;
+  cycle: string;
+  flatFeePaise: number | null;
+}): string {
+  const per = CYCLE_NOUN[sub.cycle] ?? humanizeEnum(sub.cycle).toLowerCase();
+  if (sub.model === "FLAT_FEE" && sub.flatFeePaise !== null) {
+    return `${formatCurrencyAmount(sub.flatFeePaise, "INR")} per ${per}`;
+  }
+  return `${humanizeEnum(sub.model)}, billed per ${per}`;
+}
 
 // ---------------------------------------------------------------------------
 // Create dialog
@@ -259,7 +316,9 @@ function CreateContractDialog({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-contracts", orgId] });
       // Also invalidate the active-contracts cache used by Programs page.
-      queryClient.invalidateQueries({ queryKey: ["org-contracts-active", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contracts-active", orgId],
+      });
       reset();
       onOpenChange(false);
     },
@@ -342,7 +401,9 @@ function CreateContractDialog({
                 onChange={(e) => setEffectiveTo(e.target.value)}
                 placeholder="Open-ended"
               />
-              <p className="text-xs text-muted-foreground">Leave blank for open-ended</p>
+              <p className="text-xs text-muted-foreground">
+                Leave blank for open-ended
+              </p>
             </div>
           </div>
 
@@ -358,7 +419,8 @@ function CreateContractDialog({
                 onChange={(e) => setPaymentTermsDays(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                NET-{paymentTermsDays || "?"} — how many days after invoice date the org must pay.
+                NET-{paymentTermsDays || "?"} — how many days after invoice date
+                the org must pay.
               </p>
             </div>
           )}
@@ -377,9 +439,9 @@ function CreateContractDialog({
                   onChange={(e) => setLicenseFeeINR(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Optional. Recording the fee enables annual renewal billing
-                  and dashboard display. Skipping is reversible only by
-                  terminating this contract and creating a new one.
+                  Optional. Recording the fee enables annual renewal billing and
+                  dashboard display. Skipping is reversible only by terminating
+                  this contract and creating a new one.
                 </p>
               </div>
               <div className="space-y-1.5">
@@ -421,7 +483,8 @@ function CreateContractDialog({
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              ACTIVE contracts can immediately attach Programs. DRAFT contracts need to be activated first.
+              ACTIVE contracts can immediately attach Programs. DRAFT contracts
+              need to be activated first.
             </p>
           </div>
 
@@ -430,7 +493,9 @@ function CreateContractDialog({
               checked={autoRenew}
               onCheckedChange={(v) => setAutoRenew(v === true)}
             />
-            <span className="text-sm">Auto-renew when effective-to date passes</span>
+            <span className="text-sm">
+              Auto-renew when effective-to date passes
+            </span>
           </label>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -469,12 +534,20 @@ function CreateContractDialog({
 
 // LICENSE contracts pay the flat fee upfront, so net-X payment terms don't
 // apply — render "Prepaid" rather than a misleading NET-0 or em-dash.
-function fmtPaymentTerms(c: Pick<ContractItem, "paymentTermsDays" | "billingAccount">): string {
+function fmtPaymentTerms(
+  c: Pick<ContractItem, "paymentTermsDays" | "billingAccount">,
+): string {
   if (c.billingAccount?.fundingSource === "LICENSE") return "Prepaid";
   return `NET-${c.paymentTermsDays}`;
 }
 
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
       <span className="text-muted-foreground">{label}</span>
@@ -516,12 +589,10 @@ function ContractDetailDialog({
           <div className="space-y-4">
             <div className="divide-y rounded-md border px-3">
               <DetailRow label="Status">
-                <Badge variant="outline" className={STATUS_BADGE[c.status]}>
-                  {c.status}
-                </Badge>
+                <StatusBadge {...CONTRACT_STATUS[c.status]} />
               </DetailRow>
               <DetailRow label="Funding">
-                {c.billingAccount?.fundingSource ?? "—"}
+                {fundingLabel(c.billingAccount?.fundingSource)}
               </DetailRow>
               <DetailRow label="Effective from">
                 {fmtDate(c.effectiveFrom)}
@@ -530,13 +601,12 @@ function ContractDetailDialog({
                 {c.effectiveTo ? fmtDate(c.effectiveTo) : "open-ended"}
               </DetailRow>
               <DetailRow label="Payment terms">{fmtPaymentTerms(c)}</DetailRow>
-              <DetailRow label="Auto-renew">{c.autoRenew ? "Yes" : "No"}</DetailRow>
+              <DetailRow label="Auto-renew">
+                {c.autoRenew ? "Yes" : "No"}
+              </DetailRow>
               {c.subscription && (
                 <DetailRow label="Subscription">
-                  {c.subscription.model === "FLAT_FEE" &&
-                  c.subscription.flatFeePaise != null
-                    ? `₹${(c.subscription.flatFeePaise / 100).toLocaleString("en-IN")} / ${c.subscription.cycle.toLowerCase()}`
-                    : `${c.subscription.model} / ${c.subscription.cycle.toLowerCase()}`}
+                  {fmtSubscription(c.subscription)}
                 </DetailRow>
               )}
             </div>
@@ -558,7 +628,7 @@ function ContractDetailDialog({
                     >
                       <span>{p.name}</span>
                       <Badge variant="secondary" className="text-xs">
-                        {p.type}
+                        {humanizeEnum(p.type)}
                       </Badge>
                     </li>
                   ))}
@@ -633,7 +703,9 @@ function EditContractDialog({
       editContract(orgId, contractId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-contracts", orgId] });
-      queryClient.invalidateQueries({ queryKey: ["org-contracts-active", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contracts-active", orgId],
+      });
       queryClient.invalidateQueries({
         queryKey: ["org-contract", orgId, contractId],
       });
@@ -804,8 +876,12 @@ export default function OrgContractsPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [detailTarget, setDetailTarget] = useState<ContractItem | null>(null);
   const [editTarget, setEditTarget] = useState<ContractItem | null>(null);
-  const [activateTarget, setActivateTarget] = useState<ContractItem | null>(null);
-  const [terminateTarget, setTerminateTarget] = useState<ContractItem | null>(null);
+  const [activateTarget, setActivateTarget] = useState<ContractItem | null>(
+    null,
+  );
+  const [terminateTarget, setTerminateTarget] = useState<ContractItem | null>(
+    null,
+  );
   const [deleteTarget, setDeleteTarget] = useState<ContractItem | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -833,7 +909,9 @@ export default function OrgContractsPage({
     }) => patchContract(orgId, contractId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-contracts", orgId] });
-      queryClient.invalidateQueries({ queryKey: ["org-contracts-active", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contracts-active", orgId],
+      });
       setActivateTarget(null);
       setTerminateTarget(null);
       setActionError(null);
@@ -845,7 +923,9 @@ export default function OrgContractsPage({
     mutationFn: (contractId: string) => deleteContract(orgId, contractId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-contracts", orgId] });
-      queryClient.invalidateQueries({ queryKey: ["org-contracts-active", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contracts-active", orgId],
+      });
       setDeleteTarget(null);
       setActionError(null);
     },
@@ -864,17 +944,13 @@ export default function OrgContractsPage({
       key: "status",
       header: "Status",
       primary: true,
-      cell: (c) => (
-        <Badge variant="outline" className={STATUS_BADGE[c.status]}>
-          {c.status}
-        </Badge>
-      ),
+      cell: (c) => <StatusBadge {...CONTRACT_STATUS[c.status]} />,
     },
     {
       key: "funding",
       header: "Funding",
       className: "text-sm text-muted-foreground",
-      cell: (c) => c.billingAccount?.fundingSource ?? "—",
+      cell: (c) => fundingLabel(c.billingAccount?.fundingSource),
     },
     {
       key: "period",
@@ -894,12 +970,14 @@ export default function OrgContractsPage({
       cell: (c) => (
         <>
           {c.billingAccount?.fundingSource === "LICENSE"
-            ? c.subscription?.flatFeePaise != null
-              ? `₹${(c.subscription.flatFeePaise / 100).toLocaleString("en-IN")} / ${c.subscription.cycle.toLowerCase()}`
+            ? c.subscription && c.subscription.flatFeePaise !== null
+              ? fmtSubscription(c.subscription)
               : "—"
             : `NET-${c.paymentTermsDays}`}
           {c.autoRenew && (
-            <span className="ml-1 text-xs text-muted-foreground/70">(auto-renew)</span>
+            <span className="ml-1 text-xs text-muted-foreground/70">
+              (auto-renew)
+            </span>
           )}
         </>
       ),
@@ -1083,8 +1161,8 @@ export default function OrgContractsPage({
           <AlertDialogHeader>
             <AlertDialogTitle>Activate contract?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will move the contract from DRAFT to ACTIVE. Programs can
-              be attached immediately. This action writes an audit log entry.
+              This will move the contract from DRAFT to ACTIVE. Programs can be
+              attached immediately. This action writes an audit log entry.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

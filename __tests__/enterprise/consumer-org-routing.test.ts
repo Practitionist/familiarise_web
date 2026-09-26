@@ -7,8 +7,8 @@
  * verifies role-aware in-org redirects:
  *
  *   MANAGER+      → /home
- *   LEARNER       → /my-program
- *   EXPERT        → /compensation
+ *   LEARNER       → /my-program (sponsor org) or /appointments (ORG-19)
+ *   EXPERT        → /compensation (host org) or /appointments (ORG-19)
  *   no membership → personal dashboard fallback
  *
  * `next/navigation`'s `redirect()` throws — we catch the thrown
@@ -51,17 +51,14 @@ function makeParams(orgId = "org-1") {
  * Trigger the page handler and capture the path Next's `redirect()`
  * threw. Returns the path on success, throws if no redirect happened.
  */
-async function expectRedirect(
-  call: () => Promise<unknown>,
-): Promise<string> {
+async function expectRedirect(call: () => Promise<unknown>): Promise<string> {
   try {
     await call();
   } catch (err: unknown) {
     // Next.js redirect throws a special error with `digest` set to
     // `NEXT_REDIRECT;<type>;<path>;<status>;<extra>`. We don't import
     // its internals — sniff the digest to extract segment[2] (path).
-    const digest =
-      (err as { digest?: string } | null)?.digest ?? String(err);
+    const digest = (err as { digest?: string } | null)?.digest ?? String(err);
     const match = /^NEXT_REDIRECT;[^;]+;([^;]+)/.exec(digest);
     if (match) return match[1];
     throw err;
@@ -98,11 +95,33 @@ describe("/dashboard/organization/[orgId] entry-point routing", () => {
     mockedPrisma.membership.findUnique.mockResolvedValueOnce({
       role: "LEARNER",
       status: "ACTIVE",
+      organization: { canSponsor: true, canHost: false },
     });
 
     const path = await expectRedirect(() => OrgRoot(makeParams("org-1")));
     expect(path).toBe("/dashboard/organization/org-1/my-program");
   });
+
+  // ORG-19 (#1527) — My Program / Compensation need the capability.
+  it.each([
+    ["LEARNER", { canSponsor: false, canHost: true }],
+    ["EXPERT", { canSponsor: true, canHost: false }],
+  ] as const)(
+    "sends a %s in an org without the capability to /appointments",
+    async (role, organization) => {
+      mockedGetSession.mockResolvedValueOnce({
+        user: { id: "u-member", role: "USER" },
+      });
+      mockedPrisma.membership.findUnique.mockResolvedValueOnce({
+        role,
+        status: "ACTIVE",
+        organization,
+      });
+
+      const path = await expectRedirect(() => OrgRoot(makeParams("org-1")));
+      expect(path).toBe("/dashboard/organization/org-1/appointments");
+    },
+  );
 
   it("redirects EXPERT to /compensation", async () => {
     mockedGetSession.mockResolvedValueOnce({
@@ -111,6 +130,7 @@ describe("/dashboard/organization/[orgId] entry-point routing", () => {
     mockedPrisma.membership.findUnique.mockResolvedValueOnce({
       role: "EXPERT",
       status: "ACTIVE",
+      organization: { canSponsor: false, canHost: true },
     });
 
     const path = await expectRedirect(() => OrgRoot(makeParams("org-1")));

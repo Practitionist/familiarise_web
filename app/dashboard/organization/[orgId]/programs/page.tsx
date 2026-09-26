@@ -46,7 +46,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -80,6 +79,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
 // ---------------------------------------------------------------------------
 // Types — shaped to match GET /api/organizations/[orgId]/programs
@@ -137,7 +140,10 @@ function programUtilization(
       used: String(engagementsUsed),
       total: String(total),
       // ceil, not round (#752) — non-zero usage must never display as 0%.
-      pct: total > 0 ? Math.min(100, Math.ceil((engagementsUsed / total) * 100)) : null,
+      pct:
+        total > 0
+          ? Math.min(100, Math.ceil((engagementsUsed / total) * 100))
+          : null,
     };
   }
   if (p.type === "CREDIT_POOL") {
@@ -225,7 +231,11 @@ const COVERED_PLAN_TYPE_OPTIONS = [
   { value: "CONSULTATION", label: "Consultation", description: "1:1 sessions" },
   { value: "CLASS", label: "Class", description: "Group classes" },
   { value: "WEBINAR", label: "Webinar", description: "Live webinars" },
-  { value: "SUBSCRIPTION", label: "Subscription", description: "Recurring plans" },
+  {
+    value: "SUBSCRIPTION",
+    label: "Subscription",
+    description: "Recurring plans",
+  },
 ] as const;
 
 type CoveredPlanType = (typeof COVERED_PLAN_TYPE_OPTIONS)[number]["value"];
@@ -347,6 +357,7 @@ interface MemberListItem {
 
 interface AssignmentListItem {
   id: string;
+  status: string;
   periodStart: string;
   periodEnd: string;
   membership: {
@@ -373,6 +384,48 @@ async function fetchAssignments(
   );
   if (!res.ok) throw new Error("Failed to load assignments");
   return res.json();
+}
+
+/**
+ * #1527 Q6 — end an assignment early: PATCH `cancel` frees the seat and keeps
+ * the usage history, so it is safe whether or not sessions were booked
+ * (DELETE refuses once any utilization exists).
+ */
+async function endAssignment(
+  orgId: string,
+  programId: string,
+  assignmentId: string,
+) {
+  const res = await fetch(
+    `/api/organizations/${orgId}/programs/${programId}/assignments/${assignmentId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancel: true }),
+    },
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // Thrown messages surface inside the ConfirmDialog.
+    throw new Error(
+      (json as { error?: string }).error ?? "Couldn't end the assignment.",
+    );
+  }
+}
+
+/** #1762-4 — ProgramStatus via labels + tones. */
+const PROGRAM_STATUS_TONE: Record<string, Tone> = {
+  ACTIVE: "success",
+  PAUSED: "caution",
+};
+
+function ProgramStatusBadge({ status }: Readonly<{ status: string }>) {
+  return (
+    <StatusBadge
+      label={humanizeEnum(status)}
+      tone={PROGRAM_STATUS_TONE[status] ?? "neutral"}
+    />
+  );
 }
 
 async function createAssignment(
@@ -448,14 +501,15 @@ function CreateProgramDialog({
   capability: ReachableCapability | null;
 }) {
   const queryClient = useQueryClient();
-  const [programType, setProgramType] = useState<"LICENSED_SEAT" | "CREDIT_POOL">(
-    "LICENSED_SEAT",
-  );
+  const [programType, setProgramType] = useState<
+    "LICENSED_SEAT" | "CREDIT_POOL"
+  >("LICENSED_SEAT");
   const [contractId, setContractId] = useState<string>("");
   const [name, setName] = useState("");
   const [ratePerSeatRupees, setRatePerSeatRupees] = useState("5000");
   const [cycle, setCycle] = useState<BillingCycle>("MONTHLY");
-  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] = useState("");
+  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] =
+    useState("");
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
   // Funding-aware default (mirrors the server's
@@ -477,7 +531,9 @@ function CreateProgramDialog({
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
   // is implicit (credits map to rupees end-to-end).
   const [creditBudgetPerCycle, setCreditsPerCycle] = useState("1000");
-  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(["CONSULTATION"]);
+  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>([
+    "CONSULTATION",
+  ]);
   const [error, setError] = useState<string | null>(null);
 
   // The selected contract's funding source decides which program types are
@@ -618,7 +674,9 @@ function CreateProgramDialog({
           ? null
           : parseInt(coveredEngagementsPerCycle, 10);
       if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
-        setError("Covered engagements per cycle must be blank or a positive integer.");
+        setError(
+          "Covered engagements per cycle must be blank or a positive integer.",
+        );
         return;
       }
       createMutation.mutate({
@@ -637,7 +695,11 @@ function CreateProgramDialog({
       });
     } else {
       const credits = Number(creditBudgetPerCycle.trim());
-      if (!Number.isFinite(credits) || credits < 1 || !Number.isInteger(credits)) {
+      if (
+        !Number.isFinite(credits) ||
+        credits < 1 ||
+        !Number.isInteger(credits)
+      ) {
         setError("Credits per cycle must be a positive integer.");
         return;
       }
@@ -843,13 +905,12 @@ function CreateProgramDialog({
                 />
                 <p className="text-xs text-zinc-500">
                   An engagement is one calendar occurrence — a 1:1 call, a
-                  webinar, or one class day. A 4-hour mentoring call counts
-                  as 1; a 12-call subscription counts as 12 over the cycle;
-                  an 8-week class counts as 8. Per-engagement price cap is
+                  webinar, or one class day. A 4-hour mentoring call counts as
+                  1; a 12-call subscription counts as 12 over the cycle; an
+                  8-week class counts as 8. Per-engagement price cap is
                   separate. Leave blank for unlimited (flat licence).
                 </p>
               </div>
-
             </>
           ) : (
             <div className="space-y-2">
@@ -911,11 +972,11 @@ function CreateProgramDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-zinc-500">
-              Applies to <strong>new</strong> bookings from the moment you
-              save — existing overage charges keep the policy they were booked
-              under. Switching to Block stops further over-cap bookings
-              immediately. New INVOICE programmes default to Charge org;
-              other funding defaults to Block.
+              Applies to <strong>new</strong> bookings from the moment you save
+              — existing overage charges keep the policy they were booked under.
+              Switching to Block stops further over-cap bookings immediately.
+              New INVOICE programmes default to Charge org; other funding
+              defaults to Block.
             </p>
           </div>
 
@@ -934,8 +995,8 @@ function CreateProgramDialog({
               />
               <p className="text-xs text-zinc-500">
                 Optional markup on the over-cap amount (the real session price
-                passes through; consulting rates are heterogeneous, so this is
-                a percentage knob rather than a flat per-unit tier). Blank = no
+                passes through; consulting rates are heterogeneous, so this is a
+                percentage knob rather than a flat per-unit tier). Blank = no
                 markup.
               </p>
             </div>
@@ -958,8 +1019,12 @@ function CreateProgramDialog({
               <p className="text-xs text-zinc-500">
                 Hard cap on the total over-cap amount this cycle (circuit
                 breaker). Once reached, further over-cap bookings are blocked
-                even with {effectiveOverageBehavior === "CHARGE_ORG" ? "Charge org" : "Charge member"} enabled.
-                Required by the platform — keeps runaway overage liability bounded.
+                even with{" "}
+                {effectiveOverageBehavior === "CHARGE_ORG"
+                  ? "Charge org"
+                  : "Charge member"}{" "}
+                enabled. Required by the platform — keeps runaway overage
+                liability bounded.
               </p>
             </div>
           )}
@@ -1115,7 +1180,9 @@ function EditProgramDialog({
         surchargeBps !== null &&
         (!Number.isFinite(surchargeBps) || surchargeBps < 0)
       ) {
-        setError("Overage surcharge must be blank or a non-negative percentage.");
+        setError(
+          "Overage surcharge must be blank or a non-negative percentage.",
+        );
         return;
       }
       // #1744 — a legacy CHARGE_MEMBER value is refused if re-sent; leave it
@@ -1409,9 +1476,7 @@ function EditProgramDialog({
                   step="1"
                   disabled={locked}
                   value={maxOveragePerCycleRupees}
-                  onChange={(e) =>
-                    setMaxOveragePerCycleRupees(e.target.value)
-                  }
+                  onChange={(e) => setMaxOveragePerCycleRupees(e.target.value)}
                   placeholder="e.g. 100000 = ₹1,00,000 ceiling"
                 />
                 <p className="text-xs text-zinc-500">
@@ -1451,6 +1516,29 @@ function EditProgramDialog({
 // Manage-program dialog with assign learner (#741)
 // ---------------------------------------------------------------------------
 
+/** Live = not ended by status or by date; only those can be unassigned. */
+function isLiveAssignment(a: AssignmentListItem): boolean {
+  return a.status === "ACTIVE" && new Date(a.periodEnd).getTime() >= Date.now();
+}
+
+function AssignmentStateBadge({
+  assignment: a,
+}: Readonly<{ assignment: AssignmentListItem }>) {
+  if (a.status !== "ACTIVE") {
+    return (
+      <StatusBadge label={humanizeEnum(a.status)} tone="neutral" size="sm" />
+    );
+  }
+  const now = Date.now();
+  if (new Date(a.periodEnd).getTime() < now) {
+    return <StatusBadge label="Expired" tone="neutral" size="sm" />;
+  }
+  if (new Date(a.periodStart).getTime() > now) {
+    return <StatusBadge label="Upcoming" tone="info" size="sm" />;
+  }
+  return <StatusBadge label="Active" tone="success" size="sm" />;
+}
+
 function ManageProgramDialog({
   orgId,
   program,
@@ -1464,8 +1552,8 @@ function ManageProgramDialog({
 }) {
   const queryClient = useQueryClient();
   const [membershipId, setMembershipId] = useState("");
-  const [periodStart, setPeriodStart] = useState(
-    () => new Date().toLocaleDateString("en-CA"),
+  const [periodStart, setPeriodStart] = useState(() =>
+    new Date().toLocaleDateString("en-CA"),
   );
   const [periodEnd, setPeriodEnd] = useState(() => {
     const d = new Date();
@@ -1539,15 +1627,17 @@ function ManageProgramDialog({
   const assignmentList = assignments.data?.data ?? [];
   // Filter to LEARNER role members for assignment (the primary use case),
   // but also include MANAGER and MAINTAINER since they can self-test.
-  const assignableMembers = memberList.filter(
-    (m) => ["LEARNER", "MANAGER", "MAINTAINER", "OWNER"].includes(m.role),
+  const assignableMembers = memberList.filter((m) =>
+    ["LEARNER", "MANAGER", "MAINTAINER", "OWNER"].includes(m.role),
   );
 
   return (
     <ResponsiveModal open={open} onOpenChange={onOpenChange}>
       <ResponsiveModalContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <ResponsiveModalHeader>
-          <ResponsiveModalTitle>Manage Program — {program.name}</ResponsiveModalTitle>
+          <ResponsiveModalTitle>
+            Manage Program — {program.name}
+          </ResponsiveModalTitle>
         </ResponsiveModalHeader>
 
         {/* Program info summary */}
@@ -1556,18 +1646,7 @@ function ManageProgramDialog({
             <Badge variant="secondary">
               {PROGRAM_TYPE_META[program.type].label}
             </Badge>
-            <Badge
-              variant="outline"
-              className={
-                program.status === "ACTIVE"
-                  ? "border-green-300 text-green-800"
-                  : program.status === "PAUSED"
-                    ? "border-amber-300 text-amber-800"
-                    : "border-zinc-300 text-zinc-600"
-              }
-            >
-              {program.status}
-            </Badge>
+            <ProgramStatusBadge status={program.status} />
           </div>
           {program.coveredPlanTypes.length > 0 && (
             <p className="text-xs text-zinc-500">
@@ -1604,7 +1683,11 @@ function ManageProgramDialog({
                 <SelectContent>
                   {assignableMembers.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
-                      {m.user.name ?? m.user.email} ({m.role})
+                      {m.user.name ?? m.user.email} (
+                      {MEMBER_ROLE_LABEL[
+                        m.role as keyof typeof MEMBER_ROLE_LABEL
+                      ] ?? humanizeEnum(m.role)}
+                      )
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1672,6 +1755,7 @@ function ManageProgramDialog({
                   <TableHead>Role</TableHead>
                   <TableHead>Period</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="w-24" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1682,7 +1766,9 @@ function ManageProgramDialog({
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary" className="text-xs">
-                        {a.membership.role}
+                        {MEMBER_ROLE_LABEL[
+                          a.membership.role as keyof typeof MEMBER_ROLE_LABEL
+                        ] ?? humanizeEnum(a.membership.role)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-zinc-600">
@@ -1700,16 +1786,35 @@ function ManageProgramDialog({
                       })}
                     </TableCell>
                     <TableCell>
-                      {(() => {
-                        const now = Date.now();
-                        const start = new Date(a.periodStart).getTime();
-                        const end = new Date(a.periodEnd).getTime();
-                        if (end < now)
-                          return <Badge variant="outline" className="text-xs border-zinc-300 text-zinc-500">Expired</Badge>;
-                        if (start > now)
-                          return <Badge variant="outline" className="text-xs border-blue-300 text-blue-700">Upcoming</Badge>;
-                        return <Badge variant="outline" className="text-xs border-green-300 text-green-700">Active</Badge>;
-                      })()}
+                      <AssignmentStateBadge assignment={a} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {isLiveAssignment(a) && (
+                        <ConfirmDialog
+                          title="End this assignment?"
+                          description={`${a.membership.user.name ?? a.membership.user.email} stops drawing on ${program.name} now. Sessions already booked and the usage record stay as they are.`}
+                          confirmLabel="End assignment"
+                          tone="destructive"
+                          onConfirm={async () => {
+                            await endAssignment(orgId, program.id, a.id);
+                            void queryClient.invalidateQueries({
+                              queryKey: [
+                                "program-assignments",
+                                orgId,
+                                program.id,
+                              ],
+                            });
+                            void queryClient.invalidateQueries({
+                              queryKey: ["org-programs", orgId],
+                            });
+                          }}
+                          trigger={
+                            <Button variant="ghost" size="sm">
+                              Unassign
+                            </Button>
+                          }
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1733,7 +1838,9 @@ function ManageProgramDialog({
               with assignments or booking history can only be paused or
               cancelled.
             </p>
-            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+            {deleteError && (
+              <p className="text-sm text-red-600">{deleteError}</p>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -1799,9 +1906,8 @@ export default function OrgProgramsPage({
     canSponsor: true,
   });
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [managingProgram, setManagingProgram] = useState<ProgramListItem | null>(
-    null,
-  );
+  const [managingProgram, setManagingProgram] =
+    useState<ProgramListItem | null>(null);
   const [editingProgram, setEditingProgram] = useState<ProgramListItem | null>(
     null,
   );
@@ -1905,14 +2011,13 @@ export default function OrgProgramsPage({
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-zinc-600">
-                        {p.coveredPlanTypes.length > 0
-                          ? p.coveredPlanTypes
-                              .map(
-                                (t) =>
-                                  t.charAt(0) + t.slice(1).toLowerCase(),
-                              )
-                              .join(", ")
-                          : <span className="text-zinc-400 italic">None</span>}
+                        {p.coveredPlanTypes.length > 0 ? (
+                          p.coveredPlanTypes
+                            .map((t) => t.charAt(0) + t.slice(1).toLowerCase())
+                            .join(", ")
+                        ) : (
+                          <span className="text-zinc-400 italic">None</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-zinc-600">
                         {p.type === "LICENSED_SEAT" && p.licensedSeatConfig ? (
@@ -1921,8 +2026,8 @@ export default function OrgProgramsPage({
                               p.licensedSeatConfig.ratePerSeatPaise,
                               "INR",
                             )}{" "}
-                            / seat /{" "}
-                            {p.licensedSeatConfig.cycle.toLowerCase()} ·{" "}
+                            / seat / {p.licensedSeatConfig.cycle.toLowerCase()}{" "}
+                            ·{" "}
                             {p.licensedSeatConfig.coveredEngagementsPerCycle ??
                               "unlimited"}{" "}
                             engagements ·{" "}
@@ -1942,8 +2047,7 @@ export default function OrgProgramsPage({
                               p.creditPoolConfig.creditBudgetPerCycle * 100,
                               "INR",
                             )}{" "}
-                            cap) /{" "}
-                            {p.creditPoolConfig.cycle.toLowerCase()} ·{" "}
+                            cap) / {p.creditPoolConfig.cycle.toLowerCase()} ·{" "}
                             {
                               OVERAGE_BEHAVIOR_LABEL[
                                 p.creditPoolConfig.overageBehavior
@@ -1978,18 +2082,7 @@ export default function OrgProgramsPage({
                         })()}
                       </TableCell>
                       <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={
-                            p.status === "ACTIVE"
-                              ? "border-green-300 text-green-800"
-                              : p.status === "PAUSED"
-                                ? "border-amber-300 text-amber-800"
-                                : "border-zinc-300 text-zinc-600"
-                          }
-                        >
-                          {p.status}
-                        </Badge>
+                        <ProgramStatusBadge status={p.status} />
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">

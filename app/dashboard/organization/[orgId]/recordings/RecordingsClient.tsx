@@ -7,10 +7,12 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
+import type { RecordingStatus } from "@prisma/client";
 import { useRequireOrgAccess } from "../useOrgRole";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { recordingStatusBadge } from "@/lib/labels/session-labels";
 import {
   DashboardHeader,
   DashboardContent,
@@ -23,7 +25,7 @@ import {
 interface RecordingRow {
   id: string;
   title: string;
-  status: string;
+  status: RecordingStatus;
   recordedAt: string;
   durationInMinutes: number;
 }
@@ -39,7 +41,8 @@ const COLUMNS: Column<RecordingRow>[] = [
   { header: "Title", accessor: (r) => r.title },
   {
     header: "Status",
-    accessor: (r) => <Badge variant="outline">{r.status}</Badge>,
+    // #1762-4 — the shared recording label map, not the raw enum.
+    accessor: (r) => <StatusBadge {...recordingStatusBadge(r.status)} />,
   },
   {
     header: "Duration",
@@ -76,7 +79,7 @@ export function RecordingsClient({ orgId }: { orgId: string }) {
     <>
       <DashboardHeader
         title="Recordings"
-        subtitle="Session recordings for events run under this organization."
+        description="Session recordings for events run under this organization."
       />
       <DashboardContent>
         <ScopedListTable

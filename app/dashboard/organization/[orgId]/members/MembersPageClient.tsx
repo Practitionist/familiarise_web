@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { UserPlus, Trash2, Pencil, Search } from "lucide-react";
+import { Trash2, Pencil, Search } from "lucide-react";
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
@@ -12,7 +12,6 @@ import {
   getInvitableRoles,
 } from "@/lib/labels/org-labels";
 import {
-  AddMemberPayloadSchema,
   MembersListResponseSchema,
   UpdateMemberPayloadSchema,
   ORG_MEMBERS_PER_PAGE,
@@ -27,16 +26,12 @@ import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { useSession } from "@/lib/auth-client";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -56,6 +51,7 @@ import {
   ResponsiveModalHeader,
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
+import { AddPeopleDialog } from "./AddPeopleDialog";
 
 // `MemberRow` (and the response shape) live in `@/schemas/organizations`
 // so the dashboard and any other consumer (e.g. operator tools) share the
@@ -85,52 +81,18 @@ async function fetchMembers(
   if (opts.q) sp.set("q", opts.q);
   sp.set("page", String(opts.page));
   sp.set("perPage", String(opts.perPage));
-  const res = await fetch(`/api/organizations/${orgId}/members?${sp.toString()}`);
+  const res = await fetch(
+    `/api/organizations/${orgId}/members?${sp.toString()}`,
+  );
   const parsed = await parseJsonResponse(
     res,
     MembersListResponseSchema,
     "Failed to load members",
   );
-  return { members: parsed.data, total: parsed.meta?.total ?? parsed.data.length };
-}
-
-async function addMember(
-  orgId: string,
-  payload: { email: string; role: MemberRole },
-) {
-  // The server's `POST /members` only accepts the self-service subset
-  // (OWNER/MAINTAINER/MANAGER/LEARNER) — the schema enforces that union
-  // before we even open the connection.
-  const validated = validateOutboundPayload(AddMemberPayloadSchema, payload);
-  const res = await fetch(`/api/organizations/${orgId}/members`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(validated),
-  });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    // Same field-level Zod surfacing as updateMember below — see comment
-    // there for rationale. Both POST and PATCH share the "Invalid body"
-    // string on schema parse failure, so both share the friendlier
-    // fallback.
-    const fieldErrors = body?.detail?.fieldErrors as
-      | Record<string, string[] | undefined>
-      | undefined;
-    if (fieldErrors) {
-      const offending = Object.keys(fieldErrors).filter(
-        (k) => fieldErrors[k]?.length,
-      );
-      if (offending.length > 0) {
-        throw new Error(
-          `Couldn't add member — invalid ${offending.join(", ")}. ` +
-            `Refresh the page and try again, or contact support if this persists.`,
-        );
-      }
-    }
-    const raw = errorMessageFromBody(body, "Failed to add member");
-    throw new Error(humanizeOrgError(raw));
-  }
-  return body;
+  return {
+    members: parsed.data,
+    total: parsed.meta?.total ?? parsed.data.length,
+  };
 }
 
 async function updateMember(
@@ -144,18 +106,12 @@ async function updateMember(
 ) {
   // Schema enforces "at least one of role or status" so an empty PATCH
   // never leaves the client (would 400 on the server anyway).
-  const validated = validateOutboundPayload(
-    UpdateMemberPayloadSchema,
-    payload,
-  );
-  const res = await fetch(
-    `/api/organizations/${orgId}/members/${memberId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validated),
-    },
-  );
+  const validated = validateOutboundPayload(UpdateMemberPayloadSchema, payload);
+  const res = await fetch(`/api/organizations/${orgId}/members/${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(validated),
+  });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     // Zod field-level surfacing. The server returns `error: "Invalid body"`
@@ -186,10 +142,9 @@ async function updateMember(
 }
 
 async function removeMember(orgId: string, memberId: string) {
-  const res = await fetch(
-    `/api/organizations/${orgId}/members/${memberId}`,
-    { method: "DELETE" },
-  );
+  const res = await fetch(`/api/organizations/${orgId}/members/${memberId}`, {
+    method: "DELETE",
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const raw = errorMessageFromBody(body, "Failed to remove member");
@@ -214,19 +169,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
   // below stay MAINTAINER-gated (isAtLeast("MAINTAINER")).
-  const { allowed } = useRequireOrgAccess(orgId, { permission: "members.read" });
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "members.read",
+  });
   const queryClient = useQueryClient();
   const roleOptions = selectableRoles(canSponsor, canHost);
-  // Default to the most common consumer role for the org's capability:
-  // LEARNER on sponsor-capable orgs, EXPERT on host-only orgs, MANAGER as
-  // a last resort. Hard-coding "LEARNER" left the Select trigger blank on
-  // host-only orgs because LEARNER was filtered out of roleOptions.
-  const defaultRole: MemberRole = canSponsor
-    ? "LEARNER"
-    : canHost
-      ? "EXPERT"
-      : "MANAGER";
-
   // #777 §B — roster search + server pagination. `search` is the live
   // input; `debouncedSearch` is what actually hits the API (250ms) so a
   // fast typist doesn't fire a request per keystroke. Page resets to 1
@@ -257,23 +204,6 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
-
-  const [showInvite, setShowInvite] = useState(false);
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<MemberRole>(defaultRole);
-  const [error, setError] = useState<string | null>(null);
-
-  const addMutation = useMutation({
-    mutationFn: () => addMember(orgId, { email: email.trim(), role }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
-      setShowInvite(false);
-      setEmail("");
-      setRole(defaultRole);
-      setError(null);
-    },
-    onError: (err: Error) => setError(err.message),
-  });
 
   // Destructive removals are gated through a confirm dialog rather than
   // the raw browser confirm() because (a) it matches the rest of the
@@ -360,9 +290,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       key: "status",
       header: "Status",
       cell: (m) => (
-        <Badge variant={m.status === "ACTIVE" ? "default" : "outline"}>
-          {MEMBER_STATUS_LABEL[m.status as MemberStatus] ?? m.status}
-        </Badge>
+        <StatusBadge
+          label={MEMBER_STATUS_LABEL[m.status as MemberStatus] ?? m.status}
+          tone={m.status === "ACTIVE" ? "success" : "neutral"}
+        />
       ),
     },
   ];
@@ -426,9 +357,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         description="Everyone with a seat in this organization"
         actions={
           isAtLeast("MAINTAINER") && (
-            <Button size="sm" onClick={() => setShowInvite(true)}>
-              <UserPlus className="h-4 w-4 mr-1" /> Add member
-            </Button>
+            <AddPeopleDialog
+              orgId={orgId}
+              canSponsor={canSponsor}
+              canHost={canHost}
+            />
           )
         }
       />
@@ -499,67 +432,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         </Card>
       </div>
 
-      <ResponsiveModal open={showInvite} onOpenChange={setShowInvite}>
-        <ResponsiveModalContent>
-          <ResponsiveModalHeader>
-            <ResponsiveModalTitle>Add member</ResponsiveModalTitle>
-            <ResponsiveModalDescription>
-              The user must already have a Familiarise account. To invite a
-              brand-new email, use the Invitations page.
-            </ResponsiveModalDescription>
-          </ResponsiveModalHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="add-email">Email</Label>
-              <Input
-                id="add-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="alice@acme.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="add-role">Role</Label>
-              <Select
-                value={role}
-                onValueChange={(v) => setRole(v as MemberRole)}
-              >
-                <SelectTrigger id="add-role">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {roleOptions.map((r) => (
-                    <SelectItem key={r.value} value={r.value}>
-                      {r.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-          </div>
-
-          <ResponsiveModalFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowInvite(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => addMutation.mutate()}
-              disabled={addMutation.isPending || !email.includes("@")}
-            >
-              {addMutation.isPending ? "Adding…" : "Add"}
-            </Button>
-          </ResponsiveModalFooter>
-        </ResponsiveModalContent>
-      </ResponsiveModal>
-
       {/* Edit member dialog */}
-      <ResponsiveModal open={!!editMember} onOpenChange={(open) => !open && setEditMember(null)}>
+      <ResponsiveModal
+        open={!!editMember}
+        onOpenChange={(open) => !open && setEditMember(null)}
+      >
         <ResponsiveModalContent>
           <ResponsiveModalHeader>
             <ResponsiveModalTitle>Edit member</ResponsiveModalTitle>
@@ -608,8 +485,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               </Select>
               {editMember !== null && isOwnRow(editMember) && (
                 <p className="text-xs text-muted-foreground">
-                  You cannot change your own role. Ask another operator
-                  to do it for you.
+                  You cannot change your own role. Ask another operator to do it
+                  for you.
                 </p>
               )}
             </div>
@@ -651,16 +528,16 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Where this expert&apos;s share of org-hosted sessions is routed.
+                  Where this expert&apos;s share of org-hosted sessions is
+                  routed.
                 </p>
               </div>
             )}
             {editMember &&
               isBlockedRoleTransition(editMember.role, editRole) && (
                 <p className="text-sm text-red-600">
-                  Members cannot switch between Learner and Expert roles.
-                  Remove the member and re-invite them with the new role
-                  instead.
+                  Members cannot switch between Learner and Expert roles. Remove
+                  the member and re-invite them with the new role instead.
                 </p>
               )}
             {editMember &&
@@ -708,15 +585,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           <ResponsiveModalHeader>
             <ResponsiveModalTitle>Remove member?</ResponsiveModalTitle>
             <ResponsiveModalDescription>
-              {memberToRemove?.user.name ?? memberToRemove?.user.email}
-              {" "}
-              will lose access to this organization immediately. You can
-              re-invite them later.
+              {memberToRemove?.user.name ?? memberToRemove?.user.email} will
+              lose access to this organization immediately. You can re-invite
+              them later.
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
-          {removeError && (
-            <p className="text-sm text-red-600">{removeError}</p>
-          )}
+          {removeError && <p className="text-sm text-red-600">{removeError}</p>}
           <ResponsiveModalFooter>
             <Button
               variant="outline"
