@@ -306,18 +306,18 @@ async function settleSeat(
       appointmentId: session.appointmentId,
       userId: payment.userId,
       status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+      // #1834 — a seat funded by another order (a re-bought seat reuses its
+      // row) is not this payment's; a legacy seat with no link keeps the match.
+      OR: [{ paymentId: payment.id }, { paymentId: null }],
     },
     select: {
       id: true,
       status: true,
-      paymentId: true,
       createdAt: true,
       sessionsPurchased: true,
     },
   });
-  // #1834 — a seat funded by another order (a re-bought seat reuses its row)
-  // is not this payment's; a legacy seat with no link keeps the old match.
-  if (!seat || (seat.paymentId && seat.paymentId !== payment.id)) return false;
+  if (!seat) return false;
   const joinedAt =
     seat.createdAt > payment.createdAt ? seat.createdAt : payment.createdAt;
   // Only a seat that held this session is owed for it.

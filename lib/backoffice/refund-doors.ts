@@ -118,7 +118,12 @@ export async function refundInFlightOr(err: unknown, dedupeKey: string) {
 async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId, deletedAt: null },
-    select: { appointmentId: true, userId: true },
+    select: {
+      appointmentId: true,
+      userId: true,
+      amount: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
   });
   const occurrence = await prisma.appointmentOccurrence.findUnique({
     where: { id: occurrenceId },
@@ -137,12 +142,13 @@ async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
           select: { id: true },
         })
       : null;
-  if (!seat) {
+  if (!seat || !payment) {
     throw new OpsRefusal(
       "SESSION_NOT_ON_PAYMENT",
       "That session is not part of this payment's booking, or the payment holds no live seat for it.",
     );
   }
+  return payment;
 }
 
 /**
@@ -155,7 +161,10 @@ export async function assertSessionRefundable(args: {
   dedupeKey: string;
   amountPaise: number | undefined;
 }): Promise<void> {
-  await assertSessionOnPayment(args.paymentId, args.occurrenceId);
+  const payment = await assertSessionOnPayment(
+    args.paymentId,
+    args.occurrenceId,
+  );
   const prior = await prisma.refund.findUnique({
     where: { dedupeKey: args.dedupeKey },
     select: { amountPaise: true, status: true },
@@ -164,17 +173,10 @@ export async function assertSessionRefundable(args: {
     return;
   }
   // A full refund resolves to the balance the first refund saw: today's plus its own amount.
-  let asked = args.amountPaise;
-  if (asked === undefined) {
-    const row = await prisma.payment.findUnique({
-      where: { id: args.paymentId },
-      select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
-    });
-    asked = row
-      ? refundableBalancePaise(Number(row.amount), row) +
-        Number(prior.amountPaise)
-      : undefined;
-  }
+  const asked =
+    args.amountPaise ??
+    refundableBalancePaise(Number(payment.amount), payment) +
+      Number(prior.amountPaise);
   if (asked === Number(prior.amountPaise)) return;
   throw new OpsRefusal(
     "SESSION_ALREADY_REFUNDED",

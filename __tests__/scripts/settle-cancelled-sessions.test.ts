@@ -73,12 +73,20 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: async () => ({ refunds: [], disputes: [] }),
     },
     appointmentParticipant: {
-      findFirst: async () => ({
-        id: "seat-1",
-        status: state.seatStatus,
-        paymentId: state.seatPaymentId,
-        createdAt: new Date("2026-08-01T00:00:00Z"),
-      }),
+      // The seat row answers only its own payment's lookup (or any, when unlinked).
+      findFirst: async ({
+        where,
+      }: {
+        where: { OR?: { paymentId: string | null }[] };
+      }) =>
+        state.seatPaymentId &&
+        !where.OR?.some((o) => o.paymentId === state.seatPaymentId)
+          ? null
+          : {
+              id: "seat-1",
+              status: state.seatStatus,
+              createdAt: new Date("2026-08-01T00:00:00Z"),
+            },
     },
     systemEvent: {
       findFirst: async ({ where }: { where: { correlationId: string } }) =>
