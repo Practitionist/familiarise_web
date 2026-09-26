@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { waitlistStatusBadge } from "@/lib/labels/session-labels";
@@ -191,13 +192,7 @@ export function WaitlistManagement() {
       setHtmlBody("");
       queryClient.invalidateQueries({ queryKey: ["admin-waitlist"] });
     },
-    onError: (sendError: Error) => {
-      toast({
-        title: "Could not send",
-        description: sendError.message,
-        variant: "destructive",
-      });
-    },
+    // A failure is shown inside the confirm dialog, which stays open.
   });
 
   const stats = data?.stats;
@@ -415,18 +410,28 @@ export function WaitlistManagement() {
                 />
               </div>
 
-              <Button
-                onClick={() => broadcast.mutate()}
-                disabled={
-                  broadcast.isPending ||
-                  !subject.trim() ||
-                  !htmlBody.trim() ||
-                  (stats?.SUBSCRIBED ?? 0) === 0
+              {/* #1527 Q10 — a mass send is confirmed with its audience size. */}
+              <ConfirmDialog
+                trigger={
+                  <Button
+                    disabled={
+                      broadcast.isPending ||
+                      !subject.trim() ||
+                      !htmlBody.trim() ||
+                      (stats?.SUBSCRIBED ?? 0) === 0
+                    }
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    {broadcast.isPending ? "Sending…" : "Send to subscribers"}
+                  </Button>
                 }
-              >
-                <Send className="mr-2 h-4 w-4" />
-                {broadcast.isPending ? "Sending…" : "Send to subscribers"}
-              </Button>
+                title={`Send to ${stats?.SUBSCRIBED ?? 0} subscribers?`}
+                description={`"${subject.trim()}" goes out now to every confirmed subscriber. An email cannot be recalled.`}
+                confirmLabel="Send newsletter"
+                onConfirm={async () => {
+                  await broadcast.mutateAsync();
+                }}
+              />
             </CardContent>
           </Card>
         )}

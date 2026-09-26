@@ -11,8 +11,9 @@ import {
   SupportTicketStatus,
   SupportPriority,
   SupportIssueType,
-  Prisma,
 } from "@prisma/client";
+import { ticketListWhere } from "@/lib/backoffice/queue-predicates";
+import { slaStateOf } from "@/lib/support/sla";
 
 /**
  * GET /api/staff/support-tickets
@@ -34,36 +35,14 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = (page - 1) * limit;
 
-    // Build where clause
-    const where: Prisma.SupportTicketWhereInput = {};
-
-    if (status) {
-      where.status = status;
-    }
-    if (priority) {
-      where.priority = priority;
-    }
-    if (issueType) {
-      where.issueType = issueType;
-    }
-    if (assignedToId) {
-      where.assignedToId = assignedToId === "unassigned" ? null : assignedToId;
-    }
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-        { id: { contains: search, mode: "insensitive" } },
-        {
-          user: {
-            OR: [
-              { name: { contains: search, mode: "insensitive" } },
-              { email: { contains: search, mode: "insensitive" } },
-            ],
-          },
-        },
-      ];
-    }
+    // #1527 — the same builder feeds the Tickets nav badge.
+    const where = ticketListWhere({
+      status,
+      priority,
+      issueType,
+      assignedToId,
+      search,
+    });
 
     // Get tickets with related data
     const [tickets, total] = await Promise.all([
@@ -78,6 +57,7 @@ export async function GET(req: NextRequest) {
               image: true,
             },
           },
+          assignedTo: { select: { id: true, name: true } },
           _count: {
             select: {
               responses: true,
@@ -107,6 +87,9 @@ export async function GET(req: NextRequest) {
       issueType: ticket.issueType,
       user: ticket.user,
       assignedToId: ticket.assignedToId,
+      assignedTo: ticket.assignedTo,
+      // #1527 — the queue's SLA column; derived here, never stored (sla.ts).
+      sla: slaStateOf(ticket),
       responseCount: ticket._count.responses,
       attachmentCount: ticket._count.attachments,
       // Entity links

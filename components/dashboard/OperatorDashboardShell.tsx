@@ -19,6 +19,7 @@ import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { ContextSwitcher } from "@/components/dashboard/ContextSwitcher";
 import { useDashboardBreadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { useBackofficeNavCounts } from "@/components/dashboard/backoffice/useBackofficeNavCounts";
 import { usePrefetchNavPaths } from "@/hooks/usePrefetchNavPaths";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { backofficeLandingHref } from "@/lib/backoffice/capability";
@@ -45,6 +46,8 @@ export function OperatorDashboardShell({
     [cap, showTds],
   );
   const roleLabel = cap.tree === "admin" ? "Admin" : "Staff";
+  // #1527 Q12 — queue badges on the nav and the mobile tabs.
+  const { data: badges } = useBackofficeNavCounts();
   const prefetchPaths = useMemo(
     () => [
       backofficeLandingHref(cap),
@@ -78,6 +81,7 @@ export function OperatorDashboardShell({
     <DashboardShell
       kind="backoffice"
       nav={nav}
+      badges={badges}
       switcher={<ContextSwitcher />}
       account={{
         name: displayName,

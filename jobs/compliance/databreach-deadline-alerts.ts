@@ -41,8 +41,10 @@ import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
+import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
 
-const REPORTING_DEADLINE_HOURS = 72;
+// #1527 — one constant, shared with the Compliance page.
+const REPORTING_DEADLINE_HOURS = BREACH_REPORTING_DEADLINE_HOURS;
 const WARN_HOURS_BEFORE_DEADLINE = 12; // surface breaches when ≤12h remain
 const MAX_ROWS_IN_EMAIL = 50;
 

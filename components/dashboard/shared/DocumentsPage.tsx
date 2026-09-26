@@ -19,7 +19,6 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 
 import { Badge } from "@/components/ui/badge";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
   Select,
   SelectContent,
@@ -80,9 +79,7 @@ const COLUMNS: Column<DocumentRow>[] = [
     header: "Document",
     accessor: (r) => (
       <div className="min-w-0">
-        <p className="truncate font-medium text-foreground">
-          {r.originalName}
-        </p>
+        <p className="truncate font-medium text-foreground">{r.originalName}</p>
         {/* A revision reads as an unrelated row otherwise — the reviewer sees
             two files and no indication one supersedes the other. */}
         {r.responseToDocumentId && (
@@ -148,6 +145,7 @@ const COLUMNS: Column<DocumentRow>[] = [
   },
 ];
 
+/** #1527 — the Verification page's Documents tab (its header is the page's). */
 export function DocumentsPage() {
   // `ScopedListTable` paginates by pushing `?page=N`, so the URL is the source
   // of truth. Holding it in local state meant every deep link and every
@@ -199,10 +197,6 @@ export function DocumentsPage() {
 
   return (
     <div className="space-y-6">
-      <DashboardHeader
-        title="Documents"
-        subtitle="Every document uploaded against an appointment, with its review outcome"
-      />
       <ScopedListTable
         title="Document review log"
         description="Read-only. Reviewing is the consultant's call on their own session; this is here so support can explain an outcome."

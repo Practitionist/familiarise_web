@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
       adminPayoutsQuerySchema,
       {
         status: searchParams.get("status"),
+        statusIn: searchParams.get("statusIn")?.split(",") ?? null,
         kind: searchParams.get("kind"),
         search: searchParams.get("search"),
         // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
@@ -50,6 +51,7 @@ export async function GET(req: NextRequest) {
     if (queryError) return queryError;
     const result = await getOperatorPayouts({
       status: query.status ?? null,
+      statusIn: query.statusIn ?? null,
       kind: query.kind ?? null,
       search: query.search,
       orgId: query.orgId,

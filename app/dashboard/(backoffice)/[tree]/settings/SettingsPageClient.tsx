@@ -16,7 +16,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotificationPreferencesPanel } from "@/components/notifications";
 import { useToast } from "@/hooks/use-toast";
-import { useSession } from "@/lib/auth-client";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 
@@ -48,13 +49,18 @@ async function fetchAdminData(userId: string): Promise<AdminData> {
   return result.data;
 }
 
-export default function AdminSettingsPage() {
-  const { data: session } = useSession();
+const PROFILE_DESCRIPTION =
+  "Your own details and notifications, the same page for admin and staff.";
+
+/** #1527 — the one "My profile" page for both back-office trees. */
+export default function BackofficeProfilePage() {
+  // The layout knows who is signed in; no session round-trip on first render.
+  const { viewerId } = useBackofficeCapability();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
 
-  const userId = session?.user?.id;
+  const userId = viewerId;
 
   const { data: adminData, isLoading } = useQuery({
     queryKey: ["admin-settings", userId],
@@ -145,12 +151,7 @@ export default function AdminSettingsPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Settings</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage your account settings
-          </p>
-        </div>
+        <PageHeader title="My profile" description={PROFILE_DESCRIPTION} />
         <Card>
           <CardHeader>
             <Skeleton className="h-6 w-[200px]" />
@@ -169,12 +170,7 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Settings</h1>
-        <p className="text-muted-foreground mt-1">
-          Manage your account settings and preferences
-        </p>
-      </div>
+      <PageHeader title="My profile" description={PROFILE_DESCRIPTION} />
 
       {/* Personal Information */}
       <Card>

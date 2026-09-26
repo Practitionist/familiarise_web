@@ -3,16 +3,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
 import PendingPayoutsSection from "./sections/PendingPayoutsSection";
-import ProcessingPayoutsSection from "./sections/ProcessingPayoutsSection";
-import CompletedPayoutsSection from "./sections/CompletedPayoutsSection";
-import EarningsSection from "./sections/EarningsSection";
+import { PayoutListSection } from "./sections/PayoutListSection";
 
 // Lazy-load recharts so it stays out of this route's first-load JS.
 const PayoutsChart = dynamic(() => import("./PayoutsChart"), {
@@ -22,14 +20,31 @@ const PayoutsChart = dynamic(() => import("./PayoutsChart"), {
   ),
 });
 
-type TabKey = "pending" | "processing" | "completed" | "earnings";
+// #1527 — five tabs covering every PayoutStatus; the inner Earnings tab is
+// gone (Earnings has its own Money item).
+type TabKey = "awaiting" | "scheduled" | "in-flight" | "failed" | "paid";
 
 const VALID_TABS: readonly TabKey[] = [
-  "pending",
-  "processing",
-  "completed",
-  "earnings",
+  "awaiting",
+  "scheduled",
+  "in-flight",
+  "failed",
+  "paid",
 ] as const;
+
+/** Old `?tab=` values keep landing somewhere sensible. */
+const LEGACY_TABS: Record<string, TabKey> = {
+  pending: "awaiting",
+  processing: "in-flight",
+  completed: "paid",
+};
+
+const parseTab = (value: string | null): TabKey => {
+  if ((VALID_TABS as readonly string[]).includes(value ?? "")) {
+    return value as TabKey;
+  }
+  return LEGACY_TABS[value ?? ""] ?? "awaiting";
+};
 
 interface PayoutTrendSeriesDatum {
   day: string;
@@ -55,11 +70,7 @@ async function fetchPayoutTrend(): Promise<PayoutTrendResponse> {
 export function PayoutsBoard() {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const urlTab: TabKey = (VALID_TABS as readonly string[]).includes(
-    tabParam ?? "",
-  )
-    ? (tabParam as TabKey)
-    : "pending";
+  const urlTab = parseTab(tabParam);
 
   // URL writes go through window.history.replaceState rather than
   // router.replace: the tab panels are client state (each section fetches
@@ -76,9 +87,7 @@ export function PayoutsBoard() {
   }, [tabParam]);
 
   const handleTabChange = (value: string) => {
-    const nextTab: TabKey = (VALID_TABS as readonly string[]).includes(value)
-      ? (value as TabKey)
-      : "pending";
+    const nextTab = parseTab(value);
     setLocalTab(nextTab);
     const next = new URLSearchParams(Array.from(searchParams.entries()));
     next.set("tab", nextTab);
@@ -116,9 +125,9 @@ export function PayoutsBoard() {
 
   return (
     <div className="space-y-6">
-      <DashboardHeader
+      <PageHeader
         title="Payouts"
-        subtitle="Manage consultant payouts and earnings"
+        description="Consultant payouts from approval to the bank."
       />
 
       {/* Payout trend chart */}
@@ -135,24 +144,46 @@ export function PayoutsBoard() {
         onValueChange={handleTabChange}
         className="w-full"
       >
-        <TabsList className="grid h-auto w-full max-w-xl grid-cols-2 gap-1 sm:h-9 sm:grid-cols-4">
-          <TabsTrigger value="pending">Pending</TabsTrigger>
-          <TabsTrigger value="processing">Processing</TabsTrigger>
-          <TabsTrigger value="completed">Completed</TabsTrigger>
-          <TabsTrigger value="earnings">Earnings</TabsTrigger>
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 sm:w-auto">
+          <TabsTrigger value="awaiting">Awaiting approval</TabsTrigger>
+          <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+          <TabsTrigger value="in-flight">In flight</TabsTrigger>
+          <TabsTrigger value="failed">Failed &amp; returned</TabsTrigger>
+          <TabsTrigger value="paid">Paid</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="pending" className="mt-6">
+        <TabsContent value="awaiting" className="mt-6">
           <PendingPayoutsSection />
         </TabsContent>
-        <TabsContent value="processing" className="mt-6">
-          <ProcessingPayoutsSection />
+        <TabsContent value="scheduled" className="mt-6">
+          <PayoutListSection
+            statuses={["APPROVED"]}
+            name="scheduled"
+            empty="No approved payouts are waiting for the next run."
+            note="Approved and waiting for the payout run to send them."
+          />
         </TabsContent>
-        <TabsContent value="completed" className="mt-6">
-          <CompletedPayoutsSection />
+        <TabsContent value="in-flight" className="mt-6">
+          <PayoutListSection
+            statuses={["PROCESSING"]}
+            name="in-flight"
+            empty="No payouts are with the provider right now."
+            note="Sent to the provider; the webhook moves each to Paid or Failed."
+          />
         </TabsContent>
-        <TabsContent value="earnings" className="mt-6">
-          <EarningsSection />
+        <TabsContent value="failed" className="mt-6">
+          <PayoutListSection
+            statuses={["FAILED", "CANCELLED", "REVERSED"]}
+            name="failed"
+            empty="No failed, cancelled or reversed payouts."
+          />
+        </TabsContent>
+        <TabsContent value="paid" className="mt-6">
+          <PayoutListSection
+            statuses={["COMPLETED"]}
+            name="paid"
+            empty="No payouts have been paid yet."
+          />
         </TabsContent>
       </Tabs>
     </div>

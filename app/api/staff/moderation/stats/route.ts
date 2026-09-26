@@ -5,6 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  PENDING_CONSULTANT_VERIFICATION_WHERE,
+  PENDING_REPORT_WHERE,
+} from "@/lib/backoffice/queue-predicates";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 /**
@@ -33,9 +37,8 @@ export async function GET(req: NextRequest) {
     // both, which is half of why every card rendered 0.
     const [pendingReports, resolvedToday, pendingProfiles, pendingReviews] =
       await Promise.all([
-        prisma.moderationReport.count({
-          where: { status: "PENDING" },
-        }),
+        // #1527 — the Moderation nav badge counts this same predicate.
+        prisma.moderationReport.count({ where: PENDING_REPORT_WHERE }),
         prisma.moderationReport.count({
           where: {
             status: { in: ["DISMISSED", "ACTION_TAKEN"] },
@@ -43,7 +46,7 @@ export async function GET(req: NextRequest) {
           },
         }),
         prisma.consultantProfileVerification.count({
-          where: { status: "PENDING" },
+          where: PENDING_CONSULTANT_VERIFICATION_WHERE,
         }),
         // "Reviews to Check" is a moderation queue, and a review only enters
         // one by being reported — `ConsultantReview` carries no status, flag

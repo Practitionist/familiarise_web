@@ -7,6 +7,8 @@ import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
 
 type CapabilityValue = BackofficeCapability & {
   can: (surface: BackofficeSurface) => boolean;
+  /** The signed-in operator's user id ("Mine", "Assign to me"). */
+  viewerId: string;
 };
 
 const BackofficeCapabilityContext = createContext<CapabilityValue | null>(null);
@@ -18,11 +20,16 @@ const BackofficeCapabilityContext = createContext<CapabilityValue | null>(null);
  */
 export function BackofficeCapabilityProvider({
   value,
+  viewerId,
   children,
-}: Readonly<{ value: BackofficeCapability; children: ReactNode }>) {
+}: Readonly<{
+  value: BackofficeCapability;
+  viewerId: string;
+  children: ReactNode;
+}>) {
   const ctx = useMemo<CapabilityValue>(
-    () => ({ ...value, can: (surface) => can(value, surface) }),
-    [value],
+    () => ({ ...value, viewerId, can: (surface) => can(value, surface) }),
+    [value, viewerId],
   );
   return (
     <BackofficeCapabilityContext.Provider value={ctx}>

@@ -3,18 +3,22 @@
  *
  * Admin review queue. Surfaces PENDING + IN_PROGRESS requests first
  * (the ones that have an SLA clock), then COMPLETED / REJECTED for
- * historical context. Admin-only.
+ * historical context. `?open=1` narrows to the open ones — the Compliance
+ * nav badge's predicate (#1527). Gated on `compliance.manage` (admin).
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { OPEN_ERASURE_WHERE } from "@/lib/backoffice/queue-predicates";
 
-export async function GET() {
-  const auth = await requireAdminAuth();
+export async function GET(req: NextRequest) {
+  const auth = await requireBackofficeSurface("compliance.manage");
   if (auth.error) return auth.error;
 
+  const open = new URL(req.url).searchParams.get("open") === "1";
   const requests = await prisma.erasureRequest.findMany({
+    where: open ? OPEN_ERASURE_WHERE : undefined,
     orderBy: [{ status: "asc" }, { requestedAt: "asc" }],
     take: 200,
     include: {

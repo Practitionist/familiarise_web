@@ -5,23 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Check, X, Loader2 } from "lucide-react";
+import { Check, X } from "lucide-react";
+
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { needsTypedConfirm } from "@/lib/ui/typed-confirm";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 import type { Payout } from "@/types/payouts";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
@@ -94,14 +88,12 @@ export default function PendingPayoutsSection() {
   const canManage = useBackofficeCapability().can("payouts.manage");
   const queryClient = useQueryClient();
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
-  // #1771 K-4 — both decisions carry a reason into the audit log.
-  const [decisionReason, setDecisionReason] = useState("");
   const [instantOnly, setInstantOnly] = useState(false);
   const [dialogType, setDialogType] = useState<"approve" | "reject" | null>(
     null,
   );
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["admin-payouts-pending", instantOnly],
     queryFn: () => fetchPendingPayouts(instantOnly),
     staleTime: 30 * 1000,
@@ -115,7 +107,6 @@ export default function PendingPayoutsSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-payout-stats"] });
       setDialogType(null);
       setSelectedPayout(null);
-      setDecisionReason("");
     },
   });
 
@@ -127,11 +118,8 @@ export default function PendingPayoutsSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-payout-stats"] });
       setDialogType(null);
       setSelectedPayout(null);
-      setDecisionReason("");
     },
   });
-
-  const reasonReady = decisionReason.trim().length >= 5;
 
   const handleApprove = (payout: Payout) => {
     setSelectedPayout(payout);
@@ -141,18 +129,6 @@ export default function PendingPayoutsSection() {
   const handleReject = (payout: Payout) => {
     setSelectedPayout(payout);
     setDialogType("reject");
-  };
-
-  const confirmApprove = () => {
-    if (selectedPayout && reasonReady) {
-      approveMutation.mutate({ id: selectedPayout.id, reason: decisionReason });
-    }
-  };
-
-  const confirmReject = () => {
-    if (selectedPayout && reasonReady) {
-      rejectMutation.mutate({ id: selectedPayout.id, reason: decisionReason });
-    }
   };
 
   const columns: ResponsiveColumn<Payout>[] = [
@@ -176,10 +152,7 @@ export default function PendingPayoutsSection() {
       header: "Amount",
       cell: (payout) => (
         <span className="text-sm font-semibold text-foreground">
-          {(payout.amount / 100).toLocaleString("en-IN", {
-            style: "currency",
-            currency: payout.currency,
-          })}
+          {formatCurrencyAmount(payout.amount, payout.currency)}
         </span>
       ),
     },
@@ -243,41 +216,23 @@ export default function PendingPayoutsSection() {
 
   const renderRowActions = (payout: Payout) => (
     <div className="flex gap-2">
-      <Button
-        size="sm"
-        variant="outline"
-        className="text-green-600 border-green-600 hover:bg-green-50 dark:text-green-400 dark:border-green-400 dark:hover:bg-green-950/40"
-        onClick={() => handleApprove(payout)}
-      >
+      <Button size="sm" variant="outline" onClick={() => handleApprove(payout)}>
         <Check className="w-4 h-4 mr-1" />
         Approve
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        className="text-red-600 border-red-600 hover:bg-red-50 dark:text-red-400 dark:border-red-400 dark:hover:bg-red-950/40"
-        onClick={() => handleReject(payout)}
-      >
+      <Button size="sm" variant="outline" onClick={() => handleReject(payout)}>
         <X className="w-4 h-4 mr-1" />
         Reject
       </Button>
     </div>
   );
 
-  if (error) {
+  if (error && !data) {
     return (
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle className="text-red-600 dark:text-red-400">
-            Error
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            {error instanceof Error ? error.message : "Failed to load payouts"}
-          </p>
-        </CardContent>
-      </Card>
+      <ErrorState
+        title="Pending payouts could not be loaded"
+        onRetry={() => void refetch()}
+      />
     );
   }
 
@@ -287,7 +242,7 @@ export default function PendingPayoutsSection() {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-lg">
-              Pending Payouts ({data?.payouts?.length || 0})
+              Awaiting approval ({data?.pagination.total ?? 0})
             </CardTitle>
             <Button
               size="sm"
@@ -322,88 +277,43 @@ export default function PendingPayoutsSection() {
         </CardContent>
       </Card>
 
-      {/* Approve Dialog */}
-      <AlertDialog
-        open={dialogType === "approve"}
-        onOpenChange={() => {
-          setDialogType(null);
-          setDecisionReason("");
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Approve Payout</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to approve this payout of{" "}
-              {selectedPayout &&
-                (selectedPayout.amount / 100).toLocaleString("en-IN", {
-                  style: "currency",
-                  currency: selectedPayout.currency,
-                })}{" "}
-              to {selectedPayout?.consultantName}?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="py-4">
-            <Input
-              placeholder="Reason for approving (kept in the audit log)"
-              value={decisionReason}
-              onChange={(e) => setDecisionReason(e.target.value)}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmApprove}
-              disabled={approveMutation.isPending || !reasonReady}
-              className="bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700"
-            >
-              {approveMutation.isPending && (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              )}
-              Approve
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Reject Dialog */}
-      <AlertDialog
-        open={dialogType === "reject"}
-        onOpenChange={() => {
-          setDialogType(null);
-          setDecisionReason("");
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reject Payout</AlertDialogTitle>
-            <AlertDialogDescription>
-              Please provide a reason for rejecting this payout to{" "}
-              {selectedPayout?.consultantName}.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="py-4">
-            <Input
-              placeholder="Reason for rejection..."
-              value={decisionReason}
-              onChange={(e) => setDecisionReason(e.target.value)}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmReject}
-              disabled={rejectMutation.isPending || !reasonReady}
-              className="bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700"
-            >
-              {rejectMutation.isPending && (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              )}
-              Reject
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* #1771 K-4 — both decisions carry a reason into the audit log;
+          #1527 Q10 — an approval at or above the threshold is typed. */}
+      {selectedPayout && dialogType && (
+        <ConfirmDialog
+          key={`${dialogType}-${selectedPayout.id}`}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setDialogType(null);
+              setSelectedPayout(null);
+            }
+          }}
+          title={dialogType === "approve" ? "Approve payout" : "Reject payout"}
+          description={`${formatCurrencyAmount(selectedPayout.amount, selectedPayout.currency)} to ${selectedPayout.consultantName}.`}
+          confirmLabel={dialogType === "approve" ? "Approve" : "Reject"}
+          tone={dialogType === "reject" ? "destructive" : "default"}
+          requireReason={{
+            label:
+              dialogType === "approve"
+                ? "Reason for approving"
+                : "Reason for rejecting",
+          }}
+          requireTyped={
+            dialogType === "approve" && needsTypedConfirm(selectedPayout.amount)
+              ? "APPROVE"
+              : undefined
+          }
+          onConfirm={async ({ reason }) => {
+            const mutation =
+              dialogType === "approve" ? approveMutation : rejectMutation;
+            await mutation.mutateAsync({
+              id: selectedPayout.id,
+              reason: reason ?? "",
+            });
+          }}
+        />
+      )}
     </>
   );
 }

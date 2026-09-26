@@ -3,7 +3,7 @@
  */
 
 /**
- * The operator user-detail modal's verification badge.
+ * The operator User 360 page's verification badge (was the user-detail modal).
  *
  * It switched on "VERIFIED", "PENDING_VERIFICATION" and "UNDER_REVIEW". None of
  * those are `ProfileVerificationStatus` values — only "REJECTED" happened to
@@ -35,7 +35,9 @@ function schemaEnumValues(name: string): string[] {
 }
 
 describe("the verification badge switches on real ProfileVerificationStatus values", () => {
-  const MODAL = "components/admin/UserDetailModal.tsx";
+  // #1527 — the badge moved with the modal into User 360.
+  const MODAL =
+    "app/dashboard/(backoffice)/[tree]/users/[userId]/User360Client.tsx";
 
   /** Cases inside getVerificationStatusBadge only, not the role switch below it. */
   function badgeCases(): string[] {

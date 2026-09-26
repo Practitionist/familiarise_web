@@ -25,7 +25,9 @@ import {
 } from "@/components/ui/responsive-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -36,7 +38,6 @@ import {
   MessageSquare,
   User,
   FileText,
-  ThumbsUp,
   ThumbsDown,
   Loader2,
   RefreshCw,
@@ -46,6 +47,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import type {
   ModerationCapabilities,
   ModerationLatestAction,
@@ -56,22 +58,13 @@ import type {
   ModerationStats,
 } from "@/types/moderation";
 
-const getStatusColor = (status: string) => {
-  switch (status.toLowerCase()) {
-    case "pending":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "resolved":
-    case "approved":
-    case "verified":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "rejected":
-    case "dismissed":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    case "in_progress":
-      return "bg-muted text-foreground";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
+// #1527 — one tone map for report statuses (was a local colour switch).
+const REPORT_STATUS_TONE: Record<string, Tone> = {
+  PENDING: "warning",
+  UNDER_REVIEW: "caution",
+  ESCALATED: "critical",
+  ACTION_TAKEN: "success",
+  DISMISSED: "neutral",
 };
 
 const getTypeIcon = (type: string) => {
@@ -531,9 +524,12 @@ export function ModerationPage() {
     mutationFn: async ({
       reportId,
       action,
+      notes = moderationNote,
     }: {
       reportId: string;
       action: ReportActionKey;
+      /** The confirm dialog's reason, for Suspend and Ban. */
+      notes?: string;
     }) => {
       const response = await fetch(
         `/api/staff/moderation/reports/${reportId}/action`,
@@ -542,7 +538,7 @@ export function ModerationPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             actionType: REPORT_ACTION_TYPE[action],
-            notes: moderationNote,
+            notes,
             ...(action === "SUSPEND" ? { suspensionDays } : {}),
           }),
         },
@@ -603,8 +599,16 @@ export function ModerationPage() {
     },
   });
 
-  const handleReportAction = (reportId: string, action: ReportActionKey) =>
-    reportActionMutation.mutate({ reportId, action });
+  // #1527 Q10 — Suspend and Ban close an account; they go through a confirm
+  // with a written reason instead of firing on one click.
+  const [confirmAction, setConfirmAction] = useState<ReportActionKey | null>(
+    null,
+  );
+  const ACCOUNT_ACTIONS = new Set<ReportActionKey>(["SUSPEND", "BAN"]);
+  const handleReportAction = (reportId: string, action: ReportActionKey) => {
+    if (ACCOUNT_ACTIONS.has(action)) setConfirmAction(action);
+    else reportActionMutation.mutate({ reportId, action });
+  };
 
   /**
    * #1270 — lifting a ban. USER_BANNED deactivates the target on Stream, which
@@ -745,18 +749,14 @@ export function ModerationPage() {
     },
   });
 
-  const handleDeleteReview = (reviewId: string) =>
-    deleteReviewMutation.mutate(reviewId);
-
   // #997 secondary findings — search now happens server-side (debounced
   // above); `reports` is already the filtered set.
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <DashboardHeader
-        title="Content Moderation"
-        subtitle="Review and moderate platform content"
+      <PageHeader
+        title="Moderation"
+        description="Reports and reviews waiting for a decision."
         actions={
           <Button
             variant="ghost"
@@ -919,15 +919,15 @@ export function ModerationPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{title.primary}</p>
-                              <Badge variant="outline" className="capitalize">
-                                {report.type}
+                              <Badge variant="outline">
+                                {humanizeEnum(report.type)}
                               </Badge>
-                              <Badge
-                                className={getStatusColor(report.status)}
-                                variant="secondary"
-                              >
-                                {report.status}
-                              </Badge>
+                              <StatusBadge
+                                label={humanizeEnum(report.status)}
+                                tone={
+                                  REPORT_STATUS_TONE[report.status] ?? "neutral"
+                                }
+                              />
                             </div>
                             {title.secondary && (
                               <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
@@ -1114,19 +1114,27 @@ export function ModerationPage() {
                         </span>
                       </div>
                       <div className="flex justify-end gap-2 mt-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-1"
-                          onClick={() => handleDeleteReview(review.id)}
-                        >
-                          <ThumbsDown className="h-4 w-4" />
-                          Remove
-                        </Button>
-                        <Button size="sm" className="gap-1">
-                          <ThumbsUp className="h-4 w-4" />
-                          Approve
-                        </Button>
+                        {/* #1527 — Remove is confirmed; the dead Approve is gone
+                            (no approve API: a review with no report is live). */}
+                        <ConfirmDialog
+                          trigger={
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                            >
+                              <ThumbsDown className="h-4 w-4" />
+                              Remove
+                            </Button>
+                          }
+                          title="Remove this review?"
+                          description={`${reviewerName}'s review of ${consultantName} is taken off the public profile.`}
+                          confirmLabel="Remove review"
+                          tone="destructive"
+                          onConfirm={async () => {
+                            await deleteReviewMutation.mutateAsync(review.id);
+                          }}
+                        />
                       </div>
                     </CardContent>
                   </Card>
@@ -1353,6 +1361,35 @@ export function ModerationPage() {
           )}
         </ResponsiveModalContent>
       </ResponsiveModal>
+      {selectedReport && confirmAction && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => !open && setConfirmAction(null)}
+          title={
+            confirmAction === "BAN"
+              ? `Ban ${selectedReport.targetUser.name ?? "this account"}?`
+              : `Suspend ${selectedReport.targetUser.name ?? "this account"} for ${suspensionDays} days?`
+          }
+          description={
+            confirmAction === "BAN"
+              ? "Permanent until an admin lifts it: the account loses access and chat, and its upcoming appointments are cancelled."
+              : "The account loses access until the suspension ends, and its upcoming appointments are cancelled."
+          }
+          confirmLabel={
+            confirmAction === "BAN" ? "Ban account" : "Suspend account"
+          }
+          tone="destructive"
+          requireReason={{ label: "Reason (kept on the report)" }}
+          onConfirm={async ({ reason }) => {
+            await reportActionMutation.mutateAsync({
+              reportId: selectedReport.id,
+              action: confirmAction,
+              notes: reason,
+            });
+            setConfirmAction(null);
+          }}
+        />
+      )}
     </div>
   );
 }

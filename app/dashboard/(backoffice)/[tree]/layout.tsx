@@ -36,7 +36,7 @@ export default async function BackofficeLayout({
   }
 
   return (
-    <BackofficeCapabilityProvider value={cap}>
+    <BackofficeCapabilityProvider value={cap} viewerId={session.user.id}>
       <OperatorDashboardShell
         userName={session.user.name ?? null}
         userImage={session.user.image ?? null}

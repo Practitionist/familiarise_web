@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { earningStatusBadge } from "@/lib/labels/session-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonDialog } from "./ReasonDialog";
@@ -32,7 +33,17 @@ interface EarningRow {
   consultantProfile: { user: { name: string; email: string } };
 }
 
-const STATUSES = ["PENDING", "READY", "HELD", "BATCHED", "PAID", "REFUNDED"];
+// #1527 — PENDING_TRUST (org-funded, awaiting the org's first invoice) was
+// unfilterable; HELD leads because the page opens on it.
+const STATUSES = [
+  "HELD",
+  "PENDING",
+  "PENDING_TRUST",
+  "READY",
+  "BATCHED",
+  "PAID",
+  "REFUNDED",
+];
 const QUERY_KEY = ["money-earnings"] as const;
 
 function doorFor(status: string): "hold" | "release" | null {
@@ -68,7 +79,7 @@ const columns: ResponsiveColumn<EarningRow>[] = [
   {
     key: "status",
     header: "Status",
-    cell: (r) => earningStatusBadge(r.status).label,
+    cell: (r) => <StatusBadge {...earningStatusBadge(r.status)} />,
   },
   {
     key: "hold",
@@ -102,7 +113,8 @@ function earningActions(onAct: (acting: Acting) => void) {
  * hold has matured and nothing is open on the payment.
  */
 export function EarningsTab() {
-  const [status, setStatus] = useState("all");
+  // #1527 — held earnings are the ones waiting on an operator.
+  const [status, setStatus] = useState("HELD");
   const [consultantProfileId, setConsultantProfileId] = useState("");
   const [paymentId, setPaymentId] = useState("");
   const [acting, setActing] = useState<Acting | null>(null);

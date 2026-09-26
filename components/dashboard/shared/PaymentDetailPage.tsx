@@ -6,6 +6,19 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useState } from "react";
+import { RefundDoorDialog } from "@/components/dashboard/backoffice/money/RefundDoorDialog";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { disputeStatus } from "@/lib/labels/backoffice-labels";
+import { gatewayLabel } from "@/lib/labels/money-labels";
+import {
+  paymentStatusBadge,
+  refundStatusBadge,
+} from "@/lib/labels/session-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   PaymentDetail,
@@ -13,11 +26,9 @@ import type {
   PaymentDetailDispute,
 } from "@/types/payments";
 
-// Manual refunds ship with the live checkout/program wiring — the admin
-// refund flow will rebuild on top of `WalletEntry` + `SettlementLedgerEntry`
-// + `OrganizationEarnings.refundedAmountPaise`. Until then this page is
-// read-only: operators can see refund history that the system wrote from
-// automated paths (gateway-originated refunds, dispute resolutions).
+// #1527 Q10 — admins issue a refund from here through the same console door
+// as the Refunds page (`/api/admin/refunds/issue`), pre-filled with this
+// payment and its refundable remainder; staff read only.
 
 /**
  * Dispute states with a verdict behind them. Everything else is a proceeding
@@ -46,13 +57,15 @@ export interface PaymentDetailPageProps {
 
 export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
   // #1527 — back-links and cross-links stay inside the viewer's tree.
-  const { basePath } = useBackofficeCapability();
+  const { basePath, can } = useBackofficeCapability();
+  const [refundOpen, setRefundOpen] = useState(false);
   const resolvedParams = { paymentId };
 
   const {
     data: payment,
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["admin-payment", resolvedParams.paymentId],
     queryFn: () => fetchPaymentDetails(resolvedParams.paymentId),
@@ -71,24 +84,13 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
         : false,
   });
 
-  if (error) {
+  if (error && !payment) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-red-600 dark:text-red-400">
-              Error
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">
-              {error instanceof Error
-                ? error.message
-                : "Failed to load payment details"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <ErrorState
+        title="This payment could not be loaded"
+        onRetry={() => void refetch()}
+        variant="page"
+      />
     );
   }
 
@@ -112,20 +114,27 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <Link
-            href={`${basePath}/payments`}
-            className="text-sm text-muted-foreground hover:text-foreground mb-2 inline-block"
-          >
-            ← Back to Payments
-          </Link>
-          <h1 className="text-fluid-3xl font-bold tracking-tight text-foreground">
-            Payment Details
-          </h1>
-        </div>
-      </div>
+      <PageHeader
+        title="Payment details"
+        back={{ href: `${basePath}/money/payments`, label: "Payments" }}
+        actions={
+          can("refunds.manage") && payment.paymentStatus === "SUCCEEDED" ? (
+            <Button variant="outline" onClick={() => setRefundOpen(true)}>
+              Issue refund
+            </Button>
+          ) : undefined
+        }
+      />
+      {refundOpen && (
+        <RefundDoorDialog
+          door="issue"
+          presetPaymentId={payment.id}
+          onClose={() => {
+            setRefundOpen(false);
+            void refetch();
+          }}
+        />
+      )}
 
       {/* Payment Info */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -149,23 +158,13 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
             <div>
               <Label className="text-muted-foreground">Status</Label>
               <div className="mt-1">
-                <span
-                  className={`px-3 py-1 rounded text-sm font-medium ${
-                    payment.paymentStatus === "SUCCEEDED"
-                      ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
-                      : payment.paymentStatus === "PENDING"
-                        ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
-                        : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
-                  }`}
-                >
-                  {payment.paymentStatus}
-                </span>
+                <StatusBadge {...paymentStatusBadge(payment.paymentStatus)} />
               </div>
             </div>
             <div>
               <Label className="text-muted-foreground">Payment Gateway</Label>
               <p className="font-medium text-foreground">
-                {payment.paymentGateway}
+                {gatewayLabel(payment.paymentGateway)}
               </p>
             </div>
             <div>
@@ -229,7 +228,7 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
                     Appointment Type
                   </Label>
                   <p className="font-medium text-foreground">
-                    {payment.appointment.appointmentType}
+                    {humanizeEnum(payment.appointment.appointmentType)}
                   </p>
                 </div>
                 <div>
@@ -295,17 +294,7 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
                       {new Date(refund.createdAt).toLocaleString()}
                     </p>
                   </div>
-                  <span
-                    className={`shrink-0 px-2 py-1 rounded text-xs font-medium ${
-                      refund.status === "SUCCEEDED"
-                        ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
-                        : refund.status === "PENDING"
-                          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
-                          : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
-                    }`}
-                  >
-                    {refund.status}
-                  </span>
+                  <StatusBadge {...refundStatusBadge(refund.status)} />
                 </div>
               ))}
             </div>
@@ -315,11 +304,9 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
 
       {/* Disputes List */}
       {payment.disputes && payment.disputes.length > 0 && (
-        <Card className="border-red-200 dark:border-red-900/60">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-red-600 dark:text-red-400">
-              Disputes
-            </CardTitle>
+            <CardTitle>Disputes</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -344,17 +331,7 @@ export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
                         {new Date(dispute.createdAt).toLocaleString()}
                       </p>
                     </div>
-                    <span
-                      className={`shrink-0 px-2 py-1 rounded text-xs font-medium ${
-                        dispute.status === "WON"
-                          ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
-                          : dispute.status === "LOST"
-                            ? "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
-                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
-                      }`}
-                    >
-                      {dispute.status}
-                    </span>
+                    <StatusBadge {...disputeStatus(dispute.status)} />
                   </div>
                 </Link>
               ))}

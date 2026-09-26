@@ -8,7 +8,7 @@ import {
   CalendarCheck,
   Coins,
   CreditCard,
-  FileText,
+  FileWarning,
   Home,
   Landmark,
   ListChecks,
@@ -171,12 +171,14 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           surface: "appointments.manage",
         },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
-        // Support context for "why was my document rejected?" — read-only.
+        // #1527 — one queue for experts and organizations; the document
+        // review log is its Documents tab.
         {
-          name: "Documents",
-          icon: FileText,
-          path: "documents",
-          surface: "appointments.manage",
+          name: "Verification",
+          icon: BadgeCheck,
+          path: "verification",
+          surface: "users.verify",
+          badgeKey: "verification",
         },
       ],
     },
@@ -195,12 +197,6 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: RefreshCw,
           path: "subscriptions",
           surface: "subscriptions.read",
-        },
-        {
-          name: "Approval Payments",
-          icon: BadgeCheck,
-          path: "approval-payments",
-          surface: "approvalPayments.manage",
         },
         {
           name: "TDS",
@@ -243,6 +239,14 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: Building2,
           path: "organizations",
           surface: "organizations.manage",
+        },
+        {
+          // #1527 Q5 — erasure requests, data breaches, failed emails.
+          name: "Compliance",
+          icon: FileWarning,
+          path: "compliance",
+          surface: "compliance.manage",
+          badgeKey: "compliance",
         },
         {
           name: "System jobs",
