@@ -17,9 +17,10 @@ import * as React from "react";
 import type { FieldErrors, FieldValues, UseFormReturn } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
-import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2 } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
 import type { TPlanImageType } from "@/lib/supabase";
 import { FormSection } from "@/components/planner/components/form-fields/FormSection";
 import { OfferingField } from "./OfferingFields";
@@ -59,6 +60,10 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
   publishOnlyFields?: readonly string[];
   /** Replaces "Save draft", e.g. when saving as a draft unpublishes (#1527). */
   draftLabel?: string;
+  /** False hides "Save draft" — a published webinar/class cannot go back (#1527). */
+  canSaveDraft?: boolean;
+  /** The buyer-facing page; the owner's preview renders drafts too (Q4). */
+  previewHref?: string;
   onSaveDraft: (values: T) => void | Promise<void>;
   onPublish: (values: T) => void | Promise<void>;
   onCancel?: () => void;
@@ -75,6 +80,8 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   publishBlockedReason = null,
   publishOnlyFields,
   draftLabel = "Save draft",
+  canSaveDraft = true,
+  previewHref,
   onSaveDraft,
   onPublish,
   onCancel,
@@ -164,9 +171,24 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
               <h1 className="text-xl font-semibold">
                 {planId ? "Edit" : "New"} {manifest.noun}
               </h1>
-              <span className="ml-auto flex items-center gap-2">
-                {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
-                {status === "PUBLISHED" && <Badge>Published</Badge>}
+              <span className="ml-auto flex items-center gap-3">
+                {previewHref && (
+                  <Link
+                    href={previewHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    Preview public page
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                  </Link>
+                )}
+                {status === "DRAFT" && (
+                  <StatusBadge label="Draft" tone="neutral" />
+                )}
+                {status === "PUBLISHED" && (
+                  <StatusBadge label="Published" tone="success" />
+                )}
               </span>
             </div>
 
@@ -263,17 +285,19 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
                 Cancel
               </Button>
             )}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isSaving}
-              onClick={submitDraft}
-            >
-              {savingAction === "draft" && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              {draftLabel}
-            </Button>
+            {canSaveDraft && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSaving}
+                onClick={submitDraft}
+              >
+                {savingAction === "draft" && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                {draftLabel}
+              </Button>
+            )}
             <Button
               type="button"
               disabled={isSaving || !!publishBlockedReason}

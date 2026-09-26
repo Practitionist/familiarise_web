@@ -197,6 +197,7 @@ export function usePrefetchDashboard({
             case "appointments":
               safePrefetch([queries.appointments], "high");
               break;
+            case "offerings":
             case "planner":
               safePrefetch([queries.planner], "high");
               break;

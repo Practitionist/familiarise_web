@@ -104,7 +104,7 @@ export function ActiveCollaborationCard({
             </div>
             {owner?.id ? (
               <Link
-                href={`/dashboard/consultant/${owner.id}/planner`}
+                href={`/dashboard/consultant/${owner.id}/offerings`}
                 className="block truncate text-[15px] font-semibold tracking-tight text-zinc-900 hover:underline"
               >
                 {collab.planTitle}

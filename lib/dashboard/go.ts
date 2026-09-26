@@ -65,6 +65,7 @@ const EXPERT_ONLY = new Set([
   "planner",
   "collaborations",
   "offerings",
+  "reviews",
   "analytics",
 ]);
 const CLIENT_ONLY = new Set(["payments", "resources"]);

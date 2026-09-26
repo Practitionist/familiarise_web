@@ -35,10 +35,10 @@ import { useVerificationStatus } from "./hooks/useVerificationStatus";
 
 const PREFETCH_SUFFIXES = ["home", "appointments", "requests"];
 
-// Offerings have no list route yet (#1527 b) — the planner hosts them.
+// A type segment (`offerings/webinar/new`) has no page; its crumb opens the list.
 const OFFERINGS_CRUMBS = {
   typeSegments: CONSULTANT_OFFERING_TYPE_SEGMENTS,
-  listingHref: "planner",
+  listingHref: "offerings",
 };
 
 interface PageProps {

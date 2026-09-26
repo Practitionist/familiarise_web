@@ -27,7 +27,7 @@ export interface DashboardBreadcrumbsInput {
   pageLabels: Record<string, string>;
   /** Segments that group routes without a page of their own (never linked). */
   pathlessSegments?: ReadonlySet<string>;
-  /** Consultant only, until the Offerings list route exists (#1527 b). */
+  /** Consultant only: where `offerings/<type>` crumbs point (#1527 b). */
   offeringsConfig?: OfferingsCrumbConfig;
 }
 
@@ -71,7 +71,7 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
     (seg === "offerings" ||
       (ctx.onOfferings && offeringsConfig.typeSegments.has(seg)))
   ) {
-    // Offerings have no list route yet; the planner is where they live.
+    // A type segment has no page of its own; the list is where it lives.
     return { label, href: ctx.offeringsListingHref };
   }
   // A segment bound to a dynamic param is never a URL of its own.

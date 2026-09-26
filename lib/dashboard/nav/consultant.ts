@@ -10,7 +10,6 @@ import {
   LifeBuoy,
   MessageSquare,
   Settings,
-  Users,
   Video,
   Wallet,
 } from "lucide-react";
@@ -18,8 +17,8 @@ import {
 import type { DashboardNav } from "./types";
 
 /**
- * Expert (consultant) IA from #1527 §7.2. Offerings still points at `planner`
- * until the Offerings route lands; the label is already the target name.
+ * Expert (consultant) IA from #1527 §7.2. Collaborations is a tab of
+ * Offerings.
  */
 export function buildConsultantNav(consultantId: string): DashboardNav {
   const publicHref = `/explore/experts/${consultantId}`;
@@ -48,8 +47,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
       {
         label: "Business",
         items: [
-          { name: "Offerings", icon: CalendarRange, path: "planner" },
-          { name: "Collaborations", icon: Users, path: "collaborations" },
+          { name: "Offerings", icon: CalendarRange, path: "offerings" },
           // #1785 — a daily work surface, not a preference.
           { name: "Availability", icon: CalendarClock, path: "availability" },
           { name: "Earnings", icon: Wallet, path: "earnings" },
@@ -95,13 +93,13 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   webinars: "Webinar",
   webinar: "Webinar",
   offerings: "Offerings",
-  planner: "Offerings",
   availability: "Availability",
   requests: "Requests",
   timings: "Timings",
   allocate: "Allocate",
   reschedule: "Reschedule",
   collaborations: "Collaborations",
+  reviews: "Reviews",
   recordings: "Recordings",
   documents: "Documents",
   earnings: "Earnings",
@@ -109,6 +107,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   settings: "Settings",
   // Settings hub sections (#1785): one URL each, so one crumb each.
   profile: "Profile",
+  experience: "Experience & education",
   verification: "Verification",
   booking: "Booking requests",
   "get-paid": "Get paid",
@@ -122,10 +121,9 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   new: "New",
 };
 
-// `offerings` has only `[type]/…` children and `participants` only
-// `[eventType]/…` — linking either crumb would prefetch a 404.
+// `participants` has only `[eventType]/…` children — linking its crumb would
+// prefetch a 404.
 export const CONSULTANT_PATHLESS_SEGMENTS: ReadonlySet<string> = new Set([
-  "offerings",
   "participants",
 ]);
 

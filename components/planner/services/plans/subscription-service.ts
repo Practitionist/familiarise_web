@@ -118,7 +118,8 @@ export class SubscriptionService {
         topics: plan.topics ?? [],
         trialEnabled: plan.trialEnabled ?? false,
         trialDurationMinutes: plan.trialDurationMinutes ?? 30,
-        trialPriceInPaise: plan.trialPriceInPaise ?? 0,
+        // Edited in rupees like `price` (#1527); stored in paise.
+        trialPriceInPaise: priceToPaise(plan.trialPriceInPaise),
         subscriptionContents: plan.subscriptionContents ?? [],
         ...positioningPayload(plan),
         ...recordingPayload(plan),
