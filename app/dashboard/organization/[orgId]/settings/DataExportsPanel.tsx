@@ -16,6 +16,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRequireOrgAccess } from "../useOrgRole";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import type { Tone } from "@/lib/ui/tone";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import {
   Card,
@@ -25,7 +27,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -43,19 +44,22 @@ type ExportJob = {
   completedAt: string | null;
 };
 
-const STATUS_TONE: Record<ExportJob["status"], string> = {
-  PENDING: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  // In-flight is a neutral/transient state — monochrome instead of an
-  // off-brand blue accent. Terminal states keep their semantic colors.
-  PROCESSING: "bg-muted text-muted-foreground",
-  READY: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  FAILED: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-  EXPIRED: "bg-muted text-muted-foreground",
+// #1762-4 — labels + tones instead of the raw enum.
+const EXPORT_STATUS: Record<
+  ExportJob["status"],
+  { label: string; tone: Tone }
+> = {
+  PENDING: { label: "Queued", tone: "info" },
+  PROCESSING: { label: "Preparing", tone: "info" },
+  READY: { label: "Ready", tone: "success" },
+  FAILED: { label: "Failed", tone: "critical" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
 };
 
-
 export function DataExportsPanel({ orgId }: { orgId: string }) {
-  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
+    permission: "billing.manage",
+  });
   const qc = useQueryClient();
   const [requestError, setRequestError] = useState<string | null>(null);
 
@@ -113,7 +117,7 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
       header: "Status",
       cell: (row) => (
         <>
-          <Badge className={STATUS_TONE[row.status]}>{row.status}</Badge>
+          <StatusBadge {...EXPORT_STATUS[row.status]} />
           {row.error && (
             <p className="mt-1 text-xs text-red-600">{row.error}</p>
           )}
@@ -194,8 +198,7 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
           <CardHeader>
             <CardTitle>Past exports</CardTitle>
             <CardDescription>
-              Last 30 days. Polls every 15 seconds while anything is in
-              flight.
+              Last 30 days. Polls every 15 seconds while anything is in flight.
             </CardDescription>
           </CardHeader>
           <CardContent>

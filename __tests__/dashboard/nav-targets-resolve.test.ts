@@ -88,6 +88,12 @@ describe("personal + workspace nav targets resolve", () => {
       buildWorkspaceNav("ow-1"),
       "org-workspace/[orgWorkspaceId]",
     ],
+    // #1527 §7.4 — Activity and Spend hide at one owned org.
+    [
+      "org-workspace (one org)",
+      buildWorkspaceNav("ow-1", { ownedOrgCount: 1 }),
+      "org-workspace/[orgWorkspaceId]",
+    ],
   ] as const)("%s", (_name, nav, routeDir) => {
     expect(missingPaths(nav, routeDir)).toEqual([]);
     expectTabsAreItems(nav);

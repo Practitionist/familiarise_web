@@ -26,11 +26,13 @@ import {
 
 export function OrgWorkspaceShell({
   orgWorkspaceId,
+  ownedOrgCount,
   userName,
   userImage,
   children,
 }: Readonly<{
   orgWorkspaceId: string;
+  ownedOrgCount: number;
   userName: string | null;
   userImage: string | null;
   children: React.ReactNode;
@@ -46,16 +48,20 @@ export function OrgWorkspaceShell({
     pathname = rawPathname;
   }
   const nav = useMemo(
-    () => buildWorkspaceNav(orgWorkspaceId),
-    [orgWorkspaceId],
+    () => buildWorkspaceNav(orgWorkspaceId, { ownedOrgCount }),
+    [orgWorkspaceId, ownedOrgCount],
   );
 
-  // Overview + Activity + Spend are the operator's core loop.
-  usePrefetchNavPaths([
-    `${nav.basePath}/home`,
-    `${nav.basePath}/activity`,
-    `${nav.basePath}/billing`,
-  ]);
+  // Warm whichever of the operator's core pages the nav offers.
+  const prefetchPaths = useMemo(
+    () =>
+      nav.groups
+        .flatMap((g) => g.items)
+        .filter((i) => ["home", "activity", "billing"].includes(i.path))
+        .map((i) => `${nav.basePath}/${i.path}`),
+    [nav],
+  );
+  usePrefetchNavPaths(prefetchPaths);
 
   const breadcrumbs = useDashboardBreadcrumbs({
     pathname,

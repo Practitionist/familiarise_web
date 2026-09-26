@@ -1,24 +1,21 @@
 "use client";
 
 /**
- * Settings — general org config, SSO, and the three integrations.
+ * Org Settings (#1527 §14): General · Branding · Domains & SSO · Directory
+ * sync · Billing contacts · Webhooks · Data exports · Your notifications.
  *
- * SSO and the integrations used to be their own routes; SSO in particular had
- * no sidebar entry at all and was reachable only from a link buried inside the
- * settings page. They're tabs now, addressable as `?tab=`.
- *
- * Each tab carries the gate its old route guard used, so a role that couldn't
- * reach the page can't reach the tab. The gates differ meaningfully:
- * `settings.manage` is GOVERNANCE (OWNER + MAINTAINER), `integrations.read` is
- * the finance set (which includes BILLING_ADMIN), and SSO is an OWNER rank
- * floor — a genuine hierarchy check, not a surface grant. A BILLING_ADMIN
- * therefore lands on Billing and Webhooks with no General tab, which is
- * correct: `billing.manage` is OWNER + BILLING_ADMIN, and the Billing tab
- * carries exactly the two fields the server's field-level gate already let
- * that role write.
+ * Each tab carries the gate its server routes use, so a role never sees a tab
+ * that 403s: General is `settings.manage` (GOVERNANCE); Branding, Domains &
+ * SSO and Directory sync are OWNER-only routes (a rank floor, not a matrix
+ * surface); Billing contacts and Data exports are `billing.manage`; Webhooks
+ * is `integrations.manage` (OWNER + BILLING_ADMIN, §17b). Tab values keep the
+ * old `?tab=` names so bookmarks still land.
  */
 
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import {
+  DashboardContent,
+  DashboardHeader,
+} from "@/components/dashboard/PageScaffold";
 import { UrlTabs, type UrlTab } from "@/components/dashboard/UrlTabs";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
@@ -29,6 +26,8 @@ import { SsoPanel } from "./SsoPanel";
 import { WebhooksPanel } from "./WebhooksPanel";
 import { ScimPanel } from "./ScimPanel";
 import { DataExportsPanel } from "./DataExportsPanel";
+import { BrandingPanel } from "./BrandingPanel";
+import { DomainsPanel } from "./DomainsPanel";
 import { NotificationPreferencesPanel } from "@/components/notifications/NotificationPreferencesPanel";
 
 export function SettingsTabs({ orgId }: { orgId: string }) {
@@ -39,7 +38,7 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
   if (isLoading) return null;
 
   const can = hasOrgPermission.bind(null, role);
-  const canIntegrations = can("integrations.read");
+  const isOwner = role === "OWNER";
 
   const tabs: UrlTab[] = [
     {
@@ -49,15 +48,33 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       show: can("settings.manage"),
     },
     {
+      value: "branding",
+      label: "Branding",
+      content: <BrandingPanel orgId={orgId} />,
+      show: isOwner,
+    },
+    {
       value: "sso",
-      label: "SSO",
-      content: <SsoPanel orgId={orgId} />,
-      // Rank floor, not a matrix surface — SSO config is OWNER-only.
-      show: role === "OWNER",
+      label: "Domains & SSO",
+      content: (
+        <>
+          <DomainsPanel orgId={orgId} />
+          <SsoPanel orgId={orgId} />
+        </>
+      ),
+      // Domain claims and SSO config are requireOrgOwner routes.
+      show: isOwner,
+    },
+    {
+      value: "scim",
+      label: "Directory sync",
+      content: <ScimPanel orgId={orgId} />,
+      // #1132 — the SCIM token routes are requireOrgOwner.
+      show: isOwner,
     },
     {
       value: "billing",
-      label: "Billing",
+      label: "Billing contacts",
       content: <BillingSettingsPanel orgId={orgId} />,
       // `billing.manage` (OWNER + BILLING_ADMIN), not `settings.manage`. The
       // server has always let BILLING_ADMIN write these two fields — see
@@ -70,23 +87,13 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       value: "webhooks",
       label: "Webhooks",
       content: <WebhooksPanel orgId={orgId} />,
-      show: canIntegrations,
-    },
-    {
-      value: "scim",
-      label: "SCIM",
-      content: <ScimPanel orgId={orgId} />,
-      // #1132 — the SCIM token routes are requireOrgOwner, so showing this on
-      // `integrations.read` (which includes MAINTAINER/BILLING_ADMIN/MANAGER)
-      // rendered a tab that 403s the moment it loads.
-      show: role === "OWNER",
+      show: can("integrations.manage"),
     },
     {
       value: "data-exports",
       label: "Data exports",
       content: <DataExportsPanel orgId={orgId} />,
-      // #1132 — the data-export routes are requireOrgBillingAdminOrOwner, so
-      // this is `billing.manage`, not the broader `integrations.read`.
+      // #1132 — the data-export routes are requireOrgBillingAdminOrOwner.
       show: can("billing.manage"),
     },
     {
@@ -98,7 +105,8 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       // Messages. The preferences themselves are per-user, not per-org, which
       // is why the panel is the same one the personal dashboards mount.
       value: "notifications",
-      label: "Notifications",
+      // The viewer's own delivery preferences, not the org's (#1527).
+      label: "Your notifications",
       content: <NotificationPreferencesPanel />,
     },
   ];
@@ -107,11 +115,11 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
     <>
       <DashboardHeader
         title="Settings"
-        subtitle="Organization profile, sign-on, and integrations"
+        description="Organization profile, sign-in, integrations and your own notifications."
       />
-      <div className="p-4 sm:p-6 lg:p-8">
+      <DashboardContent>
         <UrlTabs tabs={tabs} />
-      </div>
+      </DashboardContent>
     </>
   );
 }

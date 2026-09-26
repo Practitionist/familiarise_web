@@ -15,6 +15,7 @@
  */
 
 import { useState } from "react";
+import type { MemberRole } from "@prisma/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRequireOrgAccess, useOrgRole } from "../useOrgRole";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -28,6 +29,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -87,15 +91,10 @@ const tokenColumns: ResponsiveColumn<ScimToken>[] = [
     key: "status",
     header: "Status",
     cell: (t) => (
-      <Badge
-        className={
-          t.status === "ACTIVE"
-            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-            : "bg-muted text-muted-foreground"
-        }
-      >
-        {t.status}
-      </Badge>
+      <StatusBadge
+        label={humanizeEnum(t.status)}
+        tone={t.status === "ACTIVE" ? "success" : "neutral"}
+      />
     ),
   },
   {
@@ -113,9 +112,10 @@ const tokenColumns: ResponsiveColumn<ScimToken>[] = [
   },
 ];
 
-
 export function ScimPanel({ orgId }: { orgId: string }) {
-  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
+    minRole: "OWNER",
+  });
   const { role: viewerRole } = useOrgRole(orgId);
   const isOwner = viewerRole === "OWNER";
   const qc = useQueryClient();
@@ -238,8 +238,7 @@ export function ScimPanel({ orgId }: { orgId: string }) {
             {revealedToken && (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
                 <p className="text-sm font-medium text-emerald-900">
-                  Token minted. Copy now — you won&apos;t see this value
-                  again.
+                  Token minted. Copy now — you won&apos;t see this value again.
                 </p>
                 <code className="mt-2 block break-all rounded bg-card px-2 py-1 text-xs">
                   {revealedToken}
@@ -268,9 +267,8 @@ export function ScimPanel({ orgId }: { orgId: string }) {
           <CardHeader>
             <CardTitle>Group → role mappings</CardTitle>
             <CardDescription>
-              When SCIM provisions a user, their IdP group names are looked
-              up here to resolve their org role. Unmapped users default to
-              LEARNER.
+              When SCIM provisions a user, their IdP group names are looked up
+              here to resolve their org role. Unmapped users default to LEARNER.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -320,7 +318,9 @@ export function ScimPanel({ orgId }: { orgId: string }) {
             )}
 
             {mappings.isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading mappings...</p>
+              <p className="text-sm text-muted-foreground">
+                Loading mappings...
+              </p>
             ) : !mappings.data || mappings.data.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No group mappings yet.
@@ -345,7 +345,10 @@ export function ScimPanel({ orgId }: { orgId: string }) {
                           <code className="text-xs">{m.scimGroupName}</code>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{m.role}</Badge>
+                          <Badge variant="secondary">
+                            {MEMBER_ROLE_LABEL[m.role as MemberRole] ??
+                              humanizeEnum(m.role)}
+                          </Badge>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {new Date(m.createdAt).toLocaleDateString()}

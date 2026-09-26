@@ -44,7 +44,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 
 import {
   Select,
@@ -167,11 +167,17 @@ async function patchSso(orgId: string, payload: PatchPayload) {
     body: JSON.stringify(validated),
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to update SSO settings"));
+  if (!res.ok)
+    throw new Error(
+      errorMessageFromBody(body, "Failed to update SSO settings"),
+    );
   return body;
 }
 
-async function createProvider(orgId: string, payload: CreateSsoProviderPayload) {
+async function createProvider(
+  orgId: string,
+  payload: CreateSsoProviderPayload,
+) {
   // Discriminated union enforces "providerType: 'saml' ⇒ samlConfig" and
   // "providerType: 'oidc' ⇒ oidcConfig" — flipping the radio without
   // re-validating the matching config block fails before we hit the wire.
@@ -185,7 +191,8 @@ async function createProvider(orgId: string, payload: CreateSsoProviderPayload) 
     body: JSON.stringify(validated),
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to register provider"));
+  if (!res.ok)
+    throw new Error(errorMessageFromBody(body, "Failed to register provider"));
   return body;
 }
 
@@ -375,11 +382,10 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                   Learner
                 </div>
                 <p className="text-xs text-zinc-500">
-                  New users who sign in via SSO for the first time are
-                  always granted the Learner role. Promote them
-                  explicitly from the Members page after their first
-                  sign-in — this keeps the audit trail of role grants
-                  deliberate and least-privilege.
+                  New users who sign in via SSO for the first time are always
+                  granted the Learner role. Promote them explicitly from the
+                  Members page after their first sign-in — this keeps the audit
+                  trail of role grants deliberate and least-privilege.
                 </p>
               </div>
 
@@ -410,14 +416,27 @@ export function SsoPanel({ orgId }: { orgId: string }) {
               rows={data?.providers ?? []}
               getRowId={(p) => p.id}
               rowActions={(p) => (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Delete provider"
-                  onClick={() => deleteProviderMutation.mutate(p.id)}
-                >
-                  <Trash2 className="h-4 w-4 text-red-500" />
-                </Button>
+                // #1527 Q10 — deleting a provider can lock every SSO user
+                // out, so it takes a typed confirm (it fired on first click).
+                <ConfirmDialog
+                  title="Delete this SSO provider?"
+                  description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
+                  confirmLabel="Delete provider"
+                  tone="destructive"
+                  requireTyped={p.providerId}
+                  onConfirm={async () => {
+                    await deleteProviderMutation.mutateAsync(p.id);
+                  }}
+                  trigger={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Delete provider"
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
+                  }
+                />
               )}
               empty={
                 <p className="text-center text-sm text-muted-foreground py-6">
@@ -467,8 +486,13 @@ export function SsoPanel({ orgId }: { orgId: string }) {
             </div>
             <div className="space-y-2">
               <Label>Provider type</Label>
-              <Select value={providerType} onValueChange={(v) => setProviderType(v as "saml" | "oidc")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select
+                value={providerType}
+                onValueChange={(v) => setProviderType(v as "saml" | "oidc")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="saml">SAML</SelectItem>
                   <SelectItem value="oidc">OIDC</SelectItem>
@@ -481,7 +505,9 @@ export function SsoPanel({ orgId }: { orgId: string }) {
               </p>
               <CopyableUrl
                 label={
-                  providerType === "saml" ? "ACS / Callback URL" : "Redirect URI"
+                  providerType === "saml"
+                    ? "ACS / Callback URL"
+                    : "Redirect URI"
                 }
                 value={deriveAcsUrl(providerId, providerType)}
               />

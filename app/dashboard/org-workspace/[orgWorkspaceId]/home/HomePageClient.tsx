@@ -1,60 +1,46 @@
 "use client";
 
 /**
- * Operator dashboard home — the canonical place to land after creating
- * an organisation. Replaces the prior 1-org-auto-redirect chooser stub
- * AND the old /dashboard/organization switcher list.
+ * "All organizations" home (#1527 §7.4) — the portfolio facet.
  *
- * What you see:
- *   1. Stats row — orgs you own, active members across them, outstanding
- *      INR across all your billing accounts.
- *   2. Org grid — every org you operate, capability + funding + role
- *      badges, click to enter that org's dashboard.
- *   3. "+ New organization" CTA — opens the create wizard inside this
- *      same dashboard chrome at /create.
+ *   1. Figures — orgs you own, their active members, and what they owe and
+ *      hold, one total per currency (never a mixed-currency sum).
+ *   2. Every organization you belong to, grouped by your role in it, each
+ *      with its status. Only OWNER rows used to show, so a maintainer or
+ *      learner elsewhere had no way in from here.
+ *   3. "New organization" — the create wizard inside this same chrome.
  *
- * Design intent: this is a *cross-org* surface. Per-org operator views
- * (members, programs, billing) live one click deeper at
- * /dashboard/organization/[orgId]/*. The two layers don't overlap.
- *
- * Client half of the split page. The server `page.tsx` SSR-prefetches
- * the org list + billing roll-up into the React Query cache and hands
- * hydration down; the `useQuery`/`useWorkspaceBilling` calls below read
- * from that cache verbatim (matching query keys) and refetch client-side.
+ * The server page SSR-prefetches the org list and the billing roll-up under
+ * the same query keys used below, so first paint needs no fetch.
  */
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, Plus, Users, Wallet } from "lucide-react";
+import { Building2, Plus } from "lucide-react";
 import type { FundingSource, MemberRole, OrgStatus } from "@prisma/client";
 
 import {
   DashboardHeader,
   DashboardContent,
-  DashboardGrid,
 } from "@/components/dashboard/PageScaffold";
-import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
-import { EmptyState, DataCardSkeleton } from "@/components/dashboard/DataCard";
+import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
+import { Section } from "@/components/dashboard/Section";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { DataCardSkeleton } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { formatCurrencyAmount } from "@/utils/formatting";
-import {
   deriveCapabilityKind,
   CAPABILITY_LABEL,
-  CAPABILITY_BADGE_CLASS,
   FUNDING_SOURCE_LABEL,
-  FUNDING_SOURCE_BADGE_CLASS,
   MEMBER_ROLE_LABEL,
 } from "@/lib/labels/org-labels";
+import { ORG_STATUS } from "@/lib/labels/backoffice-labels";
 import { useWorkspaceBilling } from "../hooks/useWorkspaceBilling";
+import { formatCurrencyTotals } from "../currency-totals";
 
 interface OrgMembershipRow {
   membershipId: string;
@@ -76,10 +62,58 @@ interface OrgMembershipRow {
   };
 }
 
+/** Group order: the roles that run an org first. */
+const ROLE_ORDER: MemberRole[] = [
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+  "MANAGER",
+  "SUPPORT",
+  "EXPERT",
+  "LEARNER",
+];
+
 async function fetchOrgs(): Promise<{ data: OrgMembershipRow[] }> {
   const res = await fetch("/api/organizations");
   if (!res.ok) throw new Error("Failed to load organizations");
   return res.json();
+}
+
+function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
+  const org = row.organization;
+  const kind = deriveCapabilityKind(org.canSponsor, org.canHost);
+  const funding = org.billingAccount?.fundingSource ?? null;
+  return (
+    // The bare org route lands each role on its own page.
+    <Link
+      href={`/dashboard/organization/${org.id}`}
+      className="block rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+    >
+      <div className="flex items-center gap-3">
+        <Avatar className="h-10 w-10 rounded-lg">
+          <AvatarImage
+            src={org.logo ?? undefined}
+            alt={org.name}
+            className="object-cover"
+          />
+          <AvatarFallback className="rounded-lg bg-muted text-muted-foreground">
+            <Building2 className="h-5 w-5" />
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <p className="truncate font-medium">{org.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{org.slug}</p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <StatusBadge {...ORG_STATUS[org.status]} size="sm" />
+        <Badge variant="secondary">{CAPABILITY_LABEL[kind]}</Badge>
+        {funding && (
+          <Badge variant="outline">{FUNDING_SOURCE_LABEL[funding]}</Badge>
+        )}
+      </div>
+    </Link>
+  );
 }
 
 export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
@@ -87,183 +121,117 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
     queryKey: ["org-workspace-orgs"],
     queryFn: fetchOrgs,
   });
-  // Shared with the billing page under one query key — see useWorkspaceBilling.
+  // Shared with the Spend page under one query key — see useWorkspaceBilling.
   const rollup = useWorkspaceBilling(orgWorkspaceId);
   const summary = rollup.data?.summary;
+  const createHref = `/dashboard/org-workspace/${orgWorkspaceId}/create`;
 
-  const rows = (orgs.data?.data ?? []).filter((r) => r.role === "OWNER");
+  const rows = orgs.data?.data ?? [];
+  const groups = ROLE_ORDER.map((role) => ({
+    role,
+    rows: rows.filter((r) => r.role === role),
+  })).filter((g) => g.rows.length > 0);
+
+  let figures: React.ReactNode;
+  if (rollup.isError) {
+    figures = (
+      <ErrorState
+        title="Couldn't load your totals"
+        onRetry={() => void rollup.refetch()}
+      />
+    );
+  } else if (rollup.isLoading || !summary) {
+    figures = (
+      <StatRow columns={4}>
+        <StatSkeleton />
+        <StatSkeleton />
+        <StatSkeleton />
+        <StatSkeleton />
+      </StatRow>
+    );
+  } else {
+    figures = (
+      <StatRow columns={4}>
+        <Stat label="Organizations you own" value={summary.orgsOwned} />
+        <Stat
+          label="Active members"
+          value={summary.totalActiveMembers.toLocaleString("en-IN")}
+        />
+        <Stat
+          label="Outstanding"
+          value={formatCurrencyTotals(summary.outstandingByCurrency)}
+          tone={
+            summary.outstandingByCurrency.length > 0 ? "warning" : "neutral"
+          }
+        />
+        <Stat
+          label="Wallet balances"
+          value={formatCurrencyTotals(summary.walletByCurrency)}
+        />
+      </StatRow>
+    );
+  }
+
+  let list: React.ReactNode;
+  if (orgs.isLoading) {
+    list = (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <DataCardSkeleton />
+        <DataCardSkeleton />
+        <DataCardSkeleton />
+      </div>
+    );
+  } else if (orgs.isError) {
+    list = (
+      <ErrorState
+        title="Couldn't load your organizations"
+        onRetry={() => void orgs.refetch()}
+      />
+    );
+  } else if (groups.length === 0) {
+    list = (
+      <EmptyState
+        icon={Building2}
+        title="No organizations yet"
+        description="Create one to invite your team and start booking."
+        action={
+          <Button asChild size="sm">
+            <Link href={createHref}>Create your first organization</Link>
+          </Button>
+        }
+      />
+    );
+  } else {
+    list = groups.map((g) => (
+      <Section
+        key={g.role}
+        title={`${MEMBER_ROLE_LABEL[g.role]} (${g.rows.length})`}
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {g.rows.map((row) => (
+            <OrgCard key={row.membershipId} row={row} />
+          ))}
+        </div>
+      </Section>
+    ));
+  }
 
   return (
     <>
       <DashboardHeader
-        title="Operator dashboard"
-        subtitle="Cross-org snapshot of the organisations you run"
+        title="All organizations"
+        description="Every organization you belong to, and what the ones you own owe and hold."
         actions={
-          <Link href={`/dashboard/org-workspace/${orgWorkspaceId}/create`}>
-            <Button size="sm">
-              <Plus className="h-4 w-4 mr-1" /> New organization
-            </Button>
-          </Link>
+          <Button asChild size="sm">
+            <Link href={createHref}>
+              <Plus className="mr-1 h-4 w-4" /> New organization
+            </Link>
+          </Button>
         }
       />
       <DashboardContent>
-        {rollup.isError ? (
-          <Card>
-            <CardContent className="py-6">
-              <EmptyState
-                icon={Wallet}
-                title="Couldn't load the billing roll-up"
-                description="We hit an error fetching your cross-org totals."
-                action={
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => rollup.refetch()}
-                  >
-                    Retry
-                  </Button>
-                }
-              />
-            </CardContent>
-          </Card>
-        ) : (
-          <DashboardGrid>
-            {rollup.isLoading ? (
-              <>
-                <StatCardSkeleton />
-                <StatCardSkeleton />
-                <StatCardSkeleton />
-              </>
-            ) : (
-              <>
-                <StatCard
-                  title="Organisations"
-                  value={summary?.orgsOwned?.toString() ?? "0"}
-                  icon={Building2}
-                />
-                <StatCard
-                  title="Active members"
-                  value={summary?.totalActiveMembers?.toLocaleString("en-IN") ?? "0"}
-                  icon={Users}
-                />
-                <StatCard
-                  title="Outstanding (INR)"
-                  value={formatCurrencyAmount(
-                    summary?.totalOutstandingPaise ?? 0,
-                    "INR",
-                  )}
-                  icon={Wallet}
-                  variant={
-                    summary && summary.totalOutstandingPaise > 0
-                      ? "warning"
-                      : "default"
-                  }
-                />
-              </>
-            )}
-          </DashboardGrid>
-        )}
-
-        <section className="mt-6">
-          <h2 className="text-lg font-medium mb-3">Your organisations</h2>
-          {orgs.isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <DataCardSkeleton />
-              <DataCardSkeleton />
-              <DataCardSkeleton />
-            </div>
-          ) : orgs.isError ? (
-            <Card>
-              <CardContent className="py-10">
-                <EmptyState
-                  icon={Building2}
-                  title="Couldn't load your organisations"
-                  description="We hit an error fetching your org list. Check your connection and try again."
-                  action={
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => orgs.refetch()}
-                    >
-                      Retry
-                    </Button>
-                  }
-                />
-              </CardContent>
-            </Card>
-          ) : rows.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {rows.map((row) => {
-                const org = row.organization;
-                const kind = deriveCapabilityKind(org.canSponsor, org.canHost);
-                const funding = org.billingAccount?.fundingSource ?? null;
-                return (
-                  <Link
-                    key={row.membershipId}
-                    href={`/dashboard/organization/${org.id}/home`}
-                    className="group"
-                  >
-                    <Card className="h-full hover:border-zinc-400 transition-colors">
-                      <CardHeader>
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-10 w-10 rounded-lg">
-                            <AvatarImage
-                              src={org.logo ?? undefined}
-                              alt={org.name}
-                              className="object-cover"
-                            />
-                            <AvatarFallback className="rounded-lg bg-zinc-100 text-zinc-500">
-                              <Building2 className="h-5 w-5" />
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0">
-                            <CardTitle className="truncate text-base">
-                              {org.name}
-                            </CardTitle>
-                            <CardDescription className="text-xs">
-                              {org.slug}
-                            </CardDescription>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="flex flex-wrap gap-2">
-                        <Badge
-                          variant="secondary"
-                          className={CAPABILITY_BADGE_CLASS[kind]}
-                        >
-                          {CAPABILITY_LABEL[kind]}
-                        </Badge>
-                        {funding && (
-                          <Badge
-                            variant="outline"
-                            className={FUNDING_SOURCE_BADGE_CLASS[funding]}
-                          >
-                            {FUNDING_SOURCE_LABEL[funding]}
-                          </Badge>
-                        )}
-                        <Badge>{MEMBER_ROLE_LABEL[row.role]}</Badge>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                );
-              })}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="py-10 text-center">
-                <Building2 className="w-10 h-10 mx-auto mb-3 text-zinc-400" />
-                <p className="text-sm text-zinc-600">
-                  You don&apos;t own any organisations yet.
-                </p>
-                <Link href={`/dashboard/org-workspace/${orgWorkspaceId}/create`}>
-                  <Button size="sm" className="mt-4">
-                    Create your first organisation
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          )}
-        </section>
+        {figures}
+        {list}
       </DashboardContent>
     </>
   );

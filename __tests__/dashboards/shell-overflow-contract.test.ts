@@ -15,6 +15,7 @@ const SHELL_SOURCES = [
   // #1527: one DashboardShell renders the chrome for the personal, org,
   // org-workspace and back-office trees.
   "components/dashboard/DashboardShell.tsx",
+  // The legacy create-wizard frame; OrgSwitcherTopBar is gone (#1527 §7.4).
   "app/dashboard/organization/(switcher)/layout.tsx",
 ] as const;
 
@@ -248,7 +249,8 @@ describe("dashboard shell overflow contract", () => {
     for (const rel of [
       "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/new/page.tsx",
       "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/[offeringId]/edit/page.tsx",
-      "app/dashboard/organization/[orgId]/catalog/[type]/new/page.tsx",
+      // ORG-01 (#1527): the page is a server gate; the chrome is its client.
+      "app/dashboard/organization/[orgId]/catalog/[type]/new/NewOrgOfferingClient.tsx",
     ]) {
       expect(read(rel)).toContain("content-flush-bottom");
     }
@@ -301,7 +303,8 @@ describe("dashboard shell overflow contract", () => {
     // The sticky band is the page's only title: no second h1 from the page.
     for (const rel of [
       "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/new/page.tsx",
-      "app/dashboard/organization/[orgId]/catalog/[type]/new/page.tsx",
+      // ORG-01 (#1527): the page is a server gate; the chrome is its client.
+      "app/dashboard/organization/[orgId]/catalog/[type]/new/NewOrgOfferingClient.tsx",
     ]) {
       expect(read(rel)).not.toContain("DashboardHeader");
     }

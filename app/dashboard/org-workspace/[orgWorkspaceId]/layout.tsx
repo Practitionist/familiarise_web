@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireOnboarded } from "@/lib/auth-guard";
+import prisma from "@/lib/prisma";
 import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
 
 /**
@@ -41,9 +42,15 @@ export default async function OrgWorkspaceLayout({
     notFound();
   }
 
+  // #1527 §7.4 — the portfolio pages only earn their place past one org.
+  const ownedOrgCount = await prisma.membership.count({
+    where: { userId: session.user.id, role: "OWNER", status: "ACTIVE" },
+  });
+
   return (
     <OrgWorkspaceShell
       orgWorkspaceId={orgWorkspaceId}
+      ownedOrgCount={ownedOrgCount}
       userName={session.user.name ?? null}
       userImage={session.user.image ?? null}
     >
