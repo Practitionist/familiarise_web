@@ -56,7 +56,9 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     key: "earnings",
     label: "Earnings",
     description: "Consultant earnings, with hold and release.",
-    surface: "payouts.read",
+    // The section is the hold/release doors, so admin; the earnings read
+    // itself follows `payouts.read` (the Payouts board's Earnings view).
+    surface: "payouts.manage",
   },
   {
     key: "reconcile",

@@ -5,11 +5,12 @@ import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { RECONCILE_JOBS } from "@/lib/backoffice/reconcile-jobs";
 
 /**
- * #1771 K-8 — the Reconcile tab's last-run line per job: the latest
+ * #1771 K-8 — the Reconcile section's last-run line per job: the latest
  * SystemJobExecution for its lock name (the ledger run also has its report).
+ * Gated like the section (admin), not by `payouts.read`, which staff hold.
  */
 export async function GET() {
-  const auth = await requireBackofficeSurface("payouts.read");
+  const auth = await requireBackofficeSurface("payouts.manage");
   if (auth.error) return auth.error;
   const jobs = [];
   for (const [key, job] of Object.entries(RECONCILE_JOBS)) {

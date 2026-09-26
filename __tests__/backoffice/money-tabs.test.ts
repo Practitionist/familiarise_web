@@ -9,13 +9,12 @@ import {
   retiredMoneyTabHref,
 } from "@/lib/backoffice/money-tabs";
 
-it("hides the admin-only tabs from staff and keeps the rest", () => {
+it("hides the admin-only sections from staff and keeps the rest", () => {
   const staff = moneyTabsFor("STAFF").map((t) => t.key);
-  expect(staff).toEqual(
-    expect.arrayContaining(["payments", "refunds", "disputes"]),
+  expect(staff).toEqual(["payments", "refunds", "disputes", "payouts"]);
+  expect(moneyTabsFor("ADMIN").map((t) => t.key)).toEqual(
+    expect.arrayContaining(["earnings", "reconcile"]),
   );
-  expect(staff).not.toContain("payouts");
-  expect(moneyTabsFor("ADMIN").map((t) => t.key)).toContain("payouts");
 });
 
 it("carries the old query onto the hub URL", () => {

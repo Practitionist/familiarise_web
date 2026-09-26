@@ -22,16 +22,25 @@ table below lists every section with the surfaces that gate it.
 | --------- | --------------------------- | -------------------------------------------------------------------------------------------- |
 | Payments  | `payments.read`             | Every payment, with its status and rail.                                                     |
 | Refunds   | `refunds.read` / `.manage`  | Refunds issued, pending and failed, plus the admin refund doors.                             |
-| Payouts   | `payouts.read` / `.manage`  | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
-| Earnings  | `payouts.read` / `.manage`  | Consultant earnings, with hold and release.                                                  |
 | Disputes  | `disputes.read` / `.manage` | Chargebacks and their evidence deadlines.                                                    |
+| Payouts   | `payouts.read` / `.manage`  | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
+| Earnings  | `payouts.manage`            | Consultant earnings, with hold and release.                                                  |
 | Reconcile | `payouts.manage`            | Runs the four reconcile jobs on demand and shows when each last ran.                         |
 
-`payouts.read` is admin-only, so staff do not see the Payouts or Earnings
-tabs; a support agent resolving a billing ticket can still see a payment,
-refund or dispute without being able to move money. Approval Payments stays
-its own page rather than a ninth tab, because it chases an unpaid pay-link
-rather than moving money once it lands.
+Staff hold `payouts.read`, so they see the Payouts section read-only: the
+list, the trend and the earnings view render, while the approve and reject
+buttons do not, and every payout and earnings mutation (approve or reject,
+including an instant payout waiting for approval, hold and release, and
+every reconcile run) stays `payouts.manage`, which only an admin holds. The
+earnings read follows `payouts.read`, but the Earnings section is where hold
+and release live, so it and the Reconcile section are gated by
+`payouts.manage` and appear for admins only. The reconcile reads
+(`GET /api/admin/reconcile` and `GET /api/admin/reconcile-ledgers`) stay
+admin-only too, because the ledger reports expose cross-organisation
+aggregates. A support agent resolving a billing ticket can therefore see a
+payment, refund, dispute or payout without being able to move money.
+Approval Payments stays its own page rather than a money section, because
+it chases an unpaid pay-link rather than moving money once it lands.
 
 The four pages the hub replaced — `/dashboard/admin/{payments,refunds,
 disputes,payouts}` — now answer a 308 to their section, carrying their

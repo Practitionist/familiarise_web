@@ -46,7 +46,7 @@ export async function MoneyTabBody({
         </>
       );
     case "payouts":
-      return <PayoutsBoard />;
+      return <PayoutsBoard canManage={isAdmin} />;
     case "earnings":
       return <EarningsTab />;
     case "disputes":

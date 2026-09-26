@@ -1,8 +1,8 @@
 import { renderMoneyTab } from "@/app/dashboard/admin/money/_components/money-page";
 
 /**
- * #1771 K-2 — one Money hub tab in the staff tree; an admin-only tab (payouts,
- * earnings, reconcile) redirects to the first staff tab instead of erroring.
+ * #1771 K-2 — one money section in the staff tree; an admin-only section
+ * (earnings, reconcile) redirects to the first staff section instead of erroring.
  */
 export default async function StaffMoneyTabPage({
   params,
