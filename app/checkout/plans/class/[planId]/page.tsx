@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
+import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -470,8 +472,11 @@ export default function ClassCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  const nextClassSession =
-    planDetails?.classes?.[0]?.appointments?.[0]?.occurrences?.[0];
+  // The class the checkout books (availableClassId), not whichever is listed first.
+  const nextClassSession = (
+    planDetails?.classes?.find((c) => c.id === availableClassId) ??
+    planDetails?.classes?.[0]
+  )?.appointments?.[0]?.occurrences?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -757,7 +762,18 @@ export default function ClassCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              {/* #1780 D-6 — the host's free-cancellation window. */}
+              <FreeCancellationLine
+                startsAt={nextClassSession?.startsAt}
+                windowHours={planDetails?.refundWindowHours}
+                kind="class"
+                className="text-xs text-muted-foreground"
+              />
               <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
               />

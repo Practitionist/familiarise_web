@@ -37,7 +37,8 @@ import {
   type BookingStateKind,
 } from "@/lib/dashboard/money-state";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
-import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
+import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
@@ -76,6 +77,8 @@ import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
+import { ClassSessionControls } from "./ClassSessionControls";
+import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
@@ -508,20 +511,16 @@ export function AppointmentDetailClient({
     : undefined;
   const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
   const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
-  // #1429 F2 — a trial's Pay Now lands on our branded trial checkout, which
-  // names the amount and the hold deadline; only a non-trial booking falls
-  // through to the raw gateway link. #1428 added a second Pay Now here without
-  // the branch, so both entry points now ask the one shared helper.
-  const trialHref = trialCheckoutHref(vm);
+  // #1429 F2 / #1775 P-1 — both Pay Now entry points ask the one shared
+  // helper: the trial's branded page or our pay page (SPA push), else a hosted link.
+  const payHref = bookingPayHref(vm);
   const openPendingPayment = () => {
-    if (trialHref) {
-      // Internal checkout page — SPA navigation (was full reload).
-      router.push(trialHref);
+    if (!payHref) return;
+    if (isExternalPayHref(payHref)) {
+      window.open(payHref, "_blank", "noopener,noreferrer");
       return;
     }
-    if (vm.pendingPaymentUrl && /^https?:\/\//.test(vm.pendingPaymentUrl)) {
-      window.open(vm.pendingPaymentUrl, "_blank", "noopener,noreferrer");
-    }
+    router.push(payHref);
   };
 
   return (
@@ -704,7 +703,18 @@ export function AppointmentDetailClient({
           names={names}
           heldCount={heldCount}
           pending={pendingRow}
-          onPay={openPendingPayment}
+          onPay={payHref ? openPendingPayment : undefined}
+          onExitSeries={
+            role === "consultee" && detail.appointment.class && viewerId
+              ? () =>
+                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
+                    () =>
+                      queryClient.invalidateQueries({
+                        queryKey: ["appointment-detail", appointmentId],
+                      }),
+                  )
+              : undefined
+          }
           requestAgainHref={
             vm.consultantProfileId
               ? `/explore/experts/${vm.consultantProfileId}`
@@ -809,6 +819,16 @@ export function AppointmentDetailClient({
                     // and a consultant rating their own session would feed the
                     // org quality average.
                     renderSessionExtra={(session) => {
+                      // #1569 B-4 — the host side sees who attended each session.
+                      const attendance =
+                        role === "consultant" ? (
+                          <SessionAttendance
+                            appointmentId={
+                              session.appointmentId ?? appointmentId
+                            }
+                            occurrenceId={session.occurrenceId}
+                          />
+                        ) : null;
                       const rating =
                         sessionFeedback.ratings[session.occurrenceId] ?? null;
                       // Offer stars only where a rating would be ACCEPTED —
@@ -822,20 +842,25 @@ export function AppointmentDetailClient({
                       // `rating` is null for every row — indistinguishable from
                       // the truth. Show nothing per row and let the notice above
                       // say why, rather than inviting a click we cannot honour.
-                      if (sessionFeedback.isError) return null;
+                      if (sessionFeedback.isError) return attendance;
                       if (role === "consultee" && !canRate && rating === null) {
                         return null;
                       }
                       return (
-                        <SessionRatingRow
-                          appointmentId={session.appointmentId ?? appointmentId}
-                          bookingAppointmentId={appointmentId}
-                          occurrenceId={session.occurrenceId}
-                          existingRating={rating}
-                          // The consultant sees what a call scored; only the
-                          // attendee can set it.
-                          readOnly={role !== "consultee" || !canRate}
-                        />
+                        <>
+                          {attendance}
+                          <SessionRatingRow
+                            appointmentId={
+                              session.appointmentId ?? appointmentId
+                            }
+                            bookingAppointmentId={appointmentId}
+                            occurrenceId={session.occurrenceId}
+                            existingRating={rating}
+                            // The consultant sees what a call scored; only the
+                            // attendee can set it.
+                            readOnly={role !== "consultee" || !canRate}
+                          />
+                        </>
                       );
                     }}
                     occurrences={vm.occurrences}
@@ -858,6 +883,23 @@ export function AppointmentDetailClient({
                   </p>
                 )}
               </Section>
+            )}
+
+            {/* #1780 row 4 — cancel one session, make it up, or skip the make-up. */}
+            {vm.kind === "CLASS" && detail.appointment.class && (
+              <ClassSessionControls
+                appointmentId={appointmentId}
+                sessions={detail.appointment.occurrences}
+                role={role}
+                // The seat's unit depends on when it was bought (#1780); no
+                // list-price guess — the copy says "one session" instead.
+                unitLabel={null}
+                onChanged={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: ["appointment-detail", appointmentId],
+                  });
+                }}
+              />
             )}
 
             {role === "consultant" && (
@@ -1107,4 +1149,16 @@ export function AppointmentDetailClient({
       />
     </DashboardErrorBoundary>
   );
+}
+
+/** #1780 E-5 — the class exit right: a full refund of the remaining sessions. */
+async function exitClassSeries(classId: string, userId: string) {
+  const res = await fetch(
+    `/api/participants/class/${classId}?userId=${encodeURIComponent(userId)}&mode=exit`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "Could not leave the class");
+  }
 }

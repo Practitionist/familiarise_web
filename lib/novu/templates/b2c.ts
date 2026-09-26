@@ -50,6 +50,91 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       redirect: "dashboardUrl",
     },
   },
+  // #1780 row 4 — the class make-up machine; staged in the writer's transaction.
+  {
+    workflowId: W.CLASS_SESSION_CANCELLED,
+    name: "Class session cancelled",
+    description: "Seat holders, when the host cancels one session of a class.",
+    category: "appointments",
+    inApp: {
+      subject:
+        "{% if payload.voided %}A class session did not count{% else %}A class session was cancelled{% endif %}",
+      body: "{% if payload.voided %}Your {{payload.dateTime}} session of {{payload.planTitle}} lost too much time to count as held{% else %}Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled{% endif %} — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CLASS_MAKEUP_SCHEDULED,
+    name: "Class make-up scheduled",
+    description:
+      "Seat holders, when the host schedules a cancelled session's make-up.",
+    category: "appointments",
+    inApp: {
+      subject: "Make-up session scheduled",
+      body: "The make-up session of {{payload.planTitle}} is on {{payload.dateTime}}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CLASS_SESSION_REFUNDED,
+    name: "Class session refunded",
+    description:
+      "A seat holder, when a missed session was not made up in time.",
+    category: "appointments",
+    inApp: {
+      subject: "Session refunded",
+      body: "A missed session of {{payload.planTitle}} was not made up, so {{payload.amount}} is on its way back to you.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CLASS_EXIT_AVAILABLE,
+    name: "Class exit available",
+    description:
+      "A seat holder, when missed sessions (host cancellations and voided sessions) give them the right to leave with a full refund of the remaining sessions.",
+    category: "appointments",
+    inApp: {
+      subject: "You can leave with a full refund",
+      body: "{{payload.planTitle}} has had {{payload.misses}} missed sessions. You may leave the series with a full refund of the sessions still to come.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.SESSION_NO_SHOW,
+    name: "Session missed by the learner",
+    description:
+      "The learner of a 1:1 session who never joined it (#1569 D7); the session counts as held.",
+    category: "appointments",
+    inApp: {
+      subject: "We didn't see you in your session",
+      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} went ahead without you, so it counts as held. If you couldn't get in, tell support and we will look at the call record.{% if payload.recordingUrl %} The recording is in your recordings: {{payload.recordingUrl}}{% endif %}",
+      redirect: "supportUrl",
+    },
+  },
+  {
+    workflowId: W.SESSION_MISSED_RECORDING,
+    name: "Group session missed, recording available",
+    description:
+      "A class or webinar seat holder who was not in a held session, sent only when that session was recorded.",
+    category: "appointments",
+    inApp: {
+      subject: "Sorry we missed you",
+      body: "Sorry we missed you in the {{payload.dateTime}} session of {{payload.planTitle}} — here's the recording.",
+      redirect: "recordingUrl",
+    },
+  },
+  {
+    // #1778 — notify-only: nothing is reserved, first to book wins.
+    workflowId: W.WINDOW_OPENED,
+    name: "Window opened",
+    description: "A learner who asked to hear when a held 1:1 time frees up.",
+    category: "appointments",
+    inApp: {
+      subject: "A time you wanted just opened",
+      body: "{{payload.windowText}} with {{payload.consultantName}} is free again — first to book gets it.",
+      redirect: "dashboardUrl",
+    },
+  },
   {
     workflowId: W.APPOINTMENT_RESCHEDULED,
     name: "Appointment rescheduled",
@@ -88,12 +173,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.NEW_BOOKING_REQUEST,
     name: "New booking request",
     description:
-      "The consultant, when a request needs their approval; with `nudgeDay`, a paid subscription still waiting for session times (#1703).",
+      "The consultant, when a request needs their approval; with `nudgeHours`, a paid plan still waiting for session times (#1775 C-4).",
     category: "appointments",
     inApp: {
       subject:
-        "{% if payload.nudgeDay %}Waiting for session times{% else %}New booking request{% endif %}",
-      body: "{% if payload.nudgeDay %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeDay}} days since payment.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
+        "{% if payload.nudgeHours %}Waiting for session times{% else %}New booking request{% endif %}",
+      body: "{% if payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}} h since payment. Schedule cycle 1 within 48 h or the buyer is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -271,6 +356,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // #1775 C-6 — staged inside the 48 h sweep's CAS transaction.
+    workflowId: W.SUBSCRIPTION_UNALLOCATED_REFUNDED,
+    name: "Plan refunded — not scheduled",
+    description:
+      "Both parties, when a paid plan's first cycle was not scheduled within 48 h of payment.",
+    category: "subscriptions",
+    inApp: {
+      subject: "Plan refunded in full",
+      body: "{{payload.planTitle}} was not scheduled within 48 h of payment, so {{payload.consulteeName}} is refunded in full.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.TRIAL_SESSION_REQUESTED,
     name: "Trial requested",
     description: "The consultant, when a consultee asks for a free trial.",
@@ -311,6 +409,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Trial cancelled",
       body: "The trial session for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %} was cancelled.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    // #1775 C-12 — staged with the decline or the 48 h no-answer sweep.
+    workflowId: W.TRIAL_REFUNDED,
+    name: "Trial refunded",
+    description:
+      "The learner, when a paid trial is declined or not answered within 48 h.",
+    category: "trials",
+    inApp: {
+      subject: "Trial refunded in full",
+      body: "{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial, so it is refunded in full.",
       redirect: "dashboardUrl",
     },
   },

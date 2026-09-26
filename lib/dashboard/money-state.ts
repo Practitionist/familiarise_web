@@ -21,6 +21,7 @@ import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
 import {
   isSponsoredPayment,
+  paymentFunding,
   paymentRailLabel,
   type PaymentDisplayLike,
 } from "@/lib/appointments/payment-display";
@@ -62,6 +63,10 @@ export type NextActionKind =
   | "APPROVE_OR_DECLINE"
   /** #1775 — the consultant's actions on an unpaid approval. */
   | "REMIND_OR_WITHDRAW"
+  /** #1775 C-5 — a paid plan waiting for cycle 1, or for its next cycle. */
+  | "ALLOCATE"
+  /** #1780 row 6 — the host's misses give the learner a full-refund exit. */
+  | "EXIT_SERIES"
   | "PAY"
   | "REQUEST_AGAIN"
   | "JOIN"
@@ -99,7 +104,15 @@ export interface TimelineEvent {
   actor: string;
   label: string;
   done: boolean;
+  /** #1780 — the refund leg a refund event shows; absent on every other step. */
+  kind?: RefundTimelineKind;
 }
+
+export type RefundTimelineKind =
+  | "refund-requested"
+  | "refund-processing"
+  | "refund-completed"
+  | "refund-failed";
 
 export type OccurrenceInput = {
   startsAt: Date | string;
@@ -115,11 +128,16 @@ export type PaymentInput = PaymentDisplayLike & {
   currency: string;
   createdAt: Date | string;
   expiresAt?: Date | string | null;
+  /** #1775 C-2 — the capture clock; a read without it falls back to createdAt. */
+  capturedAt?: Date | string | null;
 };
 
 export type RefundInput = {
   amountPaise: bigint | number | string;
   status: string;
+  /** #1780 — the gateway's refund id once it has one; a placeholder before. */
+  refundId?: string | null;
+  createdAt?: Date | string | null;
 };
 
 export type DisputeInput = { status: string };
@@ -159,6 +177,15 @@ export interface BookingPresentationInput {
     sessions: number;
   } | null;
   names: { payer: string; consultant: string };
+  /** #1775 C-5 — a subscription's entitlement summary (lib/booking/entitlement). */
+  entitlement?: { remaining: number; nextBatch: number } | null;
+  /** #1780 E-5 — a class seat's series ledger summary. */
+  series?: {
+    misses: number;
+    N: number;
+    exitRight: boolean;
+    undelivered: number;
+  } | null;
 }
 
 export interface BookingPresentation {
@@ -212,6 +239,40 @@ export function requestHoldDeadline(
 }
 
 const PRE_APPROVAL = new Set(["PENDING", "APPROVED_PENDING_PAYMENT"]);
+
+// #1775 C-3 — a paid plan's cycle 1 must be allocated within 48 h of capture.
+// Mirrored, not imported: expire-stale-requests.ts loads Prisma.
+const ALLOCATE_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** capturedAt (or createdAt) of the settled payment + 48 h; null when unpaid. */
+export function allocateDeadline(
+  payments: BookingPresentationInput["payments"],
+): Date | null {
+  const paid = payments.find((x) => x.paymentStatus === "SUCCEEDED");
+  if (!paid) return null;
+  const clock = toDate(paid.capturedAt ?? paid.createdAt);
+  return new Date(clock.getTime() + ALLOCATE_WINDOW_MS);
+}
+
+/** #1775 C-5 — the plan's paid cycle 1, or its next cycle, awaits the consultant. */
+function allocationWait(
+  input: BookingPresentationInput,
+  live: OccurrenceInput[],
+  paid: boolean,
+  now: Date,
+): "CYCLE_1" | "NEXT_CYCLE" | null {
+  if (normalizeStatus(input.appointmentType) !== "SUBSCRIPTION") return null;
+  const status = normalizeStatus(input.request?.status);
+  if (status === "PENDING" && paid && live.length === 0) return "CYCLE_1";
+  const upcoming = live.some((o) => occurrenceEnd(o) >= now.getTime());
+  if (
+    status === "APPROVED" &&
+    !upcoming &&
+    (input.entitlement?.remaining ?? 0) > 0
+  )
+    return "NEXT_CYCLE";
+  return null;
+}
 const CONFIRMED_FAMILY = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
 const COMPLETED_FAMILY = new Set(["COMPLETED", "CONVERTED"]);
 const OPEN_DISPUTES = new Set([
@@ -358,6 +419,20 @@ function deriveBooking(
   }
   if (COMPLETED_FAMILY.has(status))
     return { state: "COMPLETED", why: "Every session has been held." };
+  const wait = allocationWait(input, live, paid, now);
+  if (wait === "CYCLE_1") {
+    const by = allocateDeadline(input.payments);
+    return {
+      state: "AWAITING_ALLOCATION",
+      why: `Paid · ${c} has until ${by ? dayTime(by) : "48 h after payment"} to schedule cycle 1.`,
+    };
+  }
+  if (wait === "NEXT_CYCLE") {
+    return {
+      state: "AWAITING_ALLOCATION",
+      why: `Cycle done · schedule the next ${input.entitlement?.nextBatch ?? 0}.`,
+    };
+  }
   if (status === "DRAFT")
     return {
       state: "AWAITING_ALLOCATION",
@@ -453,11 +528,18 @@ function deriveMoney(
     if (
       input.disputes.some((d) => OPEN_DISPUTES.has(normalizeStatus(d.status)))
     ) {
-      return build(
-        "DISPUTED",
-        "Disputed",
-        `${money(paid.amount, paid.currency)} · disputed · ${when}`,
-      );
+      // #1771 row 8 — read-only for both parties; the buyer reads plain words.
+      return you
+        ? build(
+            "DISPUTED",
+            "Under review",
+            `${money(paid.amount, paid.currency)} · under review by your bank · ${when}`,
+          )
+        : build(
+            "DISPUTED",
+            "Disputed",
+            `${money(paid.amount, paid.currency)} · disputed · ${when}`,
+          );
     }
     // Refunds: the same rule the seat roster and the Payments API use (#1627).
     // REFUND_PENDING means the WHOLE charge is coming back (the booking is
@@ -565,6 +647,9 @@ function deriveMoney(
   );
 }
 
+const paidOf = (input: BookingPresentationInput) =>
+  input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
+
 function deriveNext(
   input: BookingPresentationInput,
   booking: BookingStateKind,
@@ -592,6 +677,18 @@ function deriveNext(
     // row's expiresAt), the same one the consultee's PAY carries.
     if (booking === "AWAITING_PAYMENT")
       return { kind: "REMIND_OR_WITHDRAW", label: "Remind", deadline };
+    const wait = allocationWait(input, live, !!paidOf(input), now);
+    if (booking === "AWAITING_ALLOCATION" && wait === "CYCLE_1")
+      return {
+        kind: "ALLOCATE",
+        label: "Schedule cycle 1",
+        deadline: allocateDeadline(input.payments) ?? undefined,
+      };
+    if (booking === "AWAITING_ALLOCATION" && wait === "NEXT_CYCLE")
+      return {
+        kind: "ALLOCATE",
+        label: `Schedule the next ${input.entitlement?.nextBatch ?? 0}`,
+      };
     if (booking === "CONFIRMED" && joinable)
       return { kind: "JOIN", label: "Join" };
     return none;
@@ -611,6 +708,16 @@ function deriveNext(
     }
     if (booking === "CONFIRMED" && joinable)
       return { kind: "JOIN", label: "Join" };
+    if (
+      booking === "CONFIRMED" &&
+      normalizeStatus(input.appointmentType) === "CLASS" &&
+      input.series?.exitRight
+    ) {
+      return {
+        kind: "EXIT_SERIES",
+        label: `Leave the series with a full refund of the remaining ${input.series.undelivered} sessions`,
+      };
+    }
     if (booking === "COMPLETED")
       return { kind: "RATE", label: "Rate this session" };
   }
@@ -696,12 +803,7 @@ function deriveTimeline(
               done: true,
             }
           : null;
-  const refund: TimelineEvent | null =
-    moneyState.state === "REFUND_PENDING"
-      ? { at: null, actor: "", label: "Refund on its way", done: true }
-      : moneyState.state === "REFUNDED"
-        ? { at: null, actor: "", label: "Refunded", done: true }
-        : null;
+  const refunds = refundTimeline(input);
 
   // Pay-first checkout (#1586): the money landed before the answer.
   const steps =
@@ -715,11 +817,77 @@ function deriveTimeline(
     completed,
   ];
   const kept = terminal ? events.filter((e) => e.done) : events;
-  return [
-    ...kept,
-    ...(terminal ? [terminal] : []),
-    ...(refund ? [refund] : []),
-  ];
+  return [...kept, ...(terminal ? [terminal] : []), ...refunds];
+}
+
+// Razorpay (rfnd_) and Stripe (re_) ids; the front doors stamp a placeholder first.
+const GATEWAY_REFUND_ID = /^(rfnd_|re_)/;
+
+/**
+ * #1780 — one event per refund: requested (no gateway id yet), processing
+ * (the gateway has it), completed (partial when it returns less than was
+ * paid) or failed, with the arrival time of the rail it goes back to. The row
+ * records CARD for every gateway charge, so card and UPI are both named.
+ */
+const REFUND_ETA_CARD_OR_UPI = "cards take 5–7 working days, UPI 1–3";
+const REFUND_ETA: Partial<Record<string, string>> = {
+  CREDITS: "back as credits instantly",
+  ORG: "back to the organisation",
+};
+
+function completedRefundLabel(
+  partial: boolean,
+  funding: string,
+  amountPaise: Parameters<typeof money>[0],
+  currency: Parameters<typeof money>[1],
+): string {
+  if (!partial) return "Refunded";
+  // Locked 2026-09-13: a sponsored member paid nothing, so no amount.
+  if (funding === "ORG") return "Refunded (partial)";
+  return `Refunded ${money(amountPaise, currency)} (partial)`;
+}
+
+function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
+  const paid = input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
+  if (!paid) return [];
+  const funding = paymentFunding(paid);
+  const eta = REFUND_ETA[funding] ?? REFUND_ETA_CARD_OR_UPI;
+  return input.refunds.map((r): TimelineEvent => {
+    const at = toDateOrNull(r.createdAt);
+    const status = normalizeStatus(r.status);
+    if (status === "FAILED") {
+      return {
+        at,
+        actor: "",
+        label: "Refund failed — our team will retry or contact you",
+        done: true,
+        kind: "refund-failed",
+      };
+    }
+    if (status === "SUCCEEDED") {
+      const partial = Number(r.amountPaise) < Number(paid.amount);
+      return {
+        at,
+        actor: "",
+        label: completedRefundLabel(
+          partial,
+          funding,
+          r.amountPaise,
+          paid.currency,
+        ),
+        done: true,
+        kind: "refund-completed",
+      };
+    }
+    const atGateway = GATEWAY_REFUND_ID.test(r.refundId ?? "");
+    return {
+      at,
+      actor: "",
+      label: atGateway ? `Refund processing · ${eta}` : "Refund requested",
+      done: true,
+      kind: atGateway ? "refund-processing" : "refund-requested",
+    };
+  });
 }
 
 export function deriveBookingPresentation(

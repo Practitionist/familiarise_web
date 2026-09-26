@@ -24,6 +24,7 @@ import {
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
+import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -835,7 +836,18 @@ export default function SubscriptionCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              {/* #1775 C-6 — plans are paid at purchase; the 48 h promise. */}
+              <p className="text-xs text-muted-foreground">
+                You pay {formatPrice(pricing.total)} now ·{" "}
+                {planData?.data?.consultantProfile?.user?.name ?? "Your expert"}{" "}
+                schedules your first week within 48 h or you&apos;re refunded in
+                full.
+              </p>
               <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
               />

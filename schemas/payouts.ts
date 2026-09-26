@@ -17,6 +17,7 @@ export const adminPayoutsQuerySchema = z.object({
   // Closed enum: an unknown status previously fell through to Prisma and
   // surfaced as a 500 instead of a 400.
   status: z.nativeEnum(PayoutStatus).nullish(),
+  kind: z.enum(["INSTANT"]).nullish(),
   search: z.string().max(200).nullish(),
   orgId: z.string().max(128).nullish(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

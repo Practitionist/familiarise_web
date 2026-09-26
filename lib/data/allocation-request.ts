@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import { reportSentryError } from "@/lib/observability/report";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
@@ -73,7 +74,38 @@ const slotSelect = {
   },
 } as const;
 
+/**
+ * #1780 R-2 (FAMILIARISE_WEB-4X) — the allocate page's read answers null for
+ * a missing or foreign id instead of throwing, so the page reaches its own
+ * notFound(). A request owned by another consultant reads as missing.
+ */
 export async function readAllocationRequest(
+  requestId: string,
+  eventType: AllocationEventType,
+  consultantProfileId?: string,
+): Promise<AllocationRequest | null> {
+  try {
+    const request = await readAllocationRequestOrThrow(requestId, eventType);
+    if (
+      request &&
+      consultantProfileId &&
+      request.consultantProfileId !== consultantProfileId
+    ) {
+      return null;
+    }
+    return request;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: "read-allocation-request",
+      expected: true,
+      extra: { requestId, eventType },
+    });
+    return null;
+  }
+}
+
+async function readAllocationRequestOrThrow(
   requestId: string,
   eventType: AllocationEventType,
 ): Promise<AllocationRequest | null> {

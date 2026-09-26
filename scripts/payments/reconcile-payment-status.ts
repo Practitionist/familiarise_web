@@ -17,6 +17,7 @@
  * Schedule: Every 30 minutes
  */
 
+import { createHash } from "node:crypto";
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
@@ -25,6 +26,21 @@ import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
+
+// #1822 — Q-4: the same stuck ids re-fire this warning every tick until the
+// row resolves or ages into #1757's retire path. Dedupe by a hash of the id
+// set via SystemEvent.correlationId instead of a Redis key — Redis is the
+// scarce resource this fix exists to protect.
+const UNRESOLVABLE_REPORT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function unresolvableCorrelationId(ids: string[]): string {
+  const hash = createHash("sha256")
+    // Code-unit order, not localeCompare: a dedupe key must not vary by collation.
+    .update([...ids].sort((a, b) => Number(a > b) - Number(a < b)).join(","))
+    .digest("hex")
+    .slice(0, 16);
+  return `reconcile-payment-status:unresolvable:${hash}`;
+}
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
 const MIN_AGE_MINUTES = 5;
@@ -626,16 +642,47 @@ async function reconcilePaymentStatusUnlocked(
   // the pager must exclude it: `expected: "true"` (same tag convention as
   // reportSentryError) is the stable key the alert rule filters on. The
   // signal stays in logs/Sentry; only the page goes away.
+  //
+  // #1822 Q-4 — that de-duplication was by ISSUE, not by EVENT: the same
+  // stuck row set still minted a fresh Sentry event (and burned budget) on
+  // every run until it aged into #1757's retire path. Report at most once
+  // per 24h per distinct id set, tracked via a SystemEvent correlationId.
   if (unresolvableCount > 0) {
-    Sentry.captureMessage(
-      `reconcile-payment-status: ${unresolvableCount} pending payments have gateway ids the gateway does not know`,
-      {
-        level: "warning",
-        fingerprint: ["reconcile-payment-status", "unresolvable"],
-        tags: { subsystem: "payments", expected: "true" },
-        extra: { unresolvable },
-      },
-    );
+    const correlationId = unresolvableCorrelationId(unresolvable);
+    // A failed dedupe lookup must not fail completed work: report anyway.
+    const alreadyReportedToday = await prisma.systemEvent
+      .findFirst({
+        where: {
+          correlationId,
+          createdAt: {
+            gte: new Date(Date.now() - UNRESOLVABLE_REPORT_WINDOW_MS),
+          },
+        },
+        select: { id: true },
+      })
+      .catch((err: unknown) => {
+        console.warn("[reconcile-payment-status] dedupe lookup failed:", err);
+        return null;
+      });
+
+    if (!alreadyReportedToday) {
+      await recordSystemEvent({
+        category: "CRON",
+        severity: "WARN",
+        message: `reconcile-payment-status: ${unresolvableCount} pending payments have gateway ids the gateway does not know`,
+        context: { unresolvable },
+        correlationId,
+      });
+      Sentry.captureMessage(
+        `reconcile-payment-status: ${unresolvableCount} pending payments have gateway ids the gateway does not know`,
+        {
+          level: "warning",
+          fingerprint: ["reconcile-payment-status", "unresolvable"],
+          tags: { subsystem: "payments", expected: "true" },
+          extra: { unresolvable },
+        },
+      );
+    }
   }
 
   if (succeededCount > 0) {

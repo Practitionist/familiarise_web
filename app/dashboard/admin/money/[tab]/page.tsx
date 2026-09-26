@@ -1,0 +1,9 @@
+import { renderMoneyTab } from "../_components/money-page";
+
+/** #1771 K-2 — one Money hub tab in the admin tree. */
+export default async function AdminMoneyTabPage({
+  params,
+}: Readonly<{ params: Promise<{ tab: string }> }>) {
+  const { tab } = await params;
+  return renderMoneyTab({ tab, tree: "admin", treePath: "/dashboard/admin" });
+}

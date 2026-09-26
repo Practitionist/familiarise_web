@@ -1,5 +1,6 @@
 "use client";
 
+import { gatewayLabel, payoutMethodLabel } from "@/lib/labels/money-labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -140,14 +141,18 @@ export default function CompletedPayoutsSection() {
       key: "provider",
       header: "Provider",
       cell: (payout) => (
-        <span className="text-sm text-muted-foreground">{payout.provider}</span>
+        <span className="text-sm text-muted-foreground">
+          {gatewayLabel(payout.provider)}
+        </span>
       ),
     },
     {
       key: "method",
       header: "Method",
       cell: (payout) => (
-        <span className="text-sm text-muted-foreground">{payout.method}</span>
+        <span className="text-sm text-muted-foreground">
+          {payoutMethodLabel(payout.method)}
+        </span>
       ),
     },
     {

@@ -18,11 +18,20 @@
  *   BetterAuth Session + Account rows → hard-deleted (forces sign-out
  *   across every device immediately; SSO accounts are dropped too).
  *
+ *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
+ *   the RazorpayX fund account and contact are deactivated, and the
+ *   buyer's Razorpay saved-card tokens are deleted (#1771 rows 1 and 5).
+ *
  * What survives intact (per Indian IT Act §44AA / §92 retention rules
  * and per the financial-records carve-out in DPDP §12):
  *
  *   Payment*, OrganizationInvoice, OrganizationPayout,
- *   WalletEntry, FundingLedgerEntry, SettlementLedgerEntry, Refund.
+ *   WalletEntry, FundingLedgerEntry, SettlementLedgerEntry, Refund,
+ *   ConsultantPayout, TDSRecord, and the PayoutAccount rzp ids those rows
+ *   reference. Two retention clocks govern them: Income-tax Rule 6F(5)
+ *   keeps books for six years from the end of the relevant assessment
+ *   year, and CGST Act s.36 keeps GST records for seventy-two months from
+ *   the due date of that year's annual return.
  *
  * Why pseudonymousId rather than NULL on every PII field
  * ------------------------------------------------------
@@ -57,6 +66,7 @@ import {
 import { reportSentryError } from "@/lib/observability/report";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -64,6 +74,8 @@ export interface ScrubResult {
   scrubbed: boolean;
   pseudonymousId: string;
   affectedOrganizationIds: string[];
+  /// #1771 row 5 — Razorpay/RazorpayX steps that failed; each is also a system event.
+  vendorFailures: string[];
 }
 
 /**
@@ -177,6 +189,7 @@ export async function scrubUser(
       id: true,
       erasedAt: true,
       pseudonymousId: true,
+      razorpayCustomerId: true,
     },
   });
   if (!existing) {
@@ -190,6 +203,7 @@ export async function scrubUser(
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
       affectedOrganizationIds: [],
+      vendorFailures: [],
     };
   }
 
@@ -211,6 +225,12 @@ export async function scrubUser(
   const affectedOrganizationIds = Array.from(
     new Set(memberships.map((m) => m.organizationId)),
   );
+  // #1771 row 5 — bank data is reference-only: the rzp ids stay for the
+  // payout and TDS rows, and the vendor objects are deactivated after commit.
+  const payoutAccounts = await prisma.payoutAccount.findMany({
+    where: { consultantProfile: { userId } },
+    select: { id: true, razorpayContactId: true, razorpayFundAccId: true },
+  });
 
   let collaborationsRemoved: CollaborationRef[] = [];
   let erasureRequestId: string | null = null;
@@ -259,6 +279,19 @@ export async function scrubUser(
         memberships.map((m) => m.id),
         now,
       );
+    }
+
+    if (payoutAccounts.length > 0) {
+      await tx.payoutAccount.updateMany({
+        where: { id: { in: payoutAccounts.map((a) => a.id) } },
+        data: {
+          accountHolderName: null,
+          bankName: null,
+          accountNumberLast4: null,
+          ifscCode: null,
+          upiId: null,
+        },
+      });
     }
 
     // Free-text PII on profiles (best-effort — fields may or may not
@@ -411,5 +444,100 @@ export async function scrubUser(
       );
   }
 
-  return { scrubbed: true, pseudonymousId, affectedOrganizationIds };
+  const vendorFailures = await offboardPaymentVendors(prisma, {
+    userId,
+    razorpayCustomerId: existing.razorpayCustomerId,
+    payoutAccounts,
+  });
+
+  return {
+    scrubbed: true,
+    pseudonymousId,
+    affectedOrganizationIds,
+    vendorFailures,
+  };
+}
+
+/**
+ * #1771 rows 1 and 5 — after commit, like the Stream revocations: delete the
+ * buyer's saved-card tokens, then deactivate every RazorpayX fund account and
+ * contact. A failure never aborts the scrub; it becomes a system event and a
+ * `vendorFailures` entry. The Customer column is cleared only once its tokens
+ * are gone and its PII is overwritten, so the reference survives for a retry.
+ */
+async function offboardPaymentVendors(
+  prisma: Db,
+  input: {
+    userId: string;
+    razorpayCustomerId: string | null;
+    payoutAccounts: {
+      razorpayContactId: string | null;
+      razorpayFundAccId: string | null;
+    }[];
+  },
+): Promise<string[]> {
+  const failures: string[] = [];
+  const attempt = async (step: string, run: () => Promise<unknown>) => {
+    try {
+      await run();
+      return true;
+    } catch (err) {
+      failures.push(step);
+      await recordSystemErrorSafe({
+        category: "COMPLIANCE",
+        summary: `Erasure could not complete ${step}`,
+        err,
+        context: { userId: input.userId, step },
+      });
+      return false;
+    }
+  };
+
+  const customerId = input.razorpayCustomerId;
+  if (customerId) {
+    const razorpay = await import("@/lib/payments/core/razorpay");
+    const deleted = await attempt(`razorpay_tokens:${customerId}`, () =>
+      razorpay.deleteRazorpayCustomerTokens(customerId),
+    );
+    // Owner decision 2026-09-25 — the Customer cannot be deleted, so its PII is overwritten.
+    const overwritten =
+      deleted &&
+      (await attempt(`razorpay_customer_pii:${customerId}`, () =>
+        razorpay.eraseRazorpayCustomerPii(customerId, input.userId),
+      ));
+    if (overwritten) {
+      await attempt("razorpay_customer_column", () =>
+        prisma.user.update({
+          where: { id: input.userId },
+          data: { razorpayCustomerId: null },
+        }),
+      );
+    }
+  }
+
+  const fundAccountIds = input.payoutAccounts.flatMap((a) =>
+    a.razorpayFundAccId ? [a.razorpayFundAccId] : [],
+  );
+  const contactIds = Array.from(
+    new Set(
+      input.payoutAccounts.flatMap((a) =>
+        a.razorpayContactId ? [a.razorpayContactId] : [],
+      ),
+    ),
+  );
+  if (fundAccountIds.length === 0 && contactIds.length === 0) return failures;
+
+  const { getRazorpayPayoutsService } =
+    await import("@/lib/payments/payouts/razorpay-payouts");
+  for (const id of fundAccountIds) {
+    await attempt(`razorpayx_fund_account:${id}`, () =>
+      getRazorpayPayoutsService().deactivateFundAccount(id),
+    );
+  }
+  for (const id of contactIds) {
+    await attempt(`razorpayx_contact:${id}`, () =>
+      getRazorpayPayoutsService().deactivateContact(id),
+    );
+  }
+  return failures;
 }

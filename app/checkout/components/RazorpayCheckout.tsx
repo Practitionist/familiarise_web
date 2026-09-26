@@ -6,6 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import { useCheckoutFlags } from "./CheckoutFlags";
 import {
   busyRetryToast,
   checkoutNeedsGateway,
@@ -70,8 +72,22 @@ declare global {
   }
 }
 
-interface RazorpayCheckoutProps {
-  checkoutData: CheckoutInput;
+/**
+ * #1775 P-1 — an order minted elsewhere (an approval or trial pay-link). The
+ * component opens it as-is and never calls `POST /api/checkout`.
+ */
+export interface ExistingRazorpayOrder {
+  orderId: string;
+  paymentId: string;
+  amount: number;
+  currency: string;
+}
+
+type RazorpayCheckoutSource =
+  | { checkoutData: CheckoutInput; existingOrder?: never }
+  | { existingOrder: ExistingRazorpayOrder; checkoutData?: never };
+
+type RazorpayCheckoutProps = RazorpayCheckoutSource & {
   onPaymentSuccess: (
     response: RazorpayPaymentResponse | { message: string },
   ) => void;
@@ -89,10 +105,18 @@ interface RazorpayCheckoutProps {
    * sits open, so without this the buyer pays into a rejection.
    */
   onBeforeCheckout?: () => Promise<boolean>;
+};
+
+interface GatewayOrder {
+  id: string;
+  amount: number;
+  currency: string;
+  customerId?: string;
 }
 
 export default function RazorpayCheckout({
   checkoutData,
+  existingOrder,
   onPaymentSuccess,
   onPaymentError,
   disabled,
@@ -103,6 +127,7 @@ export default function RazorpayCheckout({
   onBeforeCheckout,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
+  const { emiEnabled } = useCheckoutFlags();
   const [isProcessing, setIsProcessing] = useState(false);
   // #828 — stable per-mount; the server dedupes retries on this key.
   // useState's lazy initializer runs once, unlike a useRef(arg) expression
@@ -117,162 +142,15 @@ export default function RazorpayCheckout({
     // (dismiss, failure, verified success) may re-enable it.
     let gatewayOpened = false;
     try {
-      // B5 — a structured BUSY 409 (event mutex held / same account on
-      // another device) auto-retries ONCE after the server-advised pause
-      // instead of dead-ending; the stable idempotency key keeps the retry
-      // dedupe-safe.
-      const response = await fetchCheckoutWithBusyRetry(
-        () =>
-          fetch("/api/checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...checkoutData,
-              clientIdempotencyKey: idempotencyKey,
-            }),
-          }),
-        (waitSeconds) => toast(busyRetryToast(waitSeconds)),
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        onPaymentError({
-          description: errorData.error || "Payment request failed",
-          code: errorData.errorType,
-        });
-        return;
-      }
-
-      const data = await response.json();
-
-      if (!data.success) {
-        onPaymentError({
-          description: data.error || "Payment initialization failed",
-          code: data.errorType,
-        });
-        return;
-      }
-
-      // #1437 — WALLET/INVOICE/LICENSE org funding and zero-amount/mock
-      // payments confirm synchronously; the response carries no gateway
-      // order, so open() must never run for them.
-      if (!checkoutNeedsGateway(data)) {
-        onPaymentSuccess({
-          message:
-            data.message ||
-            "Your booking is confirmed. Redirecting to your dashboard...",
-        });
-        return;
-      }
-
-      if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
-        toast({
-          title: "Payment System Configuration Error",
-          description:
-            "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // #1396 — the hold already exists server-side; a CDN failure here is
-      // the same state a buyer produces by closing the modal, so leave it
-      // to the abandoned-payments sweep instead of cancelling client-side.
-      // #1414 — loadScript REJECTS on script.onerror, so `!isLoaded` alone
-      // never saw a blocked or failed CDN load; it fell through to the outer
-      // catch and the buyer got the generic message instead of this one.
-      let isLoaded = false;
-      try {
-        isLoaded = await loadScript(
-          "https://checkout.razorpay.com/v1/checkout.js",
-        );
-      } catch (scriptError) {
-        reportPaymentsError(scriptError);
-      }
-
-      if (!isLoaded) {
-        toast({
-          title: "Payment System Not Loading",
-          description:
-            "The Razorpay payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: data.paymentIntent.amount,
-        currency: data.paymentIntent.currency,
-        name: "Familiarise",
-        description: description || "Service Payment",
-        order_id: data.paymentIntent.id,
-        handler: async function (response: RazorpayPaymentResponse) {
-          // H2 FIX: Verify Razorpay signature server-side before signaling success
-          try {
-            const verifyRes = await fetch("/api/checkout/verify-signature", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-              }),
-            });
-            if (!verifyRes.ok) {
-              const err = await verifyRes.json();
-              console.error("Payment signature verification failed:", err);
-              setIsProcessing(false);
-              onPaymentError({
-                description:
-                  "Payment verification failed. Our team will review this transaction.",
-                code: "VERIFICATION_FAILED",
-              });
-              return;
-            }
-          } catch (verifyErr) {
-            // Network failure — don't block; webhook is the ultimate authority
-            Sentry.captureException(
-              verifyErr instanceof Error
-                ? verifyErr
-                : new Error(String(verifyErr)),
-              { tags: { subsystem: "payments" } },
-            );
-            console.error("Signature verification request failed:", verifyErr);
+      const order = existingOrder
+        ? {
+            id: existingOrder.orderId,
+            amount: existingOrder.amount,
+            currency: existingOrder.currency,
           }
-          onPaymentSuccess(response);
-        },
-        ...(userName || userEmail || userPhone
-          ? {
-              prefill: {
-                ...(userName && { name: userName }),
-                ...(userEmail && { email: userEmail }),
-                ...(userPhone && { contact: userPhone }),
-              },
-            }
-          : {}),
-        theme: {
-          color: "#2563EB", // Familiarise brand blue
-        },
-        modal: {
-          ondismiss: () => {
-            setIsProcessing(false);
-            toast({
-              title: "Payment not completed",
-              description:
-                "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
-            });
-          },
-        },
-      };
-
-      const rzp = new window.Razorpay(options);
-      rzp.on("payment.failed", function (response: RazorpayFailedResponse) {
-        setIsProcessing(false);
-        onPaymentError(response.error);
-      });
-      rzp.open();
-      gatewayOpened = true;
+        : await createOrder();
+      if (!order) return;
+      gatewayOpened = await openGateway(order);
     } catch (error) {
       reportPaymentsError(error);
       onPaymentError({
@@ -284,6 +162,177 @@ export default function RazorpayCheckout({
     } finally {
       if (!gatewayOpened) setIsProcessing(false);
     }
+  };
+
+  /** Mints the order through checkout; null when it answered without one. */
+  const createOrder = async (): Promise<GatewayOrder | null> => {
+    // B5 — a structured BUSY 409 (event mutex held / same account on
+    // another device) auto-retries ONCE after the server-advised pause
+    // instead of dead-ending; the stable idempotency key keeps the retry
+    // dedupe-safe.
+    const response = await fetchCheckoutWithBusyRetry(
+      () =>
+        fetch("/api/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...checkoutData,
+            clientIdempotencyKey: idempotencyKey,
+          }),
+        }),
+      (waitSeconds) => toast(busyRetryToast(waitSeconds)),
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      onPaymentError({
+        description: errorData.error || "Payment request failed",
+        code: errorData.errorType,
+      });
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      onPaymentError({
+        description: data.error || "Payment initialization failed",
+        code: data.errorType,
+      });
+      return null;
+    }
+
+    // #1437 — WALLET/INVOICE/LICENSE org funding and zero-amount/mock
+    // payments confirm synchronously; the response carries no gateway
+    // order, so open() must never run for them.
+    if (!checkoutNeedsGateway(data)) {
+      onPaymentSuccess({
+        message:
+          data.message ||
+          "Your booking is confirmed. Redirecting to your dashboard...",
+      });
+      return null;
+    }
+
+    return {
+      id: data.paymentIntent.id,
+      amount: data.paymentIntent.amount,
+      currency: data.paymentIntent.currency,
+      // #1771 row 1 — the server echoes a Customer only while saved cards are on.
+      customerId: data.paymentIntent.customerId,
+    };
+  };
+
+  /** Opens the Razorpay sheet on an order; false when it could not open. */
+  const openGateway = async (order: GatewayOrder): Promise<boolean> => {
+    if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
+      toast({
+        title: "Payment System Configuration Error",
+        description:
+          "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    // #1396 — the hold already exists server-side; a CDN failure here is
+    // the same state a buyer produces by closing the modal, so leave it
+    // to the abandoned-payments sweep instead of cancelling client-side.
+    // #1414 — loadScript REJECTS on script.onerror, so `!isLoaded` alone
+    // never saw a blocked or failed CDN load; it fell through to the outer
+    // catch and the buyer got the generic message instead of this one.
+    let isLoaded = false;
+    try {
+      isLoaded = await loadScript(
+        "https://checkout.razorpay.com/v1/checkout.js",
+      );
+    } catch (scriptError) {
+      reportPaymentsError(scriptError);
+    }
+
+    if (!isLoaded) {
+      toast({
+        title: "Payment System Not Loading",
+        description:
+          "The Razorpay payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    const options = buildCheckoutOptions({
+      keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+      amount: order.amount,
+      currency: order.currency,
+      name: "Familiarise",
+      description: description || "Service Payment",
+      orderId: order.id,
+      customerId: order.customerId,
+      // #1780 row 1 — ENABLE_CHECKOUT_EMI off hides Razorpay's EMI block.
+      hideEmi: !emiEnabled,
+      handler: async function (response: RazorpayPaymentResponse) {
+        // H2 FIX: Verify Razorpay signature server-side before signaling success
+        try {
+          const verifyRes = await fetch("/api/checkout/verify-signature", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }),
+          });
+          if (!verifyRes.ok) {
+            const err = await verifyRes.json();
+            console.error("Payment signature verification failed:", err);
+            setIsProcessing(false);
+            onPaymentError({
+              description:
+                "Payment verification failed. Our team will review this transaction.",
+              code: "VERIFICATION_FAILED",
+            });
+            return;
+          }
+        } catch (verifyErr) {
+          // Network failure — don't block; webhook is the ultimate authority
+          Sentry.captureException(
+            verifyErr instanceof Error
+              ? verifyErr
+              : new Error(String(verifyErr)),
+            { tags: { subsystem: "payments" } },
+          );
+          console.error("Signature verification request failed:", verifyErr);
+        }
+        onPaymentSuccess(response);
+      },
+      prefill:
+        userName || userEmail || userPhone
+          ? {
+              ...(userName && { name: userName }),
+              ...(userEmail && { email: userEmail }),
+              ...(userPhone && { contact: userPhone }),
+            }
+          : undefined,
+      theme: {
+        color: "#2563EB", // Familiarise brand blue
+      },
+      onDismiss: () => {
+        setIsProcessing(false);
+        toast({
+          title: "Payment not completed",
+          description:
+            "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
+        });
+      },
+    });
+
+    const rzp = new window.Razorpay(options);
+    rzp.on("payment.failed", function (response: RazorpayFailedResponse) {
+      setIsProcessing(false);
+      onPaymentError(response.error);
+    });
+    rzp.open();
+    return true;
   };
 
   return (

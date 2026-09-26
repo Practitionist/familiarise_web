@@ -29,8 +29,27 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // #1775 C-3 — the retry cohort read; none by default.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     appointment: { findMany: jest.fn() },
+    payment: { findMany: jest.fn().mockResolvedValue([]) },
+    refund: { findMany: jest.fn().mockResolvedValue([]) },
+    // #1775 C-6 — an upsert keyed on transactionId, as the outbox is.
+    notificationOutbox: {
+      rows: new Map<string, unknown>(),
+      upsert: jest.fn(
+        async (q: { where: { transactionId: string }; create: unknown }) => {
+          const rows = (db.notificationOutbox as { rows: Map<string, unknown> })
+            .rows;
+          if (!rows.has(q.where.transactionId))
+            rows.set(q.where.transactionId, q.create);
+          return rows.get(q.where.transactionId);
+        },
+      ),
+    },
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.
@@ -47,6 +66,19 @@ jest.mock("../../lib/novu/service", () => ({
 }));
 jest.mock("../../lib/novu/outbox", () => ({
   deriveTransactionId: (...parts: unknown[]) => parts.join("|"),
+  // The real staging shape: one upsert keyed on the derived transaction id.
+  stageTrigger: (args: {
+    tx: { notificationOutbox: { upsert: (q: unknown) => unknown } };
+    workflowId: string;
+    recipients: string[];
+    dedupeKey: string;
+  }) =>
+    args.tx.notificationOutbox.upsert({
+      where: {
+        transactionId: `${args.workflowId}|${args.recipients.join(",")}|${args.dedupeKey}`,
+      },
+      create: { recipients: args.recipients },
+    }),
 }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
@@ -250,5 +282,99 @@ describe("expiry sweep refunds (PR 2c)", () => {
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(result.subscriptionsExpired).toBe(1);
     expect(result.refundsIssued).toBe(1);
+  });
+});
+
+/**
+ * #1775 C-3 — a paid plan the consultant never allocated within 48 h of the
+ * capture expires (UNALLOCATED_48H) and is refunded in full. The mocked read
+ * honours the cohort's live-session and capture-clock predicates.
+ */
+describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
+  type CohortWhere = {
+    status?: string;
+    AND?: Array<{
+      appointment?: {
+        payment?: { some?: { OR?: [{ capturedAt: { lt: Date } }] } };
+      };
+    }>;
+  };
+  const paidRow = (live: number) => ({
+    id: "sub-paid",
+    live,
+    capturedAt: new Date(Date.now() - 49 * 60 * 60 * 1000),
+    requestedBy: { user: { id: "u-buyer", name: "Buyer" } },
+    subscriptionPlan: {
+      title: "Mentorship",
+      consultantProfile: { user: { id: "u-expert", name: "Expert" } },
+    },
+    appointment: { id: "apt-1", organizationId: null, occurrences: [] },
+  });
+  const readCohort =
+    (rows: ReturnType<typeof paidRow>[]) =>
+    async ({ where }: { where: CohortWhere }) => {
+      const cutoff =
+        where.AND?.[2]?.appointment?.payment?.some?.OR?.[0].capturedAt.lt;
+      if (where.status !== "PENDING" || !cutoff) return [];
+      return rows.filter((r) => r.live === 0 && r.capturedAt < cutoff);
+    };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
+      { id: "apt-1", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
+    ]);
+    (
+      prisma as unknown as { payment: { findMany: jest.Mock } }
+    ).payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
+    refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
+  });
+
+  it("expires with the money predicate in the CAS and refunds in full", async () => {
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      readCohort([paidRow(0)]),
+    );
+    await expireStaleRequests();
+
+    const cas = (prisma.subscription.updateMany as jest.Mock).mock.calls
+      .map(([args]) => args)
+      .find((args) => args.where.id === "sub-paid");
+    expect(cas.where.status).toEqual({ in: [AppointmentStatus.PENDING] });
+    expect(JSON.stringify(cas.where)).toContain('"paymentStatus":"SUCCEEDED"');
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundBookingPayment.mock.calls[0][0]).not.toHaveProperty(
+      "amountPaise",
+    );
+  });
+
+  it("stages one bell to both parties, however often the sweep stages it (#1775 C-6)", async () => {
+    const outbox = (
+      prisma as unknown as {
+        notificationOutbox: { rows: Map<string, { recipients: string[] }> };
+      }
+    ).notificationOutbox;
+    outbox.rows.clear();
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      readCohort([paidRow(0)]),
+    );
+    await expireStaleRequests();
+    await expireStaleRequests();
+    expect(outbox.rows.size).toBe(1);
+    expect([...outbox.rows.values()][0].recipients).toEqual([
+      "u-buyer",
+      "u-expert",
+    ]);
+  });
+
+  it("leaves a plan with one live session alone", async () => {
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      readCohort([paidRow(1)]),
+    );
+    await expireStaleRequests();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 });

@@ -105,7 +105,7 @@ model MaintenanceWindow {
 
 ## Edge Read Strategy
 
-The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 30-second in-memory cache (edge isolates share module scope within an instance lifetime) and exposes two readers:
+The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (edge isolates share module scope within an instance lifetime; raised from 30 seconds under #1822 Q-6, since the read fails open and the only cost of a longer window is slower enforcement of a newly-set phase; a failed or non-OK read is cached for only 30 seconds, so one Upstash blip cannot lift a DEGRADED write-block for three minutes) and exposes two readers:
 
 | Reader                            | Used by                        | Behaviour                                                                                                |
 | --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ A soft (RSC) navigation must not block on a Redis round-trip, or it sits blank b
 - **`event.waitUntil`** — an unawaited promise is not guaranteed to run after the middleware response is sent, so `middleware()` passes `event.waitUntil` into `getMaintenanceStateCachedOnly()` to keep the background refresh alive. Without it the cache would never repopulate and a session that only soft-navigates would serve stale state indefinitely.
 - **`isRefreshing` guard** — a single module-level flag collapses concurrent stale sub-navigations into one Upstash read instead of a thundering herd.
 
-When the cache is stale the cached-only reader returns the **last-known** state (not OFF), so an active window is still enforced while the refresh is in flight. A full document load always does the live read, so any window is enforced within one document navigation or the 30-second cache window.
+When the cache is stale the cached-only reader returns the **last-known** state (not OFF), so an active window is still enforced while the refresh is in flight. A full document load always does the live read, so any window is enforced within one document navigation or the 180-second cache window (#1822).
 
 ## Bypass Mechanism
 

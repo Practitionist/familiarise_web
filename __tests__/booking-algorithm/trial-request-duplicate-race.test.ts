@@ -39,9 +39,8 @@ jest.mock("../../lib/novu", () => ({
   notifyTrialRequested: jest.fn(async () => undefined),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const db: Record<string, unknown> = {
     trial: {
       findUnique: jest.fn(),
       deleteMany: jest.fn(),
@@ -50,8 +49,11 @@ jest.mock("../../lib/prisma", () => ({
     subscriptionPlan: { findUnique: jest.fn() },
     consulteeProfile: { findUnique: jest.fn() },
     membership: { findFirst: jest.fn() },
-  },
-}));
+  };
+  // #1775 C-7 — the create runs in a transaction with the paid placeholder.
+  db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
+  return { __esModule: true, default: db };
+});
 
 import prisma from "../../lib/prisma";
 import { getSession } from "../../lib/auth-server";

@@ -32,6 +32,35 @@ const DEFAULT_TTL_MS = 15 * 60 * 1000; // workflows set timeout-minutes: 10
 /** Payout/reconcile family runs up to 30 min (ADR 05) — lock must outlive it. */
 export const LONG_JOB_TTL_MS = 35 * 60 * 1000;
 
+// #1822 Q-5 — `checkRedisHealth()`'s own cache is 2s, tuned for the booking
+// lock retry loop where a stale negative must clear within one attempt. The
+// cron ticker fires 18 targets a few seconds apart on the same instance, each
+// paying its own PING at that 2s cadence for the PRE-ACQUIRE gate below. A 30s
+// window scoped to THIS module only (the shared 2s cache in lib/redis.ts is
+// untouched, so booking's own direct callers are unaffected) still fails a
+// fail-closed job closed within one tick of a real outage. Deliberately NOT
+// applied to the post-null re-probe further down: that check exists to catch
+// Redis going down mid-attempt (#1205-triage), so it must stay a live probe.
+const CRON_HEALTH_CACHE_MS = 30_000;
+let cronHealthCachedAt = 0;
+let cronHealthCachedValue = false;
+
+async function checkRedisHealthForCron(): Promise<boolean> {
+  const now = Date.now();
+  if (now - cronHealthCachedAt < CRON_HEALTH_CACHE_MS) {
+    return cronHealthCachedValue;
+  }
+  cronHealthCachedValue = await checkRedisHealth();
+  cronHealthCachedAt = now;
+  return cronHealthCachedValue;
+}
+
+/** Test-only: clears the cron-scoped health cache between cases (#1822). */
+export function resetCronHealthCacheForTesting(): void {
+  cronHealthCachedAt = 0;
+  cronHealthCachedValue = false;
+}
+
 export interface CronLockOpts {
   ttlMs?: number;
   /**
@@ -133,7 +162,7 @@ export async function withCronLock<T>(
   // clean skip; an unreachable Redis on a fail-closed job must page instead —
   // otherwise money jobs freeze silently for as long as the outage lasts.
   if (opts.failMode === "closed") {
-    const healthy = await checkRedisHealth();
+    const healthy = await checkRedisHealthForCron();
     if (!healthy) throw new CronLockUnavailableError(jobName);
   }
 
@@ -148,6 +177,8 @@ export async function withCronLock<T>(
     // unhealthy ⇒ page (CronLockUnavailableError); reachable ⇒ someone really
     // holds the lock (clean CronLockHeldError skip).
     if (opts.failMode === "closed") {
+      // Live probe, NOT the cron-scoped cache above — this exists to catch
+      // Redis going down between the pre-acquire gate and this point.
       const healthyNow = await checkRedisHealth();
       if (!healthyNow || isRedisCircuitOpen()) {
         throw new CronLockUnavailableError(jobName);

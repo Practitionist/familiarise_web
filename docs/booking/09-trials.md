@@ -8,7 +8,7 @@ Key characteristics:
 
 - Priced per plan via `trialPriceInPaise`, which defaults to 0 (a free trial); the consultant can raise it, and a priced trial is paid for on the branded checkout page described under "Paying for a trial" below.
 - A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it. The floor defaults to 0, which keeps free trials allowed.
-- A priced trial is accepted into `AWAITING_PAYMENT` with its slot held: `Trial.pendingPaymentUrl` carries the checkout hand-off, `Trial.paymentId` links the settled `Payment`, and the capture webhook moves the trial to `SCHEDULED`. A hold that is never paid is released by the expire-unpaid-trials sweep, which since 2026-09-19 (#1591 J4-P0-03) also tombstones the held appointment (`softCancelTrialAppointment`) and notifies the consultee, not just the status column.
+- Since #1775 a priced trial is charged at request: `POST /api/trials` creates a placeholder appointment and mints the order against it, the capture webhook sets `Trial.paymentId` while the trial stays `PENDING`, and the consultant can accept only a paid trial, whose session is then placed on that appointment. Trials accepted under the earlier flow still pass through `AWAITING_PAYMENT`. An unpaid trial past its pay window is released by the expire-unpaid-trials sweep, which since 2026-09-19 (#1591 J4-P0-03) also tombstones the held appointment (`softCancelTrialAppointment`) and notifies the consultee, and a paid trial nobody answers within 48 hours is cancelled and refunded in full.
 - The pay-link persist is a CAS, not a bare write (#1583 A-P0-06): a mint that matched zero rows on `Trial.updateMany({ where: { status: AWAITING_PAYMENT, pendingPaymentUrl: null } })` tombstones the freshly minted order rather than orphaning it, and reports `PAY_LINK_ORPHANED` (`lib/booking/pay-link-persist.ts`). A trial whose link was lost this way — still `AWAITING_PAYMENT`, `pendingPaymentUrl` null, `paymentDueAt` still in the future — is re-minted from the consultee's own read (`lib/trials/pay-link.ts`), under the same `lockApprovalPaymentMint` key and appointment lock the original mint used, reusing a live PENDING intent first rather than minting a second gateway order.
 - Duration configured per plan via `trialDurationMinutes` (default 30 min)
 - Consultant must approve and schedule the session
@@ -28,20 +28,20 @@ Key characteristics:
 
 ### Trial
 
-| Field                       | Type               | Default   | Description                                                                                                                                     |
-| --------------------------- | ------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                        | `String` (cuid)    | auto      | Primary key                                                                                                                                     |
-| `status`                    | `TrialStatus`      | `PENDING` | Current lifecycle status                                                                                                                        |
-| `notes`                     | `String?` (Text)   | null      | Consultee's questions or goals for the trial                                                                                                    |
-| `consulteeProfileId`        | `String`           | required  | FK to ConsulteeProfile                                                                                                                          |
-| `consultantProfileId`       | `String`           | required  | FK to ConsultantProfile                                                                                                                         |
-| `subscriptionPlanId`        | `String`           | required  | FK to SubscriptionPlan (must have trial enabled)                                                                                                |
-| `appointmentId`             | `String?` (unique) | null      | FK to Appointment (set on acceptance: `AWAITING_PAYMENT` for a paid trial, `SCHEDULED` for a free one; the held slot lives on this appointment) |
-| `convertedToSubscriptionId` | `String?` (unique) | null      | FK to Subscription (set when CONVERTED)                                                                                                         |
-| `requestedAt`               | `DateTime`         | `now()`   | When the trial was requested                                                                                                                    |
-| `completedAt`               | `DateTime?`        | null      | When the session was completed                                                                                                                  |
-| `createdAt`                 | `DateTime`         | `now()`   | Record creation timestamp                                                                                                                       |
-| `updatedAt`                 | `DateTime`         | auto      | Last update timestamp                                                                                                                           |
+| Field                       | Type               | Default   | Description                                                                                                    |
+| --------------------------- | ------------------ | --------- | -------------------------------------------------------------------------------------------------------------- |
+| `id`                        | `String` (cuid)    | auto      | Primary key                                                                                                    |
+| `status`                    | `TrialStatus`      | `PENDING` | Current lifecycle status                                                                                       |
+| `notes`                     | `String?` (Text)   | null      | Consultee's questions or goals for the trial                                                                   |
+| `consulteeProfileId`        | `String`           | required  | FK to ConsulteeProfile                                                                                         |
+| `consultantProfileId`       | `String`           | required  | FK to ConsultantProfile                                                                                        |
+| `subscriptionPlanId`        | `String`           | required  | FK to SubscriptionPlan (must have trial enabled)                                                               |
+| `appointmentId`             | `String?` (unique) | null      | FK to Appointment (a paid trial's placeholder is created at request; a free trial's appointment on acceptance) |
+| `convertedToSubscriptionId` | `String?` (unique) | null      | FK to Subscription (set when CONVERTED)                                                                        |
+| `requestedAt`               | `DateTime`         | `now()`   | When the trial was requested                                                                                   |
+| `completedAt`               | `DateTime?`        | null      | When the session was completed                                                                                 |
+| `createdAt`                 | `DateTime`         | `now()`   | Record creation timestamp                                                                                      |
+| `updatedAt`                 | `DateTime`         | auto      | Last update timestamp                                                                                          |
 
 ### Constraints
 
@@ -60,15 +60,15 @@ Key characteristics:
 
 ### TrialStatus Enum
 
-| Value              | Description                                                            |
-| ------------------ | ---------------------------------------------------------------------- |
-| `PENDING`          | Requested, awaiting consultant action                                  |
-| `AWAITING_PAYMENT` | Accepted by the consultant, slot held, waiting on the consultee to pay |
-| `SCHEDULED`        | Time slot confirmed                                                    |
-| `COMPLETED`        | Trial session finished                                                 |
-| `CONVERTED`        | Consultee subscribed after trial                                       |
-| `CANCELLED`        | Cancelled by consultee                                                 |
-| `REJECTED`         | Declined by consultant                                                 |
+| Value              | Description                                                       |
+| ------------------ | ----------------------------------------------------------------- |
+| `PENDING`          | Requested, awaiting consultant action; a paid trial is paid here  |
+| `AWAITING_PAYMENT` | Legacy: accepted before payment under the pre-#1775 flow          |
+| `SCHEDULED`        | Time slot confirmed                                               |
+| `COMPLETED`        | Trial session finished                                            |
+| `CONVERTED`        | Consultee subscribed after trial                                  |
+| `CANCELLED`        | Cancelled by consultee, lapsed unpaid, or unanswered for 48 hours |
+| `REJECTED`         | Declined by consultant                                            |
 
 ---
 
@@ -78,7 +78,9 @@ Key characteristics:
 stateDiagram-v2
     [*] --> PENDING : Consultee requests trial
     PENDING --> SCHEDULED : Consultant approves a free trial & picks slot
-    PENDING --> AWAITING_PAYMENT : Consultant approves a paid trial & picks slot
+    PENDING --> SCHEDULED : Consultant accepts a paid trial already paid at request
+    PENDING --> CANCELLED : Unpaid past its window, or unanswered for 48 h (refunded)
+    PENDING --> AWAITING_PAYMENT : Legacy accept-then-pay only
     AWAITING_PAYMENT --> SCHEDULED : Webhook confirms payment
     AWAITING_PAYMENT --> CANCELLED : Consultee cancels or the pay-link lapses (expire-unpaid-trials sweep)
     PENDING --> REJECTED : Consultant declines
@@ -170,12 +172,14 @@ sequenceDiagram
 
 1. **Request** -- Consultee calls `POST /api/trials` with `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, and optional `notes`. The API checks the unique constraint and verifies `trialEnabled` on the plan.
 2. **Eligibility check** -- `GET /api/trials/check-eligibility` can be called beforehand to verify the consultee has not already used their trial with this consultant.
-3. **Approve & Schedule** -- Consultant calls `PATCH /api/trials/[trialId]` with `status: "SCHEDULED"` and `slotData: { startsAt, endsAt }`. The system acquires a distributed lock, validates slot availability, then creates an `Appointment` (type `TRIAL`) and a `AppointmentOccurrence` inside a Prisma transaction. When the plan's trial price is above zero the server lands the trial in `AWAITING_PAYMENT` instead, with the same appointment holding the slot until the payment webhook confirms.
+3. **Approve & Schedule** -- Consultant calls `PATCH /api/trials/[trialId]` with `status: "SCHEDULED"` and `slotData: { startsAt, endsAt }`. The system acquires a distributed lock, validates slot availability, then creates an `Appointment` (type `TRIAL`) and a `AppointmentOccurrence` inside a Prisma transaction. A paid trial is accepted only once its request-time payment has been captured; the session is then placed on the placeholder appointment created at request time, and the trial moves straight to `SCHEDULED`. `AWAITING_PAYMENT` remains only for trials accepted under the old accept-then-pay flow.
 4. **Session** -- Both parties join the meeting via Stream video call.
 5. **Auto-complete** -- The hourly cron marks `SCHEDULED` trials as `COMPLETED` once all appointment slots have ended (with a 1-hour buffer).
 6. **Conversion** -- If the consultee subscribes, the trial status transitions to `CONVERTED` and `convertedToSubscriptionId` is set.
 
 ### Paying for a trial
+
+Since #1775 a paid trial is charged when it is requested, not when it is accepted. The request creates a placeholder appointment and mints the order against it, the buyer pays on the branded checkout page, and the capture stamps the trial's `paymentId` while it stays `PENDING`. The consultant can accept only a paid trial (`409 TRIAL_UNPAID` otherwise), and the session is then created on the placeholder appointment. A decline, or 48 hours without an answer (`TRIAL_UNANSWERED`), refunds the payment in full and stages the `trial-refunded` bell for the learner. The "Pay to confirm" button on the checkout page lands on `/checkout/pay/[paymentId]`, which opens the existing Razorpay order.
 
 A priced trial is paid for on our own checkout page at
 `/checkout/plans/trial/[trialId]`, and every "Pay Now" affordance in the product
@@ -185,10 +189,10 @@ context a buyer needs: the branded page names the amount, shows the held session
 in the viewer's own timezone, states the deadline the hold expires at, and only
 then hands off (#1167).
 
-The one place that decision is made is `trialCheckoutHref` in
-`lib/appointments/trial-checkout-href.ts`. It returns the branded href for a
-trial row and `null` for everything else, and a caller that gets `null` falls
-back to opening `vm.pendingPaymentUrl` in a new tab. The `Trial` id only
+The one place that decision is made is `bookingPayHref` in
+`lib/appointments/trial-checkout-href.ts`. It returns the branded trial page
+for a trial row, our pay page at `/checkout/pay/[paymentId]` for a Razorpay
+order, and a hosted link only when one is an https URL. The `Trial` id only
 survives in the synthetic view-model id the mappers mint (`trial-<id>`), which
 is why the helper parses that prefix rather than reading a field. Both Pay Now
 buttons on the appointment detail page and the one in the appointment sheet call
@@ -198,7 +202,8 @@ trials back to the raw gateway link (#1428, #1429).
 
 If you add a new surface that offers to pay for a booking, call the helper
 first; do not re-derive the branch, and do not link to `pendingPaymentUrl`
-directly.
+directly. The branded page's own "Pay to confirm" button lands on
+`/checkout/pay/[paymentId]`, which opens the existing order.
 
 ---
 

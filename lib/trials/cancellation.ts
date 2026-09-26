@@ -57,15 +57,12 @@ export async function softCancelTrialAppointment(
     // concurrent capture/accept racing the cancel CASes instead of being
     // overwritten — and the move is audited. allowZero because the trial may
     // legitimately have no live rows left (already released, never placed).
-    await transitionOccurrenceCompletion(
-      tx,
-      {
-        where: { appointmentId, deletedAt: null },
-        to: OccurrenceCompletionStatus.CANCELLED,
-        data: { deletedAt: now },
-        allowZero: true,
-      },
-    );
+    await transitionOccurrenceCompletion(tx, {
+      where: { appointmentId, deletedAt: null },
+      to: OccurrenceCompletionStatus.CANCELLED,
+      data: { deletedAt: now },
+      allowZero: true,
+    });
     await tx.appointment.updateMany({
       where: { id: appointmentId, deletedAt: null },
       data: { deletedAt: now },
@@ -129,10 +126,12 @@ export async function refundCancelledTrial(args: {
       })
     : null;
 
+  // #1775 C-11 — no session yet (a paid trial waiting for its answer) is
+  // infinite notice, as quoteBookingRefund reads it; -1 refunded 0 %.
   const startsAt = appointment?.occurrences[0]?.startsAt;
   const hoursUntilStart = startsAt
     ? (startsAt.getTime() - Date.now()) / 3_600_000
-    : -1;
+    : Number.POSITIVE_INFINITY;
 
   const refundPct = computeRefundPct(
     termsFromPolicyRow(appointment?.cancellationPolicy),

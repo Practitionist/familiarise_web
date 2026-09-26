@@ -21,6 +21,7 @@ import AppointmentRescheduledEmail, {
 import AppointmentReminderEmail from "@/emails/booking/AppointmentReminderEmail";
 import NewBookingRequestEmail from "@/emails/booking/NewBookingRequestEmail";
 import TrialScheduledEmail from "@/emails/booking/TrialScheduledEmail";
+import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
 import { SENDERS } from "../config";
 import { loadEmailRecipients, type EmailRecipient } from "../preferences";
 import {
@@ -393,7 +394,8 @@ export interface UnscheduledSubscriptionNudgeEmailArgs {
   consultantUserId: string;
   consulteeName: string;
   planTitle: string;
-  nudgeDays: number;
+  /** #1775 C-4 — hours since the plan's capture (12, 24 or 36). */
+  nudgeHours: number;
   timingsUrl: string;
 }
 
@@ -403,9 +405,9 @@ export const SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE =
   "SUBSCRIPTION_UNSCHEDULED_NUDGE";
 export function unscheduledNudgeEntityRef(
   subscriptionId: string,
-  nudgeDays: number,
+  nudgeHours: number,
 ): string {
-  return `subscription:${subscriptionId}:day${nudgeDays}`;
+  return `subscription:${subscriptionId}:h${nudgeHours}`;
 }
 
 export function sendUnscheduledSubscriptionNudgeEmail(
@@ -416,7 +418,10 @@ export function sendUnscheduledSubscriptionNudgeEmail(
     {
       emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
       category: "appointments",
-      entityRef: unscheduledNudgeEntityRef(args.subscriptionId, args.nudgeDays),
+      entityRef: unscheduledNudgeEntityRef(
+        args.subscriptionId,
+        args.nudgeHours,
+      ),
       subject: () =>
         `${args.consulteeName}'s subscription is waiting for session times`,
       render: (r) =>
@@ -427,7 +432,7 @@ export function sendUnscheduledSubscriptionNudgeEmail(
           appointmentType: "subscription",
           reviewUrl: absolute(args.timingsUrl),
           unsubscribeUrl: r.unsubscribeUrl,
-          nudgeDays: args.nudgeDays,
+          nudgeHours: args.nudgeHours,
         }),
     },
     [args.consultantUserId],
@@ -489,4 +494,45 @@ export function sendTrialScheduledEmail(
     [args.consulteeUserId, args.consultantUserId],
     budgetMs,
   );
+}
+
+// ── Window opened (#1778) ───────────────────────────────────────────────────
+
+export const WINDOW_OPENED_EMAIL_TYPE = "WINDOW_OPENED";
+
+/**
+ * #1778 — a held window a learner asked about has freed. Staged through `tx`
+ * with the bell; the caller runs `attemptStaged()` after the commit.
+ */
+export async function stageWindowOpenedEmail(
+  tx: Tx,
+  args: {
+    interestId: string;
+    userId: string;
+    consultantName: string;
+    windowStart: Date;
+    bookUrl: string;
+  },
+): Promise<StagedRecipientEmail[]> {
+  const recipients = await loadEmailRecipients(
+    [args.userId],
+    "appointments",
+    tx,
+  );
+  return stageToRecipients({
+    tx,
+    recipients,
+    emailType: WINDOW_OPENED_EMAIL_TYPE,
+    from: SENDERS.notifications,
+    entityRef: `window-opened:${args.interestId}`,
+    subject: () => `A time with ${args.consultantName} just opened`,
+    render: (r) =>
+      React.createElement(WindowOpenedEmail, {
+        recipientName: greet(r),
+        consultantName: args.consultantName,
+        windowText: whenText(args.windowStart, r.zone),
+        bookUrl: absolute(args.bookUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+      }),
+  });
 }

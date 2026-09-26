@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { payLinkHref } from "@/lib/payments/pay-link-href";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -35,25 +36,38 @@ import {
 export async function persistTrialPayLink(args: {
   trialId: string;
   paymentIntentId: string;
+  paymentId: string;
   checkoutUrl: string;
 }): Promise<string | null> {
+  // #1775 P-1 — a Razorpay "link" is the order id; store our pay page instead.
+  const link =
+    payLinkHref({ paymentId: args.paymentId, checkoutUrl: args.checkoutUrl }) ??
+    args.checkoutUrl;
+  // #1775 C-7 — a paid trial is payable from request (PENDING, uncaptured).
   const res = await prisma.trial.updateMany({
     where: {
       id: args.trialId,
-      status: TrialStatus.AWAITING_PAYMENT,
+      status: { in: TRIAL_PAYABLE_STATUSES },
+      paymentId: null,
       pendingPaymentUrl: null,
     },
-    data: { pendingPaymentUrl: args.checkoutUrl },
+    data: { pendingPaymentUrl: link },
   });
-  if (res.count === 1) return args.checkoutUrl;
+  if (res.count === 1) return link;
   const outcome = await reconcileOrphanedPayLink({
     kind: "trial",
     id: args.trialId,
     paymentIntentId: args.paymentIntentId,
-    checkoutUrl: args.checkoutUrl,
+    checkoutUrl: link,
   });
   return outcome.url;
 }
+
+/** #1775 C-7 — a paid trial is payable while PENDING (charged at request) or AWAITING_PAYMENT. */
+export const TRIAL_PAYABLE_STATUSES: TrialStatus[] = [
+  TrialStatus.PENDING,
+  TrialStatus.AWAITING_PAYMENT,
+];
 
 export interface TrialPayLinkSubject {
   id: string;
@@ -77,7 +91,7 @@ export function needsTrialPayLinkRemint(
   now = new Date(),
 ): boolean {
   return (
-    trial.status === TrialStatus.AWAITING_PAYMENT &&
+    TRIAL_PAYABLE_STATUSES.includes(trial.status) &&
     trial.pendingPaymentUrl === null &&
     trial.paymentDueAt !== null &&
     trial.paymentDueAt > now
@@ -98,8 +112,9 @@ export async function remintTrialPayLink(
   trial: TrialPayLinkSubject,
 ): Promise<string | null> {
   if (!needsTrialPayLinkRemint(trial)) return trial.pendingPaymentUrl;
+  // #1775 C-7 — a request-time placeholder has no session yet.
   const slot = trial.appointment?.occurrences[0];
-  if (!trial.appointment || !slot) return null;
+  if (!trial.appointment) return null;
   const appointmentId = trial.appointment.id;
 
   try {
@@ -136,6 +151,7 @@ export async function remintTrialPayLink(
       const intent = live
         ? {
             paymentIntentId: live.paymentIntent,
+            paymentId: live.id,
             checkoutUrl: live.paymentIntent,
           }
         : await createApprovalPaymentIntent({
@@ -145,13 +161,14 @@ export async function remintTrialPayLink(
             appointmentId,
             planId: trial.subscriptionPlanId,
             paymentGateway: PaymentGateway.RAZORPAY,
-            startsAt: slot.startsAt.toISOString(),
-            endsAt: slot.endsAt.toISOString(),
+            startsAt: slot?.startsAt.toISOString(),
+            endsAt: slot?.endsAt.toISOString(),
           });
 
       return persistTrialPayLink({
         trialId: trial.id,
         paymentIntentId: intent.paymentIntentId,
+        paymentId: intent.paymentId,
         checkoutUrl: intent.checkoutUrl,
       });
     });

@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
       adminPayoutsQuerySchema,
       {
         status: searchParams.get("status"),
+        kind: searchParams.get("kind"),
         search: searchParams.get("search"),
         // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
         orgId: searchParams.get("orgId"),
@@ -52,13 +53,16 @@ export async function GET(req: NextRequest) {
     if (queryError) return queryError;
     const result = await getOperatorPayouts({
       status: query.status ?? null,
+      kind: query.kind ?? null,
       search: query.search,
       orgId: query.orgId,
       limit: query.limit,
       offset: query.offset,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching payouts:", error);

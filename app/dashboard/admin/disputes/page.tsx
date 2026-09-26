@@ -1,14 +1,14 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
+import { moneyHubHref } from "@/lib/backoffice/money-tabs";
 
-export default function AdminDisputesPage() {
-  return (
-    <DisputesPage
-      basePath="/dashboard/admin"
-      apiEndpoint="/api/admin/disputes"
-      title="Disputes"
-      description="Manage and respond to payment disputes"
-    />
+/** #1771 K-2 — disputes moved into the Money hub; the old URL answers a 308. */
+export default async function AdminDisputesRedirectPage({
+  searchParams,
+}: Readonly<{
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  permanentRedirect(
+    moneyHubHref("/dashboard/admin", "disputes", await searchParams),
   );
 }

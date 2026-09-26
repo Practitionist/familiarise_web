@@ -55,6 +55,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 import { useSession } from "@/lib/auth-client";
 import { buildRazorpayPrefill } from "@/lib/payments/razorpay-prefill";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import type {
   OrgReceivablePosting,
   OrgReceivablesPayload,
@@ -407,19 +408,21 @@ export function BillingPageClient({
         phone: session?.user?.phone ?? null,
       });
       const paid = await new Promise<boolean>((resolve) => {
-        const rzp = new window.Razorpay({
-          key: result.keyId,
-          amount: result.amountPaise,
-          currency: result.currency,
-          name: "Familiarise",
-          description: `Invoice ${result.invoice.invoiceNumber}`,
-          order_id: result.razorpayOrderId,
-          ...(Object.keys(prefill).length > 0 ? { prefill } : {}),
-          handler: () => {
-            resolve(true);
-          },
-          theme: { color: "#2563EB" },
-        });
+        const rzp = new window.Razorpay(
+          buildCheckoutOptions({
+            keyId: result.keyId,
+            amount: result.amountPaise,
+            currency: result.currency,
+            name: "Familiarise",
+            description: `Invoice ${result.invoice.invoiceNumber}`,
+            orderId: result.razorpayOrderId,
+            prefill: Object.keys(prefill).length > 0 ? prefill : undefined,
+            handler: () => {
+              resolve(true);
+            },
+            theme: { color: "#2563EB" },
+          }),
+        );
         rzp.on("payment.failed", () => {
           toast({
             title: "Payment failed",

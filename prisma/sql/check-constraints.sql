@@ -8,6 +8,9 @@
 -- Payment amounts use >= 0, not > 0: credit-covered checkouts and
 -- org-sponsored bookings legitimately write amount = 0 (free_/org_ synthetic
 -- payment intents in lib/payments/operations/checkout.ts).
+--
+-- Staged for the #1729 reset (#1771 row 7): ALTER TABLE "OrganizationPayoutAccount"
+-- DROP COLUMN "accountNumberEncrypted"; it is no longer written, as bank data is reference-only.
 
 ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_time_order";
 -- SPLIT
@@ -16,11 +19,12 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_time_order" CHECK
 -- #1554 — `ordinal` is the call's position in its purchase and a replacement
 -- written after a reschedule inherits it, so the unique holds over LIVE rows
 -- only; the RESCHEDULED / CANCELLED row keeps its number for history.
+-- #1569 — a VOIDED row is a miss like a host cancel, so its make-up reuses the ordinal.
 DROP INDEX IF EXISTS "appointment_occurrence_live_ordinal_key";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "appointment_occurrence_live_ordinal_key"
   ON "AppointmentOccurrence" ("appointmentId", "ordinal")
-  WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL;
+  WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED', 'VOIDED') AND "deletedAt" IS NULL;
 -- SPLIT
 -- #1554 / #1550 — a rating is about one call (appointmentOccurrenceId set) or
 -- the whole appointment (NULL). One row per person per level: NULLS NOT

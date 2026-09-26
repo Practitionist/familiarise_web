@@ -53,6 +53,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
 import {
   appointmentStatusBadge,
   eventStatusBadge,
@@ -333,14 +335,15 @@ function UpcomingSessionCard({
           )}
         </div>
         {/* The Appointments row's primary action for PAY_NOW, verbatim. */}
-        {event.needsActionReason === "PAY_NOW" &&
-          event.pendingPaymentUrl &&
-          /^https?:\/\//.test(event.pendingPaymentUrl) && (
-            <Button
-              asChild
-              size="sm"
-              className="h-7 px-3 text-xs font-semibold rounded-md shrink-0 bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
-            >
+        {/* #1775 P-1 — the processor resolves the target: our pay page for a
+            Razorpay order id (in-app), or a hosted https link (new tab). */}
+        {event.needsActionReason === "PAY_NOW" && event.pendingPaymentUrl && (
+          <Button
+            asChild
+            size="sm"
+            className="h-7 px-3 text-xs font-semibold rounded-md shrink-0 bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+          >
+            {isExternalPayHref(event.pendingPaymentUrl) ? (
               <a
                 href={event.pendingPaymentUrl}
                 target="_blank"
@@ -349,8 +352,16 @@ function UpcomingSessionCard({
               >
                 Pay now
               </a>
-            </Button>
-          )}
+            ) : (
+              <Link
+                href={event.pendingPaymentUrl}
+                onClick={(e) => e.stopPropagation()}
+              >
+                Pay now
+              </Link>
+            )}
+          </Button>
+        )}
         {canShowJoin && (
           <Button
             size="sm"
@@ -1056,6 +1067,10 @@ export default function HomeTab({
         {/* Right sidebar — stretch to match monthly schedule */}
         <div className="lg:h-full">
           <PendingPaymentsWidget consulteeId={consulteeId} />
+          {/* #1778 — held times this learner asked to hear about. */}
+          <div className="mt-4">
+            <WaitingTimesStrip />
+          </div>
         </div>
       </motion.div>
     </motion.div>

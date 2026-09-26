@@ -75,10 +75,21 @@ describe("sweeps cancel only from a cancellable state", () => {
 });
 
 describe("slot completion writers use transitionOccurrenceCompletion", () => {
+  // #1569 D2 — the Stream end webhooks and the orphan reconciler only close the
+  // room now; the end + 1 h slot pass is the one writer of the outcome.
   for (const file of [
     "lib/stream/session-handlers.ts",
     "jobs/meetings/reconcile-orphaned-sessions.ts",
+  ]) {
+    it(`${file} never writes completion`, () => {
+      expect(read(file)).not.toMatch(
+        /transitionOccurrenceCompletion|completionStatus/,
+      );
+    });
+  }
+  for (const file of [
     "actions/maintenance/drain-sessions.ts",
+    "lib/booking/session-outcome-sweep.ts",
   ]) {
     it(`${file} has no bare completionStatus write`, () => {
       const src = read(file);

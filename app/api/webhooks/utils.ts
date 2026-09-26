@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { getStripeClient } from "@/lib/payments/core/stripe";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
+import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -2234,7 +2235,7 @@ export async function handleRazorpayPayoutWebhook(
     cancelled: "CANCELLED",
   };
 
-  const status = statusMap[payoutData.status] || "PENDING";
+  const status = statusMap[payoutData.status];
 
   // #813/#812 — a `payout.reversed` for an ALREADY-COMPLETED consultant payout
   // must post the inverse journal + re-open earnings, mirroring the org branch.
@@ -2254,6 +2255,17 @@ export async function handleRazorpayPayoutWebhook(
       );
       return;
     }
+  }
+
+  // R-5 — an unknown status keeps the payout as it is instead of downgrading it to PENDING.
+  if (!status) {
+    await reportUnknownPayoutStatus({
+      provider: PaymentGateway.RAZORPAY,
+      providerPayoutId: payoutData.id,
+      status: payoutData.status,
+      eventType,
+    });
+    return;
   }
 
   await handlePayoutWebhook(
@@ -2295,7 +2307,17 @@ export async function handleStripePayoutWebhook(
     canceled: "CANCELLED",
   };
 
-  const status = statusMap[payoutData.status] || "PENDING";
+  const status = statusMap[payoutData.status];
+  // R-5 — the Stripe twin of the same rule.
+  if (!status) {
+    await reportUnknownPayoutStatus({
+      provider: PaymentGateway.STRIPE,
+      providerPayoutId: payoutData.id,
+      status: payoutData.status,
+      eventType,
+    });
+    return;
+  }
   const failureReason = payoutData.failure_message || payoutData.failure_code;
 
   await handlePayoutWebhook(

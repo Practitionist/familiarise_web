@@ -15,6 +15,8 @@ export interface Payout {
   createdAt: string;
   status: string;
   batchId?: string;
+  /** #1771 K-4 — 'INSTANT' for an above-cap instant payout; null = the batch. */
+  kind?: string | null;
   // No `providerPayoutId`: getOperatorPayouts hand-maps the row and does not
   // return it, and no section renders it. Declaring an optional field the
   // producer never sends is indistinguishable from a real absence, so it

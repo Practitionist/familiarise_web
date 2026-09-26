@@ -1,5 +1,6 @@
 "use client";
 
+import { earningStatusBadge } from "@/lib/labels/session-labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -128,7 +129,7 @@ export default function EarningsSection() {
       <span
         className={`px-2 py-1 rounded text-xs font-medium ${badge.bg} ${badge.text}`}
       >
-        {status}
+        {earningStatusBadge(status).label}
       </span>
     );
   };

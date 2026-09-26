@@ -114,8 +114,14 @@ export async function refundRejectedRequest(args: {
     // Clamp to what is actually still refundable. A percentage of the gross
     // overshoots on a payment with an earlier partial refund, and the refund
     // operation rejects the whole request rather than paying the remainder.
+    // #1780 R-3 — integer basis points in BigInt, as cancellation-policy does:
+    // a two-decimal percentage times paise put float error inside money.
     const amountPaise = Math.min(
-      Math.floor((ctx.paidPayment.amountPaise * refundPct) / 100),
+      Number(
+        (BigInt(ctx.paidPayment.amountPaise) *
+          BigInt(Math.round(refundPct * 100))) /
+          BigInt(10_000),
+      ),
       ctx.paidPayment.refundablePaise,
     );
     if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };

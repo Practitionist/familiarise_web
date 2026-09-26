@@ -54,6 +54,8 @@ const TARGETS = [
   "appointment-reminders",
   "tentative-occurrences",
   "expire-stale-requests",
+  // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
+  "settle-cancelled-sessions",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -80,6 +82,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "drain-notification-outbox": 20,
   // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
   "reconcile-orphaned-confirmations": 10,
+  // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
+  "settle-cancelled-sessions": 10,
 };
 
 /**
@@ -92,9 +96,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
 // (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
 // batch size — is the burn lever. Targets with an Actions twin at equal or
 // better cadence ride the 15-minute slots; the ticker-only Novu relay rides
-// every 10. Every-tick keeps only the two latency-sensitive money confirms
-// with no equal backstop (payment-status q30m Actions, orphaned-confirmations
-// q30m Actions but chat-access latency is customer-visible).
+// every 10. #1822 Q-3 — the two reconcile confirms left every-tick too
+// (≈83k commands/month); their 30-min Actions twins stay the backstop.
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
   "sweep-orphaned-topup-captures": 15,
@@ -109,6 +112,9 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
+  // #1822 Q-3 — see the block comment above; moved off every-tick.
+  "reconcile-payment-status": 15,
+  "reconcile-orphaned-confirmations": 15,
   // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
   // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
   "expire-unpaid-trials": 15,
@@ -116,6 +122,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "appointment-reminders": 15,
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
+  "settle-cancelled-sessions": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -148,6 +155,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   // an overlap with the Actions run a 409, not a double run.
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
+  "settle-cancelled-sessions": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */

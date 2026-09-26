@@ -3,22 +3,20 @@
  * PUT /api/organizations/[orgId]/payout-account
  *
  * Hosting-side bank/payout credentials (canHost=true orgs). The record is
- * 1:1 with Organization — a PUT either creates or updates. Full account
- * numbers are encrypted before storage; the public-readable last-four and
- * status flow is what UI surfaces render.
+ * 1:1 with Organization — a PUT either creates or updates. The full account
+ * number is forwarded to RazorpayX and never stored (#1771 row 7); the
+ * last-four and status flow is what UI surfaces render.
  *
  * Verification lifecycle (`status`) moves PENDING_VERIFICATION → VERIFIED
  * through a side-channel (Razorpay contact + fund-account creation). This
  * endpoint only writes the raw record; the verification job flips status.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { encodeAccountEnvelope } from "@/lib/payments/payouts/account-crypto";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
@@ -27,7 +25,7 @@ import { transitionOrgPayoutAccount } from "@/lib/enterprise/transitions";
 
 const UpsertBodySchema = z.object({
   accountHolderName: z.string().min(1).max(200),
-  // Full account number — stored encrypted. Last-four is derived.
+  // Full account number — sent to RazorpayX only. Last-four is derived.
   accountNumber: z.string().min(4).max(34),
   bankName: z.string().min(1).max(120),
   ifscCode: z.string().length(11).optional(),
@@ -203,22 +201,9 @@ export async function PUT(
   const body = parsed.data;
 
   const last4 = body.accountNumber.slice(-4);
-  let encrypted: string;
-  try {
-    encrypted = encodeAccountEnvelope(body.accountNumber);
-  } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "organizations" } },
-    );
-    return NextResponse.json(
-      {
-        error: "Payout encryption is not configured on this server",
-        detail: err instanceof Error ? err.message : String(err),
-      },
-      { status: 500 },
-    );
-  }
+  // #1771 row 7 — bank data is reference-only: the full number goes to RazorpayX
+  // once and is never stored. The column stays NOT NULL until the #1729 drop.
+  const noStoredAccountNumber = "";
 
   const upserted = await prisma.$transaction(async (tx) => {
     const existing = await tx.organizationPayoutAccount.findUnique({
@@ -233,7 +218,7 @@ export async function PUT(
       create: {
         organizationId: orgId,
         accountHolderName: body.accountHolderName,
-        accountNumberEncrypted: encrypted,
+        accountNumberEncrypted: noStoredAccountNumber,
         accountNumberLast4: last4,
         bankName: body.bankName,
         ifscCode: body.ifscCode ?? null,
@@ -243,7 +228,7 @@ export async function PUT(
       },
       update: {
         accountHolderName: body.accountHolderName,
-        accountNumberEncrypted: encrypted,
+        accountNumberEncrypted: noStoredAccountNumber,
         accountNumberLast4: last4,
         bankName: body.bankName,
         ifscCode: body.ifscCode ?? null,

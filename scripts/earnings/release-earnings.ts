@@ -21,7 +21,8 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { EarningStatus, Prisma } from "@prisma/client";
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
+import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -65,6 +66,41 @@ export interface ReleaseEarningsOptions {
  *
  * @returns ReleaseResult with counts and error details
  */
+/**
+ * #1775 P-2 — an earning whose payment has a refund still in flight is not
+ * released: the clawback cascade sizes itself when that refund settles, and a
+ * READY (or paid-out) row would pay the consultant money that is leaving.
+ * Repeated in the claim's WHERE so a refund opened mid-run keeps the row.
+ */
+/**
+ * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
+ * a make-up or a refund for a host-cancelled or voided session, or holding a
+ * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
+ */
+const RELEASABLE_PAYMENT = {
+  refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  OR: [
+    { appointmentId: null },
+    {
+      appointment: {
+        AND: [
+          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
+        ],
+      },
+    },
+  ],
+} satisfies Prisma.PaymentWhereInput;
+
+const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
+  payment: RELEASABLE_PAYMENT,
+};
+
+/** The same guards on the host-organisation arm (#1775 P-2, #1569). */
+const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
+  payment: RELEASABLE_PAYMENT,
+};
+
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function releaseEarningsFromHold(
@@ -109,6 +145,7 @@ async function releaseEarningsFromHoldUnlocked(
           where: {
             status: EarningStatus.PENDING,
             holdUntil: { lte: now },
+            ...NO_OPEN_REFUND,
           },
           include: {
             consultantProfile: {
@@ -125,6 +162,7 @@ async function releaseEarningsFromHoldUnlocked(
           where: {
             id: { in: rows.map((r) => r.id) },
             status: EarningStatus.PENDING,
+            ...NO_OPEN_REFUND,
           },
           data: {
             status: EarningStatus.READY,
@@ -163,6 +201,7 @@ async function releaseEarningsFromHoldUnlocked(
             where: {
               status: EarningStatus.PENDING,
               holdUntil: { lte: now },
+              ...NO_OPEN_REFUND_ORG,
             },
             select: {
               id: true,
@@ -180,6 +219,7 @@ async function releaseEarningsFromHoldUnlocked(
             where: {
               id: { in: rows.map((r) => r.id) },
               status: EarningStatus.PENDING,
+              ...NO_OPEN_REFUND_ORG,
             },
             data: {
               status: EarningStatus.READY,

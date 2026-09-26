@@ -5,13 +5,13 @@
  * Events handled:
  * - call.session_ended: When call session ends (last participant leaves + timeout)
  * - call.ended: When call is explicitly ended
+ *
+ * #1569 D2 — these stamp Meeting.endedAt only. The end + 1 h slot pass in
+ * auto-complete-appointments is the one writer of an occurrence's outcome.
  */
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
-import { settleSubscriptionCycle } from "@/lib/booking/subscription-cycle";
-import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -40,8 +40,8 @@ export interface StreamCallEndedEvent {
 
 // STR-4 — per-participant join/leave. Stream's CallParticipantResponse nests
 // the Stream user id (== our app userId, see upsertUserToStream) under
-// `participant.user.id`. `user_session_id` is the per-tab/device session, used
-// only for logging — attendance is keyed on the app user, not the device.
+// `participant.user.id`. `user_session_id` is the per-tab/device session: it keys
+// the #1569 MeetingPresence interval, while attendance stays per app user.
 export interface StreamSessionParticipantJoinedEvent {
   call_cid: string;
   type: "call.session_participant_joined";
@@ -76,20 +76,6 @@ export interface StreamSessionParticipantLeftEvent {
  * - Set endedReason to "session_timeout"
  * - Log session duration
  */
-/** #1766 — post-commit, best-effort: the relay delivers what this misses. */
-async function attemptStaged(rows: StagedTrigger[]): Promise<void> {
-  for (const row of rows) {
-    try {
-      await attemptTrigger(row);
-    } catch (error) {
-      streamLogger.warn("Cycle bell attempt failed; relay will retry", {
-        outboxId: row.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-}
-
 export async function handleSessionEnded(
   event: StreamSessionEndedEvent,
 ): Promise<void> {
@@ -137,57 +123,15 @@ export async function handleSessionEnded(
     }
 
     // #1270 — Stream fires this `inactivity_timeout_seconds` after the LAST
-    // participant leaves, which on the live call type is 900 seconds. An empty
-    // room is not a finished session: one party stepping out for coffee at
-    // 09:56 of a 10:00-11:00 booking produced this event, and marking the slot
-    // COMPLETED then made it review-eligible and handed it to
-    // auto-complete-appointments — for a session that had not started.
-    //
-    // The session row still records that Stream's session ended, because it
-    // did; `endedReason` distinguishes it from a host closing the room, and
-    // `isDeliberateEnd` is what the join gates read. The SLOT only completes
-    // once its booked time is actually over.
+    // participant leaves, so an empty room is not a finished session; the
+    // `endedReason` distinguishes it from a host closing the room, and
+    // `isDeliberateEnd` is what the join gates read.
     const slotEndsAt = meeting.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
-    const staged = await prisma.$transaction(async (tx) => {
-      await tx.meeting.update({
-        where: { id: meeting.id },
-        data: {
-          endedAt,
-          endedReason: "session_timeout",
-          isRecording: false,
-        },
-      });
-      if (!bookedTimeIsOver) return [];
-      // CAS (#1319): a late webhook must not resurrect a CANCELLED slot as
-      // COMPLETED. Zero rows is expected here, so log rather than throw; the
-      // session row above still records the truth about the call.
-      const moved = await transitionOccurrenceCompletion(tx, {
-        where: { id: meeting.appointmentOccurrenceId },
-        to: "COMPLETED",
-        // Never lift UNVERIFIED: the maintenance drain parked it for a human.
-        fromIn: ["SCHEDULED"],
-        data: { completedAt: endedAt },
-        allowZero: true,
-      });
-      if (moved === 0) {
-        streamLogger.info(
-          "Slot not completable — already cancelled or completed",
-          {
-            sessionId: meeting.id,
-            streamCallId,
-          },
-        );
-        return [];
-      }
-      // #1766 — staged in the same tx; attempted after commit below.
-      return settleSubscriptionCycle(tx, {
-        appointmentId: meeting.occurrence.appointmentId,
-        now: endedAt,
-      });
-    });
-    await attemptStaged(staged);
+    // CAS on the end we read: a concurrent call.ended must not be overwritten.
+    const stamped = await stampEnd(meeting, endedAt, "session_timeout");
+    if (!stamped) return;
 
     if (!bookedTimeIsOver) {
       streamLogger.info(
@@ -284,43 +228,7 @@ export async function handleCallEnded(
     const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
     const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
-    // Update meeting session and mark slot as completed atomically
-    const staged = await prisma.$transaction(async (tx) => {
-      await tx.meeting.update({
-        where: { id: meeting.id },
-        data: {
-          endedAt,
-          endedReason,
-          isRecording: false,
-        },
-      });
-      if (endedBeforeStart) return [];
-      // CAS (#1319) — see the session_timeout arm above.
-      const moved = await transitionOccurrenceCompletion(tx, {
-        where: { id: meeting.appointmentOccurrenceId },
-        to: "COMPLETED",
-        // Never lift UNVERIFIED: the maintenance drain parked it for a human.
-        fromIn: ["SCHEDULED"],
-        data: { completedAt: endedAt },
-        allowZero: true,
-      });
-      if (moved === 0) {
-        streamLogger.info(
-          "Slot not completable — already cancelled or completed",
-          {
-            sessionId: meeting.id,
-            streamCallId,
-          },
-        );
-        return [];
-      }
-      // #1766 — see the session_timeout arm above.
-      return settleSubscriptionCycle(tx, {
-        appointmentId: meeting.occurrence.appointmentId,
-        now: endedAt,
-      });
-    });
-    await attemptStaged(staged);
+    if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
     // Calculate session duration if we have a start reference
     const slotStartTime = meeting.occurrence.startsAt;
@@ -366,6 +274,36 @@ async function resolveMeeting(streamCallId: string) {
       appointmentOccurrenceId: true,
     },
   });
+}
+
+/** #1569 — one device's stay; Stream always sends user_session_id, the fallback is per call session. */
+function presenceKey(
+  sessionId: string,
+  participant: { user_session_id?: string },
+  userId: string,
+): string {
+  return participant.user_session_id || `${sessionId}:${userId}`;
+}
+
+/**
+ * Stamp the room's end, compare-and-set on the end this event read, so two end
+ * webhooks racing each other cannot overwrite a deliberate end. False when lost.
+ */
+async function stampEnd(
+  meeting: { id: string; endedAt: Date | null },
+  endedAt: Date,
+  endedReason: string,
+): Promise<boolean> {
+  const { count } = await prisma.meeting.updateMany({
+    where: { id: meeting.id, endedAt: meeting.endedAt },
+    data: { endedAt, endedReason, isRecording: false },
+  });
+  if (count === 0) {
+    streamLogger.info("End not stamped — the room's end changed concurrently", {
+      sessionId: meeting.id,
+    });
+  }
+  return count > 0;
 }
 
 /** #1607 — the last end wins; a replayed or older event never moves endedAt backwards. */
@@ -423,23 +361,36 @@ export async function handleSessionParticipantJoined(
       });
     }
 
-    // Idempotent: a duplicate webhook for the same join must not inflate the
-    // count, so the unique [meetingId, userId] row is the dedup key.
-    // First join → create with firstJoinedAt; rejoin → bump joinCount only
-    // (firstJoinedAt is immutable so #471 reads the genuine first arrival).
-    await prisma.meetingAttendance.upsert({
-      where: {
-        meetingId_userId: { meetingId, userId },
-      },
-      create: {
-        meetingId,
-        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-        userId,
-        firstJoinedAt: joinedAt,
-      },
-      update: {
-        joinCount: { increment: 1 },
-      },
+    const userSessionId = presenceKey(event.session_id, participant, userId);
+    // #1569 — the (meetingId, userSessionId) unique makes a replay a no-op, and
+    // joinCount counts distinct device sessions, not deliveries (#1746).
+    await prisma.$transaction(async (tx) => {
+      const { count: newSessions } = await tx.meetingPresence.createMany({
+        data: [
+          {
+            meetingId,
+            appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+            userId,
+            userSessionId,
+            joinedAt,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      // firstJoinedAt is immutable so #471 reads the genuine first arrival.
+      await tx.meetingAttendance.upsert({
+        where: {
+          meetingId_userId: { meetingId, userId },
+        },
+        create: {
+          meetingId,
+          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+          userId,
+          firstJoinedAt: joinedAt,
+        },
+        update:
+          newSessions > 0 ? { joinCount: { increment: newSessions } } : {},
+      });
     });
 
     streamLogger.info("Recorded participant join", {
@@ -489,23 +440,53 @@ export async function handleSessionParticipantLeft(
     const meetingId = meeting.id;
 
     const leftAt = new Date(created_at);
+    // #1569 — the leave carries its own duration, so a lost join is rebuilt from it.
+    const joinedAt = new Date(
+      leftAt.getTime() - Math.max(0, event.duration_seconds ?? 0) * 1000,
+    );
+    const userSessionId = presenceKey(event.session_id, participant, userId);
 
-    // upsert (not update) — a left arriving before/without a recorded join still
-    // creates the row, with firstJoinedAt defensively set to the leave time.
-    await prisma.meetingAttendance.upsert({
-      where: {
-        meetingId_userId: { meetingId, userId },
-      },
-      create: {
-        meetingId,
-        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-        userId,
-        firstJoinedAt: leftAt,
-        lastLeftAt: leftAt,
-      },
-      update: {
-        lastLeftAt: leftAt,
-      },
+    await prisma.$transaction(async (tx) => {
+      const { count: newSessions } = await tx.meetingPresence.createMany({
+        data: [
+          {
+            meetingId,
+            appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+            userId,
+            userSessionId,
+            joinedAt,
+            leftAt,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      // A replayed or older leave never moves leftAt backwards.
+      await tx.meetingPresence.updateMany({
+        where: {
+          meetingId,
+          userSessionId,
+          OR: [{ leftAt: null }, { leftAt: { lt: leftAt } }],
+        },
+        data: { leftAt },
+      });
+      // upsert (not update) — a leave arriving without a recorded join still
+      // creates the row, with firstJoinedAt rebuilt from the leave's duration.
+      await tx.meetingAttendance.upsert({
+        where: {
+          meetingId_userId: { meetingId, userId },
+        },
+        create: {
+          meetingId,
+          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+          userId,
+          firstJoinedAt: joinedAt,
+          lastLeftAt: leftAt,
+        },
+        update: {
+          lastLeftAt: leftAt,
+          ...(newSessions > 0 && { joinCount: { increment: newSessions } }),
+        },
+      });
     });
 
     streamLogger.info("Recorded participant leave", {

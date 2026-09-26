@@ -20,6 +20,7 @@ import {
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
+import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   isPendingPaymentStatus,
@@ -294,7 +295,11 @@ function processConsultation(
     slots: slotContexts.map(toEventSlot),
     appointmentId,
     needsActionReason,
-    pendingPaymentUrl: consultation.pendingPaymentUrl ?? null,
+    // #1775 P-1 — the Pay target: our pay page for an order id, else the link.
+    pendingPaymentUrl: payLinkHref({
+      paymentId: payablePaymentId(consultation.appointment?.payment),
+      checkoutUrl: consultation.pendingPaymentUrl,
+    }),
     joinableAppointment: session ? joinableAppointment : undefined,
     joinableSlot,
     joinableOccurrence: session?.run ?? null,
@@ -358,7 +363,10 @@ function processSubscription(
     slots: allSlots.map(toEventSlot),
     appointmentId: nextAppointment?.id,
     needsActionReason,
-    pendingPaymentUrl: subscription.pendingPaymentUrl ?? null,
+    pendingPaymentUrl: payLinkHref({
+      paymentId: payablePaymentId(nextAppointment?.payment),
+      checkoutUrl: subscription.pendingPaymentUrl,
+    }),
     joinableAppointment: nextSlot ? joinableAppointment : undefined,
     joinableSlot: nextSlot?.rawSlot,
     joinableOccurrence: nextSlot?.run ?? null,

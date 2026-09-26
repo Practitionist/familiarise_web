@@ -5,7 +5,9 @@ import { cn } from "@/utils/tailwind";
 /**
  * #1675 — the booking's story in one line: what has happened (●) and what
  * comes next (○), from `deriveBookingPresentation`. Future steps are muted
- * so the strip reads as a path, not as three more states.
+ * so the strip reads as a path, not as three more states. Each refund adds
+ * its own step — requested, processing, completed or failed (#1780) — and a
+ * failed one is drawn in the destructive colour so it cannot read as done.
  */
 export function TimelineStrip({ events }: { events: TimelineEvent[] }) {
   if (events.length === 0) return null;
@@ -21,6 +23,7 @@ export function TimelineStrip({ events }: { events: TimelineEvent[] }) {
             className={cn(
               "flex items-center gap-1.5",
               event.done ? "text-foreground" : "text-muted-foreground",
+              event.kind === "refund-failed" && "text-destructive",
             )}
           >
             {i > 0 && (

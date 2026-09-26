@@ -351,6 +351,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "expire-event-channels.yml": "scheduled",
   "expire-reschedule-proposals.yml": "scheduled",
   "expire-stale-requests.yml": "scheduled",
+  "settle-cancelled-sessions.yml": "scheduled",
   "expire-unpaid-trials.yml": "scheduled",
   "generate-subscription-invoices.yml": "scheduled",
   "gst-outward-register-export.yml": "scheduled",

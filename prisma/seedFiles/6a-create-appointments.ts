@@ -184,6 +184,9 @@ const createConsultationAppointment = (
   endsAt: Date,
   consultantUserId?: string,
 ): Prisma.AppointmentCreateInput => {
+  // #1639 item 3 — pick once and reuse, so the occurrence's stamp matches the
+  // plan actually connected below rather than a second independent draw.
+  const selectedPlan = faker.helpers.arrayElement(consultationPlans);
   return {
     appointmentType: AppointmentsType.CONSULTATION,
     // #1319 A9 — participant rows mirror the slot connects below.
@@ -212,6 +215,9 @@ const createConsultationAppointment = (
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: defaultStatus === AppointmentStatus.PENDING,
+        // #1639 item 3 — the app's checkout stamps this via
+        // buildOccurrenceForWindow; seeded rows were the only ones left NULL.
+        consultantProfileId: selectedPlan.consultantProfileId,
         meeting: createMeetingData(isPastAppointment),
       },
     },
@@ -219,7 +225,7 @@ const createConsultationAppointment = (
       create: {
         consultationPlan: {
           connect: {
-            id: faker.helpers.arrayElement(consultationPlans).id,
+            id: selectedPlan.id,
           },
         },
         requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
@@ -324,6 +330,8 @@ const createSubscriptionAppointment = (
             startsAt: slotStart,
             endsAt: slotEnd,
             isTentative: defaultStatus === AppointmentStatus.PENDING,
+            // #1639 item 3 — stamp the plan's consultant, as checkout does.
+            consultantProfileId: selectedPlan.consultantProfileId,
             meeting: createMeetingData(
               isPastAppointment && slotStart < new Date(),
             ),
@@ -360,6 +368,8 @@ const createSubscriptionAppointment = (
       startsAt: slotStart,
       endsAt: slotEnd,
       isTentative: defaultStatus === AppointmentStatus.PENDING,
+      // #1639 item 3 — stamp the plan's consultant, as checkout does.
+      consultantProfileId: selectedPlan.consultantProfileId,
       meeting: createMeetingData(isPastAppointment),
     });
   }
