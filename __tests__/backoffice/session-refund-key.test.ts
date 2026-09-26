@@ -6,6 +6,7 @@
 
 const db = {
   occurrenceAppt: "apt-1",
+  occurrenceStart: new Date("2026-10-08T10:00:00Z"),
   prior: null as { amountPaise: number; status: string } | null,
   refunds: [] as { amountPaise: number; status: string }[],
 };
@@ -17,14 +18,20 @@ jest.mock("../../lib/prisma", () => ({
         appointmentId: "apt-1",
         userId: "u-1",
         amount: 80_000,
+        createdAt: new Date("2026-10-01T00:00:00Z"),
         refunds: db.refunds,
         disputes: [],
       }),
     },
     appointmentOccurrence: {
-      findUnique: async () => ({ appointmentId: db.occurrenceAppt }),
+      findUnique: async () => ({
+        appointmentId: db.occurrenceAppt,
+        startsAt: db.occurrenceStart,
+      }),
     },
-    appointmentParticipant: { findFirst: async () => ({ id: "seat-1" }) },
+    appointmentParticipant: {
+      findFirst: async () => ({ createdAt: new Date("2026-09-20T00:00:00Z") }),
+    },
     refund: { findUnique: async () => db.prior },
   },
 }));
@@ -39,13 +46,19 @@ const ask = (amountPaise?: number) =>
     amountPaise,
   });
 
-it("refuses a foreign session, and a changed full refund, but replays the first", async () => {
+it("refuses a foreign or pre-seat session, and a changed full refund, but replays the first", async () => {
   db.occurrenceAppt = "apt-other";
   await expect(ask(10_000)).rejects.toMatchObject({
     code: "SESSION_NOT_ON_PAYMENT",
   });
 
   db.occurrenceAppt = "apt-1";
+  // Joined 1 Oct (the later of seat and payment): a 24 Sep session was never held.
+  db.occurrenceStart = new Date("2026-09-24T10:00:00Z");
+  await expect(ask(10_000)).rejects.toMatchObject({
+    code: "SESSION_BEFORE_SEAT",
+  });
+  db.occurrenceStart = new Date("2026-10-08T10:00:00Z");
   const partial = { amountPaise: 10_000, status: "SUCCEEDED" };
   db.prior = partial;
   db.refunds = [partial];

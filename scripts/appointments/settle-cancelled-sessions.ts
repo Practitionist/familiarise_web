@@ -318,8 +318,9 @@ async function settleSeat(
     },
   });
   if (!seat) return false;
-  const joinedAt =
-    seat.createdAt > payment.createdAt ? seat.createdAt : payment.createdAt;
+  const joinedAt = new Date(
+    Math.max(seat.createdAt.getTime(), payment.createdAt.getTime()),
+  );
   // Only a seat that held this session is owed for it.
   if (session.startsAt <= joinedAt) return false;
   if (seat.status === "HELD") {

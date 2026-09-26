@@ -122,12 +122,13 @@ async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
       appointmentId: true,
       userId: true,
       amount: true,
+      createdAt: true,
       ...REFUNDABLE_BALANCE_SELECT,
     },
   });
   const occurrence = await prisma.appointmentOccurrence.findUnique({
     where: { id: occurrenceId },
-    select: { appointmentId: true },
+    select: { appointmentId: true, startsAt: true },
   });
   const seat =
     payment?.appointmentId &&
@@ -139,13 +140,24 @@ async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
             status: { in: LIVE_PARTICIPANT_STATUSES },
             OR: [{ paymentId }, { paymentId: null }],
           },
-          select: { id: true },
+          select: { createdAt: true },
         })
       : null;
-  if (!seat || !payment) {
+  if (!seat || !payment || !occurrence) {
     throw new OpsRefusal(
       "SESSION_NOT_ON_PAYMENT",
       "That session is not part of this payment's booking, or the payment holds no live seat for it.",
+    );
+  }
+  // The ledger's join time: the later of the seat row and its payment.
+  const joinedAt = Math.max(
+    seat.createdAt.getTime(),
+    payment.createdAt.getTime(),
+  );
+  if (occurrence.startsAt.getTime() <= joinedAt) {
+    throw new OpsRefusal(
+      "SESSION_BEFORE_SEAT",
+      "That session started before this seat was bought, so the seat was never owed it.",
     );
   }
   return payment;
