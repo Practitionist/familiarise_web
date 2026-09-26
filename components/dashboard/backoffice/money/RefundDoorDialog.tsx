@@ -120,10 +120,21 @@ export function RefundDoorDialog({
   if (door === "override") atStakePaise = remainder ?? 0;
   const typed = needsTypedConfirm(atStakePaise) ? "REFUND" : undefined;
 
+  // #1527 review — a full issue-refund or an override tier is judged
+  // against `remainder`; while it's unknown (still loading, or the lookup
+  // failed) the typed-confirm threshold above silently reads as ₹0, so fail
+  // closed here instead of letting either submit unchecked.
+  const remainderUnknownError = (): string | null => {
+    if (remainder !== null) return null;
+    return payment.isError
+      ? "Couldn't look up this payment. Try again."
+      : "Waiting for the payment to load.";
+  };
+
   const validationError = (): string | null => {
     if (!id) return "Enter the payment id.";
     if (door === "issue") {
-      if (full) return null;
+      if (full) return remainderUnknownError();
       if (!paise || paise <= 0)
         return "Enter an amount, or tick the full refund.";
       if (remainder !== null && paise > remainder)
@@ -131,9 +142,12 @@ export function RefundDoorDialog({
       return null;
     }
     if (door === "override")
-      return value !== "" && num >= 0 && num <= 100
-        ? null
-        : "Enter a percentage from 0 to 100.";
+      return (
+        remainderUnknownError() ??
+        (value !== "" && num >= 0 && num <= 100
+          ? null
+          : "Enter a percentage from 0 to 100.")
+      );
     return Number.isInteger(num) && num >= 1
       ? null
       : "Enter a whole number of sessions.";

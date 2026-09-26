@@ -65,15 +65,23 @@ export function InvoiceComposer({
 
   async function createInvoice() {
     setError(null);
+    // #1527 review — quantity/unitPrice are free-typed; clamp and validate
+    // before the POST rather than letting a negative or NaN value through.
     const items = lineItems
       .filter((li) => li.description.trim())
       .map((li) => ({
         description: li.description.trim(),
-        quantity: li.quantity,
+        quantity: Math.max(1, Math.trunc(li.quantity) || 1),
         unitPrice: Math.round(Number.parseFloat(li.unitPrice || "0") * 100),
       }));
     if (items.length === 0) {
       setError("Add at least one line item.");
+      return;
+    }
+    if (
+      items.some((it) => !Number.isFinite(it.unitPrice) || it.unitPrice < 0)
+    ) {
+      setError("Enter a valid, non-negative price for every line item.");
       return;
     }
     setPending(true);
@@ -104,6 +112,10 @@ export function InvoiceComposer({
       setLineItems([makeEmptyLine()]);
       setDueDate("");
       onOpenChange(false);
+    } catch {
+      // #1527 review — the fetch itself (network failure) had no catch, so it
+      // surfaced as an unhandled rejection instead of the modal's error state.
+      setError("Failed to create invoice. Check your connection and retry.");
     } finally {
       setPending(false);
     }

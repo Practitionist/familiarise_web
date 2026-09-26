@@ -12,6 +12,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { escapeCsvField } from "@/lib/csv/keyset-export";
 import { gatewayLabel, payoutMethodLabel } from "@/lib/labels/money-labels";
 import { payoutStatusBadge } from "@/lib/labels/session-labels";
 import type { Payout } from "@/types/payouts";
@@ -96,6 +97,9 @@ const columns: ResponsiveColumn<Payout>[] = [
   },
 ];
 
+// #1527 review — consultantName/consultantEmail are user-controlled; escape
+// every cell (RFC 4180 quoting + formula-trigger neutralizing) rather than a
+// bare join, matching the statutory exporters' rule (lib/csv/keyset-export.ts).
 function exportCsv(rows: Payout[], name: string) {
   const header = ["ID", "Consultant", "Email", "Amount", "Currency", "Status"];
   const lines = rows.map((p) =>
@@ -106,7 +110,9 @@ function exportCsv(rows: Payout[], name: string) {
       (p.amount / 100).toFixed(2),
       p.currency,
       p.status,
-    ].join(","),
+    ]
+      .map(escapeCsvField)
+      .join(","),
   );
   const blob = new Blob([[header.join(","), ...lines].join("\n")], {
     type: "text/csv",
@@ -177,7 +183,7 @@ export function PayoutListSection({
               onClick={() => exportCsv(rows, name)}
             >
               <Download className="mr-2 h-4 w-4" />
-              Export CSV
+              Export this page
             </Button>
           </FilterBar>
         }
