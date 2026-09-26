@@ -17,7 +17,10 @@ import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-ov
 import { useDashboardBreadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
-import { accountSettingsHref } from "@/lib/dashboard/account-href";
+import {
+  accountSettingsHref,
+  supportLinksFor,
+} from "@/lib/dashboard/account-href";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import {
   MEMBER_ROLE_LABEL,
@@ -154,16 +157,21 @@ function OrgDashboardShellInner({
 
   // Permission-filtered IA lives in a pure builder so tests can walk every
   // role × capability × funding combination (#1527).
+  const sessionUser = session?.user;
   const nav = useMemo(
-    () =>
-      buildOrganizationNav({
+    () => ({
+      ...buildOrganizationNav({
         orgId,
         role: org?.membership.role ?? "LEARNER",
         canSponsor: org?.organization.canSponsor ?? false,
         canHost: org?.organization.canHost ?? false,
         consultantProfileId: org?.membership.consultantProfileId ?? null,
       }),
-    [org, orgId],
+      // Help › Support requests is the viewer's own page, never this org's
+      // operator triage queue (#1527).
+      support: sessionUser ? supportLinksFor(sessionUser) : null,
+    }),
+    [org, orgId, sessionUser],
   );
 
   const breadcrumbs = useDashboardBreadcrumbs({

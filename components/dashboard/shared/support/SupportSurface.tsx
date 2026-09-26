@@ -18,8 +18,8 @@ export function SupportSurface({ profileId }: { profileId: string }) {
   return (
     <DashboardErrorBoundary>
       <PageHeader
-        title="Support"
-        description="Get help with the platform or a session, and track every request."
+        title="Support requests"
+        description="Your conversations with the Familiarise team — about a session or the platform."
       />
       <SupportHub profileId={profileId} defaultView="platform" />
     </DashboardErrorBoundary>

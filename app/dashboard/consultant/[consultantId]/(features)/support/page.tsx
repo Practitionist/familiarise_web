@@ -1,25 +1,19 @@
-import { HelpAndSupportPage } from "@/components/dashboard/shared/support/HelpAndSupportPage";
-import { HelpCenterPanel } from "@/app/support/_components/HelpCenterPanel";
-import { ExpertFaqPanel } from "@/components/dashboard/shared/support/ExpertFaqPanel";
+import { PersonalSupportRequests } from "@/app/support/_components/PersonalSupportRequests";
 
-/**
- * Help & support (#1527 Q2) — Requests · Feedback · Help center. Experts get
- * the expert topics plus the consultant FAQ the help centre does not cover.
- */
+/** Support requests (#1527) — Requests · Feedback, plus suggested articles. */
 export default async function SupportPage({
   params,
-}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
-  const { consultantId } = await params;
+  searchParams,
+}: Readonly<{
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<{ tab?: string | string[] }>;
+}>) {
+  const [{ consultantId }, { tab }] = await Promise.all([params, searchParams]);
   return (
-    <HelpAndSupportPage
+    <PersonalSupportRequests
+      tree="consultant"
       profileId={consultantId}
-      basePath={`/dashboard/consultant/${consultantId}`}
-      helpCenter={
-        <div className="space-y-8">
-          <HelpCenterPanel audience="expert" />
-          <ExpertFaqPanel />
-        </div>
-      }
+      tab={tab}
     />
   );
 }

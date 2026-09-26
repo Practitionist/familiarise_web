@@ -35,13 +35,28 @@ export interface PinnedCta {
   copyText?: string;
 }
 
+/**
+ * The header Help menu's private rows (#1527). The Help Center (`/support`)
+ * is always there; these point at the viewer's own Support requests page.
+ */
+export interface SupportLinks {
+  requestsHref: string;
+  /** Its Feedback tab; null where the page has none (the workspace). */
+  feedbackHref: string | null;
+}
+
+/** A personal tree's Support requests page and its Feedback tab. */
+export function personalSupportLinks(requestsHref: string): SupportLinks {
+  return { requestsHref, feedbackHref: `${requestsHref}?tab=feedback` };
+}
+
 export interface DashboardNav {
   basePath: string;
   groups: NavGroup[];
   /** The one Settings row at the rail's bottom (#1527 Cloudflare shell). */
   settings: NavItem;
-  /** Header "Help & support" target — an absolute app path. */
-  helpHref: string;
+  /** Help menu rows; null leaves only the Help Center (back office). */
+  support: SupportLinks | null;
   /** Up to four item paths shown as mobile tabs; everything else is in Menu. */
   mobileTabs: string[];
   /** Header button beside Help (#1527) — never a sidebar row. */

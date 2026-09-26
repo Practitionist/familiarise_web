@@ -706,19 +706,20 @@ export default function HomeTab({
       {/* #1778 — held times this learner asked to hear about. */}
       <WaitingTimesStrip />
 
-      {/* Q2 — the two ways into Help & support. */}
+      {/* #1527 — answers live in the public Help Center; your private
+          conversations with us live in Support requests. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <HelpCard
-          href={`${basePath}/support?tab=requests`}
+          href="/support"
           icon={LifeBuoy}
-          title="Need help?"
-          body="Ask about a booking or a payment."
+          title="Browse the Help Center"
+          body="Answers about bookings, payments, and sessions."
         />
         <HelpCard
-          href={`${basePath}/support?tab=feedback`}
+          href={`${basePath}/support?tab=requests`}
           icon={MessageSquareText}
-          title="Share feedback"
-          body="Tell us what would make this better."
+          title="Open a support request"
+          body="Ask our team about a booking or a payment."
         />
       </div>
     </div>

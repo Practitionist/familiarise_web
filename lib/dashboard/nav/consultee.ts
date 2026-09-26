@@ -10,12 +10,12 @@ import {
   Video,
 } from "lucide-react";
 
-import type { DashboardNav } from "./types";
+import { personalSupportLinks, type DashboardNav } from "./types";
 
 /**
  * Client (consultee) IA from #1527 §7.1. Settings is the rail's last row and
- * Help & support lives in the header (Cloudflare shell); Feedback and Help
- * fold into Help & support (Q2).
+ * Help lives in the header menu (Cloudflare shell); Feedback folds into
+ * Support requests.
  */
 export function buildConsulteeNav(consulteeId: string): DashboardNav {
   return {
@@ -49,7 +49,9 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
       },
     ],
     settings: { name: "Settings", icon: Settings, path: "settings" },
-    helpHref: `/dashboard/consultee/${consulteeId}/support`,
+    support: personalSupportLinks(
+      `/dashboard/consultee/${consulteeId}/support`,
+    ),
     mobileTabs: ["home", "appointments", "messages", "payments"],
     pinnedCta: {
       label: "Find experts",
@@ -67,7 +69,7 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   messages: "Messages",
   payments: "Payments",
   referrals: "Invite & earn",
-  support: "Help & support",
+  support: "Support requests",
   settings: "Settings",
   documents: "Documents",
   recordings: "Recordings",

@@ -14,7 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 
-import type { DashboardNav } from "./types";
+import { personalSupportLinks, type DashboardNav } from "./types";
 
 /**
  * Expert (consultant) IA from #1527 §7.2. Collaborations is a tab of
@@ -68,7 +68,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
       },
     ],
     settings: { name: "Settings", icon: Settings, path: "settings" },
-    helpHref: `${basePath}/support`,
+    support: personalSupportLinks(`${basePath}/support`),
     mobileTabs: ["home", "requests", "appointments", "messages"],
     pinnedCta: {
       label: "View public page",
@@ -115,7 +115,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   payouts: "Get paid",
   notifications: "Notifications",
   security: "Security",
-  support: "Help & support",
+  support: "Support requests",
   feedback: "Feedback",
   help: "Help",
   edit: "Edit",

@@ -18,7 +18,7 @@ import {
 import {
   AccountMenu,
   HeaderCta,
-  HelpLink,
+  HelpMenu,
   type DashboardAccount,
 } from "@/components/dashboard/DashboardShellParts";
 import { MobileNav } from "@/components/dashboard/MobileNav";
@@ -163,7 +163,7 @@ export function DashboardShell({
                     <HeaderCta cta={nav.pinnedCta} />
                   </div>
                 )}
-                <HelpLink href={nav.helpHref} />
+                <HelpMenu support={nav.support} />
                 <NotificationInbox />
                 <AccountMenu account={account} onSignOut={onSignOut} />
               </div>
@@ -190,7 +190,7 @@ export function DashboardShell({
             basePath={nav.basePath}
             groups={groups}
             settings={settings}
-            helpHref={nav.helpHref}
+            support={nav.support}
             tabs={nav.mobileTabs}
             pinnedCta={nav.pinnedCta}
             pathname={pathname}

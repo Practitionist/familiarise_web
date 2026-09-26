@@ -3,6 +3,7 @@ import {
   resolveDashboardLanding,
 } from "@/lib/dashboard/landing";
 import { resolveGoHref } from "@/lib/dashboard/go";
+import { supportRequestsHref } from "@/lib/dashboard/account-href";
 
 // #1527 §6 — where /dashboard lands and how /dashboard/go resolves a viewer.
 describe("resolveDashboardLanding", () => {
@@ -91,5 +92,28 @@ describe("resolveGoHref", () => {
     ).toBe("/dashboard/consultee/ce-1/payments");
     expect(resolveGoHref("auto", ["..", "admin"], dual)).toBe("/dashboard");
     expect(resolveGoHref("nope", [], dual)).toBe("/dashboard");
+  });
+});
+
+// #1527 — the Help Center's signed-in "Open a support request" and the header
+// Help menu land on the viewer's own Support requests page.
+describe("support requests targets", () => {
+  it("go/auto/support reaches either personal tree; staff have none", () => {
+    expect(
+      resolveGoHref("auto", ["support"], {
+        role: "CONSULTANT",
+        consultantProfileId: "cp-1",
+      }),
+    ).toBe("/dashboard/consultant/cp-1/support");
+    expect(
+      resolveGoHref("auto", ["support"], {
+        role: "CONSULTEE",
+        consulteeProfileId: "ce-1",
+      }),
+    ).toBe("/dashboard/consultee/ce-1/support");
+    expect(
+      supportRequestsHref({ role: "CONSULTEE", consulteeProfileId: "ce-1" }),
+    ).toBe("/dashboard/consultee/ce-1/support");
+    expect(supportRequestsHref({ role: "STAFF" })).toBe(null);
   });
 });

@@ -1,16 +1,19 @@
-import { HelpAndSupportPage } from "@/components/dashboard/shared/support/HelpAndSupportPage";
-import { HelpCenterPanel } from "@/app/support/_components/HelpCenterPanel";
+import { PersonalSupportRequests } from "@/app/support/_components/PersonalSupportRequests";
 
-/** Help & support (#1527 Q2) — Requests · Feedback · Help center (learner topics). */
+/** Support requests (#1527) — Requests · Feedback, plus suggested articles. */
 export default async function SupportPage({
   params,
-}: Readonly<{ params: Promise<{ consulteeId: string }> }>) {
-  const { consulteeId } = await params;
+  searchParams,
+}: Readonly<{
+  params: Promise<{ consulteeId: string }>;
+  searchParams: Promise<{ tab?: string | string[] }>;
+}>) {
+  const [{ consulteeId }, { tab }] = await Promise.all([params, searchParams]);
   return (
-    <HelpAndSupportPage
+    <PersonalSupportRequests
+      tree="consultee"
       profileId={consulteeId}
-      basePath={`/dashboard/consultee/${consulteeId}`}
-      helpCenter={<HelpCenterPanel audience="learner" />}
+      tab={tab}
     />
   );
 }

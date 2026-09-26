@@ -205,9 +205,9 @@ export function buildOrganizationNav(
     // Ungated (ADR 23): the page floors at active membership and each tab
     // carries its own gate, so members reach their Notifications tab.
     settings: { name: "Settings", icon: Settings, path: "settings" },
-    // The org's own `support` is operator triage (operations.read), not help,
-    // so every member's Help goes to the public help centre (#1527).
-    helpHref: "/support",
+    // The org's own `support` is operator triage (operations.read), not the
+    // viewer's requests; the shell fills in their personal page (#1527).
+    support: null,
     mobileTabs: organizationMobileTabs(groups),
   };
 }

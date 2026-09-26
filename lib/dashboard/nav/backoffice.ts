@@ -26,8 +26,9 @@ export function buildBackofficeDashboardNav(
     groups,
     // The operator's own profile page (#1527 header account menu).
     settings: { name: "Settings", icon: Settings, path: "settings" },
-    // No back-office help page exists; operators use the public help centre.
-    helpHref: "/support",
+    // Staff answer requests rather than file them: the Help menu shows only
+    // the public Help Center.
+    support: null,
     mobileTabs: MOBILE_TABS[cap.tree].filter((p) => paths.has(p)),
   };
 }

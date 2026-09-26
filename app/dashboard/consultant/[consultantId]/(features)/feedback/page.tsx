@@ -1,6 +1,6 @@
 import { permanentRedirect } from "next/navigation";
 
-/** Folded into Help & support (#1527 Q2); old links 308 to its feedback tab. */
+/** Folded into Support requests (#1527); old links 308 to its Feedback tab. */
 export default async function RetiredFeedbackPage({
   params,
 }: Readonly<{ params: Promise<{ consultantId: string }> }>) {

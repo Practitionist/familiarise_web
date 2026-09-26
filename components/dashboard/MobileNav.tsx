@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { LifeBuoy, LogOut, Menu } from "lucide-react";
+import {
+  ArrowUpRight,
+  Inbox,
+  LifeBuoy,
+  LogOut,
+  Menu,
+  MessageSquareText,
+} from "lucide-react";
 
 import { cn } from "@/utils/tailwind";
 import { LinkPendingIcon } from "@/components/ui/NavLink";
@@ -19,15 +26,19 @@ import {
   type CollapsibleSidebarGroup,
   type CollapsibleSidebarItem,
 } from "@/components/dashboard/CollapsibleSidebar";
-import { HeaderCta } from "@/components/dashboard/DashboardShellParts";
+import {
+  HELP_CENTER_HREF,
+  HeaderCta,
+} from "@/components/dashboard/DashboardShellParts";
 import { isActiveRoute } from "@/components/dashboard/route-active";
-import type { PinnedCta } from "@/lib/dashboard/nav/types";
+import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 
 export interface MobileNavProps {
   basePath: string;
   groups: CollapsibleSidebarGroup[];
   settings: CollapsibleSidebarItem;
-  helpHref: string;
+  /** The header Help menu's private rows, repeated here (#1527). */
+  support: SupportLinks | null;
   /** Paths of up to four items shown as tabs. */
   tabs: string[];
   pinnedCta?: PinnedCta;
@@ -45,7 +56,7 @@ const TAB_CLASS =
 /**
  * Phone navigation for every shell (#1527 §6): up to four tabs plus Menu,
  * which opens a bottom sheet holding the switcher, the full grouped nav, the
- * persona CTA, Help & support, Settings and Sign out — the header has no room
+ * persona CTA, the Help menu's rows, Settings and Sign out — the header has no room
  * for the CTA below md, so no destination is unreachable. Exactly h-16:
  * `.h-dashboard-fill` budgets 4rem for this bar, so no safe-area padding.
  */
@@ -53,7 +64,7 @@ export function MobileNav({
   basePath,
   groups,
   settings,
-  helpHref,
+  support,
   tabs,
   pinnedCta,
   pathname,
@@ -155,10 +166,37 @@ export function MobileNav({
                 <HeaderCta cta={pinnedCta} fullWidth onNavigate={close} />
               </div>
             )}
-            <Link href={helpHref} onClick={close} className={SHEET_ROW_CLASS}>
+            <a
+              href={HELP_CENTER_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={close}
+              className={SHEET_ROW_CLASS}
+            >
               <LifeBuoy className="h-5 w-5" />
-              Help &amp; support
-            </Link>
+              Help Center
+              <ArrowUpRight className="ml-auto h-4 w-4" aria-hidden />
+            </a>
+            {support && (
+              <Link
+                href={support.requestsHref}
+                onClick={close}
+                className={SHEET_ROW_CLASS}
+              >
+                <Inbox className="h-5 w-5" />
+                Support requests
+              </Link>
+            )}
+            {support?.feedbackHref && (
+              <Link
+                href={support.feedbackHref}
+                onClick={close}
+                className={SHEET_ROW_CLASS}
+              >
+                <MessageSquareText className="h-5 w-5" />
+                Send feedback
+              </Link>
+            )}
             <SidebarNavLink
               item={settings}
               basePath={basePath}

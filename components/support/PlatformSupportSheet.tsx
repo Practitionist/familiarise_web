@@ -298,7 +298,7 @@ export function PlatformSupportSheet({
           <SheetDescription>
             {flowId
               ? "Pick an option, or type a message."
-              : "Pick a topic, or browse the Help section for quick answers."}
+              : "Pick a topic, or browse the Help Center for quick answers."}
           </SheetDescription>
         </SheetHeader>
 

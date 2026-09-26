@@ -30,8 +30,9 @@ export function buildWorkspaceNav(
       },
     ],
     settings: { name: "Workspace settings", icon: Settings, path: "settings" },
-    // The workspace Support page is the operator's help desk (#1527 header).
-    helpHref: `${basePath}/support`,
+    // The operator's Support requests page (#1527). It has no Feedback tab,
+    // so the Help menu shows no Send feedback row.
+    support: { requestsHref: `${basePath}/support`, feedbackHref: null },
     mobileTabs: portfolio
       ? ["home", "activity", "billing", "settings"]
       : ["home", "settings"],
@@ -43,6 +44,6 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   activity: "Activity",
   billing: "Spend",
   settings: "Workspace settings",
-  support: "Support",
+  support: "Support requests",
   create: "New organization",
 };

@@ -109,14 +109,19 @@ describe("personal + workspace nav targets resolve", () => {
       ),
     ).toBe(true);
     expect(buildConsulteeNav("ce-1").pinnedCta?.href).toBe("/explore/experts");
-    // #1527 Cloudflare shell — Help is a header link, so pin its target too.
+    // #1527 — the header Help menu's Support requests rows are the viewer's
+    // own page; the back office has only the public Help Center.
+    expect(buildBackofficeDashboardNav(backofficeCap("admin")).support).toBe(
+      null,
+    );
+    expect(buildWorkspaceNav("ow-1").support?.feedbackHref).toBe(null);
     const helpPages = [
-      buildConsultantNav("cp-1").helpHref,
-      buildConsulteeNav("ce-1").helpHref,
-      buildWorkspaceNav("ow-1").helpHref,
-      buildBackofficeDashboardNav(backofficeCap("admin")).helpHref,
+      buildConsultantNav("cp-1").support?.requestsHref,
+      buildConsulteeNav("ce-1").support?.requestsHref,
+      buildWorkspaceNav("ow-1").support?.requestsHref,
+      "/support",
     ].map((href) =>
-      href
+      (href ?? "")
         .replace(
           "/dashboard/consultant/cp-1",
           "dashboard/consultant/[consultantId]/(features)",

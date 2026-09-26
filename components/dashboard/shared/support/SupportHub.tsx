@@ -13,8 +13,9 @@
  * The panels are deliberately scope-free: `/api/user/support-tickets`,
  * `/api/user/support-threads` and `/api/appointments` all key off the session,
  * so consultee, consultant, org operator and staff mount the same component.
- * #1527 Q2 — it is the Requests tab of the one Help & support page; Feedback
- * and the Help center are that page's sibling tabs (deep-linked below).
+ * #1527 — it is the Requests tab of the Support requests page; Feedback is
+ * that page's sibling tab (deep-linked below). Articles live only in the
+ * public Help Center.
  */
 
 import { useMemo } from "react";
@@ -22,7 +23,6 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   MessageSquareText,
-  HelpCircle,
   CalendarDays,
   ChevronRight,
   Bot,
@@ -427,11 +427,9 @@ function SessionsTab({
 function PlatformTab({
   orgId,
   feedbackHref,
-  helpHref,
 }: {
   orgId?: string;
   feedbackHref?: string;
-  helpHref?: string;
 }) {
   const tickets = useQuery({
     queryKey: ["user-support-tickets"],
@@ -479,26 +477,16 @@ function PlatformTab({
           </div>
           <PlatformSupportSheet orgId={orgId} />
         </div>
-        {(feedbackHref || helpHref) && (
+        {feedbackHref && (
           <div className="mt-3 flex flex-wrap gap-2">
-            {feedbackHref && (
-              <Button variant="ghost" size="sm" asChild>
-                {/* Internal dashboard route (all callers pass relative
-                    dashboard hrefs) — Link so it prefetches. */}
-                <Link href={feedbackHref}>
-                  <MessageSquareText className="mr-1.5 h-4 w-4" />
-                  Share feedback
-                </Link>
-              </Button>
-            )}
-            {helpHref && (
-              <Button variant="ghost" size="sm" asChild>
-                <Link href={helpHref}>
-                  <HelpCircle className="mr-1.5 h-4 w-4" />
-                  Browse FAQs
-                </Link>
-              </Button>
-            )}
+            <Button variant="ghost" size="sm" asChild>
+              {/* Internal dashboard route (all callers pass relative
+                  dashboard hrefs) — Link so it prefetches. */}
+              <Link href={feedbackHref}>
+                <MessageSquareText className="mr-1.5 h-4 w-4" />
+                Share feedback
+              </Link>
+            </Button>
           </div>
         )}
       </section>
@@ -599,7 +587,6 @@ function PlatformTab({
 export function SupportHub({
   orgId,
   feedbackHref,
-  helpHref,
   appointmentsHrefBase,
   defaultView = "sessions",
 }: {
@@ -610,7 +597,6 @@ export function SupportHub({
   /** Active org id in operator trees — attributes platform tickets. */
   orgId?: string;
   feedbackHref?: string;
-  helpHref?: string;
   /** Base path to a session's detail page (personal trees only). Enables the
    *  "Go to appointment" link inside the thread sheet. Deliberately omitted on
    *  org surfaces (ADR 20: no per-session drill-in for org roles). */
@@ -630,13 +616,7 @@ export function SupportHub({
   const platform = {
     value: "platform",
     label: "Platform",
-    content: (
-      <PlatformTab
-        orgId={orgId}
-        feedbackHref={feedbackHref}
-        helpHref={helpHref}
-      />
-    ),
+    content: <PlatformTab orgId={orgId} feedbackHref={feedbackHref} />,
   };
   return (
     <UrlTabs

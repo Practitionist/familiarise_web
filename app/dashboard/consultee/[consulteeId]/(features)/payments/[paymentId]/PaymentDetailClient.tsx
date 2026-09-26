@@ -199,7 +199,7 @@ export function PaymentDetailClient({
               href={`${basePath}/support?tab=requests`}
               className="font-medium text-foreground underline underline-offset-4"
             >
-              Open Help &amp; support
+              Open a support request
             </Link>
             .
           </p>

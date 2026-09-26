@@ -239,7 +239,7 @@ export function EarningsSummary({
         price of each booking you sell yourself; sessions an organisation pays
         for follow that organisation&apos;s agreement.{" "}
         <Link
-          href={`${base}/support?tab=help`}
+          href="/support/experts/payouts"
           className="font-medium text-foreground underline-offset-4 hover:underline"
         >
           Payout FAQs

@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Copy, LifeBuoy, LogOut, Settings } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  Copy,
+  Inbox,
+  LifeBuoy,
+  LogOut,
+  MessageSquareText,
+  Settings,
+} from "lucide-react";
 
 import { cn } from "@/utils/tailwind";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSession } from "@/lib/auth-client";
-import type { PinnedCta } from "@/lib/dashboard/nav/types";
+import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 
 /**
  * The person behind the header avatar menu. Context (which dashboard) lives in
@@ -92,20 +102,71 @@ export function AccountMenu({
   );
 }
 
-/** Header "Help & support": icon + label at md+, icon-only below. */
-export function HelpLink({ href }: Readonly<{ href: string }>) {
+/** The public Help Center — the one home for articles (#1527). */
+export const HELP_CENTER_HREF = "/support";
+
+/**
+ * Header "Help" menu (#1527): the public Help Center in a new tab, then the
+ * viewer's own Support requests and Send feedback when they have them. Icon +
+ * label at md+, icon-only below.
+ */
+export function HelpMenu({
+  support,
+}: Readonly<{ support: SupportLinks | null }>) {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      asChild
-      className="shrink-0 px-2 text-zinc-600 dark:text-zinc-300"
-    >
-      <Link href={href} aria-label="Help & support">
-        <LifeBuoy className="h-4 w-4" />
-        <span className="hidden md:inline">Help &amp; support</span>
-      </Link>
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Help"
+          className="shrink-0 gap-1 px-2 text-zinc-600 dark:text-zinc-300"
+        >
+          <LifeBuoy className="h-4 w-4" />
+          <span className="hidden md:inline">Help</span>
+          <ChevronDown className="hidden h-3.5 w-3.5 md:inline" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem asChild className="cursor-pointer gap-2">
+          <a
+            href={HELP_CENTER_HREF}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex w-full items-center gap-2"
+          >
+            <LifeBuoy className="h-4 w-4 text-zinc-500" />
+            Help Center
+            <ArrowUpRight
+              className="ml-auto h-3.5 w-3.5 text-zinc-400"
+              aria-hidden
+            />
+          </a>
+        </DropdownMenuItem>
+        {support && (
+          <DropdownMenuItem asChild className="cursor-pointer gap-2">
+            <Link
+              href={support.requestsHref}
+              className="flex w-full items-center gap-2"
+            >
+              <Inbox className="h-4 w-4 text-zinc-500" />
+              Support requests
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {support?.feedbackHref && (
+          <DropdownMenuItem asChild className="cursor-pointer gap-2">
+            <Link
+              href={support.feedbackHref}
+              className="flex w-full items-center gap-2"
+            >
+              <MessageSquareText className="h-4 w-4 text-zinc-500" />
+              Send feedback
+            </Link>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

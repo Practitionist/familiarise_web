@@ -1,9 +1,6 @@
 import { permanentRedirect } from "next/navigation";
 
-/** Folded into Help & support (#1527 Q2); old links 308 to its help tab. */
-export default async function RetiredHelpPage({
-  params,
-}: Readonly<{ params: Promise<{ consulteeId: string }> }>) {
-  const { consulteeId } = await params;
-  permanentRedirect(`/dashboard/consultee/${consulteeId}/support?tab=help`);
+/** Articles live only in the public Help Center (#1527); old links 308 there. */
+export default function RetiredHelpPage() {
+  permanentRedirect("/support");
 }
