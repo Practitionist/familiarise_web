@@ -33,7 +33,7 @@ export default function ConsultantSettingsLayout({
   return (
     <SettingsLayout
       title="Settings"
-      description="Your profile, payouts and account"
+      description="Your account, public profile and business settings"
       groups={groups}
       basePath={`${basePath}/settings`}
       listHref={`${basePath}/settings?view=${SETTINGS_LIST_VIEW}`}

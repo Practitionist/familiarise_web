@@ -259,7 +259,9 @@ export const consultantSettingsQueryKey = (consultantId: string) =>
  * one URL under `/settings/<slug>`; `group` is the titled block the left nav
  * shows it under. Settings stays ONE sidebar entry with these inside it —
  * Material's settings pattern says to group with specific titles and never to
- * split into synonyms such as "Preferences".
+ * split into synonyms such as "Preferences". #1527 §14 — Account leads (it
+ * absorbed Security, `/profile` and change-password); "Public profile" has room
+ * for Experience & education.
  */
 export interface SettingsSection {
   group: string;
@@ -270,30 +272,45 @@ export interface SettingsSection {
 }
 
 export type SettingsSectionKey =
+  | "account"
+  | "notifications"
   | "profile"
   | "verification"
   | "booking"
-  | "get-paid"
-  | "notifications"
-  | "security";
+  | "get-paid";
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
-    group: "Profile & verification",
+    group: "Account",
+    key: "account",
+    label: "Account",
+    slug: "account",
+    description:
+      "Your details, password, sessions, connected accounts and data rights",
+  },
+  {
+    group: "Account",
+    key: "notifications",
+    label: "Notifications",
+    slug: "notifications",
+    description: "Which updates reach you, and on which channel",
+  },
+  {
+    group: "Public profile",
     key: "profile",
     label: "Profile",
     slug: "profile",
     description: "Your expertise, background and the links on your public page",
   },
   {
-    group: "Profile & verification",
+    group: "Public profile",
     key: "verification",
     label: "Verification",
     slug: "verification",
     description: "The documents that put the verified mark on your profile",
   },
   {
-    group: "Booking requests",
+    group: "Business",
     key: "booking",
     label: "Booking requests",
     slug: "booking",
@@ -301,28 +318,23 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "Whether people book you instantly or ask first, and how many can wait",
   },
   {
-    group: "Get paid",
+    group: "Business",
     key: "get-paid",
     label: "Get paid",
     slug: "get-paid",
     description:
       "Where your earnings go, and the tax details the law asks us to hold",
   },
-  {
-    group: "Notifications",
-    key: "notifications",
-    label: "Notifications",
-    slug: "notifications",
-    description: "Which updates reach you, and on which channel",
-  },
-  {
-    group: "Security",
-    key: "security",
-    label: "Security",
-    slug: "security",
-    description: "Your password, sessions and connected accounts",
-  },
 ];
+
+/**
+ * Retired section keys and where they live now. `security` folded into
+ * Account (#1527 §14); its old `?tab=security` links and `/settings/security`
+ * URL both land there.
+ */
+export const SETTINGS_SECTION_ALIASES: Readonly<
+  Record<string, SettingsSectionKey>
+> = { security: "account" };
 
 /** The sections in nav order, grouped under their titles. */
 export function settingsSectionGroups(): {
@@ -365,7 +377,8 @@ export function settingsTabRedirect(
   tab: string | null | undefined,
 ): string {
   if (tab === "availability") return `${basePath}/availability`;
+  const key = (tab && SETTINGS_SECTION_ALIASES[tab]) ?? tab;
   const section =
-    SETTINGS_SECTIONS.find((s) => s.key === tab) ?? SETTINGS_SECTIONS[0];
+    SETTINGS_SECTIONS.find((s) => s.key === key) ?? SETTINGS_SECTIONS[0];
   return settingsSectionHref(basePath, section);
 }

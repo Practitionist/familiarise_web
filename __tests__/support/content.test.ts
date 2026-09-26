@@ -11,6 +11,7 @@ import {
   articlesForCategory,
   getArticle,
   getCategory,
+  helpCenterFor,
   relatedArticles,
   supportArticles,
   supportCategories,
@@ -80,6 +81,20 @@ describe("support content model", () => {
     );
     for (const article of supportArticles) {
       expect(valid.has(article.contactCategory)).toBe(true);
+    }
+  });
+
+  it("gives learners and experts their own help-centre topics (#1527 Q2)", () => {
+    const slugs = (audience: "learner" | "expert") =>
+      helpCenterFor(audience).map((c) => c.category.slug);
+    // The consultee Help page used to serve the consultant FAQ.
+    expect(slugs("learner")).not.toContain("experts");
+    expect(slugs("learner")).not.toContain("organizations");
+    expect(slugs("expert")).toContain("experts");
+    for (const audience of ["learner", "expert"] as const) {
+      for (const { articles } of helpCenterFor(audience)) {
+        expect(articles.length).toBeGreaterThan(0);
+      }
     }
   });
 });

@@ -13,14 +13,14 @@
  * The panels are deliberately scope-free: `/api/user/support-tickets`,
  * `/api/user/support-threads` and `/api/appointments` all key off the session,
  * so consultee, consultant, org operator and staff mount the same component.
- * Feedback and Help remain their own destinations (deep-linked below).
+ * #1527 Q2 — it is the Requests tab of the one Help & support page; Feedback
+ * and the Help center are that page's sibling tabs (deep-linked below).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
-  LifeBuoy,
   MessageSquareText,
   HelpCircle,
   CalendarDays,
@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus } from "lucide-react";
@@ -600,6 +601,7 @@ export function SupportHub({
   feedbackHref,
   helpHref,
   appointmentsHrefBase,
+  defaultView = "sessions",
 }: {
   /** Profile id of the mounting dashboard (consultee/consultant). Kept in the
    *  public signature for parity with the standalone request pages; the hub
@@ -613,43 +615,35 @@ export function SupportHub({
    *  "Go to appointment" link inside the thread sheet. Deliberately omitted on
    *  org surfaces (ADR 20: no per-session drill-in for org roles). */
   appointmentsHrefBase?: string;
+  /** Which subtab opens when the URL names none (#1527 — the workspace, with
+   *  no sessions of its own, opens on Platform). */
+  defaultView?: "sessions" | "platform";
 }) {
-  const [tab, setTab] = useState<"sessions" | "platform">("sessions");
-
+  // #1527 — real tabs in the URL (`?view=`), replacing the hand-rolled pill
+  // buttons; the page (not this hub) owns the gutter. UrlTabs opens the first
+  // tab when the URL names none, so the default goes first.
+  const sessions = {
+    value: "sessions",
+    label: "Sessions",
+    content: <SessionsTab appointmentsHrefBase={appointmentsHrefBase} />,
+  };
+  const platform = {
+    value: "platform",
+    label: "Platform",
+    content: (
+      <PlatformTab
+        orgId={orgId}
+        feedbackHref={feedbackHref}
+        helpHref={helpHref}
+      />
+    ),
+  };
   return (
-    <div className="p-4 sm:p-6 lg:p-8">
-      <div className="mb-6 flex gap-1 rounded-lg bg-muted p-1 sm:w-fit">
-        {(
-          [
-            { key: "sessions", label: "Sessions", icon: CalendarDays },
-            { key: "platform", label: "Platform", icon: LifeBuoy },
-          ] as const
-        ).map(({ key, label, icon: Icon }) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={
-              "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-colors " +
-              (tab === key
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground")
-            }
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "sessions" ? (
-        <SessionsTab appointmentsHrefBase={appointmentsHrefBase} />
-      ) : (
-        <PlatformTab
-          orgId={orgId}
-          feedbackHref={feedbackHref}
-          helpHref={helpHref}
-        />
-      )}
-    </div>
+    <UrlTabs
+      paramName="view"
+      tabs={
+        defaultView === "platform" ? [platform, sessions] : [sessions, platform]
+      }
+    />
   );
 }

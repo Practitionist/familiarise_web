@@ -1,23 +1,25 @@
-import { SupportHub } from "@/components/dashboard/shared/support/SupportHub";
+import { HelpAndSupportPage } from "@/components/dashboard/shared/support/HelpAndSupportPage";
+import { HelpCenterPanel } from "@/app/support/_components/HelpCenterPanel";
+import { ExpertFaqPanel } from "@/components/dashboard/shared/support/ExpertFaqPanel";
 
 /**
- * #support-hub — the Support tab: one Swiggy-style surface with a Sessions
- * subtab (per-appointment threads, including sessions the consultant
- * delivers) and a Platform subtab (flowchart intake + tickets). Feedback and
- * Help remain sibling destinations, deep-linked from the Platform subtab.
+ * Help & support (#1527 Q2) — Requests · Feedback · Help center. Experts get
+ * the expert topics plus the consultant FAQ the help centre does not cover.
  */
 export default async function SupportPage({
   params,
-}: {
-  params: Promise<{ consultantId: string }>;
-}) {
-  const p = await params;
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  const { consultantId } = await params;
   return (
-    <SupportHub
-      profileId={p.consultantId}
-      appointmentsHrefBase={`/dashboard/consultant/${p.consultantId}/appointments`}
-      feedbackHref={`/dashboard/consultant/${p.consultantId}/feedback`}
-      helpHref={`/dashboard/consultant/${p.consultantId}/help`}
+    <HelpAndSupportPage
+      profileId={consultantId}
+      basePath={`/dashboard/consultant/${consultantId}`}
+      helpCenter={
+        <div className="space-y-8">
+          <HelpCenterPanel audience="expert" />
+          <ExpertFaqPanel />
+        </div>
+      }
     />
   );
 }

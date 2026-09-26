@@ -1,7 +1,6 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,10 +13,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { NotificationPreferencesPanel } from "@/components/notifications";
-import { EmptyState } from "@/components/dashboard/DataCard";
-import { Settings as SettingsIcon } from "lucide-react";
-import React, { useEffect, useCallback } from "react";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { SettingsSaveBar } from "@/components/dashboard/SettingsLayout";
+import React, { useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { CareerStage, BudgetPreference } from "@prisma/client";
@@ -26,7 +24,7 @@ import type { Education as EducationForm } from "@/app/form/onboarding/component
 import { WorkExperienceSection } from "@/app/form/onboarding/components/experience/WorkExperienceSection";
 import type { WorkExperience as WorkExperienceForm } from "@/app/form/onboarding/components/experience/WorkExperienceSection";
 
-interface SettingsTabProps {
+interface LearningProfileFormProps {
   consulteeId: string;
 }
 
@@ -39,8 +37,14 @@ interface ProfileFormData {
   goals: string | null;
 }
 
-
-export default function SettingsTab({ consulteeId }: SettingsTabProps) {
+/**
+ * Settings › Learning profile (#1527 §14): the learner fields that used to be
+ * the whole consultee Settings page. Account and Notifications are their own
+ * sections now, so this form no longer claims to manage the account.
+ */
+export default function LearningProfileForm({
+  consulteeId,
+}: LearningProfileFormProps) {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -80,71 +84,71 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     }));
   };
 
-  useEffect(() => {
-    if (consulteeData) {
-      setProfileSettings({
+  // The saved values, derived from the last load; Reset restores them and
+  // the save bar shows only while the form differs from them (#1527 §14).
+  const saved = useMemo(() => {
+    if (!consulteeData) return null;
+    // The settings query uses TConsulteeProfileWithBackground, so
+    // user.education and user.workExperiences are properly typed.
+    const { user } = consulteeData;
+    return {
+      profileSettings: {
         aboutMe: consulteeData.aboutMe,
         preferredLanguage: consulteeData.preferredLanguage,
         goals: consulteeData.goals,
         careerStage: consulteeData.careerStage ?? null,
         skillsToDevelop: consulteeData.skillsToDevelop ?? [],
         budgetPreference: consulteeData.budgetPreference ?? null,
-      });
-
-      // Load user-level education and work experiences
-      // The settings query now uses TConsulteeProfileWithBackground,
-      // so user.education and user.workExperiences are properly typed.
-      const { user } = consulteeData;
-      if (user?.education) {
-        setEducationList(
-          user.education.map((edu) => ({
-            id: edu.id,
-            institution: edu.institution,
-            institutionDomain: edu.institutionDomain ?? undefined,
-            degree: edu.degree,
-            fieldOfStudy: edu.fieldOfStudy ?? undefined,
-            startYear: edu.startYear ?? undefined,
-            endYear: edu.endYear ?? undefined,
-            grade: edu.grade ?? undefined,
-            activities: edu.activities ?? undefined,
-            description: edu.description ?? undefined,
-          })),
-        );
-      }
-      if (user?.workExperiences) {
-        setWorkExperienceList(
-          user.workExperiences.map((we) => ({
-            id: we.id,
-            company: we.company,
-            companyDomain: we.companyDomain ?? undefined,
-            title: we.title,
-            location: we.location ?? undefined,
-            startDate: new Date(we.startDate),
-            endDate: we.endDate ? new Date(we.endDate) : undefined,
-            isCurrent: we.isCurrent,
-            description: we.description ?? undefined,
-          })),
-        );
-      }
-    }
+      } satisfies ProfileFormData,
+      educationList: (user?.education ?? []).map(
+        (edu): EducationForm => ({
+          id: edu.id,
+          institution: edu.institution,
+          institutionDomain: edu.institutionDomain ?? undefined,
+          degree: edu.degree,
+          fieldOfStudy: edu.fieldOfStudy ?? undefined,
+          startYear: edu.startYear ?? undefined,
+          endYear: edu.endYear ?? undefined,
+          grade: edu.grade ?? undefined,
+          activities: edu.activities ?? undefined,
+          description: edu.description ?? undefined,
+        }),
+      ),
+      workExperienceList: (user?.workExperiences ?? []).map(
+        (we): WorkExperienceForm => ({
+          id: we.id,
+          company: we.company,
+          companyDomain: we.companyDomain ?? undefined,
+          title: we.title,
+          location: we.location ?? undefined,
+          startDate: new Date(we.startDate),
+          endDate: we.endDate ? new Date(we.endDate) : undefined,
+          isCurrent: we.isCurrent,
+          description: we.description ?? undefined,
+        }),
+      ),
+    };
   }, [consulteeData]);
 
-  useEffect(() => {
-    if (error) {
-      toast({
-        title: "Error",
-        description: "Failed to load profile settings.",
-        variant: "destructive",
-      });
-    }
-  }, [error, toast]);
+  const restore = useCallback(() => {
+    if (!saved) return;
+    setProfileSettings(saved.profileSettings);
+    setEducationList(saved.educationList);
+    setWorkExperienceList(saved.workExperienceList);
+  }, [saved]);
 
-  const handleEducationUpdate = useCallback(
-    (updated: EducationForm[]) => {
-      setEducationList(updated);
-    },
-    [],
-  );
+  useEffect(() => {
+    restore();
+  }, [restore]);
+
+  const isDirty =
+    !!saved &&
+    JSON.stringify({ profileSettings, educationList, workExperienceList }) !==
+      JSON.stringify(saved);
+
+  const handleEducationUpdate = useCallback((updated: EducationForm[]) => {
+    setEducationList(updated);
+  }, []);
 
   const handleWorkExperienceUpdate = useCallback(
     (updated: WorkExperienceForm[]) => {
@@ -153,7 +157,8 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     [],
   );
 
-  const handleSave = async () => {
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
     try {
       setIsSaving(true);
 
@@ -212,14 +217,14 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         }
       }
 
-      toast({
-        title: "Settings saved",
-        description: "Your settings have been updated successfully.",
-      });
+      toast({ title: "Learning profile saved" });
 
-      refetch();
+      await refetch();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       toast({
         title: "Error",
         description: "Failed to save settings. Please try again.",
@@ -232,31 +237,17 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <div className="bg-card rounded-xl p-6 shadow-sm border border-border mb-6 sm:p-8">
-          <h2 className="text-fluid-3xl font-bold tracking-tight text-foreground">
-            Settings
-          </h2>
-          <p className="mt-2 text-muted-foreground">
-            Manage your account settings and preferences
-          </p>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>Profile Settings</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="animate-pulse space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="h-16 bg-muted rounded"></div>
-                <div className="h-16 bg-muted rounded"></div>
-              </div>
-              <div className="h-32 bg-muted rounded"></div>
-              <div className="h-16 bg-muted rounded"></div>
+      <Card>
+        <CardContent className="space-y-4 p-6">
+          <div className="animate-pulse space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="h-16 rounded bg-muted"></div>
+              <div className="h-16 rounded bg-muted"></div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+            <div className="h-32 rounded bg-muted"></div>
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -264,33 +255,19 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
   // nulls after a failed load, which read like empty settings.
   if (error && !consulteeData) {
     return (
-      <EmptyState
-        icon={SettingsIcon}
-        title="Couldn't load your settings"
-        description="Something went wrong while fetching your profile."
-        action={
-          <Button variant="outline" onClick={() => refetch()}>
-            Retry
-          </Button>
-        }
+      <ErrorState
+        title="Couldn't load your learning profile"
+        error={error}
+        onRetry={() => void refetch()}
       />
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="bg-card rounded-xl p-6 shadow-sm border border-border mb-6 sm:p-8">
-        <h2 className="text-fluid-3xl font-bold tracking-tight text-foreground">
-          Settings
-        </h2>
-        <p className="mt-2 text-muted-foreground">
-          Manage your account settings and preferences
-        </p>
-      </div>
-
+    <form onSubmit={handleSave} className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Profile Settings</CardTitle>
+          <CardTitle>About you</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -444,14 +421,11 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         </CardContent>
       </Card>
 
-      {/* Notification Preferences */}
-      <NotificationPreferencesPanel />
-
-      <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={isSaving}>
-          {isSaving ? "Saving..." : "Save Changes"}
-        </Button>
-      </div>
-    </div>
+      <SettingsSaveBar
+        isSaving={isSaving}
+        isDirty={isDirty}
+        onReset={restore}
+      />
+    </form>
   );
 }
