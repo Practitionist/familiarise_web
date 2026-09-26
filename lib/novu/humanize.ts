@@ -189,6 +189,93 @@ export function cancellationReasonLabel(
   return CANCELLATION_REASON_LABEL[key as CancellationReason] ?? raw;
 }
 
+/** A bare row id inside prose — never readable, never the lookup path (the
+ *  refunds queue links the row). Scrubbed to a noun the sentence survives. */
+const UUID_PATTERN =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Why a refund was raised, as the clause that follows "Reason: " on the
+ * `refund-requested` bell.
+ *
+ * The `Refund.reason` column keeps the machine string the builders wrote
+ * (dedupe keys, audits and the refunds queue read it); the bell gets the
+ * human one. Whole-event cancellations reuse {@link cancellationReasonLabel}
+ * so `(OTHER)` never reaches the inbox, and internal prefixes (`ops refund:`)
+ * are restated as what they are — a manual refund — instead of leaking the
+ * console's label. Anything already human (tiers, moderation, maintenance,
+ * webhook cascades) passes through verbatim, and an unknown future builder
+ * gets its UUIDs scrubbed rather than printed.
+ */
+export function refundReasonLabel(
+  reason: string | null | undefined,
+): string | undefined {
+  const raw = reason?.trim();
+  if (!raw) return undefined;
+
+  // Whole-event cancellation: the parenthetical is a CancellationReason
+  // member or the cancel route's "cancelled" default (which would read
+  // "cancelled (cancelled)" if kept).
+  const whole = raw.match(/^whole-event (class|webinar) cancellation \((.*)\)$/i);
+  if (whole) {
+    const kind = whole[1].toLowerCase();
+    const inner = whole[2].trim();
+    if (/^cancelled$/i.test(inner)) return `the whole ${kind} was cancelled`;
+    return `the whole ${kind} was cancelled (${cancellationReasonLabel(inner)})`;
+  }
+
+  // A skipped class session whose make-up never happened.
+  if (/^class session \S+ skipped — make-up not attended$/i.test(raw)) {
+    return "a class session was skipped and its make-up was not attended";
+  }
+
+  // Seat removals: the event id is not the story; the side and the tier are.
+  const removed = raw.match(
+    /^removed from (class|webinar) \S+ by the (organiser|attendee) \((\d+(?:\.\d+)?)%\)$/i,
+  );
+  if (removed) {
+    return `removed from the ${removed[1].toLowerCase()} by the ${removed[2].toLowerCase()} (${removed[3]}% refund)`;
+  }
+
+  // Credit-funded seat leaving mid-series: credits come back, not cash.
+  const credits = raw.match(/^left (class|webinar) \S+ — credits restored in full$/i);
+  if (credits) {
+    return `left the ${credits[1].toLowerCase()} early; credits restored in full`;
+  }
+
+  // Console-issued refunds: restate the machine prefix, keep the human text.
+  const manual = raw.match(/^(ops|admin)( whole-event)? refund: ?(.*)$/i);
+  if (manual) {
+    const text = manual[3].trim();
+    const scope = manual[2] ? " whole-event" : "";
+    return text
+      ? `manual${scope} refund issued by ops — ${text}`
+      : `manual${scope} refund issued by ops`;
+  }
+  // Settle-sweep machine codes (scripts/appointments/settle-cancelled-sessions.ts).
+  const sweep: Record<string, string> = {
+    SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
+    HOST_SESSION_NOT_MADE_UP: "a cancelled session was never made up",
+    SESSION_VOIDED_UNUSED_AT_PLAN_END:
+      "an unused voided session at the end of the plan",
+  };
+  if (sweep[raw]) return sweep[raw];
+
+  // Overage credit-backs name ledger rows; the direction is the story.
+  if (/^overage credit-back — parent booking \S+ refunded$/i.test(raw)) {
+    return "overage credit-back after the parent booking was refunded";
+  }
+  const overageEvent = raw.match(
+    /^overage credit-back — (class|webinar) \S+ cancelled$/i,
+  );
+  if (overageEvent) {
+    return `overage credit-back after the ${overageEvent[1].toLowerCase()} was cancelled`;
+  }
+
+  // Last resort for builders not yet mapped: drop the ids, keep the words.
+  return raw.replace(UUID_PATTERN, "that booking").trim() || undefined;
+}
+
 /**
  * A ticket status as the clause that follows "is now": `IN_PROGRESS` reaches
  * the inbox as "in progress". Exhaustive over the enum so a new status fails

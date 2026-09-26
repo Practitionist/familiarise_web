@@ -38,7 +38,6 @@ const base = {
   consultantProfileId: "cp1",
   documentIds: ["d1", "d2"],
   carryOver: false,
-  adminDashboardUrl: "/dashboard/admin/verification",
 };
 
 function primeHappyPath() {
