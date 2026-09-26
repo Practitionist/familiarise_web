@@ -114,7 +114,14 @@ function NewSplitForm({ orgId }: Readonly<{ orgId: string }>) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const parts = [platform, org, expert].map(bps);
+    // #1527 review — `Number("")` is 0, so a blank field used to pass as a
+    // silent 0% share instead of the "fill this in" error it should be.
+    const raw = [platform, org, expert];
+    if (raw.some((v) => v.trim() === "")) {
+      setError("Enter a percentage for each share.");
+      return;
+    }
+    const parts = raw.map(bps);
     if (parts.some((p) => !Number.isFinite(p) || p < 0)) {
       setError("Enter a percentage for each share.");
       return;

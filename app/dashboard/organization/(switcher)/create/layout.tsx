@@ -17,18 +17,19 @@ import { requireUserRole } from "@/lib/auth-guard";
  *
  * If such a user comes back via this URL, we render the unbranded shell so
  * they can finish creation. Once their profile is created, this URL
- * answers a 308 into the operator chrome (#1527 §17b) — making the
- * dashboard the canonical entry for everyone except half-onboarded
- * recoveries. Do NOT delete this route until the backfill for legacy rows
- * has run; the roadmap item to move the lazy-create into the handoff is
- * done, this shell is what remains for the old rows.
+ * answers a 307 into the operator chrome (#1527 §17b; session-keyed, so it
+ * must stay temporary) — making the dashboard the canonical entry for
+ * everyone except half-onboarded recoveries. Do NOT delete this route
+ * until the backfill for legacy rows has run; the roadmap item to move the
+ * lazy-create into the handoff is done, this shell is what remains for the
+ * old rows.
  */
 export default async function CreateOrganizationLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Role gate only; the page 308s anyone who has a workspace (#1527).
+  // Role gate only; the page 307s anyone who has a workspace (#1527).
   await requireUserRole("ORG_WORKSPACE");
   return <>{children}</>;
 }

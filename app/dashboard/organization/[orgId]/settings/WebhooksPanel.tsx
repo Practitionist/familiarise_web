@@ -306,6 +306,9 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
       "POST",
     );
     setShownSecret((json as { endpoint: { secret: string } }).endpoint.secret);
+    // #1527 review — create and remove both invalidate the list; rotate
+    // didn't, so the endpoint list could show server state a rotation ago.
+    void qc.invalidateQueries({ queryKey: ["org-webhooks", orgId] });
     toast({
       title: "Secret rotated",
       description: "The old secret keeps working for 24 hours.",
