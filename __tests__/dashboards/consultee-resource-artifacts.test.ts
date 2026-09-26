@@ -93,16 +93,18 @@ describe("the two Library pages read their own sources (#1527)", () => {
     expect(read(TAB)).not.toContain("Sync from Stream");
   });
 
-  it("Recordings takes group recordings from the late-join-safe read (#1819)", () => {
-    const src = read(
+  it("the resources read enforces the late-join rule on class recordings (#1819)", () => {
+    const route = read(
+      "app/api/dashboard/consultee/[consulteeId]/resources/route.ts",
+    );
+    expect(route).toContain("lateJoinRecordingAccess(userId)");
+    expect(route).toContain("hiddenFromLateJoiner(");
+    expect(route).toMatch(/access: lateJoin, classId: cl\.id/);
+    const page = read(
       "components/dashboard/consultee/resources/ConsulteeRecordingsPage.tsx",
     );
-    expect(src).toContain("/api/consultees/${consulteeId}/recordings");
-    expect(src).toContain('artifact="recordings"');
-    // Only the 1:1 arms of the resources read survive; its webinar/class arms
-    // are the ones that ignored the late-join rule.
-    expect(src).not.toMatch(/webinars:\s*own\./);
-    expect(src).not.toMatch(/classes:\s*own\./);
+    expect(page).toContain("/api/dashboard/consultee/${consulteeId}/resources");
+    expect(page).toContain('artifact="recordings"');
   });
 
   it("the retired route redirects rather than 404s", () => {

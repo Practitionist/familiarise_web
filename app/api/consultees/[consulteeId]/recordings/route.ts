@@ -63,27 +63,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         let planType: "webinar" | "class" | null = null;
         let planId: string | null = null;
         let planTitle: string | null = null;
-        // #1527 — the event (batch) and its host, so the Recordings page can
-        // group by session run the way the resources read did.
-        let eventId: string | null = null;
-        let eventStatus: string | null = null;
-        let host: { name: string | null; image: string | null } | null = null;
 
         if (appointment?.webinar?.webinarPlan) {
           planType = "webinar";
           planId = appointment.webinar.webinarPlan.id ?? null;
           planTitle = appointment.webinar.webinarPlan.title ?? null;
-          eventId = appointment.webinar.id;
-          eventStatus = appointment.webinar.status;
-          host =
-            appointment.webinar.webinarPlan.consultantProfile?.user ?? null;
         } else if (appointment?.class?.classPlan) {
           planType = "class";
           planId = appointment.class.classPlan.id ?? null;
           planTitle = appointment.class.classPlan.title ?? null;
-          eventId = appointment.class.id;
-          eventStatus = appointment.class.status;
-          host = appointment.class.classPlan.consultantProfile?.user ?? null;
         }
 
         return {
@@ -99,10 +87,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           planType,
           planId,
           planTitle,
-          eventId,
-          eventStatus,
-          consultantName: host?.name ?? null,
-          consultantImage: host?.image ?? null,
           createdAt: recording.createdAt,
         };
       }),

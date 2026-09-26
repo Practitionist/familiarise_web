@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { LifeBuoy } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import { Section, KeyValueList } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ export function PaymentDetailClient({
 }: Readonly<{ consulteeId: string; detail: ConsulteePaymentDetail }>) {
   const [helpOpen, setHelpOpen] = useState(false);
   const { row, moneyState } = detail;
+  useSetBreadcrumbLabel(row.planTitle);
   const basePath = `/dashboard/consultee/${consulteeId}`;
   const money = (paise: number) => formatCurrencyAmount(paise, row.currency);
 

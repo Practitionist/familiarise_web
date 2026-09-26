@@ -5,6 +5,11 @@ import prisma from "@/lib/prisma";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { RecordingService } from "@/lib/stream/recording-service";
 import {
+  hiddenFromLateJoiner,
+  lateJoinRecordingAccess,
+  type LateJoinAccess,
+} from "@/lib/stream/late-join-recordings";
+import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
@@ -206,6 +211,7 @@ export async function GET(
     }
 
     const userId = consulteeProfile.userId;
+    const lateJoin = await lateJoinRecordingAccess(userId);
 
     // Get paid plan IDs via shared RecordingService method
     const {
@@ -406,6 +412,7 @@ export async function GET(
             materials: cl.classPlan.materials,
             recordings: await extractRecordings(
               cl.appointment ? [cl.appointment] : [],
+              { access: lateJoin, classId: cl.id, classPlanId: cl.classPlanId },
             ),
           })),
         )
@@ -444,9 +451,39 @@ export async function GET(
   }
 }
 
-async function extractRecordings(appointments: AppointmentWithSlots[]) {
+async function extractRecordings(
+  appointments: AppointmentWithSlots[],
+  lateJoinScope?: {
+    access: LateJoinAccess;
+    classId: string;
+    classPlanId: string;
+  },
+) {
+  // #1819 — a late joiner's seat hides a class's earlier sessions (host
+  // toggle); enforced here so no caller of this read bypasses it (#1527).
   const recordings = appointments.flatMap((apt) =>
-    apt.occurrences.flatMap((slot) => slot.meeting?.recordings ?? []),
+    apt.occurrences.flatMap((slot) => {
+      if (
+        lateJoinScope &&
+        hiddenFromLateJoiner(
+          {
+            meeting: {
+              occurrence: {
+                startsAt: slot.startsAt,
+                appointment: {
+                  classId: lateJoinScope.classId,
+                  class: { classPlanId: lateJoinScope.classPlanId },
+                },
+              },
+            },
+          },
+          lateJoinScope.access,
+        )
+      ) {
+        return [];
+      }
+      return slot.meeting?.recordings ?? [];
+    }),
   );
 
   return Promise.all(
