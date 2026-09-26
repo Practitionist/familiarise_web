@@ -97,10 +97,12 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your organisation's wallet is frozen; ask your billing admin or support before booking again.",
   },
+  // Checkout raises this for the booking member's own SESSION_BOOKING consent
+  // on an org-funded booking; the checkout toast links to the fix (#1527 3c).
   [ErrorTypes.CONSENT_REQUIRED]: {
-    title: "Booking Not Available",
+    title: "Your Consent Is Needed",
     description:
-      "This consultant has not enabled bookings yet; you can try another consultant or check back later.",
+      "Your organisation can't book this session for you until you give session-booking consent in Settings › Account › Data consent. You were not charged.",
   },
   [ErrorTypes.CONSENT_WITHDRAWN]: {
     title: "Booking Not Available",

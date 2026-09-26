@@ -38,7 +38,12 @@ import {
 } from "@/lib/enterprise/data-export-kinds";
 import { getInvitableRoles } from "@/lib/labels/org-labels";
 import { GET as listAssignments } from "../../app/api/organizations/[orgId]/programs/[programId]/assignments/route";
-import { POST as postConsent } from "../../app/api/organizations/[orgId]/consent/route";
+import {
+  DELETE as deleteConsent,
+  GET as getConsent,
+  POST as postConsent,
+} from "../../app/api/organizations/[orgId]/consent/route";
+import { dataConsentHref } from "@/lib/dashboard/account-href";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const ROLES: MemberRole[] = [
@@ -233,6 +238,26 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
     expect((await res.json()).code).toBe("CONSENT_GRANT_SELF_ONLY");
     // Operators still record withdrawals.
     expect(hasOrgPermission("MANAGER", "consent.withdraw")).toBe(true);
+  });
+
+  it("a member reads + withdraws only their own consent (#1527 3c)", async () => {
+    mockRequireOrgAccess.mockResolvedValue({
+      session: { user: { id: "learner-user" } },
+      member: { id: "m-le", role: "LEARNER" },
+      org: { id: "o" },
+    });
+    const params = { params: Promise.resolve({ orgId: "o" }) };
+    const url = "http://x/api?userId=someone-else&purposeCode=SESSION_BOOKING";
+    const read403 = await getConsent(new Request(url) as never, params);
+    expect((await read403.json()).code).toBe("CONSENT_READ_SELF_ONLY");
+    const del = await deleteConsent(
+      new Request(url, { method: "DELETE" }) as never,
+      params,
+    );
+    expect(del.status).toBe(403);
+    expect(dataConsentHref({ consulteeProfileId: "c1" })).toBe(
+      "/dashboard/consultee/c1/settings/account#data-consent",
+    );
   });
 
   it("non-owners are never offered OWNER; SUPPORT is invitable (P1-7)", () => {

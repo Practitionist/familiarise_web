@@ -2187,7 +2187,7 @@ async function revalidateInsideLock(
       ) {
         throw Object.assign(
           new Error(
-            "Consent required before your organization can book sessions for you.",
+            "Consent required before your organization can book sessions for you. Give session-booking consent in Settings › Account › Data consent.",
           ),
           {
             httpStatus: 403,
@@ -3320,7 +3320,7 @@ export async function handleCheckout(
     ) {
       throw Object.assign(
         new Error(
-          "Consent required before your organization can book sessions for you. Grant session-booking consent in your organization's privacy settings.",
+          "Consent required before your organization can book sessions for you. Give session-booking consent in Settings › Account › Data consent.",
         ),
         {
           httpStatus: 403,

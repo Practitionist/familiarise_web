@@ -47,6 +47,22 @@ export function accountSettingsHref(
   return base ? `${base}/settings/${section}` : null;
 }
 
+/** #1527 3c — anchor of Settings › Account's "Data consent" section. */
+export const DATA_CONSENT_ANCHOR = "data-consent";
+
+/**
+ * Where a member grants or withdraws their own org consent (checkout's
+ * CONSENT_REQUIRED points here). Null outside the personal trees, which are
+ * the only ones rendering the shared Account settings.
+ */
+export function dataConsentHref(user: AccountHrefUser): string | null {
+  if (["ADMIN", "STAFF", "ORG_WORKSPACE"].includes(user.role ?? "")) {
+    return null;
+  }
+  const href = accountSettingsHref(user, "account");
+  return href ? `${href}#${DATA_CONSENT_ANCHOR}` : null;
+}
+
 /**
  * The viewer's own Support requests page (#1527) — never an org's operator
  * triage page. Null for the back office (staff answer requests, they don't

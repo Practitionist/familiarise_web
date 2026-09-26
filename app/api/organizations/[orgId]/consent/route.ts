@@ -13,7 +13,9 @@
  * stub header. #1527 decision 5 — only the member grants their own consent:
  * any active member may POST for themselves; an operator granting on behalf
  * of someone else is refused (CONSENT_GRANT_SELF_ONLY). Operators view
- * (consent.read) and record withdrawal requests (consent.withdraw).
+ * (consent.read) and record withdrawal requests (consent.withdraw). Any
+ * active member may also read and withdraw their OWN consent — the Account
+ * settings "Data consent" section (#1527 3c).
  *
  * Retention: `auditRetainedUntil` = grantedAt + 7y per DPDP Rules (Nov
  * 2025). A daily cron sweeper (jobs/compliance/consent-retention-sweeper)
@@ -25,6 +27,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
 import {
@@ -61,8 +64,11 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "consent.read" });
+  // Any active member reads their own artifacts; consent.read reads everyone's.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+  const selfId = access.session.user.id;
+  const readsOthers = hasOrgPermission(access.member.role, "consent.read");
 
   const url = new URL(req.url);
   const parsedQuery = QuerySchema.safeParse(
@@ -75,6 +81,16 @@ export async function GET(
     );
   }
   const q = parsedQuery.data;
+  if (!readsOthers && q.userId && q.userId !== selfId) {
+    return NextResponse.json(
+      {
+        error: "You can only read your own consent",
+        code: "CONSENT_READ_SELF_ONLY",
+      },
+      { status: 403 },
+    );
+  }
+  const userId = readsOthers ? q.userId : selfId;
 
   // Scope to this org via the user → memberships relation so Postgres
   // does the filter with a JOIN rather than pulling every member userId
@@ -84,7 +100,7 @@ export async function GET(
   // org records.
   const consents = await prisma.consentArtifact.findMany({
     where: {
-      ...(q.userId && { userId: q.userId }),
+      ...(userId && { userId }),
       user: { memberships: { some: { organizationId: orgId } } },
       ...(q.active === "true" && { withdrawnAt: null }),
       ...(q.active === "false" && { withdrawnAt: { not: null } }),
@@ -218,9 +234,8 @@ export async function POST(
  *
  *  - Operators (`consent.withdraw`: OWNER, MAINTAINER, MANAGER) record a
  *    member's withdrawal request — the org-side of the data principal's
- *    right to withdraw (#1527 decision 5). Self-service withdrawal from the
- *    user's own account settings goes through a different route (to be
- *    added) that requires the authenticated user to match `userId`.
+ *    right to withdraw (#1527 decision 5). Any active member may withdraw
+ *    their own consent (`userId` = the caller) from Account settings.
  */
 const DeleteQuerySchema = z.object({
   userId: z.string().min(1).max(128),
@@ -232,9 +247,7 @@ export async function DELETE(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    permission: "consent.withdraw",
-  });
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -248,6 +261,15 @@ export async function DELETE(
     );
   }
   const { userId } = parsed.data;
+  if (
+    userId !== access.session.user.id &&
+    !hasOrgPermission(access.member.role, "consent.withdraw")
+  ) {
+    return NextResponse.json(
+      { error: "Forbidden — your role does not grant consent.withdraw" },
+      { status: 403 },
+    );
+  }
   // Normalise a legacy kebab-case scope to canonical so a withdrawal targets
   // the same code the gate/storage uses (e.g. third-party-sharing-with-stream
   // → STREAM_DATA_PROCESSING). An unknown code must 400 — NOT fall back to

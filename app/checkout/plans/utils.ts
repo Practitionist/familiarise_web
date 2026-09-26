@@ -1,6 +1,9 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { createElement } from "react";
+import { ToastAction, type ToastActionElement } from "@/components/ui/toast";
+import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import { useToast } from "@/hooks/use-toast";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
@@ -82,6 +85,19 @@ export function createHandleApiError(
       title,
       description,
       variant: "destructive",
+      // #1527 3c — the member clears this themselves. /profile 308s to
+      // accountSettingsHref(user, "account") and the browser keeps the anchor.
+      ...(errorType === ErrorTypes.CONSENT_REQUIRED && {
+        action: createElement(
+          ToastAction,
+          {
+            altText: "Open your data consent settings",
+            onClick: () =>
+              window.location.assign(`/profile#${DATA_CONSENT_ANCHOR}`),
+          },
+          "Open settings",
+        ) as ToastActionElement,
+      }),
     });
   };
 }
