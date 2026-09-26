@@ -476,7 +476,7 @@ export function DocumentUpload({
             : {contextInfo.appointmentTitle || appointmentTitle}
             {contextInfo.consultantName && (
               <span className="block mt-1 text-sm text-muted-foreground">
-                Consultant: {contextInfo.consultantName}
+                Expert: {contextInfo.consultantName}
               </span>
             )}
           </ResponsiveModalDescription>
@@ -677,7 +677,7 @@ export function DocumentUpload({
                                       className="text-xs"
                                       title={
                                         doc.uploadedByRole === "CONSULTANT"
-                                          ? `Consultant response #${doc.versionNo} in this review thread`
+                                          ? `Expert response #${doc.versionNo} in this review thread`
                                           : `Revision v${doc.versionNo}`
                                       }
                                     >
@@ -817,7 +817,7 @@ export function DocumentUpload({
                                       return "Follow-up documents";
                                     return kinds.has("revision")
                                       ? `Your revision${n > 1 ? "s" : ""}`
-                                      : `Consultant response${n > 1 ? "s" : ""}`;
+                                      : `Expert response${n > 1 ? "s" : ""}`;
                                   })()}
                                 </span>
                               </div>

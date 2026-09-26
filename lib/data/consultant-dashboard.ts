@@ -147,7 +147,7 @@ async function readNextCycles(
       });
       return {
         subscriptionId: row.id,
-        consulteeName: row.requestedBy?.user?.name ?? "Consultee",
+        consulteeName: row.requestedBy?.user?.name ?? "Learner",
         planTitle: row.subscriptionPlan.title,
         nextBatch: entitlement.cycle.nextBatch,
         held: entitlement.held,

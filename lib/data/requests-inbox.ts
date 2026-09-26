@@ -343,7 +343,7 @@ function consultationRow(
       appointmentId: c.appointment?.id ?? null,
       planTitle: c.consultationPlan.title,
       requester: {
-        name: c.requestedBy.user.name ?? "Consultee",
+        name: c.requestedBy.user.name ?? "Learner",
         image: c.requestedBy.user.image ?? null,
       },
       requestedAt: c.requestedAt,
@@ -476,7 +476,7 @@ function subscriptionRow(
       appointmentId: s.appointment?.id ?? null,
       planTitle: s.subscriptionPlan.title,
       requester: {
-        name: s.requestedBy.user.name ?? "Consultee",
+        name: s.requestedBy.user.name ?? "Learner",
         image: s.requestedBy.user.image ?? null,
       },
       requestedAt: s.requestedAt,
@@ -537,7 +537,7 @@ function trialRow(
       appointmentId: t.appointment?.id ?? null,
       planTitle: t.subscriptionPlan.title,
       requester: {
-        name: t.consulteeProfile.user.name ?? "Consultee",
+        name: t.consulteeProfile.user.name ?? "Learner",
         image: t.consulteeProfile.user.image ?? null,
       },
       requestedAt: t.requestedAt,
