@@ -59,7 +59,7 @@ describe("back-office nav targets resolve", () => {
     expect(flattenNav(nav).length).toBeGreaterThan(0);
     const dirs =
       tree === "admin"
-        ? ["admin"]
+        ? ["(backoffice)/[tree]"]
         : ["staff/[staffId]/(features)", "staff/[staffId]"];
     expect(missingPaths(nav, ...dirs)).toEqual([]);
     expectTabsAreItems(nav);

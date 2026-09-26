@@ -37,7 +37,7 @@ const FILTER_DRIVEN_QUERIES = [
   // this route as a tab (ADR 19); `page.tsx` is now a server wrapper.
   "app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsSummaryPanel.tsx",
   "app/dashboard/organization/[orgId]/payouts/PayoutsPageClient.tsx",
-  "app/dashboard/admin/payouts/_sections/EarningsSection.tsx",
+  "components/dashboard/backoffice/payouts/sections/EarningsSection.tsx",
   "app/dashboard/organization/[orgId]/purchase-orders/page.tsx",
   "components/dashboard/shared/OperatorAppointmentsClient.tsx",
   // Already correct before this sweep — kept so they cannot regress.

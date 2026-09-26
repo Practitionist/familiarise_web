@@ -1,4 +1,4 @@
-import { renderMoneyTab } from "../_components/money-page";
+import { renderMoneyTab } from "@/components/dashboard/backoffice/money/money-page";
 
 /** #1771 K-2 — one money section in the admin tree. */
 export default async function AdminMoneyTabPage({

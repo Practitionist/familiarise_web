@@ -1,6 +1,6 @@
 import { OperatorAppointmentsPage } from "@/components/dashboard/shared/OperatorAppointmentsPage";
 import { requireBackofficePage } from "@/lib/auth-guard";
-import { AppointmentsWithOps } from "@/app/dashboard/admin/money/_components/AppointmentsWithOps";
+import { AppointmentsWithOps } from "@/components/dashboard/backoffice/money/AppointmentsWithOps";
 
 /** Platform-wide appointment triage — shared with the admin tree. */
 export default async function StaffAppointmentsPage({

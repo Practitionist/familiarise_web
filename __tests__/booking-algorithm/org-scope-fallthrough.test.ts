@@ -256,7 +256,7 @@ describe("the platform-wide surfaces declare `all` deliberately", () => {
 
   it("both operator appointment pages pass an explicit scope", () => {
     for (const rel of [
-      "app/dashboard/admin/appointments/page.tsx",
+      "app/dashboard/(backoffice)/[tree]/appointments/page.tsx",
       "app/dashboard/staff/[staffId]/(features)/appointments/page.tsx",
     ]) {
       expect(read(rel)).toContain('scope={{ kind: "all" }}');

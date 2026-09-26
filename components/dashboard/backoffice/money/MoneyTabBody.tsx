@@ -1,7 +1,7 @@
 import { PaymentsPage } from "@/components/dashboard/shared/PaymentsPage";
 import { RefundsPage } from "@/components/dashboard/shared/RefundsPage";
 import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
-import { PayoutsBoard } from "@/app/dashboard/admin/payouts/PayoutsBoard";
+import { PayoutsBoard } from "@/components/dashboard/backoffice/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
 import { ReconcileTab } from "./ReconcileTab";

@@ -1,4 +1,4 @@
-import { renderMoneyTab } from "@/app/dashboard/admin/money/_components/money-page";
+import { renderMoneyTab } from "@/components/dashboard/backoffice/money/money-page";
 
 /**
  * #1771 K-2 — one money section in the staff tree; an admin-only section

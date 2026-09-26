@@ -9,10 +9,10 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
-import PendingPayoutsSection from "./_sections/PendingPayoutsSection";
-import ProcessingPayoutsSection from "./_sections/ProcessingPayoutsSection";
-import CompletedPayoutsSection from "./_sections/CompletedPayoutsSection";
-import EarningsSection from "./_sections/EarningsSection";
+import PendingPayoutsSection from "./sections/PendingPayoutsSection";
+import ProcessingPayoutsSection from "./sections/ProcessingPayoutsSection";
+import CompletedPayoutsSection from "./sections/CompletedPayoutsSection";
+import EarningsSection from "./sections/EarningsSection";
 
 // Lazy-load recharts so it stays out of this route's first-load JS.
 const PayoutsChart = dynamic(() => import("./PayoutsChart"), {

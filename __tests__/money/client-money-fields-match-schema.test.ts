@@ -151,7 +151,7 @@ describe("paise values reach a paise formatter", () => {
     // That is the more dangerous half of this bug class: ₹NaN is obviously
     // broken and gets reported, whereas a plausible-looking number that is
     // 100x off gets believed and acted on.
-    const src = read("app/dashboard/admin/home/AdminHomePageClient.tsx");
+    const src = read("app/dashboard/(backoffice)/[tree]/home/AdminHomePageClient.tsx");
     for (const field of [
       "totalPaymentsValue",
       "pendingPaymentsValue",
