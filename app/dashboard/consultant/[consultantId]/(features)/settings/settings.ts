@@ -349,18 +349,11 @@ export function settingsSectionHref(
   return `${basePath}/settings/${section.slug}`;
 }
 
-/** The section a pathname is on, if it is on one. */
-export function settingsSectionForPath(
-  basePath: string,
-  pathname: string,
-): SettingsSection | null {
-  return (
-    SETTINGS_SECTIONS.find((s) => {
-      const href = settingsSectionHref(basePath, s);
-      return pathname === href || pathname.startsWith(`${href}/`);
-    }) ?? null
-  );
-}
+/**
+ * `settings?view=sections` renders the hub's section list (the mobile list
+ * view, #1527) instead of redirecting to the first section.
+ */
+export const SETTINGS_LIST_VIEW = "sections";
 
 /**
  * Where a legacy `settings?tab=<key>` deep link lands now that the tabs are

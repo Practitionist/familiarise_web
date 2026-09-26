@@ -1,12 +1,14 @@
 "use client";
 
+import { ChevronLeft } from "lucide-react";
+import Link from "next/link";
+import type { ReactNode } from "react";
 import { cn } from "@/utils/tailwind";
-import { ReactNode } from "react";
 
 /**
  * PageScaffold — page-scaffold primitives shared by every dashboard role
- * (org, staff, admin, consultant, consultee): a page header band, a padded
- * content region, and a responsive KPI grid.
+ * (org, staff, admin, consultant, consultee): the page header, the content
+ * flow, and a responsive KPI grid.
  *
  * Formerly DashboardShell.tsx; renamed when the legacy `DashboardShell`
  * layout wrapper (fixed sidebar + mobile drawer) died with the
@@ -15,63 +17,100 @@ import { ReactNode } from "react";
  * instead, and only these scaffold primitives remain.
  */
 
-interface DashboardHeaderProps {
-  title: string;
-  subtitle?: string;
+export interface PageHeaderProps {
+  title: ReactNode;
+  description?: ReactNode;
+  /** Legacy name for `description`. */
+  subtitle?: ReactNode;
+  /** Right-aligned at sm+, stacked full-width under the title on mobile. */
   actions?: ReactNode;
+  /** A small link above the title, for detail pages. */
+  back?: { href: string; label: string };
+  /** A line of facts under the description (status badge, dates, ids). */
+  meta?: ReactNode;
   breadcrumbs?: { label: string; href?: string }[];
+  className?: string;
 }
 
-export function DashboardHeader({
+/**
+ * The page title block (#1527 §15). It used to be a full-bleed blurred band
+ * with its own gutter inside shells that already pad, so the title sat inset
+ * from the content below it. The shell owns the gutter now; this is only type
+ * and spacing.
+ */
+export function PageHeader({
   title,
+  description,
   subtitle,
   actions,
+  back,
+  meta,
   breadcrumbs,
-}: DashboardHeaderProps) {
+  className,
+}: Readonly<PageHeaderProps>) {
+  const desc = description ?? subtitle;
   return (
-    <div className="bg-card/80 backdrop-blur-xl border-b border-border/50">
-      <div className="px-4 sm:px-6 py-3 sm:py-4 lg:px-8">
-        {breadcrumbs && breadcrumbs.length > 0 && (
-          <nav className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+    <header className={cn("mb-6", className)}>
+      {breadcrumbs && breadcrumbs.length > 0 && (
+        <nav aria-label="Breadcrumb" className="mb-2">
+          <ol className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             {breadcrumbs.map((crumb, index) => (
-              <span key={crumb.label} className="flex items-center gap-2">
-                {index > 0 && <span>/</span>}
+              <li key={crumb.label} className="flex items-center gap-2">
+                {index > 0 && <span aria-hidden>/</span>}
                 {crumb.href ? (
-                  <a
+                  <Link
                     href={crumb.href}
-                    className="hover:text-zinc-900 transition-colors"
+                    className="transition-colors hover:text-foreground"
                   >
                     {crumb.label}
-                  </a>
+                  </Link>
                 ) : (
-                  <span className="text-zinc-900">{crumb.label}</span>
+                  <span aria-current="page" className="text-foreground">
+                    {crumb.label}
+                  </span>
                 )}
-              </span>
+              </li>
             ))}
-          </nav>
-        )}
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 sm:truncate">
-              {title}
-            </h1>
-            {subtitle && (
-              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 sm:truncate">
-                {subtitle}
-              </p>
-            )}
-          </div>
-          {actions && (
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3 sm:shrink-0">
-              {actions}
+          </ol>
+        </nav>
+      )}
+      {back && (
+        <Link
+          href={back.href}
+          className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden />
+          {back.label}
+        </Link>
+      )}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-[22px]">
+            {title}
+          </h1>
+          {desc && (
+            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+              {desc}
+            </p>
+          )}
+          {meta && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {meta}
             </div>
           )}
         </div>
+        {actions && (
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end [&>*]:w-full sm:[&>*]:w-auto">
+            {actions}
+          </div>
+        )}
       </div>
-    </div>
+    </header>
   );
 }
+
+/** The name 68 pages already import; same component as `PageHeader`. */
+export const DashboardHeader = PageHeader;
 
 interface PanelHeaderProps {
   description?: string;
@@ -117,8 +156,9 @@ export function DashboardContent({
 }: DashboardContentProps) {
   return (
     <div
+      // #1527: no own padding; the shell owns the gutter.
       className={cn(
-        "px-6 py-6 lg:px-8",
+        "space-y-6",
         fullHeight && "flex-1 flex flex-col overflow-auto",
         className,
       )}

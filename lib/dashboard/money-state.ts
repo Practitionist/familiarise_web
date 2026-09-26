@@ -15,6 +15,7 @@
 
 import { format } from "date-fns";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
+import { toneClass, type Tone } from "@/lib/ui/tone";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
@@ -29,14 +30,8 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 
 export type Viewer = "CONSULTANT" | "CONSULTEE" | "ORG_ADMIN";
 
-/** The six tones every badge on a dashboard page draws from. */
-export type Tone =
-  | "neutral"
-  | "info"
-  | "success"
-  | "caution"
-  | "warning"
-  | "critical";
+// The tones moved to lib/ui/tone.ts (#1527); re-exported so importers keep working.
+export { TONE_CLASS, type Tone } from "@/lib/ui/tone";
 
 export type BookingStateKind =
   | "REQUESTED"
@@ -305,37 +300,9 @@ const MONEY_TONE: Record<MoneyStateKind, Tone> = {
   FREE: "neutral",
 };
 
-/** Existing palette only (lib/labels/session-labels.ts conventions). */
-const TONE_CLASS: Record<Tone, { className: string; dotClassName: string }> = {
-  neutral: {
-    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-    dotClassName: "bg-zinc-400",
-  },
-  info: {
-    className: "bg-blue-100 text-blue-900 border-blue-200",
-    dotClassName: "bg-blue-500",
-  },
-  success: {
-    className: "bg-green-100 text-green-900 border-green-200",
-    dotClassName: "bg-green-500",
-  },
-  caution: {
-    className: "bg-amber-100 text-amber-900 border-amber-200",
-    dotClassName: "bg-amber-500",
-  },
-  warning: {
-    className: "bg-orange-100 text-orange-900 border-orange-200",
-    dotClassName: "bg-orange-500",
-  },
-  critical: {
-    className: "bg-red-100 text-red-900 border-red-200",
-    dotClassName: "bg-red-500",
-  },
-};
-
 /** `StatusBadge` props for a tone + label. */
 export function toneBadge(tone: Tone, label: string): StatusBadgeStyle {
-  return { label, ...TONE_CLASS[tone] };
+  return { label, ...toneClass(tone) };
 }
 
 const money = (paise: bigint | number | string, currency: string) =>
