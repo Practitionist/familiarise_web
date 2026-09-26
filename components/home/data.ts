@@ -324,8 +324,16 @@ export const FAQ_ITEMS = [
   },
   {
     question: "How does the payment and refund process work?",
+    // #1569 B3: "you can request a full refund" overstated an undefined
+    // "guarantee period" and implied a manual request everywhere; a session
+    // that doesn't happen because the host is absent is voided and
+    // remedied automatically (D1, D4), and cancellation refunds follow the
+    // terms shown on the booking. CodeRabbit caught the first draft for not
+    // distinguishing the immediate-refund and make-up-first remedies, and
+    // the #1833 review round caught "doesn't join" reading as a total
+    // no-show rather than including a host absent long enough who joins late.
     answer:
-      "We use secure payment processing. Payment is held in escrow until your session is completed. If you're not satisfied or your session doesn't happen, you can request a full refund within our guarantee period.",
+      "We use secure payment processing. Payment is held in escrow until your session is completed. Cancellation refunds follow the terms shown on your booking. If your expert isn't there for enough of a consultation, it's voided and refunded automatically — no request needed. Missed classes and webinars are offered a free make-up first, with an automatic refund if it goes unused.",
   },
   {
     question: "Can I become an expert on the platform?",

@@ -478,7 +478,10 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "No-shows",
         paragraphs: [
-          "If the expert misses the session, the platform flags it after a grace window (around 2 hours) and the booking is cancelled with a refund for expert fault. If you miss the session, standard cancellation terms apply. Sessions held outside the platform are marked inconclusive and handled case by case — contact support with evidence.",
+          // #1569 B2: replaces the consultation-only description with the
+          // owner-decided void rule (D1) and remedy (D4/D7), which now
+          // covers every session shape, not just one-to-one consultations.
+          "If a session's host is absent for at least 15 minutes of the booked time, or for half of it on sessions shorter than 30 minutes, the session is voided. For a one-to-one consultation, a host no-show is refunded in full automatically. For classes and webinars, we first offer a free make-up session within 14 days; if it goes unused, that session is refunded automatically. For subscriptions, a voided session is returned to your plan's allowance instead, and any voided session that's still unused when your plan or billing cycle ends is refunded automatically. If you miss the session as the learner, no refund applies, but you'll get a support link — and a link to the recording, when your plan records sessions — in case something on our side kept you out; support can review and correct the outcome if it was recorded incorrectly. Sessions held outside the platform are marked inconclusive and handled case by case — contact support with evidence.",
         ],
       },
     ],
