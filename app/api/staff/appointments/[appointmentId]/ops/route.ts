@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import type { UserRole } from "@prisma/client";
 import { z } from "zod";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { readBookingOps } from "@/lib/backoffice/booking-ops-read";
 
 const OpsParams = z.object({ appointmentId: z.string().uuid() });
@@ -27,7 +29,12 @@ export async function GET(
       { status: 404 },
     );
   }
-  return NextResponse.json(view, {
+  // The money state is a payments read; omit it if the matrix ever splits them.
+  const role = auth.session.user.role as UserRole;
+  const body = hasBackofficePermission(role, "payments.read")
+    ? view
+    : { ...view, payments: [] };
+  return NextResponse.json(body, {
     headers: { "Cache-Control": "no-store" },
   });
 }
