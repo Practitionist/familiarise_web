@@ -5044,6 +5044,11 @@ enum OccurrenceCompletionStatus {
   /// the isTentative boolean and never wrote this value; the reschedule flow
   /// now stamps replaced occurrences RESCHEDULED so lifecycle is explicit.
   RESCHEDULED // Replaced by a later occurrence (via reschedule/reallocation)
+  /// #1569 (session outcomes): the live database already carries this label
+  /// (added by a db:push from the unmerged session-outcomes work, commit
+  /// ed6bf85). Postgres cannot DROP an enum value, so the schema must carry
+  /// it or reads of AppointmentOccurrence.completionStatus risk Prisma P2023.
+  VOIDED // Held, but host-side lost min(15, booked/2) min; make-up/refund owed
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
