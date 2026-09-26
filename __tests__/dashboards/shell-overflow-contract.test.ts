@@ -337,6 +337,19 @@ describe("dashboard shell overflow contract", () => {
     expect(card).toContain("min-h-[16rem]");
   });
 
+  it("the cookie bar's height is reserved inside main, never on the dashboard document (#1527 3c)", () => {
+    const css = read("app/globals.css");
+    expect(
+      extractCssRule(css, ".h-screen-maintenance main.overflow-y-auto {"),
+    ).toContain("padding-bottom: var(--cookie-bar-height, 0px)");
+    expect(
+      extractCssRule(css, "body:not(:has(.h-screen-maintenance)) {"),
+    ).toContain("padding-bottom: var(--cookie-bar-height, 0px)");
+    expect(read("components/CookieConsent.tsx")).toContain(
+      'BAR_HEIGHT_VAR = "--cookie-bar-height"',
+    );
+  });
+
   it("org-workspace loading uses a content skeleton, not a nested full shell", () => {
     const loading = read(
       "app/dashboard/org-workspace/[orgWorkspaceId]/loading.tsx",
