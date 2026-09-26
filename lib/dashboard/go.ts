@@ -25,6 +25,15 @@ export interface GoParticipation {
 
 export const GO_FALLBACK = "/dashboard";
 
+/**
+ * `/dashboard/go/<facet>[/<path>]` — builds a deep link without hand-spelling
+ * the segments at each call site (#1527 deep-link sweep). Omit `path` for the
+ * facet's own home.
+ */
+export function goHref(facet: GoFacet, path?: string): string {
+  return path ? `/dashboard/go/${facet}/${path}` : `/dashboard/go/${facet}`;
+}
+
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]+$/;
 
 /** Path segments that are safe to splice into a dashboard URL, or null. */

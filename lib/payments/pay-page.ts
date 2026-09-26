@@ -19,6 +19,7 @@ import {
 import prisma from "@/lib/prisma";
 import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
 import { remintTrialPayLink } from "@/lib/trials/pay-link";
+import { goHref } from "@/lib/dashboard/go";
 
 export interface PayPageOrder {
   orderId: string;
@@ -108,9 +109,11 @@ function readPayPageRow(paymentId: string) {
 
 function detailHref(row: PayPageRow): string {
   const consulteeId = row.user.consulteeProfile?.id;
+  // #1527 — a payer without a consultee profile is an edge case (defensive,
+  // not the normal path); auto still resolves the viewer's own side.
   return consulteeId && row.appointmentId
     ? `/dashboard/consultee/${consulteeId}/appointments/${row.appointmentId}`
-    : "/dashboard";
+    : goHref("auto", "payments");
 }
 
 function isLive(row: PayPageRow, now: Date): boolean {

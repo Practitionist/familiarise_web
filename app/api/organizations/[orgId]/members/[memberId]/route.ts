@@ -28,6 +28,7 @@ import {
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
+import { goHref } from "@/lib/dashboard/go";
 import {
   attemptOnboardingEmail,
   stageOrgMembershipChangedEmail,
@@ -705,7 +706,9 @@ export async function DELETE(
               orgSlug: org.slug,
               removedByName: actor?.name ?? actor?.email ?? "An operator",
               reason: null,
-              dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard/consultant`,
+              // #1527 — was a bare `/dashboard/consultant` with no profile id
+              // (a guaranteed 404); the removed member is confirmed EXPERT.
+              dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}${goHref("expert")}`,
             },
           };
         }

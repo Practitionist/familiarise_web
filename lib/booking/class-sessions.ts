@@ -26,6 +26,7 @@ import {
 } from "@/lib/payments/operations/refund";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
+import { goHref } from "@/lib/dashboard/go";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
@@ -168,7 +169,8 @@ async function onExitRightTripped(
       payload: {
         planTitle: hosted.cls.classPlan.title,
         misses,
-        dashboardUrl: "/dashboard",
+        // #1527 — every seat holder here is a consultee.
+        dashboardUrl: goHref("client", "appointments"),
       },
       dedupeKey: `exit-avail:${hosted.cls.id}:${userId}`,
     });
@@ -223,7 +225,8 @@ export async function cancelClassSession(
               hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
             dateTime: when(session.startsAt),
             makeUpBy: when(makeUpBy),
-            dashboardUrl: "/dashboard",
+            // #1527 — every seat holder here is a consultee.
+            dashboardUrl: goHref("client", "appointments"),
           },
           dedupeKey: `occ-cancel:${occurrenceId}`,
         });
@@ -294,7 +297,8 @@ export async function onClassSessionVoided(
         makeUpBy: when(
           new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
         ),
-        dashboardUrl: "/dashboard",
+        // #1527 — every seat holder here is a consultee.
+        dashboardUrl: goHref("client", "appointments"),
       },
       dedupeKey: `occ-void:${args.occurrenceId}`,
     });
@@ -404,7 +408,8 @@ export async function scheduleClassMakeUp(
           payload: {
             planTitle: hosted.cls.classPlan.title,
             dateTime: when(startsAt),
-            dashboardUrl: "/dashboard",
+            // #1527 — every seat holder here is a consultee.
+            dashboardUrl: goHref("client", "appointments"),
           },
           dedupeKey: `makeup:${sourceOccurrenceId}`,
         });

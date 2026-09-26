@@ -64,6 +64,7 @@ import {
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutFailed, notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================
@@ -572,7 +573,8 @@ export async function rejectPayout(
         amount: Number(rejected.amount),
         currency: rejected.currency,
         payoutId,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the consultant who owns the payout.
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
       });
     }
   } catch (error) {
@@ -1720,7 +1722,8 @@ export async function handlePayoutWebhook(
         amount: Number(payout.amount),
         currency: payout.currency,
         payoutId: payout.id,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the consultant who owns the payout.
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
         reportSentryError(error, { subsystem: "payments", level: "warning" });
@@ -1743,7 +1746,8 @@ export async function handlePayoutWebhook(
         amount: Number(payout.amount),
         currency: payout.currency,
         payoutId: payout.id,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the consultant who owns the payout.
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout-failed notice:", error);
         reportSentryError(error, { subsystem: "payments", level: "warning" });
