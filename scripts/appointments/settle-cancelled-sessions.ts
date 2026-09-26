@@ -279,50 +279,9 @@ async function settleOne(
   });
   let pending = 0;
   for (const payment of payments) {
-    const seat = await prisma.appointmentParticipant.findFirst({
-      where: {
-        appointmentId: session.appointmentId,
-        userId: payment.userId,
-        status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
-      },
-      select: {
-        id: true,
-        status: true,
-        paymentId: true,
-        createdAt: true,
-        sessionsPurchased: true,
-      },
-    });
-    // #1834 — a seat funded by another order (a re-bought seat reuses its row)
-    // is not this payment's; a legacy seat with no link keeps the old match.
-    if (seat?.paymentId && seat.paymentId !== payment.id) continue;
-    const joinedAt =
-      seat && seat.createdAt > payment.createdAt
-        ? seat.createdAt
-        : payment.createdAt;
-    // Only a seat that held this session is owed for it.
-    if (!seat || session.startsAt <= joinedAt) continue;
-    if (seat.status === "HELD") {
-      // #1834 owner decision — a paid seat still HELD is a human's call, never
-      // skipped silently nor auto-refunded; the session settles for the rest.
-      await escalateHeldPaidSeat(session, payment, seat.id, {
-        unitPaise: await seatUnitPaise(
-          session,
-          payment,
-          joinedAt,
-          seat.sessionsPurchased,
-        ),
-      });
-      continue;
-    }
-    const refunded = await refundSeatForSession(
-      session,
-      payment,
-      joinedAt,
-      seat.sessionsPurchased,
-    );
-    if (refunded === null) pending += 1;
-    else if (refunded) result.refunded += 1;
+    const outcome = await settleSeat(session, payment);
+    if (outcome === null) pending += 1;
+    else if (outcome) result.refunded += 1;
   }
   return pending === 0;
 }
@@ -333,6 +292,56 @@ type SeatPayment = {
   currency: string;
   userId: string;
 };
+
+/**
+ * One payment's share of a missed session: true refunded, false nothing owed
+ * or sent to ops, null to retry on the next run.
+ */
+async function settleSeat(
+  session: CancelledSession,
+  payment: SeatPayment & { createdAt: Date },
+): Promise<boolean | null> {
+  const seat = await prisma.appointmentParticipant.findFirst({
+    where: {
+      appointmentId: session.appointmentId,
+      userId: payment.userId,
+      status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+    },
+    select: {
+      id: true,
+      status: true,
+      paymentId: true,
+      createdAt: true,
+      sessionsPurchased: true,
+    },
+  });
+  // #1834 — a seat funded by another order (a re-bought seat reuses its row)
+  // is not this payment's; a legacy seat with no link keeps the old match.
+  if (!seat || (seat.paymentId && seat.paymentId !== payment.id)) return false;
+  const joinedAt =
+    seat.createdAt > payment.createdAt ? seat.createdAt : payment.createdAt;
+  // Only a seat that held this session is owed for it.
+  if (session.startsAt <= joinedAt) return false;
+  if (seat.status === "HELD") {
+    // #1834 owner decision — a paid seat still HELD is a human's call, never
+    // skipped silently nor auto-refunded; the session settles for the rest.
+    await escalateHeldPaidSeat(session, payment, seat.id, {
+      unitPaise: await seatUnitPaise(
+        session,
+        payment,
+        joinedAt,
+        seat.sessionsPurchased,
+      ),
+    });
+    return false;
+  }
+  return refundSeatForSession(
+    session,
+    payment,
+    joinedAt,
+    seat.sessionsPurchased,
+  );
+}
 
 /** A keyed refund that already moved (or is moving) money for this seat. */
 async function alreadySpent(dedupeKey: string): Promise<boolean> {
