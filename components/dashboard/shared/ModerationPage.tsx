@@ -468,7 +468,11 @@ export function ModerationPage() {
   // guessing from the session keeps the button and the 403 in agreement.
   const canModerateUsers = reportsData?.capabilities?.canModerateUsers ?? false;
 
-  // Fetch profile verifications
+  // Fetch profile verifications — only while its tab is active. The stats
+  // cards + badges above come from the stats query, so mounting this page
+  // used to fire reports + profiles + reviews regardless of which tab the
+  // moderator opens. Profiles wait until visited (the tab shows its skeleton
+  // via loadingProfiles); switching back reuses cache under global defaults.
   const {
     data: profilesData,
     isPending: loadingProfiles,
@@ -485,6 +489,7 @@ export function ModerationPage() {
       return response.json();
     },
     placeholderData: keepPreviousData,
+    enabled: activeTab === "profiles",
   });
   const profiles = profilesData?.verifications ?? [];
 
@@ -533,9 +538,11 @@ export function ModerationPage() {
 
   const handleRefreshAll = () => {
     refetchStats();
-    refetchReports();
-    refetchProfiles();
-    refetchReviews();
+    // Only the visible tab's list — refetching inactive tabs would defeat
+    // the tab-scoped fetching above (and refetch() bypasses `enabled`).
+    if (activeTab === "reports") refetchReports();
+    else if (activeTab === "profiles") refetchProfiles();
+    else refetchReviews();
   };
 
   // Handle report action (dismiss or take action). UI verbs map to the

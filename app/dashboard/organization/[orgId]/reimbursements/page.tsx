@@ -240,6 +240,9 @@ export default function OrgReimbursementsPage({
           perPage={data?.perPage ?? 20}
           columns={COLUMNS}
           rowKey={(r) => r.id}
+          // Server twin is client-only ("use client"); page data refetches via
+          // the useSearchParams-keyed query — no RSC round-trip needed.
+          clientSidePagination
           emptyMessage="No reimbursable payments yet — members on this org haven't paid out of pocket for any sessions."
         />
       </DashboardContent>

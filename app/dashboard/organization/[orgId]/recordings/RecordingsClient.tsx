@@ -90,6 +90,8 @@ export function RecordingsClient({ orgId }: { orgId: string }) {
           columns={COLUMNS}
           rowKey={(r) => r.id}
           emptyMessage="No recordings under this organization yet."
+          // Server page only gates access; page data is client-fetched.
+          clientSidePagination
         />
       </DashboardContent>
     </>
