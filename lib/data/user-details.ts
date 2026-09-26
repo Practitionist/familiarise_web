@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
  *
  * Extracted from GET /api/user/[id] so the server layout can PREFETCH it. The
  * consultant dashboard layout is a client component that returns
- * `PersonalDashboardShellSkeleton` instead of `children` while its queries are
+ * `DashboardShellSkeleton` instead of `children` while its queries are
  * loading — always true during SSR — so no dashboard markup reached the HTML
  * at all (measured on #1103: no `<h1`, no nav, FCP ~6s). Hydrating this query
  * is enough to open that gate, because the guard is

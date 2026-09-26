@@ -10,7 +10,7 @@ import { createContext, useContext, useMemo } from "react";
  * still pending during SSR — so `getEffectiveUserId(session)` is `undefined`
  * there, their `["user-details", userId]` query keys become
  * `["user-details", undefined]`, and a server-side seed of the real key is
- * never read. That is why they render `PersonalDashboardShellSkeleton` instead
+ * never read. That is why they render `DashboardShellSkeleton` instead
  * of `children` server-side, and why no dashboard markup reaches the HTML at
  * all (#1103 measurement: no `<h1`, no nav, FCP ~6s).
  *

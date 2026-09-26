@@ -2,37 +2,44 @@
 
 /**
  * Shared inner layout for the consultant + consultee dashboards (Batch C3).
- * The two layouts were ~85% identical (session/userId plumbing, Novu/Stream
- * providers, capability gate + guarded redirect, prefetch, org chip,
- * id-dropping breadcrumbs, auth/access/skeleton/error early returns) with a
- * repeated joint-fix history — every fix had to land twice. There is now one
- * implementation: kind-specific data (nav, labels, fetchers, guards, error
- * UX, verification extras, user wrapping) is injected as props.
+ * The two layouts were ~85% identical (session/userId plumbing, Stream
+ * provider, capability gate + guarded redirect, prefetch, breadcrumbs,
+ * auth/access/skeleton/error early returns) with a repeated joint-fix history
+ * — every fix had to land twice. There is now one implementation:
+ * kind-specific data (nav, labels, fetchers, guards, error UX, verification
+ * extras, user wrapping) is injected as props. Chrome, Novu and the error
+ * boundary live in DashboardShell (#1527).
  */
 
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Building2, Lock, UserRound, type LucideIcon } from "lucide-react";
+import {
+  LifeBuoy,
+  Lock,
+  Settings,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 
 import {
-  PersonalDashboardShell,
-  PersonalDashboardShellSkeleton,
-  type PersonalDashboardMobileTab,
-} from "@/components/dashboard/PersonalDashboardShell";
-import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
-import { useBreadcrumbOverride } from "@/components/dashboard/breadcrumb-override";
+  DashboardShell,
+  DashboardShellSkeleton,
+} from "@/components/dashboard/DashboardShell";
+import { ContextSwitcher } from "@/components/dashboard/ContextSwitcher";
+import {
+  useDashboardBreadcrumbs,
+  type OfferingsCrumbConfig,
+} from "@/components/dashboard/breadcrumbs";
 import type { DashboardContextBarBadge } from "@/components/dashboard/DashboardContextBar";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamProvider from "@/providers/StreamProvider";
-import NovuProvider from "@/providers/NovuProvider";
-import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { getEffectiveUserId } from "@/utils/auth";
 import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
+import type { DashboardNav } from "@/lib/dashboard/nav/types";
 
 /** Minimal user shape the core reads. Fetchers return richer types. */
 export interface PersonalDashboardUser {
@@ -61,19 +68,16 @@ export interface PersonalDashboardExtrasCtx<P> {
 
 export interface PersonalDashboardCoreProps<P> {
   routeParam: string;
-  basePath: string;
-  title: string;
-  /** Sidebar chip role ("Consultant" / "Client") + identity fallback name. */
+  /** Pure nav from `lib/dashboard/nav/{consultant,consultee}.ts`. */
+  nav: DashboardNav;
+  /** Counts keyed by `NavItem.badgeKey`. */
+  badges?: Record<string, number | undefined>;
+  /** Account chip role ("Expert" / "Client") + identity fallback name. */
   chipRole: string;
   identityFallbackName: string;
-  navGroups: CollapsibleSidebarGroup[];
-  mobileTabs: PersonalDashboardMobileTab[];
   pageLabels: Record<string, string>;
   pathlessSegments?: ReadonlySet<string>;
-  offeringsConfig?: {
-    typeSegments: ReadonlySet<string>;
-    listingHref: string;
-  };
+  offeringsConfig?: OfferingsCrumbConfig;
   fetchUser: (userId: string) => Promise<PersonalDashboardUser | null>;
   profileQueryKey: readonly unknown[];
   fetchProfile: () => Promise<P | null>;
@@ -99,175 +103,12 @@ export interface PersonalDashboardCoreProps<P> {
   /** Consultee tree counts a user-query failure as a layout error. */
   includeUserError?: boolean;
   renderError?: (message: string) => React.ReactNode;
-  useExtras?: (
-    ctx: PersonalDashboardExtrasCtx<P>,
-  ) => PersonalDashboardExtras;
+  useExtras?: (ctx: PersonalDashboardExtrasCtx<P>) => PersonalDashboardExtras;
   wrapShell?: (
     shell: React.ReactNode,
     user: PersonalDashboardUser,
   ) => React.ReactNode;
   children: React.ReactNode;
-}
-
-// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
-const looksLikeRecordId = (segment: string) =>
-  /^[a-z0-9]{20,}$/i.test(segment) ||
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    segment,
-  );
-
-interface Crumb {
-  label: string;
-  href?: string;
-}
-
-/** Text out of an untyped membership payload: strings/numbers pass through,
- *  everything else is empty (never "[object Object]"). */
-function toText(value: unknown): string {
-  return typeof value === "string" || typeof value === "number"
-    ? String(value)
-    : "";
-}
-
-interface SegmentCrumbCtx {
-  seg: string;
-  acc: string;
-  overrideLabel: string | null;
-  onOfferings: boolean;
-  offeringsConfig:
-    | { typeSegments: ReadonlySet<string>; listingHref: string }
-    | undefined;
-  offeringsListingHref: string;
-  pageLabels: Record<string, string>;
-  pathlessSegments: ReadonlySet<string> | undefined;
-  paramValues: ReadonlySet<string>;
-}
-
-function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
-  const {
-    seg,
-    acc,
-    overrideLabel,
-    onOfferings,
-    offeringsConfig,
-    offeringsListingHref,
-    pageLabels,
-    pathlessSegments,
-    paramValues,
-  } = ctx;
-  if (looksLikeRecordId(seg)) {
-    // The label goes HERE, in the id's own position — that segment IS the
-    // record, so its human name belongs where the id was.
-    if (overrideLabel) return { label: overrideLabel, href: acc };
-    return null;
-  }
-  if (
-    offeringsConfig &&
-    (seg === "offerings" ||
-      (onOfferings && offeringsConfig.typeSegments.has(seg)))
-  ) {
-    // Offerings have no list route of their own — the Event Planner is where
-    // those rows live. Point both the "Offerings" crumb and the type crumb
-    // there so the trail is clickable without prefetching a 404.
-    return {
-      label: pageLabels[seg] ?? seg,
-      href: offeringsListingHref,
-    };
-  }
-  const navigable = pathlessSegments
-    ? !pathlessSegments.has(seg) && !paramValues.has(seg)
-    : true;
-  return {
-    label: pageLabels[seg] ?? seg,
-    ...(navigable ? { href: acc } : {}),
-  };
-}
-
-function delinkTerminalCrumb(
-  crumbs: readonly Crumb[],
-  pathname: string,
-): Crumb[] {
-  return crumbs.map((crumb, index) => {
-    const isLast = index === crumbs.length - 1;
-    // Keep a link when the visible crumb is still a parent of the URL
-    // (happens when the last segment was an opaque id we stripped).
-    if (isLast && crumb.href && pathname === crumb.href) {
-      return { label: crumb.label };
-    }
-    return crumb;
-  });
-}
-
-interface BreadcrumbsInput {
-  pathname: string;
-  basePath: string;
-  overrideLabel: string | null;
-  pageLabels: Record<string, string>;
-  pathlessSegments: ReadonlySet<string> | undefined;
-  offeringsConfig:
-    | { typeSegments: ReadonlySet<string>; listingHref: string }
-    | undefined;
-}
-
-// Full breadcrumb trail — every URL segment after the route id becomes a
-// crumb; opaque record ids are dropped (or replaced with an override label
-// such as the appointment title). Parent crumbs keep an href so users can
-// click back, but only when the accumulated path is a route the app can
-// actually serve.
-function useDashboardBreadcrumbs(
-  input: Readonly<BreadcrumbsInput>,
-): Crumb[] {
-  const {
-    pathname,
-    basePath,
-    overrideLabel,
-    pageLabels,
-    pathlessSegments,
-    offeringsConfig,
-  } = input;
-  const routeParams = useParams();
-  return useMemo(() => {
-    // Every value the current route bound to a dynamic param. Such a segment
-    // is never a URL of its own, so its crumb must not be a link.
-    const paramValues = new Set<string>();
-    for (const value of Object.values(routeParams ?? {})) {
-      for (const part of Array.isArray(value) ? value : [value]) {
-        if (part) paramValues.add(part);
-      }
-    }
-    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
-    const onOfferings = !!offeringsConfig && parts[0] === "offerings";
-    const offeringsListingHref = offeringsConfig
-      ? `${basePath}/${offeringsConfig.listingHref}`
-      : basePath;
-
-    const crumbs: Crumb[] = [];
-    let acc = basePath;
-    for (const seg of parts) {
-      acc = `${acc}/${seg}`;
-      const crumb = resolveSegmentCrumb({
-        seg,
-        acc,
-        overrideLabel,
-        onOfferings,
-        offeringsConfig,
-        offeringsListingHref,
-        pageLabels,
-        pathlessSegments,
-        paramValues,
-      });
-      if (crumb) crumbs.push(crumb);
-    }
-    return delinkTerminalCrumb(crumbs, pathname);
-  }, [
-    pathname,
-    basePath,
-    overrideLabel,
-    pageLabels,
-    pathlessSegments,
-    offeringsConfig,
-    routeParams,
-  ]);
 }
 
 function AccessCard({
@@ -323,12 +164,10 @@ const identityWrap = (shell: React.ReactNode) => shell;
 
 export function PersonalDashboardLayoutCore<P>({
   routeParam,
-  basePath,
-  title,
+  nav,
+  badges,
   chipRole,
   identityFallbackName,
-  navGroups,
-  mobileTabs,
   pageLabels,
   pathlessSegments,
   offeringsConfig,
@@ -352,15 +191,13 @@ export function PersonalDashboardLayoutCore<P>({
   const pathname = usePathname();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
+  const { basePath } = nav;
 
   // Fall back to the server-resolved id: useSession() is still pending during
   // SSR, so without this the query key below is ["user-details", undefined]
   // and the server seed in app/dashboard/layout.tsx can never be read (#1105).
   const serverUserId = useServerUserId();
   const userId = getEffectiveUserId(session) ?? serverUserId;
-
-  // Sync user as Novu subscriber (once per session)
-  useNovuSubscriberSync();
 
   const {
     data: userDetails,
@@ -382,9 +219,7 @@ export function PersonalDashboardLayoutCore<P>({
   } = useQuery({
     queryKey: [...profileQueryKey],
     queryFn: fetchProfile,
-    enabled: profileGatesOnUser
-      ? !!userId && !isSessionLoading
-      : !!routeParam,
+    enabled: profileGatesOnUser ? !!userId && !isSessionLoading : !!routeParam,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
@@ -457,23 +292,9 @@ export function PersonalDashboardLayoutCore<P>({
     }, 3000);
   }, [userId, routeParam, router, hasCoreAccess, basePath, prefetchSuffixes]);
 
-  // Org memberships for the bottom chip's "Switch to organization" section
-  const orgMemberships = useMemo(() => {
-    const raw = (session?.user as Record<string, unknown> | undefined)
-      ?.organizationMemberships;
-    if (!Array.isArray(raw)) return [];
-    return raw.map((m: Record<string, unknown>) => ({
-      organizationId: toText(m.organizationId),
-      organizationName: toText(m.organizationName),
-    }));
-  }, [session?.user]);
-
-  const { overrideLabel } = useBreadcrumbOverride();
-
   const breadcrumbs = useDashboardBreadcrumbs({
     pathname,
     basePath,
-    overrideLabel,
     pageLabels,
     pathlessSegments,
     offeringsConfig,
@@ -493,10 +314,10 @@ export function PersonalDashboardLayoutCore<P>({
           enableChat={true}
           enableVideo={true}
         >
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          {children}
         </StreamProvider>
       ) : (
-        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+        children
       ),
     [streamUserId, children],
   );
@@ -543,7 +364,7 @@ export function PersonalDashboardLayoutCore<P>({
     !userDetails &&
     !profileData
   ) {
-    return <PersonalDashboardShellSkeleton />;
+    return <DashboardShellSkeleton />;
   }
 
   // Error state (the consultee tree also counts a user-query failure;
@@ -560,11 +381,13 @@ export function PersonalDashboardLayoutCore<P>({
         </>
       );
     }
-    return <DefaultError message={error.message || "Failed to load dashboard"} />;
+    return (
+      <DefaultError message={error.message || "Failed to load dashboard"} />
+    );
   }
 
   if (requireUserDetails && !userDetails) {
-    return <PersonalDashboardShellSkeleton />;
+    return <DashboardShellSkeleton />;
   }
 
   const sessionName =
@@ -582,36 +405,27 @@ export function PersonalDashboardLayoutCore<P>({
     sessionImage ??
     null;
 
-  // Bottom chip dropdown — org context switching only. Sign Out renders as
-  // the standalone red button below.
-  const bottomUserChipActions = [
-    ...(orgMemberships.length > 0
-      ? [
-          { type: "separator" as const },
-          { type: "label" as const, label: "Switch to organization" },
-          ...orgMemberships.map((m) => ({
-            type: "item" as const,
-            label: m.organizationName,
-            href: `/dashboard/organization/${m.organizationId}/home`,
-            icon: Building2,
-          })),
-        ]
-      : []),
-  ];
-
+  // Account only (#1527 Q1): context switching lives in the switcher.
   const shell = (
-    <PersonalDashboardShell
-      groups={navGroups}
-      basePath={basePath}
-      title={title}
-      subtitle={userName}
-      headerImage={userImage}
-      bottomUserChip={{
+    <DashboardShell
+      kind="personal"
+      nav={nav}
+      badges={badges}
+      switcher={<ContextSwitcher />}
+      account={{
         name: userName,
         image: userImage,
-        role: chipRole,
+        roleLabel: chipRole,
+        actions: [
+          { label: "Settings", href: `${basePath}/settings`, icon: Settings },
+          {
+            label: "Help & support",
+            href: `${basePath}/support`,
+            icon: LifeBuoy,
+          },
+        ],
       }}
-      bottomUserChipActions={bottomUserChipActions}
+      onSignOut={() => void signOutEverywhere()}
       contextBar={{
         identity: {
           name: userName ?? identityFallbackName,
@@ -621,19 +435,17 @@ export function PersonalDashboardLayoutCore<P>({
         badges: extras.badges ?? [],
         breadcrumbs,
       }}
-      mobileTabs={mobileTabs}
       banner={extras.banner}
       pathname={pathname}
-      onSignOut={() => void signOutEverywhere()}
     >
       {memoizedStreamContent}
-    </PersonalDashboardShell>
+    </DashboardShell>
   );
 
   return (
-    <NovuProvider>
+    <>
       {extras.overlay}
       {userDetails ? wrapShell(shell, userDetails) : shell}
-    </NovuProvider>
+    </>
   );
 }

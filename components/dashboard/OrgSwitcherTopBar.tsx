@@ -23,7 +23,7 @@
 import Link from "next/link";
 import { ArrowLeft, LogOut, User } from "lucide-react";
 
-import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
+import { ContextSwitcher } from "@/components/dashboard/ContextSwitcher";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,7 @@ import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 
 /**
  * Render the top bar with: back link → personal dashboard,
- * OrganizationSwitcher, NotificationInbox, user menu.
+ * ContextSwitcher, NotificationInbox, user menu.
  *
  * The back link uses `resolvePersonalDashboardHref` so a consultant
  * lands on /dashboard/consultant/<id>, a consultee on
@@ -110,7 +110,9 @@ export function OrgSwitcherTopBar({
 
       {/* Right: org switcher, notifications, user menu. */}
       <div className="flex items-center gap-1.5">
-        <OrganizationSwitcher />
+        <div className="w-44 sm:w-56">
+          <ContextSwitcher />
+        </div>
         <NotificationInbox />
 
         <DropdownMenu>

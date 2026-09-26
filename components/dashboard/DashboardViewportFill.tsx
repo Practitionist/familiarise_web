@@ -8,7 +8,7 @@ import { cn } from "@/utils/tailwind";
  * capped at 500px with empty white space below.
  *
  * `overflow-hidden` keeps a single inner scrollport (the calendar grid). Do not
- * put `overflow-hidden` on `PersonalDashboardShell`'s right panel — that creates
+ * put `overflow-hidden` on `DashboardShell`'s right panel — that creates
  * a second scrollport and breaks `position: sticky` for editor chrome.
  */
 export function DashboardViewportFill({

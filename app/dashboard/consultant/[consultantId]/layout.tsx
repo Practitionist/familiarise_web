@@ -3,21 +3,6 @@
 import { use, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
-  Home,
-  MessageSquare,
-  CalendarCheck,
-  CalendarClock,
-  CalendarRange,
-  Inbox,
-  Users,
-  Video,
-  FileText,
-  Wallet,
-  Gift,
-  Settings,
-  MessageSquareText,
-  HelpCircle,
-  LifeBuoy,
   UserX,
   Lock,
   WifiOff,
@@ -25,7 +10,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
 import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-override";
 import {
   PersonalDashboardLayoutCore,
@@ -34,6 +18,12 @@ import {
   type PersonalDashboardUser,
 } from "@/components/dashboard/PersonalDashboardLayoutCore";
 import { consultantFetchers } from "@/lib/dashboard-queries";
+import {
+  buildConsultantNav,
+  CONSULTANT_OFFERING_TYPE_SEGMENTS,
+  CONSULTANT_PAGE_LABELS,
+  CONSULTANT_PATHLESS_SEGMENTS,
+} from "@/lib/dashboard/nav/consultant";
 import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import {
@@ -43,146 +33,13 @@ import {
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
 import { useVerificationStatus } from "./hooks/useVerificationStatus";
 
-// Grouped sidebar nav (Services / Resources / Finance / Support), rendered by
-// the shared CollapsibleSidebar.
-//
-// Trials and Analytics used to be entries here and are now tabs on Appointments
-// and Earnings respectively — see the group comments below. This array is still
-// static and unfiltered, unlike the org sidebar's permission-driven one: every
-// surface on a personal dashboard belongs to the one person who owns it, so
-// there is nothing to filter on.
-const NAV_GROUPS: CollapsibleSidebarGroup[] = [
-  {
-    items: [
-      { name: "Home", icon: Home, path: "home" },
-      { name: "Messages", icon: MessageSquare, path: "messages" },
-      { name: "Appointments", icon: CalendarCheck, path: "appointments" },
-    ],
-  },
-  {
-    // Trials is absent by ADR 19's rule that a nav entry must be a distinct
-    // destination: a trial IS an appointment, which is why the org sidebar
-    // already folded it onto Appointments. It lives at
-    // `appointments?tab=trials` now.
-    label: "Services",
-    items: [
-      { name: "Event Planner", icon: CalendarRange, path: "planner" },
-      // #1785 — Availability is a daily work surface, not a preference, so it
-      // left Settings for the sidebar (where Calendly and Cal.com keep it too).
-      { name: "Availability", icon: CalendarClock, path: "availability" },
-      { name: "Requests", icon: Inbox, path: "requests" },
-      { name: "Collaborations", icon: Users, path: "collaborations" },
-    ],
-  },
-  {
-    // "Resources" rather than "Content", matching the consultee side — the
-    // same two artifacts under the same name on both dashboards, so a
-    // consultant who also books sessions is not learning two vocabularies.
-    label: "Resources",
-    items: [
-      { name: "Documents", icon: FileText, path: "documents" },
-      { name: "Recordings", icon: Video, path: "recordings" },
-    ],
-  },
-  {
-    // Analytics is absent for the same reason as Trials: it read the very same
-    // /api/consultant/earnings endpoint as Earnings, only adding
-    // `?includeMonthly=1`. Two entries over one object is exactly what ADR 19
-    // forbids, so it is the Analytics tab of Earnings now.
-    label: "Finance",
-    items: [
-      { name: "Earnings", icon: Wallet, path: "earnings" },
-      { name: "Referrals", icon: Gift, path: "referrals" },
-    ],
-  },
-  {
-    // A real group now rather than a lone entry: requests, feedback and help
-    // were tabs on one page and are distinct destinations. Settings joins them
-    // as the fourth — the other thing people go looking for when something is
-    // wrong. Mirrors the consultee shell exactly.
-    label: "Support",
-    items: [
-      { name: "Support requests", icon: LifeBuoy, path: "support" },
-      { name: "Feedback", icon: MessageSquareText, path: "feedback" },
-      { name: "Help", icon: HelpCircle, path: "help" },
-      { name: "Settings", icon: Settings, path: "settings" },
-    ],
-  },
-];
-
-// Mobile bottom-tab configuration — 5 most-accessed consultant pages. Five is
-// the cap; Availability stays reachable from the sidebar drawer (#1785).
-const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
-  { label: "Home", path: "home", Icon: Home },
-  { label: "Appointments", path: "appointments", Icon: CalendarCheck },
-  { label: "Requests", path: "requests", Icon: Inbox },
-  { label: "Earnings", path: "earnings", Icon: Wallet },
-  { label: "Settings", path: "settings", Icon: Settings },
-];
-
-// Map URL segments to human-readable page names so the breadcrumbs match
-// the heading the user actually sees on the page.
-const PAGE_LABELS: Record<string, string> = {
-  home: "Home",
-  messages: "Messages",
-  appointments: "Appointments",
-  participants: "Participants",
-  classes: "Class",
-  class: "Class",
-  consultations: "Consultation",
-  consultation: "Consultation",
-  subscriptions: "Subscription",
-  subscription: "Subscription",
-  webinars: "Webinar",
-  webinar: "Webinar",
-  offerings: "Offerings",
-  planner: "Event Planner",
-  availability: "Availability",
-  requests: "Requests",
-  // Task routes hanging off a record id. Without these the trail ends on the
-  // raw lowercase segment ("timings").
-  timings: "Timings",
-  allocate: "Allocate",
-  reschedule: "Reschedule",
-  collaborations: "Collaborations",
-  recordings: "Recordings",
-  documents: "Documents",
-  earnings: "Earnings",
-  referrals: "Referrals",
-  settings: "Settings",
-  // The Settings hub's sections (#1785): one URL each, so one crumb each.
-  profile: "Profile",
-  verification: "Verification",
-  booking: "Booking requests",
-  "get-paid": "Get paid",
-  payouts: "Get paid",
-  notifications: "Notifications",
-  security: "Security",
-  support: "Support requests",
-  feedback: "Feedback",
-  help: "Help",
-  edit: "Edit",
-  new: "New",
-};
-
-// Segments that group routes without owning a page of their own — a crumb that
-// links the accumulated path makes Next prefetch a URL that 404s. Verified
-// against the route tree: `offerings` has only `[type]/…` children and
-// `participants` only `[eventType]/…`.
-//
-// Offerings is special-cased in the core: the crumb stays, but its href is
-// rewritten to the Event Planner, which is the actual listings surface.
-const PATHLESS_SEGMENTS = new Set(["offerings", "participants"]);
-
-/** Offering types that appear as `/offerings/[type]/…` URL segments. */
-const OFFERING_TYPE_SEGMENTS = new Set([
-  "consultation",
-  "subscription",
-  "webinar",
-  "class",
-]);
-
 const PREFETCH_SUFFIXES = ["home", "appointments", "requests"];
+
+// Offerings have no list route yet (#1527 b) — the planner hosts them.
+const OFFERINGS_CRUMBS = {
+  typeSegments: CONSULTANT_OFFERING_TYPE_SEGMENTS,
+  listingHref: "planner",
+};
 
 interface PageProps {
   children: React.ReactNode;
@@ -437,47 +294,31 @@ export default function ConsultantLayout(props: Readonly<PageProps>) {
 
 function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consultantId } = use(params);
-  const basePath = `/dashboard/consultant/${consultantId}`;
+  const nav = useMemo(() => buildConsultantNav(consultantId), [consultantId]);
 
   // Unread badge count for the Messages nav item
   const chatUnreadCount = useChatUnreadCount();
-  const navGroups = useMemo(
-    () =>
-      NAV_GROUPS.map((group) => ({
-        ...group,
-        items: group.items.map((item) =>
-          item.path === "messages" && chatUnreadCount > 0
-            ? {
-                ...item,
-                badge: chatUnreadCount > 99 ? "99+" : chatUnreadCount,
-              }
-            : item,
-        ),
-      })),
+  const badges = useMemo(
+    () => ({ messages: chatUnreadCount }),
     [chatUnreadCount],
   );
 
   return (
     <PersonalDashboardLayoutCore<ConsultantDetails>
       routeParam={consultantId}
-      basePath={basePath}
-      title="Consultant Dashboard"
-      chipRole="Consultant"
-      identityFallbackName="Consultant"
-      navGroups={navGroups}
-      mobileTabs={MOBILE_TABS}
-      pageLabels={PAGE_LABELS}
-      pathlessSegments={PATHLESS_SEGMENTS}
-      offeringsConfig={{
-        typeSegments: OFFERING_TYPE_SEGMENTS,
-        listingHref: "planner",
-      }}
+      nav={nav}
+      badges={badges}
+      chipRole="Expert"
+      identityFallbackName="Expert"
+      pageLabels={CONSULTANT_PAGE_LABELS}
+      pathlessSegments={CONSULTANT_PATHLESS_SEGMENTS}
+      offeringsConfig={OFFERINGS_CRUMBS}
       fetchUser={fetchConsultantUser}
       profileQueryKey={["consultant-data", consultantId]}
       fetchProfile={() =>
-        consultantFetchers.details(consultantId) as Promise<
-          ConsultantDetails | null
-        >
+        consultantFetchers.details(
+          consultantId,
+        ) as Promise<ConsultantDetails | null>
       }
       profileStreamUserId={(profile) => profile?.user?.id}
       profileDisplayName={(profile) => profile?.user?.name}

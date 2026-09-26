@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { requireOnboarded } from "@/lib/auth-guard";
-import NovuProvider from "@/providers/NovuProvider";
 import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
 
 /**
@@ -16,13 +15,11 @@ import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
  * ORG_WORKSPACE handoff). A mid-wizard user who guesses this URL bounces to
  * /form/onboarding instead of seeing an empty operator shell.
  *
- * Chrome: full CollapsibleSidebar (mirrors /dashboard/admin and
- * /dashboard/staff), with a top context bar carrying the
- * OrganizationSwitcher dropdown and the Novu notification bell. The
- * sidebar items live on OrgWorkspaceShell — keeping the layout thin so
- * the auth check stays server-side.
+ * Chrome: the shared DashboardShell via OrgWorkspaceShell (#1527), which
+ * also owns the Novu provider — keeping the layout thin so the auth check
+ * stays server-side.
  *
- * User identity props (name/email/image) are read from the *server*
+ * User identity props (name/image) are read from the *server*
  * session here and passed down. The shell intentionally does NOT use
  * useSession() for these — the client hook returns null on the first
  * render and resolves later, which causes a hydration mismatch when
@@ -45,15 +42,12 @@ export default async function OrgWorkspaceLayout({
   }
 
   return (
-    <NovuProvider>
-      <OrgWorkspaceShell
-        orgWorkspaceId={orgWorkspaceId}
-        userName={session.user.name ?? null}
-        userEmail={session.user.email ?? null}
-        userImage={session.user.image ?? null}
-      >
-        {children}
-      </OrgWorkspaceShell>
-    </NovuProvider>
+    <OrgWorkspaceShell
+      orgWorkspaceId={orgWorkspaceId}
+      userName={session.user.name ?? null}
+      userImage={session.user.image ?? null}
+    >
+      {children}
+    </OrgWorkspaceShell>
   );
 }
