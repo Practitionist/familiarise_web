@@ -466,9 +466,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     className="mt-0.5"
                   />
                   <div>
-                    <p className="text-sm font-medium">Host consultants</p>
+                    <p className="text-sm font-medium">Host experts</p>
                     <p className="text-xs text-zinc-500">
-                      The organization hosts consultants who deliver sessions.
+                      The organization hosts experts who deliver sessions.
                       Enables the payout account, rate cards, and the Experts +
                       Payouts sidebar entries.
                     </p>
@@ -805,7 +805,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
               <AlertDialogDescription>
                 {pendingDisable === "canSponsor"
                   ? "Members will no longer be able to bill the organization for new sessions. The Billing surface and any active programs will be hidden. The wallet must already be at ₹0 — the server will reject the change otherwise."
-                  : "External consultants will stop earning through this organization. The Experts and Payouts surfaces will be hidden. Existing earnings remain payable."}
+                  : "External experts will stop earning through this organization. The Experts and Payouts surfaces will be hidden. Existing earnings remain payable."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

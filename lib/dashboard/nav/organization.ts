@@ -198,13 +198,18 @@ export function buildOrganizationNav(
     { label: "Operations", items: keep(operations) },
     { label: "Insights", items: keep(insights) },
   ].filter((g) => g.items.length > 0);
+  // #1527 — an ordinary last item, not a rail footer. Ungated (ADR 23): the
+  // page floors at active membership and each tab carries its own gate, so
+  // members reach their Notifications tab.
+  groups[groups.length - 1].items.push({
+    name: "Organization settings",
+    icon: Settings,
+    path: "settings",
+  });
 
   return {
     basePath: `/dashboard/organization/${orgId}`,
     groups,
-    // Ungated (ADR 23): the page floors at active membership and each tab
-    // carries its own gate, so members reach their Notifications tab.
-    settings: { name: "Settings", icon: Settings, path: "settings" },
     // The org's own `support` is operator triage (operations.read), not the
     // viewer's requests; the shell fills in their personal page (#1527).
     support: null,
@@ -255,7 +260,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   analytics: "Analytics",
   audit: "Audit",
   consent: "Consent",
-  settings: "Settings",
+  settings: "Organization settings",
   new: "New",
   edit: "Edit",
 };

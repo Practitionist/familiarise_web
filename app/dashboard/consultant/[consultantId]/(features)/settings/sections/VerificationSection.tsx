@@ -66,7 +66,7 @@ const STATUS_TONE: Record<
     body: "text-green-700",
     title: "Profile Verified",
     description:
-      "Great job! Your profile has been verified. You are now visible in the consultant directory and can accept bookings.",
+      "Great job! Your profile has been verified. You are now visible in the expert directory and can accept bookings.",
   },
   PENDING_VERIFICATION: {
     icon: Clock,

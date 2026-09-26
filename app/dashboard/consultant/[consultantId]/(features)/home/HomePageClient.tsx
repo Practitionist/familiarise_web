@@ -55,7 +55,7 @@ export default function HomePageClient({
         <EmptyState
           icon={Inbox}
           title="No data available"
-          description="Dashboard data not found for this consultant."
+          description="Dashboard data not found for this expert."
         />
       </DashboardErrorBoundary>
     );

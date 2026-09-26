@@ -25,6 +25,7 @@ import {
 } from "@/lib/dashboard/nav/consultant";
 import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
+import { PERSONAL_SIDE_LABEL } from "@/lib/labels/personal-dashboard";
 import {
   VerificationPendingOverlay,
   VerificationBanner,
@@ -295,8 +296,8 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
       routeParam={consultantId}
       nav={nav}
       badges={badges}
-      chipRole="Expert"
-      identityFallbackName="Expert"
+      chipRole={PERSONAL_SIDE_LABEL.consultant}
+      identityFallbackName={PERSONAL_SIDE_LABEL.consultant}
       pageLabels={CONSULTANT_PAGE_LABELS}
       pathlessSegments={CONSULTANT_PATHLESS_SEGMENTS}
       offeringsConfig={OFFERINGS_CRUMBS}

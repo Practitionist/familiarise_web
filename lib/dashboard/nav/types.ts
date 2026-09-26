@@ -53,8 +53,12 @@ export function personalSupportLinks(requestsHref: string): SupportLinks {
 export interface DashboardNav {
   basePath: string;
   groups: NavGroup[];
-  /** The one Settings row at the rail's bottom (#1527 Cloudflare shell). */
-  settings: NavItem;
+  /**
+   * Personal / back-office Settings (#1527): the avatar menu's "Settings" and
+   * a mobile Menu row, never a rail row. Omitted where Settings is an
+   * ordinary last nav item (organization, workspace).
+   */
+  settings?: NavItem;
   /** Help menu rows; null leaves only the Help Center (back office). */
   support: SupportLinks | null;
   /** Up to four item paths shown as mobile tabs; everything else is in Menu. */
@@ -63,7 +67,10 @@ export interface DashboardNav {
   pinnedCta?: PinnedCta;
 }
 
-/** Every item in a nav, groups first, then Settings. */
-export function flattenNav(nav: Pick<DashboardNav, "groups" | "settings">) {
-  return [...nav.groups.flatMap((g) => g.items), nav.settings];
+/** Every item in a nav, groups first, then the account Settings if any. */
+export function flattenNav(
+  nav: Pick<DashboardNav, "groups" | "settings">,
+): NavItem[] {
+  const items = nav.groups.flatMap((g) => g.items);
+  return nav.settings ? [...items, nav.settings] : items;
 }

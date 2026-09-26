@@ -125,7 +125,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "create-payout-batch",
     name: "Create Payout Batch",
-    description: "Create weekly payout batches for eligible consultants",
+    description: "Create weekly payout batches for eligible experts",
     schedule: "Weekly (Mon 8PM UTC)",
     category: "Payouts",
   },

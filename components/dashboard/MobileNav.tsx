@@ -36,7 +36,8 @@ import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 export interface MobileNavProps {
   basePath: string;
   groups: CollapsibleSidebarGroup[];
-  settings: CollapsibleSidebarItem;
+  /** Personal / back-office Settings; org trees carry it as a nav item. */
+  settings?: CollapsibleSidebarItem;
   /** The header Help menu's private rows, repeated here (#1527). */
   support: SupportLinks | null;
   /** Paths of up to four items shown as tabs. */
@@ -78,7 +79,8 @@ export function MobileNav({
   const setOpen = (next: boolean) => setOpenedAt(next ? pathname : null);
   const close = () => setOpen(false);
 
-  const items = [...groups.flatMap((g) => g.items), settings];
+  const items = groups.flatMap((g) => g.items);
+  if (settings) items.push(settings);
   const tabItems = tabs
     .map((path) => items.find((item) => item.path === path))
     .filter((item): item is CollapsibleSidebarItem => !!item)
@@ -197,12 +199,16 @@ export function MobileNav({
                 Send feedback
               </Link>
             )}
-            <SidebarNavLink
-              item={settings}
-              basePath={basePath}
-              pathname={pathname}
-              onNavigate={close}
-            />
+            {/* #1527 — the header has no room for the avatar menu's
+                Settings on phones, so the sheet keeps the row. */}
+            {settings && (
+              <SidebarNavLink
+                item={settings}
+                basePath={basePath}
+                pathname={pathname}
+                onNavigate={close}
+              />
+            )}
             <button
               type="button"
               onClick={onSignOut}

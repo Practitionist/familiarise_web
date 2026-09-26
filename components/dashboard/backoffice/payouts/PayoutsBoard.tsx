@@ -127,7 +127,7 @@ export function PayoutsBoard() {
     <div className="space-y-6">
       <PageHeader
         title="Payouts"
-        description="Consultant payouts from approval to the bank."
+        description="Expert payouts from approval to the bank."
       />
 
       {/* Payout trend chart */}

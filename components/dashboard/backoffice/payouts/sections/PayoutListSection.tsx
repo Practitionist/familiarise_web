@@ -46,7 +46,7 @@ const when = (iso?: string | null) =>
 const columns: ResponsiveColumn<Payout>[] = [
   {
     key: "consultant",
-    header: "Consultant",
+    header: "Expert",
     primary: true,
     cell: (p) => (
       <div>
@@ -162,7 +162,7 @@ export function PayoutListSection({
           <FilterBar
             search={{
               label: "Search payouts",
-              placeholder: "Consultant name or email",
+              placeholder: "Expert name or email",
               value: search,
               onChange: (v) => {
                 setSearch(v);

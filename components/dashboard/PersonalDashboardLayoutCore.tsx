@@ -70,7 +70,7 @@ export interface PersonalDashboardCoreProps<P> {
   nav: DashboardNav;
   /** Counts keyed by `NavItem.badgeKey`. */
   badges?: Record<string, number | undefined>;
-  /** Avatar-menu role ("Expert" / "Client") + identity fallback name. */
+  /** Avatar-menu role ("Expert" / "Learner") + identity fallback name. */
   chipRole: string;
   identityFallbackName: string;
   pageLabels: Record<string, string>;
@@ -158,6 +158,15 @@ function DefaultError({ message }: Readonly<{ message: string }>) {
 
 const noExtras = () => ({});
 const identityWrap = (shell: React.ReactNode) => shell;
+
+function avatarSettingsHref(
+  ownsProfile: boolean,
+  basePath: string,
+  viewer: PersonalDashboardUser | null | undefined,
+): string | null {
+  if (ownsProfile) return `${basePath}/settings`;
+  return viewer ? accountSettingsHref(viewer) : null;
+}
 
 const OPERATOR_TREE: Record<string, "admin" | "staff"> = {
   ADMIN: "admin",
@@ -471,9 +480,9 @@ export function PersonalDashboardLayoutCore<P>({
       </>
     ) : undefined;
 
-  // Account only (#1527 Q1): context switching lives in the switcher. The
-  // settings target is the VIEWER's own account, so an operator inspecting
-  // someone's dashboard lands on their own profile.
+  // Account only (#1527 Q1): context switching lives in the switcher.
+  // Settings is this tree's hub for its owner; an operator inspecting someone's
+  // dashboard gets their OWN settings, never the inspected user's.
   const shell = (
     <DashboardShell
       kind="personal"
@@ -484,9 +493,7 @@ export function PersonalDashboardLayoutCore<P>({
         name: userName,
         image: userImage,
         roleLabel: chipRole,
-        settingsHref: userDetails
-          ? accountSettingsHref(userDetails, "account")
-          : null,
+        settingsHref: avatarSettingsHref(ownsProfile, basePath, userDetails),
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

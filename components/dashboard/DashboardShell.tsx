@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 
 import { useCssVarHeight } from "@/components/dashboard/useCssVarHeight";
 import {
   CollapsibleSidebar,
   CollapsibleSidebarSkeleton,
-  SidebarNavLink,
-  useSidebarCollapsed,
+  SidebarToggle,
+  usePersistedCollapse,
+  useSidebarShortcut,
   type CollapsibleSidebarGroup,
   type CollapsibleSidebarItem,
 } from "@/components/dashboard/CollapsibleSidebar";
@@ -24,7 +25,6 @@ import {
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import NovuProvider from "@/providers/NovuProvider";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import type { DashboardNav, NavItem } from "@/lib/dashboard/nav/types";
@@ -46,8 +46,8 @@ export interface DashboardShellProps {
   /** The header avatar menu's person (#1527 — the rail has no account chip). */
   account: DashboardAccount;
   onSignOut: () => void;
-  /** The shell owns the right cluster, so callers cannot pass `rightSlot`. */
-  contextBar: Omit<DashboardContextBarProps, "rightSlot">;
+  /** The shell owns both ends of the bar (sidebar toggle, right cluster). */
+  contextBar: Omit<DashboardContextBarProps, "rightSlot" | "leadingSlot">;
   /** Full-width strip above <main> (verification / org status). */
   banner?: ReactNode;
   pathname: string;
@@ -61,42 +61,19 @@ function withBadge(
   return item.badgeKey ? { ...item, badge: badges?.[item.badgeKey] } : item;
 }
 
-/** The rail's one bottom row (#1527); reads the collapse state for icon-only. */
-function SidebarSettings({
-  item,
-  basePath,
-  pathname,
-}: Readonly<{
-  item: CollapsibleSidebarItem;
-  basePath: string;
-  pathname: string;
-}>) {
-  const collapsed = useSidebarCollapsed();
-  return (
-    <TooltipProvider delayDuration={0}>
-      <SidebarNavLink
-        item={item}
-        basePath={basePath}
-        pathname={pathname}
-        collapsed={collapsed}
-      />
-    </TooltipProvider>
-  );
-}
-
 /**
  * The one dashboard chrome (#1527 §6), shared by the personal, organization,
  * workspace and back-office trees:
  *
- *   ┌ sidebar (md+) ─┬ context bar: crumbs · CTA · Help · bell · avatar ┐
+ *   ┌ sidebar (md+) ─┬ bar: toggle · crumbs · CTA · Help · bell · avatar ┐
  *   │ switcher       ├ banner slot                                      │
  *   │ grouped nav    ├ main (error boundary)                            │
- *   │ ── Settings    │                                                  │
- *   │ collapse       ├ mobile tabs + Menu (<md)                         │
+ *   │                ├ mobile tabs + Menu (<md)                         │
  *   └────────────────┴──────────────────────────────────────────────────┘
  *
  * #1527 (Cloudflare model): the person appears once, as the header avatar
- * menu; Settings once, at the rail's bottom; Help once, in the header.
+ * menu, which also holds the personal / back-office Settings; Help once, in
+ * the header; the collapse toggle leads the bar (Ctrl/⌘ \).
  *
  * It owns the Novu provider (the org tree mounted the inbox without one) and
  * the single error boundary. Layouts resolve data and pass pure props.
@@ -124,10 +101,14 @@ export function DashboardShell({
       })),
     [nav.groups, badges],
   );
-  const settings = useMemo(
-    () => withBadge(nav.settings, badges),
-    [nav.settings, badges],
+  const [collapsed, setCollapsed] = usePersistedCollapse(
+    `fw.sidebar.collapsed.${kind}`,
   );
+  const toggleSidebar = useCallback(
+    () => setCollapsed(!collapsed),
+    [collapsed, setCollapsed],
+  );
+  useSidebarShortcut(toggleSidebar);
 
   return (
     <NovuProvider>
@@ -140,21 +121,17 @@ export function DashboardShell({
             groups={groups}
             basePath={nav.basePath}
             pathname={pathname}
-            storageKey={`fw.sidebar.collapsed.${kind}`}
+            collapsed={collapsed}
             header={switcher}
-            footer={
-              <SidebarSettings
-                item={settings}
-                basePath={nav.basePath}
-                pathname={pathname}
-              />
-            }
           />
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <DashboardContextBar
             {...contextBar}
+            leadingSlot={
+              <SidebarToggle collapsed={collapsed} onToggle={toggleSidebar} />
+            }
             rightSlot={
               <div className="flex shrink-0 items-center gap-1 sm:gap-2">
                 {/* Below md the CTA lives in the Menu sheet. */}
@@ -189,7 +166,7 @@ export function DashboardShell({
           <MobileNav
             basePath={nav.basePath}
             groups={groups}
-            settings={settings}
+            settings={nav.settings}
             support={nav.support}
             tabs={nav.mobileTabs}
             pinnedCta={nav.pinnedCta}

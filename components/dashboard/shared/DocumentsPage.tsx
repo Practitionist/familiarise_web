@@ -199,7 +199,7 @@ export function DocumentsPage() {
     <div className="space-y-6">
       <ScopedListTable
         title="Document review log"
-        description="Read-only. Reviewing is the consultant's call on their own session; this is here so support can explain an outcome."
+        description="Read-only. Reviewing is the expert's call on their own session; this is here so support can explain an outcome."
         isLoading={isLoading}
         isError={isError}
         items={data?.items ?? []}

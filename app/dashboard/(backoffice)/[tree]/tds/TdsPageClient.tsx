@@ -67,7 +67,7 @@ export default function TdsPageClient() {
     <div className="space-y-6">
       <DashboardHeader
         title="TDS"
-        subtitle="Tax deducted at source — summary and consultant breakdown"
+        subtitle="Tax deducted at source — summary and expert breakdown"
       />
 
       <div className="flex items-center gap-2">
@@ -158,10 +158,10 @@ export default function TdsPageClient() {
         </CardContent>
       </Card>
 
-      {/* Consultant breakdown */}
+      {/* Expert breakdown */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Consultant breakdown</CardTitle>
+          <CardTitle className="text-lg">Expert breakdown</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           {consultants.isLoading ? (
@@ -170,7 +170,7 @@ export default function TdsPageClient() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-muted-foreground">
-                  <th className="py-2 pr-4">Consultant</th>
+                  <th className="py-2 pr-4">Expert</th>
                   <th className="py-2 pr-4">Rate</th>
                   <th className="py-2 pr-4">Credited</th>
                   <th className="py-2 pr-4">Deducted</th>
@@ -201,7 +201,7 @@ export default function TdsPageClient() {
                         colSpan={5}
                         className="py-6 text-center text-muted-foreground"
                       >
-                        No consultant TDS for {fy}.
+                        No expert TDS for {fy}.
                       </td>
                     </tr>
                   )}

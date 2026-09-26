@@ -5,10 +5,11 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeft, PanelLeftClose } from "lucide-react";
 
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
@@ -78,7 +79,13 @@ function readCollapsed(key: string): boolean {
   }
 }
 
-function usePersistedCollapse(key: string): [boolean, (next: boolean) => void] {
+/**
+ * The shell owns the collapse state (#1527): the toggle lives in the header,
+ * the sidebar only renders it.
+ */
+export function usePersistedCollapse(
+  key: string,
+): [boolean, (next: boolean) => void] {
   const collapsed = useSyncExternalStore(
     subscribeCollapse,
     () => readCollapsed(key),
@@ -97,6 +104,66 @@ function usePersistedCollapse(key: string): [boolean, (next: boolean) => void] {
     [key],
   );
   return [collapsed, setCollapsed];
+}
+
+// ── Header toggle + Ctrl/⌘ \ shortcut (#1527) ───────────────────────────
+
+/** Typing targets keep the keystroke; the shortcut must not steal it. */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+/** Ctrl/⌘ + \ toggles the rail at md+ (below md the Menu sheet is the nav). */
+export function useSidebarShortcut(toggle: () => void) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "\\" || !(event.metaKey || event.ctrlKey)) return;
+      if (event.altKey || event.shiftKey || isEditableTarget(event.target)) {
+        return;
+      }
+      if (!window.matchMedia("(min-width: 768px)").matches) return;
+      event.preventDefault();
+      toggle();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggle]);
+}
+
+/** Leftmost header control, before the breadcrumb; hidden below md. */
+export function SidebarToggle({
+  collapsed,
+  onToggle,
+}: Readonly<{ collapsed: boolean; onToggle: () => void }>) {
+  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggle}
+            aria-label={label}
+            aria-expanded={!collapsed}
+            aria-keyshortcuts={"Control+\\ Meta+\\"}
+            className="hidden h-8 w-8 shrink-0 text-zinc-500 hover:text-zinc-900 md:inline-flex dark:text-zinc-400 dark:hover:text-zinc-100"
+          >
+            {collapsed ? (
+              <PanelLeft className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {collapsed ? label : `${label} (Ctrl/⌘ \\)`}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 // ── Nav rows (shared by the sidebar and the mobile Menu sheet) ────────────
@@ -216,10 +283,8 @@ export interface CollapsibleSidebarProps {
   pathname: string;
   /** Top slot — the ContextSwitcher (#1527 Q1). */
   header?: ReactNode;
-  /** Bottom slot above the collapse toggle — the one Settings row. */
-  footer?: ReactNode;
-  /** localStorage key for the collapsed state, one per shell kind. */
-  storageKey: string;
+  /** From the shell's `usePersistedCollapse`; the toggle is in the header. */
+  collapsed: boolean;
   className?: string;
 }
 
@@ -232,12 +297,9 @@ export function CollapsibleSidebar({
   basePath,
   pathname,
   header,
-  footer,
-  storageKey,
+  collapsed,
   className,
 }: Readonly<CollapsibleSidebarProps>) {
-  const [collapsed, setCollapsed] = usePersistedCollapse(storageKey);
-
   return (
     <SidebarCollapsedContext.Provider value={collapsed}>
       <aside
@@ -263,29 +325,6 @@ export function CollapsibleSidebar({
             collapsed={collapsed}
           />
         </nav>
-
-        {/* #1527 — the collapse toggle sits alone at the very bottom of the
-            rail, not in the switcher row. */}
-        <div className="space-y-1 border-t border-zinc-200 p-2 dark:border-zinc-800">
-          {footer}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setCollapsed(!collapsed)}
-            className={cn(
-              "h-8 w-8 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-              collapsed ? "mx-auto flex" : "ml-1",
-            )}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-expanded={!collapsed}
-          >
-            {collapsed ? (
-              <PanelLeftOpen className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
       </aside>
     </SidebarCollapsedContext.Provider>
   );

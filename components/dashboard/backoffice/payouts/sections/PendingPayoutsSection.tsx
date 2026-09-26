@@ -134,7 +134,7 @@ export default function PendingPayoutsSection() {
   const columns: ResponsiveColumn<Payout>[] = [
     {
       key: "consultant",
-      header: "Consultant",
+      header: "Expert",
       primary: true,
       cell: (payout) => (
         <div>

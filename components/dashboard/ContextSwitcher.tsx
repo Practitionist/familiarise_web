@@ -116,6 +116,11 @@ function FacetItem({
           <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
             {facet.label}
           </p>
+          {facet.sublabel && (
+            <p className="truncate text-[11px] text-zinc-500">
+              {facet.sublabel}
+            </p>
+          )}
           {(facet.roleLabel || facet.statusLabel) && (
             <div className="mt-0.5 flex items-center gap-1">
               {facet.roleLabel && (
@@ -175,7 +180,7 @@ export interface ContextSwitcherProps {
 
 /**
  * Top-left facet switcher for every dashboard shell (#1527 Q1): You (Expert,
- * Client), Organizations (All organizations + each membership with a status
+ * Learner), Organizations (All organizations + each membership with a status
  * badge), Platform (Admin, Staff), plus Create organization / Become an
  * expert when entitled. Always rendered — it hosts those two actions even for
  * a single-facet user.

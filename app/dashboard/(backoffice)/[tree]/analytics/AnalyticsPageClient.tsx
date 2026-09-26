@@ -84,7 +84,7 @@ export default function AdminAnalyticsPage() {
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Consultants
+              Experts
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -100,7 +100,7 @@ export default function AdminAnalyticsPage() {
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Consultees
+              Learners
             </CardTitle>
           </CardHeader>
           <CardContent>

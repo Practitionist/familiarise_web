@@ -22,6 +22,7 @@ import { ticketStatus } from "@/lib/labels/backoffice-labels";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 type Row<K extends keyof User360> =
@@ -93,7 +94,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
       key={facet}
       trigger={
         <Button variant="outline" size="sm">
-          View {facet === "consultant" ? "expert" : "client"} dashboard
+          View {facet === "consultant" ? "expert" : "learner"} dashboard
         </Button>
       }
       title={`Open ${profile.name}'s dashboard?`}
@@ -289,7 +290,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
         <Section title="Profile" variant="card">
           <KeyValueList
             items={[
-              { label: "Role", value: humanizeEnum(profile.role ?? "none") },
+              { label: "Role", value: userRoleLabel(profile.role) },
               { label: "Account", value: accountState },
               ...(banned && profile.banReason
                 ? [{ label: "Ban reason", value: profile.banReason }]

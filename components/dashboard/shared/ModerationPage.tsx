@@ -132,7 +132,7 @@ function reportTitle(report: ModerationReport): {
       return { primary: `Account · ${report.targetUser.name ?? "Unknown"}` };
     case "REVIEW": {
       const consultantName =
-        report.review?.consultantProfile.user.name ?? "Unknown consultant";
+        report.review?.consultantProfile.user.name ?? "Unknown expert";
       const rating = report.review?.rating;
       const excerpt = report.review?.reviewDescription?.slice(0, 60) ?? "";
       return {
@@ -1037,7 +1037,7 @@ export function ModerationPage() {
                 const reviewerName = review.isAnonymous
                   ? "Anonymous"
                   : review.reviewer.name || "Anonymous";
-                const consultantName = review.consultant.name || "Consultant";
+                const consultantName = review.consultant.name || "Expert";
                 const latestModerationAction = review.moderationActions[0];
 
                 return (
@@ -1095,7 +1095,7 @@ export function ModerationPage() {
                               <p className="mt-1 text-xs text-destructive">
                                 {review.replyRemovedBy === "MODERATION"
                                   ? "Reply removed by moderation"
-                                  : "Reply withdrawn by the consultant"}
+                                  : "Reply withdrawn by the expert"}
                               </p>
                             )}
                             {latestModerationAction && (

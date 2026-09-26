@@ -52,7 +52,7 @@ async function fetchAdminData(userId: string): Promise<AdminData> {
 const PROFILE_DESCRIPTION =
   "Your own details and notifications, the same page for admin and staff.";
 
-/** #1527 — the one "My profile" page for both back-office trees. */
+/** #1527 — the one Settings (profile) page for both back-office trees. */
 export default function BackofficeProfilePage() {
   // The layout knows who is signed in; no session round-trip on first render.
   const { viewerId } = useBackofficeCapability();
@@ -151,7 +151,7 @@ export default function BackofficeProfilePage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <PageHeader title="My profile" description={PROFILE_DESCRIPTION} />
+        <PageHeader title="Settings" description={PROFILE_DESCRIPTION} />
         <Card>
           <CardHeader>
             <Skeleton className="h-6 w-[200px]" />
@@ -170,7 +170,7 @@ export default function BackofficeProfilePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="My profile" description={PROFILE_DESCRIPTION} />
+      <PageHeader title="Settings" description={PROFILE_DESCRIPTION} />
 
       {/* Personal Information */}
       <Card>

@@ -87,7 +87,8 @@ export function OperatorDashboardShell({
         name: displayName,
         image: userImage,
         roleLabel,
-        // The operator's own My profile page, in the tree they are viewing.
+        // #1527 — the avatar menu's one "Settings": the operator's own profile
+        // page, in the tree they are viewing.
         settingsHref: `${nav.basePath}/settings`,
       }}
       onSignOut={() => void signOutEverywhere()}

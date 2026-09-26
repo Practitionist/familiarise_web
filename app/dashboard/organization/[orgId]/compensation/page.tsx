@@ -129,7 +129,7 @@ export default async function MyArrangementPage({
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Bookings {access.org.name} sponsored for you to host. Personal
                 bookings you take from learners outside this org appear on your
-                consultant dashboard.
+                Expert dashboard.
               </p>
             </div>
             <div className="overflow-x-auto rounded-lg border bg-card">
@@ -410,10 +410,10 @@ export default async function MyArrangementPage({
             )}
             {member.payoutRecipient === "ORGANIZATION" && (
               <p className="mt-2 text-xs text-muted-foreground">
-                Your share figures above show the consultant cut per the rate
-                card. Because your payout is routed to the organisation, the
-                actual cash flow to you happens internally — confirm with your
-                org administrator.
+                Your share figures above show the expert cut per the rate card.
+                Because your payout is routed to the organisation, the actual
+                cash flow to you happens internally — confirm with your org
+                administrator.
               </p>
             )}
           </section>
@@ -421,7 +421,7 @@ export default async function MyArrangementPage({
 
         {!member.consultantProfileId && (
           <div className="rounded-lg border bg-muted/40 p-4 text-sm">
-            You don't have a consultant profile yet. Once you create one on your
+            You don't have an expert profile yet. Once you create one on your
             personal dashboard, sessions you host under this org will show up
             here.
           </div>

@@ -37,11 +37,11 @@ export interface DashboardAccount {
   image: string | null;
   /** Humanized ("Owner", "Expert"), never a raw enum. */
   roleLabel: string;
-  /** "Account settings" target; null hides the item (mid-onboarding). */
+  /** The one "Settings" entry (#1527); null hides it (mid-onboarding). */
   settingsHref: string | null;
 }
 
-/** Header avatar menu: identity, Account settings, Sign out (#1527). */
+/** Header avatar menu: identity, Settings, Sign out (#1527). */
 export function AccountMenu({
   account,
   onSignOut,
@@ -88,7 +88,7 @@ export function AccountMenu({
               className="flex w-full items-center gap-2"
             >
               <Settings className="h-4 w-4 text-zinc-500" />
-              Account settings
+              Settings
             </Link>
           </DropdownMenuItem>
         )}

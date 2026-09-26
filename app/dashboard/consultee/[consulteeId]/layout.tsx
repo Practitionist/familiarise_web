@@ -14,6 +14,7 @@ import {
 } from "@/lib/dashboard/nav/consultee";
 import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { fetchConsulteeDetails } from "@/lib/user";
+import { PERSONAL_SIDE_LABEL } from "@/lib/labels/personal-dashboard";
 import { UserProvider } from "./UserContext";
 
 const PREFETCH_SUFFIXES = ["home"];
@@ -52,8 +53,8 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       routeParam={consulteeId}
       nav={nav}
       badges={badges}
-      chipRole="Client"
-      identityFallbackName="Client"
+      chipRole={PERSONAL_SIDE_LABEL.consultee}
+      identityFallbackName={PERSONAL_SIDE_LABEL.consultee}
       pageLabels={CONSULTEE_PAGE_LABELS}
       profileQueryKey={["consultee-profile", consulteeId]}
       fetchProfile={() => fetchConsulteeDetails(consulteeId)}

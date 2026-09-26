@@ -21,11 +21,11 @@ const keys = (input: DashboardFacetInput) => {
 
 // #1527 Q1 — the switcher's facet groups per identity mix.
 describe("resolveDashboardFacets", () => {
-  it("consultee only: Client, can become an expert", () => {
+  it("consultee only: Learner, can become an expert", () => {
     expect(
       keys({ ...base, consulteeProfileId: "ce-1", canBecomeExpert: true }),
     ).toEqual({
-      you: ["Client"],
+      you: ["Learner"],
       organizations: [],
       platform: [],
       create: null,
@@ -45,16 +45,17 @@ describe("resolveDashboardFacets", () => {
     });
   });
 
-  it("consultant who also booked: Expert and Client", () => {
+  it("consultant who also booked: Expert and Learner", () => {
     const f = resolveDashboardFacets({
       ...base,
       role: "CONSULTANT",
       consultantProfileId: "cp-1",
       consulteeProfileId: "ce-1",
     });
-    expect(f.you.map((x) => [x.label, x.href])).toEqual([
-      ["Expert", "/dashboard/consultant/cp-1/home"],
-      ["Client", "/dashboard/consultee/ce-1/home"],
+    // #1527 — end users read Expert / Learner, B2C as well as B2B.
+    expect(f.you.map((x) => [x.label, x.sublabel, x.href])).toEqual([
+      ["Expert", "Your practice", "/dashboard/consultant/cp-1/home"],
+      ["Learner", "Your bookings & learning", "/dashboard/consultee/ce-1/home"],
     ]);
   });
 

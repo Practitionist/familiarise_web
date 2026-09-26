@@ -152,7 +152,7 @@ export function SubscriptionsPage({
     },
     {
       key: "consultant",
-      header: "Consultant",
+      header: "Expert",
       className: "text-sm text-muted-foreground",
       cell: (subscription) => subscription.consultantName || "-",
     },

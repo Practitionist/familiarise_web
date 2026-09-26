@@ -240,3 +240,40 @@ describe("no redundant group nesting", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+// #1527 — Settings: the avatar menu (+ mobile sheet) for personal and back
+// office; an ordinary last nav item for the organization and the workspace.
+describe("where Settings lives", () => {
+  const inGroups = (nav: DashboardNav) =>
+    nav.groups.flatMap((g) => g.items).some((i) => i.path === "settings");
+
+  it.each([
+    ["consultant", buildConsultantNav("cp-1")],
+    ["consultee", buildConsulteeNav("ce-1")],
+    ["admin", buildBackofficeDashboardNav(backofficeCap("admin"))],
+  ] as const)("%s: account Settings, never a rail row", (_name, nav) => {
+    expect(nav.settings?.name).toBe("Settings");
+    expect(inGroups(nav)).toBe(false);
+  });
+
+  it.each([
+    [
+      "organization",
+      buildOrganizationNav({
+        orgId: "org-1",
+        role: "LEARNER",
+        canSponsor: true,
+        canHost: false,
+        consultantProfileId: null,
+      }),
+      "Organization settings",
+    ],
+    ["workspace", buildWorkspaceNav("ow-1"), "Workspace settings"],
+  ] as const)("%s: last item of the last group", (_name, nav, label) => {
+    expect(nav.settings).toBeUndefined();
+    expect(nav.groups.at(-1)?.items.at(-1)).toMatchObject({
+      name: label,
+      path: "settings",
+    });
+  });
+});

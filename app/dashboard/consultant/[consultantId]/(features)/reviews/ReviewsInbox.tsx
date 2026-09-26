@@ -86,8 +86,8 @@ function ScoreRow({
         value={score(summary.publishedRatingOneToOne)}
         hint={
           summary.publishedRatingOneToOne === null
-            ? "Shown once enough clients have rated you"
-            : `From ${summary.ratedClientsOneToOne} clients`
+            ? "Shown once enough learners have rated you"
+            : `From ${summary.ratedClientsOneToOne} learners`
         }
       />
       <Stat

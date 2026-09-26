@@ -509,7 +509,7 @@ export function RequestedSlotsDialog({
           </ResponsiveModalTitle>
           <ResponsiveModalDescription>
             {confirmation
-              ? "The consultee has been told."
+              ? "The learner has been told."
               : "Check the requested times before booking them."}
           </ResponsiveModalDescription>
         </ResponsiveModalHeader>

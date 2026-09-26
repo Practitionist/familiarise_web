@@ -580,7 +580,7 @@ export function PendingPaymentsWidget({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {cancelTarget?.kind === "approval"
-                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the consultant's approval and any held slots are released.`
+                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`
                 : `"${cancelTarget?.title ?? ""}" will be cancelled and your held slot released. If the payment already went through, it will be reconciled automatically.`}
             </AlertDialogDescription>
           </AlertDialogHeader>

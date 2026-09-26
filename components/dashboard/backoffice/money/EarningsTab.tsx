@@ -62,7 +62,7 @@ async function fetchEarnings(filters: Record<string, string>) {
 const columns: ResponsiveColumn<EarningRow>[] = [
   {
     key: "consultant",
-    header: "Consultant",
+    header: "Expert",
     primary: true,
     cell: (r) => (
       <div>
@@ -160,8 +160,8 @@ export function EarningsTab() {
             </SelectContent>
           </Select>
           <Input
-            aria-label="Consultant profile id"
-            placeholder="Consultant profile id"
+            aria-label="Expert profile id"
+            placeholder="Expert profile id"
             value={consultantProfileId}
             onChange={(e) => setConsultantProfileId(e.target.value)}
           />

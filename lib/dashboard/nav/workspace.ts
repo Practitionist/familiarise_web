@@ -26,10 +26,11 @@ export function buildWorkspaceNav(
                 { name: "Spend", icon: CreditCard, path: "billing" },
               ]
             : []),
+          // #1527 — an ordinary last item, not a rail footer.
+          { name: "Workspace settings", icon: Settings, path: "settings" },
         ],
       },
     ],
-    settings: { name: "Workspace settings", icon: Settings, path: "settings" },
     // The operator's Support requests page (#1527). It has no Feedback tab,
     // so the Help menu shows no Send feedback row.
     support: { requestsHref: `${basePath}/support`, feedbackHref: null },

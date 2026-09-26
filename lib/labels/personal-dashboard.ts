@@ -4,6 +4,24 @@ import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
 } from "@/lib/labels/org-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
+
+/**
+ * #1527 — end users read "Expert" and "Learner", B2C and B2B alike (the same
+ * words as the org roles EXPERT / LEARNER). Internal ids stay consultant /
+ * consultee.
+ */
+export const PERSONAL_SIDE_LABEL = {
+  consultant: "Expert",
+  consultee: "Learner",
+} as const;
+
+/** A `UserRole` for display: Expert / Learner for the two personal sides. */
+export function userRoleLabel(role: string | null | undefined): string {
+  if (role === "CONSULTANT") return PERSONAL_SIDE_LABEL.consultant;
+  if (role === "CONSULTEE") return PERSONAL_SIDE_LABEL.consultee;
+  return humanizeEnum(role ?? "none");
+}
 
 /**
  * Resolve the href for a user's "Personal Dashboard" link.
@@ -59,6 +77,8 @@ export interface DashboardFacet {
   /** Stable key: the kind, or `org:<id>` for organizations. */
   key: string;
   label: string;
+  /** One-line hint under the label ("Your practice"). */
+  sublabel?: string;
   href: string;
   /** Organization facets only. */
   organizationId?: string;
@@ -120,7 +140,7 @@ function membershipStatusLabel(m: DashboardFacetMembership): string | null {
 /**
  * Every dashboard a user can switch to, grouped You / Organizations / Platform
  * (#1527 Q1). Facets follow capability (which profiles exist), not the single
- * UserRole, so a consultant who also booked sessions sees Client too. Org
+ * UserRole, so a consultant who also booked sessions sees Learner too. Org
  * links go to the bare org route, which lands each role on its own page.
  */
 export function resolveDashboardFacets(
@@ -131,7 +151,8 @@ export function resolveDashboardFacets(
     you.push({
       kind: "expert",
       key: "expert",
-      label: "Expert",
+      label: PERSONAL_SIDE_LABEL.consultant,
+      sublabel: "Your practice",
       href: `/dashboard/consultant/${input.consultantProfileId}/home`,
     });
   }
@@ -139,7 +160,8 @@ export function resolveDashboardFacets(
     you.push({
       kind: "client",
       key: "client",
-      label: "Client",
+      label: PERSONAL_SIDE_LABEL.consultee,
+      sublabel: "Your bookings & learning",
       href: `/dashboard/consultee/${input.consulteeProfileId}/home`,
     });
   }

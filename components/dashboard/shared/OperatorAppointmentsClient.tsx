@@ -555,7 +555,7 @@ export function OperatorAppointmentsClient({
                   {selectedAppointment.consultant && (
                     <div className="p-3 rounded-lg bg-muted">
                       <Label className="text-xs text-muted-foreground">
-                        Consultant
+                        Expert
                       </Label>
                       <div className="flex items-center gap-2 mt-2">
                         <Avatar>
@@ -586,7 +586,7 @@ export function OperatorAppointmentsClient({
                   {selectedAppointment.consultee && (
                     <div className="p-3 rounded-lg bg-muted">
                       <Label className="text-xs text-muted-foreground">
-                        Consultee
+                        Learner
                       </Label>
                       <div className="flex items-center gap-2 mt-2">
                         <Avatar>

@@ -115,8 +115,7 @@ export function useConsultantEventActions({
         proposedSlots?.length
           ? {
               title: "Times proposed",
-              description:
-                "The consultee has been asked to accept the new time.",
+              description: "The learner has been asked to accept the new time.",
             }
           : {
               title: "Ready to reschedule",

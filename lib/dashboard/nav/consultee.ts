@@ -13,9 +13,9 @@ import {
 import { personalSupportLinks, type DashboardNav } from "./types";
 
 /**
- * Client (consultee) IA from #1527 §7.1. Settings is the rail's last row and
- * Help lives in the header menu (Cloudflare shell); Feedback folds into
- * Support requests.
+ * Learner (consultee) IA from #1527 §7.1. Settings lives in the avatar menu
+ * and Help in the header menu (Cloudflare shell); Feedback folds into Support
+ * requests.
  */
 export function buildConsulteeNav(consulteeId: string): DashboardNav {
   return {

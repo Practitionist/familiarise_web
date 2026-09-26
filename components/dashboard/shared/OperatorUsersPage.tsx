@@ -13,13 +13,13 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { humanizeEnum } from "@/lib/ui/tone";
+import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import type { UserListItem, UserListResponse } from "@/types/admin-users";
 
 const PAGE_SIZE = 20; // the route's fixed page size
 
 const ROLE_OPTIONS = ["CONSULTANT", "CONSULTEE", "STAFF", "ADMIN"].map(
-  (value) => ({ value, label: humanizeEnum(value) }),
+  (value) => ({ value, label: userRoleLabel(value) }),
 );
 
 const initials = (u: UserListItem) =>
@@ -53,7 +53,7 @@ const columns: ResponsiveColumn<UserListItem>[] = [
   {
     key: "role",
     header: "Role",
-    cell: (user) => humanizeEnum(user.role ?? "none"),
+    cell: (user) => userRoleLabel(user.role),
   },
   {
     key: "status",
