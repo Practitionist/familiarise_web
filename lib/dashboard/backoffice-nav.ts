@@ -6,7 +6,6 @@ import {
   BarChart3,
   Building2,
   CalendarCheck,
-  CalendarRange,
   Coins,
   CreditCard,
   FileText,
@@ -87,7 +86,6 @@ const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
   payouts: Banknote,
   earnings: Coins,
   reconcile: ArrowLeftRight,
-  "class-series": CalendarRange,
   audit: ScrollText,
 };
 

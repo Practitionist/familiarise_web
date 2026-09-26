@@ -5,33 +5,11 @@ import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import type { ClassSeriesView } from "@/lib/backoffice/class-series-types";
 import { enumLabel, fundingRailLabel } from "@/lib/labels/money-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { DoorDialog, type Door } from "./DoorDialog";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
-import { ReasonDialog } from "./ReasonDialog";
-import { useOpsDoor } from "./ops-door";
-import { SessionOutcomesCard } from "./SessionOutcomesCard";
-
-interface PickerRow {
-  id: string;
-  title: string;
-  status: string;
-  hostName: string | null;
-}
-
-type Door = {
-  url: string;
-  title: string;
-  description: string;
-  confirm: string;
-  body?: Record<string, unknown>;
-  /** Extra fields the dialog asks for, merged into the body on confirm. */
-  extra?: "make-up" | "subscription";
-};
 
 const when = (iso: string) => new Date(iso).toLocaleString();
 
@@ -48,33 +26,26 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 /**
- * #1771 K-6 — the #1780 manual doors. Staff cancel a session for the host,
- * grant a make-up, flag reliability and leave notes; admins also skip a
- * make-up for a learner, cancel the whole series, run a sweep for one row,
- * and refund one seat — every door that moves money.
+ * #1771 K-6 — the #1780 manual doors for one class, in its booking's Ops
+ * actions panel. Staff cancel a session for the host, grant a make-up, flag
+ * reliability and leave notes; admins also skip a make-up for a learner,
+ * cancel the whole series, run the 14-day sweep for one session, and refund
+ * one seat — every door that moves money.
  */
-export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
-  const [query, setQuery] = useState("");
-  const [classId, setClassId] = useState<string | null>(null);
+export function ClassSeriesDoors({
+  classId,
+  isAdmin,
+}: Readonly<{ classId: string; isAdmin: boolean }>) {
   const [door, setDoor] = useState<Door | null>(null);
   const [refund, setRefund] = useState<{
     door: RefundDoor;
     paymentId: string;
   } | null>(null);
 
-  const picker = useQuery({
-    queryKey: ["class-series-picker", query],
-    queryFn: () =>
-      getJson<{ classes: PickerRow[] }>(
-        `/api/admin/class-series?q=${encodeURIComponent(query)}`,
-      ),
-    staleTime: 30_000,
-  });
   const view = useQuery({
     queryKey: ["class-series", classId],
     queryFn: () =>
       getJson<ClassSeriesView>(`/api/admin/class-series/${classId}`),
-    enabled: !!classId,
     staleTime: 10_000,
   });
   const base = `/api/admin/class-series/${classId}`;
@@ -82,44 +53,11 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
 
   return (
     <div className="space-y-4">
-      <SessionOutcomesCard />
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Class series</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input
-            aria-label="Find a class"
-            placeholder="Class title or id"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <ul className="max-h-56 divide-y divide-border overflow-y-auto rounded-md border">
-            {(picker.data?.classes ?? []).map((c) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => setClassId(c.id)}
-                  aria-current={c.id === classId ? "true" : undefined}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-muted aria-[current=true]:bg-muted"
-                >
-                  <span className="font-medium">{c.title}</span>
-                  <span className="text-muted-foreground">
-                    {" "}
-                    · {c.hostName ?? "Unknown host"} · {enumLabel(c.status)}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-
       {v && (
         <>
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">{v.title}</CardTitle>
+              <CardTitle className="text-lg">Class series</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <p>
@@ -304,30 +242,13 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
               </Row>
             ))}
           </Section>
-
-          {isAdmin && (
-            <Button
-              variant="outline"
-              onClick={() =>
-                setDoor({
-                  url: "/api/admin/class-series/sweeps/unallocated",
-                  title: "Run the 48-hour arm for one plan",
-                  description:
-                    "Expires a paid plan with no session after 48 hours and refunds it in full.",
-                  confirm: "Run",
-                  extra: "subscription",
-                })
-              }
-            >
-              Run the 48-hour arm for a subscription
-            </Button>
-          )}
         </>
       )}
 
       <DoorDialog
         key={door ? `${door.url}:${JSON.stringify(door.body ?? {})}` : "none"}
         door={door}
+        invalidate={[["class-series"], ["booking-ops"]]}
         onClose={() => setDoor(null)}
       />
       <RefundDoorDialog
@@ -369,85 +290,5 @@ function Row({
       <span className="min-w-0 flex-1">{label}</span>
       <span className="flex flex-wrap gap-2">{children}</span>
     </li>
-  );
-}
-
-function DoorDialog({
-  door,
-  onClose,
-}: Readonly<{ door: Door | null; onClose: () => void }>) {
-  const [startsAt, setStartsAt] = useState("");
-  const [bypass, setBypass] = useState(false);
-  const [subscriptionId, setSubscriptionId] = useState("");
-  const mutation = useOpsDoor({
-    success: "Done",
-    invalidate: [["class-series"]],
-    onDone: onClose,
-  });
-  if (!door) return null;
-  const extraOk =
-    door.extra === "make-up"
-      ? startsAt !== ""
-      : door.extra !== "subscription" || subscriptionId.trim() !== "";
-  const extraBody = (): Record<string, unknown> => {
-    if (door.extra === "make-up")
-      return {
-        startsAt: new Date(startsAt).toISOString(),
-        bypassWindow: bypass,
-      };
-    if (door.extra === "subscription")
-      return { subscriptionId: subscriptionId.trim() };
-    return {};
-  };
-  return (
-    <ReasonDialog
-      open
-      onOpenChange={(o) => !o && onClose()}
-      title={door.title}
-      description={door.description}
-      confirmLabel={door.confirm}
-      pending={mutation.isPending}
-      canConfirm={extraOk}
-      onConfirm={(reason) =>
-        mutation.mutate({
-          url: door.url,
-          body: { ...door.body, ...extraBody(), reason },
-        })
-      }
-    >
-      {door.extra === "make-up" && (
-        <>
-          <div className="space-y-1.5">
-            <Label htmlFor="makeup-at">Make-up starts at</Label>
-            <Input
-              id="makeup-at"
-              type="datetime-local"
-              value={startsAt}
-              onChange={(e) => setStartsAt(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="makeup-bypass"
-              checked={bypass}
-              onCheckedChange={(c) => setBypass(c === true)}
-            />
-            <Label htmlFor="makeup-bypass">
-              Allow a date past the 14-day window
-            </Label>
-          </div>
-        </>
-      )}
-      {door.extra === "subscription" && (
-        <div className="space-y-1.5">
-          <Label htmlFor="sweep-sub">Subscription id</Label>
-          <Input
-            id="sweep-sub"
-            value={subscriptionId}
-            onChange={(e) => setSubscriptionId(e.target.value)}
-          />
-        </div>
-      )}
-    </ReasonDialog>
   );
 }

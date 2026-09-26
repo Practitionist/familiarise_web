@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -46,12 +47,19 @@ function doorFor(item: NeedsHuman) {
  * the credit seats the automatic paths left for a human.
  */
 export function RefundDoorsPanel() {
+  const params = useSearchParams();
+  const linkedPayment = params.get("paymentId");
+  // A booking's Ops actions link here with `?door=issue&paymentId=…`.
   const [open, setOpen] = useState<{
     door: RefundDoor;
     paymentId?: string;
     occurrenceId?: string;
     amountRupees?: string;
-  } | null>(null);
+  } | null>(
+    params.get("door") === "issue" && linkedPayment
+      ? { door: "issue", paymentId: linkedPayment }
+      : null,
+  );
   const { data } = useQuery({
     queryKey: ["money-refund-needs"],
     queryFn: fetchNeeds,

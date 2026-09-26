@@ -1,5 +1,5 @@
 /**
- * #1771 K-6 — what the Class-series tab shows for one class: the series
+ * #1771 K-6 — what a class booking's Ops actions panel shows: the series
  * ledger, the host-cancelled sessions and their make-ups, the reliability
  * flag, and every seat with its own ledger. Read-only; the doors live in
  * app/api/admin/class-series.
@@ -14,41 +14,6 @@ export type { ClassSeriesView };
 
 export const reliabilityCorrelationId = (classId: string) =>
   `class-reliability:${classId}`;
-
-export async function listClassesForPicker(query: string) {
-  const q = query.trim();
-  const rows = await prisma.class.findMany({
-    where: {
-      deletedAt: null,
-      ...(q
-        ? {
-            OR: [
-              { id: q },
-              { classPlan: { title: { contains: q, mode: "insensitive" } } },
-            ],
-          }
-        : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    take: 25,
-    select: {
-      id: true,
-      status: true,
-      classPlan: {
-        select: {
-          title: true,
-          consultantProfile: { select: { user: { select: { name: true } } } },
-        },
-      },
-    },
-  });
-  return rows.map((c) => ({
-    id: c.id,
-    status: c.status,
-    title: c.classPlan.title,
-    hostName: c.classPlan.consultantProfile?.user.name ?? null,
-  }));
-}
 
 const OCC_SELECT = {
   id: true,

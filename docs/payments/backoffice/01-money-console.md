@@ -18,16 +18,15 @@ shared `[tab]` page guards it, and both filter the list through
 is never visible to a role whose route guard would then turn it away. The
 table below lists every section with the surfaces that gate it.
 
-| Tab          | Surface                          | What it is for                                                                               |
-| ------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| Payments     | `payments.read`                  | Every payment, with its status and rail.                                                     |
-| Refunds      | `refunds.read` / `.manage`       | Refunds issued, pending and failed, plus the admin refund doors.                             |
-| Payouts      | `payouts.read` / `.manage`       | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
-| Earnings     | `payouts.read` / `.manage`       | Consultant earnings, with hold and release.                                                  |
-| Disputes     | `disputes.read` / `.manage`      | Chargebacks and their evidence deadlines.                                                    |
-| Reconcile    | `payouts.manage`                 | Runs the four reconcile jobs on demand and shows when each last ran.                         |
-| Class series | `classSeries.support` / `.money` | The manual doors for #1780's class-series rules.                                             |
-| Audit        | `opsLog.read`                    | Every console action: who, what, on which row, and why.                                      |
+| Tab       | Surface                     | What it is for                                                                               |
+| --------- | --------------------------- | -------------------------------------------------------------------------------------------- |
+| Payments  | `payments.read`             | Every payment, with its status and rail.                                                     |
+| Refunds   | `refunds.read` / `.manage`  | Refunds issued, pending and failed, plus the admin refund doors.                             |
+| Payouts   | `payouts.read` / `.manage`  | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
+| Earnings  | `payouts.read` / `.manage`  | Consultant earnings, with hold and release.                                                  |
+| Disputes  | `disputes.read` / `.manage` | Chargebacks and their evidence deadlines.                                                    |
+| Reconcile | `payouts.manage`            | Runs the four reconcile jobs on demand and shows when each last ran.                         |
+| Audit     | `opsLog.read`               | Every console action: who, what, on which row, and why.                                      |
 
 `payouts.read` is admin-only, so staff do not see the Payouts or Earnings
 tabs; a support agent resolving a billing ticket can still see a payment,
@@ -71,7 +70,7 @@ or "nothing left to restore" rather than a crash.
 
 The console repeats the platform's one rule for privileged access: staff own
 support end-to-end and read every money surface, and admin alone executes
-money. On the class-series tab this reads literally as two surfaces,
+money. The class doors read this literally as two surfaces,
 `classSeries.support` and `classSeries.money`: a staff member can cancel a
 session for the host, grant a make-up (including an ops-only bypass of the
 14-day window, itself reason-gated), clear or re-flag the reliability flag,
@@ -80,6 +79,24 @@ whole series with refunds, and every refund or credit-restore door are
 `classSeries.money` and `refunds.manage`, admin-only, because every one of
 them does. See [the class-series money-rules ADR](../../decisions/2026-09-25-class-series-money-rules.md)
 for what each door does and why it exists.
+
+## Per-booking Ops actions
+
+The class doors no longer have a section of their own. Each booking's detail
+dialog under Operations → Appointments carries an "Ops actions" panel
+(`BookingOpsPanel`), which reads `GET /api/staff/appointments/[id]/ops` and
+opens only the existing door routes. Every booking type lists its sessions
+with their outcome and the `session.set-outcome` door, and shows its money
+state; an admin also gets a link that opens the Refunds section's issue door
+pre-filled with the payment. A class booking adds the class doors described
+above: cancel a session, grant a make-up with the reason-gated 14-day bypass,
+skip a make-up (admin), the exit-right state, the reliability flag with an
+ops note, and, for an admin, cancelling the whole series and running the
+14-day sweep for one session. A subscription booking gives an admin its
+48-hour sweep. Webinars get no class door, because those doors are keyed to a
+class. The old `/money/class-series` URL answers a 308 to Appointments
+filtered to classes, and the sessions-needing-a-decision queue now heads the
+Appointments page.
 
 ## The refund and credit doors
 

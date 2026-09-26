@@ -1,9 +1,13 @@
 import type { UserRole } from "@prisma/client";
-import { redirect } from "next/navigation";
+import { permanentRedirect, redirect } from "next/navigation";
 
 import { requireUserRole } from "@/lib/auth-guard";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import { findMoneyTab, moneyTabsFor } from "@/lib/backoffice/money-tabs";
+import {
+  findMoneyTab,
+  moneyTabsFor,
+  retiredMoneyTabHref,
+} from "@/lib/backoffice/money-tabs";
 import { MoneyTabBody } from "./MoneyTabBody";
 
 /**
@@ -17,6 +21,8 @@ export async function renderMoneyTab(args: {
   tree: "admin" | "staff";
   treePath: string;
 }) {
+  const retired = retiredMoneyTabHref(args.treePath, args.tab);
+  if (retired) permanentRedirect(retired);
   const session = await requireUserRole(["ADMIN", "STAFF"]);
   const role = session.user.role as UserRole;
   const audience: UserRole = args.tree === "admin" ? "ADMIN" : "STAFF";

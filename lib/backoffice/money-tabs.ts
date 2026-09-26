@@ -18,7 +18,6 @@ export type MoneyTabKey =
   | "payouts"
   | "earnings"
   | "reconcile"
-  | "class-series"
   | "audit";
 
 export interface MoneyTab {
@@ -66,13 +65,6 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     surface: "payouts.manage",
   },
   {
-    key: "class-series",
-    label: "Class series",
-    description:
-      "The manual doors for class series: sessions, make-ups, seats.",
-    surface: "classSeries.support",
-  },
-  {
     key: "audit",
     label: "Audit",
     description: "Every console action: who, what, on which row, and why.",
@@ -86,6 +78,18 @@ export function moneyTabsFor(audience: UserRole): MoneyTab[] {
 
 export function findMoneyTab(key: string): MoneyTab | undefined {
   return MONEY_TABS.find((t) => t.key === key);
+}
+
+/**
+ * A retired section's new home, answered with a 308: the class-series doors
+ * moved onto each class booking's Ops actions panel under Appointments.
+ */
+export function retiredMoneyTabHref(
+  treePath: string,
+  key: string,
+): string | null {
+  if (key === "class-series") return `${treePath}/appointments?type=class`;
+  return null;
 }
 
 type SearchParams = Record<string, string | string[] | undefined>;
