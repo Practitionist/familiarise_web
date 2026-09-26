@@ -129,6 +129,7 @@ export async function POST(
       (await isOrgAdminOfAppointment(
         open.initiatedById,
         open.appointment?.organizationId,
+        "reschedule",
       ));
     const counterpartyUserId = initiatedByConsultant
       ? consulteeUserId

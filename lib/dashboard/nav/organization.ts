@@ -41,6 +41,20 @@ export interface OrganizationNavInput {
 
 type ItemSpec = NavItem & { show?: boolean };
 
+/**
+ * #1527 — the Compensation / Plan collaborators page gate: the EXPERT role,
+ * or any member holding a consultant profile (an OWNER can deliver too).
+ * Every member the nav offers those pages to passes it.
+ */
+export function deliversForOrg(
+  input: Pick<OrganizationNavInput, "role" | "consultantProfileId">,
+): boolean {
+  return (
+    hasOrgPermission(input.role, "myArrangement.read") ||
+    input.consultantProfileId !== null
+  );
+}
+
 const keep = (items: ItemSpec[]): NavItem[] =>
   items
     .filter((it) => it.show !== false)
@@ -59,6 +73,9 @@ export function buildOrganizationNav(
 ): DashboardNav {
   const { orgId, role, canSponsor, canHost } = input;
   const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
+  // Nav ⊆ page: the Compensation / Plan collaborators pages admit anyone who
+  // `deliversForOrg`; the nav offers them to experts only, since operators
+  // who deliver read collaborators in Catalog (#1527).
   const isExpertHost = can("myArrangement.read") && canHost;
 
   const top: ItemSpec[] = [
@@ -81,12 +98,11 @@ export function buildOrganizationNav(
     { name: "Messages", icon: MessageSquare, path: "messages" },
     {
       // The profile is the real predicate: an OWNER who delivers gets it too.
+      // Same test as the page, which redirects without a profile (#1527 P1-10).
       name: "Requests",
       icon: ClipboardCheck,
       path: "requests",
-      show:
-        (can("myArrangement.read") || input.consultantProfileId !== null) &&
-        canHost,
+      show: input.consultantProfileId !== null && canHost,
     },
     {
       // #1527-4c — experts keep it in Top; operators use Catalog › Collaborators.
@@ -99,10 +115,12 @@ export function buildOrganizationNav(
 
   const people: ItemSpec[] = [
     {
+      // Every member gets the names-only directory; members.read gets the
+      // full table inside (#1527 decision 3).
       name: "Members",
       icon: Users,
       path: "members",
-      show: can("members.read"),
+      show: can("members.directory"),
     },
   ];
 
@@ -111,7 +129,7 @@ export function buildOrganizationNav(
       name: "Programs",
       icon: Briefcase,
       path: "programs",
-      show: canSponsor && can("programs.manage"),
+      show: canSponsor && can("programs.read"),
     },
     {
       name: "Contracts",
@@ -213,7 +231,7 @@ export function buildOrganizationNav(
     // The org's own `support` is operator triage (operations.read), not the
     // viewer's requests; the shell fills in their personal page (#1527).
     support: null,
-    mobileTabs: organizationMobileTabs(groups),
+    mobileTabs: organizationMobileTabs(groups, role),
   };
 }
 
@@ -221,15 +239,22 @@ export function buildOrganizationNav(
  * Operators get Overview · Appointments · Members · Billing|Payouts; members
  * get their own landing · Appointments · Messages (#1527 §7.3).
  */
-function organizationMobileTabs(groups: NavGroup[]): string[] {
+function organizationMobileTabs(
+  groups: NavGroup[],
+  role: MemberRole,
+): string[] {
   const paths = new Set(groups.flatMap((g) => g.items.map((i) => i.path)));
   const has = (p: string) => paths.has(p);
   let money: string | null = null;
   if (has("billing")) money = "billing";
   else if (has("payouts")) money = "payouts";
+  // Members is in every nav now (the directory); the operator layout keys on
+  // the full roster grant instead (#1527).
+  const operatorMembers =
+    has("members") && hasOrgPermission(role, "members.read");
 
-  if (has("members") || money) {
-    return ["home", "appointments", has("members") ? "members" : null, money]
+  if (operatorMembers || money) {
+    return ["home", "appointments", operatorMembers ? "members" : null, money]
       .filter((p): p is string => p !== null)
       .slice(0, 4);
   }

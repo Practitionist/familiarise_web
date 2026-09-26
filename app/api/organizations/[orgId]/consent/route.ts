@@ -10,7 +10,10 @@
  * POST writes a tamper-evident consent row via `buildConsentArtifact`
  * (lib/compliance/dpdp.ts). The SHA-256 hash is real; the surrounding
  * consent-manager + notice-versioning workflow is documented in the dpdp
- * stub header.
+ * stub header. #1527 decision 5 — only the member grants their own consent:
+ * any active member may POST for themselves; an operator granting on behalf
+ * of someone else is refused (CONSENT_GRANT_SELF_ONLY). Operators view
+ * (consent.read) and record withdrawal requests (consent.withdraw).
  *
  * Retention: `auditRetainedUntil` = grantedAt + 7y per DPDP Rules (Nov
  * 2025). A daily cron sweeper (jobs/compliance/consent-retention-sweeper)
@@ -39,7 +42,8 @@ const LanguageSchema = z
   .regex(/^[a-z]{2,3}(-[A-Z]{2})?$/, "ISO 639-1/2 language code required");
 
 const CreateBodySchema = z.object({
-  userId: z.string().min(1).max(128),
+  // Optional: defaults to the caller. Any other user is refused (#1527).
+  userId: z.string().min(1).max(128).optional(),
   purposeCodes: z.array(z.string().min(1).max(64)).min(1).max(20),
   language: LanguageSchema,
   consentManager: z.string().min(1).max(120).nullable().optional(),
@@ -97,7 +101,8 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "consent.manage" });
+  // Any active member — granting is the data principal's own act.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -108,7 +113,18 @@ export async function POST(
       { status: 400 },
     );
   }
-  const body = parsed.data;
+  const selfId = access.session.user.id;
+  const body = { ...parsed.data, userId: parsed.data.userId ?? selfId };
+  // #1527 decision 5 — no operator grants consent on a member's behalf.
+  if (body.userId !== selfId) {
+    return NextResponse.json(
+      {
+        error: "Only the member can grant their own consent",
+        code: "CONSENT_GRANT_SELF_ONLY",
+      },
+      { status: 403 },
+    );
+  }
 
   // Normalise to the single canonical taxonomy (lib/compliance/purpose-codes.ts)
   // before storage, so the fail-closed runtime gate and the dashboard never
@@ -200,11 +216,11 @@ export async function POST(
  *    list contains that value. Omit it to withdraw ALL active consents
  *    for the user (full DPDP §12 opt-out).
  *
- *  - Admins (MANAGER+) can trigger withdrawal on behalf of a member —
- *    this is the org-side of the data principal's right to withdraw.
- *    Self-service withdrawal from the user's own account settings goes
- *    through a different route (to be added) that requires the
- *    authenticated user to match `userId` rather than MANAGER access.
+ *  - Operators (`consent.withdraw`: OWNER, MAINTAINER, MANAGER) record a
+ *    member's withdrawal request — the org-side of the data principal's
+ *    right to withdraw (#1527 decision 5). Self-service withdrawal from the
+ *    user's own account settings goes through a different route (to be
+ *    added) that requires the authenticated user to match `userId`.
  */
 const DeleteQuerySchema = z.object({
   userId: z.string().min(1).max(128),
@@ -216,7 +232,9 @@ export async function DELETE(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "consent.manage" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "consent.withdraw",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

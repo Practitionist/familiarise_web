@@ -21,8 +21,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { getOrgAnalytics, withoutOrgMoney } from "@/lib/data/org-analytics";
+import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 
 export async function GET(
   _req: NextRequest,
@@ -42,10 +41,6 @@ export async function GET(
     );
   }
 
-  // #1527 — SUPPORT reads operations, never money.
-  return NextResponse.json(
-    hasOrgPermission(access.member.role, "billing.read")
-      ? analytics
-      : withoutOrgMoney(analytics),
-  );
+  // #1527 — SUPPORT reads operations, never money; MANAGER no host earnings.
+  return NextResponse.json(orgAnalyticsForRole(analytics, access.member.role));
 }

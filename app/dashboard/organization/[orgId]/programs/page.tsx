@@ -1544,11 +1544,17 @@ function ManageProgramDialog({
   program,
   open,
   onOpenChange,
+  canAssign,
+  canManage,
 }: {
   orgId: string;
   program: ProgramListItem;
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** programs.assign — seat assign/unassign (#1527 decision 8). */
+  canAssign: boolean;
+  /** programs.manage — program design, incl. delete. */
+  canManage: boolean;
 }) {
   const queryClient = useQueryClient();
   const [membershipId, setMembershipId] = useState("");
@@ -1565,7 +1571,9 @@ function ManageProgramDialog({
   const members = useQuery({
     queryKey: ["org-members", orgId],
     queryFn: () => fetchMembers(orgId),
-    enabled: open,
+    // The picker only exists for assigners; BILLING_ADMIN reads the roster
+    // through the assignments list, not the members API (#1527).
+    enabled: open && canAssign,
   });
 
   const assignments = useQuery({
@@ -1659,7 +1667,7 @@ function ManageProgramDialog({
         </div>
 
         {/* Assign learner form */}
-        {program.status === "ACTIVE" && (
+        {canAssign && program.status === "ACTIVE" && (
           <div className="space-y-3 rounded-md border p-4">
             <h4 className="text-sm font-semibold flex items-center gap-1.5">
               <Users className="h-4 w-4" /> Assign a member
@@ -1789,7 +1797,7 @@ function ManageProgramDialog({
                       <AssignmentStateBadge assignment={a} />
                     </TableCell>
                     <TableCell className="text-right">
-                      {isLiveAssignment(a) && (
+                      {canAssign && isLiveAssignment(a) && (
                         <ConfirmDialog
                           title="End this assignment?"
                           description={`${a.membership.user.name ?? a.membership.user.email} stops drawing on ${program.name} now. Sessions already booked and the usage record stay as they are.`}
@@ -1827,7 +1835,7 @@ function ManageProgramDialog({
             deletable; anything with assignments stays terminate-only.
             isSuccess (not !isLoading): a failed assignments read must not
             expose the CTA on an unverified zero. */}
-        {assignments.isSuccess && assignmentList.length === 0 && (
+        {canManage && assignments.isSuccess && assignmentList.length === 0 && (
           <div className="space-y-2 rounded-md border border-red-200 p-4">
             <h4 className="text-sm font-semibold text-red-700">
               Delete program
@@ -1899,12 +1907,16 @@ export default function OrgProgramsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
+  const { can, canSponsor, canHost } = useOrgRole(orgId);
   const capability = capabilityOf(canSponsor, canHost);
+  // #1527 — programs.read opens the page (BILLING_ADMIN reconciles spend,
+  // MANAGER assigns seats); design stays programs.manage.
   const { allowed } = useRequireOrgAccess(orgId, {
-    permission: "programs.manage",
+    permission: "programs.read",
     canSponsor: true,
   });
+  const canManage = can("programs.manage");
+  const canAssign = can("programs.assign");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [managingProgram, setManagingProgram] =
     useState<ProgramListItem | null>(null);
@@ -1921,7 +1933,7 @@ export default function OrgProgramsPage({
   const contracts = useQuery({
     queryKey: ["org-contracts-active", orgId],
     queryFn: () => fetchContracts(orgId),
-    enabled: allowed && isAtLeast("MAINTAINER"),
+    enabled: allowed && canManage,
   });
 
   if (!allowed) return null;
@@ -1935,7 +1947,7 @@ export default function OrgProgramsPage({
         title="Programs"
         subtitle="Typed commercial offerings attached to a Contract. Each Program controls what's covered per assigned member."
         actions={
-          isAtLeast("MAINTAINER") && (
+          canManage && (
             <Button
               size="sm"
               onClick={() => setDialogOpen(true)}
@@ -1974,13 +1986,13 @@ export default function OrgProgramsPage({
               <div className="text-center py-12 text-zinc-500">
                 <Briefcase className="h-10 w-10 mx-auto mb-3 text-zinc-300" />
                 <p className="text-sm">No programs yet.</p>
-                {isAtLeast("MAINTAINER") && contractList.length > 0 && (
+                {canManage && contractList.length > 0 && (
                   <p className="text-xs mt-2">
                     Click <strong>New Program</strong> to create one against an
                     active contract.
                   </p>
                 )}
-                {contractList.length === 0 && isAtLeast("MAINTAINER") && (
+                {contractList.length === 0 && canManage && (
                   <p className="text-xs mt-2">
                     Create an ACTIVE contract first — Programs must attach to
                     one.
@@ -2086,7 +2098,7 @@ export default function OrgProgramsPage({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          {isAtLeast("MAINTAINER") && (
+                          {canManage && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -2100,7 +2112,8 @@ export default function OrgProgramsPage({
                             size="sm"
                             onClick={() => setManagingProgram(p)}
                           >
-                            <Users className="h-3.5 w-3.5 mr-1" /> Manage
+                            <Users className="h-3.5 w-3.5 mr-1" />{" "}
+                            {canAssign ? "Manage" : "View"}
                           </Button>
                         </div>
                       </TableCell>
@@ -2140,6 +2153,8 @@ export default function OrgProgramsPage({
           onOpenChange={(v) => {
             if (!v) setManagingProgram(null);
           }}
+          canAssign={canAssign}
+          canManage={canManage}
         />
       )}
     </>

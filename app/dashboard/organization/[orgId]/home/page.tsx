@@ -5,8 +5,7 @@ import {
 } from "@tanstack/react-query";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { getOrgAnalytics, withoutOrgMoney } from "@/lib/data/org-analytics";
+import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 import { getOrgActivityFeed } from "@/lib/data/org-activity";
 
 import { HomePageClient } from "./HomePageClient";
@@ -30,15 +29,14 @@ export default async function OrgHomePage({
     permission: "operations.read",
   });
   if (!access.error && OPERATOR_ROLES.has(access.member.role)) {
-    const seesMoney = hasOrgPermission(access.member.role, "billing.read");
     await Promise.allSettled([
       queryClient.prefetchQuery({
         queryKey: ["org-analytics", orgId],
         queryFn: async () => {
           const analytics = await getOrgAnalytics(orgId);
-          return analytics && !seesMoney
-            ? withoutOrgMoney(analytics)
-            : analytics;
+          return (
+            analytics && orgAnalyticsForRole(analytics, access.member.role)
+          );
         },
       }),
       queryClient.prefetchQuery({

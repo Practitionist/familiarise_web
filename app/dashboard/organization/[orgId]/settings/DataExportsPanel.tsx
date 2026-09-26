@@ -3,8 +3,10 @@
 /**
  * /dashboard/organization/[orgId]/integrations/data-exports
  *
- * DPDP §11 right-to-access surface. OWNER + BILLING_ADMIN can request
- * a bundle (rate-limited 1/24h via `orgDataExportLimiter`); the worker
+ * DPDP §11 right-to-access surface. Bundles come in two kinds (#1527
+ * decision 4): people (`dataExports.people`, OWNER + MAINTAINER) and finance
+ * (`dataExports.finance`, OWNER + BILLING_ADMIN); the panel offers only the
+ * kinds the viewer holds (rate-limited 1/24h per kind); the worker
  * picks it up within ~10 minutes, uploads to Supabase Storage, and
  * the dashboard exposes a download link with a 7-day signed-URL TTL.
  *
@@ -15,7 +17,11 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRequireOrgAccess } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import {
+  dataExportKindsFor,
+  type DataExportKind,
+} from "@/lib/enterprise/data-export-kinds";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import type { Tone } from "@/lib/ui/tone";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -34,6 +40,8 @@ import {
 
 type ExportJob = {
   id: string;
+  /** null = a full bundle requested before the split. */
+  kind: DataExportKind | null;
   status: "PENDING" | "PROCESSING" | "READY" | "FAILED" | "EXPIRED";
   requestedByMembershipId: string;
   fileSizeBytes: number | string | null;
@@ -45,6 +53,14 @@ type ExportJob = {
 };
 
 // #1762-4 — labels + tones instead of the raw enum.
+const KIND_COPY: Record<DataExportKind, { label: string; covers: string }> = {
+  people: { label: "People", covers: "members and the audit log" },
+  finance: {
+    label: "Finance",
+    covers: "contracts, programs, invoices, earnings and payouts",
+  },
+};
+
 const EXPORT_STATUS: Record<
   ExportJob["status"],
   { label: string; tone: Tone }
@@ -58,8 +74,10 @@ const EXPORT_STATUS: Record<
 
 export function DataExportsPanel({ orgId }: { orgId: string }) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
-    permission: "billing.manage",
+    permission: ["dataExports.people", "dataExports.finance"],
   });
+  const { role } = useOrgRole(orgId);
+  const kinds = dataExportKindsFor(role);
   const qc = useQueryClient();
   const [requestError, setRequestError] = useState<string | null>(null);
 
@@ -85,9 +103,11 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
   });
 
   const request = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (kind: DataExportKind) => {
       const res = await fetch(`/api/organizations/${orgId}/data-exports`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -111,6 +131,12 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
       primary: true,
       className: "text-xs text-muted-foreground",
       cell: (row) => new Date(row.createdAt).toLocaleString(),
+    },
+    {
+      key: "kind",
+      header: "Bundle",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => (row.kind ? KIND_COPY[row.kind].label : "Everything"),
     },
     {
       key: "status",
@@ -162,14 +188,14 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <PanelHeader description="Download a JSON bundle of every entity scoped to this org — members, contracts, programs, invoices, earnings, payouts, audit log. Honours DPDP §11." />
+      <PanelHeader description="Download a JSON bundle of this organization's data. Honours DPDP §11." />
       <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Request a bundle</CardTitle>
             <CardDescription>
-              One request per organization per 24 hours. Bundles are emailed
-              when ready and expire 7 days after generation. See{" "}
+              One request per bundle per 24 hours. Bundles are emailed when
+              ready and expire 7 days after generation. See{" "}
               <a
                 href="/docs/enterprise/40-compliance-and-data/03-data-export"
                 className="underline"
@@ -185,12 +211,23 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
             {requestError && (
               <p className="mb-3 text-sm text-red-600">{requestError}</p>
             )}
-            <Button
-              disabled={request.isPending}
-              onClick={() => request.mutate()}
-            >
-              {request.isPending ? "Requesting..." : "Request export"}
-            </Button>
+            <div className="flex flex-wrap gap-3">
+              {kinds.map((kind) => (
+                <div key={kind} className="space-y-1">
+                  <Button
+                    disabled={request.isPending}
+                    onClick={() => request.mutate(kind)}
+                  >
+                    {request.isPending && request.variables === kind
+                      ? "Requesting..."
+                      : `Request ${KIND_COPY[kind].label.toLowerCase()} export`}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Includes {KIND_COPY[kind].covers}.
+                  </p>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
 
@@ -222,7 +259,7 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
                 }
                 empty={
                   <p className="text-sm text-muted-foreground">
-                    No exports yet. Click &quot;Request export&quot; above.
+                    No exports yet. Request one above.
                   </p>
                 }
               />

@@ -132,7 +132,8 @@ function AssetSection({
 
 /**
  * Settings › Branding (#1527 Q6): logo and banner through
- * `…/branding/[asset]` POST/DELETE, OWNER-only on the server and in the tab.
+ * `…/branding/[asset]` POST/DELETE, `settings.manage` on the server and in
+ * the tab (#1527 decision 7).
  */
 export function BrandingPanel({ orgId }: Readonly<{ orgId: string }>) {
   const { data } = useQuery({

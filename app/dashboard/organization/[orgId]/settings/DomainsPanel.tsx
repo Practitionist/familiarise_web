@@ -10,6 +10,8 @@ import { ErrorState } from "@/components/dashboard/ErrorState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+import { useOrgRole } from "../useOrgRole";
 import { FieldError } from "@/components/ui/field-error";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
@@ -58,10 +60,12 @@ function TxtInstructions({ claim }: Readonly<{ claim: DomainClaim }>) {
 /**
  * Settings › Domains (#1527 Q6): claim an email domain, prove it with a DNS
  * TXT record, and remove it. A verified domain unlocks SSO, invoice funding
- * and seats past the unverified cap (lib/enterprise/governance.ts). OWNER-only
- * on the server and in the tab.
+ * and seats past the unverified cap (lib/enterprise/governance.ts). MAINTAINER
+ * reads the status (identity.read, #1527 decision 7); claim, verify, remove
+ * and the DNS token stay OWNER-only on the server and here.
  */
 export function DomainsPanel({ orgId }: Readonly<{ orgId: string }>) {
+  const canEdit = useOrgRole(orgId).role === "OWNER";
   const [domain, setDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -136,36 +140,38 @@ export function DomainsPanel({ orgId }: Readonly<{ orgId: string }>) {
                   />
                 )}
               </span>
-              <span className="flex gap-1">
-                {!c.verifiedAt && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={verify.isPending}
-                    onClick={() => verify.mutate(c.domain)}
-                  >
-                    Verify
-                  </Button>
-                )}
-                <ConfirmDialog
-                  title={`Remove ${c.domain}?`}
-                  description="Single sign-on and automatic joining stop working for this domain straight away."
-                  confirmLabel="Remove domain"
-                  tone="destructive"
-                  onConfirm={async () => {
-                    await send(
-                      `${base}/${encodeURIComponent(c.domain)}`,
-                      "DELETE",
-                    );
-                    await refresh();
-                  }}
-                  trigger={
-                    <Button size="sm" variant="ghost">
-                      Remove
+              {canEdit && (
+                <span className="flex gap-1">
+                  {!c.verifiedAt && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={verify.isPending}
+                      onClick={() => verify.mutate(c.domain)}
+                    >
+                      Verify
                     </Button>
-                  }
-                />
-              </span>
+                  )}
+                  <ConfirmDialog
+                    title={`Remove ${c.domain}?`}
+                    description="Single sign-on and automatic joining stop working for this domain straight away."
+                    confirmLabel="Remove domain"
+                    tone="destructive"
+                    onConfirm={async () => {
+                      await send(
+                        `${base}/${encodeURIComponent(c.domain)}`,
+                        "DELETE",
+                      );
+                      await refresh();
+                    }}
+                    trigger={
+                      <Button size="sm" variant="ghost">
+                        Remove
+                      </Button>
+                    }
+                  />
+                </span>
+              )}
             </div>
             {!c.verifiedAt && c.verificationToken && (
               <TxtInstructions claim={c} />
@@ -182,26 +188,28 @@ export function DomainsPanel({ orgId }: Readonly<{ orgId: string }>) {
       description="Verifying a domain proves your organization controls it. It unlocks single sign-on and invoice funding."
     >
       {list}
-      <form
-        className="mt-4 flex max-w-xl flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (domain.trim()) claim.mutate();
-        }}
-      >
-        <div className="min-w-56 flex-1 space-y-1.5">
-          <Label htmlFor="domain-claim">Domain</Label>
-          <Input
-            id="domain-claim"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            placeholder="acme.com"
-          />
-        </div>
-        <Button type="submit" disabled={claim.isPending || !domain.trim()}>
-          {claim.isPending ? "Claiming…" : "Claim domain"}
-        </Button>
-      </form>
+      {canEdit && (
+        <form
+          className="mt-4 flex max-w-xl flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (domain.trim()) claim.mutate();
+          }}
+        >
+          <div className="min-w-56 flex-1 space-y-1.5">
+            <Label htmlFor="domain-claim">Domain</Label>
+            <Input
+              id="domain-claim"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="acme.com"
+            />
+          </div>
+          <Button type="submit" disabled={claim.isPending || !domain.trim()}>
+            {claim.isPending ? "Claiming…" : "Claim domain"}
+          </Button>
+        </form>
+      )}
       <FieldError message={error} />
     </Section>
   );

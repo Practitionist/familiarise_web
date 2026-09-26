@@ -23,9 +23,6 @@ jest.mock("../../lib/auth-helpers", () => ({
     member: { role: "OWNER", consultantProfileId: null },
   }),
 }));
-jest.mock("../../lib/booking/org-actor", () => ({
-  isPayerAdminRole: (role: string) => role === "OWNER",
-}));
 jest.mock(
   "../../app/dashboard/organization/[orgId]/requests/RequestsClient",
   () => ({ RequestsClient: () => null }),

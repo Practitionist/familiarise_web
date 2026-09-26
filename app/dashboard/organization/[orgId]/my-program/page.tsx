@@ -16,6 +16,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { getMyProgramData } from "@/lib/data/org-member-program";
 import { getOrgMemberCatalog } from "@/lib/data/org-member-catalog";
@@ -46,7 +47,8 @@ export default async function MyProgramPage({
 }) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId);
-  if (access.error) {
+  // Same grant as the nav item (#1527): the sponsored member's own page.
+  if (access.error || !hasOrgPermission(access.member.role, "myProgram.read")) {
     redirect(`/dashboard/organization/${orgId}/home`);
   }
   // #1527 — a host-only org sponsors nothing: explain instead of a 404

@@ -5,7 +5,7 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
-import { isPayerAdminRole } from "@/lib/booking/org-actor";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { orgTabHref } from "@/lib/dashboard/org-tab-redirect";
 
 import { RequestsClient } from "./RequestsClient";
@@ -28,8 +28,8 @@ import { RequestsClient } from "./RequestsClient";
  * #1166 B2B gap 8 — a payer admin who does not deliver used to be redirected
  * away entirely, which cost them the one thing they do need: an org-funded
  * booking that no expert has scheduled is the org's money sitting idle, and the
- * only surface showing it was the delivering consultant's. OWNER/MAINTAINER —
- * the payer-side actor, same rule as `isOrgAdminOfAppointment` — get that list
+ * only surface showing it was the delivering consultant's. Holders of
+ * `appointments.unscheduled.read` (OWNER, MAINTAINER, MANAGER) get that list
  * read-only as Appointments › Unscheduled (#1527 Q7; this URL 308s there).
  * Everyone else still goes home, because they would be looking at a page with
  * nothing on it for them.
@@ -53,7 +53,9 @@ export default async function OrgRequestsPage({
   const consultantProfileId = access.member.consultantProfileId;
 
   if (!consultantProfileId) {
-    if (!isPayerAdminRole(access.member.role)) {
+    if (
+      !hasOrgPermission(access.member.role, "appointments.unscheduled.read")
+    ) {
       redirect(`/dashboard/organization/${orgId}/home`);
     }
     // Keeps the old query like the other retired routes (#1527 QA wave 3).

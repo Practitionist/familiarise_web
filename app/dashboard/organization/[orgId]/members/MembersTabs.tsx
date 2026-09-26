@@ -10,9 +10,9 @@
  * still resolve.
  *
  * Each tab carries the same matrix key its old route guard used, so a role
- * that couldn't reach the page can't reach the tab either. `members.read` is
- * the widest of the four grants (OPERATIONS_READERS vs GOVERNANCE/OPERATORS),
- * which is why the page-level guard stays on it.
+ * that couldn't reach the page can't reach the tab either. The page floors at
+ * `members.directory` (every member, #1527 decision 3): without `members.read`
+ * the All tab is the names-only directory instead of the operators' table.
  */
 
 import {
@@ -24,6 +24,7 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 import { useOrgRole } from "../useOrgRole";
 import { MembersPageClient } from "./MembersPageClient";
+import { MemberDirectoryPanel } from "./MemberDirectoryPanel";
 import { LearnersPanel } from "./LearnersPanel";
 import { ExpertsPanel } from "./ExpertsPanel";
 import { MemberInvitationsPanel } from "./MemberInvitationsPanel";
@@ -42,8 +43,12 @@ export function MembersTabs({ orgId }: { orgId: string }) {
     {
       value: "all",
       label: "All",
-      content: <MembersPageClient orgId={orgId} />,
-      show: can("members.read"),
+      content: can("members.read") ? (
+        <MembersPageClient orgId={orgId} />
+      ) : (
+        <MemberDirectoryPanel orgId={orgId} />
+      ),
+      show: can("members.directory"),
     },
     {
       value: "learners",

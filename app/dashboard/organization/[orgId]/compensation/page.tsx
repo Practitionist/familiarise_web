@@ -19,6 +19,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { deliversForOrg } from "@/lib/dashboard/nav/organization";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { getMyArrangementData } from "@/lib/data/org-member-arrangement";
@@ -64,7 +65,8 @@ export default async function MyArrangementPage({
 }) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId);
-  if (access.error) {
+  // Same predicate as the nav item (#1527): the viewer delivers for the org.
+  if (access.error || !deliversForOrg(access.member)) {
     redirect(`/dashboard/organization/${orgId}/home`);
   }
   // #1527 — a sponsor-only org hosts nothing: explain instead of a 404.

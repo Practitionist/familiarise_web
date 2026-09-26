@@ -32,9 +32,24 @@ jest.mock("../../lib/auth-helpers", () => ({
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { redactOrgDetailsForRole } from "@/lib/data/org-details-include";
 import { auditRowScope } from "@/lib/enterprise/audit-visibility";
+import {
+  canHandleExportKind,
+  dataExportKindsFor,
+} from "@/lib/enterprise/data-export-kinds";
+import { getInvitableRoles } from "@/lib/labels/org-labels";
 import { GET as listAssignments } from "../../app/api/organizations/[orgId]/programs/[programId]/assignments/route";
+import { POST as postConsent } from "../../app/api/organizations/[orgId]/consent/route";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+const ROLES: MemberRole[] = [
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+  "MANAGER",
+  "SUPPORT",
+  "EXPERT",
+  "LEARNER",
+];
 const API = "app/api/organizations/[orgId]";
 
 describe("org-details money redaction (P0-1)", () => {
@@ -145,5 +160,158 @@ describe("route guards read matrix keys, not ranks (P0-3, P0-4)", () => {
     expect(hasOrgPermission("BILLING_ADMIN", "identity.read")).toBe(false);
     expect(hasOrgPermission("BILLING_ADMIN", "messaging.read")).toBe(false);
     expect(hasOrgPermission("BILLING_ADMIN", "activity.read")).toBe(false);
+  });
+});
+
+describe("role matrix decisions (#1527 decisions 1–8)", () => {
+  it("MANAGER keeps read-only Billing but loses Payouts (decision 1)", () => {
+    expect(hasOrgPermission("MANAGER", "billing.read")).toBe(true);
+    expect(hasOrgPermission("MANAGER", "billing.manage")).toBe(false);
+    expect(hasOrgPermission("MANAGER", "payouts.read")).toBe(false);
+    const out = redactOrgDetailsForRole(
+      {
+        billingAccount: { walletBalance: 1, creditLimit: 2 },
+        payoutAccount: { bankName: "HDFC", accountNumberLast4: "1234" },
+      },
+      "MANAGER",
+    );
+    expect(out.billingAccount?.walletBalance).toBe(1);
+    expect(out.payoutAccount?.bankName).toBeNull();
+  });
+
+  it("every member reads the names-only directory; only operators the roster (decision 3)", () => {
+    for (const role of ROLES) {
+      expect(hasOrgPermission(role, "members.directory")).toBe(true);
+    }
+    expect(hasOrgPermission("EXPERT", "members.read")).toBe(false);
+    expect(hasOrgPermission("BILLING_ADMIN", "members.read")).toBe(false);
+    const route = read(`${API}/members/directory/route.ts`);
+    expect(route).toContain('permission: "members.directory"');
+    expect(route).not.toContain("email: true");
+  });
+
+  it("export kinds split people (OW, MT) from finance (OW, BA) (decision 4)", () => {
+    expect(dataExportKindsFor("OWNER")).toEqual(["people", "finance"]);
+    expect(dataExportKindsFor("MAINTAINER")).toEqual(["people"]);
+    expect(dataExportKindsFor("BILLING_ADMIN")).toEqual(["finance"]);
+    expect(dataExportKindsFor("MANAGER")).toEqual([]);
+    expect(canHandleExportKind("MAINTAINER", "finance")).toBe(false);
+    // A pre-split job is a full bundle: only a holder of both kinds.
+    expect(canHandleExportKind("BILLING_ADMIN", null)).toBe(false);
+    expect(canHandleExportKind("OWNER", null)).toBe(true);
+    for (const file of [
+      "data-exports/route.ts",
+      "data-exports/[exportId]/download/route.ts",
+    ]) {
+      expect(read(`${API}/${file}`)).toContain("canHandleExportKind(");
+    }
+  });
+
+  it("an operator can't grant consent for a member (decision 5)", async () => {
+    mockRequireOrgAccess.mockResolvedValue({
+      session: { user: { id: "operator-user" } },
+      member: { id: "m-op", role: "OWNER" },
+      org: { id: "o" },
+    });
+    const res = await postConsent(
+      new Request("http://x/api", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: "someone-else",
+          purposeCodes: ["PRIMARY_PROCESSING"],
+          language: "en",
+          version: 1,
+        }),
+      }) as never,
+      { params: Promise.resolve({ orgId: "o" }) },
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("CONSENT_GRANT_SELF_ONLY");
+    // Operators still record withdrawals.
+    expect(hasOrgPermission("MANAGER", "consent.withdraw")).toBe(true);
+  });
+
+  it("non-owners are never offered OWNER; SUPPORT is invitable (P1-7)", () => {
+    expect(getInvitableRoles("MAINTAINER", true, true)).not.toContain("OWNER");
+    expect(getInvitableRoles("MAINTAINER", true, true)).toContain("SUPPORT");
+    expect(getInvitableRoles("OWNER", true, true)).toContain("OWNER");
+  });
+
+  it("MAINTAINER manages branding, reads identity; secrets stay OWNER (decision 7)", () => {
+    expect(hasOrgPermission("MAINTAINER", "settings.manage")).toBe(true);
+    expect(hasOrgPermission("MAINTAINER", "identity.read")).toBe(true);
+    expect(read(`${API}/branding/[asset]/route.ts`)).toContain(
+      'permission: "settings.manage"',
+    );
+    const scimTokens = read(`${API}/scim/tokens/route.ts`);
+    expect(scimTokens.split("export async function POST")[1]).toContain(
+      "requireOrgOwner(orgId)",
+    );
+  });
+
+  it("MANAGER assigns seats; design stays GOVERNANCE (decision 8)", () => {
+    expect(hasOrgPermission("MANAGER", "programs.assign")).toBe(true);
+    expect(hasOrgPermission("MANAGER", "programs.manage")).toBe(false);
+    expect(hasOrgPermission("BILLING_ADMIN", "programs.assign")).toBe(false);
+  });
+});
+
+/**
+ * Parity: each changed API guard reads the same key as the page or tab that
+ * shows the surface, so the UI never offers what the route refuses.
+ */
+describe("API guard ↔ page/tab gate parity (#1527)", () => {
+  const DASH = "app/dashboard/organization/[orgId]";
+  it.each([
+    [
+      `${API}/programs/[programId]/assignments/route.ts`,
+      "programs.assign",
+      `${DASH}/programs/page.tsx`,
+    ],
+    [
+      `${API}/programs/[programId]/auto-enroll/route.ts`,
+      "programs.assign",
+      `${DASH}/programs/page.tsx`,
+    ],
+    [`${API}/programs/route.ts`, "programs.read", `${DASH}/programs/page.tsx`],
+    [
+      `${API}/earnings/route.ts`,
+      "payouts.read",
+      `${DASH}/payouts/PayoutsPageClient.tsx`,
+    ],
+    [
+      `${API}/payout-account/route.ts`,
+      "payouts.read",
+      `${DASH}/payouts/PayoutsPageClient.tsx`,
+    ],
+    [
+      `${API}/sso/route.ts`,
+      "identity.read",
+      `${DASH}/settings/SettingsTabs.tsx`,
+    ],
+    [
+      `${API}/scim/tokens/route.ts`,
+      "identity.read",
+      `${DASH}/settings/ScimPanel.tsx`,
+    ],
+    [
+      `${API}/branding/[asset]/route.ts`,
+      "settings.manage",
+      `${DASH}/settings/SettingsTabs.tsx`,
+    ],
+    [
+      `${API}/audit/export/route.ts`,
+      "dataExports.people",
+      `${DASH}/audit/page.tsx`,
+    ],
+    [`${API}/consent/route.ts`, "consent.read", `${DASH}/consent/page.tsx`],
+    [
+      `${API}/members/directory/route.ts`,
+      "members.directory",
+      `${DASH}/members/MembersTabs.tsx`,
+    ],
+  ])("%s ↔ %s", (route, key, gate) => {
+    expect(read(route)).toContain(`"${key}"`);
+    expect(read(gate)).toContain(`"${key}"`);
   });
 });

@@ -209,6 +209,91 @@ describe("org nav targets resolve for every role × capability", () => {
 });
 
 /**
+ * #1527 role matrix — the org nav each role gets on a sponsor + host org,
+ * walked from the same matrix the page gates and API guards read.
+ */
+describe("org nav role walk (#1527 matrix)", () => {
+  const OPS = ["support", "documents", "recordings", "analytics"];
+  const BASE = ["home", "appointments", "messages", "members", "settings"];
+  const EXPECTED: Record<MemberRole, string[]> = {
+    OWNER: [
+      ...BASE,
+      "programs",
+      "contracts",
+      "catalog",
+      "billing",
+      "payouts",
+      ...OPS,
+      "audit",
+      "consent",
+    ],
+    MAINTAINER: [
+      ...BASE,
+      "programs",
+      "contracts",
+      "catalog",
+      "billing",
+      "payouts",
+      ...OPS,
+      "audit",
+      "consent",
+    ],
+    // Finance track: no operations, catalog or consent; contracts + programs read.
+    BILLING_ADMIN: [
+      ...BASE,
+      "programs",
+      "contracts",
+      "billing",
+      "payouts",
+      "audit",
+    ],
+    // Decision 1 (no Payouts) and no Contracts; programs for seat assignment.
+    MANAGER: [
+      ...BASE,
+      "programs",
+      "catalog",
+      "billing",
+      ...OPS,
+      "audit",
+      "consent",
+    ],
+    SUPPORT: [...BASE, ...OPS, "audit"],
+    EXPERT: [...BASE, "compensation", "collaborations"],
+    LEARNER: [...BASE, "my-program"],
+  };
+
+  it.each(Object.keys(EXPECTED) as MemberRole[])("%s", (role) => {
+    const nav = buildOrganizationNav({
+      orgId: "org-1",
+      role,
+      canSponsor: true,
+      canHost: true,
+      consultantProfileId: null,
+    });
+    expect(
+      flattenNav(nav)
+        .map((i) => i.path)
+        .sort(),
+    ).toEqual([...EXPECTED[role]].sort());
+  });
+
+  it("Requests follows the page's own predicate: a consultant profile", () => {
+    const paths = (consultantProfileId: string | null) =>
+      flattenNav(
+        buildOrganizationNav({
+          orgId: "org-1",
+          role: "EXPERT",
+          canSponsor: false,
+          canHost: true,
+          consultantProfileId,
+        }),
+      ).map((i) => i.path);
+    expect(paths(null)).not.toContain("requests");
+    expect(paths("cp-1")).toContain("requests");
+  });
+});
+
+/**
  * A group header that restates the only item beneath it carries no
  * information — the reader expands "Resources" to find "Resources". The rule:
  * a labelled group must hold more than one item, or an item named differently.

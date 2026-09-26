@@ -7,9 +7,9 @@
  * token natively. The typed `Membership` row is created separately at
  * accept time (see /api/organizations/invitations/accept/route.ts).
  *
- * Self-service cannot invite into EXPERT or SUPPORT roles. EXPERT
- * requires canHost=true and the apply flow, SUPPORT is assigned from
- * Settings by an OWNER. The guard lives in the Zod schema.
+ * EXPERT requires canHost=true and LEARNER canSponsor=true (checked below);
+ * SUPPORT is invitable like the other operator roles (#1527). The role list
+ * lives in the Zod schema.
  */
 
 import * as Sentry from "@sentry/nextjs";

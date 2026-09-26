@@ -8,14 +8,15 @@
  * invitations still aggregate personally either way — this page only
  * covers the host-perspective "my plans with collaborators" section.
  *
- * Access: ANY active member (requireOrgAccess floors at that). The sidebar
- * shows it to experts in host orgs as "Plan collaborators"; operators reach
- * the same panel as Catalog › Collaborators (#1527-4c).
+ * Access: members who deliver for the org (`deliversForOrg`, the nav's own
+ * predicate — #1527). Operators read the org's hosted plans as Catalog ›
+ * Collaborators (#1527-4c).
  */
 
 import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { deliversForOrg } from "@/lib/dashboard/nav/organization";
 import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
 import {
   DashboardHeader,
@@ -30,7 +31,9 @@ export default async function OrgCollaborationsPage({
   const { orgId } = await params;
 
   const access = await requireOrgAccess(orgId);
-  if (access.error) {
+  // Same predicate as the nav item (#1527); operators use Catalog ›
+  // Collaborators.
+  if (access.error || !deliversForOrg(access.member)) {
     notFound();
   }
 

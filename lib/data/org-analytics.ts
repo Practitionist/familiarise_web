@@ -18,6 +18,7 @@ import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -338,20 +339,28 @@ export async function getOrgAnalytics(
 }
 
 /**
- * #1527 — the SUPPORT carve-out opens `operations.read` but not money. Strip
- * every paise figure for a viewer without `billing.read` before the payload
- * leaves the server (API response and SSR seed alike).
+ * #1527 — money in the analytics payload follows the matrix: without
+ * `billing.read` (SUPPORT) every paise figure goes; without `payouts.read`
+ * (MANAGER, decision 1) the host-earnings split goes. Applied before the
+ * payload leaves the server (API response and SSR seeds alike).
  */
-export function withoutOrgMoney(
+export function orgAnalyticsForRole(
   payload: OrgAnalyticsPayload,
+  role: MemberRole,
 ): OrgAnalyticsPayload {
-  return {
-    ...payload,
-    capabilities: { ...payload.capabilities, walletBalance: null },
-    wallet: null,
-    invoices: null,
-    subscription: null,
-    reimbursements: null,
-    earnings: null,
-  };
+  if (!hasOrgPermission(role, "billing.read")) {
+    return {
+      ...payload,
+      capabilities: { ...payload.capabilities, walletBalance: null },
+      wallet: null,
+      invoices: null,
+      subscription: null,
+      reimbursements: null,
+      earnings: null,
+    };
+  }
+  if (!hasOrgPermission(role, "payouts.read")) {
+    return { ...payload, earnings: null };
+  }
+  return payload;
 }

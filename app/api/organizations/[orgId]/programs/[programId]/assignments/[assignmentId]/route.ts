@@ -256,8 +256,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, programId, assignmentId } = await params;
+  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
+  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.assign",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -310,8 +312,10 @@ export async function DELETE(
   },
 ) {
   const { orgId, programId, assignmentId } = await params;
+  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
+  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.assign",
     canSponsor: true,
   });
   if (access.error) return access.error;

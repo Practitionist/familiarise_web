@@ -178,6 +178,7 @@ export async function POST(
     const actorIsFundingOrgAdmin = await isOrgAdminOfAppointment(
       session.user.id,
       orgScope?.organizationId,
+      "reschedule",
     );
 
     // Start transaction

@@ -5,15 +5,12 @@
  *
  * DPDP (Digital Personal Data Protection Act 2023) consent-artifact
  * dashboard. Lists this org's `ConsentArtifact`s (active + withdrawn
- * history) and lets an admin grant / withdraw consent on behalf of a
- * member. Withdrawal is exposed at exactly the same prominence as grant
- * — DPDP §6(4) requires that withdrawing consent be as easy as giving it.
+ * history) and lets an operator record a member's withdrawal request.
+ * Granting is the member's own act (#1527 decision 5): the API refuses an
+ * operator grant on someone else's behalf, so this page offers none.
  *
- * Gated via the org permission matrix (consent.read) so OWNER + MAINTAINER +
- * BILLING_ADMIN + MANAGER reach it (mirrors the DPDP data-exports sibling
- * and the MANAGER floor on /api/organizations/[orgId]/consent). Self-
- * service withdrawal from a member's own account settings is a separate
- * route (#681 follow-up); this is the org-admin compliance surface.
+ * Gated via the org permission matrix (consent.read: OWNER, MAINTAINER,
+ * MANAGER); withdrawals are consent.withdraw, the same three roles.
  *
  * Withdrawal is irreversible in our model: a re-grant goes through POST
  * and mints a NEW artifact with a fresh hash, keeping chain-of-custody
@@ -37,23 +34,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import {
-  ALL_PURPOSE_CODES,
-  PURPOSE_CODE_META,
-  PURPOSE_CODES,
-} from "@/lib/compliance/purpose-codes";
+import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
 
 type ConsentArtifact = {
   id: string;
@@ -72,26 +57,6 @@ type Member = {
   user: { id: string; name: string | null; email: string };
   role: string;
 };
-
-// Granular purpose taxonomy — the SINGLE canonical set shared with the
-// runtime gate (lib/compliance/purpose-codes.ts). The dashboard offers each
-// canonical code as a one-click toggle; crucially the Stream toggle now
-// grants/withdraws STREAM_DATA_PROCESSING, so a user CAN re-grant the consent
-// the fail-closed video/chat gate reads. Free-form codes are still accepted by
-// the API, but the UI only ever emits canonical codes.
-
-// Schedule VIII languages we surface in v1 (English + the most common
-// Indian-enterprise locales). The API accepts any ISO 639-1/2 code.
-const LANGUAGES: Array<{ code: string; label: string }> = [
-  { code: "en", label: "English" },
-  { code: "hi", label: "हिन्दी (Hindi)" },
-  { code: "bn", label: "বাংলা (Bengali)" },
-  { code: "ta", label: "தமிழ் (Tamil)" },
-  { code: "te", label: "తెలుగు (Telugu)" },
-  { code: "mr", label: "मराठी (Marathi)" },
-];
-
-const NOTICE_VERSION = 1;
 
 type PageProps = { params: Promise<{ orgId: string }> };
 
@@ -113,17 +78,11 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
   });
   const qc = useQueryClient();
 
-  // Grant-form state. Minimal local state (no RHF) — one member picker,
-  // a purpose-code toggle list, and a language select.
-  const [grantUserId, setGrantUserId] = useState("");
-  const [grantPurposes, setGrantPurposes] = useState<Set<string>>(
-    new Set([PURPOSE_CODES.PRIMARY_PROCESSING]),
-  );
-  const [grantLanguage, setGrantLanguage] = useState("en");
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Names for the artifact table only — there is no grant picker (#1527).
   const members = useQuery<Member[]>({
-    queryKey: ["org-members", orgId, "consent-grant"],
+    queryKey: ["org-members", orgId, "consent-labels"],
     queryFn: async () => {
       const res = await fetch(
         `/api/organizations/${orgId}/members?perPage=100`,
@@ -156,32 +115,6 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     return map;
   }, [members.data]);
 
-  const grant = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/organizations/${orgId}/consent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: grantUserId,
-          purposeCodes: Array.from(grantPurposes),
-          language: grantLanguage,
-          version: NOTICE_VERSION,
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Failed to record consent");
-      return body.consent as ConsentArtifact;
-    },
-    onSuccess: () => {
-      setActionError(null);
-      setGrantUserId("");
-      setGrantPurposes(new Set([PURPOSE_CODES.PRIMARY_PROCESSING]));
-      setGrantLanguage("en");
-      qc.invalidateQueries({ queryKey: ["org-consents", orgId] });
-    },
-    onError: (err) => setActionError(err.message),
-  });
-
   // Withdrawal scopes to a single purposeCode when provided; omitting it
   // is the full DPDP §12 opt-out. The DELETE endpoint is idempotent.
   const withdraw = useMutation({
@@ -205,15 +138,6 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
 
   if (isGateLoading || !allowed) return null;
 
-  const togglePurpose = (code: string) => {
-    setGrantPurposes((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return next;
-    });
-  };
-
   // Friendly label for a stored code; falls back to the raw value so any
   // legacy/free-form code still renders.
   const purposeLabel = (code: string) =>
@@ -222,9 +146,6 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
   const rows = consents.data ?? [];
   const active = rows.filter((r) => r.withdrawnAt === null);
   const history = rows.filter((r) => r.withdrawnAt !== null);
-
-  const canGrant =
-    grantUserId !== "" && grantPurposes.size > 0 && !grant.isPending;
 
   const memberCell = (row: ConsentArtifact) =>
     memberLabel.get(row.userId) ?? (
@@ -253,7 +174,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               <ConfirmDialog
                 title={`Withdraw "${purposeLabel(p)}"?`}
                 description="The organization stops processing this member's data for this purpose from now on. The withdrawal is recorded and can't be undone; the member can grant it again."
-                confirmLabel="Withdraw"
+                confirmLabel="Record withdrawal"
                 tone="destructive"
                 onConfirm={async () => {
                   await withdraw.mutateAsync({
@@ -291,21 +212,21 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     },
     {
       key: "withdraw",
-      header: "Withdraw",
+      header: "Withdrawal",
       headClassName: "text-right",
       className: "text-right",
       cell: (row) => (
         <ConfirmDialog
           title="Withdraw every purpose?"
           description="This is the member's full DPDP opt-out: the organization stops processing their data for all purposes from now on. It is recorded and can't be undone."
-          confirmLabel="Withdraw all"
+          confirmLabel="Record withdrawal"
           tone="destructive"
           onConfirm={async () => {
             await withdraw.mutateAsync({ userId: row.userId });
           }}
           trigger={
             <Button size="sm" variant="outline" disabled={withdraw.isPending}>
-              Withdraw all
+              Record withdrawal
             </Button>
           }
         />
@@ -374,96 +295,12 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
 
         <Card>
           <CardHeader>
-            <CardTitle>Record consent</CardTitle>
-            <CardDescription>
-              Capture a member&apos;s consent for one or more processing
-              purposes. Each grant mints a new hashed artifact; withdrawal is
-              available below at the same prominence (DPDP §6(4)).
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-4 max-w-xl">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="consent-member">Member</Label>
-                <Select value={grantUserId} onValueChange={setGrantUserId}>
-                  <SelectTrigger id="consent-member">
-                    <SelectValue
-                      placeholder={
-                        members.isLoading
-                          ? "Loading members…"
-                          : "Select a member"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(members.data ?? []).map((m) => (
-                      <SelectItem key={m.user.id} value={m.user.id}>
-                        {m.user.name || m.user.email}
-                        {m.user.name ? ` · ${m.user.email}` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <Label>Purposes</Label>
-                <div className="flex flex-wrap gap-2">
-                  {ALL_PURPOSE_CODES.map((code) => {
-                    const on = grantPurposes.has(code);
-                    const meta = PURPOSE_CODE_META[code];
-                    return (
-                      <button
-                        key={code}
-                        type="button"
-                        title={meta.description}
-                        onClick={() => togglePurpose(code)}
-                        className={
-                          on
-                            ? "rounded-full border border-primary bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-                            : "rounded-full border border-input px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
-                        }
-                        aria-pressed={on}
-                      >
-                        {meta.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="consent-language">Notice language</Label>
-                <Select value={grantLanguage} onValueChange={setGrantLanguage}>
-                  <SelectTrigger id="consent-language" className="sm:w-64">
-                    <SelectValue placeholder="Language" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LANGUAGES.map((l) => (
-                      <SelectItem key={l.code} value={l.code}>
-                        {l.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Button disabled={!canGrant} onClick={() => grant.mutate()}>
-                  {grant.isPending ? "Recording…" : "Record consent"}
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="mt-6">
-          <CardHeader>
             <CardTitle>Active consents</CardTitle>
             <CardDescription>
-              Currently-granted artifacts. Withdraw a single purpose or all
-              purposes for a member — withdrawal stamps the artifact and stops
-              downstream processing.
+              Consents members have granted. Record a member&apos;s withdrawal
+              request for one purpose or all of them — it stamps the artifact
+              and stops downstream processing. Only the member can grant consent
+              again.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0 sm:p-4">

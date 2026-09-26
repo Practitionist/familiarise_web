@@ -92,9 +92,10 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
     permission: "audit.read",
   });
-  // The export route floors at MAINTAINER, so SUPPORT reads but can't export.
-  const { isAtLeast, role } = useOrgRole(orgId);
-  const canExport = isAtLeast("MAINTAINER");
+  // The CSV is part of the people export (dataExports.people, #1527), so
+  // SUPPORT, MANAGER and BILLING_ADMIN read but can't export.
+  const { can, role } = useOrgRole(orgId);
+  const canExport = can("dataExports.people");
   // Only offer categories whose rows this role can read (#1527 audit split).
   const categories = visibleAuditCategories(role, CATEGORIES);
 

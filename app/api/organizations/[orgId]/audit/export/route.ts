@@ -89,7 +89,12 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  // #1527 decision 4 — the audit trail is part of the people bundle, so the
+  // CSV follows dataExports.people (OWNER, MAINTAINER; was a MAINTAINER rank
+  // floor — the same roles).
+  const access = await requireOrgAccess(orgId, {
+    permission: "dataExports.people",
+  });
   if (access.error) return access.error;
   // Same category split as the viewer (#1527 P0-6).
   const rowScope = auditRowScope(access.member.role);

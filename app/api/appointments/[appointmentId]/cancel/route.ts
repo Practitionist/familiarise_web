@@ -410,6 +410,7 @@ export async function POST(
       (await isOrgAdminOfAppointment(
         session.user.id,
         appointment.organizationId,
+        "cancel",
       ));
 
     if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {

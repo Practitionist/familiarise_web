@@ -8,14 +8,16 @@
  * `Organization.logo` or `Organization.bannerImage` inside a Prisma
  * transaction that also emits an `OrgAuditLog` row (category `SETTINGS`,
  * action `SETTINGS_CHANGED`). DELETE removes the stored object and nulls
- * the column. OWNER-only on both verbs — branding is a settings surface.
+ * the column. `settings.manage` (OWNER + MAINTAINER) on both verbs — the same
+ * grant as the org PATCH's branding fields and the Branding tab (#1527
+ * decision 7).
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   uploadOrganizationLogo,
@@ -60,7 +62,9 @@ export async function POST(
   const asset = parseAsset(rawAsset);
   if (!asset) return badAsset();
 
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "settings.manage",
+  });
   if (access.error) return access.error;
 
   let formData: FormData;
@@ -160,7 +164,9 @@ export async function DELETE(
   const asset = parseAsset(rawAsset);
   if (!asset) return badAsset();
 
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "settings.manage",
+  });
   if (access.error) return access.error;
 
   const column = ASSET_COLUMN[asset];

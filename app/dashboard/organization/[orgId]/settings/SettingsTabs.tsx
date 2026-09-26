@@ -5,11 +5,13 @@
  * sync · Billing contacts · Webhooks · Data exports · Your notifications.
  *
  * Each tab carries the gate its server routes use, so a role never sees a tab
- * that 403s: General is `settings.manage` (GOVERNANCE); Branding, Domains &
- * SSO and Directory sync are OWNER-only routes (a rank floor, not a matrix
- * surface); Billing contacts and Data exports are `billing.manage`; Webhooks
- * is `integrations.manage` (OWNER + BILLING_ADMIN, §17b). Tab values keep the
- * old `?tab=` names so bookmarks still land.
+ * that 403s: General and Branding are `settings.manage` (GOVERNANCE, #1527
+ * decision 7); Domains & SSO and Directory sync are `identity.read` —
+ * MAINTAINER reads status, every write and secret stays OWNER-only in the
+ * panels and routes; Billing contacts is `billing.manage`; Data exports is
+ * either `dataExports.*` kind; Webhooks is `integrations.manage` (OWNER +
+ * BILLING_ADMIN, §17b). Tab values keep the old `?tab=` names so bookmarks
+ * still land.
  */
 
 import {
@@ -38,7 +40,6 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
   if (isLoading) return null;
 
   const can = hasOrgPermission.bind(null, role);
-  const isOwner = role === "OWNER";
 
   const tabs: UrlTab[] = [
     {
@@ -51,7 +52,7 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       value: "branding",
       label: "Branding",
       content: <BrandingPanel orgId={orgId} />,
-      show: isOwner,
+      show: can("settings.manage"),
     },
     {
       value: "sso",
@@ -62,15 +63,15 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
           <SsoPanel orgId={orgId} />
         </>
       ),
-      // Domain claims and SSO config are requireOrgOwner routes.
-      show: isOwner,
+      // Reads are identity.read; claim/verify/SSO writes stay requireOrgOwner.
+      show: can("identity.read"),
     },
     {
       value: "scim",
       label: "Directory sync",
       content: <ScimPanel orgId={orgId} />,
-      // #1132 — the SCIM token routes are requireOrgOwner.
-      show: isOwner,
+      // Token/mapping reads are identity.read; writes stay requireOrgOwner.
+      show: can("identity.read"),
     },
     {
       value: "billing",
@@ -93,8 +94,8 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       value: "data-exports",
       label: "Data exports",
       content: <DataExportsPanel orgId={orgId} />,
-      // #1132 — the data-export routes are requireOrgBillingAdminOrOwner.
-      show: can("billing.manage"),
+      // #1527 decision 4 — people (GOVERNANCE) or finance (OW + BA) bundles.
+      show: can("dataExports.people") || can("dataExports.finance"),
     },
     {
       // ADR 23 — the org dashboard carried a notification bell but no way to

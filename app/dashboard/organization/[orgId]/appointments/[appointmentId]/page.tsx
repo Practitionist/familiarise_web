@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { isPayerAdminRole } from "@/lib/booking/org-actor";
+import { canActForOrg } from "@/lib/booking/org-actor";
 import {
   CANCELLABLE_FROM,
   RESCHEDULABLE_FROM,
@@ -53,9 +53,9 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
  *   2. The deliverer — experts used to 404 on sessions they delivered; they
  *      now get the consultant detail, kept inside the org dashboard.
  *   3. Operators — `operations.read` sees the ADR 20 metadata the Everyone list
- *      shows; OWNER/MAINTAINER of the funding org may also cancel or ask to
- *      reschedule a 1:1 booking from it (Q11), which the API already allows
- *      via `isOrgAdminOfAppointment`.
+ *      shows; the funding org's payer-side actors may also cancel or ask to
+ *      reschedule a 1:1 booking from it (Q11, split by `canActForOrg`), as the API
+ *      allows via `isOrgAdminOfAppointment`.
  *
  * Both ids come from the URL and neither constrains the other, so the page
  * first proves membership, then that the appointment is THIS org's, and only
@@ -132,10 +132,18 @@ export default async function OrgAppointmentDetailPage({
     );
   }
 
-  // 3. Operators read metadata; the funding org's payer admins may act.
+  // 3. Operators read metadata; the funding org's payer-side actors may act —
+  // MANAGER reschedules, cancel (it refunds) stays OWNER/MAINTAINER (#1527).
   const role = access.member.role;
-  const actsForOrg = isPayerAdminRole(role);
-  if (!actsForOrg && !hasOrgPermission(role, "operations.read")) notFound();
+  const mayCancel = canActForOrg(role, "cancel");
+  const mayReschedule = canActForOrg(role, "reschedule");
+  if (
+    !mayCancel &&
+    !mayReschedule &&
+    !hasOrgPermission(role, "operations.read")
+  ) {
+    notFound();
+  }
 
   const booking = appointment.consultation ?? appointment.subscription;
   // Q11 covers the org's own 1:1 bookings; a group event's cancel is the
@@ -149,10 +157,10 @@ export default async function OrgAppointmentDetailPage({
       appointmentId={appointmentId}
       meta={toMetadata(appointment)}
       canCancel={
-        actsForOrg && status !== null && CANCELLABLE_FROM.includes(status)
+        mayCancel && status !== null && CANCELLABLE_FROM.includes(status)
       }
       canReschedule={
-        actsForOrg && status !== null && RESCHEDULABLE_FROM.includes(status)
+        mayReschedule && status !== null && RESCHEDULABLE_FROM.includes(status)
       }
       isSubscription={appointment.subscription !== null}
     />

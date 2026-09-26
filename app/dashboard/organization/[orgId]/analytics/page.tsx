@@ -6,8 +6,7 @@ import {
 import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AnalyticsPageClient } from "./AnalyticsPageClient";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { getOrgAnalytics, withoutOrgMoney } from "@/lib/data/org-analytics";
+import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 
 export default async function OrgAnalyticsPage({
   params,
@@ -26,17 +25,16 @@ export default async function OrgAnalyticsPage({
   if (access.error) redirect(`/dashboard/organization/${orgId}/home`);
 
   const queryClient = new QueryClient();
-  const seesMoney = hasOrgPermission(access.member.role, "billing.read");
 
   // queryKey MUST match AnalyticsPageClient's useQuery
   // (["org-analytics", orgId]) or hydration won't apply.
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: ["org-analytics", orgId],
-      // Same redaction as the API route (#1527): no paise for SUPPORT.
+      // Same redaction as the API route (#1527).
       queryFn: async () => {
         const analytics = await getOrgAnalytics(orgId);
-        return analytics && !seesMoney ? withoutOrgMoney(analytics) : analytics;
+        return analytics && orgAnalyticsForRole(analytics, access.member.role);
       },
     }),
   ]);

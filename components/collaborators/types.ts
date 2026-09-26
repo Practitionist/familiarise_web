@@ -126,6 +126,8 @@ export interface HostedWebinarPlan {
   maxParticipants: number;
   language: string | null;
   level: string | null;
+  /** The plan's host — read by the org-wide view (#1527 P1-8). */
+  consultantProfile?: { user: { name: string | null; image: string | null } };
   collaborators: CollaboratorInfo[];
   webinars: WebinarEventSchedule[];
 }
@@ -140,6 +142,8 @@ export interface HostedClassPlan {
   durationInMonths: number;
   totalSessions: number;
   lateJoinUntilSession: number | null;
+  /** The plan's host — read by the org-wide view (#1527 P1-8). */
+  consultantProfile?: { user: { name: string | null; image: string | null } };
   collaborators: CollaboratorInfo[];
   classes: ClassEventSchedule[];
 }
@@ -150,6 +154,8 @@ export interface HostedPlanEntry {
   title: string;
   price: number;
   collaborators: CollaboratorInfo[];
+  /** Set on the org-wide view, where the viewer is not the host. */
+  host?: { name: string | null; image: string | null };
   webinarPlan?: HostedWebinarPlan;
   classPlan?: HostedClassPlan;
 }

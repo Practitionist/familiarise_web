@@ -35,16 +35,28 @@ import { PendingInvitationCard } from "./PendingInvitationCard";
 import { ActiveCollaborationCard } from "./ActiveCollaborationCard";
 import { HostedPlanCard } from "./HostedPlanCard";
 
-export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
+export function InvitationsPanel({
+  orgScope,
+  orgView = false,
+}: {
+  orgScope?: string;
+  /**
+   * #1527 P1-8 — Catalog › Collaborators: every plan the org hosts, whoever
+   * delivers it, read-only. Received invitations are personal and hidden.
+   */
+  orgView?: boolean;
+} = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery<CollaborationsData>({
-    queryKey: ["my-collaborations", orgScope ?? "mine"],
+    queryKey: ["my-collaborations", orgScope ?? "mine", orgView],
     queryFn: async () => {
-      const url = orgScope
-        ? `/api/collaborations?orgScope=${encodeURIComponent(orgScope)}`
-        : "/api/collaborations";
+      let url = "/api/collaborations";
+      if (orgScope) {
+        url += `?orgScope=${encodeURIComponent(orgScope)}`;
+        if (orgView) url += "&view=org";
+      }
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch collaborations");
       const json = await res.json();
@@ -114,6 +126,7 @@ export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
       title: p.title,
       price: p.price,
       collaborators: p.collaborators,
+      host: p.consultantProfile?.user,
       webinarPlan: p,
     })) ?? []),
     ...(data?.hostedClassPlans?.map((p) => ({
@@ -121,6 +134,7 @@ export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
       title: p.title,
       price: p.price,
       collaborators: p.collaborators,
+      host: p.consultantProfile?.user,
       classPlan: p,
     })) ?? []),
   ];
@@ -155,8 +169,29 @@ export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
       <EmptyState
         icon={Inbox}
         title="No collaborations"
-        description="When you invite collaborators to your plans or another consultant invites you, it will appear here."
+        description={
+          orgView
+            ? "When an expert invites collaborators to one of this organization's plans, it will appear here."
+            : "When you invite collaborators to your plans or another consultant invites you, it will appear here."
+        }
       />
+    );
+  }
+
+  if (orgView) {
+    return (
+      <TooltipProvider>
+        <div className="space-y-3">
+          {hostedPlans.map((plan) => (
+            <HostedPlanCard
+              key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.classPlan?.id}`}
+              plan={plan}
+              hostUser={plan.host}
+              hostLabel={plan.host?.name ?? "Host"}
+            />
+          ))}
+        </div>
+      </TooltipProvider>
     );
   }
 

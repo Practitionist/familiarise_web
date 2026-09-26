@@ -867,7 +867,10 @@ export default function OrgContractsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { isAtLeast } = useOrgRole(orgId);
+  const { can } = useOrgRole(orgId);
+  // contracts.read now includes BILLING_ADMIN (reconciliation, #1527);
+  // every write is contracts.manage, the routes' own grant.
+  const canManage = can("contracts.manage");
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "contracts.read",
     canSponsor: true,
@@ -896,7 +899,7 @@ export default function OrgContractsPage({
   const billingAccount = useQuery({
     queryKey: ["org-billing-account", orgId],
     queryFn: () => fetchBillingAccount(orgId),
-    enabled: allowed && isAtLeast("OWNER"),
+    enabled: allowed && canManage,
   });
 
   const patchMutation = useMutation({
@@ -936,8 +939,7 @@ export default function OrgContractsPage({
 
   const contractList = contracts.data?.data ?? [];
   const billingAccountId = billingAccount.data?.billingAccount?.id ?? "";
-  const canCreate = isAtLeast("OWNER") && !!billingAccountId;
-  const canManage = isAtLeast("OWNER");
+  const canCreate = canManage && !!billingAccountId;
 
   const columns: ResponsiveColumn<ContractItem>[] = [
     {

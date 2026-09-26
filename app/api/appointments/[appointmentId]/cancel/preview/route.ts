@@ -409,6 +409,7 @@ export async function GET(
       (await isOrgAdminOfAppointment(
         session.user.id,
         appointment.organizationId,
+        "cancel",
       ));
 
     if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {

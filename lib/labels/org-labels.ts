@@ -197,13 +197,12 @@ export type SelfServiceFundingSource = z.infer<
 export const SELF_SERVICE_FUNDING_SOURCES =
   SelfServiceFundingSourceSchema.options;
 
-// Self-service onboarding for a sponsor-only org exposes the four
-// non-privileged MemberRoles. EXPERT is assigned only on canHost=true
-// orgs (see HostInvitableMemberRoleSchema below); SUPPORT is an
-// operator role assigned by owners from Settings.
+// Self-service onboarding (the org-creation wizard) for a sponsor-only org.
+// EXPERT is assigned only on canHost=true orgs (see
+// HostInvitableMemberRoleSchema below); SUPPORT is invited from the
+// dashboard's Members › Add people by an OWNER or MAINTAINER (#1527).
 // BILLING_ADMIN is included here so OWNERs can invite a finance lead
 // from the org-creation wizard onwards without leaving the dashboard.
-// SUPPORT remains operator-only (assigned by OWNERs from Settings).
 export const SelfServiceMemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
@@ -248,6 +247,7 @@ export const HostInvitableMemberRoleSchema = z.enum([
   "MAINTAINER",
   "BILLING_ADMIN",
   "MANAGER",
+  "SUPPORT",
   "LEARNER",
   "EXPERT",
 ]);
@@ -255,9 +255,11 @@ export const HOST_INVITABLE_MEMBER_ROLES =
   HostInvitableMemberRoleSchema.options;
 
 /**
- * Returns the role list a self-service inviter can pick on the given
- * org, gated by capability:
- *   - operator roles (OWNER / MAINTAINER / BILLING_ADMIN / MANAGER) always render
+ * Returns the role list `viewerRole` can pick when inviting or re-roling on
+ * the given org:
+ *   - OWNER only for an OWNER inviter — the members + invitations routes
+ *     refuse anyone else (OWNER_ROLE_REQUIRES_OWNER, #789 / #1527 P1-7)
+ *   - operator roles (MAINTAINER / BILLING_ADMIN / MANAGER / SUPPORT) always
  *   - LEARNER only when canSponsor=true (sponsor-side; needs Contract/Program/Wallet
  *     to actually fund sessions — host-only orgs have no settlement path)
  *   - EXPERT only when canHost=true (host-side; needs payout account / RateCard)
@@ -267,15 +269,12 @@ export const HOST_INVITABLE_MEMBER_ROLES =
  * `EXPERT_REQUIRES_CANHOST` in the members + invitations routes).
  */
 export function getInvitableRoles(
+  viewerRole: MemberRole,
   canSponsor: boolean,
   canHost: boolean,
 ): MemberRole[] {
-  const roles: MemberRole[] = [
-    "OWNER",
-    "MAINTAINER",
-    "BILLING_ADMIN",
-    "MANAGER",
-  ];
+  const roles: MemberRole[] = viewerRole === "OWNER" ? ["OWNER"] : [];
+  roles.push("MAINTAINER", "BILLING_ADMIN", "MANAGER", "SUPPORT");
   if (canSponsor) roles.push("LEARNER");
   if (canHost) roles.push("EXPERT");
   return roles;

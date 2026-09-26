@@ -8,7 +8,6 @@ import { Suspense } from "react";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { isPayerAdminRole } from "@/lib/booking/org-actor";
 import {
   getOrgAppointments,
   getOrgMemberAppointments,
@@ -145,7 +144,10 @@ export default async function OrgAppointmentsPage({
   const role = access.member.role;
   const available: AppointmentTab[] = ["mine"];
   if (hasOrgPermission(role, "operations.read")) available.push("everyone");
-  if (isPayerAdminRole(role)) available.push("unscheduled");
+  // #1527 decision 8 — MANAGER reads Unscheduled too.
+  if (hasOrgPermission(role, "appointments.unscheduled.read")) {
+    available.push("unscheduled");
+  }
   const tab = resolveTab(sp, available);
 
   const rawPage = Number(sp.page ?? "1");

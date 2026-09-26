@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Copy, Check } from "lucide-react";
-import { useRequireOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
 import {
@@ -217,13 +217,17 @@ async function deleteProvider(orgId: string, providerId: string) {
 // require deliberate action. LEARNER is the only safe auto-grant.
 
 export function SsoPanel({ orgId }: { orgId: string }) {
-  const { allowed } = useRequireOrgRole(orgId, "OWNER");
+  // #1527 decision 7 — MAINTAINER reads the policy and providers
+  // (identity.read); every write and secret stays OWNER-only.
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "identity.read",
+  });
+  const canEdit = useOrgRole(orgId).role === "OWNER";
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-sso", orgId],
     queryFn: () => fetchSso(orgId),
-    // SSO settings are OWNER-only. Gate the fetch so non-owners who
-    // land here via direct URL don't trigger a 403 before the redirect.
+    // Gate the fetch so a direct URL doesn't 403 before the redirect.
     enabled: allowed,
   });
 
@@ -359,6 +363,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                   value={domains}
                   onChange={(e) => setDomains(e.target.value)}
                   placeholder="acme.com, acme.edu"
+                  disabled={!canEdit}
                 />
                 <p className="text-xs text-zinc-500">
                   Comma-separated list of domains.
@@ -373,7 +378,11 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                     domains.
                   </p>
                 </div>
-                <Switch checked={enforce} onCheckedChange={setEnforce} />
+                <Switch
+                  checked={enforce}
+                  onCheckedChange={setEnforce}
+                  disabled={!canEdit}
+                />
               </div>
 
               <div className="space-y-2">
@@ -389,11 +398,13 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 </p>
               </div>
 
-              <div>
-                <Button type="submit" disabled={settingsMutation.isPending}>
-                  {settingsMutation.isPending ? "Saving…" : "Save policy"}
-                </Button>
-              </div>
+              {canEdit && (
+                <div>
+                  <Button type="submit" disabled={settingsMutation.isPending}>
+                    {settingsMutation.isPending ? "Saving…" : "Save policy"}
+                  </Button>
+                </div>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -406,38 +417,42 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 SAML and OIDC providers registered for this organization.
               </CardDescription>
             </div>
-            <Button size="sm" onClick={() => setShowAdd(true)}>
-              <Plus className="h-4 w-4 mr-1" /> Add provider
-            </Button>
+            {canEdit && (
+              <Button size="sm" onClick={() => setShowAdd(true)}>
+                <Plus className="h-4 w-4 mr-1" /> Add provider
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             <ResponsiveTable<SsoProvider>
               columns={providerColumns}
               rows={data?.providers ?? []}
               getRowId={(p) => p.id}
-              rowActions={(p) => (
-                // #1527 Q10 — deleting a provider can lock every SSO user
-                // out, so it takes a typed confirm (it fired on first click).
-                <ConfirmDialog
-                  title="Delete this SSO provider?"
-                  description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
-                  confirmLabel="Delete provider"
-                  tone="destructive"
-                  requireTyped={p.providerId}
-                  onConfirm={async () => {
-                    await deleteProviderMutation.mutateAsync(p.id);
-                  }}
-                  trigger={
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Delete provider"
-                    >
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
-                  }
-                />
-              )}
+              rowActions={(p) =>
+                canEdit && (
+                  // #1527 Q10 — deleting a provider can lock every SSO user
+                  // out, so it takes a typed confirm (it fired on first click).
+                  <ConfirmDialog
+                    title="Delete this SSO provider?"
+                    description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
+                    confirmLabel="Delete provider"
+                    tone="destructive"
+                    requireTyped={p.providerId}
+                    onConfirm={async () => {
+                      await deleteProviderMutation.mutateAsync(p.id);
+                    }}
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Delete provider"
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    }
+                  />
+                )
+              }
               empty={
                 <p className="text-center text-sm text-muted-foreground py-6">
                   No providers configured yet.

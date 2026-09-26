@@ -18,7 +18,7 @@
  * than shown a page with nothing on it for them.
  */
 
-import { isPayerAdminRole } from "../../lib/booking/org-actor";
+import { canActForOrg } from "../../lib/booking/org-actor";
 
 const mockRequireOrgAccess = jest.fn();
 const mockRedirect = jest.fn((path: string) => {
@@ -111,7 +111,8 @@ describe("who may open the org Requests page", () => {
     expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 
-  it.each(["OWNER", "MAINTAINER"])(
+  // #1527 decision 8 — MANAGER reads Unscheduled too.
+  it.each(["OWNER", "MAINTAINER", "MANAGER"])(
     "a %s who does not deliver is sent to Appointments › Unscheduled",
     async (role) => {
       mockRequireOrgAccess.mockResolvedValue(
@@ -137,29 +138,37 @@ describe("who may open the org Requests page", () => {
     expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 
-  it("a MANAGER is sent home too — operations.read is not the payer role", async () => {
+  it("a SUPPORT is sent home — operations.read is not the payer role", async () => {
     mockRequireOrgAccess.mockResolvedValue(
-      grant({ role: "MANAGER", consultantProfileId: null }),
+      grant({ role: "SUPPORT", consultantProfileId: null }),
     );
 
     await expect(renderPage()).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 });
 
-describe("isPayerAdminRole", () => {
-  it("admits exactly the two roles that answer for the org's money", () => {
-    expect(isPayerAdminRole("OWNER")).toBe(true);
-    expect(isPayerAdminRole("MAINTAINER")).toBe(true);
+describe("canActForOrg (#1527 decision 8)", () => {
+  it("MANAGER may reschedule an org-funded booking but not cancel it", () => {
+    expect(canActForOrg("MANAGER", "reschedule")).toBe(true);
+    expect(canActForOrg("MANAGER", "cancel")).toBe(false);
+  });
+
+  it("cancel (it refunds) stays with the two roles that answer for money", () => {
+    for (const role of ["OWNER", "MAINTAINER"] as const) {
+      expect(canActForOrg(role, "cancel")).toBe(true);
+      expect(canActForOrg(role, "reschedule")).toBe(true);
+    }
     for (const role of [
       "BILLING_ADMIN",
-      "MANAGER",
       "EXPERT",
       "LEARNER",
       "SUPPORT",
     ] as const) {
-      expect(isPayerAdminRole(role)).toBe(false);
+      expect(canActForOrg(role, "cancel")).toBe(false);
+      expect(canActForOrg(role, "reschedule")).toBe(false);
     }
-    expect(isPayerAdminRole(null)).toBe(false);
-    expect(isPayerAdminRole(undefined)).toBe(false);
+    expect(canActForOrg(null, "reschedule")).toBe(false);
+    expect(canActForOrg(undefined, "cancel")).toBe(false);
   });
 });

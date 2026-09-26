@@ -113,8 +113,10 @@ const tokenColumns: ResponsiveColumn<ScimToken>[] = [
 ];
 
 export function ScimPanel({ orgId }: { orgId: string }) {
+  // #1527 decision 7 — MAINTAINER reads token status and mappings
+  // (identity.read); minting, revoking and mapping stay OWNER-only.
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
-    minRole: "OWNER",
+    permission: "identity.read",
   });
   const { role: viewerRole } = useOrgRole(orgId);
   const isOwner = viewerRole === "OWNER";

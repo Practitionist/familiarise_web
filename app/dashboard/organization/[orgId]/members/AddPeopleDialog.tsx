@@ -37,6 +37,8 @@ import {
   CreateInvitationPayloadSchema,
 } from "@/schemas/organizations";
 
+import { useOrgRole } from "../useOrgRole";
+
 type InvitableRole = z.infer<typeof CreateInvitationPayloadSchema>["role"];
 
 type Outcome = "added" | "invited";
@@ -95,7 +97,9 @@ export function AddPeopleDialog({
   /** Set when the org can't take new people yet; disables the trigger. */
   disabledReason?: string;
 }>) {
-  const roleOptions = getInvitableRoles(canSponsor, canHost);
+  // #1527 P1-7 — the server refuses OWNER from a non-owner; don't offer it.
+  const { role: viewerRole } = useOrgRole(orgId);
+  const roleOptions = getInvitableRoles(viewerRole, canSponsor, canHost);
   // Default to the org's common consumer role so the Select is never blank.
   let defaultRole: MemberRole = "MANAGER";
   if (canSponsor) defaultRole = "LEARNER";

@@ -61,10 +61,11 @@ import { AddPeopleDialog } from "./AddPeopleDialog";
 // only on canSponsor orgs. Server enforces the symmetric gates
 // (EXPERT_REQUIRES_CANHOST + LEARNER_REQUIRES_CANSPONSOR).
 function selectableRoles(
+  viewerRole: MemberRole,
   canSponsor: boolean,
   canHost: boolean,
 ): Array<{ value: MemberRole; label: string }> {
-  return getInvitableRoles(canSponsor, canHost).map((value) => ({
+  return getInvitableRoles(viewerRole, canSponsor, canHost).map((value) => ({
     value,
     label: MEMBER_ROLE_LABEL[value],
   }));
@@ -155,7 +156,13 @@ async function removeMember(orgId: string, memberId: string) {
 export function MembersPageClient({ orgId }: { orgId: string }) {
   // canSponsor/canHost drive the capability-aware role options (LEARNER
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
-  const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
+  const {
+    role: viewerRole,
+    isAtLeast,
+    can,
+    canSponsor,
+    canHost,
+  } = useOrgRole(orgId);
   const { data: session } = useSession();
   // Compare by email — BetterAuth's session.user.id can be the BetterAuth
   // internal id rather than the Familiarise `User.id` mirrored on
@@ -168,12 +175,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // #777 FDE Group B P1 — operator read floor (OWNER/MAINTAINER/MANAGER/
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
-  // below stay MAINTAINER-gated (isAtLeast("MAINTAINER")).
+  // below are members.manage (OWNER/MAINTAINER), the routes' own grant.
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "members.read",
   });
   const queryClient = useQueryClient();
-  const roleOptions = selectableRoles(canSponsor, canHost);
+  const roleOptions = selectableRoles(viewerRole, canSponsor, canHost);
   // #777 §B — roster search + server pagination. `search` is the live
   // input; `debouncedSearch` is what actually hits the API (250ms) so a
   // fast typist doesn't fire a request per keystroke. Page resets to 1
@@ -261,7 +268,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     onError: (err: Error) => setEditError(err.message),
   });
 
-  const canManage = isAtLeast("MAINTAINER");
+  const canManage = can("members.manage");
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
@@ -356,7 +363,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       <PanelHeader
         description="Everyone with a seat in this organization"
         actions={
-          isAtLeast("MAINTAINER") && (
+          canManage && (
             <AddPeopleDialog
               orgId={orgId}
               canSponsor={canSponsor}

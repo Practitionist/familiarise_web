@@ -1,6 +1,7 @@
 import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
 import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 
 import { MembersTabs } from "./MembersTabs";
@@ -13,12 +14,18 @@ export default async function OrgMembersPage({
 }) {
   const { orgId } = await params;
 
-  // members.read — the roster is an operator surface (BILLING_ADMIN is
-  // operator-blind by role design; the old `|| finance` branch let it in).
-  // Guard before the SSR prefetch dehydrates the roster.
-  const access = await requireOrgAccess(orgId, { permission: "members.read" });
+  // members.directory — every member sees who is in the org (#1527
+  // decision 3). The full roster stays members.read (BILLING_ADMIN is
+  // operator-blind), so only that grant gets it prefetched below.
+  const access = await requireOrgAccess(orgId, {
+    permission: "members.directory",
+  });
   if (access.error) {
     redirect(`/dashboard/organization/${orgId}/home`);
+  }
+
+  if (!hasOrgPermission(access.member.role, "members.read")) {
+    return <MembersTabs orgId={orgId} />;
   }
 
   const queryClient = new QueryClient();

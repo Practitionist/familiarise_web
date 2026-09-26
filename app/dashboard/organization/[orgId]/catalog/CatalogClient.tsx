@@ -292,11 +292,11 @@ export function CatalogClient({
               ),
             },
             {
-              // #1527-4c — operators manage collaborators here; experts keep
-              // the Plan collaborators page. Same component, org-scoped.
+              // #1527-4c — operators read the org's hosted plans here;
+              // experts keep the Plan collaborators page for their own.
               value: "collaborators",
               label: "Collaborators",
-              content: <InvitationsPanel orgScope={orgId} />,
+              content: <InvitationsPanel orgScope={orgId} orgView />,
             },
           ]}
         />

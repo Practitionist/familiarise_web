@@ -50,9 +50,12 @@ describe("org appointment detail binds both ids", () => {
       "if (access.error)",
       "if (!detail) notFound()",
       "if (appointment.organizationId !== orgId) notFound()",
-      'if (!actsForOrg && !hasOrgPermission(role, "operations.read")) notFound()',
     ];
     for (const c of checks) expect(src).toContain(c);
+    // #1527 — no act-for-org grant and no operations.read → 404.
+    expect(src).toMatch(
+      /!mayCancel &&\s*!mayReschedule &&\s*!hasOrgPermission\(role, "operations\.read"\)\s*\)\s*\{\s*notFound\(\);/,
+    );
   });
 
   it("gives the delivering expert the consultant detail, not a 404", () => {
@@ -62,12 +65,17 @@ describe("org appointment detail binds both ids", () => {
     expect(src).toContain("<DelivererDetailClient");
   });
 
-  it("offers org-actor actions only to payer admins, only on 1:1 bookings", () => {
-    expect(src).toContain("const actsForOrg = isPayerAdminRole(role)");
+  it("offers org-actor actions only to payer-side actors, only on 1:1 bookings", () => {
+    // #1527 decision 8 — reschedule and cancel are separate grants.
+    expect(src).toContain('const mayCancel = canActForOrg(role, "cancel")');
+    expect(src).toContain(
+      'const mayReschedule = canActForOrg(role, "reschedule")',
+    );
     expect(src).toContain(
       "appointment.consultation ?? appointment.subscription",
     );
-    expect(src).toMatch(/canCancel=\{\s*actsForOrg && status !== null/);
+    expect(src).toMatch(/canCancel=\{\s*mayCancel && status !== null/);
+    expect(src).toMatch(/canReschedule=\{\s*mayReschedule && status !== null/);
   });
 
   it("orders the org check before the participation check", () => {
