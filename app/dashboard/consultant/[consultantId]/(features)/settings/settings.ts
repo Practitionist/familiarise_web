@@ -275,6 +275,7 @@ export type SettingsSectionKey =
   | "account"
   | "notifications"
   | "profile"
+  | "experience"
   | "verification"
   | "booking"
   | "get-paid";
@@ -301,6 +302,14 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     label: "Profile",
     slug: "profile",
     description: "Your expertise, background and the links on your public page",
+  },
+  {
+    group: "Public profile",
+    key: "experience",
+    label: "Experience & education",
+    slug: "experience",
+    description:
+      "Work history, education, certifications and achievements on your page",
   },
   {
     group: "Public profile",
