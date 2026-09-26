@@ -1,4 +1,4 @@
-import { permanentRedirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { requireAuth } from "@/lib/auth-guard";
 import { accountSettingsHref } from "@/lib/dashboard/account-href";
 
@@ -6,10 +6,12 @@ type SearchParams = Record<string, string | string[] | undefined>;
 
 /**
  * `/profile` is retired (#1527 §17b): the account lives in each viewer's own
- * Settings. This answers a 308 to it — consultant or consultee Settings ›
+ * Settings. This answers a 307 to it — consultant or consultee Settings ›
  * Account, the back office's My profile, a workspace's settings — keeping any
  * query (an OAuth link result, say) and honouring `?section=notifications`.
- * requireAuth sends a signed-out visitor to sign-in first.
+ * requireAuth sends a signed-out visitor to sign-in first. A 307, not a 308:
+ * the target depends on the signed-in viewer, so it must never be cached as
+ * permanent (#1527 review).
  */
 export default async function ProfileRedirect({
   searchParams,
@@ -26,5 +28,5 @@ export default async function ProfileRedirect({
       query.append(key, v);
   }
   const qs = query.toString();
-  permanentRedirect(qs ? `${target}?${qs}` : target);
+  redirect(qs ? `${target}?${qs}` : target);
 }

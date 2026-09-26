@@ -30,15 +30,13 @@ export function SuggestedArticles({
           </li>
         ))}
       </ul>
-      <a
+      <Link
         href="/support"
-        target="_blank"
-        rel="noopener noreferrer"
         className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline"
       >
         Browse the Help Center
         <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
-      </a>
+      </Link>
     </Section>
   );
 }
