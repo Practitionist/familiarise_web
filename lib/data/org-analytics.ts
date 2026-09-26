@@ -80,7 +80,12 @@ export async function getOrgAnalytics(
       canSponsor: true,
       canHost: true,
       billingAccount: {
-        select: { id: true, fundingSource: true, walletBalance: true, currency: true },
+        select: {
+          id: true,
+          fundingSource: true,
+          walletBalance: true,
+          currency: true,
+        },
       },
     },
   });
@@ -320,13 +325,33 @@ export async function getOrgAnalytics(
       : null,
     // Honesty gate (#687): mirror the query gate above — flag off ⇒ null, not
     // an empty array, so a still-canHost row doesn't imply zeroed host earnings.
-    earnings: ENABLE_HOST_ORGS && org.canHost
-      ? earningsAggregate.map((e) => ({
-          status: e.status,
-          count: e._count._all,
-          orgSharePaise: sumPaise(e._sum.orgSharePaise),
-          refundedPaise: sumPaise(e._sum.refundedAmountPaise),
-        }))
-      : null,
+    earnings:
+      ENABLE_HOST_ORGS && org.canHost
+        ? earningsAggregate.map((e) => ({
+            status: e.status,
+            count: e._count._all,
+            orgSharePaise: sumPaise(e._sum.orgSharePaise),
+            refundedPaise: sumPaise(e._sum.refundedAmountPaise),
+          }))
+        : null,
+  };
+}
+
+/**
+ * #1527 — the SUPPORT carve-out opens `operations.read` but not money. Strip
+ * every paise figure for a viewer without `billing.read` before the payload
+ * leaves the server (API response and SSR seed alike).
+ */
+export function withoutOrgMoney(
+  payload: OrgAnalyticsPayload,
+): OrgAnalyticsPayload {
+  return {
+    ...payload,
+    capabilities: { ...payload.capabilities, walletBalance: null },
+    wallet: null,
+    invoices: null,
+    subscription: null,
+    reimbursements: null,
+    earnings: null,
   };
 }

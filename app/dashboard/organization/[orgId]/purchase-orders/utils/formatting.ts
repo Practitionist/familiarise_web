@@ -6,6 +6,8 @@
  * while forex uses two-decimal output (where sub-unit precision matters).
  */
 
+import type { Tone } from "@/lib/ui/tone";
+
 import type { PoCurrency, PoStatus } from "./types";
 
 export function fmtDate(iso: string): string {
@@ -32,8 +34,11 @@ export function fmtMoney(paise: number, currency: PoCurrency): string {
   }).format(value);
 }
 
-export const STATUS_BADGE_CLASSNAME: Record<PoStatus, string> = {
-  ACTIVE: "bg-green-50 text-green-800 border-green-300",
-  CLOSED: "bg-zinc-100 text-zinc-700 border-zinc-300",
-  CANCELLED: "bg-red-50 text-red-700 border-red-300",
+/** #1762-4 — labels + tones instead of the raw enum. */
+export const PO_STATUS: Record<PoStatus, { label: string; tone: Tone }> = {
+  ACTIVE: { label: "Active", tone: "success" },
+  CLOSED: { label: "Closed", tone: "neutral" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
+
+export const PO_STATUSES: PoStatus[] = ["ACTIVE", "CLOSED", "CANCELLED"];

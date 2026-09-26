@@ -36,10 +36,10 @@ const FILTER_DRIVEN_QUERIES = [
   // The filtered query moved into the Summary panel when Analytics folded onto
   // this route as a tab (ADR 19); `page.tsx` is now a server wrapper.
   "app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsSummaryPanel.tsx",
-  "app/dashboard/organization/[orgId]/payouts/PayoutsPageClient.tsx",
+  "app/dashboard/organization/[orgId]/payouts/PayoutRunsPanel.tsx",
   // #1527 — the payouts board tabs (the inner Earnings tab was removed).
   "components/dashboard/backoffice/payouts/sections/PayoutListSection.tsx",
-  "app/dashboard/organization/[orgId]/purchase-orders/page.tsx",
+  "app/dashboard/organization/[orgId]/purchase-orders/PurchaseOrdersPanel.tsx",
   "components/dashboard/shared/OperatorAppointmentsClient.tsx",
   // Already correct before this sweep — kept so they cannot regress.
   "components/dashboard/shared/DisputesPage.tsx",

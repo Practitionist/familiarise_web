@@ -37,6 +37,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { humanizeEnum } from "@/lib/ui/tone";
 
 const walletResponseSchema = z.object({
   billingAccount: z.object({
@@ -330,14 +331,15 @@ export function WalletTab({
   // Seed the draft from the persisted account once it loads, keyed on the
   // returned config so a server-side change re-syncs the inputs. Alerts are
   // "on" whenever a minimum is set — the cron keys off minBalancePaise alone.
-  const acct = walletResponse?.billingAccount;
+  // `undefined` until the account loads; `null` means alerts are off.
+  const persistedMinBalance = walletResponse?.billingAccount.minBalancePaise;
   useEffect(() => {
-    if (!acct) return;
+    if (persistedMinBalance === undefined) return;
     setMinBalanceMajor(
-      acct.minBalancePaise != null ? String(acct.minBalancePaise / 100) : "",
+      persistedMinBalance === null ? "" : String(persistedMinBalance / 100),
     );
-    setAlertsEnabled(acct.minBalancePaise != null);
-  }, [acct?.minBalancePaise]);
+    setAlertsEnabled(persistedMinBalance !== null);
+  }, [persistedMinBalance]);
 
   const alertsMutation = useMutation({
     mutationFn: async () => {
@@ -348,7 +350,7 @@ export function WalletTab({
       // valid amount so the cron has a threshold to compare against.
       if (
         alertsEnabled &&
-        (parsed == null || parsed < 0 || Number.isNaN(parsed))
+        (parsed === null || parsed < 0 || Number.isNaN(parsed))
       ) {
         throw new Error("Set a valid minimum balance to enable alerts.");
       }
@@ -386,9 +388,9 @@ export function WalletTab({
       className: "text-sm",
       cell: (row) => (
         <>
-          {row.reason}
+          {humanizeEnum(row.reason)}
           {row.notes && (
-            <span className="text-xs text-muted-foreground/70 block">
+            <span className="text-xs text-muted-foreground block">
               {row.notes}
             </span>
           )}
@@ -431,9 +433,9 @@ export function WalletTab({
               {walletError.currentFundingSource && (
                 <>
                   {" "}
-                  Current funding source:{" "}
-                  <code>{walletError.currentFundingSource}</code>. Wallets only
-                  apply to <code>WALLET</code>-funded organizations.
+                  This organization is funded by{" "}
+                  {humanizeEnum(walletError.currentFundingSource)}; a wallet
+                  applies only to prepaid-wallet organizations.
                 </>
               )}
             </CardDescription>

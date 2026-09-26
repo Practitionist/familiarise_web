@@ -132,7 +132,7 @@ export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
       value: "Open →",
       subtitle: "PO balance + utilization",
       icon: Receipt,
-      href: `/dashboard/organization/${orgId}/purchase-orders`,
+      href: `/dashboard/organization/${orgId}/billing?tab=purchase-orders`,
       cta: "Manage POs",
     },
   ];

@@ -51,7 +51,8 @@ function OrgStatusBanner({ status }: { status: OrgStatus }) {
   > = {
     PENDING_VERIFICATION: {
       title: "Awaiting platform review",
-      body: "You can set up branding and draft programs now. Inviting members and moving money unlocks as soon as an admin verifies your organization.",
+      // #1762-1 — checkout accepts unverified orgs; say what verification lifts.
+      body: "Your team can start now. Until an admin verifies your organization, invitations are capped and invoice-funded bookings carry a starter credit limit.",
       tone: "bg-amber-50 border-amber-200 text-amber-900",
     },
     SUSPENDED: {
@@ -159,8 +160,6 @@ function OrgDashboardShellInner({
         role: org?.membership.role ?? "LEARNER",
         canSponsor: org?.organization.canSponsor ?? false,
         canHost: org?.organization.canHost ?? false,
-        fundingSource: org?.organization.fundingSource ?? null,
-        requiresPO: org?.organization.requiresPO ?? false,
         consultantProfileId: org?.membership.consultantProfileId ?? null,
       }),
     [org, orgId],

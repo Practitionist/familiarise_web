@@ -1,77 +1,31 @@
-"use client";
+import { notFound, redirect } from "next/navigation";
 
-import Link from "next/link";
-import { notFound, useParams, useSearchParams } from "next/navigation";
-import { DashboardContent } from "@/components/dashboard/PageScaffold";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { OfferingEditorContainer } from "@/components/offerings/editor/OfferingEditorContainer";
-import { OFFERING_MANIFESTS } from "@/components/offerings/editor/manifests";
-import type { OfferingType } from "@/components/offerings/editor/manifest";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+
+import { NewOrgOfferingClient } from "./NewOrgOfferingClient";
 
 /**
- * Org authoring uses the same editor as personal authoring.
- *
- * It previously had its own reduced surface that dropped every ADR-24 content
- * field on the floor, so an org-authored offering was structurally thinner than
- * the identical personal one. Only the WRITE differs — the org endpoint stamps
- * the organization and writes an audit log — so only the write is overridden.
+ * ORG-01 (#1527): the same gate as the Catalog page, and only the kinds the
+ * org catalog API accepts. Consultation and subscription plans need a
+ * consultant owner, so `POST …/catalog` refuses them.
  */
-export default function NewOrgOfferingPage() {
-  const params = useParams();
-  const search = useSearchParams();
+const ORG_OFFERING_TYPES = ["webinar", "class"] as const;
+type OrgOfferingType = (typeof ORG_OFFERING_TYPES)[number];
 
-  const orgId = params.orgId as string;
-  const type = params.type as OfferingType;
-  // Which expert delivers it. The catalog picks this before routing here.
-  const expertId = search.get("expertId") ?? "";
+const isOrgOfferingType = (type: string): type is OrgOfferingType =>
+  (ORG_OFFERING_TYPES as readonly string[]).includes(type);
 
-  if (!OFFERING_MANIFESTS[type]) notFound();
+export default async function NewOrgOfferingPage({
+  params,
+}: Readonly<{ params: Promise<{ orgId: string; type: string }> }>) {
+  const { orgId, type } = await params;
+  if (!isOrgOfferingType(type)) notFound();
 
-  const returnHref = `/dashboard/organization/${orgId}/catalog`;
+  const access = await requireOrgAccess(orgId, {
+    permission: "catalog.manage",
+    canHost: true,
+  });
+  if (access.error) redirect(`/dashboard/organization/${orgId}/home`);
 
-  return (
-    <>
-      <DashboardContent className="content-flush-bottom flex flex-1 flex-col">
-        <DashboardErrorBoundary>
-          {expertId ? (
-            <OfferingEditorContainer
-              type={type}
-              consultantId={expertId}
-              returnHref={returnHref}
-              onSave={async (values) => {
-                const response = await fetch(
-                  `/api/organizations/${orgId}/catalog`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      ...values,
-                      kind: type.toUpperCase(),
-                      consultantProfileId: expertId,
-                      // The endpoint takes paise; the form edits rupees, same
-                      // as every other price field in the product.
-                      pricePaise: Math.round(Number(values.price ?? 0) * 100),
-                    }),
-                  },
-                );
-                if (!response.ok) {
-                  const body = await response.json().catch(() => ({}));
-                  throw new Error(body.error ?? "Failed to save offering");
-                }
-              }}
-            />
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Pick the expert who will deliver this offering first.
-              </p>
-              <Link href={returnHref} className="text-sm underline">
-                Back to catalog
-              </Link>
-            </div>
-          )}
-        </DashboardErrorBoundary>
-      </DashboardContent>
-    </>
-  );
+  return <NewOrgOfferingClient orgId={orgId} type={type} />;
 }

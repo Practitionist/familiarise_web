@@ -13,7 +13,7 @@
 
 import { existsSync } from "fs";
 import { join } from "path";
-import type { FundingSource, MemberRole } from "@prisma/client";
+import type { MemberRole } from "@prisma/client";
 
 import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
 import { findMoneyTab } from "@/lib/backoffice/money-tabs";
@@ -106,7 +106,7 @@ describe("personal + workspace nav targets resolve", () => {
   });
 });
 
-describe("org nav targets resolve for every role × capability × funding", () => {
+describe("org nav targets resolve for every role × capability", () => {
   const ROLES: MemberRole[] = [
     "OWNER",
     "MAINTAINER",
@@ -122,39 +122,56 @@ describe("org nav targets resolve for every role × capability × funding", () =
     HYBRID: { canSponsor: true, canHost: true },
     INERT: { canSponsor: false, canHost: false },
   } as const;
-  const FUNDING: Array<FundingSource | null> = [
-    null,
-    "PERSONAL",
-    "LICENSE",
-    "WALLET",
-    "INVOICE",
+  // #1527 Q7 — funding-shaped money pages are Billing tabs, not nav items.
+  const RETIRED = [
+    "purchase-orders",
+    "disputes",
+    "reimbursements",
+    "materials",
   ];
 
   const cases = ROLES.flatMap((role) =>
     Object.entries(CAPABILITIES).flatMap(([kind, caps]) =>
-      FUNDING.flatMap((fundingSource) =>
-        [false, true].map(
-          (delivers) => [role, kind, fundingSource, delivers, caps] as const,
-        ),
-      ),
+      [false, true].map((delivers) => [role, kind, delivers, caps] as const),
     ),
   );
 
-  it.each(cases)(
-    "%s · %s · %s · delivers=%s",
-    (role, _kind, fundingSource, delivers, caps) => {
-      const nav = buildOrganizationNav({
-        orgId: "org-1",
-        role,
-        ...caps,
-        fundingSource,
-        requiresPO: true,
-        consultantProfileId: delivers ? "cp-1" : null,
-      });
-      expect(missingPaths(nav, "organization/[orgId]")).toEqual([]);
-      expectTabsAreItems(nav);
-    },
-  );
+  it.each(cases)("%s · %s · delivers=%s", (role, _kind, delivers, caps) => {
+    const nav = buildOrganizationNav({
+      orgId: "org-1",
+      role,
+      ...caps,
+      consultantProfileId: delivers ? "cp-1" : null,
+    });
+    expect(missingPaths(nav, "organization/[orgId]")).toEqual([]);
+    expectTabsAreItems(nav);
+    const paths = flattenNav(nav).map((i) => i.path);
+    expect(paths.filter((p) => RETIRED.includes(p))).toEqual([]);
+    // Members always get more than Overview + Settings on a phone (#1527 §1).
+    expect(nav.mobileTabs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // Was 20 across six groups; Operations starts collapsed for OWNER, so
+  // about 14 show on first paint.
+  it("a hybrid OWNER who delivers gets the consolidated IA", () => {
+    const nav = buildOrganizationNav({
+      orgId: "org-1",
+      role: "OWNER",
+      canSponsor: true,
+      canHost: true,
+      consultantProfileId: "cp-1",
+    });
+    expect(flattenNav(nav).length).toBeLessThanOrEqual(17);
+    expect(
+      nav.groups.find((g) => g.label === "Operations")?.defaultCollapsed,
+    ).toBe(true);
+    expect(nav.mobileTabs).toEqual([
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ]);
+  });
 });
 
 /**
@@ -175,8 +192,6 @@ describe("no redundant group nesting", () => {
         role: "OWNER",
         canSponsor: true,
         canHost: true,
-        fundingSource: "PERSONAL",
-        requiresPO: true,
         consultantProfileId: "cp-1",
       }).groups,
     ],

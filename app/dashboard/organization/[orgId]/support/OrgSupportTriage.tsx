@@ -18,11 +18,12 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Star, MessageSquareText, ShieldAlert } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRequireOrgAccess } from "../useOrgRole";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
 interface TriageRow {
   id: string;
@@ -68,22 +69,13 @@ interface FeedbackSummary {
   consultantsSuppressed: number;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  OPEN: "Open",
-  IN_PROGRESS: "In progress",
-  ESCALATED: "With platform team",
-  RESOLVED: "Resolved",
-  CLOSED: "Closed",
+const STATUS: Record<string, { label: string; tone: Tone }> = {
+  OPEN: { label: "Open", tone: "caution" },
+  IN_PROGRESS: { label: "In progress", tone: "info" },
+  ESCALATED: { label: "With platform team", tone: "caution" },
+  RESOLVED: { label: "Resolved", tone: "success" },
+  CLOSED: { label: "Closed", tone: "neutral" },
 };
-
-function statusVariant(
-  status: string,
-): "default" | "secondary" | "outline" | "destructive" {
-  if (status === "RESOLVED") return "secondary";
-  if (status === "CLOSED") return "outline";
-  if (status === "ESCALATED") return "destructive";
-  return "default";
-}
 
 const STATUS_FILTERS = [
   "OPEN",
@@ -115,7 +107,7 @@ function OrgThreadRow({ thread: t }: { thread: TriageRow }) {
           </span>
         </p>
         <p className="text-xs text-muted-foreground">
-          {t.category.replaceAll("_", " ").toLowerCase()} · last activity{" "}
+          {humanizeEnum(t.category)} · last activity{" "}
           {new Date(t.lastMessageAt).toLocaleDateString(undefined, {
             day: "numeric",
             month: "short",
@@ -123,9 +115,10 @@ function OrgThreadRow({ thread: t }: { thread: TriageRow }) {
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <Badge variant={statusVariant(t.status)}>
-          {STATUS_LABELS[t.status] ?? t.status}
-        </Badge>
+        <StatusBadge
+          label={STATUS[t.status]?.label ?? humanizeEnum(t.status)}
+          tone={STATUS[t.status]?.tone ?? "neutral"}
+        />
         <SupportThreadSheet
           appointmentId={t.appointmentId}
           trigger={
@@ -215,7 +208,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   ) : null;
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-8">
+    <div className="space-y-8">
       {/* Quality signal — aggregates only (ADR 20) */}
       <section>
         <h2 className="mb-3 text-sm font-semibold text-foreground">
@@ -330,7 +323,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
                 variant={status === f ? "default" : "outline"}
                 onClick={() => setStatus(f)}
               >
-                {STATUS_LABELS[f]}
+                {STATUS[f].label}
               </Button>
             ))}
           </div>

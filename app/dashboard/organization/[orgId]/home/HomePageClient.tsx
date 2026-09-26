@@ -190,7 +190,9 @@ function toActivationSnapshot(data: OrgAnalytics): OrgActivationSnapshot {
     activeProgramCount: data.programs.active,
     activeAssignmentCount: data.programs.activeAssignments,
     billingConfigured:
-      data.wallet != null || data.invoices != null || data.subscription != null,
+      data.wallet !== null ||
+      data.invoices !== null ||
+      data.subscription !== null,
     hasContract: data.activation.hasContract,
     hasActiveContract: data.activation.hasActiveContract,
     kybVerified: data.activation.kybVerified,
@@ -584,7 +586,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             {/* Reimbursements — PERSONAL-funded orgs only (#714) */}
             {data.reimbursements && isAtLeast("MANAGER") && (
               <Link
-                href={`/dashboard/organization/${orgId}/reimbursements`}
+                href={`/dashboard/organization/${orgId}/billing?tab=member-spend`}
                 className="contents"
               >
                 <StatCard

@@ -11,7 +11,9 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
+import { Section } from "@/components/dashboard/Section";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
+import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -22,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { CatalogPanel } from "./CatalogPanel";
+import { MaterialsPanel, type OrgMaterialRow } from "./MaterialsPanel";
 import type { CatalogRow, CatalogResponse, Kind } from "./types";
 
 interface Expert {
@@ -32,7 +35,14 @@ interface Expert {
 export function CatalogClient({
   orgId,
   experts,
-}: Readonly<{ orgId: string; experts: Expert[] }>) {
+  materials,
+  materialsTotal,
+}: Readonly<{
+  orgId: string;
+  experts: Expert[];
+  materials: OrgMaterialRow[];
+  materialsTotal: number;
+}>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [expertId, setExpertId] = useState<string>(
@@ -127,154 +137,169 @@ export function CatalogClient({
   // so say that plainly rather than opening a form that will 422.
   const blocked = experts.length === 0;
 
+  const noExperts = (
+    <EmptyState
+      icon={Library}
+      title="Invite an expert first"
+      description="Catalog offerings are delivered by an organization expert. Invite one from Members, then come back to publish."
+    />
+  );
+  const hasArchived = archivedWebinars.length + archivedClasses.length > 0;
+
   return (
     <>
       <DashboardHeader
         title="Catalog"
-        subtitle="Webinars and classes this organization owns and sells."
+        description="Webinars and classes this organization owns and sells, their materials and their collaborators."
       />
       <DashboardContent>
-        {blocked ? (
-          <EmptyState
-            icon={Library}
-            title="Invite an expert first"
-            description="Catalog offerings are delivered by an organization expert. Invite one from Members, then come back to publish."
-          />
-        ) : (
-          <>
-            <div className="mb-4 flex flex-wrap items-end gap-3">
-              <div className="min-w-56">
-                <label
-                  htmlFor="catalog-expert"
-                  className="mb-1 block text-sm font-medium"
+        {!blocked && (
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-56">
+              <label
+                htmlFor="catalog-expert"
+                className="mb-1 block text-sm font-medium"
+              >
+                Delivered by
+              </label>
+              <Select value={expertId} onValueChange={setExpertId}>
+                <SelectTrigger id="catalog-expert">
+                  <SelectValue placeholder="Choose an expert" />
+                </SelectTrigger>
+                <SelectContent>
+                  {experts.map((e) => (
+                    <SelectItem
+                      key={e.consultantProfileId}
+                      value={e.consultantProfileId}
+                    >
+                      {e.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Prefetching Links (Button asChild) instead of onClick
+                SPA-pushes. An anchor cannot be disabled, so the no-expert
+                state keeps a plain disabled Button with identical styling. */}
+            {expertId ? (
+              <Button asChild>
+                <Link
+                  href={`/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${expertId}`}
                 >
-                  Delivered by
-                </label>
-                <Select value={expertId} onValueChange={setExpertId}>
-                  <SelectTrigger id="catalog-expert">
-                    <SelectValue placeholder="Choose an expert" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {experts.map((e) => (
-                      <SelectItem
-                        key={e.consultantProfileId}
-                        value={e.consultantProfileId}
-                      >
-                        {e.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {/* Prefetching Links (Button asChild) instead of onClick
-                  SPA-pushes. An anchor cannot be disabled, so the no-expert
-                  state keeps a plain disabled Button with identical styling. */}
-              {expertId ? (
-                <Button asChild>
-                  <Link
-                    href={`/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${expertId}`}
-                  >
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    New webinar
-                  </Link>
-                </Button>
-              ) : (
-                <Button disabled>
                   <Plus className="mr-1.5 h-4 w-4" />
                   New webinar
-                </Button>
-              )}
-              {expertId ? (
-                <Button asChild variant="outline">
-                  <Link
-                    href={`/dashboard/organization/${orgId}/catalog/class/new?expertId=${expertId}`}
-                  >
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    New class
-                  </Link>
-                </Button>
-              ) : (
-                <Button variant="outline" disabled>
+                </Link>
+              </Button>
+            ) : (
+              <Button disabled>
+                <Plus className="mr-1.5 h-4 w-4" />
+                New webinar
+              </Button>
+            )}
+            {expertId ? (
+              <Button asChild variant="outline">
+                <Link
+                  href={`/dashboard/organization/${orgId}/catalog/class/new?expertId=${expertId}`}
+                >
                   <Plus className="mr-1.5 h-4 w-4" />
                   New class
-                </Button>
-              )}
-            </div>
-
-            <UrlTabs
-              tabs={[
-                {
-                  value: "webinars",
-                  label: "Webinars",
-                  content: (
-                    <CatalogPanel
-                      kind="WEBINAR"
-                      rows={live(data?.webinars)}
-                      isLoading={isLoading}
-                      error={error}
-                      onToggleArchive={archiveWebinar}
-                      isMutating={setArchived.isPending}
-                    />
-                  ),
-                },
-                {
-                  value: "classes",
-                  label: "Classes",
-                  content: (
-                    <CatalogPanel
-                      kind="CLASS"
-                      rows={live(data?.classes)}
-                      isLoading={isLoading}
-                      error={error}
-                      onToggleArchive={archiveClass}
-                      isMutating={setArchived.isPending}
-                    />
-                  ),
-                },
-                // Withdrawn plans keep their own view rather than a filter
-                // toggle: it answers a different question ("what did we stop
-                // selling") and keeps the two live tabs uncluttered. Hidden
-                // entirely until something has been withdrawn.
-                ...(archivedWebinars.length > 0
-                  ? [
-                      {
-                        value: "archived-webinars",
-                        label: `Archived webinars (${archivedWebinars.length})`,
-                        content: (
-                          <CatalogPanel
-                            kind="WEBINAR"
-                            rows={archivedWebinars}
-                            isLoading={isLoading}
-                            error={error}
-                            onToggleArchive={archiveWebinar}
-                            isMutating={setArchived.isPending}
-                          />
-                        ),
-                      },
-                    ]
-                  : []),
-                ...(archivedClasses.length > 0
-                  ? [
-                      {
-                        value: "archived-classes",
-                        label: `Archived classes (${archivedClasses.length})`,
-                        content: (
-                          <CatalogPanel
-                            kind="CLASS"
-                            rows={archivedClasses}
-                            isLoading={isLoading}
-                            error={error}
-                            onToggleArchive={archiveClass}
-                            isMutating={setArchived.isPending}
-                          />
-                        ),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          </>
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" disabled>
+                <Plus className="mr-1.5 h-4 w-4" />
+                New class
+              </Button>
+            )}
+          </div>
         )}
+
+        <UrlTabs
+          tabs={[
+            {
+              value: "webinars",
+              label: "Webinars",
+              content: blocked ? (
+                noExperts
+              ) : (
+                <CatalogPanel
+                  kind="WEBINAR"
+                  rows={live(data?.webinars)}
+                  isLoading={isLoading}
+                  error={error}
+                  onToggleArchive={archiveWebinar}
+                  isMutating={setArchived.isPending}
+                />
+              ),
+            },
+            {
+              value: "classes",
+              label: "Classes",
+              content: blocked ? (
+                noExperts
+              ) : (
+                <CatalogPanel
+                  kind="CLASS"
+                  rows={live(data?.classes)}
+                  isLoading={isLoading}
+                  error={error}
+                  onToggleArchive={archiveClass}
+                  isMutating={setArchived.isPending}
+                />
+              ),
+            },
+            {
+              // Withdrawn plans answer "what did we stop selling"; hidden
+              // until something has been withdrawn.
+              value: "archived",
+              label: "Archived",
+              show: hasArchived,
+              content: (
+                <>
+                  {archivedWebinars.length > 0 && (
+                    <Section title="Webinars">
+                      <CatalogPanel
+                        kind="WEBINAR"
+                        rows={archivedWebinars}
+                        isLoading={isLoading}
+                        error={error}
+                        onToggleArchive={archiveWebinar}
+                        isMutating={setArchived.isPending}
+                      />
+                    </Section>
+                  )}
+                  {archivedClasses.length > 0 && (
+                    <Section title="Classes">
+                      <CatalogPanel
+                        kind="CLASS"
+                        rows={archivedClasses}
+                        isLoading={isLoading}
+                        error={error}
+                        onToggleArchive={archiveClass}
+                        isMutating={setArchived.isPending}
+                      />
+                    </Section>
+                  )}
+                </>
+              ),
+            },
+            {
+              // #1527-4d — materials belong to plans.
+              value: "materials",
+              label: "Materials",
+              content: (
+                <MaterialsPanel items={materials} total={materialsTotal} />
+              ),
+            },
+            {
+              // #1527-4c — operators manage collaborators here; experts keep
+              // the Plan collaborators page. Same component, org-scoped.
+              value: "collaborators",
+              label: "Collaborators",
+              content: <InvitationsPanel orgScope={orgId} />,
+            },
+          ]}
+        />
       </DashboardContent>
     </>
   );

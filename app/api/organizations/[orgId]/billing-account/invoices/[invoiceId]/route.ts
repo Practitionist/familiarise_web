@@ -45,7 +45,10 @@ export async function GET(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MANAGER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({
@@ -57,6 +60,29 @@ export async function GET(
         select: { id: true, amount: true, currency: true, createdAt: true },
       },
       payment: true,
+      // #1527 / #1836 — the org Billing detail sheet lists lines and the
+      // issued credit notes (DRAFTs are not legal documents yet).
+      lineItems: {
+        orderBy: { position: "asc" },
+        select: {
+          id: true,
+          description: true,
+          quantity: true,
+          unitPricePaise: true,
+          taxPaise: true,
+        },
+      },
+      creditNotes: {
+        where: { status: "ISSUED" },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          creditNoteNumber: true,
+          totalPaise: true,
+          issuedAt: true,
+          reason: true,
+        },
+      },
     },
   });
   if (!invoice) {
@@ -74,7 +100,9 @@ export async function PATCH(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, {
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -215,8 +243,7 @@ export async function PATCH(
     return NextResponse.json({ invoice: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     throw err;

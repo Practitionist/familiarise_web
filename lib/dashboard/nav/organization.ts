@@ -1,4 +1,4 @@
-import type { FundingSource, MemberRole } from "@prisma/client";
+import type { MemberRole } from "@prisma/client";
 import {
   BarChart3,
   Briefcase,
@@ -8,13 +8,12 @@ import {
   CreditCard,
   FileText,
   GraduationCap,
+  Handshake,
   Home,
   Library,
   LifeBuoy,
   MessageSquare,
-  Receipt,
   Settings,
-  ShieldAlert,
   ShieldCheck,
   UserCog,
   Users,
@@ -31,8 +30,6 @@ export interface OrganizationNavInput {
   role: MemberRole;
   canSponsor: boolean;
   canHost: boolean;
-  fundingSource: FundingSource | null;
-  requiresPO: boolean;
   /** Set when this member also delivers sessions (gates Requests). */
   consultantProfileId: string | null;
 }
@@ -45,17 +42,19 @@ const keep = (items: ItemSpec[]): NavItem[] =>
     .map(({ show: _show, ...rest }) => rest);
 
 /**
- * Today's permission-filtered org IA, lifted out of OrgDashboardShell so tests
- * can walk every role × capability × funding combination (#1527). Visibility
- * comes from `org-permissions.ts` — the same matrix page guards and API routes
- * check — ANDed with the structural capability gates. The sidebar is cosmetic;
- * guards stay server-side.
+ * Permission-filtered org IA (#1527 Q7), a pure builder so tests can walk every
+ * role × capability × funding combination. Visibility comes from
+ * `org-permissions.ts` — the same matrix page guards and API routes check —
+ * ANDed with the structural capability gates. The sidebar is cosmetic; guards
+ * stay server-side. POs, disputes and member spend are Billing tabs; materials
+ * and operator collaborators are Catalog tabs (Q7).
  */
 export function buildOrganizationNav(
   input: OrganizationNavInput,
 ): DashboardNav {
-  const { orgId, role, canSponsor, canHost, fundingSource, requiresPO } = input;
+  const { orgId, role, canSponsor, canHost } = input;
   const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
+  const isExpertHost = can("myArrangement.read") && canHost;
 
   const top: ItemSpec[] = [
     { name: "Overview", icon: Home, path: "home" },
@@ -69,7 +68,7 @@ export function buildOrganizationNav(
       name: "Compensation",
       icon: UserCog,
       path: "compensation",
-      show: can("myArrangement.read") && canHost,
+      show: isExpertHost,
     },
     // Any ACTIVE member: learners attend and experts deliver org sessions.
     { name: "Appointments", icon: CalendarCheck, path: "appointments" },
@@ -84,6 +83,13 @@ export function buildOrganizationNav(
         (can("myArrangement.read") || input.consultantProfileId !== null) &&
         canHost,
     },
+    {
+      // #1527-4c — experts keep it in Top; operators use Catalog › Collaborators.
+      name: "Plan collaborators",
+      icon: Handshake,
+      path: "collaborations",
+      show: isExpertHost,
+    },
   ];
 
   const people: ItemSpec[] = [
@@ -93,40 +99,33 @@ export function buildOrganizationNav(
       path: "members",
       show: can("members.read"),
     },
-    {
-      name: "Collaborations",
-      icon: Users,
-      path: "collaborations",
-      show: can("myArrangement.read") && canHost,
-    },
   ];
 
-  const commerce: ItemSpec[] = [
-    {
-      name: "Contracts",
-      icon: FileText,
-      path: "contracts",
-      show: canSponsor && can("contracts.read"),
-    },
-    {
-      // Only orgs running India AP 3-way-match need POs in the primary nav.
-      name: "Purchase Orders",
-      icon: Receipt,
-      path: "purchase-orders",
-      show: canSponsor && requiresPO && can("purchaseOrders.read"),
-    },
-    {
-      name: "Catalog",
-      icon: Library,
-      path: "catalog",
-      show: canHost && can("catalog.manage"),
-    },
+  const sponsorship: ItemSpec[] = [
     {
       name: "Programs",
       icon: Briefcase,
       path: "programs",
       show: canSponsor && can("programs.manage"),
     },
+    {
+      name: "Contracts",
+      icon: FileText,
+      path: "contracts",
+      show: canSponsor && can("contracts.read"),
+    },
+  ];
+
+  const hosting: ItemSpec[] = [
+    {
+      name: "Catalog",
+      icon: Library,
+      path: "catalog",
+      show: canHost && can("catalog.manage"),
+    },
+  ];
+
+  const money: ItemSpec[] = [
     {
       name: "Billing",
       icon: CreditCard,
@@ -139,24 +138,16 @@ export function buildOrganizationNav(
       path: "payouts",
       show: canHost && can("payouts.read"),
     },
-    {
-      name: "Reimbursements",
-      icon: Wallet,
-      path: "reimbursements",
-      show:
-        canSponsor &&
-        fundingSource === "PERSONAL" &&
-        can("reimbursements.read"),
-    },
-    {
-      name: "Disputes",
-      icon: ShieldAlert,
-      path: "disputes",
-      show: can("disputes.read"),
-    },
   ];
 
-  const resources: ItemSpec[] = [
+  const operations: ItemSpec[] = [
+    {
+      // Metadata-only triage (ADR 20), never transcripts.
+      name: "Support",
+      icon: LifeBuoy,
+      path: "support",
+      show: can("operations.read"),
+    },
     {
       name: "Documents",
       icon: FileText,
@@ -167,13 +158,6 @@ export function buildOrganizationNav(
       name: "Recordings",
       icon: Video,
       path: "recordings",
-      show: can("operations.read"),
-    },
-    {
-      // Metadata-only triage (ADR 20), never transcripts.
-      name: "Support",
-      icon: LifeBuoy,
-      path: "support",
       show: can("operations.read"),
     },
   ];
@@ -199,30 +183,32 @@ export function buildOrganizationNav(
     },
   ];
 
-  // Ungated (ADR 23): the page floors at active membership and each tab
-  // carries its own gate, so members reach their Notifications tab.
-  const configuration: ItemSpec[] = [
-    { name: "Settings", icon: Settings, path: "settings" },
-  ];
-
+  // "Hosting", not "Catalog": a group must not restate its only item.
   const groups: NavGroup[] = [
     { items: keep(top) },
     { label: "People", items: keep(people) },
-    { label: "Commerce", items: keep(commerce) },
+    { label: "Sponsorship", items: keep(sponsorship) },
+    { label: "Hosting", items: keep(hosting) },
+    { label: "Money", items: keep(money) },
     {
-      label: "Resources",
-      items: keep(resources),
+      label: "Operations",
+      items: keep(operations),
       // Document triage isn't an OWNER/MAINTAINER's daily job.
       defaultCollapsed: role === "OWNER" || role === "MAINTAINER",
     },
     { label: "Insights", items: keep(insights) },
-    { label: "Configuration", items: keep(configuration) },
   ].filter((g) => g.items.length > 0);
+
+  // Ungated (ADR 23): the page floors at active membership and each tab
+  // carries its own gate, so members reach their Notifications tab.
+  const utility: NavItem[] = [
+    { name: "Settings", icon: Settings, path: "settings" },
+  ];
 
   return {
     basePath: `/dashboard/organization/${orgId}`,
     groups,
-    utility: [],
+    utility,
     mobileTabs: organizationMobileTabs(groups),
   };
 }
@@ -253,7 +239,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   home: "Overview",
   "my-program": "My Program",
   compensation: "Compensation",
-  collaborations: "Collaborations",
+  collaborations: "Plan collaborators",
   appointments: "Appointments",
   messages: "Messages",
   requests: "Requests",
@@ -262,14 +248,11 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   materials: "Materials",
   programs: "Programs",
   contracts: "Contracts",
-  "purchase-orders": "Purchase Orders",
   documents: "Documents",
   recordings: "Recordings",
   support: "Support",
   billing: "Billing",
   payouts: "Payouts",
-  reimbursements: "Reimbursements",
-  disputes: "Disputes",
   analytics: "Analytics",
   audit: "Audit",
   consent: "Consent",
