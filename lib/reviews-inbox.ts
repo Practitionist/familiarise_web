@@ -7,6 +7,10 @@ import { getConsultantReviewTracks } from "@/lib/data/consultant-detail";
 import type { TReviewTrackPresence } from "@/types/review";
 
 /**
+ * Owner-only, so it lives outside lib/data: the #1300 allowlist pin globs
+ * lib/data for PUBLIC review loaders, and this read also needs the reply
+ * moderation actor. Anonymity is enforced in `toOwnReviewRow` below.
+ *
  * #1527 Q5 / #1300 — the consultant's own Reviews inbox: every live review of
  * them, newest first, with the two published scores side by side. An
  * anonymous reviewer stays anonymous here too: no name and no offering, which

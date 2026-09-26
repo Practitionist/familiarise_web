@@ -21,7 +21,7 @@ jest.mock("../../lib/api/consultant-profile", () => ({
 }));
 
 const readOwnReviews = jest.fn();
-jest.mock("../../lib/data/consultant-reviews-inbox", () => ({
+jest.mock("../../lib/reviews-inbox", () => ({
   REVIEWS_PAGE_SIZE: 20,
   readOwnReviews: (args: unknown) => readOwnReviews(args),
 }));

@@ -11,7 +11,7 @@ import { apiError } from "@/lib/errors/api-error";
 import {
   REVIEWS_PAGE_SIZE,
   readOwnReviews,
-} from "@/lib/data/consultant-reviews-inbox";
+} from "@/lib/reviews-inbox";
 
 function ratingParam(raw: string | null): number | null {
   const n = raw ? Number.parseInt(raw, 10) : Number.NaN;

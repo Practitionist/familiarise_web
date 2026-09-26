@@ -25,7 +25,7 @@ import { useListParams } from "@/hooks/useListParams";
 import type {
   OwnReviewRow,
   OwnReviewsPage,
-} from "@/lib/data/consultant-reviews-inbox";
+} from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
 
