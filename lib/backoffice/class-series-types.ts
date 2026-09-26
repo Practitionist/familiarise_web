@@ -13,7 +13,10 @@ export interface ClassSeriesView {
     id: string;
     ordinal: number;
     startsAt: string;
+    /** When the session was lost: the host's cancel, or the void (#1569). */
     hostCancelledAt: string;
+    /** #1569 — true when the outcome sweep voided it rather than the host cancelling. */
+    voided: boolean;
     seatsSettledAt: string | null;
     makeUp: { id: string; startsAt: string } | null;
   }[];

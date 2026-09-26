@@ -5018,6 +5018,15 @@ model AppointmentOccurrence {
   hostCancelledAt DateTime? @db.Timestamptz // #1780 row 4 — the host cancelled this one session (a miss; no deletedAt)
   seatsSettledAt  DateTime? @db.Timestamptz // #1780 row 4 — its make-up happened or every seat got its unit back
 
+  // #1569 — the end + 1 h sweep is the one writer of these. A void is a miss like a
+  // host cancel: the row keeps its ordinal history and the make-up machine owes it.
+  voidedAt         DateTime?          @db.Timestamptz
+  outcome          OccurrenceOutcome?
+  outcomeAt        DateTime?          @db.Timestamptz
+  deliveredMinutes Int?
+  lostMinutes      Int?
+  presences        MeetingPresence[]
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -5044,6 +5053,21 @@ enum OccurrenceCompletionStatus {
   /// the isTentative boolean and never wrote this value; the reschedule flow
   /// now stamps replaced occurrences RESCHEDULED so lifecycle is explicit.
   RESCHEDULED // Replaced by a later occurrence (via reschedule/reallocation)
+  /// #1569 — held, but the host side lost at least min(15, booked/2) minutes;
+  /// the make-up machine (or a refund) owes the learner this session.
+  VOIDED
+}
+
+/// #1569 — what the end + 1 h classifier saw (lib/booking/session-outcome.ts).
+enum OccurrenceOutcome {
+  HELD
+  CUT_SHORT // voided; the host side dropped while learners stayed
+  PLATFORM_OUTAGE // voided; everyone dropped together, or a maintenance drain
+  HOST_ABSENT // voided; a learner waited and no host-side person joined
+  LEARNER_ABSENT // forfeit (D7); the host was there and no learner joined
+  NOBODY_JOINED
+  INCONCLUSIVE // a guard failed; parked UNVERIFIED for ops, never moves money
+  OFFLINE // no Meeting row at all
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -5067,6 +5091,7 @@ model Meeting {
   recordings        Recording[]
   attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
   recordingConsents RecordingConsent[] // #1134 P1-7
+  presences         MeetingPresence[] // #1569 — per-device join/leave intervals
 
   occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentOccurrenceId String                @unique
@@ -5161,6 +5186,28 @@ model MeetingAttendance {
   @@index([meetingId])
   @@index([userId])
   @@index([appointmentOccurrenceId, userId])
+}
+
+/// #1569 D2 — one row per Stream user_session_id (one device's stay in the call).
+/// The classifier merges a user's rows; MeetingAttendance stays the per-person summary.
+model MeetingPresence {
+  id                      String                @id @default(cuid())
+  meeting                 Meeting               @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId               String
+  occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId String
+  /// Stream user id, which equals User.id; stored plain like MeetingAttendance.userId.
+  userId                  String
+  userSessionId           String
+  joinedAt                DateTime              @db.Timestamptz
+  leftAt                  DateTime?             @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@unique([meetingId, userSessionId])
+  @@index([appointmentOccurrenceId])
+  @@index([meetingId, userId])
 }
 
 // Recording storage types

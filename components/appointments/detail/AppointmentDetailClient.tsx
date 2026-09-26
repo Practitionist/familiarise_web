@@ -78,6 +78,7 @@ import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
 import { ClassSessionControls } from "./ClassSessionControls";
+import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
@@ -818,6 +819,16 @@ export function AppointmentDetailClient({
                     // and a consultant rating their own session would feed the
                     // org quality average.
                     renderSessionExtra={(session) => {
+                      // #1569 B-4 — the host side sees who attended each session.
+                      const attendance =
+                        role === "consultant" ? (
+                          <SessionAttendance
+                            appointmentId={
+                              session.appointmentId ?? appointmentId
+                            }
+                            occurrenceId={session.occurrenceId}
+                          />
+                        ) : null;
                       const rating =
                         sessionFeedback.ratings[session.occurrenceId] ?? null;
                       // Offer stars only where a rating would be ACCEPTED —
@@ -831,20 +842,25 @@ export function AppointmentDetailClient({
                       // `rating` is null for every row — indistinguishable from
                       // the truth. Show nothing per row and let the notice above
                       // say why, rather than inviting a click we cannot honour.
-                      if (sessionFeedback.isError) return null;
+                      if (sessionFeedback.isError) return attendance;
                       if (role === "consultee" && !canRate && rating === null) {
                         return null;
                       }
                       return (
-                        <SessionRatingRow
-                          appointmentId={session.appointmentId ?? appointmentId}
-                          bookingAppointmentId={appointmentId}
-                          occurrenceId={session.occurrenceId}
-                          existingRating={rating}
-                          // The consultant sees what a call scored; only the
-                          // attendee can set it.
-                          readOnly={role !== "consultee" || !canRate}
-                        />
+                        <>
+                          {attendance}
+                          <SessionRatingRow
+                            appointmentId={
+                              session.appointmentId ?? appointmentId
+                            }
+                            bookingAppointmentId={appointmentId}
+                            occurrenceId={session.occurrenceId}
+                            existingRating={rating}
+                            // The consultant sees what a call scored; only the
+                            // attendee can set it.
+                            readOnly={role !== "consultee" || !canRate}
+                          />
+                        </>
                       );
                     }}
                     occurrences={vm.occurrences}

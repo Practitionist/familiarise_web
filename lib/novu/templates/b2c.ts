@@ -57,8 +57,9 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     description: "Seat holders, when the host cancels one session of a class.",
     category: "appointments",
     inApp: {
-      subject: "A class session was cancelled",
-      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.",
+      subject:
+        "{% if payload.voided %}A class session did not count{% else %}A class session was cancelled{% endif %}",
+      body: "{% if payload.voided %}Your {{payload.dateTime}} session of {{payload.planTitle}} lost too much time to count as held{% else %}Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled{% endif %} — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.",
       redirect: "dashboardUrl",
     },
   },
@@ -78,11 +79,11 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.CLASS_SESSION_REFUNDED,
     name: "Class session refunded",
     description:
-      "A seat holder, when a cancelled session was not made up in time.",
+      "A seat holder, when a missed session was not made up in time.",
     category: "appointments",
     inApp: {
       subject: "Session refunded",
-      body: "A cancelled session of {{payload.planTitle}} was not made up, so {{payload.amount}} is on its way back to you.",
+      body: "A missed session of {{payload.planTitle}} was not made up, so {{payload.amount}} is on its way back to you.",
       redirect: "dashboardUrl",
     },
   },
@@ -90,12 +91,36 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.CLASS_EXIT_AVAILABLE,
     name: "Class exit available",
     description:
-      "A seat holder, when the host's cancellations give them the right to leave with a full refund of the remaining sessions.",
+      "A seat holder, when missed sessions (host cancellations and voided sessions) give them the right to leave with a full refund of the remaining sessions.",
     category: "appointments",
     inApp: {
       subject: "You can leave with a full refund",
-      body: "{{payload.planTitle}} has had {{payload.misses}} cancelled sessions. You may leave the series with a full refund of the sessions still to come.",
+      body: "{{payload.planTitle}} has had {{payload.misses}} missed sessions. You may leave the series with a full refund of the sessions still to come.",
       redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.SESSION_NO_SHOW,
+    name: "Session missed by the learner",
+    description:
+      "The learner of a 1:1 session who never joined it (#1569 D7); the session counts as held.",
+    category: "appointments",
+    inApp: {
+      subject: "We didn't see you in your session",
+      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} went ahead without you, so it counts as held. If you couldn't get in, tell support and we will look at the call record.{% if payload.recordingUrl %} The recording is in your recordings: {{payload.recordingUrl}}{% endif %}",
+      redirect: "supportUrl",
+    },
+  },
+  {
+    workflowId: W.SESSION_MISSED_RECORDING,
+    name: "Group session missed, recording available",
+    description:
+      "A class or webinar seat holder who was not in a held session, sent only when that session was recorded.",
+    category: "appointments",
+    inApp: {
+      subject: "Sorry we missed you",
+      body: "Sorry we missed you in the {{payload.dateTime}} session of {{payload.planTitle}} — here's the recording.",
+      redirect: "recordingUrl",
     },
   },
   {

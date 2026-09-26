@@ -22,6 +22,10 @@ export const NOVU_WORKFLOWS = {
   CLASS_MAKEUP_SCHEDULED: "class-makeup-scheduled",
   CLASS_SESSION_REFUNDED: "class-session-refunded",
   CLASS_EXIT_AVAILABLE: "class-exit-available",
+  // #1569 D7 — a 1:1 learner never joined; the session is forfeit, not refunded.
+  SESSION_NO_SHOW: "session-no-show",
+  // Owner decision — a group seat absent from a held session, told of its recording.
+  SESSION_MISSED_RECORDING: "session-missed-recording",
   // #1778 — a held 1:1 window a learner asked about has freed.
   WINDOW_OPENED: "window-opened",
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
