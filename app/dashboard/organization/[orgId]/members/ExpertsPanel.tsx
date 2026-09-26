@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { displayedScore } from "@/lib/reviews-display";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ResponsiveTable,
@@ -35,13 +37,24 @@ interface ExpertRow {
 
 async function fetchExperts(
   orgId: string,
+  page: number,
   status?: MemberStatus,
-): Promise<{ data: ExpertRow[] }> {
-  const params = new URLSearchParams({ role: "EXPERT", perPage: "100" });
+): Promise<{ data: ExpertRow[]; total: number; page: number; perPage: number }> {
+  const params = new URLSearchParams({
+    role: "EXPERT",
+    page: String(page),
+    perPage: "20",
+  });
   if (status) params.set("status", status);
   const res = await fetch(`/api/organizations/${orgId}/members?${params}`);
   if (!res.ok) throw new Error("Failed to load experts");
-  return res.json();
+  const json = await res.json();
+  return {
+    data: json.data ?? [],
+    total: json.meta?.total ?? 0,
+    page: json.meta?.page ?? page,
+    perPage: json.meta?.perPage ?? 20,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -59,12 +72,19 @@ export function ExpertsPanel({ orgId }: { orgId: string }) {
     permission: "experts.read",
     canHost: true,
   });
+  // Server-paginated (was a fixed perPage=100 with no pager).
+  const [page, setPage] = useState(1);
 
   const active = useQuery({
-    queryKey: ["org-experts", orgId, "ACTIVE"],
-    queryFn: () => fetchExperts(orgId, "ACTIVE"),
+    queryKey: ["org-experts", orgId, "ACTIVE", page],
+    queryFn: () => fetchExperts(orgId, page, "ACTIVE"),
     enabled: allowed,
+    placeholderData: keepPreviousData,
   });
+  const totalPages = Math.max(
+    1,
+    Math.ceil((active.data?.total ?? 0) / (active.data?.perPage ?? 20)),
+  );
 
   if (!allowed) return null;
 
@@ -154,6 +174,31 @@ export function ExpertsPanel({ orgId }: { orgId: string }) {
                   </p>
                 }
               />
+            )}
+            {(active.data?.total ?? 0) > (active.data?.perPage ?? 20) && (
+              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+                <span className="tabular-nums">
+                  Page {active.data?.page ?? page} of {totalPages}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>

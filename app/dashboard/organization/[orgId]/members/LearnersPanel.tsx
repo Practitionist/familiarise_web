@@ -1,10 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRequireOrgAccess } from "../useOrgRole";
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -30,13 +32,22 @@ interface Learner {
 
 async function fetchLearners(
   orgId: string,
-): Promise<{ learners: Learner[]; total: number }> {
-  const res = await fetch(
-    `/api/organizations/${orgId}/members?role=LEARNER&perPage=100`,
-  );
+  page: number,
+): Promise<{ learners: Learner[]; total: number; page: number; perPage: number }> {
+  const params = new URLSearchParams({
+    role: "LEARNER",
+    page: String(page),
+    perPage: "20",
+  });
+  const res = await fetch(`/api/organizations/${orgId}/members?${params}`);
   if (!res.ok) throw new Error("Failed to load learners");
   const json = await res.json();
-  return { learners: json.data ?? [], total: json.meta?.total ?? 0 };
+  return {
+    learners: json.data ?? [],
+    total: json.meta?.total ?? 0,
+    page: json.meta?.page ?? page,
+    perPage: json.meta?.perPage ?? 20,
+  };
 }
 
 export function LearnersPanel({ orgId }: { orgId: string }) {
@@ -44,12 +55,20 @@ export function LearnersPanel({ orgId }: { orgId: string }) {
     permission: "learners.read",
     canSponsor: true,
   });
+  // Server-paginated (was a fixed perPage=100 with no pager, so large orgs
+  // paid the full roster on every tab visit and small orgs saw no change).
+  const [page, setPage] = useState(1);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["org-learners", orgId],
-    queryFn: () => fetchLearners(orgId),
+    queryKey: ["org-learners", orgId, page],
+    queryFn: () => fetchLearners(orgId, page),
     enabled: allowed,
+    placeholderData: keepPreviousData,
   });
+  const totalPages = Math.max(
+    1,
+    Math.ceil((data?.total ?? 0) / (data?.perPage ?? 20)),
+  );
 
   if (!allowed) return null;
 
@@ -111,6 +130,31 @@ export function LearnersPanel({ orgId }: { orgId: string }) {
                   </p>
                 }
               />
+            )}
+            {(data?.total ?? 0) > (data?.perPage ?? 20) && (
+              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+                <span className="tabular-nums">
+                  Page {data?.page ?? page} of {totalPages}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
