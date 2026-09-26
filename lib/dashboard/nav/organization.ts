@@ -195,25 +195,19 @@ export function buildOrganizationNav(
     { label: "Sponsorship", items: keep(sponsorship) },
     { label: "Hosting", items: keep(hosting) },
     { label: "Money", items: keep(money) },
-    {
-      label: "Operations",
-      items: keep(operations),
-      // Document triage isn't an OWNER/MAINTAINER's daily job.
-      defaultCollapsed: role === "OWNER" || role === "MAINTAINER",
-    },
+    { label: "Operations", items: keep(operations) },
     { label: "Insights", items: keep(insights) },
   ].filter((g) => g.items.length > 0);
-
-  // Ungated (ADR 23): the page floors at active membership and each tab
-  // carries its own gate, so members reach their Notifications tab.
-  const utility: NavItem[] = [
-    { name: "Settings", icon: Settings, path: "settings" },
-  ];
 
   return {
     basePath: `/dashboard/organization/${orgId}`,
     groups,
-    utility,
+    // Ungated (ADR 23): the page floors at active membership and each tab
+    // carries its own gate, so members reach their Notifications tab.
+    settings: { name: "Settings", icon: Settings, path: "settings" },
+    // The org's own `support` is operator triage (operations.read), not help,
+    // so every member's Help goes to the public help centre (#1527).
+    helpHref: "/support",
     mobileTabs: organizationMobileTabs(groups),
   };
 }

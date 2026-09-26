@@ -15,13 +15,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import {
-  LifeBuoy,
-  Lock,
-  Settings,
-  UserRound,
-  type LucideIcon,
-} from "lucide-react";
+import { Lock, UserRound, type LucideIcon } from "lucide-react";
 
 import {
   DashboardShell,
@@ -40,6 +34,7 @@ import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { getEffectiveUserId } from "@/utils/auth";
 import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import type { DashboardNav } from "@/lib/dashboard/nav/types";
 
 /** Minimal user shape the core reads. Fetchers return richer types. */
@@ -73,7 +68,7 @@ export interface PersonalDashboardCoreProps<P> {
   nav: DashboardNav;
   /** Counts keyed by `NavItem.badgeKey`. */
   badges?: Record<string, number | undefined>;
-  /** Account chip role ("Expert" / "Client") + identity fallback name. */
+  /** Avatar-menu role ("Expert" / "Client") + identity fallback name. */
   chipRole: string;
   identityFallbackName: string;
   pageLabels: Record<string, string>;
@@ -453,7 +448,9 @@ export function PersonalDashboardLayoutCore<P>({
       </>
     ) : undefined;
 
-  // Account only (#1527 Q1): context switching lives in the switcher.
+  // Account only (#1527 Q1): context switching lives in the switcher. The
+  // settings target is the VIEWER's own account, so an operator inspecting
+  // someone's dashboard lands on their own profile.
   const shell = (
     <DashboardShell
       kind="personal"
@@ -464,14 +461,9 @@ export function PersonalDashboardLayoutCore<P>({
         name: userName,
         image: userImage,
         roleLabel: chipRole,
-        actions: [
-          { label: "Settings", href: `${basePath}/settings`, icon: Settings },
-          {
-            label: "Help & support",
-            href: `${basePath}/support`,
-            icon: LifeBuoy,
-          },
-        ],
+        settingsHref: userDetails
+          ? accountSettingsHref(userDetails, "account")
+          : null,
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

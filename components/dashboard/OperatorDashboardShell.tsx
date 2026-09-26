@@ -13,7 +13,7 @@
 
 import { useMemo } from "react";
 import { usePathname } from "next/navigation";
-import { Settings, UserRound } from "lucide-react";
+import { UserRound } from "lucide-react";
 
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { ContextSwitcher } from "@/components/dashboard/ContextSwitcher";
@@ -87,14 +87,8 @@ export function OperatorDashboardShell({
         name: displayName,
         image: userImage,
         roleLabel,
-        // The operator's own profile page, not a platform surface.
-        actions: [
-          {
-            label: "Settings",
-            href: `${nav.basePath}/settings`,
-            icon: Settings,
-          },
-        ],
+        // The operator's own My profile page, in the tree they are viewing.
+        settingsHref: `${nav.basePath}/settings`,
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

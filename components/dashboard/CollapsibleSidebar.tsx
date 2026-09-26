@@ -5,11 +5,10 @@ import {
   createContext,
   useCallback,
   useContext,
-  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
@@ -31,13 +30,11 @@ export interface CollapsibleSidebarItem extends NavItem {
 
 /**
  * A labelled cluster of nav items. Omitting `label` renders a headerless top
- * cluster; `defaultCollapsed` starts a group closed (the org Resources group
- * for OWNER/MAINTAINER).
+ * cluster. Labels are plain captions, never toggles (#1527).
  */
 export interface CollapsibleSidebarGroup {
   label?: string;
   items: CollapsibleSidebarItem[];
-  defaultCollapsed?: boolean;
 }
 
 /** "99+" cap; null hides the pill. */
@@ -174,7 +171,7 @@ interface SidebarNavGroupsProps {
   onNavigate?: () => void;
 }
 
-/** Grouped nav with toggleable group headers (hidden in icon-only mode). */
+/** Grouped nav under plain section captions (hidden in icon-only mode). */
 export function SidebarNavGroups({
   groups,
   basePath,
@@ -182,56 +179,31 @@ export function SidebarNavGroups({
   collapsed = false,
   onNavigate,
 }: Readonly<SidebarNavGroupsProps>) {
-  // Only explicit toggles are stored; untouched groups follow their default.
-  const [toggled, setToggled] = useState<Record<string, boolean>>({});
-
   return (
     <TooltipProvider delayDuration={0}>
       <div className="space-y-3">
-        {groups.map((group, gi) => {
-          const label = group.label;
-          const closed =
-            !collapsed &&
-            !!label &&
-            (toggled[label] ?? !!group.defaultCollapsed);
-          return (
-            <div key={label ?? `__group_${gi}`}>
-              {!collapsed && label && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setToggled((prev) => ({ ...prev, [label]: !closed }))
-                  }
-                  className="flex w-full items-center gap-1 px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 transition-colors hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-                  aria-expanded={!closed}
-                >
-                  <ChevronDown
-                    className={cn(
-                      "h-3 w-3 transition-transform",
-                      closed && "-rotate-90",
-                    )}
+        {groups.map((group, gi) => (
+          <div key={group.label ?? `__group_${gi}`}>
+            {!collapsed && group.label && (
+              <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                {group.label}
+              </p>
+            )}
+            <ul className="space-y-1">
+              {group.items.map((item) => (
+                <li key={item.path}>
+                  <SidebarNavLink
+                    item={item}
+                    basePath={basePath}
+                    pathname={pathname}
+                    collapsed={collapsed}
+                    onNavigate={onNavigate}
                   />
-                  {label}
-                </button>
-              )}
-              {!closed && (
-                <ul className="space-y-1">
-                  {group.items.map((item) => (
-                    <li key={item.path}>
-                      <SidebarNavLink
-                        item={item}
-                        basePath={basePath}
-                        pathname={pathname}
-                        collapsed={collapsed}
-                        onNavigate={onNavigate}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          );
-        })}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </div>
     </TooltipProvider>
   );
@@ -244,7 +216,7 @@ export interface CollapsibleSidebarProps {
   pathname: string;
   /** Top slot — the ContextSwitcher (#1527 Q1). */
   header?: ReactNode;
-  /** Bottom slot — utility links, pinned CTA, account chip. */
+  /** Bottom slot above the collapse toggle — the one Settings row. */
   footer?: ReactNode;
   /** localStorage key for the collapsed state, one per shell kind. */
   storageKey: string;
@@ -276,31 +248,8 @@ export function CollapsibleSidebar({
         )}
       >
         {/* h-14 pixel-matches the DashboardContextBar so the borders meet. */}
-        <div className="border-b border-border">
-          <div
-            className={cn(
-              "flex h-14 items-center gap-1 px-2",
-              collapsed && "h-auto flex-col gap-2 py-2",
-            )}
-          >
-            <div className={cn("min-w-0 flex-1", collapsed && "w-full")}>
-              {header}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setCollapsed(!collapsed)}
-              className="h-7 w-7 flex-shrink-0 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-expanded={!collapsed}
-            >
-              {collapsed ? (
-                <ChevronRight className="h-4 w-4" />
-              ) : (
-                <ChevronLeft className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
+        <div className="flex h-14 items-center border-b border-border px-2">
+          <div className="w-full min-w-0">{header}</div>
         </div>
 
         <nav
@@ -315,11 +264,28 @@ export function CollapsibleSidebar({
           />
         </nav>
 
-        {footer && (
-          <div className="space-y-1 border-t border-zinc-200 p-2 dark:border-zinc-800">
-            {footer}
-          </div>
-        )}
+        {/* #1527 — the collapse toggle sits alone at the very bottom of the
+            rail, not in the switcher row. */}
+        <div className="space-y-1 border-t border-zinc-200 p-2 dark:border-zinc-800">
+          {footer}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setCollapsed(!collapsed)}
+            className={cn(
+              "h-8 w-8 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+              collapsed ? "mx-auto flex" : "ml-1",
+            )}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
       </aside>
     </SidebarCollapsedContext.Provider>
   );

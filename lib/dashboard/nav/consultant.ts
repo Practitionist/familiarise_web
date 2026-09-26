@@ -7,7 +7,6 @@ import {
   Gift,
   Home,
   Inbox,
-  LifeBuoy,
   MessageSquare,
   Settings,
   Star,
@@ -23,8 +22,9 @@ import type { DashboardNav } from "./types";
  */
 export function buildConsultantNav(consultantId: string): DashboardNav {
   const publicHref = `/explore/experts/${consultantId}`;
+  const basePath = `/dashboard/consultant/${consultantId}`;
   return {
-    basePath: `/dashboard/consultant/${consultantId}`,
+    basePath,
     groups: [
       {
         label: "Work",
@@ -67,15 +67,14 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         items: [{ name: "Invite & earn", icon: Gift, path: "referrals" }],
       },
     ],
-    utility: [
-      { name: "Help & support", icon: LifeBuoy, path: "support" },
-      { name: "Settings", icon: Settings, path: "settings" },
-    ],
+    settings: { name: "Settings", icon: Settings, path: "settings" },
+    helpHref: `${basePath}/support`,
     mobileTabs: ["home", "requests", "appointments", "messages"],
     pinnedCta: {
       label: "View public page",
       href: publicHref,
       icon: ExternalLink,
+      external: true,
       copyText: publicHref,
     },
   };

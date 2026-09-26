@@ -29,12 +29,15 @@ export function OrgWorkspaceShell({
   ownedOrgCount,
   userName,
   userImage,
+  accountHref,
   children,
 }: Readonly<{
   orgWorkspaceId: string;
   ownedOrgCount: number;
   userName: string | null;
   userImage: string | null;
+  /** `accountSettingsHref(session.user)`, resolved on the server. */
+  accountHref: string | null;
   children: React.ReactNode;
 }>) {
   // usePathname() is URL-encoded while orgWorkspaceId (a route param) is
@@ -76,7 +79,12 @@ export function OrgWorkspaceShell({
       kind="workspace"
       nav={nav}
       switcher={<ContextSwitcher />}
-      account={{ name: displayName, image: userImage, roleLabel: "Operator" }}
+      account={{
+        name: displayName,
+        image: userImage,
+        roleLabel: "Operator",
+        settingsHref: accountHref,
+      }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{
         identity: {

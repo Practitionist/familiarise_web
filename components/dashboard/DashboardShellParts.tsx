@@ -2,130 +2,87 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import {
-  Check,
-  ChevronsUpDown,
-  Copy,
-  LogOut,
-  type LucideIcon,
-} from "lucide-react";
+import { Check, Copy, LifeBuoy, LogOut, Settings } from "lucide-react";
 
 import { cn } from "@/utils/tailwind";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useSession } from "@/lib/auth-client";
 import type { PinnedCta } from "@/lib/dashboard/nav/types";
 
-/** An entry in the account chip menu (Settings, Help & support, …). */
-export interface ChipAction {
-  label: string;
-  href?: string;
-  onClick?: () => void;
-  icon?: LucideIcon;
-}
-
-/** The account chip answers "who am I" only — context lives in the switcher. */
+/**
+ * The person behind the header avatar menu. Context (which dashboard) lives in
+ * the switcher; this answers "who am I" once, in the header (#1527).
+ */
 export interface DashboardAccount {
   name: string | null;
   image: string | null;
   /** Humanized ("Owner", "Expert"), never a raw enum. */
   roleLabel: string;
-  actions?: ChipAction[];
+  /** "Account settings" target; null hides the item (mid-onboarding). */
+  settingsHref: string | null;
 }
 
-function AccountAvatar({ account }: Readonly<{ account: DashboardAccount }>) {
-  return (
-    <Avatar className="h-7 w-7 flex-shrink-0">
-      <AvatarImage src={account.image || ""} alt="" />
-      <AvatarFallback className="bg-zinc-700 text-xs font-semibold text-white">
-        {(account.name ?? "U").charAt(0).toUpperCase()}
-      </AvatarFallback>
-    </Avatar>
-  );
-}
-
-function AccountText({ account }: Readonly<{ account: DashboardAccount }>) {
-  return (
-    <div className="min-w-0 flex-1">
-      <p className="truncate text-xs font-medium leading-tight text-zinc-900 dark:text-zinc-100">
-        {account.name}
-      </p>
-      <p className="mt-0.5 truncate text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">
-        {account.roleLabel}
-      </p>
-    </div>
-  );
-}
-
-/** Sidebar footer chip: a menu of account actions ending in Sign out. */
-export function AccountChip({
+/** Header avatar menu: identity, Account settings, Sign out (#1527). */
+export function AccountMenu({
   account,
   onSignOut,
-  collapsed,
-}: Readonly<{
-  account: DashboardAccount;
-  onSignOut: () => void;
-  collapsed: boolean;
-}>) {
+}: Readonly<{ account: DashboardAccount; onSignOut: () => void }>) {
+  // The email only renders inside the open menu, so reading it from the
+  // client session cannot cause a hydration mismatch.
+  const { data: session } = useSession();
+  const email = session?.user?.email ?? null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           aria-label="Account menu"
-          className={cn(
-            "flex w-full items-center gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left transition-colors hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800",
-            collapsed &&
-              "justify-center border-transparent bg-transparent px-0",
-          )}
+          className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300"
         >
-          <AccountAvatar account={account} />
-          {!collapsed && (
-            <>
-              <AccountText account={account} />
-              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-            </>
-          )}
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={account.image || ""} alt="" />
+            <AvatarFallback className="bg-zinc-700 text-xs font-semibold text-white">
+              {(account.name ?? "U").charAt(0).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" className="w-60">
-        {(account.actions ?? []).map((action) => {
-          const Icon = action.icon;
-          const body = (
-            <>
-              {Icon && <Icon className="h-4 w-4 text-zinc-500" />}
-              {action.label}
-            </>
-          );
-          return action.href ? (
-            <DropdownMenuItem
-              key={action.label}
-              asChild
-              className="cursor-pointer gap-2"
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="font-normal">
+          <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            {account.name}
+          </p>
+          {email && (
+            <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+              {email}
+            </p>
+          )}
+          <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+            {account.roleLabel}
+          </p>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {account.settingsHref && (
+          <DropdownMenuItem asChild className="cursor-pointer gap-2">
+            <Link
+              href={account.settingsHref}
+              className="flex w-full items-center gap-2"
             >
-              <Link
-                href={action.href}
-                className="flex w-full items-center gap-2"
-              >
-                {body}
-              </Link>
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem
-              key={action.label}
-              onClick={action.onClick}
-              className="cursor-pointer gap-2"
-            >
-              {body}
-            </DropdownMenuItem>
-          );
-        })}
-        {(account.actions ?? []).length > 0 && <DropdownMenuSeparator />}
+              <Settings className="h-4 w-4 text-zinc-500" />
+              Account settings
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {account.settingsHref && <DropdownMenuSeparator />}
         <DropdownMenuItem onClick={onSignOut} className="cursor-pointer gap-2">
           <LogOut className="h-4 w-4 text-zinc-500" />
           Sign out
@@ -135,86 +92,39 @@ export function AccountChip({
   );
 }
 
-/** Mobile Menu sheet: the same account block, expanded (no nested menu). */
-export function AccountRow({
-  account,
-  onSignOut,
-  onNavigate,
-}: Readonly<{
-  account: DashboardAccount;
-  onSignOut: () => void;
-  onNavigate?: () => void;
-}>) {
-  const rowClass =
-    "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
+/** Header "Help & support": icon + label at md+, icon-only below. */
+export function HelpLink({ href }: Readonly<{ href: string }>) {
   return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2.5 px-3 py-2">
-        <AccountAvatar account={account} />
-        <AccountText account={account} />
-      </div>
-      {(account.actions ?? []).map((action) => {
-        const Icon = action.icon;
-        const body = (
-          <>
-            {Icon && <Icon className="h-5 w-5" />}
-            {action.label}
-          </>
-        );
-        return action.href ? (
-          <Link
-            key={action.label}
-            href={action.href}
-            onClick={onNavigate}
-            className={rowClass}
-          >
-            {body}
-          </Link>
-        ) : (
-          <button
-            key={action.label}
-            type="button"
-            onClick={() => {
-              onNavigate?.();
-              action.onClick?.();
-            }}
-            className={rowClass}
-          >
-            {body}
-          </button>
-        );
-      })}
-      <button type="button" onClick={onSignOut} className={rowClass}>
-        <LogOut className="h-5 w-5" />
-        Sign out
-      </button>
-    </div>
+    <Button
+      variant="ghost"
+      size="sm"
+      asChild
+      className="shrink-0 px-2 text-zinc-600 dark:text-zinc-300"
+    >
+      <Link href={href} aria-label="Help & support">
+        <LifeBuoy className="h-4 w-4" />
+        <span className="hidden md:inline">Help &amp; support</span>
+      </Link>
+    </Button>
   );
 }
 
 /**
- * Per-persona pinned CTA ("View public page" / "Find experts"), with an
- * optional copy-link affordance for sharing the expert's page (#1527 §7.2).
+ * Per-persona header CTA ("Find experts" / "View public page") with an
+ * optional copy-link button for sharing the expert's page (#1527 §7.2).
+ * `fullWidth` is the mobile Menu sheet's variant.
  */
-export function PinnedCtaButton({
+export function HeaderCta({
   cta,
-  collapsed = false,
+  fullWidth = false,
   onNavigate,
-}: Readonly<{ cta: PinnedCta; collapsed?: boolean; onNavigate?: () => void }>) {
+}: Readonly<{ cta: PinnedCta; fullWidth?: boolean; onNavigate?: () => void }>) {
   const [copied, setCopied] = useState(false);
   const Icon = cta.icon;
-  const linkClass = cn(
-    "flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800",
-    collapsed && "justify-center border-transparent px-0",
-  );
   const body = (
     <>
-      <Icon className="h-4 w-4 shrink-0" />
-      {collapsed ? (
-        <span className="sr-only">{cta.label}</span>
-      ) : (
-        <span className="truncate">{cta.label}</span>
-      )}
+      <Icon className="h-4 w-4" />
+      <span className="truncate">{cta.label}</span>
     </>
   );
 
@@ -233,35 +143,45 @@ export function PinnedCtaButton({
   };
 
   return (
-    <div className="flex items-center gap-1">
-      {cta.external ? (
-        <a
-          href={cta.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={onNavigate}
-          className={linkClass}
-        >
-          {body}
-        </a>
-      ) : (
-        <Link href={cta.href} onClick={onNavigate} className={linkClass}>
-          {body}
-        </Link>
-      )}
-      {cta.copyText && !collapsed && (
-        <button
+    <div
+      className={cn("flex shrink-0 items-center gap-1", fullWidth && "w-full")}
+    >
+      <Button
+        variant="outline"
+        size="sm"
+        asChild
+        className={cn(fullWidth && "flex-1 justify-start")}
+      >
+        {cta.external ? (
+          <a
+            href={cta.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onNavigate}
+          >
+            {body}
+          </a>
+        ) : (
+          <Link href={cta.href} onClick={onNavigate}>
+            {body}
+          </Link>
+        )}
+      </Button>
+      {cta.copyText && (
+        <Button
           type="button"
+          variant="outline"
+          size="icon"
           onClick={() => void copy()}
           aria-label={copied ? "Link copied" : "Copy link"}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:hover:bg-zinc-800"
+          className="h-8 w-8 shrink-0"
         >
           {copied ? (
             <Check className="h-4 w-4" />
           ) : (
             <Copy className="h-4 w-4" />
           )}
-        </button>
+        </Button>
       )}
     </div>
   );

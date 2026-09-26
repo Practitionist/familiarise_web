@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireOnboarded } from "@/lib/auth-guard";
 import prisma from "@/lib/prisma";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
 
 /**
@@ -53,6 +54,7 @@ export default async function OrgWorkspaceLayout({
       ownedOrgCount={ownedOrgCount}
       userName={session.user.name ?? null}
       userImage={session.user.image ?? null}
+      accountHref={accountSettingsHref(session.user)}
     >
       {children}
     </OrgWorkspaceShell>

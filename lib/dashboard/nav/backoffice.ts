@@ -1,3 +1,5 @@
+import { Settings } from "lucide-react";
+
 import {
   buildBackofficeNav,
   type BackofficeNavOptions,
@@ -22,7 +24,10 @@ export function buildBackofficeDashboardNav(
   return {
     basePath: cap.basePath,
     groups,
-    utility: [],
+    // The operator's own profile page (#1527 header account menu).
+    settings: { name: "Settings", icon: Settings, path: "settings" },
+    // No back-office help page exists; operators use the public help centre.
+    helpHref: "/support",
     mobileTabs: MOBILE_TABS[cap.tree].filter((p) => paths.has(p)),
   };
 }

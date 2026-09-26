@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { Menu } from "lucide-react";
+import { LifeBuoy, LogOut, Menu } from "lucide-react";
 
 import { cn } from "@/utils/tailwind";
 import { LinkPendingIcon } from "@/components/ui/NavLink";
@@ -19,26 +19,25 @@ import {
   type CollapsibleSidebarGroup,
   type CollapsibleSidebarItem,
 } from "@/components/dashboard/CollapsibleSidebar";
-import {
-  AccountRow,
-  PinnedCtaButton,
-  type DashboardAccount,
-} from "@/components/dashboard/DashboardShellParts";
+import { HeaderCta } from "@/components/dashboard/DashboardShellParts";
 import { isActiveRoute } from "@/components/dashboard/route-active";
 import type { PinnedCta } from "@/lib/dashboard/nav/types";
 
 export interface MobileNavProps {
   basePath: string;
   groups: CollapsibleSidebarGroup[];
-  utility: CollapsibleSidebarItem[];
+  settings: CollapsibleSidebarItem;
+  helpHref: string;
   /** Paths of up to four items shown as tabs. */
   tabs: string[];
   pinnedCta?: PinnedCta;
   pathname: string;
   switcher: ReactNode;
-  account: DashboardAccount;
   onSignOut: () => void;
 }
+
+const SHEET_ROW_CLASS =
+  "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
 
 const TAB_CLASS =
   "relative flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors";
@@ -46,19 +45,19 @@ const TAB_CLASS =
 /**
  * Phone navigation for every shell (#1527 §6): up to four tabs plus Menu,
  * which opens a bottom sheet holding the switcher, the full grouped nav, the
- * utility links, the pinned CTA and the account block with Sign out — so no
- * destination is unreachable below md. Exactly h-16: `.h-dashboard-fill`
- * budgets 4rem for this bar, so no safe-area padding is added here.
+ * persona CTA, Help & support, Settings and Sign out — the header has no room
+ * for the CTA below md, so no destination is unreachable. Exactly h-16:
+ * `.h-dashboard-fill` budgets 4rem for this bar, so no safe-area padding.
  */
 export function MobileNav({
   basePath,
   groups,
-  utility,
+  settings,
+  helpHref,
   tabs,
   pinnedCta,
   pathname,
   switcher,
-  account,
   onSignOut,
 }: Readonly<MobileNavProps>) {
   // Keyed to the pathname it opened on, so any navigation — including a
@@ -68,7 +67,7 @@ export function MobileNav({
   const setOpen = (next: boolean) => setOpenedAt(next ? pathname : null);
   const close = () => setOpen(false);
 
-  const items = [...groups.flatMap((g) => g.items), ...utility];
+  const items = [...groups.flatMap((g) => g.items), settings];
   const tabItems = tabs
     .map((path) => items.find((item) => item.path === path))
     .filter((item): item is CollapsibleSidebarItem => !!item)
@@ -150,28 +149,30 @@ export function MobileNav({
             pathname={pathname}
             onNavigate={close}
           />
-          {(utility.length > 0 || pinnedCta) && (
-            <div className="space-y-1 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-              {utility.map((item) => (
-                <SidebarNavLink
-                  key={item.path}
-                  item={item}
-                  basePath={basePath}
-                  pathname={pathname}
-                  onNavigate={close}
-                />
-              ))}
-              {pinnedCta && (
-                <PinnedCtaButton cta={pinnedCta} onNavigate={close} />
-              )}
-            </div>
-          )}
-          <div className="border-t border-zinc-200 pt-3 dark:border-zinc-800">
-            <AccountRow
-              account={account}
-              onSignOut={onSignOut}
+          <div className="space-y-1 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            {pinnedCta && (
+              <div className="pb-2">
+                <HeaderCta cta={pinnedCta} fullWidth onNavigate={close} />
+              </div>
+            )}
+            <Link href={helpHref} onClick={close} className={SHEET_ROW_CLASS}>
+              <LifeBuoy className="h-5 w-5" />
+              Help &amp; support
+            </Link>
+            <SidebarNavLink
+              item={settings}
+              basePath={basePath}
+              pathname={pathname}
               onNavigate={close}
             />
+            <button
+              type="button"
+              onClick={onSignOut}
+              className={SHEET_ROW_CLASS}
+            >
+              <LogOut className="h-5 w-5" />
+              Sign out
+            </button>
           </div>
         </SheetContent>
       </Sheet>

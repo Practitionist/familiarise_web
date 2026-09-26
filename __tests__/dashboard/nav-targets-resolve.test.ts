@@ -99,7 +99,7 @@ describe("personal + workspace nav targets resolve", () => {
     expectTabsAreItems(nav);
   });
 
-  it("pinned CTAs point at real public pages", () => {
+  it("header CTAs and Help targets point at real pages", () => {
     expect(buildConsultantNav("cp-1").pinnedCta?.href).toBe(
       "/explore/experts/cp-1",
     );
@@ -109,6 +109,33 @@ describe("personal + workspace nav targets resolve", () => {
       ),
     ).toBe(true);
     expect(buildConsulteeNav("ce-1").pinnedCta?.href).toBe("/explore/experts");
+    // #1527 Cloudflare shell — Help is a header link, so pin its target too.
+    const helpPages = [
+      buildConsultantNav("cp-1").helpHref,
+      buildConsulteeNav("ce-1").helpHref,
+      buildWorkspaceNav("ow-1").helpHref,
+      buildBackofficeDashboardNav(backofficeCap("admin")).helpHref,
+    ].map((href) =>
+      href
+        .replace(
+          "/dashboard/consultant/cp-1",
+          "dashboard/consultant/[consultantId]/(features)",
+        )
+        .replace(
+          "/dashboard/consultee/ce-1",
+          "dashboard/consultee/[consulteeId]/(features)",
+        )
+        .replace(
+          "/dashboard/org-workspace/ow-1",
+          "dashboard/org-workspace/[orgWorkspaceId]",
+        )
+        .replace(/^\/support$/, "support"),
+    );
+    for (const dir of helpPages) {
+      expect(existsSync(join(process.cwd(), "app", dir, "page.tsx"))).toBe(
+        true,
+      );
+    }
   });
 });
 
@@ -157,8 +184,7 @@ describe("org nav targets resolve for every role × capability", () => {
     expect(nav.mobileTabs.length).toBeGreaterThanOrEqual(3);
   });
 
-  // Was 20 across six groups; Operations starts collapsed for OWNER, so
-  // about 14 show on first paint.
+  // Was 20 across six groups (#1527 Q7).
   it("a hybrid OWNER who delivers gets the consolidated IA", () => {
     const nav = buildOrganizationNav({
       orgId: "org-1",
@@ -168,9 +194,6 @@ describe("org nav targets resolve for every role × capability", () => {
       consultantProfileId: "cp-1",
     });
     expect(flattenNav(nav).length).toBeLessThanOrEqual(17);
-    expect(
-      nav.groups.find((g) => g.label === "Operations")?.defaultCollapsed,
-    ).toBe(true);
     expect(nav.mobileTabs).toEqual([
       "home",
       "appointments",

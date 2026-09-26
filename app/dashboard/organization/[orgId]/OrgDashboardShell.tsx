@@ -17,6 +17,7 @@ import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-ov
 import { useDashboardBreadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import {
   MEMBER_ROLE_LABEL,
@@ -221,6 +222,7 @@ function OrgDashboardShellInner({
         name: session?.user?.name ?? null,
         image: session?.user?.image ?? null,
         roleLabel,
+        settingsHref: session?.user ? accountSettingsHref(session.user) : null,
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

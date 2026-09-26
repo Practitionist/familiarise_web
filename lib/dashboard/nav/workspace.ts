@@ -1,4 +1,4 @@
-import { Activity, CreditCard, Home, LifeBuoy, Settings } from "lucide-react";
+import { Activity, CreditCard, Home, Settings } from "lucide-react";
 
 import type { DashboardNav } from "./types";
 
@@ -13,8 +13,9 @@ export function buildWorkspaceNav(
   { ownedOrgCount = 2 }: { ownedOrgCount?: number } = {},
 ): DashboardNav {
   const portfolio = ownedOrgCount > 1;
+  const basePath = `/dashboard/org-workspace/${orgWorkspaceId}`;
   return {
-    basePath: `/dashboard/org-workspace/${orgWorkspaceId}`,
+    basePath,
     groups: [
       {
         items: [
@@ -25,15 +26,15 @@ export function buildWorkspaceNav(
                 { name: "Spend", icon: CreditCard, path: "billing" },
               ]
             : []),
-          { name: "Workspace settings", icon: Settings, path: "settings" },
-          { name: "Support", icon: LifeBuoy, path: "support" },
         ],
       },
     ],
-    utility: [],
+    settings: { name: "Workspace settings", icon: Settings, path: "settings" },
+    // The workspace Support page is the operator's help desk (#1527 header).
+    helpHref: `${basePath}/support`,
     mobileTabs: portfolio
-      ? ["home", "activity", "billing", "support"]
-      : ["home", "settings", "support"],
+      ? ["home", "activity", "billing", "settings"]
+      : ["home", "settings"],
   };
 }
 

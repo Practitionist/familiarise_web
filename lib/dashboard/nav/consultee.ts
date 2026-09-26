@@ -4,7 +4,6 @@ import {
   FileText,
   Gift,
   Home,
-  LifeBuoy,
   MessageSquare,
   Search,
   Settings,
@@ -14,8 +13,9 @@ import {
 import type { DashboardNav } from "./types";
 
 /**
- * Client (consultee) IA from #1527 §7.1. Settings left the old "Support" group
- * for the utility block (§13); Feedback and Help fold into Help & support (Q2).
+ * Client (consultee) IA from #1527 §7.1. Settings is the rail's last row and
+ * Help & support lives in the header (Cloudflare shell); Feedback and Help
+ * fold into Help & support (Q2).
  */
 export function buildConsulteeNav(consulteeId: string): DashboardNav {
   return {
@@ -48,10 +48,8 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
         ],
       },
     ],
-    utility: [
-      { name: "Help & support", icon: LifeBuoy, path: "support" },
-      { name: "Settings", icon: Settings, path: "settings" },
-    ],
+    settings: { name: "Settings", icon: Settings, path: "settings" },
+    helpHref: `/dashboard/consultee/${consulteeId}/support`,
     mobileTabs: ["home", "appointments", "messages", "payments"],
     pinnedCta: {
       label: "Find experts",

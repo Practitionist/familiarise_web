@@ -16,20 +16,18 @@ import {
   type DashboardContextBarProps,
 } from "@/components/dashboard/DashboardContextBar";
 import {
-  AccountChip,
-  PinnedCtaButton,
+  AccountMenu,
+  HeaderCta,
+  HelpLink,
   type DashboardAccount,
 } from "@/components/dashboard/DashboardShellParts";
 import { MobileNav } from "@/components/dashboard/MobileNav";
+import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NovuProvider from "@/providers/NovuProvider";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
-import type {
-  DashboardNav,
-  NavItem,
-  PinnedCta,
-} from "@/lib/dashboard/nav/types";
+import type { DashboardNav, NavItem } from "@/lib/dashboard/nav/types";
 
 export type DashboardShellKind =
   | "personal"
@@ -45,9 +43,11 @@ export interface DashboardShellProps {
   badges?: Record<string, number | undefined>;
   /** Rendered at the sidebar top and in the mobile Menu sheet. */
   switcher: ReactNode;
+  /** The header avatar menu's person (#1527 — the rail has no account chip). */
   account: DashboardAccount;
   onSignOut: () => void;
-  contextBar: DashboardContextBarProps;
+  /** The shell owns the right cluster, so callers cannot pass `rightSlot`. */
+  contextBar: Omit<DashboardContextBarProps, "rightSlot">;
   /** Full-width strip above <main> (verification / org status). */
   banner?: ReactNode;
   pathname: string;
@@ -61,37 +61,23 @@ function withBadge(
   return item.badgeKey ? { ...item, badge: badges?.[item.badgeKey] } : item;
 }
 
-function SidebarFooter({
+/** The rail's one bottom row (#1527); reads the collapse state for icon-only. */
+function SidebarSettings({
+  item,
   basePath,
   pathname,
-  utility,
-  pinnedCta,
-  account,
-  onSignOut,
 }: Readonly<{
+  item: CollapsibleSidebarItem;
   basePath: string;
   pathname: string;
-  utility: CollapsibleSidebarItem[];
-  pinnedCta?: PinnedCta;
-  account: DashboardAccount;
-  onSignOut: () => void;
 }>) {
   const collapsed = useSidebarCollapsed();
   return (
     <TooltipProvider delayDuration={0}>
-      {utility.map((item) => (
-        <SidebarNavLink
-          key={item.path}
-          item={item}
-          basePath={basePath}
-          pathname={pathname}
-          collapsed={collapsed}
-        />
-      ))}
-      {pinnedCta && <PinnedCtaButton cta={pinnedCta} collapsed={collapsed} />}
-      <AccountChip
-        account={account}
-        onSignOut={onSignOut}
+      <SidebarNavLink
+        item={item}
+        basePath={basePath}
+        pathname={pathname}
         collapsed={collapsed}
       />
     </TooltipProvider>
@@ -102,12 +88,15 @@ function SidebarFooter({
  * The one dashboard chrome (#1527 §6), shared by the personal, organization,
  * workspace and back-office trees:
  *
- *   ┌ sidebar (md+) ─┬ context bar (sticky h-14) ┐
- *   │ switcher       ├ banner slot               │
- *   │ grouped nav    ├ main (error boundary)     │
- *   │ utility · CTA  │                           │
- *   │ account chip   ├ mobile tabs + Menu (<md)  │
- *   └────────────────┴───────────────────────────┘
+ *   ┌ sidebar (md+) ─┬ context bar: crumbs · CTA · Help · bell · avatar ┐
+ *   │ switcher       ├ banner slot                                      │
+ *   │ grouped nav    ├ main (error boundary)                            │
+ *   │ ── Settings    │                                                  │
+ *   │ collapse       ├ mobile tabs + Menu (<md)                         │
+ *   └────────────────┴──────────────────────────────────────────────────┘
+ *
+ * #1527 (Cloudflare model): the person appears once, as the header avatar
+ * menu; Settings once, at the rail's bottom; Help once, in the header.
  *
  * It owns the Novu provider (the org tree mounted the inbox without one) and
  * the single error boundary. Layouts resolve data and pass pure props.
@@ -135,9 +124,9 @@ export function DashboardShell({
       })),
     [nav.groups, badges],
   );
-  const utility = useMemo(
-    () => nav.utility.map((item) => withBadge(item, badges)),
-    [nav.utility, badges],
+  const settings = useMemo(
+    () => withBadge(nav.settings, badges),
+    [nav.settings, badges],
   );
 
   return (
@@ -154,20 +143,32 @@ export function DashboardShell({
             storageKey={`fw.sidebar.collapsed.${kind}`}
             header={switcher}
             footer={
-              <SidebarFooter
+              <SidebarSettings
+                item={settings}
                 basePath={nav.basePath}
                 pathname={pathname}
-                utility={utility}
-                pinnedCta={nav.pinnedCta}
-                account={account}
-                onSignOut={onSignOut}
               />
             }
           />
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <DashboardContextBar {...contextBar} />
+          <DashboardContextBar
+            {...contextBar}
+            rightSlot={
+              <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+                {/* Below md the CTA lives in the Menu sheet. */}
+                {nav.pinnedCta && (
+                  <div className="hidden md:block">
+                    <HeaderCta cta={nav.pinnedCta} />
+                  </div>
+                )}
+                <HelpLink href={nav.helpHref} />
+                <NotificationInbox />
+                <AccountMenu account={account} onSignOut={onSignOut} />
+              </div>
+            }
+          />
 
           {/* Feeds --dashboard-banner-height, which .h-dashboard-fill
               subtracts so full-height pages stay inside <main>. */}
@@ -188,12 +189,12 @@ export function DashboardShell({
           <MobileNav
             basePath={nav.basePath}
             groups={groups}
-            utility={utility}
+            settings={settings}
+            helpHref={nav.helpHref}
             tabs={nav.mobileTabs}
             pinnedCta={nav.pinnedCta}
             pathname={pathname}
             switcher={switcher}
-            account={account}
             onSignOut={onSignOut}
           />
         </div>
