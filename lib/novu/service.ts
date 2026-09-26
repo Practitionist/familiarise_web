@@ -85,6 +85,7 @@ import {
   formatNotificationDateTime,
   formatNotificationMoney,
   groupRecipientsByTimezone,
+  refundReasonLabel,
   resolveRecipientTimezones,
 } from "./humanize";
 
@@ -643,11 +644,17 @@ export async function notifyPaymentFailed(
  * workflow happens to carry it.
  */
 function refundWire(payload: RefundInput): RefundPayload {
+  // The bell gets the human reason; the Refund row keeps the machine one.
+  // Destructured out first so an unmappable reason is omitted (the template
+  // gates on `{% if payload.reason %}`) rather than riding through raw.
+  const { reason: rawReason, ...rest } = payload;
+  const reason = refundReasonLabel(rawReason);
   return {
-    ...payload,
+    ...rest,
     amount: formatNotificationAmountBare(payload.amount, payload.currency),
     amountFormatted: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
+    ...(reason ? { reason } : {}),
     ...(payload.appointmentType
       ? {
           appointmentType: appointmentTypeLabel(payload.appointmentType),

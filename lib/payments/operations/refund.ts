@@ -485,20 +485,41 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // gateway outcome is known (SUCCEEDED → processed, FAILED → failed follow).
   // Outside the reservation tx and warn-only — never fail the refund itself.
   try {
+    // Each recipient gets the refunds queue THEY can open:
+    // `/dashboard/admin/*` bounces STAFF to their home, so one payload
+    // cannot serve both roles. Grouped by queue — the shared admin queue
+    // plus one queue per distinct staff profile — the same shape as
+    // support-ticket opsRecipients.
     const ops = await prisma.user.findMany({
       where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
-      select: { id: true },
+      select: { id: true, role: true, staffProfileId: true },
     });
-    if (ops.length > 0) {
+    const byQueue = new Map<string, string[]>();
+    for (const o of ops) {
+      // The admin tree is ADMIN-only (its layout bounces anyone else to
+      // /dashboard): a STAFF row without a staff profile has no refunds
+      // queue it can open, so it gets no bell rather than a dead link.
+      const queue =
+        o.role === UserRole.ADMIN
+          ? "/dashboard/admin/refunds"
+          : o.staffProfileId
+            ? `/dashboard/staff/${o.staffProfileId}/refunds`
+            : null;
+      if (!queue) continue;
+      const bucket = byQueue.get(queue);
+      if (bucket) bucket.push(o.id);
+      else byQueue.set(queue, [o.id]);
+    }
+    for (const [queue, ids] of byQueue) {
       await notifyRefundRequested(
-        ops.map((o) => o.id),
+        ids,
         {
           // A refund inherits the org-ness of the payment it reverses.
           ...notificationScope(payment.organizationId),
           amount: requested,
           currency: payment.currency,
           ...(input.reason ? { reason: input.reason } : {}),
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          dashboardUrl: `${getAppUrl()}${queue}`,
         },
         // Notification identity = the refund row, not the payload shape.
         reserved.id,
