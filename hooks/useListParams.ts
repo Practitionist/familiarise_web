@@ -129,14 +129,18 @@ export function useListParams<F extends string = never>(
 
   const setParams = useCallback(
     (patch: ListParamsPatch<F>) => {
-      const qs = nextListSearch(searchParams.toString(), patch, defaultSort);
+      // #1527 review — read the URL live rather than the `searchParams`
+      // closure: `replaceState` doesn't trigger a rerender, so two calls
+      // before one lands both closed over the same stale value and the
+      // second overwrote the first instead of composing on top of it.
+      const qs = nextListSearch(window.location.search, patch, defaultSort);
       window.history.replaceState(
         window.history.state,
         "",
         qs ? `${pathname}?${qs}` : pathname,
       );
     },
-    [pathname, searchParams, defaultSort],
+    [pathname, defaultSort],
   );
 
   return {
