@@ -761,6 +761,7 @@ export function AppointmentDetailClient({
             appointmentId={appointmentId}
             proposal={openProposal}
             role={role}
+            readOnly={adapter.readOnly}
           />
         )}
 

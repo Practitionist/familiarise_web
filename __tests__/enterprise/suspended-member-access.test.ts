@@ -35,6 +35,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
 import { flattenNav } from "@/lib/dashboard/nav/types";
 import { deriveActionCenter } from "@/lib/enterprise/org-activation";
+import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedResponse,
+} from "@/lib/enterprise/suspended-member-sessions";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const DASH = "app/dashboard/organization/[orgId]";
@@ -119,6 +123,32 @@ describe("where allowSuspended is used", () => {
     expect(checkout).toContain('callerMembership.status !== "ACTIVE"');
     expect(checkout).toContain('code: "ORG_MEMBERSHIP_REQUIRED"');
   });
+});
+
+it("a suspended learner can't cancel or reschedule an org-funded booking (#1527 3c)", async () => {
+  expect(await isSuspendedInFundingOrg("u1", "o")).toBe(true);
+  expect(await isSuspendedInFundingOrg("u1", null)).toBe(false);
+  const res = membershipSuspendedResponse();
+  expect(res.status).toBe(403);
+  expect((await res.json()).code).toBe("MEMBERSHIP_SUSPENDED");
+  const API = "app/api/appointments/[appointmentId]";
+  // Refused before any quote or refund logic runs.
+  const cancel = read(`${API}/cancel/route.ts`);
+  expect(cancel.indexOf("isSuspendedInFundingOrg(")).toBeGreaterThan(-1);
+  expect(cancel.indexOf("isSuspendedInFundingOrg(")).toBeLessThan(
+    cancel.indexOf("hasActiveDisputeForAppointment(appointmentId)"),
+  );
+  const preview = read(`${API}/cancel/preview/route.ts`);
+  expect(preview.indexOf("isSuspendedInFundingOrg(")).toBeGreaterThan(-1);
+  expect(preview.indexOf("isSuspendedInFundingOrg(")).toBeLessThan(
+    preview.indexOf("await quoteIndividualBooking("),
+  );
+  expect(read(`${API}/reschedule/route.ts`)).toContain(
+    "throw membershipSuspendedError()",
+  );
+  expect(read(`${API}/reschedule/respond/route.ts`)).toContain(
+    "return membershipSuspendedResponse()",
+  );
 });
 
 it("the suspended nav is Overview + Appointments only", () => {

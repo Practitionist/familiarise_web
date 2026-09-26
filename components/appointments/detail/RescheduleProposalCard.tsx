@@ -72,12 +72,15 @@ interface RescheduleProposalCardProps {
   proposal: OpenRescheduleProposal;
   /** Which detail page hosts the card — copy only, never authorization. */
   role: "consultee" | "consultant";
+  /** Suspended org member (#1527 decision 6): no answers; the API refuses too. */
+  readOnly?: boolean;
 }
 
 export function RescheduleProposalCard({
   appointmentId,
   proposal,
   role,
+  readOnly = false,
 }: Readonly<RescheduleProposalCardProps>) {
   const format = useZonedFormat();
   const { toast } = useToast();
@@ -187,7 +190,14 @@ export function RescheduleProposalCard({
         {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a")}
       </p>
 
-      {viewerId && (
+      {readOnly && (
+        <p className="mt-4 border-t border-border pt-4 text-sm text-muted-foreground">
+          Your organisation membership is suspended, so only your organisation
+          can answer this request.
+        </p>
+      )}
+
+      {viewerId && !readOnly && (
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
           {isInitiator ? (
             <Button

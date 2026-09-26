@@ -43,6 +43,10 @@ import {
 } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedResponse,
+} from "@/lib/enterprise/suspended-member-sessions";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
@@ -418,6 +422,23 @@ export async function POST(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
       );
+    }
+
+    // #1527 decision 6 — a suspended learner keeps join, not cancel, on an
+    // org-funded booking; refused before any refund logic.
+    const isLearner =
+      !!consulteeProfileId &&
+      (consulteeProfileId === appointment.consultation?.requestedById ||
+        consulteeProfileId === appointment.subscription?.requestedById);
+    if (
+      isLearner &&
+      !isPrivilegedUser &&
+      (await isSuspendedInFundingOrg(
+        session.user.id,
+        appointment.organizationId,
+      ))
+    ) {
+      return membershipSuspendedResponse();
     }
 
     // Extract notification data BEFORE transaction (appointment will be deleted)

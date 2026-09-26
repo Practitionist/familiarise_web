@@ -51,6 +51,10 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedError,
+} from "@/lib/enterprise/suspended-member-sessions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 
@@ -180,6 +184,12 @@ export async function POST(
       orgScope?.organizationId,
       "reschedule",
     );
+    // #1527 decision 6 — read here for the same pool reason; applied to the
+    // learner side once the transaction knows who is asking.
+    const actorSuspendedInFundingOrg = await isSuspendedInFundingOrg(
+      session.user.id,
+      orgScope?.organizationId,
+    );
 
     // Start transaction
     // #1319 — serialize lifecycle mutations per appointment (lock order:
@@ -289,6 +299,14 @@ export async function POST(
 
           if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
             throw new RescheduleAuthorizationError();
+          }
+          if (
+            initiatorRole === "CONSULTEE" &&
+            !isOrgAdminActor &&
+            !isPrivilegedUser &&
+            actorSuspendedInFundingOrg
+          ) {
+            throw membershipSuspendedError();
           }
 
           // Derive type from DB instead of trusting query param

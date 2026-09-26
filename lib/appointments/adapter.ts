@@ -52,6 +52,9 @@ export interface AppointmentActionAdapter {
    *  open them — AppointmentsShell for the list, AppointmentDetailClient for
    *  the detail page. Callers of those do NOT mount it themselves. */
   renderDialogs(): ReactNode;
+  /** Set by `readOnlyAdapter`: surfaces outside the adapter (the reschedule
+   *  proposal card) hide their actions too. */
+  readOnly?: boolean;
 }
 
 /**
@@ -71,5 +74,6 @@ export function readOnlyAdapter(
         : { ...action, onClick: undefined, href: undefined, disabled: true };
     },
     overflowItems: () => [],
+    readOnly: true,
   };
 }
