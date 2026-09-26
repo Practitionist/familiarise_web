@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import UseCasePageLayout from "../UseCasePageLayout";
 import type { UseCasePageData } from "../UseCasePageLayout";
+import { SUBSCRIPTION_HOST_NO_SHOW_ANSWER } from "@/lib/support/session-outcome-copy";
 
 export const metadata: Metadata = {
   title: "Long-Term 1:1 Mentorship in India | Familiarise",
@@ -255,9 +256,11 @@ const data: UseCasePageData = {
         // #1569 B3: a mentor no-show on a subscription session is voided
         // automatically and returned to the plan's allowance (D4), not
         // routed through the class/webinar 14-day make-up — CodeRabbit
-        // flagged the earlier wording for conflating the two remedies.
-        answer:
-          "That session is voided automatically and returned to your plan's allowance so you can use it later. Any voided session still unused when your plan or billing cycle ends is refunded automatically. If the expert cancels a session outright, that session is refunded in full regardless of when they cancel.",
+        // flagged the earlier wording for conflating the two remedies. Copy
+        // now lives in lib/support/session-outcome-copy.ts, shared with the
+        // college-students FAQ, to avoid a Sonar CPD match against the
+        // identically shaped FAQ item on the other use-cases pages (#1833).
+        answer: SUBSCRIPTION_HOST_NO_SHOW_ANSWER,
       },
       {
         question: "Can I change mentors?",

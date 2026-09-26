@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import UseCasePageLayout from "../UseCasePageLayout";
 import type { UseCasePageData } from "../UseCasePageLayout";
+import { CONSULTATION_HOST_NO_SHOW_ANSWER } from "@/lib/support/session-outcome-copy";
 
 export const metadata: Metadata = {
   title: "Career Guidance for College Students in India | Familiarise",
@@ -265,10 +266,12 @@ const data: UseCasePageData = {
         // #1569 B3: an expert no-show on a consultation is handled
         // automatically (D4) — no manual review to wait on, no reschedule
         // promise. #1833 review: "absent for the session" read as requiring
-        // a total no-show; the void rule also covers a host who is absent
-        // long enough and then joins late (CodeRabbit).
-        answer:
-          "That's automatic, not something you need to prove: if your expert isn't there for enough of the session, it's voided and refunded in full without a manual review. Report it from the booking if you'd like our team to take a look anyway.",
+        // a total no-show, and the full-refund promise wasn't scoped to
+        // consultations (CodeRabbit); copy now lives in
+        // lib/support/session-outcome-copy.ts, shared with the mentorship
+        // FAQ, to avoid a Sonar CPD match against the identically shaped
+        // FAQ item on the other use-cases pages.
+        answer: CONSULTATION_HOST_NO_SHOW_ANSWER,
       },
       {
         question: "Can I send my resume before the call?",
