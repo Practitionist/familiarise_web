@@ -398,17 +398,22 @@ export async function classSeriesLedgers(
       appointment: { classId },
       userId: { in: payments.map((p) => p.userId) },
     },
-    select: { userId: true, createdAt: true },
+    select: { userId: true, createdAt: true, sessionsPurchased: true },
   });
   const ledgers = new Map<string, SeriesSeat>();
   for (const p of payments) {
     if (!p.appointmentId) continue;
-    const seatAt = seats.find((s) => s.userId === p.userId)?.createdAt;
+    const seat = seats.find((s) => s.userId === p.userId);
+    const seatAt = seat?.createdAt;
     const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
     ledgers.set(p.id, {
       ...(await seatLedger(
         prisma,
-        { appointmentId: p.appointmentId, createdAt: joinedAt },
+        {
+          appointmentId: p.appointmentId,
+          createdAt: joinedAt,
+          sessionsPurchased: seat?.sessionsPurchased,
+        },
         p.amount,
       )),
       occRefundedPaise: await occurrenceRefundsPaise(prisma, p.id),

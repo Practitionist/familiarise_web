@@ -453,7 +453,7 @@ export async function skipClassMakeUp(args: {
       userId: args.userId,
       ...SEATED,
     },
-    select: { createdAt: true, paymentId: true },
+    select: { createdAt: true, paymentId: true, sessionsPurchased: true },
   });
   // The live seat's own order: an earlier purchase may be a left-and-refunded seat.
   const payment = seat
@@ -491,7 +491,11 @@ export async function skipClassMakeUp(args: {
   }
   const ledger = await seatLedger(
     prisma,
-    { appointmentId: args.appointmentId, createdAt: joinedAt },
+    {
+      appointmentId: args.appointmentId,
+      createdAt: joinedAt,
+      sessionsPurchased: seat.sessionsPurchased,
+    },
     payment.amount,
   );
   if (ledger.unitPaise <= BigInt(0)) {

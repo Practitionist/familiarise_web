@@ -1124,6 +1124,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             sessionsPerWeek: true,
             durationInMonths: true,
             totalSessions: true,
+            lateJoinUntilSession: true,
             consultantProfile: {
               select: {
                 id: true,
@@ -1160,6 +1161,10 @@ export async function getMyCollaborations(consultantProfileId: string) {
                         startsAt: true,
                         endsAt: true,
                         isTentative: true,
+                        // #1819 — read by the batch card derivation.
+                        ordinal: true,
+                        completionStatus: true,
+                        deletedAt: true,
                       },
                       orderBy: { startsAt: "asc" },
                     },
@@ -1270,6 +1275,7 @@ export async function getHostedCollaborations(
         sessionsPerWeek: true,
         durationInMonths: true,
         totalSessions: true,
+        lateJoinUntilSession: true,
         collaborators: {
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {
@@ -1293,6 +1299,10 @@ export async function getHostedCollaborations(
                     startsAt: true,
                     endsAt: true,
                     isTentative: true,
+                    // #1819 — read by the batch card derivation.
+                    ordinal: true,
+                    completionStatus: true,
+                    deletedAt: true,
                   },
                   orderBy: { startsAt: "asc" },
                 },

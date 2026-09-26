@@ -228,6 +228,8 @@ export class ClassService {
       })),
       consultantProfileId: consultantId,
       startDate: startDate,
+      lateJoinUntilSession: plan?.lateJoinUntilSession ?? null,
+      lateJoinersGetPastRecordings: plan?.lateJoinersGetPastRecordings ?? false,
     };
 
     if (isUpdate) {

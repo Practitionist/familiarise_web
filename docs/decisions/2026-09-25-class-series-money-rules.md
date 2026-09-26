@@ -177,8 +177,10 @@ session is cancelled.
 - **Late-join pricing and batch presentation** — pro-rata pricing for a
   learner who joins after a series has started, and how batches are shown
   and closed to new enrolment — are filed as their own issue, #1819, and
-  are a separate PR after this train. Until then, checkout keeps today's
-  full-price late join, and decision 3's per-seat unit derivation is the
-  exit-right safety net for a mid-series joiner.
+  are a separate PR after this train. That PR has landed: checkout now
+  closes a batch at the host's cutoff and pro-rates a late join, and the
+  seat stores `sessionsPurchased`, which replaces decision 3's derivation
+  as the unit's divisor. The derivation remains only for seats sold
+  before the column existed.
 - **A minimum batch size** before a class is guaranteed to run is post-MVP,
   tracked in #1745.

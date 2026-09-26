@@ -124,8 +124,8 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
             <CardContent className="space-y-3 text-sm">
               <p>
                 {v.series.delivered} of {v.series.N} sessions delivered,{" "}
-                {v.series.remaining} still ahead, {v.series.misses} missed by
-                the host.{" "}
+                {v.series.remaining} still ahead, {v.series.misses} missed (
+                {v.series.hostMisses} by the host).{" "}
                 {v.series.exitRight
                   ? "Learners may leave with every undelivered session refunded."
                   : "Learners have no exit right yet."}

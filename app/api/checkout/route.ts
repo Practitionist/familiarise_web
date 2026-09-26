@@ -27,6 +27,7 @@ import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-repla
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -303,6 +304,8 @@ export async function POST(req: NextRequest) {
       {
         error: classified.errorMessage,
         errorType: classified.errorType,
+        // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
+        ...(error instanceof BookingRuleError ? { code: error.code } : {}),
         ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         timestamp: new Date().toISOString(),
       },

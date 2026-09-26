@@ -166,6 +166,7 @@ async function readSeats(
       userId: true,
       status: true,
       createdAt: true,
+      sessionsPurchased: true,
       user: { select: { name: true } },
       payment: {
         select: {
@@ -197,6 +198,7 @@ async function readSeats(
       joinedAt,
       occurrences: live,
       now,
+      sessionsPurchased: p.sessionsPurchased,
     });
     return {
       userId: p.userId,

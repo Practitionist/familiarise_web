@@ -88,15 +88,17 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 
 **Additional class-specific fields:**
 
-| Field                    | Type    | Description                                                  |
-| ------------------------ | ------- | ------------------------------------------------------------ |
-| `maxParticipants`        | Int     | Capacity limit for enrollment                                |
-| `sessionsPerWeek`        | Int     | Sessions per week (replaces `sessionsPerWeek`)               |
-| `recordingEnabled`       | Boolean | Whether sessions are recorded                                |
-| `recordingStoragePolicy` | Enum    | `STREAM_ONLY` (2-week temp) or `SUPABASE_PERMANENT`          |
-| `certificateProvided`    | Boolean | Whether completers get a certificate                         |
-| `classContents[]`        | Array   | Ordered curriculum items (title, description, hoursAllotted) |
-| `collaborators`          | Via UI  | Co-instructors invited through CollaboratorsTab              |
+| Field                          | Type    | Description                                                       |
+| ------------------------------ | ------- | ----------------------------------------------------------------- |
+| `maxParticipants`              | Int     | Capacity limit for enrollment                                     |
+| `sessionsPerWeek`              | Int     | Sessions per week (replaces `sessionsPerWeek`)                    |
+| `recordingEnabled`             | Boolean | Whether sessions are recorded                                     |
+| `recordingStoragePolicy`       | Enum    | `STREAM_ONLY` (2-week temp) or `SUPABASE_PERMANENT`               |
+| `certificateProvided`          | Boolean | Whether completers get a certificate                              |
+| `classContents[]`              | Array   | Ordered curriculum items (title, description, hoursAllotted)      |
+| `collaborators`                | Via UI  | Co-instructors invited through CollaboratorsTab                   |
+| `lateJoinUntilSession`         | Int?    | Last session a learner may still join before it starts (#1819)    |
+| `lateJoinersGetPastRecordings` | Boolean | Whether a late joiner sees recordings of earlier sessions (#1819) |
 
 **Key difference from subscription:** Class plans support co-instructors — `Collaborator[]` rows carrying `collaboratorType: CLASS`, whose revenue shares are stored as integer basis points in `revenueShareBps` (#784 merged the old `ClassCollaborator` and `WebinarCollaborator` models into one `Collaborator`; #772 B5 moved the share off a float percentage) — and the capacity system via `maxParticipants`.
 
@@ -136,6 +138,14 @@ Consultees find plans through:
 - `schedulingPeriodStartsAt` (for subscriptions; the buyer answers "When do you want to start?")
 - `discountCode` (optional)
 - `referralCreditAmount` (optional)
+
+### 3b-i. Class batches and late join (#1819)
+
+A class listing (`ClassPlan`) runs as one or more batches, and each batch is one `Class` row with its own sessions and seats. The explore page shows one card per batch, labelled by its start date and weekday pattern (for example "Starts Mon 28 Sep · Mondays", or "Varies" when the days drift), with running and upcoming batches first, finished batches collapsed under "Past batches", the seats left, the free-cancellation line and an "Enrol in this batch" button that opens checkout with that batch's `eventId`. One pure function, `deriveBatchCards` in `lib/booking/batch-cards.ts`, produces those cards for the explore page, the checkout header and the host's class list, so all three agree on order, label and state.
+
+By default a batch stops taking enrolments when its first session starts. A host can instead let learners join until a later session through "Let learners join until session N" in the class editor, which writes `ClassPlan.lateJoinUntilSession` (at least 1 and at most the plan's `totalSessions`; empty means session 1). A learner who joins after the first session pays only for the sessions that have not started, as described in `docs/payments/checkout-flow/02-webinar-and-class.md`, and the seat records that count in `AppointmentParticipant.sessionsPurchased`. Checkout refuses a batch past its cutoff with the typed 409 `ENROLMENT_CLOSED`.
+
+A late joiner does not see recordings of the sessions that ran before their seat unless the host turns on "Late joiners can watch earlier recordings" (`ClassPlan.lateJoinersGetPastRecordings`). A learner whose only seats on the listing are late joins also does not see recordings of the listing's other batches, because those would replay the sessions they did not buy. The class recordings list, the learner's recordings list and the single-recording read all apply both rules through `lib/stream/late-join-recordings.ts`.
 
 As of #1766 the subscription's scheduling window is the first cycle only. The server derives `schedulingPeriodEndsAt` as the start plus one cycle (seven zone-days for a weekly plan) in the consultant's scheduling timezone through `firstCycleWindow`, and a `schedulingPeriodEndsAt` sent by an older client is accepted and ignored rather than refused. The same checkout writes `Subscription.sessionsTotal` from the plan, which freezes the entitlement at purchase.
 

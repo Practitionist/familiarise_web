@@ -18,7 +18,10 @@ import {
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
 import { NEEDS_HUMAN } from "@/lib/booking/misses";
-import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
+import {
+  OCCURRENCE_COMPLETION_ALLOWED_FROM,
+  transitionOccurrenceCompletion,
+} from "@/lib/booking/transitions";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "./ops-refusal-error";
 
@@ -189,6 +192,16 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   });
   assertDecided(occ, now);
   const to = COMPLETION_FOR_OUTCOME[args.outcome];
+  // #1834 — the door's fromIn is the row's own status, so the map is asked here.
+  if (
+    to !== occ.completionStatus &&
+    !OCCURRENCE_COMPLETION_ALLOWED_FROM[to].includes(occ.completionStatus)
+  ) {
+    throw new OpsRefusal(
+      "TRANSITION_NOT_ALLOWED",
+      `A ${occ.completionStatus.toLowerCase()} session cannot be given this outcome.`,
+    );
+  }
   if (occ.completionStatus === "VOIDED" && to !== "VOIDED") {
     await assertUnvoidable(tx, occ);
   }

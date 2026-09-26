@@ -474,7 +474,7 @@ export async function restoreClassSeatCredits(input: {
           }
           const seat = await tx.appointmentParticipant.findFirst({
             where: { paymentId: payment.id },
-            select: { createdAt: true, status: true },
+            select: { createdAt: true, status: true, sessionsPurchased: true },
           });
           const joinedAt =
             seat && seat.createdAt > payment.createdAt
@@ -482,7 +482,11 @@ export async function restoreClassSeatCredits(input: {
               : payment.createdAt;
           const ledger = await seatLedger(
             tx,
-            { appointmentId, createdAt: joinedAt },
+            {
+              appointmentId,
+              createdAt: joinedAt,
+              sessionsPurchased: seat?.sessionsPurchased,
+            },
             creditValue,
           );
           const seatLive =

@@ -4136,42 +4136,46 @@ enum WebinarStatus {
 // Many-Many Class
 
 model ClassPlan {
-  id                     String                 @id @default(cuid())
-  title                  String
+  id                           String                 @id @default(cuid())
+  title                        String
   // See ConsultationPlan.subtitle.
-  subtitle               String?                @db.VarChar(160)
+  subtitle                     String?                @db.VarChar(160)
   // Nullable in the DB (relaxed for legacy rows) but REQUIRED by
   // ClassPlanSchema — authoring always supplies one; the relaxation exists so
   // pre-validation rows don't block migrations.
-  description            String?                @db.Text
-  topics                 Topic[]                @relation("TopicToClassPlan")
-  classContents          ClassContent[]
-  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          Currency               @default(INR)
-  certificateProvided    Boolean                @default(false)
-  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
-  durationInMonths       Int                    @default(1) // Duration in months
+  description                  String?                @db.Text
+  topics                       Topic[]                @relation("TopicToClassPlan")
+  classContents                ClassContent[]
+  price                        BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  priceCurrency                Currency               @default(INR)
+  certificateProvided          Boolean                @default(false)
+  recordingEnabled             Boolean                @default(false) // Allow consultant to record sessions
+  recordingStoragePolicy       RecordingStoragePolicy @default(STREAM_ONLY)
+  durationInMonths             Int                    @default(1) // Duration in months
   // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
-  sessionsPerWeek        Int                    @default(1)
-  sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
-  totalSessions          Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
-  totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport           PlanEmailSupport       @default(GENERAL)
+  sessionsPerWeek              Int                    @default(1)
+  sessionDurationInHours       Float                  @default(1.0) // Duration of each session in hours
+  totalSessions                Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
+  totalHours                   Float                  @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport                 PlanEmailSupport       @default(GENERAL)
   // Default mirrors WebinarPlan's usable floor (a 1-participant "class" is a
   // consultation); per-instance capacity lives on Class.maxParticipants.
-  maxParticipants        Int                    @default(30)
-  refundWindowHours      Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  maxParticipants              Int                    @default(30)
+  refundWindowHours            Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
+  // #1819 — last session ordinal a learner may still join before it starts (null → session 1 only).
+  lateJoinUntilSession         Int?
+  // #1819 — late joiners see recordings of sessions that ran before their seat.
+  lateJoinersGetPastRecordings Boolean                @default(false)
+  language                     String                 @default("English")
+  level                        PlanLevel              @default(BEGINNER)
+  prerequisites                String?                @default("None")
+  materialProvided             String?                @default("None")
+  learningOutcomes             String[]               @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
-  imageUrl               String?
-  slug                   String?                @unique
+  targetAudience               String[]               @default([])
+  whatsIncluded                String[]               @default([])
+  imageUrl                     String?
+  slug                         String?                @unique
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant. See the mirror comment on WebinarPlan.
@@ -4538,6 +4542,9 @@ model AppointmentParticipant {
 
   // #1780 row 2 — the plan window snapshot at seat creation (null → plan → 24 h)
   refundWindowHours Int?
+
+  // #1819 — sessions this seat paid for; the refund unit is amount / this (null → derived).
+  sessionsPurchased Int?
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz

@@ -411,6 +411,25 @@ export const CLASS_MANIFEST: OfferingManifest = {
           required: true,
           span: 3,
         },
+        {
+          // #1819 — empty keeps enrolment closing when session 1 starts.
+          name: "lateJoinUntilSession",
+          kind: "number",
+          label: "Let learners join until session N",
+          min: 1,
+          step: 1,
+          description:
+            "Leave empty to close enrolment when session 1 starts. A late joiner pays only for the sessions left.",
+          span: 3,
+        },
+        {
+          name: "lateJoinersGetPastRecordings",
+          kind: "switch",
+          label: "Late joiners can watch earlier recordings",
+          description:
+            "When off, a late joiner sees recordings only from the sessions after they joined.",
+          span: 3,
+        },
       ],
     },
     {

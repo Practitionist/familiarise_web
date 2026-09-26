@@ -12,12 +12,33 @@ interface NeedsHuman {
   message: string;
   createdAt: string;
   paymentId: string | null;
+  /** #1834 — a credit seat gets the credit door; a held paid seat the refund door. */
+  kind?: "credit" | "held-paid-seat";
+  occurrenceId?: string | null;
+  unitPaise?: number | null;
 }
 
 async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
   const res = await fetch("/api/admin/refunds/needs-human");
   if (!res.ok) throw new Error("Failed to load");
   return res.json() as Promise<{ items: NeedsHuman[] }>;
+}
+
+/** #1834 — a held seat opens the refund door keyed to its session, at its unit. */
+function doorFor(item: NeedsHuman) {
+  const paymentId = item.paymentId ?? undefined;
+  if (item.kind !== "held-paid-seat") {
+    return { door: "credits" as const, paymentId };
+  }
+  return {
+    door: "issue" as const,
+    paymentId,
+    occurrenceId: item.occurrenceId ?? undefined,
+    amountRupees:
+      typeof item.unitPaise === "number"
+        ? (item.unitPaise / 100).toFixed(2)
+        : undefined,
+  };
 }
 
 /**
@@ -28,6 +49,8 @@ export function RefundDoorsPanel() {
   const [open, setOpen] = useState<{
     door: RefundDoor;
     paymentId?: string;
+    occurrenceId?: string;
+    amountRupees?: string;
   } | null>(null);
   const { data } = useQuery({
     queryKey: ["money-refund-needs"],
@@ -61,9 +84,7 @@ export function RefundDoorsPanel() {
         </div>
         {items.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium">
-              Credit seats waiting for a partial return
-            </p>
+            <p className="text-sm font-medium">Seats waiting for a human</p>
             <ul className="divide-y divide-border rounded-md border">
               {items.map((item) => (
                 <li
@@ -75,14 +96,11 @@ export function RefundDoorsPanel() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() =>
-                        setOpen({
-                          door: "credits",
-                          paymentId: item.paymentId ?? undefined,
-                        })
-                      }
+                      onClick={() => setOpen(doorFor(item))}
                     >
-                      Return credits
+                      {item.kind === "held-paid-seat"
+                        ? "Issue refund"
+                        : "Return credits"}
                     </Button>
                   )}
                 </li>
@@ -92,9 +110,11 @@ export function RefundDoorsPanel() {
         )}
       </CardContent>
       <RefundDoorDialog
-        key={`${open?.door}-${open?.paymentId ?? ""}`}
+        key={`${open?.door}-${open?.paymentId ?? ""}-${open?.occurrenceId ?? ""}`}
         door={open?.door ?? null}
         presetPaymentId={open?.paymentId}
+        presetOccurrenceId={open?.occurrenceId}
+        presetAmountRupees={open?.amountRupees}
         onClose={() => setOpen(null)}
       />
     </Card>
