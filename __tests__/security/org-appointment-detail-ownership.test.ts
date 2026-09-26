@@ -10,10 +10,10 @@
  * SSR ownership hole closed in #1029, where a server page trusted a route param
  * because a client layout appeared to have checked it.
  *
- * Participation rather than `operations.read`: the page renders documents and
- * offers reschedule and cancel, which are participant actions. An operator's
- * view of org sessions stays the metadata-only list (ADR 20), so an OWNER who
- * is not on the session gets a 404 here, not a read.
+ * #1527 widened WHO gets a view, never what a non-participant sees: the
+ * attendee gets the full detail, the delivering expert the consultant detail,
+ * and operators only ADR 20 metadata (payer admins may also cancel or ask to
+ * reschedule, Q11). Anyone else still gets a 404.
  */
 
 import { readFileSync } from "fs";
@@ -48,11 +48,26 @@ describe("org appointment detail binds both ids", () => {
     // appointment exists to someone who should not know that.
     const checks = [
       "if (access.error)",
-      "if (!detail || !profile) notFound()",
+      "if (!detail) notFound()",
       "if (appointment.organizationId !== orgId) notFound()",
-      "if (!owns) notFound()",
+      'if (!actsForOrg && !hasOrgPermission(role, "operations.read")) notFound()',
     ];
     for (const c of checks) expect(src).toContain(c);
+  });
+
+  it("gives the delivering expert the consultant detail, not a 404", () => {
+    expect(src).toContain(
+      "appointmentViewerSides(userId, detail).asConsultant",
+    );
+    expect(src).toContain("<DelivererDetailClient");
+  });
+
+  it("offers org-actor actions only to payer admins, only on 1:1 bookings", () => {
+    expect(src).toContain("const actsForOrg = isPayerAdminRole(role)");
+    expect(src).toContain(
+      "appointment.consultation ?? appointment.subscription",
+    );
+    expect(src).toMatch(/canCancel=\{\s*actsForOrg && status !== null/);
   });
 
   it("orders the org check before the participation check", () => {

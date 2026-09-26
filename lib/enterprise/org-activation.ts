@@ -116,7 +116,8 @@ export function deriveActivationChecklist(
 
   steps.push({
     key: "invite",
-    label: s.canHost && !s.canSponsor ? "Invite your experts" : "Invite members",
+    label:
+      s.canHost && !s.canSponsor ? "Invite your experts" : "Invite members",
     done: s.memberCount > 1,
     // #1132 — `${base}/invitations` is a hard 404: ADR 19 folded invitations
     // into the members page as a tab and this link was never updated, so the
@@ -159,7 +160,8 @@ export function deriveActionCenter(
       key: "pending-verification",
       severity: "warning",
       title: "Verification pending",
-      body: "Inviting members and moving money unlocks once a platform admin verifies your organization.",
+      // #1762-1 — checkout accepts unverified orgs; say what verification lifts.
+      body: "Until a platform admin verifies your organization, invitations are capped and invoice-funded bookings carry a starter credit limit.",
       ctaLabel: "Review setup",
       ctaHref: `${base}/settings`,
     });
@@ -186,7 +188,10 @@ export function deriveActionCenter(
     });
   }
 
-  if (s.creditPoolMaxUtilizationPct != null && s.creditPoolMaxUtilizationPct >= 80) {
+  if (
+    s.creditPoolMaxUtilizationPct !== null &&
+    s.creditPoolMaxUtilizationPct >= 80
+  ) {
     items.push({
       key: "credit-pool-near-cap",
       severity: "warning",
@@ -251,7 +256,7 @@ export function deriveActionCenter(
   }
 
   if (
-    s.walletLowBalancePaise != null &&
+    s.walletLowBalancePaise !== null &&
     s.walletLowBalancePaise < WALLET_LOW_BALANCE_PAISE
   ) {
     items.push({

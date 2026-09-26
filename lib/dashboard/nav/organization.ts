@@ -23,7 +23,12 @@ import {
 
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 
-import type { DashboardNav, NavGroup, NavItem } from "./types";
+import {
+  flattenNav,
+  type DashboardNav,
+  type NavGroup,
+  type NavItem,
+} from "./types";
 
 export interface OrganizationNavInput {
   orgId: string;
@@ -260,3 +265,18 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   new: "New",
   edit: "Edit",
 };
+
+/**
+ * #1762-11 — true when `href` lands on an org page this viewer's nav offers,
+ * so Home's CTAs never point at a page that would bounce them. Settings is
+ * always reachable (its tabs gate themselves, ADR 23).
+ */
+export function canOpenOrgPage(
+  input: Omit<OrganizationNavInput, "orgId">,
+  href: string,
+): boolean {
+  const match = /\/dashboard\/organization\/[^/?#]+\/([^/?#]+)/.exec(href);
+  if (!match) return true;
+  const nav = buildOrganizationNav({ ...input, orgId: "_" });
+  return flattenNav(nav).some((item) => item.path === match[1]);
+}

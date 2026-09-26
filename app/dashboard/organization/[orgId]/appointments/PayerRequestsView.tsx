@@ -6,7 +6,7 @@ import type { OrgPendingRequest } from "@/lib/data/org-pending-requests";
 
 /**
  * The payer's read-only view of unallocated org-funded requests (#1166 B2B
- * gap 8).
+ * gap 8) — Appointments › Unscheduled since #1527 Q7.
  *
  * Deliberately has no allocate control. Choosing a session's times is the
  * delivering expert's act, and giving an OWNER a button that books someone

@@ -7,10 +7,10 @@ import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 /**
  * Bare /[orgId] route.
  *
- * Routing by role:
+ * Routing by role and org capability (ORG-19, #1527):
  *   - MANAGER+      → /home (operator overview)
- *   - LEARNER       → /my-program (per-org sponsored allocation view)
- *   - EXPERT        → /compensation (per-org payout + RateCard view)
+ *   - LEARNER       → /my-program in a sponsoring org, else /appointments
+ *   - EXPERT        → /compensation in a hosting org, else /appointments
  *   - SUPPORT       → /home (read-only operator views; rank-30 passes
  *                    role checks on the lighter pages)
  *   - no membership → personal dashboard fallback (resolver may return
@@ -37,15 +37,29 @@ export default async function OrgRoot({
           organizationId: orgId,
         },
       },
-      select: { role: true, status: true },
+      select: {
+        role: true,
+        status: true,
+        organization: { select: { canSponsor: true, canHost: true } },
+      },
     });
 
     if (member?.status === "ACTIVE") {
+      const base = `/dashboard/organization/${orgId}`;
+      // Those pages need the capability; without it they'd bounce to home.
       if (member.role === "LEARNER") {
-        redirect(`/dashboard/organization/${orgId}/my-program`);
+        redirect(
+          member.organization.canSponsor
+            ? `${base}/my-program`
+            : `${base}/appointments`,
+        );
       }
       if (member.role === "EXPERT") {
-        redirect(`/dashboard/organization/${orgId}/compensation`);
+        redirect(
+          member.organization.canHost
+            ? `${base}/compensation`
+            : `${base}/appointments`,
+        );
       }
       // MANAGER+, SUPPORT, OWNER, MAINTAINER fall through to /home
     } else if (!member) {
