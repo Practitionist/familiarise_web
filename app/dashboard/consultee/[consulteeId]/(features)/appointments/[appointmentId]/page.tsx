@@ -45,7 +45,10 @@ export default async function AppointmentDetailPage({
     appointment.consultation?.requestedBy?.id === consulteeId ||
     appointment.subscription?.requestedBy?.id === consulteeId ||
     appointment.trial?.consulteeProfile?.id === consulteeId ||
-    appointment.participants.some((seat) => seat.userId === profile.userId);
+    appointment.participants.some((seat) => seat.userId === profile.userId) ||
+    // A payer whose seat was released (e.g. after a refund) still opens the
+    // booking their payment links to; the rows are scoped to their own below.
+    appointment.payment.some((p) => p.userId === profile.userId);
   if (!owns) notFound();
 
   // One zone for the server render and hydration (#418, #1527 QA).
