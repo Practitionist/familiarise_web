@@ -17,7 +17,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { OrgAuditCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
@@ -26,18 +26,9 @@ import {
 } from "@/lib/enterprise/audit-sanitize";
 import { auditRowScope } from "@/lib/enterprise/audit-visibility";
 
-const CategorySchema = z.enum([
-  "MEMBER",
-  "CONTRACT",
-  "PROGRAM",
-  "WALLET",
-  "INVOICE",
-  "PAYOUT",
-  "SETTINGS",
-  "CONSENT",
-  "CATALOG",
-  "SYSTEM",
-]);
+// Derived from Prisma so a new category (WEBHOOK) can't drift out of the
+// filter again (#1527 3c); the row scope still applies the money/ops split.
+const CategorySchema = z.nativeEnum(OrgAuditCategory);
 
 const QuerySchema = z.object({
   // Multi-select filters are supplied as comma-separated lists so the

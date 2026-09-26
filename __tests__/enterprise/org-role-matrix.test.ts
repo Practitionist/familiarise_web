@@ -14,6 +14,7 @@ import type { MemberRole } from "@prisma/client";
 const mockRequireOrgAccess = jest.fn();
 const mockProgramFindFirst = jest.fn();
 const mockAssignmentFindMany = jest.fn();
+const mockAuditFindMany = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -22,6 +23,7 @@ jest.mock("../../lib/prisma", () => ({
     programAssignment: {
       findMany: (...a: unknown[]) => mockAssignmentFindMany(...a),
     },
+    orgAuditLog: { findMany: (...a: unknown[]) => mockAuditFindMany(...a) },
   },
 }));
 jest.mock("../../lib/auth-helpers", () => ({
@@ -38,6 +40,7 @@ import {
 } from "@/lib/enterprise/data-export-kinds";
 import { getInvitableRoles } from "@/lib/labels/org-labels";
 import { GET as listAssignments } from "../../app/api/organizations/[orgId]/programs/[programId]/assignments/route";
+import { GET as getAudit } from "../../app/api/organizations/[orgId]/audit/route";
 import {
   DELETE as deleteConsent,
   GET as getConsent,
@@ -123,6 +126,26 @@ describe("audit category split (P0-6)", () => {
     expect(auditRowScope("BILLING_ADMIN")).toHaveProperty("OR");
     expect(auditRowScope("OWNER")).toEqual({});
     expect(auditRowScope("LEARNER")).toBeNull();
+  });
+
+  it("accepts the WEBHOOK filter the page offers, inside the row scope (#1527 3c)", async () => {
+    mockRequireOrgAccess.mockResolvedValue({
+      session: { user: { id: "ba-user" } },
+      member: { id: "m-ba", role: "BILLING_ADMIN" },
+      org: { id: "o" },
+    });
+    mockAuditFindMany.mockResolvedValue([]);
+    const res = await getAudit(
+      new Request("http://x/api?categories=WEBHOOK") as never,
+      { params: Promise.resolve({ orgId: "o" }) },
+    );
+    expect(res.status).toBe(200);
+    const { where } = mockAuditFindMany.mock.calls[0][0];
+    expect(where.category).toEqual({ in: ["WEBHOOK"] });
+    expect(where.AND).toEqual([auditRowScope("BILLING_ADMIN")]);
+    expect(read(`${API}/audit/export/route.ts`)).toContain(
+      "z.nativeEnum(OrgAuditCategory)",
+    );
   });
 
   it.each(["audit/route.ts", "audit/export/route.ts", "activity/route.ts"])(
