@@ -40,7 +40,7 @@ const EndCallButton = ({ onEnding }: EndCallButtonProps = {}) => {
       return `/dashboard/consultee/${consulteeProfileId}/home`;
     }
     if (role === "STAFF" && staffProfileId) {
-      return `/dashboard/staff/${staffProfileId}/home`;
+      return "/dashboard/staff/tickets"; // #1527 Q12
     }
 
     return "/"; // Fallback to home page

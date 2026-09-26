@@ -1,21 +1,16 @@
-"use client";
-
-import { use } from "react";
 import { DisputeDetailPage } from "@/components/dashboard/shared/DisputeDetailPage";
+import { requireBackofficePage } from "@/lib/auth-guard";
 
-export default function AdminDisputeDetailPage({
+export default async function BackofficeDisputeDetailPage({
   params,
-}: {
-  params: Promise<{ disputeId: string }>;
-}) {
-  const { disputeId } = use(params);
+}: Readonly<{ params: Promise<{ tree: string; disputeId: string }> }>) {
+  const { tree, disputeId } = await params;
+  // Page-level back-office gate (C5): sidebar hiding is not access control.
+  await requireBackofficePage("disputes.read", tree);
   return (
     <DisputeDetailPage
       disputeId={disputeId}
-      basePath="/dashboard/admin"
       apiEndpoint="/api/admin/disputes"
-      allowEvidenceSubmission={true}
-      queryKeyPrefix="admin"
     />
   );
 }

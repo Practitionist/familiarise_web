@@ -1,5 +1,6 @@
 "use client";
 
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -35,12 +36,10 @@ import {
   MessageSquare,
   User,
   FileText,
-  Eye,
   ThumbsUp,
   ThumbsDown,
   Loader2,
   RefreshCw,
-  ExternalLink,
   AlertTriangle,
   Trash2,
   ShieldOff,
@@ -48,7 +47,6 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type {
-  ProfileVerification,
   ModerationCapabilities,
   ModerationLatestAction,
   ModerationReport,
@@ -395,6 +393,7 @@ function ActionAuditTrail({
 }
 
 export function ModerationPage() {
+  const { can } = useBackofficeCapability();
   const [activeTab, setActiveTab] = useState("reports");
   const [searchQuery, setSearchQuery] = useState("");
   // #997 secondary findings — the reports list used to fetch all PENDING
@@ -404,8 +403,6 @@ export function ModerationPage() {
   const [selectedReport, setSelectedReport] = useState<ModerationReport | null>(
     null,
   );
-  const [selectedProfile, setSelectedProfile] =
-    useState<ProfileVerification | null>(null);
   const [moderationNote, setModerationNote] = useState("");
   const [suspensionDays, setSuspensionDays] = useState(7);
   // #1270 — a report whose enforcement half-failed leaves the PENDING queue the
@@ -465,28 +462,11 @@ export function ModerationPage() {
   });
   const reports = reportsData?.reports ?? [];
   // Banning is ADMIN-only server-side. Trusting the server's answer rather than
-  // guessing from the session keeps the button and the 403 in agreement.
-  const canModerateUsers = reportsData?.capabilities?.canModerateUsers ?? false;
-
-  // Fetch profile verifications
-  const {
-    data: profilesData,
-    isPending: loadingProfiles,
-    isFetching: fetchingProfiles,
-    isError: profilesError,
-    refetch: refetchProfiles,
-  } = useQuery({
-    queryKey: ["staff-moderation-profiles", "PENDING"],
-    queryFn: async (): Promise<{ verifications: ProfileVerification[] }> => {
-      const response = await fetch(
-        "/api/staff/moderation/profiles?status=PENDING",
-      );
-      if (!response.ok) throw new Error("Failed to fetch profiles");
-      return response.json();
-    },
-    placeholderData: keepPreviousData,
-  });
-  const profiles = profilesData?.verifications ?? [];
+  // guessing from the session keeps the button and the 403 in agreement; the
+  // tree's capability also hides it in the staff console (#1527).
+  const canModerateUsers =
+    can("users.moderate") &&
+    (reportsData?.capabilities?.canModerateUsers ?? false);
 
   // Fetch reviews
   const {
@@ -528,13 +508,11 @@ export function ModerationPage() {
     enabled: !!selectedReport,
   });
 
-  const isRefreshing =
-    fetchingStats || fetchingReports || fetchingProfiles || fetchingReviews;
+  const isRefreshing = fetchingStats || fetchingReports || fetchingReviews;
 
   const handleRefreshAll = () => {
     refetchStats();
     refetchReports();
-    refetchProfiles();
     refetchReviews();
   };
 
@@ -735,69 +713,6 @@ export function ModerationPage() {
     return actions;
   };
 
-  // Handle profile verification
-  const profileVerificationMutation = useMutation({
-    mutationFn: async ({
-      verificationId,
-      status,
-    }: {
-      verificationId: string;
-      status: "APPROVED" | "REJECTED" | "NEEDS_INFO";
-    }) => {
-      const response = await fetch(
-        `/api/staff/moderation/profiles/${verificationId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status,
-            reviewNotes: moderationNote,
-            // For rejection or needs_info, include the note as feedback
-            ...(status === "REJECTED" || status === "NEEDS_INFO"
-              ? {
-                  rejectionReason: moderationNote,
-                  feedbackDetails: moderationNote,
-                }
-              : {}),
-          }),
-        },
-      );
-
-      if (!response.ok) throw new Error("Failed to update verification");
-    },
-    onSuccess: (_data, { status }) => {
-      const statusMessages = {
-        APPROVED: "approved",
-        REJECTED: "rejected",
-        NEEDS_INFO: "marked as needing more information",
-      };
-
-      toast({
-        title: "Profile Updated",
-        description: `Profile has been ${statusMessages[status]}`,
-      });
-
-      setSelectedProfile(null);
-      setModerationNote("");
-      queryClient.invalidateQueries({
-        queryKey: ["staff-moderation-profiles"],
-      });
-      queryClient.invalidateQueries({ queryKey: ["staff-moderation-stats"] });
-    },
-    onError: () => {
-      toast({
-        title: "Error",
-        description: "Failed to update profile verification",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleProfileVerification = (
-    verificationId: string,
-    status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
-  ) => profileVerificationMutation.mutate({ verificationId, status });
-
   // Handle review deletion
   const deleteReviewMutation = useMutation({
     mutationFn: async (reviewId: string) => {
@@ -857,7 +772,7 @@ export function ModerationPage() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
             <div className="p-2 rounded-lg bg-muted">
@@ -872,25 +787,6 @@ export function ModerationPage() {
                 </p>
               )}
               <p className="text-sm text-muted-foreground">Pending Reports</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <User className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              {loadingStats ? (
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              ) : (
-                <p className="text-2xl font-bold">
-                  {stats?.pendingProfiles ?? 0}
-                </p>
-              )}
-              <p className="text-sm text-muted-foreground">
-                Profiles to Verify
-              </p>
             </div>
           </CardContent>
         </Card>
@@ -938,13 +834,6 @@ export function ModerationPage() {
             Reports
             <Badge variant="secondary" className="ml-1">
               {stats?.pendingReports ?? 0}
-            </Badge>
-          </TabsTrigger>
-          <TabsTrigger value="profiles" className="gap-2">
-            <User className="h-4 w-4" />
-            Profile Verification
-            <Badge variant="secondary" className="ml-1">
-              {stats?.pendingProfiles ?? 0}
             </Badge>
           </TabsTrigger>
           <TabsTrigger value="reviews" className="gap-2">
@@ -1108,112 +997,6 @@ export function ModerationPage() {
                   </Card>
                 );
               })}
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Profiles Tab */}
-        <TabsContent value="profiles" className="space-y-4">
-          {profilesError && !profilesData ? (
-            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
-              <div className="flex items-center gap-2 text-destructive">
-                <AlertTriangle className="h-5 w-5" />
-                <span>Failed to load profile verifications.</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={() => refetchProfiles()}
-              >
-                <RefreshCw className="h-4 w-4" />
-                Retry
-              </Button>
-            </div>
-          ) : loadingProfiles ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : profiles.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No pending profile verifications
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {profiles.map((profile) => (
-                <Card
-                  key={profile.id}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                  onClick={() => setSelectedProfile(profile)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-4">
-                        <Avatar className="h-12 w-12">
-                          <AvatarImage src={profile.consultant.image || ""} />
-                          <AvatarFallback>
-                            {(profile.consultant.name || "?")
-                              .split(" ")
-                              .map((n: string) => n[0])
-                              .join("")}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="font-medium">
-                            {profile.consultant.name || "Unnamed"}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {profile.consultant.email}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            {profile.consultant.headline && (
-                              <span className="text-sm text-muted-foreground">
-                                {profile.consultant.headline}
-                              </span>
-                            )}
-                            {profile.consultant.experience && (
-                              <span className="text-xs text-muted-foreground">
-                                • {profile.consultant.experience} years
-                                experience
-                              </span>
-                            )}
-                          </div>
-                          {profile.consultant.linkedinUrl && (
-                            <a
-                              href={profile.consultant.linkedinUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-foreground underline-offset-2 hover:underline flex items-center gap-1 mt-1"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              LinkedIn Profile
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                          Pending Review
-                        </Badge>
-                        <p className="text-xs text-muted-foreground/70 mt-1">
-                          {formatDate(profile.submittedAt)}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {profile.consultant.domain}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-muted-foreground/70" />
-                      <span className="text-sm text-muted-foreground">
-                        {profile.documents.length} document
-                        {profile.documents.length !== 1 ? "s" : ""} attached
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
             </div>
           )}
         </TabsContent>
@@ -1565,207 +1348,6 @@ export function ModerationPage() {
                     Lift ban
                   </Button>
                 )}
-              </ResponsiveModalFooter>
-            </>
-          )}
-        </ResponsiveModalContent>
-      </ResponsiveModal>
-
-      {/* Profile Verification Dialog */}
-      <ResponsiveModal
-        open={!!selectedProfile}
-        onOpenChange={() => setSelectedProfile(null)}
-      >
-        <ResponsiveModalContent className="max-w-2xl">
-          {selectedProfile && (
-            <>
-              <ResponsiveModalHeader>
-                <ResponsiveModalTitle>
-                  Profile Verification
-                </ResponsiveModalTitle>
-                <ResponsiveModalDescription>
-                  Review consultant profile and documents
-                </ResponsiveModalDescription>
-              </ResponsiveModalHeader>
-              <div className="space-y-4">
-                <div className="flex items-center gap-4 p-4 rounded-lg bg-muted">
-                  <Avatar className="h-16 w-16">
-                    <AvatarImage src={selectedProfile.consultant.image || ""} />
-                    <AvatarFallback className="text-lg">
-                      {(selectedProfile.consultant.name || "?")
-                        .split(" ")
-                        .map((n: string) => n[0])
-                        .join("")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <h3 className="text-lg font-semibold">
-                      {selectedProfile.consultant.name || "Unnamed"}
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedProfile.consultant.email}
-                    </p>
-                    {selectedProfile.consultant.linkedinUrl && (
-                      <a
-                        href={selectedProfile.consultant.linkedinUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-foreground underline-offset-2 hover:underline flex items-center gap-1 mt-1"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        View LinkedIn Profile
-                      </a>
-                    )}
-                  </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label className="text-sm font-medium">Headline</Label>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedProfile.consultant.headline || "Not specified"}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Experience</Label>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedProfile.consultant.experience
-                        ? `${selectedProfile.consultant.experience} years`
-                        : "Not specified"}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Field</Label>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedProfile.consultant.domain}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">
-                      Current Status
-                    </Label>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedProfile.consultant.verificationStatus}
-                    </p>
-                  </div>
-                </div>
-                {selectedProfile.notes && (
-                  <div>
-                    <Label className="text-sm font-medium">
-                      Applicant Notes
-                    </Label>
-                    <p className="text-sm text-muted-foreground bg-muted p-2 rounded">
-                      {selectedProfile.notes}
-                    </p>
-                  </div>
-                )}
-                <div>
-                  <Label className="text-sm font-medium">
-                    Documents ({selectedProfile.documents.length})
-                  </Label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {selectedProfile.documents.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No documents uploaded
-                      </p>
-                    ) : (
-                      selectedProfile.documents.map((doc) => (
-                        <Button
-                          key={doc.id}
-                          variant="outline"
-                          size="sm"
-                          className="gap-1"
-                          asChild
-                        >
-                          <a
-                            href={doc.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            <FileText className="h-4 w-4" />
-                            {doc.description || doc.originalName}
-                            <Eye className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="verifyNote">
-                    Verification Note{" "}
-                    <span className="text-xs text-muted-foreground font-normal">
-                      (required for Request Info or Reject)
-                    </span>
-                  </Label>
-                  <Textarea
-                    id="verifyNote"
-                    placeholder="Add notes about the verification... (e.g., what documents or info is needed, reasons for rejection)"
-                    className="mt-1"
-                    value={moderationNote}
-                    onChange={(e) => setModerationNote(e.target.value)}
-                  />
-                </div>
-              </div>
-              <ResponsiveModalFooter className="gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setSelectedProfile(null)}
-                  disabled={profileVerificationMutation.isPending}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="outline"
-                  className="text-red-600 dark:text-red-400"
-                  onClick={() =>
-                    handleProfileVerification(selectedProfile.id, "REJECTED")
-                  }
-                  disabled={profileVerificationMutation.isPending}
-                >
-                  {profileVerificationMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <XCircle className="h-4 w-4 mr-2" />
-                  )}
-                  Reject
-                </Button>
-                <Button
-                  variant="outline"
-                  className="text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950"
-                  onClick={() =>
-                    handleProfileVerification(selectedProfile.id, "NEEDS_INFO")
-                  }
-                  disabled={
-                    profileVerificationMutation.isPending ||
-                    !moderationNote.trim()
-                  }
-                  title={
-                    !moderationNote.trim()
-                      ? "Add a note explaining what information is needed"
-                      : ""
-                  }
-                >
-                  {profileVerificationMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <MessageSquare className="h-4 w-4 mr-2" />
-                  )}
-                  Request Info
-                </Button>
-                <Button
-                  className="bg-green-600 hover:bg-green-700"
-                  onClick={() =>
-                    handleProfileVerification(selectedProfile.id, "APPROVED")
-                  }
-                  disabled={profileVerificationMutation.isPending}
-                >
-                  {profileVerificationMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                  )}
-                  Approve Profile
-                </Button>
               </ResponsiveModalFooter>
             </>
           )}

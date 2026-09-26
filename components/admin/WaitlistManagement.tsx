@@ -31,6 +31,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { waitlistStatusBadge } from "@/lib/labels/session-labels";
@@ -160,6 +161,8 @@ export function WaitlistManagement() {
 
   const [subject, setSubject] = useState("");
   const [htmlBody, setHtmlBody] = useState("");
+  // #1527 — staff triage the list; only admin sends (the route 403s otherwise).
+  const canSend = useBackofficeCapability().can("newsletter.send");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin-waitlist", filters],
@@ -239,7 +242,7 @@ export function WaitlistManagement() {
   return (
     <>
       <DashboardHeader
-        title="Waitlist"
+        title="Newsletter"
         subtitle="Everyone signed up for the Familiarise newsletter"
         actions={
           <Button variant="outline" size="sm" asChild>
@@ -375,56 +378,58 @@ export function WaitlistManagement() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Mail className="h-4 w-4" /> Send a newsletter
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Goes to every confirmed subscriber
-              {stats ? ` (${stats.SUBSCRIBED} right now)` : ""}. An unsubscribe
-              footer is appended automatically.
-            </p>
+        {canSend && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Mail className="h-4 w-4" /> Send a newsletter
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Goes to every confirmed subscriber
+                {stats ? ` (${stats.SUBSCRIBED} right now)` : ""}. An
+                unsubscribe footer is appended automatically.
+              </p>
 
-            <div className="space-y-2">
-              <Label htmlFor="newsletter-subject">Subject</Label>
-              <Input
-                id="newsletter-subject"
-                value={subject}
-                onChange={(event) => setSubject(event.target.value)}
-                placeholder="What is new at Familiarise"
-                maxLength={200}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="newsletter-subject">Subject</Label>
+                <Input
+                  id="newsletter-subject"
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                  placeholder="What is new at Familiarise"
+                  maxLength={200}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="newsletter-body">Body (HTML)</Label>
-              <Textarea
-                id="newsletter-body"
-                value={htmlBody}
-                onChange={(event) => setHtmlBody(event.target.value)}
-                placeholder="<p>Hello…</p>"
-                rows={10}
-                className="font-mono text-sm"
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="newsletter-body">Body (HTML)</Label>
+                <Textarea
+                  id="newsletter-body"
+                  value={htmlBody}
+                  onChange={(event) => setHtmlBody(event.target.value)}
+                  placeholder="<p>Hello…</p>"
+                  rows={10}
+                  className="font-mono text-sm"
+                />
+              </div>
 
-            <Button
-              onClick={() => broadcast.mutate()}
-              disabled={
-                broadcast.isPending ||
-                !subject.trim() ||
-                !htmlBody.trim() ||
-                (stats?.SUBSCRIBED ?? 0) === 0
-              }
-            >
-              <Send className="mr-2 h-4 w-4" />
-              {broadcast.isPending ? "Sending…" : "Send to subscribers"}
-            </Button>
-          </CardContent>
-        </Card>
+              <Button
+                onClick={() => broadcast.mutate()}
+                disabled={
+                  broadcast.isPending ||
+                  !subject.trim() ||
+                  !htmlBody.trim() ||
+                  (stats?.SUBSCRIBED ?? 0) === 0
+                }
+              >
+                <Send className="mr-2 h-4 w-4" />
+                {broadcast.isPending ? "Sending…" : "Send to subscribers"}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </>
   );

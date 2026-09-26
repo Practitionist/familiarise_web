@@ -16,6 +16,7 @@ import type {
   OpsLogRow,
 } from "@/lib/backoffice/ops-log-types";
 import { enumLabel } from "@/lib/labels/money-labels";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 
 const FILTERS: {
   key: keyof OpsLogFilters;
@@ -65,10 +66,10 @@ const columns: ResponsiveColumn<OpsLogRow>[] = [
  * #1771 K-9 — the console's audit log, newest first, seeded by the server
  * render. Staff see their own rows only; the API enforces it too.
  */
-export function AuditTab({
-  initial,
-  viewerIsAdmin,
-}: Readonly<{ initial: OpsLogPage; viewerIsAdmin: boolean }>) {
+export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
+  // The read scopes by the viewer's ROLE, not the tree (ops-log-read.ts):
+  // an admin in the staff tree still reads every row.
+  const viewerIsAdmin = useBackofficeCapability().role === "ADMIN";
   const [filters, setFilters] = useState<OpsLogFilters>({});
   const [page, setPage] = useState(1);
   // Blank filters leave the key, so a cleared filter is the seeded key again.

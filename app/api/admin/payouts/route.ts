@@ -3,7 +3,7 @@
  * Manage consultant payouts (view, batch-create).
  *
  * GET is a thin shell — listing/aggregation logic lives in
- * `lib/api/operators/payouts.ts` and is shared with `/api/staff/payouts`.
+ * `lib/api/operators/payouts.ts`; staff read it too (`payouts.read`).
  *
  * POST (batch creation) stays inline because staff does not have it.
  */
@@ -16,10 +16,7 @@ import {
   logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
 import { createPayoutBatch } from "@/lib/payments/payouts";
-import {
-  requireAdminAuth,
-  requireBackofficeSurface,
-} from "@/lib/auth-helpers";
+import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
 import { parseRequestBody, parseJsonRequest } from "@/lib/api/parse";
 import {
@@ -64,7 +61,10 @@ export async function GET(req: NextRequest) {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching payouts:", error);
     return NextResponse.json(
       { error: "Failed to fetch payouts" },
@@ -85,10 +85,7 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    const { data, error } = await parseJsonRequest(
-      adminPayoutBatchSchema,
-      req,
-    );
+    const { data, error } = await parseJsonRequest(adminPayoutBatchSchema, req);
     if (error) return error;
     const { consultantProfileIds } = data;
 
@@ -123,7 +120,10 @@ export async function POST(req: NextRequest) {
     logClassifiedError("Payouts", classified, error);
 
     if (classified.httpStatus >= 500) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "admin" } },
+      );
     }
 
     return NextResponse.json(

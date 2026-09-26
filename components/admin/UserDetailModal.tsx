@@ -1,5 +1,6 @@
 "use client";
 
+import { backofficeLandingHref } from "@/lib/backoffice/capability";
 import { useState, useEffect } from "react";
 import {
   Dialog,
@@ -198,12 +199,11 @@ export function UserDetailModal({
         return user.consulteeProfile?.id
           ? `/dashboard/consultee/${user.consulteeProfile.id}`
           : null;
+      // #1527 Q3 — one back-office tree per role, no per-profile URL.
       case "STAFF":
-        return user.staffProfile?.id
-          ? `/dashboard/staff/${user.staffProfile.id}`
-          : null;
+        return backofficeLandingHref({ tree: "staff" });
       case "ADMIN":
-        return "/dashboard/admin";
+        return backofficeLandingHref({ tree: "admin" });
       default:
         return null;
     }

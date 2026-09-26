@@ -7,56 +7,52 @@ import { RefundDoorsPanel } from "./RefundsTab";
 import { ReconcileTab } from "./ReconcileTab";
 import { AuditTab } from "./AuditTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
+import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
 
 /**
  * #1771 K-2 — one tab's body. Each mounts the page component that already
  * served the old URL, so the hub moves the pages without rewriting them.
- * `treePath` keeps each page's own detail links inside its tree.
+ * Detail links read the tree from the capability context (#1527).
  */
 export async function MoneyTabBody({
   tabKey,
-  tree,
-  treePath,
+  cap,
   viewer,
 }: Readonly<{
   tabKey: string;
-  tree: "admin" | "staff";
-  treePath: string;
+  cap: BackofficeCapability;
   viewer: { userId: string; role: string };
 }>) {
-  const isAdmin = tree === "admin";
   switch (tabKey) {
     case "payments":
-      return <PaymentsPage basePath={treePath} />;
+      return <PaymentsPage />;
     case "refunds":
       return (
         <>
-          {isAdmin && <RefundDoorsPanel />}
+          {can(cap, "refunds.manage") && <RefundDoorsPanel />}
           <RefundsPage
-            basePath={treePath}
             apiEndpoint="/api/admin/refunds"
             title="Refunds"
             description={
-              isAdmin
+              can(cap, "refunds.manage")
                 ? "Manage and view all payment refunds"
                 : "View and track refund requests"
             }
-            queryKeyPrefix={isAdmin ? "admin-refunds" : "staff-refunds"}
+            queryKeyPrefix={`${cap.tree}-refunds`}
           />
         </>
       );
     case "payouts":
-      return <PayoutsBoard canManage={isAdmin} />;
+      return <PayoutsBoard />;
     case "earnings":
       return <EarningsTab />;
     case "disputes":
       return (
         <DisputesPage
-          basePath={treePath}
           apiEndpoint="/api/admin/disputes"
           title="Disputes"
           description={
-            isAdmin
+            can(cap, "disputes.manage")
               ? "Manage and respond to payment disputes"
               : "View and track payment disputes"
           }
@@ -69,7 +65,6 @@ export async function MoneyTabBody({
       return (
         <AuditTab
           initial={await readOpsLog({ viewer, filters: {}, page: 1 })}
-          viewerIsAdmin={viewer.role === "ADMIN"}
         />
       );
     default:

@@ -1,43 +1,50 @@
+import { headers } from "next/headers";
+import { notFound, redirect } from "next/navigation";
+
+import { BackofficeCapabilityProvider } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { OperatorDashboardShell } from "@/components/dashboard/OperatorDashboardShell";
 import { requireUserRole } from "@/lib/auth-guard";
+import {
+  isBackofficeTree,
+  resolveBackofficeCapability,
+} from "@/lib/backoffice/capability";
+import { staffTwinHref } from "@/lib/backoffice/legacy-routes";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
-import { AdminShell } from "./AdminShell";
 
 /**
- * Server-side guard for the admin dashboard.
- *
- * Access is enforced here, on the server, before any dashboard markup ships
- * to the client: `requireUserRole("ADMIN")` redirects a non-admin to
- * `/dashboard` (which in turn routes them to their own role home) — for a
- * STAFF user that lands them in `/dashboard/staff/<id>/home`, their own tree.
- * This replaces the previous client-only pattern — a `useSession()` +
- * `useQuery` fetch of `/api/user/:id` followed by a post-hydration
- * `router.replace`, which shipped the protected shell to unauthorized users
- * before bouncing them.
- *
- * Deliberately ADMIN-only while the staff layout admits both roles: an admin
- * can drop into the staff tree to reproduce what an intern reports, but staff
- * never reach admin surfaces. Because nothing but ADMIN gets past this line,
- * every page below it is admin-only by construction and needs no second gate.
- *
- * The user identity (name/email/image) is read from the server session and
- * passed to the client shell as props, so the sidebar renders the same name
- * on the server HTML and the first client render (no hydration mismatch).
+ * #1527 Q3 — one layout for both back-office trees. The tree segment is
+ * checked BEFORE any role check so `/dashboard/<anything else>` 404s for
+ * every viewer, then only ADMIN/STAFF pass. STAFF opening the admin tree get
+ * the same page in theirs. Access is still re-checked per page
+ * (`requireBackofficePage`): this layout doesn't re-run on client navigation.
  */
-export default async function AdminLayout({
+export default async function BackofficeLayout({
   children,
-}: {
+  params,
+}: Readonly<{
   children: React.ReactNode;
-}) {
-  const session = await requireUserRole("ADMIN");
+  params: Promise<{ tree: string }>;
+}>) {
+  const { tree } = await params;
+  if (!isBackofficeTree(tree)) notFound();
+
+  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  const cap = resolveBackofficeCapability(session.user.role, tree);
+  if (!cap) {
+    // Only STAFF on the admin tree reach here; middleware sets x-pathname.
+    redirect(staffTwinHref((await headers()).get("x-pathname")));
+  }
 
   return (
-    <AdminShell
-      userName={session.user.name ?? null}
-      userEmail={session.user.email ?? null}
-      userImage={session.user.image ?? null}
-      showTds={ENABLE_TDS_ADMIN_VIEW}
-    >
-      {children}
-    </AdminShell>
+    <BackofficeCapabilityProvider value={cap}>
+      <OperatorDashboardShell
+        userName={session.user.name ?? null}
+        userImage={session.user.image ?? null}
+        // #863 — the TDS page 404s while the flag is off; hide its nav item.
+        showTds={ENABLE_TDS_ADMIN_VIEW}
+      >
+        {children}
+      </OperatorDashboardShell>
+    </BackofficeCapabilityProvider>
   );
 }

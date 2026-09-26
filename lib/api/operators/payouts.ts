@@ -1,9 +1,8 @@
 /**
  * Shared operator payout listing.
  *
- * Used by both `app/api/admin/payouts/route.ts` (GET) and
- * `app/api/staff/payouts/route.ts` (GET) — extracted to remove the
- * near-duplicated query/response shape between the two routes.
+ * Used by `app/api/admin/payouts/route.ts` (GET), which both trees read
+ * (the staff twin was deleted, #1527).
  *
  * The admin route additionally exposes a POST handler for creating payout
  * batches; that logic stays inline in the admin route file because staff
@@ -101,7 +100,12 @@ export async function getOperatorPayouts(
   const status = filters.status ?? null;
   const search = filters.search ?? null;
   const limit = sanitizePagination(filters.limit, 50, 1, 200);
-  const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+  const offset = sanitizePagination(
+    filters.offset,
+    0,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
 
   const orgId = filters.orgId ?? null;
   const where: Prisma.ConsultantPayoutWhereInput = {};

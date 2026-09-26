@@ -133,7 +133,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
             `${cell(String(r.affectedUserIds.length))}` +
             `${cell(r.rootCause.slice(0, 80))}` +
             `${cell(r.dpbReference ?? "—")}` +
-            `${cell(`<a href="${appUrl}/dashboard/admin/data-breaches/${r.id}">open</a>`)}` +
+            `${cell(`<a href="${appUrl}/dashboard/admin/compliance?tab=breaches&id=${r.id}">open</a>`)}` +
             `</tr>`
           );
         })

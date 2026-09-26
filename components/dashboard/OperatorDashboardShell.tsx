@@ -6,8 +6,9 @@
  * fixed 256px on phones — and the mobile tabs + Menu sheet reach every item.
  *
  * Access is enforced upstream in the server layout; this component is chrome
- * only. Identity arrives as server-resolved props (no useSession first-render
- * null → no hydration mismatch on the displayed name).
+ * only. The nav and role label come from the capability context the layout
+ * provides; identity arrives as server-resolved props (no useSession
+ * first-render null → no hydration mismatch on the displayed name).
  */
 
 import { useMemo } from "react";
@@ -17,33 +18,42 @@ import { Settings, UserRound } from "lucide-react";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { ContextSwitcher } from "@/components/dashboard/ContextSwitcher";
 import { useDashboardBreadcrumbs } from "@/components/dashboard/breadcrumbs";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { usePrefetchNavPaths } from "@/hooks/usePrefetchNavPaths";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
-import { flattenNav, type DashboardNav } from "@/lib/dashboard/nav/types";
+import { backofficeLandingHref } from "@/lib/backoffice/capability";
+import { buildBackofficeDashboardNav } from "@/lib/dashboard/nav/backoffice";
+import { flattenNav } from "@/lib/dashboard/nav/types";
 
 export interface OperatorDashboardShellProps {
-  nav: DashboardNav;
-  /** Account chip role, e.g. "Admin" / "Staff". */
-  roleLabel: string;
   userName: string | null;
-  /** Accepted for the tree shells' identity pass-through; not displayed. */
-  userEmail?: string | null;
   userImage: string | null;
-  /** Routes to warm on mount (idle-scheduled). */
-  prefetchPaths?: string[];
+  /** #863 — ENABLE_TDS_ADMIN_VIEW, read by the server layout. */
+  showTds?: boolean;
   children: React.ReactNode;
 }
 
 export function OperatorDashboardShell({
-  nav,
-  roleLabel,
   userName,
   userImage,
-  prefetchPaths,
+  showTds = false,
   children,
 }: Readonly<OperatorDashboardShellProps>) {
+  const cap = useBackofficeCapability();
+  const nav = useMemo(
+    () => buildBackofficeDashboardNav(cap, { showTds }),
+    [cap, showTds],
+  );
+  const roleLabel = cap.tree === "admin" ? "Admin" : "Staff";
+  const prefetchPaths = useMemo(
+    () => [
+      backofficeLandingHref(cap),
+      ...nav.mobileTabs.map((p) => `${nav.basePath}/${p}`),
+    ],
+    [cap, nav],
+  );
   const pathname = usePathname() ?? "";
-  usePrefetchNavPaths(prefetchPaths ?? []);
+  usePrefetchNavPaths(prefetchPaths);
 
   // Crumb labels come from the nav itself: the last segment of each item
   // path maps to the item's name ("money/payments" → "Payments").

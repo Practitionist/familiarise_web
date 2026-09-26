@@ -12,6 +12,7 @@ import {
   slotStatusBadge,
 } from "@/lib/labels/session-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { ClassSeriesDoors } from "./ClassSeriesDoors";
 import { DoorDialog, type Door } from "./DoorDialog";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
@@ -30,9 +31,8 @@ const when = (iso: string) => new Date(iso).toLocaleString();
  */
 export function BookingOpsPanel({
   appointmentId,
-  isAdmin,
-  treePath,
-}: Readonly<{ appointmentId: string; isAdmin: boolean; treePath: string }>) {
+}: Readonly<{ appointmentId: string }>) {
+  const { can, basePath } = useBackofficeCapability();
   const [target, setTarget] = useState<Session | null>(null);
   const [door, setDoor] = useState<Door | null>(null);
   const ops = useQuery({
@@ -112,10 +112,10 @@ export function BookingOpsPanel({
                   ? ` · ${formatCurrencyAmount(p.pendingRefundPaise, p.currency)} refund pending`
                   : ""}
               </span>
-              {isAdmin && (
+              {can("refunds.manage") && (
                 <Button size="sm" variant="outline" asChild>
                   <Link
-                    href={`${treePath}/money/refunds?door=issue&paymentId=${encodeURIComponent(p.id)}`}
+                    href={`${basePath}/money/refunds?door=issue&paymentId=${encodeURIComponent(p.id)}`}
                   >
                     Issue refund
                   </Link>
@@ -126,27 +126,29 @@ export function BookingOpsPanel({
         </ul>
       </div>
 
-      {isAdmin && v.type === "SUBSCRIPTION" && v.subscriptionId && (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() =>
-            setDoor({
-              url: "/api/admin/class-series/sweeps/unallocated",
-              title: "Run the 48-hour sweep for this plan",
-              description:
-                "Expires a paid plan with no session after 48 hours and refunds it in full.",
-              confirm: "Run",
-              body: { subscriptionId: v.subscriptionId },
-            })
-          }
-        >
-          Run the 48-hour sweep
-        </Button>
-      )}
+      {can("classSeries.money") &&
+        v.type === "SUBSCRIPTION" &&
+        v.subscriptionId && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              setDoor({
+                url: "/api/admin/class-series/sweeps/unallocated",
+                title: "Run the 48-hour sweep for this plan",
+                description:
+                  "Expires a paid plan with no session after 48 hours and refunds it in full.",
+                confirm: "Run",
+                body: { subscriptionId: v.subscriptionId },
+              })
+            }
+          >
+            Run the 48-hour sweep
+          </Button>
+        )}
 
       {v.type === "CLASS" && v.classId && (
-        <ClassSeriesDoors classId={v.classId} isAdmin={isAdmin} />
+        <ClassSeriesDoors classId={v.classId} />
       )}
 
       {target && (

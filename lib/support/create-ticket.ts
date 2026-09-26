@@ -67,7 +67,7 @@ export interface CreateSupportTicketInput {
 
 /**
  * Ops recipients, each with the queue URL THEY can open: `/dashboard/admin/*`
- * is ADMIN-only and bounces a STAFF user to their home, while the staff tree
+ * is ADMIN-only (STAFF are sent to the staff twin), while the staff tree
  * admits both roles. One trigger per recipient, since the href differs.
  */
 async function opsRecipients(
@@ -77,13 +77,15 @@ async function opsRecipients(
     where: assigneeId
       ? { id: assigneeId }
       : { role: { in: ["STAFF", "ADMIN"] } },
-    select: { id: true, staffProfileId: true },
+    select: { id: true, role: true },
   });
+  // #1527 Q3 — one back-office tree per role; no profile id in the URL.
   return users.map((u) => ({
     id: u.id,
-    dashboardUrl: u.staffProfileId
-      ? `/dashboard/staff/${u.staffProfileId}/tickets`
-      : "/dashboard/admin/tickets",
+    dashboardUrl:
+      u.role === "ADMIN"
+        ? "/dashboard/admin/tickets"
+        : "/dashboard/staff/tickets",
   }));
 }
 

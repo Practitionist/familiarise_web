@@ -999,14 +999,19 @@ const MultiStepForm: React.FC = () => {
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
-        router.replace(`/dashboard/consultant/${result.user.consultantProfileId}`);
+        router.replace(
+          `/dashboard/consultant/${result.user.consultantProfileId}`,
+        );
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
       ) {
-        router.replace(`/dashboard/consultee/${result.user.consulteeProfileId}`);
+        router.replace(
+          `/dashboard/consultee/${result.user.consulteeProfileId}`,
+        );
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
-        router.replace(`/dashboard/staff/${result.user.staffProfileId}`);
+        // #1527 Q12 — one staff tree, opening on Tickets.
+        router.replace("/dashboard/staff/tickets");
       } else {
         router.replace("/dashboard");
       }

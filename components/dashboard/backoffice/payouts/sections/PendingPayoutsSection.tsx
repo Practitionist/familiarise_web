@@ -24,6 +24,7 @@ import { useState } from "react";
 import { Check, X, Loader2 } from "lucide-react";
 
 import type { Payout } from "@/types/payouts";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 
 interface PayoutListResponse {
   payouts: Payout[];
@@ -88,9 +89,9 @@ async function rejectPayout(
   return response.json() as Promise<PayoutActionResult>;
 }
 
-export default function PendingPayoutsSection({
-  canManage,
-}: Readonly<{ canManage: boolean }>) {
+export default function PendingPayoutsSection() {
+  // Staff read payouts, never decide one (#1527 capability context).
+  const canManage = useBackofficeCapability().can("payouts.manage");
   const queryClient = useQueryClient();
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
   // #1771 K-4 — both decisions carry a reason into the audit log.
@@ -208,9 +209,7 @@ export default function PendingPayoutsSection({
           return <span className="text-sm text-muted-foreground">—</span>;
         }
         const due = new Date(payout.mustPayByDate);
-        const daysLeft = Math.ceil(
-          (due.getTime() - Date.now()) / 86_400_000,
-        );
+        const daysLeft = Math.ceil((due.getTime() - Date.now()) / 86_400_000);
         // <5 days (or overdue) is the §43B(h) alert window — flag it red.
         const urgent = daysLeft < 5;
         return (
@@ -275,9 +274,7 @@ export default function PendingPayoutsSection({
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground">
-            {error instanceof Error
-              ? error.message
-              : "Failed to load payouts"}
+            {error instanceof Error ? error.message : "Failed to load payouts"}
           </p>
         </CardContent>
       </Card>

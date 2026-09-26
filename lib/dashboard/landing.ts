@@ -1,3 +1,4 @@
+import { backofficeLandingHref as treeLandingHref } from "@/lib/backoffice/capability";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import {
   selectFallbackOrgMembership,
@@ -22,16 +23,9 @@ export interface LandingUser {
 /** role=null or no reachable surface: finish onboarding (`/dashboard/error` has no page). */
 export const ONBOARDING_HREF = "/form/onboarding";
 
-/**
- * Back-office landing. Builder (d) points STAFF at Tickets (Q12); until then
- * staff keep today's home. Exported so that change lands in one place.
- */
-export function backofficeLandingHref(
-  role: "ADMIN" | "STAFF",
-  staffProfileId: string | null | undefined,
-): string {
-  if (role === "ADMIN") return "/dashboard/admin/home";
-  return staffProfileId ? `/dashboard/staff/${staffProfileId}/home` : "/";
+/** Back-office landing (Q12): admins → Needs attention, staff → Tickets. */
+export function backofficeLandingHref(role: "ADMIN" | "STAFF"): string {
+  return treeLandingHref({ tree: role === "ADMIN" ? "admin" : "staff" });
 }
 
 export function resolveDashboardLanding(
@@ -40,7 +34,7 @@ export function resolveDashboardLanding(
 ): string {
   if (!user.role) return ONBOARDING_HREF;
   if (user.role === "ADMIN" || user.role === "STAFF") {
-    return backofficeLandingHref(user.role, user.staffProfileId);
+    return backofficeLandingHref(user.role);
   }
   const memberships = user.organizationMemberships ?? [];
 

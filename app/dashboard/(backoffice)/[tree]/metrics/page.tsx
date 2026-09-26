@@ -1,10 +1,10 @@
 import { requireBackofficePage } from "@/lib/auth-guard";
-import AnalyticsPageClient from "./AnalyticsPageClient";
+import MetricsPageClient from "./MetricsPageClient";
 
-/** Platform analytics — admin's Insights item (staff read Metrics). */
+/** Support-queue metrics — staff's Insights item (#1527: moved from the staff tree). */
 export default async function Page({
   params,
 }: Readonly<{ params: Promise<{ tree: string }> }>) {
   await requireBackofficePage("analytics.read", (await params).tree);
-  return <AnalyticsPageClient />;
+  return <MetricsPageClient />;
 }

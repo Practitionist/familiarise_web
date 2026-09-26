@@ -1,5 +1,6 @@
 "use client";
 
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -41,15 +42,11 @@ async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
 
 export interface PaymentDetailPageProps {
   paymentId: string;
-  /** Base URL for back-navigation and cross-links (e.g. "/dashboard/admin",
-   *  "/dashboard/staff/abc"). Same convention as DisputeDetailPage. */
-  basePath: string;
 }
 
-export function PaymentDetailPage({
-  paymentId,
-  basePath,
-}: PaymentDetailPageProps) {
+export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
+  // #1527 — back-links and cross-links stay inside the viewer's tree.
+  const { basePath } = useBackofficeCapability();
   const resolvedParams = { paymentId };
 
   const {

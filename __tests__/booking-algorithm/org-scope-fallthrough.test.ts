@@ -254,13 +254,10 @@ describe("the platform-wide surfaces declare `all` deliberately", () => {
   const read = (rel: string) =>
     fs.readFileSync(path.join(process.cwd(), rel), "utf8");
 
-  it("both operator appointment pages pass an explicit scope", () => {
-    for (const rel of [
-      "app/dashboard/(backoffice)/[tree]/appointments/page.tsx",
-      "app/dashboard/staff/[staffId]/(features)/appointments/page.tsx",
-    ]) {
-      expect(read(rel)).toContain('scope={{ kind: "all" }}');
-    }
+  it("the operator appointments page (both trees, #1527) passes an explicit scope", () => {
+    expect(
+      read("app/dashboard/(backoffice)/[tree]/appointments/page.tsx"),
+    ).toContain('scope={{ kind: "all" }}');
   });
 
   it("getStaffAppointments takes a required Scope, so omission is a type error", () => {

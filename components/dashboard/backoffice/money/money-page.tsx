@@ -1,8 +1,12 @@
-import type { UserRole } from "@prisma/client";
-import { permanentRedirect, redirect } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 
 import { requireUserRole } from "@/lib/auth-guard";
-import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import {
+  backofficeLandingHref,
+  can,
+  isBackofficeTree,
+  resolveBackofficeCapability,
+} from "@/lib/backoffice/capability";
 import {
   findMoneyTab,
   moneyTabsFor,
@@ -16,33 +20,26 @@ import { MoneyTabBody } from "./MoneyTabBody";
  * tree's audience or the viewer's own surfaces) lands on the first section
  * they hold, never on an error boundary (QA #1824).
  */
-export async function renderMoneyTab(args: {
-  tab: string;
-  tree: "admin" | "staff";
-  treePath: string;
-}) {
-  const retired = retiredMoneyTabHref(args.treePath, args.tab);
+export async function renderMoneyTab(args: { tab: string; tree: string }) {
+  if (!isBackofficeTree(args.tree)) notFound();
+  const treePath = `/dashboard/${args.tree}`;
+  const retired = retiredMoneyTabHref(treePath, args.tab);
   if (retired) permanentRedirect(retired);
   const session = await requireUserRole(["ADMIN", "STAFF"]);
-  const role = session.user.role as UserRole;
-  const audience: UserRole = args.tree === "admin" ? "ADMIN" : "STAFF";
+  const cap = resolveBackofficeCapability(session.user.role, args.tree);
+  if (!cap) redirect("/dashboard");
   const tab = findMoneyTab(args.tab);
-  const allowed =
-    !!tab &&
-    hasBackofficePermission(audience, tab.surface) &&
-    hasBackofficePermission(role, tab.surface);
-  if (!tab || !allowed) {
-    const first = moneyTabsFor(audience).find((t) =>
-      hasBackofficePermission(role, t.surface),
+  if (!tab || !can(cap, tab.surface)) {
+    const first = moneyTabsFor(cap.audience).find((t) => can(cap, t.surface));
+    redirect(
+      first ? `${treePath}/money/${first.key}` : backofficeLandingHref(cap),
     );
-    redirect(first ? `${args.treePath}/money/${first.key}` : args.treePath);
   }
   return (
     <MoneyTabBody
       tabKey={tab.key}
-      tree={args.tree}
-      treePath={args.treePath}
-      viewer={{ userId: session.user.id, role: String(role) }}
+      cap={cap}
+      viewer={{ userId: session.user.id, role: String(cap.role) }}
     />
   );
 }

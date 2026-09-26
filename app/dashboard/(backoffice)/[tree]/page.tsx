@@ -1,14 +1,15 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-/**
- * Redirect page for /dashboard/admin
- * This page catches requests to /dashboard/admin (without subpath)
- * and redirects to /dashboard/admin/home.
- *
- * Server-side redirect(): resolves during the RSC render — one hop, no
- * skeleton paint + hydration + client replace chain (the old client stub
- * flashed HomeSkeleton on every entry).
- */
-export default function AdminDashboardRedirect() {
-  redirect("/dashboard/admin/home");
+import {
+  backofficeLandingHref,
+  isBackofficeTree,
+} from "@/lib/backoffice/capability";
+
+/** Bare `/dashboard/<tree>` opens the tree's landing (Q12). */
+export default async function BackofficeTreeIndex({
+  params,
+}: Readonly<{ params: Promise<{ tree: string }> }>) {
+  const { tree } = await params;
+  if (!isBackofficeTree(tree)) notFound();
+  redirect(backofficeLandingHref({ tree }));
 }

@@ -5,11 +5,20 @@ import {
 } from "@tanstack/react-query";
 import AdminHomePageClient from "./AdminHomePageClient";
 import { getAdminStats } from "@/lib/data/admin-stats";
+import { redirect } from "next/navigation";
 import { requireBackofficePage } from "@/lib/auth-guard";
+import { backofficeLandingHref } from "@/lib/backoffice/capability";
 
-export default async function AdminHomePage() {
+export default async function AdminHomePage({
+  params,
+}: Readonly<{ params: Promise<{ tree: string }> }>) {
   // Page-level back-office gate (C5): sidebar hiding is not access control.
-  await requireBackofficePage("users.read");
+  const { cap } = await requireBackofficePage(
+    "users.read",
+    (await params).tree,
+  );
+  // Q12 — the staff console opens on Tickets; Home is admin's.
+  if (cap.tree === "staff") redirect(backofficeLandingHref(cap));
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the admin stats so the client useQuery hydrates

@@ -17,6 +17,10 @@ import type { FundingSource, MemberRole } from "@prisma/client";
 
 import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
 import { findMoneyTab } from "@/lib/backoffice/money-tabs";
+import {
+  resolveBackofficeCapability,
+  type BackofficeTree,
+} from "@/lib/backoffice/capability";
 import { buildBackofficeDashboardNav } from "@/lib/dashboard/nav/backoffice";
 import { buildConsultantNav } from "@/lib/dashboard/nav/consultant";
 import { buildConsulteeNav } from "@/lib/dashboard/nav/consultee";
@@ -51,17 +55,17 @@ function expectTabsAreItems(nav: DashboardNav) {
   expect(nav.mobileTabs.filter((p) => !paths.has(p))).toEqual([]);
 }
 
+const backofficeCap = (tree: BackofficeTree) =>
+  resolveBackofficeCapability(tree === "admin" ? "ADMIN" : "STAFF", tree)!;
+
 describe("back-office nav targets resolve", () => {
   it.each(["admin", "staff"] as const)("%s tree", (tree) => {
-    const nav = buildBackofficeDashboardNav(tree, `/dashboard/${tree}`, {
+    const nav = buildBackofficeDashboardNav(backofficeCap(tree), {
       showTds: true,
     });
     expect(flattenNav(nav).length).toBeGreaterThan(0);
-    const dirs =
-      tree === "admin"
-        ? ["(backoffice)/[tree]"]
-        : ["staff/[staffId]/(features)", "staff/[staffId]"];
-    expect(missingPaths(nav, ...dirs)).toEqual([]);
+    // #1527 Q3 — one route tree serves both.
+    expect(missingPaths(nav, "(backoffice)/[tree]")).toEqual([]);
     expectTabsAreItems(nav);
     expect(nav.mobileTabs.length).toBe(4);
   });
@@ -160,8 +164,8 @@ describe("org nav targets resolve for every role × capability × funding", () =
  */
 describe("no redundant group nesting", () => {
   const navs: Array<[string, DashboardNav["groups"]]> = [
-    ["admin", buildBackofficeNav("admin", { showTds: true })],
-    ["staff", buildBackofficeNav("staff", { showTds: true })],
+    ["admin", buildBackofficeNav(backofficeCap("admin"), { showTds: true })],
+    ["staff", buildBackofficeNav(backofficeCap("staff"), { showTds: true })],
     ["consultant", buildConsultantNav("cp-1").groups],
     ["consultee", buildConsulteeNav("ce-1").groups],
     [

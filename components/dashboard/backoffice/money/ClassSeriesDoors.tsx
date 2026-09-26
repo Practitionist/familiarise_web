@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ClassSeriesView } from "@/lib/backoffice/class-series-types";
 import { enumLabel, fundingRailLabel } from "@/lib/labels/money-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { DoorDialog, type Door } from "./DoorDialog";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 
@@ -32,10 +33,9 @@ async function getJson<T>(url: string): Promise<T> {
  * cancel the whole series, run the 14-day sweep for one session, and refund
  * one seat — every door that moves money.
  */
-export function ClassSeriesDoors({
-  classId,
-  isAdmin,
-}: Readonly<{ classId: string; isAdmin: boolean }>) {
+export function ClassSeriesDoors({ classId }: Readonly<{ classId: string }>) {
+  // Every door that moves money is `classSeries.money` (admin tree only).
+  const canMoveMoney = useBackofficeCapability().can("classSeries.money");
   const [door, setDoor] = useState<Door | null>(null);
   const [refund, setRefund] = useState<{
     door: RefundDoor;
@@ -108,7 +108,7 @@ export function ClassSeriesDoors({
                 >
                   Add note
                 </Button>
-                {isAdmin && (
+                {canMoveMoney && (
                   <Button
                     size="sm"
                     variant="destructive"
@@ -179,7 +179,7 @@ export function ClassSeriesDoors({
                     Grant make-up
                   </Button>
                 )}
-                {isAdmin && !o.seatsSettledAt && (
+                {canMoveMoney && !o.seatsSettledAt && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -205,7 +205,7 @@ export function ClassSeriesDoors({
             {v.seats.map((s) => (
               <Row key={s.userId} label={seatLabel(s)}>
                 {v.cancelledSessions
-                  .filter((o) => isAdmin && o.makeUp && !o.seatsSettledAt)
+                  .filter((o) => canMoveMoney && o.makeUp && !o.seatsSettledAt)
                   .map((o) => (
                     <Button
                       key={o.id}
@@ -225,7 +225,7 @@ export function ClassSeriesDoors({
                       Skip #{o.ordinal}
                     </Button>
                   ))}
-                {isAdmin && s.paymentId && (
+                {canMoveMoney && s.paymentId && (
                   <Button
                     size="sm"
                     variant="outline"

@@ -24,8 +24,8 @@ it("carries the old query onto the hub URL", () => {
 });
 
 it("sends the retired class-series section to class bookings", () => {
-  expect(retiredMoneyTabHref("/dashboard/staff/s1", "class-series")).toBe(
-    "/dashboard/staff/s1/appointments?type=class",
+  expect(retiredMoneyTabHref("/dashboard/staff", "class-series")).toBe(
+    "/dashboard/staff/appointments?type=class",
   );
   expect(moneyTabsFor("ADMIN").map((t) => t.key)).not.toContain("class-series");
 });

@@ -1,12 +1,14 @@
-"use client";
-
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import MaintenanceControls from "@/components/dashboard/MaintenanceControls";
+import { requireBackofficePage } from "@/lib/auth-guard";
 
-export default function AdminMaintenancePage() {
+export default async function BackofficeMaintenancePage({
+  params,
+}: Readonly<{ params: Promise<{ tree: string }> }>) {
+  await requireBackofficePage("maintenance.manage", (await params).tree);
   return (
     <>
       <DashboardHeader

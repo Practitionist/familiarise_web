@@ -8,9 +8,11 @@ import { requireBackofficePage } from "@/lib/auth-guard";
 // disappear together. Auth is enforced by the admin route-group layout and the
 // endpoint's requirePrivilegedAuth. No Form 26Q/140 export UI — the CBDT codes
 // are unconfirmed; this is read-only summary + breakdown.
-export default async function AdminTdsPage() {
+export default async function AdminTdsPage({
+  params,
+}: Readonly<{ params: Promise<{ tree: string }> }>) {
   // Page-level back-office gate (C5): sidebar hiding is not access control.
-  await requireBackofficePage("tds.read");
+  await requireBackofficePage("tds.read", (await params).tree);
   if (!ENABLE_TDS_ADMIN_VIEW) notFound();
   return <TdsPageClient />;
 }
