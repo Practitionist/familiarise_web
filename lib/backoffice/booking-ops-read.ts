@@ -44,7 +44,7 @@ export async function readBookingOps(
           currency: true,
           refunds: {
             where: { status: { in: ["SUCCEEDED", "PENDING"] } },
-            select: { amountPaise: true },
+            select: { amountPaise: true, status: true },
           },
         },
       },
@@ -69,7 +69,18 @@ export async function readBookingOps(
       status: p.paymentStatus,
       amountPaise: Number(p.amount),
       currency: p.currency,
-      refundedPaise: p.refunds.reduce((s, r) => s + Number(r.amountPaise), 0),
+      // Only settled refunds read as refunded; PENDING is still in flight.
+      refundedPaise: sumRefunds(p.refunds, "SUCCEEDED"),
+      pendingRefundPaise: sumRefunds(p.refunds, "PENDING"),
     })),
   };
+}
+
+function sumRefunds(
+  refunds: { amountPaise: bigint | number; status: string }[],
+  status: string,
+): number {
+  return refunds
+    .filter((r) => r.status === status)
+    .reduce((sum, r) => sum + Number(r.amountPaise), 0);
 }

@@ -77,7 +77,7 @@ of every CodeRabbit review body and triage each one with the same table as
 Step 2, every time, including on a PR whose threads are all resolved:
 
 ```bash
-gh api repos/<repo>/pulls/<n>/reviews --paginate -q '.[]|select(.user.login=="coderabbitai[bot]")|.body'
+gh api "repos/$REPO/pulls/$PR/reviews" --paginate -q '.[]|select(.user.login=="coderabbitai[bot]")|.body'
 ```
 
 Note the reviewers. In this repo, **CodeRabbit auto-skips** PRs whose base is not the default branch and every _draft_ (`gh pr ready` after CI to get its round), and it also skips once the organisation's included-review cap is reached while still marking the check "pass" — count `reviewThreads` to know whether a review happened. **Gemini Code Assist**, when present, leaves inline comments worth triaging the same way.

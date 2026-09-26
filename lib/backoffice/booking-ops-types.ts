@@ -26,5 +26,6 @@ export interface BookingOpsView {
     currency: string;
     /** Refunds that moved, or are moving, money. */
     refundedPaise: number;
+    pendingRefundPaise: number;
   }[];
 }

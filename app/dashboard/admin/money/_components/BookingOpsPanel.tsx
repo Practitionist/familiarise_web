@@ -108,6 +108,9 @@ export function BookingOpsPanel({
                 {p.refundedPaise > 0
                   ? ` · ${formatCurrencyAmount(p.refundedPaise, p.currency)} refunded`
                   : ""}
+                {p.pendingRefundPaise > 0
+                  ? ` · ${formatCurrencyAmount(p.pendingRefundPaise, p.currency)} refund pending`
+                  : ""}
               </span>
               {isAdmin && (
                 <Button size="sm" variant="outline" asChild>
