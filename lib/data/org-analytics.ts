@@ -352,6 +352,9 @@ export function orgAnalyticsForRole(
     return {
       ...payload,
       capabilities: { ...payload.capabilities, walletBalance: null },
+      // #1527 review — pendingOveragePaise is a paise figure too; keep the
+      // non-money activation signals a SUPPORT viewer still needs.
+      activation: { ...payload.activation, pendingOveragePaise: 0 },
       wallet: null,
       invoices: null,
       subscription: null,

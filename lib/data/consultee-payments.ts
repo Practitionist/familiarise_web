@@ -171,7 +171,13 @@ function rangeStart(
   const day = 24 * 60 * 60 * 1000;
   if (range === "30d") return new Date(now.getTime() - 30 * day);
   if (range === "90d") return new Date(now.getTime() - 90 * day);
-  if (range === "year") return new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  // #1527 review — IST calendar year, matching istMonthStart below (a bare
+  // UTC year-start put the boundary up to 5.5h off India's midnight).
+  if (range === "year") {
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const ist = new Date(now.getTime() + IST_OFFSET_MS);
+    return new Date(Date.UTC(ist.getUTCFullYear(), 0, 1) - IST_OFFSET_MS);
+  }
   return null;
 }
 

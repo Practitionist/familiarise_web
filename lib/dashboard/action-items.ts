@@ -208,9 +208,12 @@ export function deriveConsultantActionItems({
   }
 
   for (const owed of owedMakeUps) {
+    // #1527 review — a fixed zone keeps server and client render alike;
+    // without it the deadline could read a day earlier/later off-IST.
     const by = new Date(owed.deadline).toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
+      timeZone: "Asia/Kolkata",
     });
     items.push({
       key: `make-up:${owed.occurrenceId}`,
