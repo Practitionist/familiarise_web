@@ -58,7 +58,7 @@ const formatInr = (paise: number) => formatCurrencyAmount(paise, "INR");
 const monthLabel = (month: string) =>
   format(parse(month, "yyyy-MM", new Date()), "MMM");
 
-export default function AnalyticsPageClient({
+export default function AnalyticsPanel({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
   const { data: session } = useSession();

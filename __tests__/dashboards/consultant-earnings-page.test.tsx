@@ -12,7 +12,8 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  EarningsBuckets,
+  EarningsActivity,
+  EarningsSummary,
   type EarningsResponse,
 } from "@/app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsBuckets";
 import { PayoutWalkBody } from "@/app/dashboard/consultant/[consultantId]/(features)/earnings/PayoutWalkSheet";
@@ -123,9 +124,17 @@ const data: EarningsResponse = {
 const render = (node: React.ReactElement) =>
   renderToStaticMarkup(node).replaceAll("&#x27;", "'");
 
-it("sums the three tiles, shows the hold date and the sponsor, and never a raw enum", () => {
+it("sums the tiles, shows the hold date and the sponsor, and never a raw enum", () => {
   const html = render(
-    <EarningsBuckets consultantId="c_1" data={data} now={NOW} />,
+    <>
+      <EarningsSummary
+        consultantId="c_1"
+        data={data}
+        now={NOW}
+        stats={{ rows: [], lifetimePaise: 0 }}
+      />
+      <EarningsActivity data={data} now={NOW} />
+    </>,
   );
   // Available = 80,000 − 5,000; Pending = 80,000; Paid out = 79,920 net.
   expect(html).toContain("₹750.00");
@@ -133,37 +142,31 @@ it("sums the three tiles, shows the hold date and the sponsor, and never a raw e
   expect(html).toContain("₹799.20");
   expect(html).toContain("Payouts begin at launch");
   expect(html).toContain("Add your bank account to get paid");
-  expect(html).toContain("/dashboard/consultant/c_1/settings/payouts");
+  // #1527 — straight to the hub section, no /settings/payouts 308 hop.
+  expect(html).toContain("/dashboard/consultant/c_1/settings/get-paid");
+  expect(html).toContain("Lifetime");
+  // The tile keeps "Paid out" for its COMPLETED-only sum (QA #1774 case 3).
+  expect(html).toContain("Paid out");
   expect(html).toMatch(/₹1,000\.00.*−.*₹200\.00.*platform.*₹800\.00.*yours/);
   expect(html).not.toMatch(/\b(READY|BATCHED|PENDING_TRUST|PROCESSING|HELD)\b/);
 });
 
 it("the Pending and Payouts segments carry the hold date, the sponsor and the walk", () => {
   const pending = render(
-    <EarningsBuckets
-      consultantId="c_1"
-      data={data}
-      now={NOW}
-      initialSegment="PENDING"
-    />,
+    <EarningsActivity data={data} now={NOW} initialSegment="PENDING" />,
   );
   expect(pending).toContain("available on 25 Sep");
   expect(pending).toContain("Acme Corp");
 
   const paid = render(
-    <EarningsBuckets
-      consultantId="c_1"
-      data={data}
-      now={NOW}
-      initialSegment="PAID_OUT"
-    />,
+    <EarningsActivity data={data} now={NOW} initialSegment="PAID_OUT" />,
   );
   expect(paid).toContain("Paid 15 Sep · UTR UTR9");
   // The segment lists every payout with its state, so it is "Payouts"; the
   // tile keeps "Paid out" for its COMPLETED-only sum (QA #1774 case 3).
   expect(paid).toContain(">Payouts<span");
   expect(paid).toContain("Every payout and where it is");
-  expect(paid).toContain("Paid out");
+  expect(paid).toContain("Payouts include earnings from");
   expect(paid).not.toContain('role="tab"');
   expect(paid).toContain('aria-pressed="true"');
 

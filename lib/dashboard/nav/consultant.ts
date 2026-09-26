@@ -10,6 +10,7 @@ import {
   LifeBuoy,
   MessageSquare,
   Settings,
+  Star,
   Video,
   Wallet,
 } from "lucide-react";
@@ -18,7 +19,7 @@ import type { DashboardNav } from "./types";
 
 /**
  * Expert (consultant) IA from #1527 §7.2. Collaborations is a tab of
- * Offerings.
+ * Offerings, and Reviews (Q5) closes the Business group.
  */
 export function buildConsultantNav(consultantId: string): DashboardNav {
   const publicHref = `/explore/experts/${consultantId}`;
@@ -51,6 +52,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
           // #1785 — a daily work surface, not a preference.
           { name: "Availability", icon: CalendarClock, path: "availability" },
           { name: "Earnings", icon: Wallet, path: "earnings" },
+          { name: "Reviews", icon: Star, path: "reviews" },
         ],
       },
       {

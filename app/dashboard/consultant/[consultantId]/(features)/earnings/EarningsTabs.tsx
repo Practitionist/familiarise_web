@@ -4,29 +4,22 @@ import dynamic from "next/dynamic";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { EarningsSummaryPanel } from "./EarningsSummaryPanel";
 
-const AnalyticsPageClient = dynamic(
-  () => import("../analytics/AnalyticsPageClient"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-        Loading analytics…
-      </div>
-    ),
-  },
-);
+const AnalyticsPanel = dynamic(() => import("./AnalyticsPanel"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+      Loading analytics…
+    </div>
+  ),
+});
 
 /**
- * Earnings, with Analytics as its second panel.
+ * Earnings: Summary · Activity · Analytics (#1527 §13b).
  *
- * ADR 19: a navigation entry must be a distinct destination. Analytics was a
- * second sidebar entry over the same object — it called the same
- * `/api/consultant/earnings` endpoint, only adding `?includeMonthly=1` — which
- * is the pattern the rule exists to stop. Both panels keep their own filter and
- * pagination state, deliberately: they answer different questions and resetting
- * one when the other moves would be surprising.
- *
- * Analytics (recharts) is code-split so the Summary tab does not pay for the
+ * ADR 19: a navigation entry must be a distinct destination, so Analytics is
+ * a tab here rather than a sidebar item over the same object. Summary answers
+ * "when do I get paid", Activity is the row-by-row list, Analytics the trend.
+ * Analytics (recharts) is code-split so the other tabs do not pay for the
  * charting library on first paint.
  */
 export function EarningsTabs({
@@ -41,9 +34,16 @@ export function EarningsTabs({
           content: <EarningsSummaryPanel consultantId={consultantId} />,
         },
         {
+          value: "activity",
+          label: "Activity",
+          content: (
+            <EarningsSummaryPanel consultantId={consultantId} view="activity" />
+          ),
+        },
+        {
           value: "analytics",
           label: "Analytics",
-          content: <AnalyticsPageClient consultantId={consultantId} />,
+          content: <AnalyticsPanel consultantId={consultantId} />,
         },
       ]}
     />
