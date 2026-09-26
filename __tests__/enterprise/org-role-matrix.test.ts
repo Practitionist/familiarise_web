@@ -191,20 +191,24 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
   });
 
   it("export kinds split people (OW, MT) from finance (OW, BA) (decision 4)", () => {
-    expect(dataExportKindsFor("OWNER")).toEqual(["people", "finance"]);
-    expect(dataExportKindsFor("MAINTAINER")).toEqual(["people"]);
-    expect(dataExportKindsFor("BILLING_ADMIN")).toEqual(["finance"]);
+    expect(dataExportKindsFor("OWNER")).toEqual(["PEOPLE", "FINANCE"]);
+    expect(dataExportKindsFor("MAINTAINER")).toEqual(["PEOPLE"]);
+    expect(dataExportKindsFor("BILLING_ADMIN")).toEqual(["FINANCE"]);
     expect(dataExportKindsFor("MANAGER")).toEqual([]);
-    expect(canHandleExportKind("MAINTAINER", "finance")).toBe(false);
-    // A pre-split job is a full bundle: only a holder of both kinds.
-    expect(canHandleExportKind("BILLING_ADMIN", null)).toBe(false);
-    expect(canHandleExportKind("OWNER", null)).toBe(true);
+    expect(canHandleExportKind("MAINTAINER", "FINANCE")).toBe(false);
+    // A pre-split FULL job: only a holder of both kinds.
+    expect(canHandleExportKind("BILLING_ADMIN", "FULL")).toBe(false);
+    expect(canHandleExportKind("OWNER", "FULL")).toBe(true);
     for (const file of [
       "data-exports/route.ts",
       "data-exports/[exportId]/download/route.ts",
     ]) {
       expect(read(`${API}/${file}`)).toContain("canHandleExportKind(");
     }
+    // #1527 3c — the kind is a job column, written on create.
+    expect(read(`${API}/data-exports/route.ts`)).toMatch(
+      /orgDataExportJob\.create\(\{\s*data: \{[^}]*\bkind,/,
+    );
   });
 
   it("an operator can't grant consent for a member (decision 5)", async () => {

@@ -18,6 +18,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import type { OrgDataExportKind } from "@prisma/client";
 import {
   dataExportKindsFor,
   type DataExportKind,
@@ -40,8 +41,7 @@ import {
 
 type ExportJob = {
   id: string;
-  /** null = a full bundle requested before the split. */
-  kind: DataExportKind | null;
+  kind: OrgDataExportKind;
   status: "PENDING" | "PROCESSING" | "READY" | "FAILED" | "EXPIRED";
   requestedByMembershipId: string;
   fileSizeBytes: number | string | null;
@@ -52,14 +52,16 @@ type ExportJob = {
   completedAt: string | null;
 };
 
-// #1762-4 — labels + tones instead of the raw enum.
-const KIND_COPY: Record<DataExportKind, { label: string; covers: string }> = {
-  people: { label: "People", covers: "members and the audit log" },
-  finance: {
-    label: "Finance",
-    covers: "contracts, programs, invoices, earnings and payouts",
-  },
-};
+// #1762-4 — labels + tones instead of the raw enum. FULL = pre-split job.
+const KIND_COPY: Record<OrgDataExportKind, { label: string; covers: string }> =
+  {
+    FULL: { label: "Everything", covers: "every people and finance record" },
+    PEOPLE: { label: "People", covers: "members and the audit log" },
+    FINANCE: {
+      label: "Finance",
+      covers: "contracts, programs, invoices, earnings and payouts",
+    },
+  };
 
 const EXPORT_STATUS: Record<
   ExportJob["status"],
@@ -136,7 +138,7 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
       key: "kind",
       header: "Bundle",
       className: "text-xs text-muted-foreground",
-      cell: (row) => (row.kind ? KIND_COPY[row.kind].label : "Everything"),
+      cell: (row) => KIND_COPY[row.kind].label,
     },
     {
       key: "status",

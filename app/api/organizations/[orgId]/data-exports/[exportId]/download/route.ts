@@ -15,7 +15,6 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { canHandleExportKind } from "@/lib/enterprise/data-export-kinds";
-import { loadExportKinds } from "@/lib/enterprise/data-export-jobs";
 
 export async function GET(
   _req: NextRequest,
@@ -34,9 +33,8 @@ export async function GET(
   const job = await prisma.orgDataExportJob.findFirst({
     where: { id: exportId, organizationId: orgId },
   });
-  const kind = job && (await loadExportKinds(orgId, [job.id])).get(job.id);
   // A kind the caller can't export reads as absent, not forbidden.
-  if (!job || !canHandleExportKind(access.member.role, kind ?? null)) {
+  if (!job || !canHandleExportKind(access.member.role, job.kind)) {
     return NextResponse.json(
       { error: "Export job not found" },
       { status: 404 },
@@ -68,7 +66,10 @@ export async function GET(
       category: "SYSTEM",
       action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOADED,
       description: `Downloaded export bundle ${exportId}`,
-      details: { exportId, fileSizeBytes: job.fileSizeBytes?.toString() ?? null },
+      details: {
+        exportId,
+        fileSizeBytes: job.fileSizeBytes?.toString() ?? null,
+      },
     },
   });
 

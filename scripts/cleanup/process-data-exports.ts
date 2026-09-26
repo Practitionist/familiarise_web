@@ -42,12 +42,12 @@ import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
 import { deliver, SENDERS } from "../../lib/email";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import type { OrgDataExportKind } from "@prisma/client";
 import {
-  DATA_EXPORT_KINDS,
+  bundleKinds,
   canHandleExportKind,
   type DataExportKind,
 } from "@/lib/enterprise/data-export-kinds";
-import { loadExportKinds } from "@/lib/enterprise/data-export-jobs";
 
 export interface DataExportResult {
   picked: number;
@@ -84,17 +84,17 @@ interface ExportBundle {
 /**
  * #1527 decision 4 — the bundle carries only the requested kind: people
  * (members, memberships, audit log, consent-withheld count) or finance
- * (contracts, programs, invoices, earnings, payouts). A pre-split job
- * (`null`) builds both, as before.
+ * (contracts, programs, invoices, earnings, payouts). A pre-split FULL job
+ * builds both, as before.
  */
 async function buildBundleFor(
   organizationId: string,
-  kind: DataExportKind | null,
+  kind: OrgDataExportKind,
 ): Promise<ExportBundle> {
-  const kinds: DataExportKind[] = kind ? [kind] : [...DATA_EXPORT_KINDS];
+  const kinds = bundleKinds(kind);
   const full = await buildFullBundleFor(organizationId);
-  const people = kinds.includes("people");
-  const finance = kinds.includes("finance");
+  const people = kinds.includes("PEOPLE");
+  const finance = kinds.includes("FINANCE");
   return {
     organizationId: full.organizationId,
     generatedAt: full.generatedAt,
@@ -124,7 +124,7 @@ async function buildBundleFor(
  */
 async function requesterMayExport(
   requestedByMembershipId: string,
-  kind: DataExportKind | null,
+  kind: OrgDataExportKind,
 ): Promise<boolean> {
   if (requestedByMembershipId.startsWith("__admin_stub_")) return true;
   const requester = await prisma.membership.findUnique({
@@ -370,15 +370,13 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
   });
 
   try {
-    const kind =
-      (await loadExportKinds(job.organizationId, [job.id])).get(job.id) ?? null;
-    if (!(await requesterMayExport(job.requestedByMembershipId, kind))) {
+    if (!(await requesterMayExport(job.requestedByMembershipId, job.kind))) {
       // Org-visible (job.error) — plain words, no internals.
       throw new Error(
         "The member who requested this export no longer holds the grant for it.",
       );
     }
-    const bundle = await buildBundleFor(job.organizationId, kind);
+    const bundle = await buildBundleFor(job.organizationId, job.kind);
     const uploaded = await uploadBundle(job.organizationId, job.id, bundle);
     if (!uploaded) {
       throw new Error("Bundle upload returned null");

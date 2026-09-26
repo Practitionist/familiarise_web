@@ -7342,6 +7342,9 @@ model OrgDataExportJob {
   organizationId          String
   organization            Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   requestedByMembershipId String
+  /// #1527 decision 4 — which bundle this job builds. FULL = a job from
+  /// before the people/finance split; only a holder of every kind may see it.
+  kind                    OrgDataExportKind   @default(FULL)
   status                  OrgDataExportStatus @default(PENDING)
   fileUrl                 String?
   fileSizeBytes           BigInt?
@@ -7360,6 +7363,12 @@ enum OrgDataExportStatus {
   READY
   FAILED
   EXPIRED
+}
+
+enum OrgDataExportKind {
+  FULL
+  PEOPLE
+  FINANCE
 }
 
 //////////////////////////////////////////////////// V0 LOCKDOWN ADDITIONS (#768) ////////////////////////////////////////////////////

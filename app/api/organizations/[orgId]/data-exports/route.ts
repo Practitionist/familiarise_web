@@ -29,7 +29,6 @@ import {
   DATA_EXPORT_KINDS,
   canHandleExportKind,
 } from "@/lib/enterprise/data-export-kinds";
-import { loadExportKinds } from "@/lib/enterprise/data-export-jobs";
 import { applyRateLimit, orgDataExportLimiter } from "@/lib/rate-limit";
 
 const EXPORT_GRANTS = ["dataExports.people", "dataExports.finance"] as const;
@@ -51,6 +50,7 @@ export async function GET(
     take: 50,
     select: {
       id: true,
+      kind: true,
       status: true,
       requestedByMembershipId: true,
       fileSizeBytes: true,
@@ -61,15 +61,9 @@ export async function GET(
       completedAt: true,
     },
   });
-  const kinds = await loadExportKinds(
-    orgId,
-    exports.map((e) => e.id),
-  );
   const role = access.member.role;
   return NextResponse.json({
-    data: exports
-      .map((e) => ({ ...e, kind: kinds.get(e.id) ?? null }))
-      .filter((e) => canHandleExportKind(role, e.kind)),
+    data: exports.filter((e) => canHandleExportKind(role, e.kind)),
   });
 }
 
@@ -110,6 +104,7 @@ export async function POST(
       data: {
         organizationId: orgId,
         requestedByMembershipId: access.member.id,
+        kind,
         status: "PENDING",
       },
     });
@@ -119,9 +114,7 @@ export async function POST(
         actorMembershipId: access.member.id,
         category: "SYSTEM",
         action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_REQUESTED,
-        description: `Requested org data export (${kind})`,
-        // The worker and the list read the kind back from here — the job
-        // row has no kind column (lib/enterprise/data-export-kinds.ts).
+        description: `Requested org data export (${kind.toLowerCase()})`,
         details: { exportId: job.id, kind },
       },
     });
