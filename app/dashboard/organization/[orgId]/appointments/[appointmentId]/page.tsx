@@ -16,6 +16,8 @@ import {
 
 import DetailPageClient from "./DetailPageClient";
 import { DelivererDetailClient } from "./DelivererDetailClient";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { OrgActorDetail, type OrgActorDetailProps } from "./OrgActorDetail";
 
 type Appointment = TAppointmentDetail["appointment"];
@@ -74,7 +76,7 @@ export default async function OrgAppointmentDetailPage({
 
   const userId = access.session.user.id;
 
-  const [detail, profile, consultantProfile] = await Promise.all([
+  const [detail, profile, consultantProfile, viewerZone] = await Promise.all([
     readAppointmentDetail(appointmentId),
     prisma.consulteeProfile.findUnique({
       where: { userId },
@@ -84,6 +86,8 @@ export default async function OrgAppointmentDetailPage({
       where: { userId },
       select: { id: true },
     }),
+    // One zone for the server render and hydration (#418, #1527 QA).
+    getViewerZone(),
   ]);
   if (!detail) notFound();
 
@@ -102,11 +106,13 @@ export default async function OrgAppointmentDetailPage({
       appointment.participants.some((seat) => seat.userId === userId));
   if (owns) {
     return (
-      <DetailPageClient
-        orgId={orgId}
-        appointmentId={appointmentId}
-        consulteeId={profile.id}
-      />
+      <DisplayZoneProvider zone={viewerZone.zone}>
+        <DetailPageClient
+          orgId={orgId}
+          appointmentId={appointmentId}
+          consulteeId={profile.id}
+        />
+      </DisplayZoneProvider>
     );
   }
 
@@ -116,11 +122,13 @@ export default async function OrgAppointmentDetailPage({
     appointmentViewerSides(userId, detail).asConsultant
   ) {
     return (
-      <DelivererDetailClient
-        orgId={orgId}
-        appointmentId={appointmentId}
-        consultantId={consultantProfile.id}
-      />
+      <DisplayZoneProvider zone={viewerZone.zone}>
+        <DelivererDetailClient
+          orgId={orgId}
+          appointmentId={appointmentId}
+          consultantId={consultantProfile.id}
+        />
+      </DisplayZoneProvider>
     );
   }
 

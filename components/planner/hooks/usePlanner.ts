@@ -1,6 +1,11 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { offeringStatsQueryKey } from "@/lib/offerings/stats";
 
@@ -13,6 +18,27 @@ async function requireOk(response: Response, fallback: string) {
     throw new Error(errorData?.error || fallback);
   }
   return response.json();
+}
+
+/**
+ * Every read an offering write can change: the planner's webinar/class
+ * instances, the two 1:1 plan lists, the per-offering stats and the editor's
+ * loaded offering. #1527 QA — the editor's Publish / Unpublish never touched
+ * them, so the list kept a plan's old status until a reload.
+ */
+export function invalidateOfferingQueries(
+  queryClient: QueryClient,
+  consultantId: string,
+) {
+  return Promise.all(
+    [
+      ["consultant-planner", consultantId],
+      ["consultationPlans", consultantId],
+      ["subscriptionPlans", consultantId],
+      offeringStatsQueryKey(consultantId),
+      ["offering-edit"],
+    ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+  );
 }
 
 /**
@@ -33,15 +59,10 @@ function useOfferingWrite<TInput>(
   return useMutation({
     mutationFn,
     onSuccess: (result, input) => {
-      for (const queryKey of [
-        ["consultant-planner", consultantId],
-        ["consultationPlans", consultantId],
-        ["subscriptionPlans", consultantId],
-        offeringStatsQueryKey(consultantId),
-      ]) {
-        void queryClient.invalidateQueries({ queryKey });
-      }
       toast({ title: success(input, result) });
+      // Returned so the write settles only once the list has refetched: the
+      // confirm dialog closes on a list that no longer shows a deleted card.
+      return invalidateOfferingQueries(queryClient, consultantId);
     },
   });
 }

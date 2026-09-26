@@ -19,7 +19,8 @@ import { FaqEditor } from "@/components/planner/components/form-fields/FaqEditor
 import { ContentItemsEditor } from "./ContentItemsEditor";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { OfferingEditor } from "./OfferingEditor";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateOfferingQueries } from "@/components/planner/hooks/usePlanner";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { publicOfferingHref } from "@/components/offerings/list/offering-rows";
 import {
@@ -128,6 +129,7 @@ export function OfferingEditorContainer({
   onSave,
 }: Readonly<OfferingEditorContainerProps>) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const adapter = OFFERING_ADAPTERS[type];
   const manifest = OFFERING_MANIFESTS[type];
   // Per-action, so only the pressed button spins.
@@ -253,6 +255,9 @@ export function OfferingEditorContainer({
         }),
       );
 
+      // #1527 QA — the list and its status chips re-read on return instead
+      // of showing the pre-publish copy until a reload.
+      void invalidateOfferingQueries(queryClient, consultantId);
       router.push(
         returnHref ?? `/dashboard/consultant/${consultantId}/offerings`,
       );

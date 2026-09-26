@@ -15,10 +15,15 @@ export async function generateMetadata({
   params: Promise<{ consultationPlanId: string }>;
 }>): Promise<Metadata> {
   const { consultationPlanId } = await params;
-  const plan = await getConsultationPlanDetail(consultationPlanId).catch(
-    () => null,
-  );
-  if (!plan) return { title: "Consultation not found" };
+  const [plan, session] = await Promise.all([
+    getConsultationPlanDetail(consultationPlanId).catch(() => null),
+    getSession().catch(() => null),
+  ]);
+  // #1527 Q4 — the page's own gate: a draft, archived or ORG_ONLY plan must
+  // not leak its title through the tab or link previews.
+  if (!plan || !(await canViewPlanDetail(plan, session))) {
+    return { title: "Consultation not found" };
+  }
   const expert = plan.consultantProfile?.user?.name;
   return {
     title: `${plan.title}${expert ? ` with ${expert}` : ""} — Familiarise`,

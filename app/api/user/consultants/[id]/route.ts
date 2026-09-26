@@ -84,6 +84,15 @@ const customSlotSchema = z.object({
   endsAt: dateTimeSchema,
 });
 
+// #1703 D1/D4 — the Booking requests settings. Optional so older callers keep
+// working; null clears the cap. The PUT carries them with the whole profile;
+// the PATCH (#1527) saves them alone.
+const bookingRequestFields = {
+  bookingMode: z.nativeEnum(BookingMode).optional(),
+  acceptingRequests: z.boolean().optional(),
+  maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
+};
+
 // Main request body schema
 const updateConsultantSchema = z
   .object({
@@ -113,10 +122,7 @@ const updateConsultantSchema = z
       .optional(),
     // User-level field (stored on User model, not ConsultantProfile)
     linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
-    // #1703 D1/D4 — optional so older callers keep working; null clears the cap.
-    bookingMode: z.nativeEnum(BookingMode).optional(),
-    acceptingRequests: z.boolean().optional(),
-    maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
+    ...bookingRequestFields,
   })
   // #1703 — an unknown key is a 400, so a misspelt setting cannot be dropped silently.
   .strict()
@@ -141,6 +147,31 @@ const updateConsultantSchema = z
       path: ["scheduleType"],
     },
   );
+
+const bookingRequestSettingsSchema = z
+  .object(bookingRequestFields)
+  .strict()
+  .refine((data) => Object.values(data).some((v) => v !== undefined), {
+    message: "Send at least one booking-request setting",
+  });
+
+/** The caller's own profile's owner, or the 401/403 response to return. */
+async function authorizeOwner(
+  id: string,
+): Promise<{ userId: string } | NextResponse> {
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const owner = await prisma.consultantProfile.findUnique({
+    where: { id },
+    select: { userId: true },
+  });
+  if (!owner || owner.userId !== session.user.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+  return owner;
+}
 
 export async function GET(
   request: NextRequest,
@@ -312,21 +343,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id } = await params;
-
-    // Verify the caller owns this consultant profile
-    const ownerCheck = await prisma.consultantProfile.findUnique({
-      where: { id },
-      select: { userId: true },
-    });
-    if (!ownerCheck || ownerCheck.userId !== session.user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-    }
+    const ownerCheck = await authorizeOwner(id);
+    if (ownerCheck instanceof NextResponse) return ownerCheck;
 
     const requestData = await request.json();
 
@@ -643,6 +662,50 @@ export async function PUT(
       { tags: { subsystem: "auth" } },
     );
     return apiError({ tag: "[Consultant.PUT]", error });
+  }
+}
+
+/**
+ * PATCH — the Booking requests settings alone (#1527). The PUT replaces the
+ * whole profile and re-validates every availability window, so one stale
+ * overlap made the Requests page's "Accepting requests" switch fail; these
+ * flags touch no windows.
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    const owner = await authorizeOwner(id);
+    if (owner instanceof NextResponse) return owner;
+
+    const parsed = bookingRequestSettingsSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.format() },
+        { status: 400 },
+      );
+    }
+
+    const data = await prisma.consultantProfile.update({
+      where: { id },
+      data: parsed.data,
+      select: {
+        bookingMode: true,
+        acceptingRequests: true,
+        maxOpenRequests: true,
+      },
+    });
+    // The public page shows whether the expert is taking requests.
+    purgeExpertSurfaces(id);
+    return NextResponse.json({ data });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultants" } },
+    );
+    return apiError({ tag: "[Consultant.PATCH]", error });
   }
 }
 

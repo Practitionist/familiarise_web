@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useId } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { TConsultantProfile } from "types/consultant";
 
@@ -11,12 +11,13 @@ import { Switch } from "@/components/ui/switch";
 
 import { fetchConsultantData } from "../../utils/fetchHelpers";
 import { consultantSettingsQueryKey } from "../settings/settings";
-import { useConsultantSettingsForm } from "../settings/use-consultant-settings-form";
+import { useSaveBookingRequestSettings } from "../settings/use-save-booking-request-settings";
 
 /**
- * #1527 §14 — "Accepting requests" lives on the working page. It saves through
- * the Booking requests section's own form and PUT (the route takes the whole
- * profile), so the two can never disagree about the flag.
+ * #1527 §14 — "Accepting requests" lives on the working page. It saves the
+ * one flag through the narrow booking-settings PATCH (the whole-profile PUT
+ * 400'd on any stale availability overlap and the switch reverted silently)
+ * and shares the settings query with the Booking requests page.
  */
 export function AcceptingRequestsToggle({
   consultantId,
@@ -46,37 +47,26 @@ function ToggleSwitch({
 }: Readonly<{ consultant: TConsultantProfile }>) {
   const id = useId();
   const router = useRouter();
-  const form = useConsultantSettingsForm(consultant);
-  // What the switch shows while its save is in flight; server truth otherwise.
-  const [optimistic, setOptimistic] = useState<boolean | null>(null);
-  const [queued, setQueued] = useState(false);
+  const save = useSaveBookingRequestSettings(consultant.id);
 
-  // The flip lands in form state first; the save runs on the next render so
-  // the PUT carries it (handleSubmit reads the state it closed over). The
-  // save awaits the settings query's refetch, so the prop is fresh after it.
-  useEffect(() => {
-    if (!queued || form.formData.acceptingRequests !== optimistic) return;
-    setQueued(false);
-    void form
-      .handleSubmit({ preventDefault: () => undefined } as FormEvent)
-      .finally(() => {
-        setOptimistic(null);
-        router.refresh();
-      });
-  }, [queued, optimistic, form, router]);
-
-  const checked = optimistic ?? consultant.acceptingRequests ?? true;
+  // Optimistic while in flight; server truth otherwise (a failure reverts
+  // and the hook toasts why).
+  const checked = save.isPending
+    ? (save.variables.acceptingRequests ?? true)
+    : (consultant.acceptingRequests ?? true);
   return (
     <div className="flex items-center gap-2">
       <Switch
         id={id}
         checked={checked}
-        disabled={form.isSaving || form.timezoneLoading || optimistic !== null}
-        onCheckedChange={(next) => {
-          form.setFormData((prev) => ({ ...prev, acceptingRequests: next }));
-          setOptimistic(next);
-          setQueued(true);
-        }}
+        disabled={save.isPending}
+        onCheckedChange={(next) =>
+          save.mutate(
+            { acceptingRequests: next },
+            // The paused banner is server-rendered from the profile.
+            { onSuccess: () => router.refresh() },
+          )
+        }
       />
       <Label htmlFor={id} className="text-sm font-medium">
         Accepting requests

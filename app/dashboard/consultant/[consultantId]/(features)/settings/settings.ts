@@ -7,6 +7,7 @@ import {
 import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
 import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import type { SlotsType } from "@/utils/schedule/types";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import {
   BookingMode,
   DayOfWeek,
@@ -253,6 +254,32 @@ export const getMonthYearString = (date: Date) => {
 /** The query every settings section and the Requests page's paused banner share (#1703 D4). */
 export const consultantSettingsQueryKey = (consultantId: string) =>
   ["consultant-settings", consultantId] as const;
+
+export type BookingRequestSettings = Pick<
+  FormData,
+  "bookingMode" | "acceptingRequests" | "maxOpenRequests"
+>;
+
+/**
+ * Saves only the Booking requests settings (#1527) through the narrow PATCH,
+ * so a stale availability overlap elsewhere in the profile cannot refuse it.
+ * Throws the server's sentence on a refusal, for the caller's toast.
+ */
+export async function saveBookingRequestSettings(
+  consultantId: string,
+  patch: Partial<BookingRequestSettings>,
+): Promise<BookingRequestSettings> {
+  const res = await fetch(`/api/user/consultants/${consultantId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const { data } = (await requireJsonResponse(
+    res,
+    "Couldn't save your booking settings",
+  )) as { data: BookingRequestSettings };
+  return data;
+}
 
 /**
  * The Settings hub's sections (#1785 L-2), in the locked order. One entry is
