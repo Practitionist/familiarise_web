@@ -335,7 +335,9 @@ export const OCCURRENCE_COMPLETION_ALLOWED_FROM: Record<
   OccurrenceCompletionStatus[]
 > = {
   SCHEDULED: ["RESCHEDULED"],
-  COMPLETED: ["SCHEDULED", "UNVERIFIED"],
+  // #1569 — VOIDED → COMPLETED is the ops overturn; the door refuses it once
+  // the miss is settled or any `occ:` refund exists.
+  COMPLETED: ["SCHEDULED", "UNVERIFIED", "VOIDED"],
   // COMPLETED → UNVERIFIED is the maintenance drain pulling a session it cut
   // short back for human review when the call-ended webhook landed first.
   // Automated completion (Stream webhooks) passes fromIn: ["SCHEDULED"] so it
@@ -343,6 +345,9 @@ export const OCCURRENCE_COMPLETION_ALLOWED_FROM: Record<
   UNVERIFIED: ["SCHEDULED", "COMPLETED"],
   CANCELLED: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"],
   RESCHEDULED: ["SCHEDULED", "RESCHEDULED"],
+  // #1569 — the end + 1 h sweep voids from SCHEDULED only; ops may void a
+  // parked UNVERIFIED or overturn a forfeit (COMPLETED) it judges was ours.
+  VOIDED: ["SCHEDULED", "UNVERIFIED", "COMPLETED"],
 };
 
 /**

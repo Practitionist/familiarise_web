@@ -105,9 +105,10 @@ seat that joined late and attended nothing yet is refunded in full.
 
 A learner holding a seat may leave with every undelivered session refunded
 in full once the series has accumulated three host-cancelled sessions, or a
-quarter of its total sessions, whichever comes first. Misses are host
-cancellations only for now — no-shows and outage voiding are deferred (see
-Deferred, below). The first cancellation that crosses the threshold writes
+quarter of its total sessions, whichever comes first. Misses were host
+cancellations only when this record was written; since the session-outcomes
+decision (`2026-09-25-session-outcomes.md`) every voided session is a miss
+too, and only host-attributed misses raise the flag. The first cancellation that crosses the threshold writes
 one `class-reliability:<classId>` `SystemEvent` for ops and notifies every
 seat holder once; an operator may clear the flag from the console, and a
 further host cancellation after that clear re-trips it, because a cleared
@@ -166,11 +167,13 @@ session is cancelled.
 
 ## Deferred
 
-- **No-shows and outage voiding** as their own kind of miss, alongside host
-  cancellations, are out of this train and tracked in #1569 — the session
-  outcomes register that decides what the system records and what the
-  support terminals promise for a dropped call, a slow network or a group
-  shape.
+- **No-shows and outage voiding** were deferred from this train to #1569
+  and are now decided in `2026-09-25-session-outcomes.md`. A voided session
+  is a miss that rides the make-up machine in decisions 5 and 6 unchanged,
+  every void counts toward the exit right in decision 8, and only a host
+  cancellation or a `CUT_SHORT` or `HOST_ABSENT` void raises the
+  reliability flag. A learner who never joins forfeits the session and is
+  not a miss.
 - **Late-join pricing and batch presentation** — pro-rata pricing for a
   learner who joins after a series has started, and how batches are shown
   and closed to new enrolment — are filed as their own issue, #1819, and

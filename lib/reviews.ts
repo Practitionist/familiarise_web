@@ -4,6 +4,7 @@ import type {
   AppointmentsType,
   ReviewTrack,
   OccurrenceCompletionStatus,
+  OccurrenceOutcome,
 } from "@prisma/client";
 
 /**
@@ -115,8 +116,18 @@ export function heldOccurrence(userId: string) {
       // 2. Nobody COULD have recorded it. UNVERIFIED means "past, with no
       //    Meeting", which is what an offline session looks like —
       //    excluding it would deny feedback to everyone who met in person.
+      //    #1569 — only when the sweep saw no call or could not judge it; a
+      //    parked host no-show or nobody-joined session is not a held one.
       {
         completionStatus: "UNVERIFIED" as OccurrenceCompletionStatus,
+        OR: [
+          { outcome: null },
+          {
+            outcome: {
+              in: ["OFFLINE", "INCONCLUSIVE"] as OccurrenceOutcome[],
+            },
+          },
+        ],
       },
     ],
   };
