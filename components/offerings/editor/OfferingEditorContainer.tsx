@@ -194,6 +194,10 @@ export function OfferingEditorContainer({
         (r) => `${r.planType}:${r.planId}` === offeringStatKey(type, planId),
       )?.bookings ?? 0)
     : 0;
+  // #1527 review — an unresolved or failed stats read must not read as "0
+  // bookings": that let an unpublish through with no confirmation while the
+  // real count was simply unknown.
+  const bookingsUnknown = unpublishCanStrand && !stats.data;
   const [pendingUnpublish, setPendingUnpublish] = React.useState<Record<
     string,
     unknown
@@ -329,7 +333,7 @@ export function OfferingEditorContainer({
           ...extraSlots,
         }}
         onSaveDraft={(values) => {
-          if (unpublishCanStrand && bookings > 0) {
+          if (unpublishCanStrand && (bookings > 0 || bookingsUnknown)) {
             setPendingUnpublish(values as Record<string, unknown>);
             return;
           }
@@ -346,7 +350,11 @@ export function OfferingEditorContainer({
           if (!open) setPendingUnpublish(null);
         }}
         title="Unpublish this offering?"
-        description={`${bookings} ${bookings === 1 ? "person has" : "people have"} booked it. Existing bookings are unaffected; it just stops taking new ones until you publish it again.`}
+        description={
+          bookingsUnknown
+            ? "We couldn't confirm whether anyone has booked it. Existing bookings are unaffected either way; it just stops taking new ones until you publish it again."
+            : `${bookings} ${bookings === 1 ? "person has" : "people have"} booked it. Existing bookings are unaffected; it just stops taking new ones until you publish it again.`
+        }
         confirmLabel="Unpublish"
         onConfirm={async () => {
           if (pendingUnpublish) {

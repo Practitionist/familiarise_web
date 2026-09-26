@@ -153,9 +153,18 @@ export function SessionsSection() {
         confirmLabel="Log out everywhere"
         tone="destructive"
         onConfirm={async () => {
+          // #1527 review — Better Auth resolves with `{ error }` for an
+          // API-level failure; it only throws on a network fault. Both paths
+          // must block the success toast/sign-out.
+          let result: { error?: unknown } | undefined;
           try {
-            await authClient.revokeOtherSessions();
+            result = await authClient.revokeOtherSessions();
           } catch {
+            throw new Error(
+              "We couldn't end your other sessions. Please try again.",
+            );
+          }
+          if (result?.error) {
             throw new Error(
               "We couldn't end your other sessions. Please try again.",
             );

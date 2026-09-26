@@ -474,8 +474,10 @@ export function OperatorAppointmentsClient({
           </TabsContent>
         </Tabs>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
+        {/* Pagination — #1527 review — hidden on Awaiting payment, which owns
+            its own list; without this, placeholderData could carry a
+            previous tab's totalPages onto a tab that renders no pager. */}
+        {activeTab !== "awaiting-payment" && totalPages > 1 && (
           <div className="flex justify-center gap-2 mt-4">
             <Button
               variant="outline"

@@ -1381,10 +1381,15 @@ export function ModerationPage() {
           tone="destructive"
           requireReason={{ label: "Reason (kept on the report)" }}
           onConfirm={async ({ reason }) => {
+            // #1527 review — the moderator's free-text note (moderationNote)
+            // was dropped here; combine it with the typed confirm reason.
+            const notes = [reason, moderationNote.trim()]
+              .filter(Boolean)
+              .join("\n\n");
             await reportActionMutation.mutateAsync({
               reportId: selectedReport.id,
               action: confirmAction,
-              notes: reason,
+              notes,
             });
             setConfirmAction(null);
           }}
