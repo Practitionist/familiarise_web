@@ -66,7 +66,6 @@ export type NextActionKind =
   | "REQUEST_AGAIN"
   | "JOIN"
   | "RATE"
-  | "ATTEST"
   | "NONE";
 
 export interface BookingState {

@@ -129,10 +129,19 @@ export function imminentSessionItem(
 }
 
 export interface ConsultantActionInput {
-  /** Requests awaiting slot allocation by this consultant. */
+  /** The Requests badge's number: everything in the inbox waiting on them. */
   pendingApprovals: number;
   /** Documents uploaded by consultees and awaiting this consultant's review. */
   documentsAwaitingReview?: number;
+  /** #1527 — a learner proposed new times; the consultant answers. */
+  rescheduleReplies?: { appointmentId: string; counterpartName: string }[];
+  /** #1569 — missed class sessions still owed a make-up, with the deadline. */
+  owedMakeUps?: {
+    appointmentId: string;
+    occurrenceId: string;
+    title: string;
+    deadline: string;
+  }[];
   upcomingSessions: ImminentSession[];
   basePath: string;
   /** #1675 PR-Y2 — earnings exist and no verified payout account can take them. */
@@ -144,6 +153,8 @@ export interface ConsultantActionInput {
 export function deriveConsultantActionItems({
   pendingApprovals,
   documentsAwaitingReview = 0,
+  rescheduleReplies = [],
+  owedMakeUps = [],
   upcomingSessions,
   basePath,
   payoutSetupNeeded = false,
@@ -170,7 +181,7 @@ export function deriveConsultantActionItems({
         ? "You have earnings waiting; payouts start once an account is verified."
         : "You have earnings waiting; a verified account now means you are in the first batch.",
       ctaLabel: "Set up",
-      ctaHref: `${basePath}/settings/payouts`,
+      ctaHref: `${basePath}/settings/get-paid`,
     });
   }
 
@@ -178,10 +189,36 @@ export function deriveConsultantActionItems({
     items.push({
       key: "pending-requests",
       severity: "warning",
-      title: `${pendingApprovals} ${pluralise(pendingApprovals, "request needs", "requests need")} slot allocation`,
-      body: "Learners are waiting on times from you before they can book.",
-      ctaLabel: "Allocate",
+      title: `${pendingApprovals} ${pluralise(pendingApprovals, "request", "requests")} to answer`,
+      body: "Learners are waiting on you before they can book.",
+      ctaLabel: "Answer",
       ctaHref: `${basePath}/requests`,
+    });
+  }
+
+  for (const reply of rescheduleReplies) {
+    items.push({
+      key: `reschedule-reply:${reply.appointmentId}`,
+      severity: "warning",
+      title: `${reply.counterpartName} asked to reschedule`,
+      body: "Accept one of their times or decline to keep the booking as it is.",
+      ctaLabel: "Reply",
+      ctaHref: `${basePath}/appointments/${reply.appointmentId}`,
+    });
+  }
+
+  for (const owed of owedMakeUps) {
+    const by = new Date(owed.deadline).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+    });
+    items.push({
+      key: `make-up:${owed.occurrenceId}`,
+      severity: "warning",
+      title: `Schedule a make-up for ${owed.title}`,
+      body: `Hold it by ${by}, or every learner on that session is refunded for it.`,
+      ctaLabel: "Schedule",
+      ctaHref: `${basePath}/appointments/${owed.appointmentId}`,
     });
   }
 

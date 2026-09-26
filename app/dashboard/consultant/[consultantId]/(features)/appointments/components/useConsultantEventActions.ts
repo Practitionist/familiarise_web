@@ -236,14 +236,11 @@ export function useConsultantEventActions({
         throw error;
       }
 
-      const refundNote =
-        type === "Consultation" || type === "Subscription"
-          ? " Any eligible refund follows your cancellation policy."
-          : "";
-
+      // A cancellation the expert makes refunds the learner in full, whatever
+      // the policy's notice tiers say (consultantInitiatedPct is 100, #1527).
       toast({
         title: "Appointment cancelled",
-        description: `${type} "${title}" has been cancelled.${refundNote}`,
+        description: `${type} "${title}" has been cancelled. Because you cancelled, everyone who paid gets a full refund.`,
       });
       invalidateBookingData();
     } catch (error) {

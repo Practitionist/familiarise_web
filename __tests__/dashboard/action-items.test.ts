@@ -164,13 +164,13 @@ describe("deriveConsultantActionItems", () => {
     ).toEqual([]);
   });
 
-  it("raises slot allocation and links to Requests", () => {
+  it("counts the requests to answer and links to Requests", () => {
     const [item] = deriveConsultantActionItems({
       pendingApprovals: 3,
       upcomingSessions: [],
       basePath: CONSULTANT_BASE,
     });
-    expect(item.title).toBe("3 requests need slot allocation");
+    expect(item.title).toBe("3 requests to answer");
     expect(item.ctaHref).toBe(`${CONSULTANT_BASE}/requests`);
   });
 
@@ -180,7 +180,7 @@ describe("deriveConsultantActionItems", () => {
       upcomingSessions: [],
       basePath: CONSULTANT_BASE,
     });
-    expect(item.title).toBe("1 request needs slot allocation");
+    expect(item.title).toBe("1 request to answer");
   });
 
   it("orders the imminent session ahead of the backlog", () => {

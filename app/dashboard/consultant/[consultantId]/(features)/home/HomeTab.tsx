@@ -60,13 +60,11 @@ import {
   type OccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
-import { CHIP_LABEL } from "@/components/dashboard/shared/requests/labels";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableOccurrence } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
 import { RequestsInboxPreview } from "@/components/dashboard/shared/requests/RequestsInboxPreview";
-import { PerformanceSnapshot } from "./PerformanceSnapshot";
-import { FinancialSummary } from "./FinancialSummary";
+import { ShareProfilePrompt, ThisMonthCard } from "./ThisMonthCard";
 import type {
   TPerformanceSnapshot,
   TFinancialSummary,
@@ -77,8 +75,6 @@ import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 /** One pattern for both Home lists; the zone label rides along when the
  * viewer has no saved zone (docs/booking/19-dst-and-timezone-posture.md). */
 const HOME_TIME_PATTERN = "EEE, MMM d, h:mm a";
-/** The next-cycle window is a date range, no clock (#1766). */
-const HOME_DATE_PATTERN = "MMM d";
 
 const ORG_JOIN_STATE_LABEL: Record<OccurrenceJoinState, string> = {
   joinable: "Open to join",
@@ -91,12 +87,12 @@ interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   pendingRequestsCount?: number;
-  awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
   /** The "Add your bank account" row's input; absent on older payloads. #1675 PR-Y2 */
   payoutSetup: TConsultantDashboardResponse["payoutSetup"];
-  /** Subscriptions whose next cycle is waiting on this consultant. #1766 */
-  nextCycles?: TConsultantDashboardResponse["nextCycles"];
+  /** #1527 — the Needs you strip's own reads; absent when that read failed. */
+  needsYou?: TConsultantDashboardResponse["needsYou"];
+  sessionsDelivered?: TConsultantDashboardResponse["sessionsDelivered"];
   /** Read-only metric on the requests card; absent on older payloads. #1703 */
   responseRate?: TConsultantDashboardResponse["responseRate"];
   /** From the RSC page, so server and client format one wall clock. #1703 */
@@ -127,10 +123,10 @@ export function HomeTab({
   appointments,
   consultantId,
   pendingRequestsCount = 0,
-  awaitingPayment,
   orgSessions = [],
   payoutSetup,
-  nextCycles = [],
+  needsYou,
+  sessionsDelivered,
   responseRate,
   viewerZone,
   performanceSnapshot,
@@ -204,14 +200,18 @@ export function HomeTab({
       .slice(0, 5);
   }, [allUpcomingAppointments]);
 
-  // "Needs you now" — derived from data already on the page, so no extra
-  // fetch. The rows go over whole, ids and ends included: these are raw
-  // 30-minute slot rows, and without them a two-hour booking reported its
-  // second half as a separate session starting in 30 minutes (#1061).
+  // "Needs you" (#1527 §7.2) — the strip's reads ride the Home payload. The
+  // session rows go over whole, ids and ends included: these are raw 30-minute
+  // slot rows, and without them a two-hour booking reported its second half
+  // as a separate session starting in 30 minutes (#1061).
   const actionItems = useMemo(
     () =>
       deriveConsultantActionItems({
-        pendingApprovals: pendingRequestsCount,
+        // The Requests badge's own count (#1345); the older total is the fallback.
+        pendingApprovals: needsYou?.requestsToAnswer ?? pendingRequestsCount,
+        documentsAwaitingReview: needsYou?.documentsAwaitingReview ?? 0,
+        rescheduleReplies: needsYou?.rescheduleReplies ?? [],
+        owedMakeUps: needsYou?.owedMakeUps ?? [],
         upcomingSessions: allUpcomingAppointments.flatMap((a) =>
           (a.occurrences ?? []).map((slot) => ({
             id: slot.id,
@@ -225,7 +225,13 @@ export function HomeTab({
         payoutSetupNeeded: payoutSetup?.needed ?? false,
         livePayoutsEnabled: payoutSetup?.livePayoutsEnabled ?? true,
       }),
-    [allUpcomingAppointments, pendingRequestsCount, consultantId, payoutSetup],
+    [
+      allUpcomingAppointments,
+      pendingRequestsCount,
+      needsYou,
+      consultantId,
+      payoutSetup,
+    ],
   );
 
   return (
@@ -242,14 +248,11 @@ export function HomeTab({
         >
           {/* What's actually blocked on this consultant, above everything
               else. Renders nothing when the queue is clear. */}
-          <ActionRequiredPanel items={actionItems} className="space-y-2" />
-
-          {/* Performance Snapshot */}
-          {performanceSnapshot && (
-            <motion.div variants={fadeInUp}>
-              <PerformanceSnapshot {...performanceSnapshot} />
-            </motion.div>
-          )}
+          <ActionRequiredPanel
+            items={actionItems}
+            heading="Needs you"
+            className="space-y-2"
+          />
 
           {/* Main Content Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -610,19 +613,13 @@ export function HomeTab({
 
             {/* Right Column - Pending Requests + Financial Summary */}
             <motion.div variants={fadeInUp} className="lg:col-span-2 space-y-6">
-              {/* Pending Requests */}
+              {/* #1527 — the one compact Requests surface Home keeps; its
+                  count is the strip's, so it carries no second badge. */}
               <DataCard
-                title="Pending Requests"
+                title="Requests"
                 icon={FileText}
-                headerAction={
-                  pendingRequestsCount > 0 ? (
-                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
-                      {pendingRequestsCount}
-                    </Badge>
-                  ) : undefined
-                }
                 viewAllLink={`/dashboard/consultant/${consultantId}/requests`}
-                viewAllText="View all requests"
+                viewAllText="Open Requests"
               >
                 {/* #1703 D4 — a consultant's own number, no ranking use yet. */}
                 {responseRate?.withinTargetPct !== null &&
@@ -630,7 +627,7 @@ export function HomeTab({
                     <p className="mb-3 text-xs text-muted-foreground">
                       You answer {responseRate.withinTargetPct}% of requests
                       within a day
-                      <span className="text-muted-foreground/70">
+                      <span className="text-muted-foreground">
                         {" "}
                         (last 30 days, {responseRate.total} answered)
                       </span>
@@ -640,94 +637,6 @@ export function HomeTab({
                   <RequestsInboxPreview consultantProfileId={consultantId} />
                 </div>
               </DataCard>
-
-              {/* #1703 — approved but unpaid: not pending, not bookable, so
-                  neither list above shows them. A pipeline row, not a mix
-                  into Today/Upcoming. */}
-              {awaitingPayment && awaitingPayment.count > 0 && (
-                <DataCard
-                  title={CHIP_LABEL["awaiting-payment"]}
-                  icon={Clock}
-                  headerAction={
-                    <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
-                      {awaitingPayment.count}
-                    </Badge>
-                  }
-                  viewAllLink={`/dashboard/consultant/${consultantId}/appointments?tab=needsAction`}
-                  viewAllText="View all"
-                >
-                  <ul className="divide-y divide-border text-sm">
-                    {awaitingPayment.items.map((item) => (
-                      <li
-                        key={item.id}
-                        className="flex items-center justify-between gap-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-foreground">
-                            {item.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {item.type} &middot; requested {item.date}
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          Payment required
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </DataCard>
-              )}
-
-              {/* #1766 — a plan whose live cycle is done and whose entitlement
-                  is not: derived at read time, so the row disappears the
-                  moment the next batch is placed. Same pipeline-row shape as
-                  "Awaiting payment"; the link is the existing allocate route. */}
-              {nextCycles.length > 0 && (
-                <DataCard
-                  title="Next cycle to schedule"
-                  icon={Clock}
-                  headerAction={
-                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
-                      {nextCycles.length}
-                    </Badge>
-                  }
-                >
-                  <ul className="divide-y divide-border text-sm">
-                    {nextCycles.map((row) => (
-                      <li
-                        key={row.subscriptionId}
-                        className="flex items-center justify-between gap-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-foreground">
-                            {row.consulteeName} &middot; {row.planTitle}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Schedule the next {row.nextBatch} session
-                            {row.nextBatch === 1 ? "" : "s"} &middot;{" "}
-                            {formatForViewer(
-                              row.windowStart,
-                              viewerZone,
-                              HOME_DATE_PATTERN,
-                            )}{" "}
-                            –{" "}
-                            {formatForViewer(
-                              row.windowEnd,
-                              viewerZone,
-                              HOME_DATE_PATTERN,
-                            )}{" "}
-                            &middot; {row.held} of {row.total} scheduled
-                          </p>
-                        </div>
-                        <Button asChild variant="outline" size="sm">
-                          <Link href={row.href}>Schedule</Link>
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                </DataCard>
-              )}
 
               {/* #1703 B13 — org-funded sessions this consultant delivers.
                   Home pins personal scope everywhere else (ADR 19), so
@@ -783,8 +692,16 @@ export function HomeTab({
                 </DataCard>
               )}
 
-              {/* Financial Summary */}
-              {financialSummary && <FinancialSummary {...financialSummary} />}
+              {/* #1527 — Available is the Earnings page's word for READY. */}
+              <ThisMonthCard
+                consultantId={consultantId}
+                sessionsThisMonth={sessionsDelivered?.thisMonth ?? null}
+                sessionsDelivered={sessionsDelivered?.lifetime ?? null}
+                availablePaise={financialSummary?.nextPayout ?? 0}
+                averageRating={performanceSnapshot?.averageRating ?? 0}
+                totalReviews={performanceSnapshot?.totalReviews ?? 0}
+              />
+              <ShareProfilePrompt consultantId={consultantId} />
             </motion.div>
           </div>
         </motion.div>
