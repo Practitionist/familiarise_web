@@ -603,6 +603,7 @@ export async function getConsultantDashboard(
     trialCounts,
     netEarningsAgg,
     readyEarningsAgg,
+    availableEarningsAgg,
   ] = await Promise.all([
     // Fetch approved appointments for consultations, subscriptions, webinars, and
     // classes. `appointmentInclude` carries nine nested `user` selections, so an
@@ -805,6 +806,17 @@ export async function getConsultantDashboard(
         consultantProfileId,
         status: "READY",
         payoutId: null,
+      },
+    }),
+    // 7. #1527 review — "Available" (READY + BATCHED), matching the Earnings
+    // page's bucket (lib/dashboard/earnings-state.ts bucketOf); BATCHED rows
+    // are already committed to a run but cash hasn't left, so they read as
+    // "yours" here even though they're excluded from #6's payout-eligibility.
+    prisma.consultantEarnings.aggregate({
+      _sum: { consultantSharePaise: true, refundedShareAmount: true },
+      where: {
+        consultantProfileId,
+        status: { in: ["READY", "BATCHED"] },
       },
     }),
   ]);
@@ -1029,6 +1041,9 @@ export async function getConsultantDashboard(
   const readyEarningsVal =
     sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
     sumPaise(readyEarningsAgg._sum.refundedShareAmount);
+  const availableEarningsVal =
+    sumPaise(availableEarningsAgg._sum.consultantSharePaise) -
+    sumPaise(availableEarningsAgg._sum.refundedShareAmount);
   const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
   const payoutEligible = readyEarningsVal >= payoutMinimum;
 
@@ -1049,6 +1064,7 @@ export async function getConsultantDashboard(
   const financialSummary = {
     netEarnings: netEarningsVal,
     nextPayout: readyEarningsVal,
+    availableEarnings: availableEarningsVal,
     payoutStatus: payoutEligible
       ? "Ready"
       : readyEarningsVal > 0

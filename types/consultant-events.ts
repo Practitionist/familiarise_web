@@ -66,8 +66,16 @@ export interface TPerformanceSnapshot {
 export interface TFinancialSummary {
   /** Net earnings in paise (divide by 100 for INR) */
   netEarnings: number;
-  /** Next payout amount in paise (divide by 100 for INR) */
+  /** Next payout amount in paise (divide by 100 for INR) — READY-only, the
+   *  payout-eligibility value (excludes BATCHED, which is already committed
+   *  to a payout run). */
   nextPayout: number;
+  /**
+   * #1527 review — the Earnings page's "Available" tile (READY + BATCHED,
+   * net of refunds); `nextPayout` alone under-reports it for anyone with a
+   * payout batch in flight.
+   */
+  availableEarnings: number;
   payoutStatus: string;
   activeClients: number;
   activePrograms: number;

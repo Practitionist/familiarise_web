@@ -697,7 +697,7 @@ export function HomeTab({
                 consultantId={consultantId}
                 sessionsThisMonth={sessionsDelivered?.thisMonth ?? null}
                 sessionsDelivered={sessionsDelivered?.lifetime ?? null}
-                availablePaise={financialSummary?.nextPayout ?? 0}
+                availablePaise={financialSummary?.availableEarnings ?? 0}
                 averageRating={performanceSnapshot?.averageRating ?? 0}
                 totalReviews={performanceSnapshot?.totalReviews ?? 0}
               />

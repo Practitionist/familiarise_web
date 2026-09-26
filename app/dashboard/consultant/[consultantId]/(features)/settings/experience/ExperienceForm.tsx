@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ErrorState } from "@/components/dashboard/ErrorState";
@@ -8,6 +9,7 @@ import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { Section } from "@/components/dashboard/Section";
 import { SettingsSaveBar } from "@/components/dashboard/SettingsLayout";
 import { useToast } from "@/hooks/use-toast";
+import { useSession } from "@/lib/auth-client";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import {
   WorkExperienceSection,
@@ -67,6 +69,17 @@ async function readBackground(response: Response, fallback: string) {
  * exactly as it did the first time; one save replaces all four.
  */
 export function ExperienceForm() {
+  const { consultantId } = useParams<{ consultantId: string }>();
+  const { data: session, isPending: isSessionPending } = useSession();
+  // #1527 review — ADMIN/STAFF can reach this route on another consultant's
+  // dashboard (the layout never gates it), but the API resolves the
+  // signed-in user, not :consultantId. Without this check a non-owner
+  // viewer silently saw and could overwrite THEIR OWN experience under
+  // someone else's settings URL.
+  const isOwnDashboard =
+    (session?.user as { consultantProfileId?: string } | undefined)
+      ?.consultantProfileId === consultantId;
+
   const query = useQuery({
     queryKey: experienceKey,
     queryFn: async () =>
@@ -75,9 +88,20 @@ export function ExperienceForm() {
         "Couldn't load your experience",
       ),
     refetchOnWindowFocus: false,
+    enabled: isOwnDashboard,
   });
 
-  if (query.isLoading) return <SettingsSkeleton />;
+  if (isSessionPending || (isOwnDashboard && query.isLoading)) {
+    return <SettingsSkeleton />;
+  }
+  if (!isOwnDashboard) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Experience and education can only be viewed and edited from the
+        owner&apos;s own dashboard.
+      </p>
+    );
+  }
   if (query.isError || !query.data) {
     return (
       <ErrorState
