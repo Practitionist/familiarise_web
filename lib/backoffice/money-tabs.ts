@@ -6,12 +6,22 @@ import {
 } from "@/lib/auth/backoffice-permissions";
 
 /**
- * #1771 K-2 — the Money hub's tabs, one URL each under `<tree>/money/<key>`.
- * Both trees read this list and filter it through BACKOFFICE_PERMISSIONS, so
- * a tab is never shown to a role whose page guard would then turn it away.
+ * #1771 K-2 — the money sections, one URL each under `<tree>/money/<key>`.
+ * The sidebar lists each one as its own item, and both the sidebar and the
+ * page guard filter this list through BACKOFFICE_PERMISSIONS, so a section is
+ * never shown to a role whose page guard would then turn it away.
  */
+export type MoneyTabKey =
+  | "payments"
+  | "refunds"
+  | "disputes"
+  | "payouts"
+  | "earnings"
+  | "reconcile"
+  | "audit";
+
 export interface MoneyTab {
-  key: string;
+  key: MoneyTabKey;
   label: string;
   description: string;
   surface: BackofficeSurface;
@@ -31,6 +41,12 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     surface: "refunds.read",
   },
   {
+    key: "disputes",
+    label: "Disputes",
+    description: "Chargebacks and their evidence deadlines.",
+    surface: "disputes.read",
+  },
+  {
     key: "payouts",
     label: "Payouts",
     description: "Consultant payouts waiting, in flight and paid.",
@@ -40,13 +56,9 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     key: "earnings",
     label: "Earnings",
     description: "Consultant earnings, with hold and release.",
-    surface: "payouts.read",
-  },
-  {
-    key: "disputes",
-    label: "Disputes",
-    description: "Chargebacks and their evidence deadlines.",
-    surface: "disputes.read",
+    // The section is the hold/release doors, so admin; the earnings read
+    // itself follows `payouts.read` (the Payouts board's Earnings view).
+    surface: "payouts.manage",
   },
   {
     key: "reconcile",
@@ -54,27 +66,37 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     description: "Run the reconcile jobs now and see when each last ran.",
     surface: "payouts.manage",
   },
-  {
-    key: "class-series",
-    label: "Class series",
-    description:
-      "The manual doors for class series: sessions, make-ups, seats.",
-    surface: "classSeries.support",
-  },
-  {
-    key: "audit",
-    label: "Audit",
-    description: "Every console action: who, what, on which row, and why.",
-    surface: "opsLog.read",
-  },
 ];
+
+/**
+ * The console's audit log keeps its `/money/audit` URL, but the sidebar lists
+ * it as its own item at the end, outside the Money group.
+ */
+export const AUDIT_TAB: MoneyTab = {
+  key: "audit",
+  label: "Audit log",
+  description: "Every console action: who, what, on which row, and why.",
+  surface: "opsLog.read",
+};
 
 export function moneyTabsFor(audience: UserRole): MoneyTab[] {
   return MONEY_TABS.filter((t) => hasBackofficePermission(audience, t.surface));
 }
 
 export function findMoneyTab(key: string): MoneyTab | undefined {
-  return MONEY_TABS.find((t) => t.key === key);
+  return [...MONEY_TABS, AUDIT_TAB].find((t) => t.key === key);
+}
+
+/**
+ * A retired section's new home, answered with a 308: the class-series doors
+ * moved onto each class booking's Ops actions panel under Appointments.
+ */
+export function retiredMoneyTabHref(
+  treePath: string,
+  key: string,
+): string | null {
+  if (key === "class-series") return `${treePath}/appointments?type=class`;
+  return null;
 }
 
 type SearchParams = Record<string, string | string[] | undefined>;

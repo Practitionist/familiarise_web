@@ -1,6 +1,6 @@
 import type { SeriesLedger } from "@/lib/booking/class-series";
 
-/** #1771 K-6 — the Class-series tab's read, shared by the route and the client. */
+/** #1771 K-6 — a class booking's series read, shared by the route and the client. */
 export interface ClassSeriesView {
   classId: string;
   appointmentId: string;

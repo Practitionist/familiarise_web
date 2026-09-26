@@ -1,21 +1,28 @@
 import type { UserRole } from "@prisma/client";
-import { redirect } from "next/navigation";
+import { permanentRedirect, redirect } from "next/navigation";
 
 import { requireUserRole } from "@/lib/auth-guard";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import { findMoneyTab, moneyTabsFor } from "@/lib/backoffice/money-tabs";
+import {
+  findMoneyTab,
+  moneyTabsFor,
+  retiredMoneyTabHref,
+} from "@/lib/backoffice/money-tabs";
 import { MoneyTabBody } from "./MoneyTabBody";
 
 /**
- * #1771 K-2 — the shared `[tab]` page of both trees. A tab the viewer cannot
- * open (unknown, or outside the tree's audience or the viewer's own surfaces)
- * lands on the first tab they hold, never on an error boundary (QA #1824).
+ * #1771 K-2 — the shared `[tab]` page of both trees; each section is its own
+ * sidebar item. A section the viewer cannot open (unknown, or outside the
+ * tree's audience or the viewer's own surfaces) lands on the first section
+ * they hold, never on an error boundary (QA #1824).
  */
 export async function renderMoneyTab(args: {
   tab: string;
   tree: "admin" | "staff";
   treePath: string;
 }) {
+  const retired = retiredMoneyTabHref(args.treePath, args.tab);
+  if (retired) permanentRedirect(retired);
   const session = await requireUserRole(["ADMIN", "STAFF"]);
   const role = session.user.role as UserRole;
   const audience: UserRole = args.tree === "admin" ? "ADMIN" : "STAFF";

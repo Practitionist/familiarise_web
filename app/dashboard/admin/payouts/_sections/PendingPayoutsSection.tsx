@@ -88,7 +88,9 @@ async function rejectPayout(
   return response.json() as Promise<PayoutActionResult>;
 }
 
-export default function PendingPayoutsSection() {
+export default function PendingPayoutsSection({
+  canManage,
+}: Readonly<{ canManage: boolean }>) {
   const queryClient = useQueryClient();
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
   // #1771 K-4 — both decisions carry a reason into the audit log.
@@ -312,7 +314,7 @@ export default function PendingPayoutsSection() {
               columns={columns}
               rows={data.payouts}
               getRowId={(p) => p.id}
-              rowActions={renderRowActions}
+              rowActions={canManage ? renderRowActions : undefined}
               empty={
                 <div className="text-center py-12">
                   <p className="text-muted-foreground">No pending payouts</p>

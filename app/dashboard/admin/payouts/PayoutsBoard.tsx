@@ -52,7 +52,8 @@ async function fetchPayoutTrend(): Promise<PayoutTrendResponse> {
   return response.json() as Promise<PayoutTrendResponse>;
 }
 
-export function PayoutsBoard() {
+/** `canManage` is false in the staff tree: staff read payouts, never decide one. */
+export function PayoutsBoard({ canManage }: Readonly<{ canManage: boolean }>) {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
   const urlTab: TabKey = (VALID_TABS as readonly string[]).includes(
@@ -143,7 +144,7 @@ export function PayoutsBoard() {
         </TabsList>
 
         <TabsContent value="pending" className="mt-6">
-          <PendingPayoutsSection />
+          <PendingPayoutsSection canManage={canManage} />
         </TabsContent>
         <TabsContent value="processing" className="mt-6">
           <ProcessingPayoutsSection />

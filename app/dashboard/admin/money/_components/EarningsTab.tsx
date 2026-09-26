@@ -128,7 +128,7 @@ export function EarningsTab() {
   });
 
   return (
-    <Card className="m-4 md:m-6 lg:m-8">
+    <Card>
       <CardHeader>
         <CardTitle className="text-lg">Earnings</CardTitle>
       </CardHeader>

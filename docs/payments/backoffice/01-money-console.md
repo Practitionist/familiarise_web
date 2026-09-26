@@ -2,39 +2,50 @@
 
 Operators used to reach payments, refunds, payouts and disputes through four
 separate pages, each with its own URL, its own access guard, and no shared
-record of who had touched what. Since #1771 they are one console — the Money
-hub — reachable at `/dashboard/admin/money/<tab>` for admins and
-`/dashboard/staff/[staffId]/money/<tab>` for staff, with every mutation
-passing through one audited door.
+record of who had touched what. Since #1771 they are one console, reachable
+at `/dashboard/admin/money/<section>` for admins and
+`/dashboard/staff/[staffId]/money/<section>` for staff, with every mutation
+passing through one audited door. Each section is its own item in the
+sidebar's Money group, next to Invoices and Subscriptions; there is no
+in-page tab bar.
 
-## Tabs, and who sees them
+## Sections, and who sees them
 
-`lib/backoffice/money-tabs.ts` declares the tab list once; both trees read it
-and filter it through `BACKOFFICE_PERMISSIONS`
-(`lib/auth/backoffice-permissions.ts`), so a tab is never visible to a role
-whose route guard would then turn it away.
+`lib/backoffice/money-tabs.ts` declares the section list once. The sidebar
+(`lib/dashboard/backoffice-nav.ts`) turns each entry into an item and the
+shared `[tab]` page guards it, and both filter the list through
+`BACKOFFICE_PERMISSIONS` (`lib/auth/backoffice-permissions.ts`), so a section
+is never visible to a role whose route guard would then turn it away. The
+table below lists every section with the surfaces that gate it.
 
-| Tab          | Surface                          | What it is for                                                                               |
-| ------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| Payments     | `payments.read`                  | Every payment, with its status and rail.                                                     |
-| Refunds      | `refunds.read` / `.manage`       | Refunds issued, pending and failed, plus the admin refund doors.                             |
-| Payouts      | `payouts.read` / `.manage`       | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
-| Earnings     | `payouts.read` / `.manage`       | Consultant earnings, with hold and release.                                                  |
-| Disputes     | `disputes.read` / `.manage`      | Chargebacks and their evidence deadlines.                                                    |
-| Reconcile    | `payouts.manage`                 | Runs the four reconcile jobs on demand and shows when each last ran.                         |
-| Class series | `classSeries.support` / `.money` | The manual doors for #1780's class-series rules.                                             |
-| Audit        | `opsLog.read`                    | Every console action: who, what, on which row, and why.                                      |
+| Section   | Surface                     | What it is for                                                                               |
+| --------- | --------------------------- | -------------------------------------------------------------------------------------------- |
+| Payments  | `payments.read`             | Every payment, with its status and rail.                                                     |
+| Refunds   | `refunds.read` / `.manage`  | Refunds issued, pending and failed, plus the admin refund doors.                             |
+| Disputes  | `disputes.read` / `.manage` | Chargebacks and their evidence deadlines.                                                    |
+| Payouts   | `payouts.read` / `.manage`  | Consultant payouts waiting, in flight and paid, including the instant-payout approval queue. |
+| Earnings  | `payouts.manage`            | Consultant earnings, with hold and release.                                                  |
+| Reconcile | `payouts.manage`            | Runs the four reconcile jobs on demand and shows when each last ran.                         |
 
-`payouts.read` is admin-only, so staff do not see the Payouts or Earnings
-tabs; a support agent resolving a billing ticket can still see a payment,
-refund or dispute without being able to move money. Approval Payments stays
-its own page rather than a ninth tab, because it chases an unpaid pay-link
-rather than moving money once it lands.
+Staff hold `payouts.read`, so they see the Payouts section read-only: the
+list, the trend and the earnings view render, while the approve and reject
+buttons do not, and every payout and earnings mutation (approve or reject,
+including an instant payout waiting for approval, hold and release, and
+every reconcile run) stays `payouts.manage`, which only an admin holds. The
+earnings read follows `payouts.read`, but the Earnings section is where hold
+and release live, so it and the Reconcile section are gated by
+`payouts.manage` and appear for admins only. The reconcile reads
+(`GET /api/admin/reconcile` and `GET /api/admin/reconcile-ledgers`) stay
+admin-only too, because the ledger reports expose cross-organisation
+aggregates. A support agent resolving a billing ticket can therefore see a
+payment, refund, dispute or payout without being able to move money.
+Approval Payments stays its own page rather than a money section, because
+it chases an unpaid pay-link rather than moving money once it lands.
 
 The four pages the hub replaced — `/dashboard/admin/{payments,refunds,
-disputes,payouts}` — now answer a 308 to their tab, carrying their query
-string over (`moneyHubHref`), so a bookmarked or linked URL keeps working.
-The four separate sidebar entries collapsed into one "Money" item.
+disputes,payouts}` — now answer a 308 to their section, carrying their
+query string over (`moneyHubHref`), so a bookmarked or linked URL keeps
+working. The sidebar links straight to each section's `/money/<section>` URL.
 
 ## Every mutation is a door, and every door is a `withOpsAction`
 
@@ -67,7 +78,7 @@ or "nothing left to restore" rather than a crash.
 
 The console repeats the platform's one rule for privileged access: staff own
 support end-to-end and read every money surface, and admin alone executes
-money. On the class-series tab this reads literally as two surfaces,
+money. The class doors read this literally as two surfaces,
 `classSeries.support` and `classSeries.money`: a staff member can cancel a
 session for the host, grant a make-up (including an ops-only bypass of the
 14-day window, itself reason-gated), clear or re-flag the reliability flag,
@@ -76,6 +87,24 @@ whole series with refunds, and every refund or credit-restore door are
 `classSeries.money` and `refunds.manage`, admin-only, because every one of
 them does. See [the class-series money-rules ADR](../../decisions/2026-09-25-class-series-money-rules.md)
 for what each door does and why it exists.
+
+## Per-booking Ops actions
+
+The class doors no longer have a section of their own. Each booking's detail
+dialog under Operations → Appointments carries an "Ops actions" panel
+(`BookingOpsPanel`), which reads `GET /api/staff/appointments/[id]/ops` and
+opens only the existing door routes. Every booking type lists its sessions
+with their outcome and the `session.set-outcome` door, and shows its money
+state; an admin also gets a link that opens the Refunds section's issue door
+pre-filled with the payment. A class booking adds the class doors described
+above: cancel a session, grant a make-up with the reason-gated 14-day bypass,
+skip a make-up (admin), the exit-right state, the reliability flag with an
+ops note, and, for an admin, cancelling the whole series and running the
+14-day sweep for one session. A subscription booking gives an admin its
+48-hour sweep. Webinars get no class door, because those doors are keyed to a
+class. The old `/money/class-series` URL answers a 308 to Appointments
+filtered to classes, and the sessions-needing-a-decision queue now heads the
+Appointments page.
 
 ## The refund and credit doors
 
@@ -101,10 +130,14 @@ the earnings healer (`sync-payment-earnings`) — through
 instead of a second overlapping pass, and the tab shows each job's last run
 from the same heartbeat the scheduled invocation writes.
 
-## The Audit tab is the log's only reader
+## The audit log is the log's only reader
+
+The audit log is not a Money section. It is its own item at the end of the
+sidebar, outside the Money group, because it covers every console door, and
+it still lives at `/money/audit`.
 
 `OpsActionLog` has no admin-only write path and no back door: every row on
-it was written by a `withOpsAction` door, and the Audit tab is a paged,
+it was written by a `withOpsAction` door, and the audit log is a paged,
 RSC-seeded read over exactly those rows, answered `Cache-Control: no-store`
 like every other money GET. Staff see only the rows they themselves wrote;
 admins see every row. Filters are by actor, surface and target, so "what did

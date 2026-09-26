@@ -3,7 +3,7 @@ import {
   QueryClient,
   dehydrate,
 } from "@tanstack/react-query";
-import { OperatorAppointmentsClient } from "./OperatorAppointmentsClient";
+import type { ReactNode } from "react";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
 
@@ -12,7 +12,14 @@ import type { Scope } from "@/lib/api/scope/parse";
  * it is looking at (#674 defect 13). Both callers pass `{ kind: "all" }` — the
  * platform-wide triage view these pages exist for.
  */
-export async function OperatorAppointmentsPage({ scope }: { scope: Scope }) {
+export async function OperatorAppointmentsPage({
+  scope,
+  children,
+}: {
+  scope: Scope;
+  /** The tree's client view — `OperatorAppointmentsClient` plus its Ops panel. */
+  children: ReactNode;
+}) {
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the DEFAULT view (page 1, no filters) so the client
@@ -33,7 +40,7 @@ export async function OperatorAppointmentsPage({ scope }: { scope: Scope }) {
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <OperatorAppointmentsClient />
+      {children}
     </HydrationBoundary>
   );
 }
