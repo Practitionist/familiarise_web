@@ -74,7 +74,6 @@ import {
   type ProcessedEvent,
   processAllEvents,
   getUpcomingEvents,
-  getMonthlyEvents,
   selectNextUp,
   groupSlotsIntoSessions,
 } from "./event-processor";
@@ -323,7 +322,12 @@ function sessionsThisMonth(
   now: Date,
 ): number {
   const monthKey = formatInViewerZone(now, zone, "yyyy-MM");
-  return getMonthlyEvents(events, now, zone)
+  // #1527 review — `getMonthlyEvents`'s own month-window reference reads
+  // `month.getFullYear()`/`.getMonth()` (the runtime's zone), which can
+  // disagree with `zone` near a midnight boundary and drop an event before
+  // the (correct) per-slot check below ever sees it. Filter `events`
+  // directly instead of pre-filtering through that helper.
+  return events
     .filter((event) => !isCancelledLikeStatus(event.status))
     .reduce(
       (sum, event) =>

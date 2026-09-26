@@ -48,8 +48,13 @@ function downloadIcs(vm: AppointmentVM) {
   const a = document.createElement("a");
   a.href = url;
   a.download = `${vm.title.replaceAll(/[^\w-]+/g, "-").slice(0, 60) || "session"}.ics`;
+  // #1527 review — a detached anchor's click can race the download start in
+  // some browsers; attach it, click, remove, and revoke the URL on the next
+  // tick so the download has already begun.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function ConsulteeExtraActions({ vm }: Readonly<{ vm: AppointmentVM }>) {

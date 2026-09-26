@@ -65,7 +65,12 @@ export function NeedsYouBand({
           ))}
         </ul>
       )}
-      {pending + lapsed > 0 && (
+      {/* #1527 review — mount while `data` is still unresolved (loading or
+          errored) too, not just once a positive count is known: the widget
+          shares this query key and already renders its own skeleton/error
+          state; gating on the count alone left this band blank until the
+          fetch settled. */}
+      {(!data || pending + lapsed > 0) && (
         <PendingPaymentsWidget consulteeId={consulteeId} />
       )}
     </section>
