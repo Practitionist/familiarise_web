@@ -282,41 +282,9 @@ export async function POST(request: NextRequest) {
     const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
     if (rl) return rl;
 
-    // Check if a trial already exists for this consultee-consultant pair
-    const existingTrial = await prisma.trial.findUnique({
-      where: {
-        consulteeProfileId_consultantProfileId: {
-          consulteeProfileId,
-          consultantProfileId,
-        },
-      },
-    });
-
-    // Only a live or already-delivered trial blocks a new request. A declined,
-    // withdrawn or lapsed-unpaid trial frees the pair — never paying isn't the
-    // same as having used your trial. The freed row must be deleted rather than
-    // left in place, because the pair is @@unique. See lib/trials/eligibility.ts
-    // for the abuse trade-off and how to tighten it if this gets gamed.
-    if (existingTrial) {
-      if (blocksNewTrialRequest(existingTrial.status)) {
-        return NextResponse.json(
-          {
-            error: "You have already requested a trial with this consultant",
-            code: "TRIAL_ALREADY_REQUESTED",
-          },
-          { status: 409 },
-        );
-      }
-      // deleteMany, not delete: two requests can both read the same freed row
-      // and both try to clear it, and the loser of that race gets P2025 — which
-      // escapes to the generic catch as a 500, before the create-side unique
-      // violation below can turn it into the calm 409 this pair already has an
-      // answer for. A count of 0 means somebody else freed it; either way the
-      // slot is clear and the insert decides who gets it.
-      await prisma.trial.deleteMany({ where: { id: existingTrial.id } });
-    }
-
-    // Verify the subscription plan exists and has trials enabled
+    // #1527 review — the plan lookup + refusal checks used to run AFTER the
+    // freed-trial deleteMany below, so a request against a DRAFT plan (409)
+    // still consumed the consultee's freed trial slot. Verify the plan first.
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       include: {
@@ -358,6 +326,40 @@ export async function POST(request: NextRequest) {
         { error: "A trial is not available for this plan" },
         { status: 400 },
       );
+    }
+
+    // Check if a trial already exists for this consultee-consultant pair
+    const existingTrial = await prisma.trial.findUnique({
+      where: {
+        consulteeProfileId_consultantProfileId: {
+          consulteeProfileId,
+          consultantProfileId,
+        },
+      },
+    });
+
+    // Only a live or already-delivered trial blocks a new request. A declined,
+    // withdrawn or lapsed-unpaid trial frees the pair — never paying isn't the
+    // same as having used your trial. The freed row must be deleted rather than
+    // left in place, because the pair is @@unique. See lib/trials/eligibility.ts
+    // for the abuse trade-off and how to tighten it if this gets gamed.
+    if (existingTrial) {
+      if (blocksNewTrialRequest(existingTrial.status)) {
+        return NextResponse.json(
+          {
+            error: "You have already requested a trial with this consultant",
+            code: "TRIAL_ALREADY_REQUESTED",
+          },
+          { status: 409 },
+        );
+      }
+      // deleteMany, not delete: two requests can both read the same freed row
+      // and both try to clear it, and the loser of that race gets P2025 — which
+      // escapes to the generic catch as a 500, before the create-side unique
+      // violation below can turn it into the calm 409 this pair already has an
+      // answer for. A count of 0 means somebody else freed it; either way the
+      // slot is clear and the insert decides who gets it.
+      await prisma.trial.deleteMany({ where: { id: existingTrial.id } });
     }
 
     // #1775 C-7 — a paid trial is charged at request and refunded in full on
