@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import prisma from "@/lib/prisma";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
@@ -9,6 +10,30 @@ import {
 } from "@/lib/backoffice/refund-doors";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
+
+/**
+ * #1834 — a session's key refunds once; a retry at the same amount replays
+ * it, and a different amount is refused rather than silently deduped.
+ */
+async function assertSessionKeyFree(
+  dedupeKey: string,
+  amountPaise: number | undefined,
+): Promise<void> {
+  const prior = await prisma.refund.findUnique({
+    where: { dedupeKey },
+    select: { amountPaise: true, status: true },
+  });
+  if (!prior || prior.status === "FAILED" || prior.status === "CANCELLED") {
+    return;
+  }
+  if (amountPaise === undefined || Number(prior.amountPaise) === amountPaise) {
+    return;
+  }
+  throw new OpsRefusal(
+    "SESSION_ALREADY_REFUNDED",
+    "This session was already refunded at a different amount. Issue any further refund without the session link.",
+  );
+}
 
 /**
  * #1771 K-5 — "Issue refund" and "Ladder override". A full refund (no
@@ -57,6 +82,9 @@ export const POST = withOpsAction(
       const dedupeKey = body.occurrenceId
         ? occurrenceRefundKey(body.occurrenceId, body.paymentId)
         : `ops:${body.idempotencyKey ?? opsActionId}`;
+      if (body.occurrenceId) {
+        await assertSessionKeyFree(dedupeKey, amountPaise);
+      }
       const result = await refundBookingPayment({
         paymentId: body.paymentId,
         amountPaise,
