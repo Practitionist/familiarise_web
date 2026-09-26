@@ -143,10 +143,61 @@ const lastLeftBy = (segments: Segment[], t: number): number | null =>
     null,
   );
 
-/** Pure. See the module comment for the rule; the guards live inline. */
-export function classifySessionOutcome(
+type MinuteLoss = "host" | "platform" | null;
+
+interface Sides {
+  host: Segment[];
+  learner: Segment[];
+  outages: Segment[];
+  /** When a person closed the room ("End for everyone") inside the window. */
+  deliberateEndAt: number | null;
+}
+
+/** Who lost minute t, when the host side was not in the room. */
+function lossAt(sides: Sides, t: number): MinuteLoss {
+  if (covers(sides.host, t)) return null;
+  if (covers(sides.outages, t)) return "platform";
+  if (covers(sides.learner, t)) return "host";
+  const grace = RECONNECT_GRACE_MINUTES * MIN_MS;
+  const hostLeft = lastLeftBy(sides.host, t);
+  const learnerLeft = lastLeftBy(sides.learner, t) ?? t;
+  // The host never came while the learner waited, or left first: attributable.
+  if (hostLeft === null || learnerLeft - hostLeft > grace) return "host";
+  // The learner left first and the host closed an empty room.
+  if (Math.abs(learnerLeft - hostLeft) > grace) return null;
+  // Everyone left together: a host's "End for everyone" is the host's (D6).
+  const endedByHost =
+    sides.deliberateEndAt !== null &&
+    Math.abs(sides.deliberateEndAt - hostLeft) <= grace;
+  return endedByHost ? "host" : "platform";
+}
+
+/** Host and platform minutes lost inside [from, booked), in whole minutes. */
+function countLoss(sides: Sides, start: number, from: number, booked: number) {
+  let hostLoss = 0;
+  let platformLoss = 0;
+  for (let i = from; i < booked; i++) {
+    const loss = lossAt(sides, start + i * MIN_MS + MIN_MS / 2);
+    if (loss === "host") hostLoss++;
+    else if (loss === "platform") platformLoss++;
+  }
+  return { hostLoss, platformLoss };
+}
+
+/** Overrun minutes both sides spent together, up to the credit cap. */
+function overrunCredit(sides: Sides, start: number, booked: number): number {
+  let credit = 0;
+  for (let i = booked; i < booked + OVERRUN_CREDIT_MINUTES; i++) {
+    const t = start + i * MIN_MS + MIN_MS / 2;
+    if (covers(sides.host, t) && covers(sides.learner, t)) credit++;
+  }
+  return credit;
+}
+
+/** The guards that return before any minute is counted. */
+function earlyVerdict(
   input: SessionOutcomeInput,
-): SessionOutcomeVerdict {
+): SessionOutcomeVerdict | null {
   if (!input.meeting) return verdict("OFFLINE");
   // An open interval is either a live overrun (the sweep defers those) or a lost
   // leave; neither can be judged, so it never moves money.
@@ -159,62 +210,64 @@ export function classifySessionOutcome(
     return verdict("INCONCLUSIVE");
   }
   if (input.intervals.length === 0) return verdict("NOBODY_JOINED");
+  // No host side on record (a plan with no consultant): attribution is unknowable.
+  if (input.hostUserIds.length === 0) return verdict("INCONCLUSIVE");
+  return null;
+}
+
+/** Pure. See the module comment for the rule; the guards live in `earlyVerdict`. */
+export function classifySessionOutcome(
+  input: SessionOutcomeInput,
+): SessionOutcomeVerdict {
+  const early = earlyVerdict(input);
+  if (early) return early;
 
   const start = input.startsAt.getTime();
   const end = input.endsAt.getTime();
   const horizon = end + OVERRUN_CREDIT_MINUTES * MIN_MS;
   const hosts = new Set(input.hostUserIds);
-  const host = mergeSide(
-    input.intervals.filter((i) => hosts.has(i.userId)),
-    start,
-    horizon,
-  );
-  const learner = mergeSide(
-    input.intervals.filter((i) => !hosts.has(i.userId)),
-    start,
-    horizon,
-  );
-  const hostEver = host.some((s) => s.start < end);
-  const learnerEver = learner.some((s) => s.start < end);
+  const endedAt = input.meeting?.endedAt?.getTime() ?? null;
+  const sides: Sides = {
+    host: mergeSide(
+      input.intervals.filter((i) => hosts.has(i.userId)),
+      start,
+      horizon,
+    ),
+    learner: mergeSide(
+      input.intervals.filter((i) => !hosts.has(i.userId)),
+      start,
+      horizon,
+    ),
+    outages: outageSegments(input),
+    deliberateEndAt:
+      input.meeting?.endedReason === "call_ended" &&
+      endedAt !== null &&
+      endedAt < end
+        ? endedAt
+        : null,
+  };
+  const hostEver = sides.host.some((s) => s.start < end);
+  const learnerEver = sides.learner.some((s) => s.start < end);
   if (!learnerEver) {
     return hostEver
       ? verdict("LEARNER_ABSENT", 0, 0)
       : verdict("NOBODY_JOINED");
   }
 
-  const outages = outageSegments(input);
-  const inOutage = (t: number) => covers(outages, t);
   const booked = Math.max(1, Math.round((end - start) / MIN_MS));
-  const lossFrom = Math.max(0, Math.floor((learner[0].start - start) / MIN_MS));
-  let hostLoss = 0;
-  let platformLoss = 0;
-  for (let i = lossFrom; i < booked; i++) {
-    const t = start + i * MIN_MS + MIN_MS / 2;
-    if (covers(host, t)) continue;
-    if (inOutage(t)) platformLoss++;
-    else if (covers(learner, t)) hostLoss++;
-    else {
-      const hostLeft = lastLeftBy(host, t);
-      const learnerLeft = lastLeftBy(learner, t) ?? t;
-      const grace = RECONNECT_GRACE_MINUTES * MIN_MS;
-      // The host never came while the learner waited, or left first: attributable.
-      if (hostLeft === null || learnerLeft - hostLeft > grace) hostLoss++;
-      else if (Math.abs(learnerLeft - hostLeft) <= grace) platformLoss++;
-      // Otherwise the learner left first and the host closed an empty room.
-    }
-  }
-  let credit = 0;
-  for (let i = booked; i < booked + OVERRUN_CREDIT_MINUTES; i++) {
-    const t = start + i * MIN_MS + MIN_MS / 2;
-    if (covers(host, t) && covers(learner, t)) credit++;
-  }
+  const lossFrom = Math.max(
+    0,
+    Math.floor((sides.learner[0].start - start) / MIN_MS),
+  );
+  const { hostLoss, platformLoss } = countLoss(sides, start, lossFrom, booked);
+  const credit = overrunCredit(sides, start, booked);
   const lost = Math.max(0, hostLoss + platformLoss - credit);
   const delivered = Math.max(0, booked - lost);
   const isVoid = lost > 0 && lost >= Math.min(VOID_LOSS_MINUTES, booked / 2);
 
   if (!hostEver) {
     // A host-absent verdict needs a waiting learner and no maintenance hold.
-    const held = outages.some((o) => o.start < end && o.end > start);
+    const held = sides.outages.some((o) => o.start < end && o.end > start);
     return isVoid && !held
       ? verdict("HOST_ABSENT", delivered, lost)
       : verdict("INCONCLUSIVE", delivered, lost);

@@ -42,6 +42,7 @@ const state = {
   wrapperRows: [] as unknown[],
   seatStatus: undefined as string | undefined,
   events: [] as { correlationId: string; context: unknown }[],
+  undecided: 0,
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
@@ -52,6 +53,9 @@ jest.mock("../../lib/prisma", () => ({
       findMany: async ({ where }: { where: { appointmentId?: string } }) =>
         where.appointmentId ? state.wrapperRows : state.due,
       findFirst: async () => state.madeUp,
+      // Tentative rows are excluded by the query itself (where.isTentative).
+      count: async ({ where }: { where: { isTentative?: boolean } }) =>
+        where.isTentative === false ? state.undecided : 99,
       updateMany: (...a: unknown[]) => stamp(...(a as [])),
     },
     payment: {
@@ -101,6 +105,7 @@ beforeEach(() => {
   state.due = [CLASS_SESSION];
   state.seatStatus = undefined;
   state.events = [];
+  state.undecided = 0;
 });
 
 it("#1834 — a paid seat still HELD goes to the ops queue once, never refunded", async () => {
@@ -220,4 +225,23 @@ it("#1569 D4 — the refundable voids are the latest ones, whatever order the sw
     "void-unused:v3:pay:pay-b",
     "void-unused:v2:pay:pay-b",
   ]);
+});
+
+it("#1569 D4 — plan-end void refunds wait while any session is undecided", async () => {
+  const sub = {
+    status: "APPROVED",
+    sessionsTotal: 8,
+    subscriptionPlan: { title: "M", totalSessions: 8 },
+  };
+  state.due = [
+    {
+      ...CLASS_SESSION,
+      completionStatus: "VOIDED",
+      appointment: { subscription: sub },
+    },
+  ];
+  state.undecided = 1;
+  const result = await settleCancelledSessions();
+  expect(refundBookingPayment).not.toHaveBeenCalled();
+  expect(result.stamped).toBe(0);
 });

@@ -13,7 +13,6 @@ jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     meeting: {
       findUnique: jest.fn(),
-      update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     meetingAttendance: { upsert: jest.fn().mockResolvedValue({}) },
@@ -46,7 +45,7 @@ import {
 } from "../../lib/stream/session-handlers";
 
 const db = prisma as unknown as {
-  meeting: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
+  meeting: { findUnique: jest.Mock; updateMany: jest.Mock };
   meetingAttendance: { upsert: jest.Mock };
 };
 const mockTransition = transitionOccurrenceCompletion as jest.Mock;
@@ -76,7 +75,7 @@ describe("call.ended before the booked start (#1607)", () => {
       created_at: "2026-09-13T09:48:00.000Z",
     });
 
-    expect(db.meeting.update).toHaveBeenCalledWith(
+    expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ endedReason: "ended_early" }),
       }),
@@ -93,7 +92,7 @@ describe("call.ended before the booked start (#1607)", () => {
       created_at: "2026-09-13T10:30:00.000Z",
     });
 
-    expect(db.meeting.update).toHaveBeenCalledWith(
+    expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ endedReason: "call_ended" }),
       }),
@@ -103,10 +102,9 @@ describe("call.ended before the booked start (#1607)", () => {
 });
 
 describe("the last end wins (#1607)", () => {
-  it("lets a later session_ended overwrite an earlier timeout", async () => {
-    db.meeting.findUnique.mockResolvedValue(
-      session(new Date("2026-09-13T10:00:30.000Z"), "session_timeout"),
-    );
+  it("lets a later session_ended overwrite an earlier timeout, CAS on the end it read", async () => {
+    const read = new Date("2026-09-13T10:00:30.000Z");
+    db.meeting.findUnique.mockResolvedValue(session(read, "session_timeout"));
 
     await handleSessionEnded({
       call_cid: "default:slot_1",
@@ -114,8 +112,10 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T11:02:00.000Z",
     });
 
-    expect(db.meeting.update).toHaveBeenCalledWith(
+    expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        // A concurrent call.ended moves endedAt, so this write then matches nothing.
+        where: { id: "ms_1", endedAt: read },
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
         }),
@@ -134,7 +134,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T10:30:00.400Z",
     });
 
-    expect(db.meeting.update).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
   });
 
   it("ignores an older end once a later one is recorded", async () => {
@@ -148,7 +148,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T10:00:30.000Z",
     });
 
-    expect(db.meeting.update).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
     expect(mockTransition).not.toHaveBeenCalled();
   });
 });

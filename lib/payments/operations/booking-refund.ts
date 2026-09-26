@@ -646,7 +646,7 @@ function assertReturnable(
   if (unit * sessions > owed) {
     const max = Math.max(0, Math.floor(owed / unit));
     const which = bound.seatLive
-      ? "host-cancelled sessions that were not made up"
+      ? "missed sessions that were not made up"
       : "undelivered sessions";
     throw new RefundValidationError(
       `While this seat is ${bound.seatLive ? "live" : "released"}, credit comes back only for ${which}: at most ${max} more`,
