@@ -81,7 +81,7 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
   const v = view.data;
 
   return (
-    <div className="space-y-4 p-4 md:p-6 lg:p-8">
+    <div className="space-y-4">
       <SessionOutcomesCard />
       <Card>
         <CardHeader>

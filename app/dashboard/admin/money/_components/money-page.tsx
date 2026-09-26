@@ -7,9 +7,10 @@ import { findMoneyTab, moneyTabsFor } from "@/lib/backoffice/money-tabs";
 import { MoneyTabBody } from "./MoneyTabBody";
 
 /**
- * #1771 K-2 — the shared `[tab]` page of both trees. A tab the viewer cannot
- * open (unknown, or outside the tree's audience or the viewer's own surfaces)
- * lands on the first tab they hold, never on an error boundary (QA #1824).
+ * #1771 K-2 — the shared `[tab]` page of both trees; each section is its own
+ * sidebar item. A section the viewer cannot open (unknown, or outside the
+ * tree's audience or the viewer's own surfaces) lands on the first section
+ * they hold, never on an error boundary (QA #1824).
  */
 export async function renderMoneyTab(args: {
   tab: string;

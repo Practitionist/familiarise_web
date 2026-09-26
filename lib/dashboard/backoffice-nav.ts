@@ -1,9 +1,13 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowLeftRight,
   BadgeCheck,
+  Banknote,
   BarChart3,
   Building2,
   CalendarCheck,
+  CalendarRange,
+  Coins,
   CreditCard,
   FileText,
   Home,
@@ -14,6 +18,9 @@ import {
   Play,
   Receipt,
   RefreshCw,
+  RotateCcw,
+  Scale,
+  ScrollText,
   Shield,
   Star,
   Ticket,
@@ -31,6 +38,7 @@ import {
   hasBackofficePermission,
   type BackofficeSurface,
 } from "@/lib/auth/backoffice-permissions";
+import { MONEY_TABS, type MoneyTabKey } from "@/lib/backoffice/money-tabs";
 
 /**
  * The one nav definition behind both back-office trees.
@@ -71,6 +79,26 @@ export interface BackofficeNavOptions {
   /** #863 — ENABLE_TDS_ADMIN_VIEW. Hides the item when the page would 404. */
   showTds?: boolean;
 }
+
+const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
+  payments: CreditCard,
+  refunds: RotateCcw,
+  disputes: Scale,
+  payouts: Banknote,
+  earnings: Coins,
+  reconcile: ArrowLeftRight,
+  "class-series": CalendarRange,
+  audit: ScrollText,
+};
+
+/** Each money section is its own item at its existing `/money/<key>` URL. */
+const moneyItems = (): NavItemSpec[] =>
+  MONEY_TABS.map((t) => ({
+    name: t.label,
+    icon: MONEY_ICONS[t.key],
+    path: `money/${t.key}`,
+    surface: t.surface,
+  }));
 
 function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
   return [
@@ -148,14 +176,7 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
     {
       label: "Money",
       items: [
-        {
-          // #1771 K-2 — one hub: payments, refunds, payouts, disputes and the
-          // ops doors are tabs under /money, filtered per role by the hub.
-          name: "Money",
-          icon: CreditCard,
-          path: "money",
-          surface: "payments.read",
-        },
+        ...moneyItems(),
         {
           name: "Invoices",
           icon: Receipt,

@@ -86,7 +86,9 @@ describe("buildBackofficeNav", () => {
     // The exact class of bug the matrix exists to prevent: a visible tab whose
     // page guard 403s. Every rendered path must resolve to a granted surface.
     const forbidden = [
-      "payouts",
+      "money/payouts",
+      "money/earnings",
+      "money/reconcile",
       "approval-payments",
       "tds",
       "organizations",
@@ -111,8 +113,13 @@ describe("buildBackofficeNav", () => {
       "appointments",
       "waitlist",
       "users",
-      // #1771 K-2 — payments, refunds, disputes and payouts are hub tabs.
-      "money",
+      // Each money section is its own item at its /money/<key> URL.
+      "money/payments",
+      "money/refunds",
+      "money/disputes",
+      "money/payouts",
+      "money/earnings",
+      "money/reconcile",
       "invoices",
       "subscriptions",
       "approval-payments",

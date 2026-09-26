@@ -2,17 +2,21 @@
 
 Operators used to reach payments, refunds, payouts and disputes through four
 separate pages, each with its own URL, its own access guard, and no shared
-record of who had touched what. Since #1771 they are one console — the Money
-hub — reachable at `/dashboard/admin/money/<tab>` for admins and
-`/dashboard/staff/[staffId]/money/<tab>` for staff, with every mutation
-passing through one audited door.
+record of who had touched what. Since #1771 they are one console, reachable
+at `/dashboard/admin/money/<section>` for admins and
+`/dashboard/staff/[staffId]/money/<section>` for staff, with every mutation
+passing through one audited door. Each section is its own item in the
+sidebar's Money group, next to Invoices and Subscriptions; there is no
+in-page tab bar.
 
-## Tabs, and who sees them
+## Sections, and who sees them
 
-`lib/backoffice/money-tabs.ts` declares the tab list once; both trees read it
-and filter it through `BACKOFFICE_PERMISSIONS`
-(`lib/auth/backoffice-permissions.ts`), so a tab is never visible to a role
-whose route guard would then turn it away.
+`lib/backoffice/money-tabs.ts` declares the section list once. The sidebar
+(`lib/dashboard/backoffice-nav.ts`) turns each entry into an item and the
+shared `[tab]` page guards it, and both filter the list through
+`BACKOFFICE_PERMISSIONS` (`lib/auth/backoffice-permissions.ts`), so a section
+is never visible to a role whose route guard would then turn it away. The
+table below lists every section with the surfaces that gate it.
 
 | Tab          | Surface                          | What it is for                                                                               |
 | ------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -32,9 +36,9 @@ its own page rather than a ninth tab, because it chases an unpaid pay-link
 rather than moving money once it lands.
 
 The four pages the hub replaced — `/dashboard/admin/{payments,refunds,
-disputes,payouts}` — now answer a 308 to their tab, carrying their query
-string over (`moneyHubHref`), so a bookmarked or linked URL keeps working.
-The four separate sidebar entries collapsed into one "Money" item.
+disputes,payouts}` — now answer a 308 to their section, carrying their
+query string over (`moneyHubHref`), so a bookmarked or linked URL keeps
+working. The sidebar links straight to each section's `/money/<section>` URL.
 
 ## Every mutation is a door, and every door is a `withOpsAction`
 

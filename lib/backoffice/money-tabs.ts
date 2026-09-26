@@ -6,12 +6,23 @@ import {
 } from "@/lib/auth/backoffice-permissions";
 
 /**
- * #1771 K-2 — the Money hub's tabs, one URL each under `<tree>/money/<key>`.
- * Both trees read this list and filter it through BACKOFFICE_PERMISSIONS, so
- * a tab is never shown to a role whose page guard would then turn it away.
+ * #1771 K-2 — the money sections, one URL each under `<tree>/money/<key>`.
+ * The sidebar lists each one as its own item, and both the sidebar and the
+ * page guard filter this list through BACKOFFICE_PERMISSIONS, so a section is
+ * never shown to a role whose page guard would then turn it away.
  */
+export type MoneyTabKey =
+  | "payments"
+  | "refunds"
+  | "disputes"
+  | "payouts"
+  | "earnings"
+  | "reconcile"
+  | "class-series"
+  | "audit";
+
 export interface MoneyTab {
-  key: string;
+  key: MoneyTabKey;
   label: string;
   description: string;
   surface: BackofficeSurface;
@@ -31,6 +42,12 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     surface: "refunds.read",
   },
   {
+    key: "disputes",
+    label: "Disputes",
+    description: "Chargebacks and their evidence deadlines.",
+    surface: "disputes.read",
+  },
+  {
     key: "payouts",
     label: "Payouts",
     description: "Consultant payouts waiting, in flight and paid.",
@@ -41,12 +58,6 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     label: "Earnings",
     description: "Consultant earnings, with hold and release.",
     surface: "payouts.read",
-  },
-  {
-    key: "disputes",
-    label: "Disputes",
-    description: "Chargebacks and their evidence deadlines.",
-    surface: "disputes.read",
   },
   {
     key: "reconcile",
