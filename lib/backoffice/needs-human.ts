@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
 /** #1834 — the settle sweep's key for a paid seat still HELD at settle time. */
 export const HELD_PAID_SEAT_PREFIX = "held-paid-seat:";
@@ -49,25 +50,28 @@ export async function dropSettled<
 }
 
 /**
- * #1834 — a held paid seat leaves the queue once ops has moved money on its
- * payment after the escalation: any refund raised since, pending or done.
+ * #1834 — a held paid seat leaves the queue only when a refund keyed to its
+ * own occurrence and payment (`occ:<occurrence>:pay:<payment>`) is pending or done.
  */
 export async function dropAnsweredHeldSeats<
-  T extends { createdAt: Date; paymentId: string | null },
+  T extends { paymentId: string | null; occurrenceId: string | null },
 >(items: T[]): Promise<T[]> {
-  const ids = [
-    ...new Set(items.flatMap((i) => (i.paymentId ? [i.paymentId] : []))),
-  ];
-  if (ids.length === 0) return items;
-  const refunds = await prisma.refund.findMany({
-    where: { paymentId: { in: ids }, status: { in: ["PENDING", "SUCCEEDED"] } },
-    select: { paymentId: true, createdAt: true },
+  const keyOf = (i: T) =>
+    i.paymentId && i.occurrenceId
+      ? occurrenceRefundKey(i.occurrenceId, i.paymentId)
+      : null;
+  const keys = items.flatMap((i) => keyOf(i) ?? []);
+  if (keys.length === 0) return items;
+  const answered = await prisma.refund.findMany({
+    where: {
+      dedupeKey: { in: keys },
+      status: { in: ["PENDING", "SUCCEEDED"] },
+    },
+    select: { dedupeKey: true },
   });
-  return items.filter(
-    (item) =>
-      !item.paymentId ||
-      !refunds.some(
-        (r) => r.paymentId === item.paymentId && r.createdAt > item.createdAt,
-      ),
-  );
+  const done = new Set(answered.map((r) => r.dedupeKey));
+  return items.filter((i) => {
+    const key = keyOf(i);
+    return !key || !done.has(key);
+  });
 }

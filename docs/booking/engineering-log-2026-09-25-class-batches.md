@@ -23,3 +23,7 @@ The host's class list (`components/collaborators/ScheduleSummaries.tsx`) still r
 ## Deferred
 
 A fixed weekly slot per batch, a minimum batch size, a waitlist on a full batch, cloning a batch, and who sets the late-join cutoff on an org-curated listing are left to #1745. The enterprise engagement meter still counts every session of the batch for an org-funded late joiner; with the default cutoff this never differs from the sessions bought.
+
+## Review round 2 (#1834)
+
+With #1832 merged, its review threads became dev bugs and were fixed here. The consultant no-show detector no longer cancels or refunds a consultation whose session the outcome sweep has already decided or parked `UNVERIFIED` for ops; both its candidate query and its CAS exclude such sessions. The ops outcome door now refuses a status move that `OCCURRENCE_COMPLETION_ALLOWED_FROM` does not list, such as `VOIDED → UNVERIFIED`. A paid seat still `HELD` at settle time is matched to its own payment, and its needs-human item stays listed, with no age window, until a refund keyed `occ:<occurrence>:pay:<payment>` lands through the issue door.

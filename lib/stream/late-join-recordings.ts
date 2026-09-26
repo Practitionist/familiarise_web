@@ -12,6 +12,8 @@ export interface LateJoinAccess {
   lateSeatBatches: Map<string, Set<string>>;
 }
 
+const ENTITLED = new Set<string>(["CONFIRMED", "ATTENDED"]);
+
 /** The viewer's late-join limits on class recordings, read once per request. */
 export async function lateJoinRecordingAccess(
   userId: string,
@@ -25,6 +27,7 @@ export async function lateJoinRecordingAccess(
       },
     },
     select: {
+      status: true,
       createdAt: true,
       sessionsPurchased: true,
       payment: { select: { createdAt: true } },
@@ -56,7 +59,8 @@ export async function lateJoinRecordingAccess(
     const late =
       seat.sessionsPurchased !== null &&
       seat.sessionsPurchased < cls.classPlan.totalSessions;
-    if (!late) onTimePlans.add(cls.classPlanId);
+    // #1834 — only an entitled on-time seat lifts the listing's late-join limit.
+    if (!late && ENTITLED.has(seat.status)) onTimePlans.add(cls.classPlanId);
     batches.set(
       cls.classPlanId,
       (batches.get(cls.classPlanId) ?? new Set<string>()).add(cls.id),

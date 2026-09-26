@@ -159,7 +159,7 @@ function BatchPanel({
           {card.phase !== "completed" && (
             <p className="text-sm text-muted-foreground">{seatsLine(card)}</p>
           )}
-          {card.freeCancellationUntil && (
+          {card.freeCancellationUntil && (card.canEnrol || enrolled) && (
             <p className="text-sm text-muted-foreground">
               Free cancellation until{" "}
               {formatInTimeZone(

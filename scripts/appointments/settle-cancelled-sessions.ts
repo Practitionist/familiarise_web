@@ -288,10 +288,14 @@ async function settleOne(
       select: {
         id: true,
         status: true,
+        paymentId: true,
         createdAt: true,
         sessionsPurchased: true,
       },
     });
+    // #1834 — a seat funded by another order (a re-bought seat reuses its row)
+    // is not this payment's; a legacy seat with no link keeps the old match.
+    if (seat?.paymentId && seat.paymentId !== payment.id) continue;
     const joinedAt =
       seat && seat.createdAt > payment.createdAt
         ? seat.createdAt

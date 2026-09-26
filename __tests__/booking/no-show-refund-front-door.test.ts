@@ -232,6 +232,30 @@ describe("consultant no-show refunds", () => {
     );
   });
 
+  // #1834 — a session the sweep decided or parked for ops is never cancelled here.
+  it("keeps decided or parked sessions out of the cohort and the claim's CAS", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    await detectConsultantNoShows();
+
+    const parked = {
+      deletedAt: null,
+      OR: [{ outcome: { not: null } }, { completionStatus: "UNVERIFIED" }],
+    };
+    const [query] = (prisma.consultation.findMany as jest.Mock).mock.calls[0];
+    expect(query.where.appointment.occurrences.none).toEqual(parked);
+    const [claim] = (prisma.consultation.updateMany as jest.Mock).mock.calls[0];
+    expect(claim.where.appointment).toEqual({ occurrences: { none: parked } });
+    const [release] = (
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+    ).mock.calls[0];
+    expect(release.where).toMatchObject({
+      outcome: null,
+      completionStatus: { in: ["SCHEDULED"] },
+    });
+  });
+
   it("does not filter the candidate query on a positive amount", async () => {
     await detectConsultantNoShows();
 
