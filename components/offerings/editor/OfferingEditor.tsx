@@ -57,6 +57,8 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
    * is not a draft.
    */
   publishOnlyFields?: readonly string[];
+  /** Replaces "Save draft", e.g. when saving as a draft unpublishes (#1527). */
+  draftLabel?: string;
   onSaveDraft: (values: T) => void | Promise<void>;
   onPublish: (values: T) => void | Promise<void>;
   onCancel?: () => void;
@@ -72,6 +74,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   savingAction = null,
   publishBlockedReason = null,
   publishOnlyFields,
+  draftLabel = "Save draft",
   onSaveDraft,
   onPublish,
   onCancel,
@@ -269,7 +272,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
               {savingAction === "draft" && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-              Save draft
+              {draftLabel}
             </Button>
             <Button
               type="button"

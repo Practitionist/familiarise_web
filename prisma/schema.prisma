@@ -3676,6 +3676,10 @@ model ConsultationPlan {
   // delete. Null means live; set means withdrawn, and it is reversible.
   archivedAt DateTime?
 
+  // #1527 Q4 — a DRAFT is invisible to buyers and refused at checkout; existing
+  // bookings and their pay-links are unaffected.
+  status OfferingPlanStatus @default(PUBLISHED)
+
   consultations Consultation[]
   materials     PlanMaterial[]
   faqs          PlanFaq[]
@@ -3800,6 +3804,9 @@ model SubscriptionPlan {
   // #catalog-archive — see ConsultationPlan.archivedAt.
   archivedAt DateTime?
 
+  // #1527 Q4 — see ConsultationPlan.status.
+  status OfferingPlanStatus @default(PUBLISHED)
+
   subscriptions        Subscription[]
   subscriptionContents SubscriptionContent[]
   trials               Trial[]
@@ -3812,6 +3819,13 @@ model SubscriptionPlan {
   @@index([organizationId])
   @@index([visibility, organizationId])
   @@index([consultantProfileId])
+}
+
+// #1527 Q4 — the sale state of a 1:1 or subscription plan. Webinars and classes
+// keep their drafts on Webinar.status / Class.status instead.
+enum OfferingPlanStatus {
+  DRAFT
+  PUBLISHED
 }
 
 model Subscription {

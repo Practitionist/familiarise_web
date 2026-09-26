@@ -48,6 +48,51 @@ interface OfferingEditorContainerProps {
   ) => Promise<void>;
 }
 
+/**
+ * #1527 Q4 — the badge reads the loaded plan's real status. Only 1:1 and
+ * subscription rows carry one; webinar and class rows fall back to the old
+ * "saved means published" reading until their drafts are wired the same way.
+ */
+function editorStatus(
+  plan: Record<string, unknown> | undefined,
+  planId: string | undefined,
+): "DRAFT" | "PUBLISHED" | null {
+  if (plan?.status === "DRAFT" || plan?.status === "PUBLISHED") {
+    return plan.status;
+  }
+  return planId ? "PUBLISHED" : null;
+}
+
+/** #1527 Q4 — say only what the save actually did for this type. */
+function savedToast({
+  publish,
+  hasRealDraft,
+  wasPublished,
+}: {
+  publish: boolean;
+  hasRealDraft: boolean;
+  wasPublished: boolean;
+}): { title: string; description?: string } {
+  if (publish) {
+    return {
+      title: "Offering published",
+      description: "It's now visible to buyers.",
+    };
+  }
+  if (!hasRealDraft) return { title: "Offering saved" };
+  if (wasPublished) {
+    return {
+      title: "Offering unpublished",
+      description:
+        "Buyers can no longer find or book it. Existing bookings are unaffected.",
+    };
+  }
+  return {
+    title: "Draft saved",
+    description: "Only you can see this until you publish it.",
+  };
+}
+
 export function OfferingEditorContainer({
   type,
   consultantId,
@@ -90,6 +135,8 @@ export function OfferingEditorContainer({
   });
 
   const planId = (existingPlan?.id as string | undefined) ?? undefined;
+  const status = editorStatus(existingPlan, planId);
+  const hasRealDraft = type === "consultation" || type === "subscription";
 
   /**
    * Why publishing is blocked, if it is. Returning the reason rather than a
@@ -139,14 +186,17 @@ export function OfferingEditorContainer({
         await adapter.save(payload, consultantId);
       }
 
-      toast({
-        title: publish ? "Offering published" : "Draft saved",
-        description: publish
-          ? "It's now visible to buyers."
-          : "Only you can see this until you publish it.",
-      });
+      toast(
+        savedToast({
+          publish,
+          hasRealDraft,
+          wasPublished: status === "PUBLISHED",
+        }),
+      );
 
-      router.push(returnHref ?? `/dashboard/consultant/${consultantId}/planner`);
+      router.push(
+        returnHref ?? `/dashboard/consultant/${consultantId}/planner`,
+      );
       router.refresh();
     } catch (error) {
       Sentry.captureException(
@@ -170,7 +220,12 @@ export function OfferingEditorContainer({
       form={form}
       planId={planId}
       planImageType={adapter.imageType}
-      status={planId ? "PUBLISHED" : null}
+      status={status}
+      draftLabel={
+        hasRealDraft && status === "PUBLISHED"
+          ? "Unpublish (save as draft)"
+          : undefined
+      }
       savingAction={savingAction}
       publishBlockedReason={publishBlockedReason}
       publishOnlyFields={publishOnlyFields}
@@ -198,11 +253,7 @@ export function OfferingEditorContainer({
         ...((type === "webinar" || type === "class") && planId
           ? {
               collaborators: (
-                <CollaboratorsTab
-                  planType={type}
-                  planId={planId}
-                  isOwner
-                />
+                <CollaboratorsTab planType={type} planId={planId} isOwner />
               ),
             }
           : {}),

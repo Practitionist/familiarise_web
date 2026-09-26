@@ -28,6 +28,7 @@ import {
   type CollaborationRef,
 } from "@/lib/collaborators/standing";
 import { apiError } from "@/lib/errors";
+import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import * as Sentry from "@sentry/nextjs";
 import { dateToMinuteUtc } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
@@ -198,6 +199,11 @@ export async function GET(
       | undefined = isPrivilegedAccess
       ? undefined
       : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+    // #1527 Q4 — 1:1 and subscription plans also hide drafts (and archived
+    // rows) from the public include.
+    const oneOnOnePlanFilter = isPrivilegedAccess
+      ? undefined
+      : oneOnOnePlanDiscoverableWhere();
 
     // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
@@ -248,11 +254,11 @@ export async function GET(
         availabilityWindowsWeekly: true,
         availabilityWindowsCustom: true,
         consultationPlans: {
-          ...(planVisibilityFilter && { where: planVisibilityFilter }),
+          ...(oneOnOnePlanFilter && { where: oneOnOnePlanFilter }),
           include: { faqs: { orderBy: { order: "asc" } } },
         },
         subscriptionPlans: {
-          ...(planVisibilityFilter && { where: planVisibilityFilter }),
+          ...(oneOnOnePlanFilter && { where: oneOnOnePlanFilter }),
           include: {
             subscriptionContents: {
               orderBy: { order: "asc" },

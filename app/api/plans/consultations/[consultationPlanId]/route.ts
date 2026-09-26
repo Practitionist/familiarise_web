@@ -13,6 +13,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
+import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 import * as Sentry from "@sentry/nextjs";
 export async function GET(
   request: NextRequest,
@@ -20,15 +21,24 @@ export async function GET(
 ) {
   try {
     const { consultationPlanId } = await params;
+    // #1527 Q4 — no booking rows: this GET is open to any caller, and neither
+    // the editor nor checkout reads them.
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
       where: { id: consultationPlanId },
       include: {
         consultantProfile: { select: planConsultantSelect },
-        consultations: true,
         topics: true,
         faqs: { orderBy: { order: "asc" } },
       },
     });
+
+    // #1527 Q4 — a draft is readable by its author only.
+    if (await isHiddenDraft(consultationPlan)) {
+      return NextResponse.json(
+        { error: "Consultation plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(consultationPlan) },
@@ -138,6 +148,8 @@ export async function PUT(
         faqs: faqReplaceNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
         recordingStoragePolicy: validatedData.recordingStoragePolicy,
+        // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+        status: validatedData.status,
         ...topicsUpdate,
       },
       include: {

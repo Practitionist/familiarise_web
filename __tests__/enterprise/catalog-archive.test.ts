@@ -63,7 +63,9 @@ describe("catalog plans are archived, never deleted", () => {
       schema.indexOf("model Webinar {"),
       schema.indexOf("\n}", schema.indexOf("model Webinar {")),
     );
-    expect(webinar).toMatch(/webinarPlan\s+WebinarPlan @relation\(.*onDelete: Cascade/);
+    expect(webinar).toMatch(
+      /webinarPlan\s+WebinarPlan @relation\(.*onDelete: Cascade/,
+    );
   });
 });
 
@@ -93,15 +95,16 @@ describe("archived plans leave public discovery", () => {
     expect(src).toContain("eventPlanDiscoverableWhere(");
   });
 
-  it("the models without the column keep the plain visibility filter", () => {
-    // ConsultationPlan and SubscriptionPlan have no archivedAt; attaching the
-    // filter to their queries would make Prisma reject them at runtime.
+  it("the 1:1 and subscription lists compose the 1:1 filter", () => {
+    // #1527 Q4 — both models now carry archivedAt and a draft status, so their
+    // public lists go through oneOnOnePlanListWhere (discovery filter for
+    // everyone but the owner's planner), never the event-plan filter.
     for (const rel of [
       "app/api/plans/consultations/route.ts",
       "app/api/plans/subscriptions/route.ts",
     ]) {
       const src = read(rel);
-      expect(src).toContain("marketplaceVisibilityWhere(");
+      expect(src).toContain("oneOnOnePlanListWhere(");
       expect(src).not.toContain("eventPlanDiscoverableWhere(");
     }
   });

@@ -105,6 +105,17 @@ const toFormValues = (
   topics: topicNames(plan.topics),
 });
 
+/**
+ * #1527 Q4 — the container speaks the webinar/class vocabulary (SCHEDULED or
+ * DRAFT); 1:1 and subscription plans store PUBLISHED or DRAFT.
+ */
+const withPlanStatus = (
+  values: Record<string, unknown>,
+): Record<string, unknown> => ({
+  ...values,
+  status: values.status === "DRAFT" ? "DRAFT" : "PUBLISHED",
+});
+
 export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
   consultation: {
     schema: ConsultationPlanSchema,
@@ -122,7 +133,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     },
     save: (values, consultantId) =>
       ConsultationService.saveConsultationPlan(
-        { consultationPlan: values } as never,
+        { consultationPlan: withPlanStatus(values) } as never,
         consultantId,
       ),
   },
@@ -147,7 +158,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     },
     save: (values, consultantId) =>
       SubscriptionService.saveSubscriptionPlan(
-        { subscriptionPlan: values } as never,
+        { subscriptionPlan: withPlanStatus(values) } as never,
         consultantId,
       ),
   },

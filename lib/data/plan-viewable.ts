@@ -2,7 +2,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { isPlanViewable } from "@/lib/api/plans/visibility";
-import type { OrgPlanVisibility } from "@prisma/client";
+import type { OfferingPlanStatus, OrgPlanVisibility } from "@prisma/client";
 
 /**
  * Server-side wiring for {@link isPlanViewable}.
@@ -16,6 +16,8 @@ export async function canViewPlanDetail(
     visibility: OrgPlanVisibility;
     organizationId: string | null;
     archivedAt?: Date | null;
+    /** #1527 Q4 — select it on 1:1 and subscription plans so drafts 404. */
+    status?: OfferingPlanStatus | null;
   } | null,
   // Pass a session already fetched alongside the plan (e.g. via Promise.all
   // in the detail pages) so the gate doesn't serialize behind it. When

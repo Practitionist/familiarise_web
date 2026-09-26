@@ -3,7 +3,10 @@ import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { NextRequest, NextResponse } from "next/server";
 import { ConsultationPlanSchema } from "@/schemas/plans";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
+import {
+  oneOnOnePlanListCacheControl,
+  oneOnOnePlanListWhere,
+} from "@/lib/api/plans/visibility";
 import { faqCreateNested, planContentInclude } from "@/lib/api/plans/content";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
@@ -23,11 +26,19 @@ export async function GET(request: NextRequest) {
     );
     const skip = (page - 1) * limit;
 
-    // #726 — public marketplace must not surface ORG_ONLY plans.
-    const where = {
-      ...(consultantId ? { consultantProfileId: consultantId } : {}),
-      ...marketplaceVisibilityWhere(),
-    };
+    // #726 — public marketplace must not surface ORG_ONLY plans; #1527 Q4 —
+    // nor drafts, except to the owner's planner (the only consultantId caller).
+    // A failed session read degrades to the public list, never a 500.
+    const viewer = consultantId
+      ? await getSession(true).catch((error: unknown) => {
+          Sentry.captureException(error, { tags: { subsystem: "plans" } });
+          return null;
+        })
+      : null;
+    const where = oneOnOnePlanListWhere(
+      consultantId,
+      viewer?.user?.consultantProfileId,
+    );
 
     const [consultationPlans, total] = await Promise.all([
       prisma.consultationPlan.findMany({
@@ -64,7 +75,7 @@ export async function GET(request: NextRequest) {
         // webinars/classes lists (paginatedResponse): CDN-cached 60s with
         // background revalidation instead of hitting Postgres per visit.
         headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+          "Cache-Control": oneOnOnePlanListCacheControl(consultantId),
         },
       },
     );
@@ -152,6 +163,8 @@ export async function POST(request: NextRequest) {
         faqs: faqCreateNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
         recordingStoragePolicy: validatedData.recordingStoragePolicy,
+        // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+        status: validatedData.status,
         consultantProfile: { connect: { id: consultantProfileId } },
         topics:
           topicIds.length > 0

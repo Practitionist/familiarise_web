@@ -122,6 +122,8 @@ export class SubscriptionService {
         subscriptionContents: plan.subscriptionContents ?? [],
         ...positioningPayload(plan),
         ...recordingPayload(plan),
+        // #1527 Q4 — absent keeps the stored status (PUBLISHED on create).
+        ...(plan.status ? { status: plan.status } : {}),
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };
