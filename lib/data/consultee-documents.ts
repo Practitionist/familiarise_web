@@ -18,13 +18,13 @@ export const CONSULTEE_DOCUMENTS_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 const MATERIALS_CAP = 200;
 
-const REVIEW_STATUSES: readonly DocumentReviewStatus[] = [
+const REVIEW_STATUSES: ReadonlySet<DocumentReviewStatus> = new Set([
   "PENDING",
   "IN_REVIEW",
   "APPROVED",
   "REJECTED",
   "NEEDS_REVISION",
-];
+] as const);
 
 export interface ConsulteeDocumentRow {
   id: string;
@@ -82,7 +82,7 @@ export function normalizeDocumentsQuery(raw: {
     Number.isFinite(raw.offset) && (raw.offset as number) >= 0
       ? Math.trunc(raw.offset as number)
       : 0;
-  const status = REVIEW_STATUSES.includes(raw.status as DocumentReviewStatus)
+  const status = REVIEW_STATUSES.has(raw.status as DocumentReviewStatus)
     ? (raw.status as DocumentReviewStatus)
     : null;
   return { limit, offset, status };

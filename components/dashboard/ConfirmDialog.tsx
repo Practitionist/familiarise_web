@@ -98,11 +98,11 @@ export function ConfirmDialog({
       setTyped("");
       if (openProp === undefined) setOpenState(false);
       onOpenChange?.(false);
-    } catch (caught) {
+    } catch (error_) {
       setPending(false);
       setError(
-        caught instanceof Error && caught.message
-          ? caught.message
+        error_ instanceof Error && error_.message
+          ? error_.message
           : GENERIC_FAILURE,
       );
     }

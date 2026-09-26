@@ -64,7 +64,7 @@ export function OperatorDashboardShell({
     const labels: Record<string, string> = { money: "Money" };
     for (const item of flattenNav(nav)) {
       const segments = item.path.split("/");
-      labels[segments[segments.length - 1]] = item.name;
+      labels[segments.at(-1) as string] = item.name;
     }
     return labels;
   }, [nav]);

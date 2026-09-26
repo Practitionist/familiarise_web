@@ -26,48 +26,46 @@ export function NewOrgOfferingClient({
   const returnHref = `/dashboard/organization/${orgId}/catalog`;
 
   return (
-    <>
-      <DashboardContent className="content-flush-bottom flex flex-1 flex-col">
-        <DashboardErrorBoundary>
-          {expertId ? (
-            <OfferingEditorContainer
-              type={type}
-              consultantId={expertId}
-              returnHref={returnHref}
-              onSave={async (values) => {
-                const response = await fetch(
-                  `/api/organizations/${orgId}/catalog`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      ...values,
-                      kind: type.toUpperCase(),
-                      consultantProfileId: expertId,
-                      // The endpoint takes paise; the form edits rupees, same
-                      // as every other price field in the product.
-                      pricePaise: Math.round(Number(values.price ?? 0) * 100),
-                    }),
-                  },
-                );
-                if (!response.ok) {
-                  const body = await response.json().catch(() => ({}));
-                  throw new Error(body.error ?? "Failed to save offering");
-                }
-              }}
-            />
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Pick the expert who will deliver this offering first.
-              </p>
-              <Link href={returnHref} className="text-sm underline">
-                Back to catalog
-              </Link>
-            </div>
-          )}
-        </DashboardErrorBoundary>
-      </DashboardContent>
-    </>
+    <DashboardContent className="content-flush-bottom flex flex-1 flex-col">
+      <DashboardErrorBoundary>
+        {expertId ? (
+          <OfferingEditorContainer
+            type={type}
+            consultantId={expertId}
+            returnHref={returnHref}
+            onSave={async (values) => {
+              const response = await fetch(
+                `/api/organizations/${orgId}/catalog`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    ...values,
+                    kind: type.toUpperCase(),
+                    consultantProfileId: expertId,
+                    // The endpoint takes paise; the form edits rupees, same
+                    // as every other price field in the product.
+                    pricePaise: Math.round(Number(values.price ?? 0) * 100),
+                  }),
+                },
+              );
+              if (!response.ok) {
+                const body = await response.json().catch(() => ({}));
+                throw new Error(body.error ?? "Failed to save offering");
+              }
+            }}
+          />
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Pick the expert who will deliver this offering first.
+            </p>
+            <Link href={returnHref} className="text-sm underline">
+              Back to catalog
+            </Link>
+          </div>
+        )}
+      </DashboardErrorBoundary>
+    </DashboardContent>
   );
 }

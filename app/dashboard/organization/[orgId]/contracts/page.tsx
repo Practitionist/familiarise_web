@@ -544,10 +544,10 @@ function fmtPaymentTerms(
 function DetailRow({
   label,
   children,
-}: {
+}: Readonly<{
   label: string;
   children: ReactNode;
-}) {
+}>) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
       <span className="text-muted-foreground">{label}</span>

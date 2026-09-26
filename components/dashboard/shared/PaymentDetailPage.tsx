@@ -55,7 +55,9 @@ export interface PaymentDetailPageProps {
   paymentId: string;
 }
 
-export function PaymentDetailPage({ paymentId }: PaymentDetailPageProps) {
+export function PaymentDetailPage({
+  paymentId,
+}: Readonly<PaymentDetailPageProps>) {
   // #1527 — back-links and cross-links stay inside the viewer's tree.
   const { basePath, can } = useBackofficeCapability();
   const [refundOpen, setRefundOpen] = useState(false);

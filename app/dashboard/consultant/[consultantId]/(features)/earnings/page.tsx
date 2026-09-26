@@ -80,15 +80,13 @@ export default async function EarningsPage({ params }: Readonly<PageProps>) {
   ]);
 
   return (
-    <>
-      <HydrationBoundary state={dehydrate(queryClient)}>
-        <DashboardHeader
-          title="Earnings"
-          subtitle="When you get paid, and what each offering earns"
-          actions={<PayoutStatusChip consultantId={consultantId} />}
-        />
-        <EarningsTabs consultantId={consultantId} />
-      </HydrationBoundary>
-    </>
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <DashboardHeader
+        title="Earnings"
+        subtitle="When you get paid, and what each offering earns"
+        actions={<PayoutStatusChip consultantId={consultantId} />}
+      />
+      <EarningsTabs consultantId={consultantId} />
+    </HydrationBoundary>
   );
 }

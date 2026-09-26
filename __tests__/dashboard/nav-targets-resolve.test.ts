@@ -67,7 +67,7 @@ describe("back-office nav targets resolve", () => {
     // #1527 Q3 — one route tree serves both.
     expect(missingPaths(nav, "(backoffice)/[tree]")).toEqual([]);
     expectTabsAreItems(nav);
-    expect(nav.mobileTabs.length).toBe(4);
+    expect(nav.mobileTabs).toHaveLength(4);
   });
 });
 

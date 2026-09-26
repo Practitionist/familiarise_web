@@ -14,7 +14,7 @@ const MILESTONES = [1, 10, 25, 50, 100, 250, 500, 1000];
 
 /** #1827 adapted — one motivating line, no milestone engine. */
 export function milestoneLine(delivered: number): string | null {
-  const reached = MILESTONES.filter((m) => delivered >= m).at(-1);
+  const reached = MILESTONES.findLast((m) => delivered >= m);
   const next = MILESTONES.find((m) => delivered < m);
   if (!reached) return next ? "Your first delivered session is ahead." : null;
   const done = `${reached} ${reached === 1 ? "session" : "sessions"} delivered`;

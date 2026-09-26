@@ -193,9 +193,7 @@ export function OperatorHome({ orgId }: Readonly<{ orgId: string }>) {
     ? deriveActivationChecklist(snapshot, orgId).filter((s) => opens(s.href))
     : [];
   const showChecklist =
-    isAtLeast("MAINTAINER") &&
-    checklist.length > 0 &&
-    checklist.some((s) => !s.done);
+    isAtLeast("MAINTAINER") && checklist.some((s) => !s.done);
 
   const currency = data?.capabilities.currency ?? "INR";
   const quickActions = [

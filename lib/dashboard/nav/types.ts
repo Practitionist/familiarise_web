@@ -6,15 +6,13 @@ import type { LucideIcon } from "lucide-react";
  * assert every href resolves to a real page instead of regex-scanning layouts.
  */
 
-/** Keys into the shell's `badges` map (unread messages, pending requests, …). */
-export type NavBadgeKey = string;
-
 export interface NavItem {
   name: string;
   icon: LucideIcon;
   /** Path relative to the nav's `basePath` (may contain a `/`). */
   path: string;
-  badgeKey?: NavBadgeKey;
+  /** Key into the shell's `badges` map (unread messages, pending requests, …). */
+  badgeKey?: string;
 }
 
 /** A plain, always-open section; the label is a caption, not a toggle (#1527). */

@@ -44,7 +44,7 @@ interface ProfileFormData {
  */
 export default function LearningProfileForm({
   consulteeId,
-}: LearningProfileFormProps) {
+}: Readonly<LearningProfileFormProps>) {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = React.useState(false);
 

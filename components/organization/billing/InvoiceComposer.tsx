@@ -16,9 +16,25 @@ import {
 } from "@/components/ui/responsive-modal";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 
-type LineItem = { description: string; quantity: number; unitPrice: string };
+type LineItem = {
+  key: string;
+  description: string;
+  quantity: number;
+  unitPrice: string;
+};
 
-const EMPTY_LINE: LineItem = { description: "", quantity: 1, unitPrice: "" };
+// #1527 review — a stable key per row so removing a middle row doesn't
+// misattribute focus/DOM state to the wrong input (Sonar S6479).
+let lineItemSeq = 0;
+function makeEmptyLine(): LineItem {
+  lineItemSeq += 1;
+  return {
+    key: `line-${lineItemSeq}`,
+    description: "",
+    quantity: 1,
+    unitPrice: "",
+  };
+}
 
 /**
  * #1527 Q8 — the manual invoice composer, moved from the org Billing page to
@@ -37,7 +53,7 @@ export function InvoiceComposer({
   onOpenChange: (open: boolean) => void;
 }>) {
   const queryClient = useQueryClient();
-  const [lineItems, setLineItems] = useState<LineItem[]>([EMPTY_LINE]);
+  const [lineItems, setLineItems] = useState<LineItem[]>([makeEmptyLine()]);
   const [dueDate, setDueDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -85,7 +101,7 @@ export function InvoiceComposer({
       void queryClient.invalidateQueries({
         queryKey: ["org-billing-invoices", orgId],
       });
-      setLineItems([EMPTY_LINE]);
+      setLineItems([makeEmptyLine()]);
       setDueDate("");
       onOpenChange(false);
     } finally {
@@ -103,7 +119,7 @@ export function InvoiceComposer({
           <div className="space-y-2">
             <Label>Line items</Label>
             {lineItems.map((li, i) => (
-              <div key={i} className="flex items-end gap-2">
+              <div key={li.key} className="flex items-end gap-2">
                 <Input
                   aria-label="Description"
                   placeholder="Description"
@@ -151,7 +167,7 @@ export function InvoiceComposer({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setLineItems([...lineItems, EMPTY_LINE])}
+              onClick={() => setLineItems([...lineItems, makeEmptyLine()])}
             >
               <Plus className="mr-1 h-4 w-4" /> Add line
             </Button>

@@ -98,7 +98,10 @@ export interface ReferralsPageProps {
   creditsHref?: string;
 }
 
-export function ReferralsPage({ role, creditsHref }: ReferralsPageProps) {
+export function ReferralsPage({
+  role,
+  creditsHref,
+}: Readonly<ReferralsPageProps>) {
   const isConsultant = role === "CONSULTANT";
   const { toast } = useToast();
   const queryClient = useQueryClient();

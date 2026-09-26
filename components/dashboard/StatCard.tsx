@@ -100,4 +100,4 @@ export function StatCard({
   );
 }
 
-export const StatCardSkeleton = StatSkeleton;
+export { StatSkeleton as StatCardSkeleton };
