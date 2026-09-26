@@ -492,13 +492,20 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     // support-ticket opsRecipients.
     const ops = await prisma.user.findMany({
       where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
-      select: { id: true, staffProfileId: true },
+      select: { id: true, role: true, staffProfileId: true },
     });
     const byQueue = new Map<string, string[]>();
     for (const o of ops) {
-      const queue = o.staffProfileId
-        ? `/dashboard/staff/${o.staffProfileId}/refunds`
-        : "/dashboard/admin/refunds";
+      // The admin tree is ADMIN-only (its layout bounces anyone else to
+      // /dashboard): a STAFF row without a staff profile has no refunds
+      // queue it can open, so it gets no bell rather than a dead link.
+      const queue =
+        o.role === UserRole.ADMIN
+          ? "/dashboard/admin/refunds"
+          : o.staffProfileId
+            ? `/dashboard/staff/${o.staffProfileId}/refunds`
+            : null;
+      if (!queue) continue;
       const bucket = byQueue.get(queue);
       if (bucket) bucket.push(o.id);
       else byQueue.set(queue, [o.id]);

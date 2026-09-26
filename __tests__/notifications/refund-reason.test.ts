@@ -113,4 +113,23 @@ describe("refundReasonLabel", () => {
       ),
     ).toBe("something new that booking happened");
   });
+
+  it("scrubs ids in every branch, not just the fallback", () => {
+    expect(
+      refundReasonLabel(
+        "ops refund: booking 4424e3fe-3e53-48ce-b8de-595b71cc6596 failed twice",
+      ),
+    ).toBe("manual refund issued by ops — booking that booking failed twice");
+    expect(
+      refundReasonLabel(
+        "whole-event class cancellation (4424e3fe-3e53-48ce-b8de-595b71cc6596)",
+      ),
+    ).toBe("the whole class was cancelled (that booking)");
+  });
+
+  it("never returns an inherited property for a hostile reason", () => {
+    expect(refundReasonLabel("toString")).toBe("toString");
+    expect(refundReasonLabel("constructor")).toBe("constructor");
+    expect(refundReasonLabel("valueOf")).toBe("valueOf");
+  });
 });

@@ -212,7 +212,15 @@ export function refundReasonLabel(
 ): string | undefined {
   const raw = reason?.trim();
   if (!raw) return undefined;
+  // Every branch below can carry an id (a console note quoting a booking,
+  // an unrecognized cancellation reason): the bell never prints one, so
+  // the scrub runs once here instead of in each branch.
+  const label = rawRefundReasonLabel(raw);
+  if (!label) return undefined;
+  return label.replace(UUID_PATTERN, "that booking").trim() || undefined;
+}
 
+function rawRefundReasonLabel(raw: string): string | undefined {
   // Whole-event cancellation: the parenthetical is a CancellationReason
   // member or the cancel route's "cancelled" default (which would read
   // "cancelled (cancelled)" if kept).
@@ -259,7 +267,9 @@ export function refundReasonLabel(
     SESSION_VOIDED_UNUSED_AT_PLAN_END:
       "an unused voided session at the end of the plan",
   };
-  if (sweep[raw]) return sweep[raw];
+  // Own-key: `sweep["toString"]` would otherwise resolve the inherited
+  // function and hand a non-string to the template.
+  if (Object.hasOwn(sweep, raw)) return sweep[raw];
 
   // Overage credit-backs name ledger rows; the direction is the story.
   if (/^overage credit-back — parent booking \S+ refunded$/i.test(raw)) {
@@ -272,8 +282,8 @@ export function refundReasonLabel(
     return `overage credit-back after the ${overageEvent[1].toLowerCase()} was cancelled`;
   }
 
-  // Last resort for builders not yet mapped: drop the ids, keep the words.
-  return raw.replace(UUID_PATTERN, "that booking").trim() || undefined;
+  // Builders not yet mapped pass through; the wrapper scrubs their ids.
+  return raw;
 }
 
 /**

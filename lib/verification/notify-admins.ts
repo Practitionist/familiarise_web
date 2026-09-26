@@ -35,7 +35,7 @@ export async function stageNewApplicationBells(
     const [admins, user] = await Promise.all([
       db.user.findMany({
         where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
-        select: { id: true, staffProfileId: true },
+        select: { id: true, role: true, staffProfileId: true },
       }),
       db.user.findUnique({
         where: { id: applicant.userId },
@@ -43,16 +43,21 @@ export async function stageNewApplicationBells(
       }),
     ]);
     if (admins.length === 0) return [];
-    // The verification queue lives on the users page, per tree:
-    // `/dashboard/admin/*` bounces STAFF to their home, so each
-    // recipient is pointed at the queue they can open (grouped by
+    // The verification queue lives on the users page, per tree, and the
+    // admin tree is ADMIN-only (its layout bounces anyone else to
+    // /dashboard): a STAFF row without a staff profile has no queue it
+    // can open, so it gets no bell rather than a dead link. Grouped by
     // queue — the shared admin queue plus one per distinct staff
-    // profile — not one trigger per recipient).
+    // profile — not one trigger per recipient.
     const byQueue = new Map<string, string[]>();
     for (const a of admins) {
-      const queue = a.staffProfileId
-        ? `/dashboard/staff/${a.staffProfileId}/users`
-        : "/dashboard/admin/users";
+      const queue =
+        a.role === UserRole.ADMIN
+          ? "/dashboard/admin/users"
+          : a.staffProfileId
+            ? `/dashboard/staff/${a.staffProfileId}/users`
+            : null;
+      if (!queue) continue;
       const bucket = byQueue.get(queue);
       if (bucket) bucket.push(a.id);
       else byQueue.set(queue, [a.id]);
