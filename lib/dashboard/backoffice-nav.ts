@@ -37,7 +37,12 @@ import {
   hasBackofficePermission,
   type BackofficeSurface,
 } from "@/lib/auth/backoffice-permissions";
-import { MONEY_TABS, type MoneyTabKey } from "@/lib/backoffice/money-tabs";
+import {
+  AUDIT_TAB,
+  MONEY_TABS,
+  type MoneyTab,
+  type MoneyTabKey,
+} from "@/lib/backoffice/money-tabs";
 
 /**
  * The one nav definition behind both back-office trees.
@@ -90,13 +95,12 @@ const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
 };
 
 /** Each money section is its own item at its existing `/money/<key>` URL. */
-const moneyItems = (): NavItemSpec[] =>
-  MONEY_TABS.map((t) => ({
-    name: t.label,
-    icon: MONEY_ICONS[t.key],
-    path: `money/${t.key}`,
-    surface: t.surface,
-  }));
+const moneyItem = (t: MoneyTab): NavItemSpec => ({
+  name: t.label,
+  icon: MONEY_ICONS[t.key],
+  path: `money/${t.key}`,
+  surface: t.surface,
+});
 
 function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
   return [
@@ -174,7 +178,7 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
     {
       label: "Money",
       items: [
-        ...moneyItems(),
+        ...MONEY_TABS.map(moneyItem),
         {
           name: "Invoices",
           icon: Receipt,
@@ -251,6 +255,9 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
         },
       ],
     },
+    // The audit log covers every console door, not only money, so it closes
+    // the sidebar on its own. Admins read every row, staff their own.
+    { items: [moneyItem(AUDIT_TAB)] },
   ];
 }
 

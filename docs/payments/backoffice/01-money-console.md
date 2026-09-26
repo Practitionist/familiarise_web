@@ -18,7 +18,7 @@ shared `[tab]` page guards it, and both filter the list through
 is never visible to a role whose route guard would then turn it away. The
 table below lists every section with the surfaces that gate it.
 
-| Tab       | Surface                     | What it is for                                                                               |
+| Section   | Surface                     | What it is for                                                                               |
 | --------- | --------------------------- | -------------------------------------------------------------------------------------------- |
 | Payments  | `payments.read`             | Every payment, with its status and rail.                                                     |
 | Refunds   | `refunds.read` / `.manage`  | Refunds issued, pending and failed, plus the admin refund doors.                             |
@@ -26,7 +26,6 @@ table below lists every section with the surfaces that gate it.
 | Earnings  | `payouts.read` / `.manage`  | Consultant earnings, with hold and release.                                                  |
 | Disputes  | `disputes.read` / `.manage` | Chargebacks and their evidence deadlines.                                                    |
 | Reconcile | `payouts.manage`            | Runs the four reconcile jobs on demand and shows when each last ran.                         |
-| Audit     | `opsLog.read`               | Every console action: who, what, on which row, and why.                                      |
 
 `payouts.read` is admin-only, so staff do not see the Payouts or Earnings
 tabs; a support agent resolving a billing ticket can still see a payment,
@@ -122,10 +121,14 @@ the earnings healer (`sync-payment-earnings`) — through
 instead of a second overlapping pass, and the tab shows each job's last run
 from the same heartbeat the scheduled invocation writes.
 
-## The Audit tab is the log's only reader
+## The audit log is the log's only reader
+
+The audit log is not a Money section. It is its own item at the end of the
+sidebar, outside the Money group, because it covers every console door, and
+it still lives at `/money/audit`.
 
 `OpsActionLog` has no admin-only write path and no back door: every row on
-it was written by a `withOpsAction` door, and the Audit tab is a paged,
+it was written by a `withOpsAction` door, and the audit log is a paged,
 RSC-seeded read over exactly those rows, answered `Cache-Control: no-store`
 like every other money GET. Staff see only the rows they themselves wrote;
 admins see every row. Filters are by actor, surface and target, so "what did

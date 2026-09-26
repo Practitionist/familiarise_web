@@ -134,6 +134,15 @@ describe("buildBackofficeNav", () => {
     }
   });
 
+  it("closes both sidebars with the audit log, outside the Money group", () => {
+    for (const tree of ["admin", "staff"] as const) {
+      const groups = buildBackofficeNav(tree);
+      const last = groups[groups.length - 1];
+      expect(last.label).toBeUndefined();
+      expect(last.items.map((i) => i.path)).toEqual(["money/audit"]);
+    }
+  });
+
   it("keeps Metrics staff-only and Analytics admin-only", () => {
     // Not a rename of one another: different endpoints, different questions
     // (support-queue health vs platform revenue).

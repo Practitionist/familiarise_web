@@ -64,20 +64,25 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     description: "Run the reconcile jobs now and see when each last ran.",
     surface: "payouts.manage",
   },
-  {
-    key: "audit",
-    label: "Audit",
-    description: "Every console action: who, what, on which row, and why.",
-    surface: "opsLog.read",
-  },
 ];
+
+/**
+ * The console's audit log keeps its `/money/audit` URL, but the sidebar lists
+ * it as its own item at the end, outside the Money group.
+ */
+export const AUDIT_TAB: MoneyTab = {
+  key: "audit",
+  label: "Audit log",
+  description: "Every console action: who, what, on which row, and why.",
+  surface: "opsLog.read",
+};
 
 export function moneyTabsFor(audience: UserRole): MoneyTab[] {
   return MONEY_TABS.filter((t) => hasBackofficePermission(audience, t.surface));
 }
 
 export function findMoneyTab(key: string): MoneyTab | undefined {
-  return MONEY_TABS.find((t) => t.key === key);
+  return [...MONEY_TABS, AUDIT_TAB].find((t) => t.key === key);
 }
 
 /**
