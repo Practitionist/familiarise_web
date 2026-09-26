@@ -37,6 +37,11 @@ export interface OrganizationNavInput {
   canHost: boolean;
   /** Set when this member also delivers sessions (gates Requests). */
   consultantProfileId: string | null;
+  /**
+   * #1527 decision 6 — a SUSPENDED membership keeps only Overview and its
+   * booked sessions; every other page refuses it server-side.
+   */
+  suspended?: boolean;
 }
 
 type ItemSpec = NavItem & { show?: boolean };
@@ -72,6 +77,21 @@ export function buildOrganizationNav(
   input: OrganizationNavInput,
 ): DashboardNav {
   const { orgId, role, canSponsor, canHost } = input;
+  if (input.suspended) {
+    return {
+      basePath: `/dashboard/organization/${orgId}`,
+      groups: [
+        {
+          items: [
+            { name: "Overview", icon: Home, path: "home" },
+            { name: "Appointments", icon: CalendarCheck, path: "appointments" },
+          ],
+        },
+      ],
+      support: null,
+      mobileTabs: ["home", "appointments"],
+    };
+  }
   const can = (surface: OrgSurface) => hasOrgPermission(role, surface);
   // Nav ⊆ page: the Compensation / Plan collaborators pages admit anyone who
   // `deliversForOrg`; the nav offers them to experts only, since operators

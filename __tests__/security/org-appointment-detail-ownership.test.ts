@@ -26,7 +26,11 @@ const src = readFileSync(join(process.cwd(), PAGE), "utf8");
 
 describe("org appointment detail binds both ids", () => {
   it("requires org membership first", () => {
-    expect(src).toContain("await requireOrgAccess(orgId)");
+    // #1527 decision 6 — SUSPENDED is admitted for the member's own session
+    // only; the operator branch 404s it.
+    expect(src).toContain(
+      "await requireOrgAccess(orgId, { allowSuspended: true })",
+    );
   });
 
   it("checks the appointment belongs to THIS org, not merely to some org", () => {

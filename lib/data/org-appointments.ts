@@ -22,11 +22,14 @@ import {
   type ListAppointmentsResult,
 } from "@/lib/api/scope/list-appointments";
 import { toPlain } from "@/lib/data/serialize";
+import { suspendedMemberAttendeeWhere } from "@/lib/enterprise/suspended-member-sessions";
 
 export interface GetOrgAppointmentsArgs {
   appointmentType?: AppointmentsType;
   page?: number;
   perPage?: number;
+  /** #1527 decision 6 — only sessions whose attendee is suspended here. */
+  suspendedMembersOnly?: boolean;
 }
 
 export async function getOrgAppointments(
@@ -41,6 +44,9 @@ export async function getOrgAppointments(
     appointmentType: args.appointmentType,
     page: args.page ?? 1,
     perPage: args.perPage ?? 20,
+    ...(args.suspendedMembersOnly && {
+      extraWhere: suspendedMemberAttendeeWhere(orgId),
+    }),
   });
   return toPlain(result);
 }

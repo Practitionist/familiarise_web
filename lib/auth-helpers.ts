@@ -379,6 +379,14 @@ export type OrgCapabilityGate = {
    * distinguish this from plain 403.
    */
   requireActive?: true;
+  /**
+   * #1527 decision 6 — also admit a SUSPENDED membership, for the member's
+   * already-booked sessions ONLY: the org shell's details read, Appointments ›
+   * Mine, and their own appointment detail. A suspended member never passes a
+   * role or permission gate, so this refuses when combined with
+   * `minimumRole` / `permission`; callers branch on `member.status`.
+   */
+  allowSuspended?: true;
 };
 
 /**
@@ -405,6 +413,7 @@ export async function requireOrgAccess(
     canHost,
     fundingSource,
     requireActive,
+    allowSuspended,
   } = options;
 
   const auth = await requireApiAuth();
@@ -558,7 +567,12 @@ export async function requireOrgAccess(
     };
   }
 
-  if (member.status !== "ACTIVE") {
+  const suspendedAdmitted =
+    allowSuspended === true && member.status === "SUSPENDED";
+  if (
+    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
+    (suspendedAdmitted && (minimumRole || permission))
+  ) {
     return {
       error: NextResponse.json(
         { error: `Membership is ${member.status.toLowerCase()}` },

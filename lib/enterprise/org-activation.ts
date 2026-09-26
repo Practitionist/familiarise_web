@@ -40,6 +40,8 @@ export interface OrgActivationSnapshot {
   creditPoolMaxUtilizationPct: number | null;
   /** #1744 — live programmes still set to the refused CHARGE_MEMBER. */
   memberBilledOverageProgramNames?: string[];
+  /** #1527 decision 6 — upcoming booked sessions of suspended members. */
+  suspendedMemberUpcomingCount?: number;
 }
 
 export interface ActivationStep {
@@ -212,6 +214,19 @@ export function deriveActionCenter(
       body: "Charging members is no longer offered: the member pays after the session while the consultant is paid on the full price. Switch the programme to BLOCK or CHARGE_ORG.",
       ctaLabel: "Edit programme",
       ctaHref: `${base}/programs`,
+    });
+  }
+
+  const suspendedSessions = s.suspendedMemberUpcomingCount ?? 0;
+  if (suspendedSessions > 0) {
+    // #1527 decision 6 — suspension keeps these bookings; the org decides.
+    items.push({
+      key: "suspended-member-sessions",
+      severity: "warning",
+      title: `${suspendedSessions} upcoming session${suspendedSessions === 1 ? "" : "s"} for suspended members`,
+      body: "Suspended members keep sessions that were already booked. Cancel and refund them deliberately, or restore the member.",
+      ctaLabel: "Review sessions",
+      ctaHref: `${base}/appointments?tab=everyone&members=suspended`,
     });
   }
 

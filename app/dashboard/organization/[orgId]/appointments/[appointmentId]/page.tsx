@@ -69,10 +69,13 @@ export default async function OrgAppointmentDetailPage({
 }) {
   const { orgId, appointmentId } = await params;
 
-  const access = await requireOrgAccess(orgId);
+  // #1527 decision 6 — a SUSPENDED member may open their OWN session
+  // (branches 1–2, read-only); the operator branch needs an ACTIVE grant.
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
   if (access.error) {
     notFound();
   }
+  const suspended = access.member.status === "SUSPENDED";
 
   const userId = access.session.user.id;
 
@@ -111,6 +114,7 @@ export default async function OrgAppointmentDetailPage({
           orgId={orgId}
           appointmentId={appointmentId}
           consulteeId={profile.id}
+          readOnly={suspended}
         />
       </DisplayZoneProvider>
     );
@@ -127,6 +131,7 @@ export default async function OrgAppointmentDetailPage({
           orgId={orgId}
           appointmentId={appointmentId}
           consultantId={consultantProfile.id}
+          readOnly={suspended}
         />
       </DisplayZoneProvider>
     );
@@ -134,6 +139,7 @@ export default async function OrgAppointmentDetailPage({
 
   // 3. Operators read metadata; the funding org's payer-side actors may act —
   // MANAGER reschedules, cancel (it refunds) stays OWNER/MAINTAINER (#1527).
+  if (suspended) notFound();
   const role = access.member.role;
   const mayCancel = canActForOrg(role, "cancel");
   const mayReschedule = canActForOrg(role, "reschedule");

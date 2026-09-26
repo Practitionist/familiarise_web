@@ -41,6 +41,7 @@ interface OrgAnalytics {
     stuckPayoutCount: number;
     creditPoolMaxUtilizationPct: number | null;
     memberBilledOverageProgramNames: string[];
+    suspendedMemberUpcomingCount: number;
   };
   members: { total: number; active: number };
   programs: { total: number; active: number; activeAssignments: number };
@@ -109,6 +110,7 @@ function toActivationSnapshot(data: OrgAnalytics): OrgActivationSnapshot {
     creditPoolMaxUtilizationPct: data.activation.creditPoolMaxUtilizationPct,
     memberBilledOverageProgramNames:
       data.activation.memberBilledOverageProgramNames,
+    suspendedMemberUpcomingCount: data.activation.suspendedMemberUpcomingCount,
   };
 }
 

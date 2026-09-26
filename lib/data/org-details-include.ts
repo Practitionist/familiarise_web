@@ -98,3 +98,34 @@ export function redactOrgDetailsForRole<T extends OrgMoneyShape>(
     payoutAccount,
   } as unknown as RedactedOrgDetails<T>;
 }
+
+/**
+ * #1527 decision 6 — a SUSPENDED member reads only what the org shell needs
+ * to render Appointments › Mine: identity, capabilities and funding source.
+ * No org profile scalars, counts, money or payout fields.
+ */
+export function suspendedOrgDetails(org: {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  canSponsor: boolean;
+  canHost: boolean;
+  requiresPO: boolean;
+  brandingProfile: { logo: string | null } | null;
+  billingAccount: { fundingSource: unknown } | null;
+}) {
+  return {
+    id: org.id,
+    name: org.name,
+    slug: org.slug,
+    status: org.status,
+    canSponsor: org.canSponsor,
+    canHost: org.canHost,
+    requiresPO: org.requiresPO,
+    brandingProfile: org.brandingProfile,
+    billingAccount: org.billingAccount
+      ? { fundingSource: org.billingAccount.fundingSource }
+      : null,
+  };
+}

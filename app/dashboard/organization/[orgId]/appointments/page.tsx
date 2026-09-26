@@ -136,16 +136,21 @@ export default async function OrgAppointmentsPage({
 
   // Floor at active membership — requireOrgAccess rejects non-members, and we
   // keep the URL tree honest with a 404 rather than leaking the shell.
-  const access = await requireOrgAccess(orgId);
+  // #1527 decision 6 — a SUSPENDED member keeps "Mine" (sessions already
+  // booked) and nothing else: no grant-gated tab is offered below.
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
   if (access.error) {
     notFound();
   }
 
   const role = access.member.role;
+  const active = access.member.status === "ACTIVE";
   const available: AppointmentTab[] = ["mine"];
-  if (hasOrgPermission(role, "operations.read")) available.push("everyone");
+  if (active && hasOrgPermission(role, "operations.read")) {
+    available.push("everyone");
+  }
   // #1527 decision 8 — MANAGER reads Unscheduled too.
-  if (hasOrgPermission(role, "appointments.unscheduled.read")) {
+  if (active && hasOrgPermission(role, "appointments.unscheduled.read")) {
     available.push("unscheduled");
   }
   const tab = resolveTab(sp, available);

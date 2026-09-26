@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
+import { readOnlyAdapter } from "@/lib/appointments/adapter";
 import { AppointmentDocumentsList } from "@/components/appointments/detail/AppointmentDocumentsList";
 import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { useConsultantAppointmentsAdapter } from "@/app/dashboard/consultant/[consultantId]/(features)/appointments/ConsultantAppointmentsAdapter";
@@ -18,20 +19,23 @@ export function DelivererDetailClient({
   orgId,
   appointmentId,
   consultantId,
+  readOnly = false,
 }: Readonly<{
   orgId: string;
   appointmentId: string;
   consultantId: string;
+  /** SUSPENDED membership: view and Join only (#1527 decision 6). */
+  readOnly?: boolean;
 }>) {
   const base = useConsultantAppointmentsAdapter(consultantId);
-  const adapter = useMemo(
-    () => ({
+  const adapter = useMemo(() => {
+    const scoped = {
       ...base,
       detailHref: () =>
         `/dashboard/organization/${orgId}/appointments/${appointmentId}`,
-    }),
-    [base, orgId, appointmentId],
-  );
+    };
+    return readOnly ? readOnlyAdapter(scoped) : scoped;
+  }, [base, orgId, appointmentId, readOnly]);
 
   return (
     <AppointmentDetailClient

@@ -6,7 +6,8 @@
  * personal `/api/appointments?orgScope=...` route uses, so the response
  * shape is identical.
  *
- * Query params: `appointmentType`, `page`, `perPage`.
+ * Query params: `appointmentType`, `page`, `perPage`, `members=suspended`
+ * (#1527 decision 6 — sessions of suspended members, from the action centre).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -24,6 +25,7 @@ const QuerySchema = z.object({
   appointmentType: z
     .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"])
     .optional(),
+  members: z.literal("suspended").optional(),
 });
 
 export async function GET(
@@ -39,6 +41,7 @@ export async function GET(
   const url = new URL(req.url);
   const filters = QuerySchema.safeParse({
     appointmentType: url.searchParams.get("appointmentType") ?? undefined,
+    members: url.searchParams.get("members") ?? undefined,
   });
   if (!filters.success) {
     return NextResponse.json(
@@ -50,6 +53,7 @@ export async function GET(
 
   const result = await getOrgAppointments(orgId, {
     appointmentType: filters.data.appointmentType,
+    suspendedMembersOnly: filters.data.members === "suspended",
     page: pagination.page,
     perPage: pagination.pageSize,
   });

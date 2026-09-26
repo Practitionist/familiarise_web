@@ -53,3 +53,23 @@ export interface AppointmentActionAdapter {
    *  the detail page. Callers of those do NOT mount it themselves. */
   renderDialogs(): ReactNode;
 }
+
+/**
+ * #1527 decision 6 — a SUSPENDED org member sees their booked session and can
+ * join it, nothing else: no overflow actions, and any primary action other
+ * than Join/View is shown disabled.
+ */
+export function readOnlyAdapter(
+  adapter: AppointmentActionAdapter,
+): AppointmentActionAdapter {
+  return {
+    ...adapter,
+    primaryAction: (vm) => {
+      const action = adapter.primaryAction(vm);
+      return action.kind === "join" || action.kind === "view"
+        ? action
+        : { ...action, onClick: undefined, href: undefined, disabled: true };
+    },
+    overflowItems: () => [],
+  };
+}

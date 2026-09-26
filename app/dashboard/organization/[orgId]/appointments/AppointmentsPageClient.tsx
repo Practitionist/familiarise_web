@@ -257,14 +257,25 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
     ? (rawTypeFilter as string)
     : undefined;
 
+  // #1527 decision 6 — the action centre links here for suspended members'
+  // sessions; the default (unfiltered) query key must match the SSR seed.
+  const suspendedOnly = searchParams?.get("members") === "suspended";
+
   const [status, setStatus] = useState<string>("all");
   const [search, setSearch] = useState("");
 
   const { data, isLoading, isError } = useQuery<AppointmentsResponse>({
-    queryKey: ["org-appointments", orgId, page, typeFilter],
+    queryKey: [
+      "org-appointments",
+      orgId,
+      page,
+      typeFilter,
+      ...(suspendedOnly ? ["suspended"] : []),
+    ],
     queryFn: async () => {
       const sp = new URLSearchParams({ page: String(page) });
       if (typeFilter) sp.set("appointmentType", typeFilter);
+      if (suspendedOnly) sp.set("members", "suspended");
       const res = await fetch(
         `/api/organizations/${orgId}/appointments?${sp.toString()}`,
       );
@@ -345,15 +356,29 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
     </div>
   );
 
+  let listDescription: React.ReactNode =
+    "Sessions booked by members of this organization or scoped to a member's program assignment.";
+  if (suspendedOnly) {
+    listDescription = (
+      <>
+        Sessions booked for members whose membership is suspended.{" "}
+        <Link
+          href={`/dashboard/organization/${orgId}/appointments?tab=everyone`}
+          className="underline underline-offset-2"
+        >
+          Show everyone
+        </Link>
+      </>
+    );
+  } else if (isNarrowed) {
+    listDescription = `Showing ${filtered.length} of ${items.length} on this page. Status and search filter the current page only; type filters everything.`;
+  }
+
   return (
     <div className="space-y-6">
       <ScopedListTable
         title="Org appointments"
-        description={
-          isNarrowed
-            ? `Showing ${filtered.length} of ${items.length} on this page. Status and search filter the current page only; type filters everything.`
-            : "Sessions booked by members of this organization or scoped to a member's program assignment."
-        }
+        description={listDescription}
         isLoading={isLoading}
         isError={isError}
         items={filtered}

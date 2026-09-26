@@ -78,7 +78,7 @@ function MemberHome({
  * the door to My Program, Compensation or Appointments.
  */
 export function HomePageClient({ orgId }: { orgId: string }) {
-  const { role, canSponsor, canHost, isLoading } = useOrgRole(orgId);
+  const { role, suspended, canSponsor, canHost, isLoading } = useOrgRole(orgId);
 
   // Role resolves LEARNER while the org payload is in flight (fail-closed in
   // useOrgRole); a neutral skeleton avoids painting the wrong home first.
@@ -101,7 +101,23 @@ export function HomePageClient({ orgId }: { orgId: string }) {
   let title = "Overview";
   let description = "Your membership on this organization.";
   let body: React.ReactNode;
-  if (OPERATOR_ROLES.has(role)) {
+  if (suspended) {
+    // #1527 decision 6 — nothing but the sessions already booked.
+    description = "Your membership on this organization is suspended.";
+    body = (
+      <Section
+        variant="card"
+        title="Your booked sessions stay available"
+        description="You can still see and join sessions that were already booked. New bookings and everything else here are paused until an administrator restores your membership."
+      >
+        <Button asChild size="sm" variant="outline">
+          <Link href={`/dashboard/organization/${orgId}/appointments`}>
+            Open my appointments
+          </Link>
+        </Button>
+      </Section>
+    );
+  } else if (OPERATOR_ROLES.has(role)) {
     description = "What needs doing on this organization.";
     body = <OperatorHome orgId={orgId} />;
   } else if (role === "BILLING_ADMIN") {

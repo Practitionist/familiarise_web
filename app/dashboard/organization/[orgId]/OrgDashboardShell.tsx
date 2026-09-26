@@ -142,7 +142,12 @@ function OrgDashboardShellInner({
   // Idle-warm the highest-traffic tabs, with the same permission gates as
   // the nav — a hidden surface is not prefetched (it would render "forbidden").
   const prefetchPaths = useMemo(() => {
-    if (!org?.organization || org.organization.status !== "ACTIVE") return [];
+    if (
+      !org?.organization ||
+      org.organization.status !== "ACTIVE" ||
+      org.membership.status !== "ACTIVE"
+    )
+      return [];
     const base = `/dashboard/organization/${orgId}`;
     const can = (surface: OrgSurface) =>
       hasOrgPermission(org.membership.role, surface);
@@ -166,6 +171,7 @@ function OrgDashboardShellInner({
         canSponsor: org?.organization.canSponsor ?? false,
         canHost: org?.organization.canHost ?? false,
         consultantProfileId: org?.membership.consultantProfileId ?? null,
+        suspended: org?.membership.status === "SUSPENDED",
       }),
       // Help › Support requests is the viewer's own page, never this org's
       // operator triage queue (#1527).

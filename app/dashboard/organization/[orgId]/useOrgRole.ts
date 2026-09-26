@@ -45,13 +45,16 @@ export function useOrgRole(orgId: string) {
   });
 
   const role: MemberRole = data?.membership.role ?? "LEARNER";
+  // #1527 decision 6 — a SUSPENDED member holds no grant; the shell renders
+  // only so they can reach their booked sessions.
+  const suspended = data?.membership.status === "SUSPENDED";
   const canSponsor = data?.organization.canSponsor ?? false;
   const canHost = data?.organization.canHost ?? false;
   const fundingSource = data?.organization.fundingSource ?? null;
 
   const isAtLeast = useCallback(
-    (min: MemberRole) => isAtLeastRole(role, min),
-    [role],
+    (min: MemberRole) => !suspended && isAtLeastRole(role, min),
+    [role, suspended],
   );
 
   /**
@@ -63,12 +66,13 @@ export function useOrgRole(orgId: string) {
    * hierarchy checks.
    */
   const can = useCallback(
-    (surface: OrgSurface) => hasOrgPermission(role, surface),
-    [role],
+    (surface: OrgSurface) => !suspended && hasOrgPermission(role, surface),
+    [role, suspended],
   );
 
   return {
     role,
+    suspended,
     canSponsor,
     canHost,
     fundingSource,
@@ -106,11 +110,20 @@ export function useRequireOrgAccess(
   orgId: string,
   gate: OrgAccessGate,
 ): { allowed: boolean; isLoading: boolean } {
-  const { role, canSponsor, canHost, fundingSource, isLoading, isAtLeast } =
-    useOrgRole(orgId);
+  const {
+    role,
+    suspended,
+    canSponsor,
+    canHost,
+    fundingSource,
+    isLoading,
+    isAtLeast,
+  } = useOrgRole(orgId);
   const router = useRouter();
 
+  // Every gated page is closed to a SUSPENDED member (#1527 decision 6).
   const passes =
+    !suspended &&
     (!gate.minRole || isAtLeast(gate.minRole)) &&
     (!gate.permission || hasAnyOrgPermission(role, gate.permission)) &&
     (gate.canSponsor !== true || canSponsor) &&

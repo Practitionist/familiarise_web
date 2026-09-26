@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import {
   orgDetailsInclude,
   redactOrgDetailsForRole,
+  suspendedOrgDetails,
 } from "@/lib/data/org-details-include";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
@@ -103,7 +104,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "LEARNER");
+  // Any member, incl. SUSPENDED (#1527 decision 6): the shell must render so
+  // a suspended member reaches their booked sessions; they get the minimal
+  // shape below.
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
   if (access.error) return access.error;
 
   const org = await prisma.organization.findUnique({
@@ -120,7 +124,10 @@ export async function GET(
   }
 
   return NextResponse.json({
-    organization: redactOrgDetailsForRole(org, access.member.role),
+    organization:
+      access.member.status === "ACTIVE"
+        ? redactOrgDetailsForRole(org, access.member.role)
+        : suspendedOrgDetails(org),
     membership: {
       role: access.member.role,
       status: access.member.status,
