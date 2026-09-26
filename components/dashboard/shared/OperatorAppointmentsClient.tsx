@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AppointmentTimeline } from "./AppointmentTimeline";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import type {
   StaffAppointment,
   StaffAppointmentsPayload,
@@ -82,25 +83,10 @@ const TABS = [
   "completed",
 ] as const;
 
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
-
-const formatFullDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+// #1527 QA — date-fns patterns in the page's display zone (DisplayZoneProvider
+// in OperatorAppointmentsPage), not toLocaleString in the runtime zone.
+const DATE_PATTERN = "d MMM, hh:mm a";
+const FULL_DATE_PATTERN = "EEE, d MMM yyyy, hh:mm a";
 
 const formatCurrency = (amount: number, currency: string = "INR") => {
   return new Intl.NumberFormat("en-IN", {
@@ -142,6 +128,7 @@ export function OperatorAppointmentsClient({
   renderOps?: (appointmentId: string) => ReactNode;
 }>) {
   const { toast } = useToast();
+  const zoned = useZonedFormat();
   // #1771 — the retired class-series URL lands here as `?type=class`.
   const searchParams = useSearchParams();
   const linkedType = searchParams.get("type") ?? "";
@@ -457,7 +444,7 @@ export function OperatorAppointmentsClient({
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3 w-3" />
-                                  {formatDate(appointment.scheduledAt)}
+                                  {zoned(appointment.scheduledAt, DATE_PATTERN)}
                                 </span>
                                 {appointment.duration > 0 && (
                                   <span className="flex items-center gap-1">
@@ -622,7 +609,12 @@ export function OperatorAppointmentsClient({
                     <Label className="text-xs text-muted-foreground">
                       Scheduled At
                     </Label>
-                    <p>{formatFullDate(selectedAppointment.scheduledAt)}</p>
+                    <p>
+                      {zoned(
+                        selectedAppointment.scheduledAt,
+                        FULL_DATE_PATTERN,
+                      )}
+                    </p>
                   </div>
                   {selectedAppointment.duration > 0 && (
                     <div>

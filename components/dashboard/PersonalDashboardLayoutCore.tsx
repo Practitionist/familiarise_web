@@ -89,6 +89,14 @@ export interface PersonalDashboardCoreProps<P> {
   profileDisplayImage?: (
     profile: P | null | undefined,
   ) => string | null | undefined;
+  /**
+   * The route profile's owner, for the operator-view banner (#1527 QA B6):
+   * the header identity is the signed-in operator, the banner names whose
+   * dashboard this is.
+   */
+  profileOwnerName: (
+    profile: P | null | undefined,
+  ) => string | null | undefined;
   hasAccess: (
     user: PersonalDashboardUser | null | undefined,
     routeParam: string,
@@ -185,9 +193,9 @@ function OperatorViewBanner({
       className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 sm:px-6 lg:px-8"
     >
       <span>
-        Operator view — you&apos;re looking at{" "}
-        <strong>{name ?? "this user"}</strong>&apos;s dashboard. Anything you
-        change here is real.
+        Operator view — you&apos;re viewing{" "}
+        <strong>{name ?? "this user"}</strong>&apos;s dashboard. Actions run as
+        you and are logged.
       </span>
       <Link
         href={`/dashboard/${tree}/users`}
@@ -214,6 +222,7 @@ export function PersonalDashboardLayoutCore<P>({
   profileStreamUserId,
   profileDisplayName,
   profileDisplayImage,
+  profileOwnerName,
   hasAccess,
   resolveRedirectTarget,
   prefetchSuffixes,
@@ -470,7 +479,10 @@ export function PersonalDashboardLayoutCore<P>({
     userDetails?.consulteeProfileId === routeParam;
   const operatorBanner =
     operatorTree && !ownsProfile ? (
-      <OperatorViewBanner name={userName} tree={operatorTree} />
+      <OperatorViewBanner
+        name={profileOwnerName(profileData) ?? null}
+        tree={operatorTree}
+      />
     ) : null;
   const banner =
     operatorBanner || extras.banner ? (

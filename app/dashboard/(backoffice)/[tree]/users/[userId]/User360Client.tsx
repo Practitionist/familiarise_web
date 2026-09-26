@@ -98,7 +98,8 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
         </Button>
       }
       title={`Open ${profile.name}'s dashboard?`}
-      description="You see it read-only, as they do. The visit is recorded in the audit log."
+      // #1527 QA B6 — nothing enforces read-only, so the copy doesn't promise it.
+      description="You see their dashboard as they do. Anything you do there runs as you and is logged, and this visit is recorded in the audit log."
       confirmLabel="Open dashboard"
       requireReason={{ label: "Why are you opening it?" }}
       onConfirm={async ({ reason }) => {

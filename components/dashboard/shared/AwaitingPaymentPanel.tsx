@@ -1,10 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 
+import { KeyValueList } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
+import {
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -52,11 +62,14 @@ function deadline(p: ApprovalPayment) {
 /**
  * #1527 Q9 — approved bookings whose buyer has not paid yet (the old
  * Approval Payments page), as an Appointments tab both trees can see. A row
- * opens its booking, where the Ops actions panel lives.
+ * opens its booking, where the Ops actions panel lives; a request with no
+ * booking row yet (one is created when the learner pays) opens its request
+ * facts instead, so no row is inert (QA B5).
  */
 export function AwaitingPaymentPanel({
   onOpenBooking,
 }: Readonly<{ onOpenBooking: (appointmentId: string) => void }>) {
+  const [request, setRequest] = useState<ApprovalPayment | null>(null);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["approval-payments"],
     queryFn: fetchApprovalPayments,
@@ -101,29 +114,66 @@ export function AwaitingPaymentPanel({
   ];
 
   return (
-    <ResponsiveTable<ApprovalPayment>
-      columns={columns}
-      rows={data?.approvalPayments ?? []}
-      getRowId={(p) => `${p.type}:${p.id}`}
-      isLoading={isLoading && !data}
-      error={error && !data ? error : undefined}
-      onRetry={() => void refetch()}
-      rowActions={(p) =>
-        p.appointmentId ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => p.appointmentId && onOpenBooking(p.appointmentId)}
-          >
-            Open booking
-          </Button>
-        ) : null
-      }
-      empty={
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          Every approved booking has been paid.
-        </p>
-      }
-    />
+    <>
+      <ResponsiveTable<ApprovalPayment>
+        columns={columns}
+        rows={data?.approvalPayments ?? []}
+        getRowId={(p) => `${p.type}:${p.id}`}
+        isLoading={isLoading && !data}
+        error={error && !data ? error : undefined}
+        onRetry={() => void refetch()}
+        onRowClick={(p) =>
+          p.appointmentId ? onOpenBooking(p.appointmentId) : setRequest(p)
+        }
+        empty={
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            Every approved booking has been paid.
+          </p>
+        }
+      />
+      <ResponsiveModal
+        open={request !== null}
+        onOpenChange={(open) => !open && setRequest(null)}
+      >
+        <ResponsiveModalContent className="sm:max-w-lg">
+          {request && (
+            <>
+              <ResponsiveModalHeader>
+                <ResponsiveModalTitle>{request.title}</ResponsiveModalTitle>
+                <ResponsiveModalDescription>
+                  Approved, not paid yet. The booking, its sessions and its Ops
+                  actions are created when the learner pays.
+                </ResponsiveModalDescription>
+              </ResponsiveModalHeader>
+              <KeyValueList
+                items={[
+                  { label: "Type", value: humanizeEnum(request.type) },
+                  { label: "Expert", value: request.consultantName },
+                  {
+                    label: "Learner",
+                    value: request.consulteeName,
+                    hint: request.consulteeEmail,
+                  },
+                  {
+                    label: "Amount",
+                    value: formatCurrencyAmount(
+                      request.amount,
+                      request.currency,
+                    ),
+                  },
+                  { label: "Pay link", value: deadline(request) },
+                  { label: "Request ID", value: request.id },
+                ]}
+              />
+              <ResponsiveModalFooter>
+                <Button variant="outline" onClick={() => setRequest(null)}>
+                  Close
+                </Button>
+              </ResponsiveModalFooter>
+            </>
+          )}
+        </ResponsiveModalContent>
+      </ResponsiveModal>
+    </>
   );
 }

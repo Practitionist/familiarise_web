@@ -59,6 +59,7 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       profileQueryKey={["consultee-profile", consulteeId]}
       fetchProfile={() => fetchConsulteeDetails(consulteeId)}
       profileGatesOnUser={false}
+      profileOwnerName={(profile) => profile?.user?.name}
       hasAccess={(user) =>
         !!user &&
         (user.role === "ADMIN" ||

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { MemberRole, MemberStatus, OrgStatus } from "@prisma/client";
 import {
@@ -170,6 +170,21 @@ function FacetSection({
   );
 }
 
+const subscribeNever = () => () => {};
+
+/**
+ * #1527 QA — false for the server render AND hydration, true after. Better
+ * Auth's store hands a resolved session to a Suspense boundary that hydrates
+ * late, so the trigger printed the name the server never rendered (#418).
+ */
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
+}
+
 export interface ContextSwitcherProps {
   /**
    * Trigger identity override — e.g. the org shell passes the loaded org,
@@ -190,7 +205,8 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
   const pathname = usePathname() ?? "";
   const collapsed = useSidebarCollapsed();
   const [open, setOpen] = useState(false);
-  const user = session?.user;
+  const hydrated = useHydrated();
+  const user = hydrated ? session?.user : undefined;
 
   const { data: allMemberships } = useQuery({
     queryKey: ["user-org-memberships", "all"],

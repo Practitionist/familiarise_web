@@ -261,14 +261,25 @@ const EXECUTION_STATUS: Record<
 };
 
 /**
+ * #1527 QA B10 — money-list jobs that only expire unpaid orders and links.
+ * Maintenance still holds them with the money jobs, but no balance moves, so
+ * the reason every run asks for is enough.
+ */
+const NO_TYPED_CONFIRM = new Set([
+  "cleanup-abandoned-payments",
+  "cleanup-approval-payments",
+]);
+
+/**
  * #1527 Q10 — a money job moves or mutates real balances, so running one by
  * hand needs a typed confirmation: the payout pair asks for "RUN PAYOUTS",
  * any other money job for its own id.
  */
-function runConfirmPhrase(job: SystemJob): string | undefined {
-  if (job.category === "Payouts" && isFinancialJob(job.id))
-    return "RUN PAYOUTS";
-  return isFinancialJob(job.id) ? job.id : undefined;
+export function runConfirmPhrase(
+  job: Pick<SystemJob, "id" | "category">,
+): string | undefined {
+  if (!isFinancialJob(job.id) || NO_TYPED_CONFIRM.has(job.id)) return undefined;
+  return job.category === "Payouts" ? "RUN PAYOUTS" : job.id;
 }
 
 interface JobCardProps {
@@ -576,7 +587,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
           title={`Run ${confirmJob.name} now?`}
           description={`${confirmJob.description}. It normally runs ${confirmJob.schedule.toLowerCase()}.`}
           confirmLabel="Run now"
-          tone={isFinancialJob(confirmJob.id) ? "destructive" : "default"}
+          tone={runConfirmPhrase(confirmJob) ? "destructive" : "default"}
           requireReason={{ label: "Why run it by hand?" }}
           requireTyped={runConfirmPhrase(confirmJob)}
           onConfirm={async ({ reason }) => {
