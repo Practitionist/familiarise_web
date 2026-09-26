@@ -28,6 +28,7 @@ import {
   DashboardShellSkeleton,
 } from "@/components/dashboard/DashboardShell";
 import { ContextSwitcher } from "@/components/dashboard/ContextSwitcher";
+import Link from "next/link";
 import {
   useDashboardBreadcrumbs,
   type OfferingsCrumbConfig,
@@ -161,6 +162,37 @@ function DefaultError({ message }: Readonly<{ message: string }>) {
 
 const noExtras = () => ({});
 const identityWrap = (shell: React.ReactNode) => shell;
+
+const OPERATOR_TREE: Record<string, "admin" | "staff"> = {
+  ADMIN: "admin",
+  STAFF: "staff",
+};
+
+/** #1527 — an operator opening someone's dashboard (User 360 "View
+ *  dashboard") must always know whose data they are looking at. */
+function OperatorViewBanner({
+  name,
+  tree,
+}: Readonly<{ name: string | null; tree: "admin" | "staff" }>) {
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 sm:px-6 lg:px-8"
+    >
+      <span>
+        Operator view — you&apos;re looking at{" "}
+        <strong>{name ?? "this user"}</strong>&apos;s dashboard. Anything you
+        change here is real.
+      </span>
+      <Link
+        href={`/dashboard/${tree}/users`}
+        className="font-medium underline underline-offset-2"
+      >
+        Back to back office
+      </Link>
+    </div>
+  );
+}
 
 export function PersonalDashboardLayoutCore<P>({
   routeParam,
@@ -405,6 +437,22 @@ export function PersonalDashboardLayoutCore<P>({
     sessionImage ??
     null;
 
+  const operatorTree = OPERATOR_TREE[userDetails?.role ?? ""] ?? null;
+  const ownsProfile =
+    userDetails?.consultantProfileId === routeParam ||
+    userDetails?.consulteeProfileId === routeParam;
+  const operatorBanner =
+    operatorTree && !ownsProfile ? (
+      <OperatorViewBanner name={userName} tree={operatorTree} />
+    ) : null;
+  const banner =
+    operatorBanner || extras.banner ? (
+      <>
+        {operatorBanner}
+        {extras.banner}
+      </>
+    ) : undefined;
+
   // Account only (#1527 Q1): context switching lives in the switcher.
   const shell = (
     <DashboardShell
@@ -435,7 +483,7 @@ export function PersonalDashboardLayoutCore<P>({
         badges: extras.badges ?? [],
         breadcrumbs,
       }}
-      banner={extras.banner}
+      banner={banner}
       pathname={pathname}
     >
       {memoizedStreamContent}
