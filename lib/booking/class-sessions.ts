@@ -29,7 +29,7 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
-import { MISS_WHERE, missedAt } from "./misses";
+import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
 import {
   exitRightFor,
   seatLedger,
@@ -37,8 +37,8 @@ import {
   type SeriesLedger,
 } from "./class-series";
 
-/** A cancelled session must be made up, and HELD, within this many days. */
-export const MAKEUP_WINDOW_DAYS = 14;
+// Lives with the miss predicates so light readers (Home, #1527) skip this module.
+export { MAKEUP_WINDOW_DAYS };
 const DAY_MS = 86_400_000;
 
 /** The dedupe key of one seat's refund for one missed session. */

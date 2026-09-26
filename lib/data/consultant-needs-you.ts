@@ -3,8 +3,11 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { MAKEUP_WINDOW_DAYS } from "@/lib/booking/class-sessions";
-import { UNSETTLED_MISS, missedAt } from "@/lib/booking/misses";
+import {
+  MAKEUP_WINDOW_DAYS,
+  UNSETTLED_MISS,
+  missedAt,
+} from "@/lib/booking/misses";
 import { readRequestsInboxCounts } from "@/lib/data/requests-inbox";
 
 /**
