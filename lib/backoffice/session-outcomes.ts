@@ -8,6 +8,7 @@
 import {
   OccurrenceCompletionStatus,
   type OccurrenceOutcome,
+  type Prisma,
 } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -42,33 +43,36 @@ async function voidRefundExists(tx: Tx, occurrenceId: string) {
   return row !== null;
 }
 
-/** Overturn one past session's outcome; the status follows the outcome. */
-export async function setSessionOutcome(
-  tx: Tx,
-  args: {
-    occurrenceId: string;
-    outcome: OccurrenceOutcome;
-    actorUserId: string;
-    now?: Date;
-  },
-) {
-  const now = args.now ?? new Date();
-  const occ = await tx.appointmentOccurrence.findUnique({
-    where: { id: args.occurrenceId },
-    select: {
-      id: true,
-      appointmentId: true,
-      ordinal: true,
-      startsAt: true,
-      endsAt: true,
-      completionStatus: true,
-      outcome: true,
-      seatsSettledAt: true,
-      deletedAt: true,
-      isTentative: true,
-      appointment: { select: { classId: true } },
-    },
-  });
+const OVERTURN_SELECT = {
+  id: true,
+  appointmentId: true,
+  ordinal: true,
+  startsAt: true,
+  endsAt: true,
+  completionStatus: true,
+  outcome: true,
+  seatsSettledAt: true,
+  deletedAt: true,
+  isTentative: true,
+  appointment: { select: { classId: true } },
+} satisfies Prisma.AppointmentOccurrenceSelect;
+
+type OverturnRow = Prisma.AppointmentOccurrenceGetPayload<{
+  select: typeof OVERTURN_SELECT;
+}>;
+
+type OverturnArgs = {
+  occurrenceId: string;
+  outcome: OccurrenceOutcome;
+  actorUserId: string;
+  now?: Date;
+};
+
+/** Only a live, past session the sweep has decided may be overturned. */
+function assertDecided(
+  occ: OverturnRow | null,
+  now: Date,
+): asserts occ is OverturnRow {
   if (
     !occ ||
     occ.deletedAt ||
@@ -81,82 +85,115 @@ export async function setSessionOutcome(
       "Only a past session the outcome sweep has decided can be overturned.",
     );
   }
-  const to = COMPLETION_FOR_OUTCOME[args.outcome];
-  if (occ.completionStatus === "VOIDED" && to !== "VOIDED") {
-    // An owed make-up or refund has already been honoured, or a make-up holds
-    // the ordinal the un-voided row would take back.
-    const makeUp = await tx.appointmentOccurrence.findFirst({
-      where: {
-        appointmentId: occ.appointmentId,
-        ordinal: occ.ordinal,
-        id: { not: occ.id },
-        deletedAt: null,
-        completionStatus: { in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"] },
-      },
-      select: { id: true },
-    });
-    if (occ.seatsSettledAt || makeUp || (await voidRefundExists(tx, occ.id))) {
-      throw new OpsRefusal(
-        "OUTCOME_SETTLED",
-        "This void was already made up or refunded, so it can no longer be overturned.",
-      );
-    }
+}
+
+/**
+ * An un-void is refused once its make-up or refund was honoured, or a make-up
+ * holds the ordinal the un-voided row would take back.
+ */
+async function assertUnvoidable(tx: Tx, occ: OverturnRow) {
+  const makeUp = await tx.appointmentOccurrence.findFirst({
+    where: {
+      appointmentId: occ.appointmentId,
+      ordinal: occ.ordinal,
+      id: { not: occ.id },
+      deletedAt: null,
+      completionStatus: { in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"] },
+    },
+    select: { id: true },
+  });
+  if (occ.seatsSettledAt || makeUp || (await voidRefundExists(tx, occ.id))) {
+    throw new OpsRefusal(
+      "OUTCOME_SETTLED",
+      "This void was already made up or refunded, so it can no longer be overturned.",
+    );
   }
-  const data = {
-    outcome: args.outcome,
-    outcomeAt: now,
-    voidedAt: to === "VOIDED" ? now : null,
-  };
-  const history = {
+}
+
+/** A relabel inside one status is not a status write; CAS on the status read. */
+async function relabel(
+  tx: Tx,
+  occ: OverturnRow,
+  args: OverturnArgs,
+  now: Date,
+) {
+  const { count } = await tx.appointmentOccurrence.updateMany({
+    where: { id: occ.id, completionStatus: occ.completionStatus },
+    data: { outcome: args.outcome, outcomeAt: now },
+  });
+  if (count === 0) {
+    throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+  }
+  // A relabel moves no money, but a void newly blamed on the host feeds D6's flag.
+  const nowHostAttributed =
+    HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome) &&
+    !(occ.outcome && HOST_ATTRIBUTED_OUTCOMES.includes(occ.outcome));
+  if (
+    occ.completionStatus === "VOIDED" &&
+    nowHostAttributed &&
+    occ.appointment.classId
+  ) {
+    await onClassSessionVoided(tx, {
+      appointmentId: occ.appointmentId,
+      occurrenceId: occ.id,
+      startsAt: occ.startsAt,
+      voidedAt: now,
+      hostAttributed: true,
+    });
+  }
+}
+
+/** A status move through the CAS helper, plus the class void side effects. */
+async function moveStatus(
+  tx: Tx,
+  occ: OverturnRow,
+  args: OverturnArgs,
+  to: OccurrenceCompletionStatus,
+  now: Date,
+) {
+  await transitionOccurrenceCompletion(tx, {
+    where: {
+      id: occ.id,
+      deletedAt: null,
+      isTentative: false,
+      // A settle stamp landing after the read must win over an un-void.
+      ...(occ.completionStatus === "VOIDED" && { seatsSettledAt: null }),
+    },
+    to,
+    fromIn: [occ.completionStatus],
+    data: {
+      outcome: args.outcome,
+      outcomeAt: now,
+      voidedAt: to === "VOIDED" ? now : null,
+    },
     reason: `ops:session.set-outcome:${args.outcome}`,
     actorUserId: args.actorUserId,
-  };
-  if (to === occ.completionStatus) {
-    // A relabel inside one status is not a status write; CAS on the status read.
-    const { count } = await tx.appointmentOccurrence.updateMany({
-      where: { id: occ.id, completionStatus: occ.completionStatus },
-      data: { outcome: args.outcome, outcomeAt: now },
+  });
+  if (to === "VOIDED" && occ.appointment.classId) {
+    await onClassSessionVoided(tx, {
+      appointmentId: occ.appointmentId,
+      occurrenceId: occ.id,
+      startsAt: occ.startsAt,
+      voidedAt: now,
+      hostAttributed: HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome),
     });
-    if (count === 0) {
-      throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
-    }
-    // A relabel moves no money, but a void newly blamed on the host feeds D6's flag.
-    const nowHostAttributed =
-      HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome) &&
-      !(occ.outcome && HOST_ATTRIBUTED_OUTCOMES.includes(occ.outcome));
-    if (to === "VOIDED" && nowHostAttributed && occ.appointment.classId) {
-      await onClassSessionVoided(tx, {
-        appointmentId: occ.appointmentId,
-        occurrenceId: occ.id,
-        startsAt: occ.startsAt,
-        voidedAt: now,
-        hostAttributed: true,
-      });
-    }
-  } else {
-    await transitionOccurrenceCompletion(tx, {
-      where: {
-        id: occ.id,
-        deletedAt: null,
-        isTentative: false,
-        // A settle stamp landing after the read must win over an un-void.
-        ...(occ.completionStatus === "VOIDED" && { seatsSettledAt: null }),
-      },
-      to,
-      fromIn: [occ.completionStatus],
-      data,
-      ...history,
-    });
-    if (to === "VOIDED" && occ.appointment.classId) {
-      await onClassSessionVoided(tx, {
-        appointmentId: occ.appointmentId,
-        occurrenceId: occ.id,
-        startsAt: occ.startsAt,
-        voidedAt: now,
-        hostAttributed: HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome),
-      });
-    }
   }
+}
+
+/** Overturn one past session's outcome; the status follows the outcome. */
+export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
+  const now = args.now ?? new Date();
+  const occ = await tx.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: OVERTURN_SELECT,
+  });
+  assertDecided(occ, now);
+  const to = COMPLETION_FOR_OUTCOME[args.outcome];
+  if (occ.completionStatus === "VOIDED" && to !== "VOIDED") {
+    await assertUnvoidable(tx, occ);
+  }
+  if (to === occ.completionStatus) await relabel(tx, occ, args, now);
+  else await moveStatus(tx, occ, args, to, now);
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },

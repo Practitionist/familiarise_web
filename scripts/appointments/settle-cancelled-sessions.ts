@@ -371,13 +371,14 @@ async function settleSubscriptionVoid(
   }
   // The owed set is only stable once every session is decided: a session still
   // SCHEDULED or parked for ops could yet count as delivered. Retry next tick.
+  // A tentative (unplaced or held) row is not a session, so it never blocks.
   const undecided = await prisma.appointmentOccurrence.count({
     where: {
       appointmentId: session.appointmentId,
+      isTentative: false,
       OR: [
         {
           completionStatus: OccurrenceCompletionStatus.SCHEDULED,
-          isTentative: false,
           deletedAt: null,
         },
         AWAITING_HUMAN,

@@ -51,7 +51,9 @@ jest.mock("../../lib/prisma", () => ({
       findMany: async ({ where }: { where: { appointmentId?: string } }) =>
         where.appointmentId ? state.wrapperRows : state.due,
       findFirst: async () => state.madeUp,
-      count: async () => state.undecided,
+      // Tentative rows are excluded by the query itself (where.isTentative).
+      count: async ({ where }: { where: { isTentative?: boolean } }) =>
+        where.isTentative === false ? state.undecided : 99,
       updateMany: (...a: unknown[]) => stamp(...(a as [])),
     },
     payment: {

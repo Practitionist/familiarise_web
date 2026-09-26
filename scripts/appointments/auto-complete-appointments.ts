@@ -789,9 +789,11 @@ async function completeIndividualSlots(): Promise<{
       take: MAX_SLOT_OUTCOMES_PER_RUN,
     });
     // The cohort is ordered by end, so the earliest start is not cohort[0]'s.
-    const earliestStart = cohort.reduce<Date>(
-      (min, slot) => (slot.startsAt < min ? slot.startsAt : min),
-      bufferTime,
+    const earliestStart = new Date(
+      Math.min(
+        bufferTime.getTime(),
+        ...cohort.map((slot) => slot.startsAt.getTime()),
+      ),
     );
     const outages = await readOutageWindows(prisma, earliestStart);
     const wrappers = new Set<string>();
