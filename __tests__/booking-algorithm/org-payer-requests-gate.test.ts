@@ -86,7 +86,10 @@ function mountedComponents(element: unknown): unknown[] {
 }
 
 async function renderPage() {
-  return OrgRequestsPage({ params: Promise.resolve({ orgId: ORG }) });
+  return OrgRequestsPage({
+    params: Promise.resolve({ orgId: ORG }),
+    searchParams: Promise.resolve({}),
+  });
 }
 
 beforeEach(() => {

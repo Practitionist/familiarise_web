@@ -4,6 +4,7 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -17,6 +18,7 @@ import {
   DashboardContent,
   DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
+import { Skeleton } from "@/components/ui/skeleton";
 import StreamProvider from "@/providers/StreamProvider";
 
 import { AppointmentsPageClient } from "./AppointmentsPageClient";
@@ -35,6 +37,80 @@ function resolveTab(
   // `?scope=everyone` predates the tabs; old links keep working.
   const requested = sp.tab ?? sp.scope;
   return available.find((t) => t === requested) ?? "mine";
+}
+
+/** The tab body's own skeleton; the header stays put above it. */
+function TabBodySkeleton() {
+  return (
+    <div
+      className="space-y-3"
+      aria-busy="true"
+      aria-label="Loading appointments"
+    >
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-16 w-full rounded-lg" />
+      ))}
+    </div>
+  );
+}
+
+/** One tab's server read + list. */
+async function AppointmentsTabBody({
+  tab,
+  orgId,
+  page,
+  userId,
+}: Readonly<{
+  tab: AppointmentTab;
+  orgId: string;
+  page: number;
+  userId: string;
+}>) {
+  if (tab === "everyone") {
+    const queryClient = new QueryClient();
+    // #890 — prefetch only the default page; filtered/paged views diverge by
+    // queryKey and fall back to the client fetch. The trailing `undefined` is
+    // the appointmentType filter and MUST be present: the client's key carries
+    // that slot, and ["...", 1] wouldn't match ["...", 1, undefined].
+    await Promise.allSettled([
+      queryClient.prefetchQuery({
+        queryKey: ["org-appointments", orgId, page, undefined],
+        queryFn: () => getOrgAppointments(orgId, { page }),
+      }),
+    ]);
+
+    return (
+      <HydrationBoundary state={dehydrate(queryClient)}>
+        <AppointmentsPageClient orgId={orgId} />
+      </HydrationBoundary>
+    );
+  }
+
+  if (tab === "unscheduled") {
+    const requests = await readOrgPendingRequests(orgId);
+    return <PayerRequestsView requests={requests} />;
+  }
+
+  const { items, total, perPage } = await getOrgMemberAppointments(
+    orgId,
+    userId,
+    { page },
+  );
+
+  return (
+    // Video-only Stream client, scoped to this subtree so Join has a
+    // connected client without connecting video on every org route.
+    <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
+      <MyAppointmentsClient
+        orgId={orgId}
+        viewerId={userId}
+        items={items as unknown as MyAppointmentItem[]}
+        total={total}
+        page={page}
+        perPage={perPage}
+      />
+    </StreamProvider>
+  );
 }
 
 /**
@@ -88,66 +164,22 @@ export default async function OrgAppointmentsPage({
     />
   );
 
-  if (tab === "everyone") {
-    const queryClient = new QueryClient();
-    // #890 — prefetch only the default page; filtered/paged views diverge by
-    // queryKey and fall back to the client fetch. The trailing `undefined` is
-    // the appointmentType filter and MUST be present: the client's key carries
-    // that slot, and ["...", 1] wouldn't match ["...", 1, undefined].
-    await Promise.allSettled([
-      queryClient.prefetchQuery({
-        queryKey: ["org-appointments", orgId, page, undefined],
-        queryFn: () => getOrgAppointments(orgId, { page }),
-      }),
-    ]);
-
-    return (
-      <>
-        {header}
-        <DashboardContent>
-          <HydrationBoundary state={dehydrate(queryClient)}>
-            <AppointmentsPageClient orgId={orgId} />
-          </HydrationBoundary>
-        </DashboardContent>
-      </>
-    );
-  }
-
-  if (tab === "unscheduled") {
-    const requests = await readOrgPendingRequests(orgId);
-    return (
-      <>
-        {header}
-        <DashboardContent>
-          <PayerRequestsView requests={requests} />
-        </DashboardContent>
-      </>
-    );
-  }
-
-  const userId = access.session.user.id;
-  const { items, total, perPage } = await getOrgMemberAppointments(
-    orgId,
-    userId,
-    { page },
-  );
-
   return (
     <>
       {header}
       <DashboardContent>
-        {/* Video-only Stream client, scoped to this subtree so Join has a
-            connected client without connecting video on every org route. */}
-        <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
-          <MyAppointmentsClient
+        {/* #1527 QA wave 3 — Next keeps the previous tab on screen while a
+            search-param navigation's server render runs (no loading.tsx), so
+            "Everyone" looked dead. A boundary keyed per tab swaps in a
+            skeleton the moment the header lands. */}
+        <Suspense key={tab} fallback={<TabBodySkeleton />}>
+          <AppointmentsTabBody
+            tab={tab}
             orgId={orgId}
-            viewerId={userId}
-            items={items as unknown as MyAppointmentItem[]}
-            total={total}
             page={page}
-            perPage={perPage}
+            userId={access.session.user.id}
           />
-        </StreamProvider>
+        </Suspense>
       </DashboardContent>
     </>
   );

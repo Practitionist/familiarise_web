@@ -6,6 +6,7 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { isPayerAdminRole } from "@/lib/booking/org-actor";
+import { orgTabHref } from "@/lib/dashboard/org-tab-redirect";
 
 import { RequestsClient } from "./RequestsClient";
 
@@ -35,8 +36,10 @@ import { RequestsClient } from "./RequestsClient";
  */
 export default async function OrgRequestsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ orgId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { orgId } = await params;
 
@@ -53,8 +56,9 @@ export default async function OrgRequestsPage({
     if (!isPayerAdminRole(access.member.role)) {
       redirect(`/dashboard/organization/${orgId}/home`);
     }
+    // Keeps the old query like the other retired routes (#1527 QA wave 3).
     permanentRedirect(
-      `/dashboard/organization/${orgId}/appointments?tab=unscheduled`,
+      orgTabHref(orgId, "appointments", "unscheduled", await searchParams),
     );
   }
 

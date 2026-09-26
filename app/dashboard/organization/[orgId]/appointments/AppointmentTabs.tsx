@@ -9,6 +9,7 @@
  * "Mine" left, nothing renders.
  */
 
+import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -29,10 +30,19 @@ export function AppointmentTabs({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // #1527 QA wave 3 — the click shows at once; the server's `active` wins as
+  // soon as the navigation lands (it no longer matches `from`).
+  const [picked, setPicked] = useState<{
+    tab: AppointmentTab;
+    from: AppointmentTab;
+  } | null>(null);
+  const shown = picked?.from === active ? picked.tab : active;
 
   if (available.length < 2) return null;
 
   const select = (next: AppointmentTab) => {
+    if (next === shown) return;
+    setPicked({ tab: next, from: active });
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.set("tab", next);
     params.delete("scope");
@@ -45,6 +55,7 @@ export function AppointmentTabs({
     <div
       role="group"
       aria-label="Which appointments"
+      aria-busy={shown !== active}
       className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1"
     >
       {available.map((tab) => (
@@ -53,11 +64,11 @@ export function AppointmentTabs({
           type="button"
           size="sm"
           variant="ghost"
-          aria-pressed={active === tab}
+          aria-pressed={shown === tab}
           onClick={() => select(tab)}
           className={cn(
             "h-7 px-3 text-sm",
-            active === tab
+            shown === tab
               ? "bg-background shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
