@@ -12,6 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   capabilityOf,
@@ -52,7 +53,11 @@ const refineOverageCombo = (
 ) => {
   const behavior = v.overageBehavior ?? "BLOCK";
   if (behavior !== "BLOCK") {
-    if (v.maxOveragePerCyclePaise == null || v.maxOveragePerCyclePaise < 1) {
+    if (
+      v.maxOveragePerCyclePaise === null ||
+      v.maxOveragePerCyclePaise === undefined ||
+      v.maxOveragePerCyclePaise < 1
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["maxOveragePerCyclePaise"],
@@ -110,12 +115,23 @@ const LicensedSeatConfigSchema = z
     // resolved by the route, which re-checks dead knobs against the effective
     // behaviour for unlimited caps).
     const behavior = v.overageBehavior ?? "BLOCK";
-    if (v.coveredEngagementsPerCycle == null) {
+    if (
+      v.coveredEngagementsPerCycle === null ||
+      v.coveredEngagementsPerCycle === undefined
+    ) {
       const deadKnobs: Array<[string, boolean]> = [
         ["overageBehavior", behavior !== "BLOCK"],
         ["overageSurchargeBps", (v.overageSurchargeBps ?? 0) > 0],
-        ["maxOveragePerCyclePaise", v.maxOveragePerCyclePaise != null],
-        ["priceCapPerEngagementPaise", v.priceCapPerEngagementPaise != null],
+        [
+          "maxOveragePerCyclePaise",
+          v.maxOveragePerCyclePaise !== null &&
+            v.maxOveragePerCyclePaise !== undefined,
+        ],
+        [
+          "priceCapPerEngagementPaise",
+          v.priceCapPerEngagementPaise !== null &&
+            v.priceCapPerEngagementPaise !== undefined,
+        ],
       ];
       for (const [field, isDead] of deadKnobs) {
         if (isDead) {
@@ -187,10 +203,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  // Read is widened to any ACTIVE org member: LEARNERs legitimately need
-  // to see "which programs am I under" (drives the home dashboard,
-  // booking UI, and utilization widgets). Mutations (POST below) stay
-  // MANAGER+canSponsor — see docs/enterprise/00-foundations/04-roles-and-permissions.md.
+  // Any ACTIVE member may call this, but only `programs.read` sees every
+  // program with spend; everyone else sees the programs they hold a seat in,
+  // without utilisation (#1527 P0-2).
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
@@ -208,11 +223,16 @@ export async function GET(
   // ?includeArchived=true surfaces them (history view).
   const includeArchived = url.searchParams.get("includeArchived") === "true";
 
+  const canReadAll = hasOrgPermission(access.member.role, "programs.read");
+
   const programs = await prisma.program.findMany({
     where: {
       contract: { organizationId: orgId },
       ...(contractId && { contractId }),
       ...(!includeArchived && { archivedAt: null }),
+      ...(!canReadAll && {
+        assignments: { some: { membershipId: access.member.id } },
+      }),
     },
     include: {
       licensedSeatConfig: true,
@@ -224,6 +244,8 @@ export async function GET(
 
   // #777 §H — per-program usage across current-cycle assignments, so the list
   // can show a utilization column without a per-row round-trip. Aggregated.
+  if (!canReadAll) return NextResponse.json({ data: programs });
+
   const now = new Date();
   const usage = programs.length
     ? await prisma.programAssignment.groupBy({
@@ -347,14 +369,18 @@ export async function POST(
     body.type === "LICENSED_SEAT"
       ? (body.licensedSeatConfig.coveredEngagementsPerCycle ?? null)
       : undefined;
-  const canOverage = body.type !== "LICENSED_SEAT" || seatCap != null;
+  const canOverage =
+    body.type !== "LICENSED_SEAT" ||
+    (seatCap !== null && seatCap !== undefined);
   const effectiveOverageBehavior =
     overageConfig.overageBehavior ??
     (canOverage ? defaultOverageBehaviorForFunding(fundingSource) : "BLOCK");
   const effectiveBreaker = overageConfig.maxOveragePerCyclePaise ?? null;
   if (
     effectiveOverageBehavior !== "BLOCK" &&
-    (effectiveBreaker == null || effectiveBreaker < 1)
+    (effectiveBreaker === null ||
+      effectiveBreaker === undefined ||
+      effectiveBreaker < 1)
   ) {
     return NextResponse.json(
       {

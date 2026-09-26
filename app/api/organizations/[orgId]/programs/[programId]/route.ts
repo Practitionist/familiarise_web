@@ -13,6 +13,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
@@ -99,9 +100,8 @@ export async function GET(
   },
 ) {
   const { orgId, programId } = await params;
-  // Read widened to any ACTIVE member: a LEARNER assigned to a program
-  // needs to see the program's rules (covered plan types, pool balance)
-  // to understand what they can book. Mutations stay MANAGER+ below.
+  // Any ACTIVE member may call this: an assignee reads the rules of a program
+  // they hold a seat in; any other program needs `programs.read` (#1527 P0-2).
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
@@ -112,7 +112,13 @@ export async function GET(
   }
 
   const program = await prisma.program.findFirst({
-    where: { id: programId, contract: { organizationId: orgId } },
+    where: {
+      id: programId,
+      contract: { organizationId: orgId },
+      ...(!hasOrgPermission(access.member.role, "programs.read") && {
+        assignments: { some: { membershipId: access.member.id } },
+      }),
+    },
     include: {
       licensedSeatConfig: true,
       creditPoolConfig: true,
@@ -220,10 +226,12 @@ async function applyProgramPatch(
     };
     if (
       current.type === "LICENSED_SEAT" &&
-      merged.coveredEngagementsPerCycle == null &&
+      (merged.coveredEngagementsPerCycle === null ||
+        merged.coveredEngagementsPerCycle === undefined) &&
       (merged.overageBehavior !== "BLOCK" ||
         (merged.overageSurchargeBps ?? 0) > 0 ||
-        merged.maxOveragePerCyclePaise != null)
+        (merged.maxOveragePerCyclePaise !== null &&
+          merged.maxOveragePerCyclePaise !== undefined))
     ) {
       fail(
         "Overage settings have no effect while coveredEngagementsPerCycle is unlimited — clear them or set a cap.",
@@ -231,9 +239,11 @@ async function applyProgramPatch(
     }
     if (
       merged.overageBehavior !== "BLOCK" &&
-      (merged.coveredEngagementsPerCycle != null ||
+      ((merged.coveredEngagementsPerCycle !== null &&
+        merged.coveredEngagementsPerCycle !== undefined) ||
         current.type === "CREDIT_POOL") &&
-      (merged.maxOveragePerCyclePaise == null ||
+      (merged.maxOveragePerCyclePaise === null ||
+        merged.maxOveragePerCyclePaise === undefined ||
         merged.maxOveragePerCyclePaise < 1)
     ) {
       fail(
@@ -358,7 +368,7 @@ async function applyProgramPatch(
     });
   }
 
-  const next = await tx.program.findUniqueOrThrow({
+  await tx.program.findUniqueOrThrow({
     where: { id: programId },
   });
 
@@ -419,7 +429,7 @@ async function applyProgramPatch(
   // Archive/unarchive gets its own audit action (#777 §B).
   if (
     body.archived !== undefined &&
-    body.archived !== (current.archivedAt != null)
+    body.archived !== (current.archivedAt !== null)
   ) {
     await tx.orgAuditLog.create({
       data: {

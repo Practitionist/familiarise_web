@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { visibleAuditCategories } from "@/lib/enterprise/audit-visibility";
 import {
   Select,
   SelectContent,
@@ -29,7 +30,8 @@ import {
 /**
  * /dashboard/organization/[orgId]/audit — org audit-log browser.
  *
- * MAINTAINER+ role-gated (matches the API endpoint). Renders a
+ * `audit.read`-gated (matches the API endpoint), rows scoped per category
+ * grant server-side (#1527: money rows for money readers only). Renders a
  * paginated table of `OrgAuditLog` rows with filters for category +
  * freetext search + date range. The "Download CSV" button hits the
  * export endpoint which streams the full filtered result + emits
@@ -85,15 +87,16 @@ type AuditResponse = {
 
 export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  // audit.read (OWNER/MAINTAINER/SUPPORT) — same matrix entry the sidebar
-  // and the audit GET API check, so SUPPORT's ticket-investigation read
-  // works and an EXPERT/LEARNER/BILLING_ADMIN direct URL bounces to /home.
+  // audit.read — same matrix entry the sidebar and the audit GET API check;
+  // an EXPERT/LEARNER direct URL bounces to /home.
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
     permission: "audit.read",
   });
   // The export route floors at MAINTAINER, so SUPPORT reads but can't export.
-  const { isAtLeast } = useOrgRole(orgId);
+  const { isAtLeast, role } = useOrgRole(orgId);
   const canExport = isAtLeast("MAINTAINER");
+  // Only offer categories whose rows this role can read (#1527 audit split).
+  const categories = visibleAuditCategories(role, CATEGORIES);
 
   const [category, setCategory] = useState<OrgAuditCategory | "ALL">("ALL");
   const [search, setSearch] = useState("");
@@ -139,8 +142,8 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
         <Card>
           <CardContent className="p-6">
             <p className="text-sm text-foreground">
-              The audit log is available to owners, maintainers and support
-              staff.
+              The audit log is available to owners, maintainers, managers,
+              billing admins and support staff.
             </p>
           </CardContent>
         </Card>
@@ -258,7 +261,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">All categories</SelectItem>
-                  {CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <SelectItem key={c} value={c}>
                       {humanizeEnum(c)}
                     </SelectItem>

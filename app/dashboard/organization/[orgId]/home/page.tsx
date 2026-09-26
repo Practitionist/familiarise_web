@@ -44,7 +44,9 @@ export default async function OrgHomePage({
       queryClient.prefetchQuery({
         queryKey: ["org-activity", orgId],
         queryFn: () =>
-          getOrgActivityFeed(orgId, 5).then((rows) => ({ activity: rows })),
+          getOrgActivityFeed(orgId, access.member.role, 5).then((rows) => ({
+            activity: rows,
+          })),
       }),
     ]);
   }

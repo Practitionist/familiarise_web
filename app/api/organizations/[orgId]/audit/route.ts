@@ -24,6 +24,7 @@ import {
   sanitizeAuditDescription,
   sanitizeAuditDetails,
 } from "@/lib/enterprise/audit-sanitize";
+import { auditRowScope } from "@/lib/enterprise/audit-visibility";
 
 const CategorySchema = z.enum([
   "MEMBER",
@@ -78,11 +79,12 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  // audit.read (OWNER/MAINTAINER/SUPPORT) — same matrix entry as the
-  // sidebar + page gate, incl. the SUPPORT L1/L2 read carve-out. The CSV
-  // export route keeps its MAINTAINER floor (bulk PII is governance).
+  // audit.read — same matrix entry as the sidebar + page gate. Rows are then
+  // scoped per category grant: SUPPORT/MANAGER never get a money row,
+  // BILLING_ADMIN gets only money rows (#1527 P0-6).
   const access = await requireOrgAccess(orgId, { permission: "audit.read" });
   if (access.error) return access.error;
+  const rowScope = auditRowScope(access.member.role) ?? {};
 
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse(
@@ -119,6 +121,7 @@ export async function GET(
 
   const where: Prisma.OrgAuditLogWhereInput = {
     organizationId: orgId,
+    AND: [rowScope],
     ...(q.categories.length > 0 ? { category: { in: q.categories } } : {}),
     ...(q.actions.length > 0 ? { action: { in: q.actions } } : {}),
     ...(q.actorMembershipId ? { actorMembershipId: q.actorMembershipId } : {}),

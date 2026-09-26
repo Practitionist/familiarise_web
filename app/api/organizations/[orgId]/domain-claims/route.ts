@@ -48,7 +48,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
+  // floor that admitted BILLING_ADMIN.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const claims = await prisma.orgDomainClaim.findMany({
@@ -56,7 +58,13 @@ export async function GET(
     orderBy: { claimedAt: "desc" },
   });
 
-  return NextResponse.json({ data: claims });
+  // The DNS proof token belongs with the OWNER, who alone may verify (#1527).
+  const isOwner = access.member.role === "OWNER";
+  return NextResponse.json({
+    data: isOwner
+      ? claims
+      : claims.map((claim) => ({ ...claim, verificationToken: null })),
+  });
 }
 
 export async function POST(

@@ -29,10 +29,20 @@ export type OrgSurface =
   | "invitations.manage"
   | "learners.read"
   | "experts.read"
+  // Floor for the Audit page/API = holds either category grant below; rows
+  // are then filtered per grant (#1527 audit split).
   | "audit.read"
+  | "audit.read.ops"
+  | "audit.read.money"
+  // Home activity feed — audit rows, row-filtered like the Audit page.
+  | "activity.read"
   | "consent.read"
   | "consent.manage"
   | "settings.manage"
+  // Domains & SSO / directory-sync reads — never secrets (#1527).
+  | "identity.read"
+  // Org chat roster + call metadata compliance reads (Stream).
+  | "messaging.read"
   // Commerce (sponsor-side; combine with canSponsor at the consumer)
   | "contracts.read"
   | "contracts.manage"
@@ -40,6 +50,7 @@ export type OrgSurface =
   // programs.manage, which is the sponsor's entitlement CRUD — combine with
   // canHost at the consumer.
   | "catalog.manage"
+  | "programs.read"
   | "programs.manage"
   | "purchaseOrders.read"
   | "purchaseOrders.manage"
@@ -74,6 +85,8 @@ const FINANCE_READERS = roles(
   "MANAGER",
 );
 const FINANCE_MUTATORS = roles("OWNER", "BILLING_ADMIN");
+const AUDIT_OPS_READERS = OPERATIONS_READERS;
+const AUDIT_MONEY_READERS = roles("OWNER", "MAINTAINER", "BILLING_ADMIN");
 
 export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // People & governance — BILLING_ADMIN is operator-blind by design.
@@ -82,10 +95,21 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   "invitations.manage": GOVERNANCE,
   "learners.read": OPERATORS,
   "experts.read": OPERATORS,
-  "audit.read": roles("OWNER", "MAINTAINER", "SUPPORT"),
+  // #1527 — split by category so SUPPORT reads people/ops history without a
+  // single money figure, and BILLING_ADMIN reads the money trail it owns.
+  "audit.read": new Set([...AUDIT_OPS_READERS, ...AUDIT_MONEY_READERS]),
+  "audit.read.ops": AUDIT_OPS_READERS,
+  "audit.read.money": AUDIT_MONEY_READERS,
+  // #1527 — was a MANAGER rank floor, which admitted BILLING_ADMIN (rank 70).
+  "activity.read": OPERATORS,
   "consent.read": OPERATORS,
   "consent.manage": OPERATORS,
   "settings.manage": GOVERNANCE,
+  // #1527 — was a MANAGER rank floor; MAINTAINER reads status, OWNER keeps
+  // every write and secret at the route.
+  "identity.read": GOVERNANCE,
+  // #1527 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
+  "messaging.read": OPERATORS,
 
   // Commerce — contract terms and program design are org-structural
   // decisions (spec: MAINTAINER floor); POs are day-to-day.
@@ -97,6 +121,9 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // an org-owned plan commits the ORG's revenue and payout obligation, so it
   // needs an operator in the loop. An EXPERT is named as the deliverer instead.
   "catalog.manage": OPERATORS,
+  // #1527 — the org-wide seat roster + utilisation. Everyone else reads only
+  // their own assignment, without spend.
+  "programs.read": roles("OWNER", "MAINTAINER", "BILLING_ADMIN", "MANAGER"),
   "programs.manage": GOVERNANCE,
   "purchaseOrders.read": FINANCE_READERS,
   "purchaseOrders.manage": FINANCE_MUTATORS,
@@ -139,4 +166,14 @@ export function hasOrgPermission(
   surface: OrgSurface,
 ): boolean {
   return ORG_PERMISSIONS[surface].has(role);
+}
+
+/** Any-of form for surfaces two grants open (e.g. Settings GET, #1527). */
+export function hasAnyOrgPermission(
+  role: MemberRole,
+  surfaces: OrgSurface | readonly OrgSurface[],
+): boolean {
+  const list: readonly OrgSurface[] =
+    typeof surfaces === "string" ? [surfaces] : surfaces;
+  return list.some((surface) => ORG_PERMISSIONS[surface].has(role));
 }

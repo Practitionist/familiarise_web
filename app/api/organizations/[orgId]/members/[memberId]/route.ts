@@ -17,6 +17,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
@@ -91,10 +92,11 @@ export async function GET(
   },
 ) {
   const { orgId, memberId } = await params;
-  // MANAGER+ can read other members' details. LEARNER+SUPPORT can only
-  // fetch THEIR OWN membership — otherwise any member of the org could
-  // enumerate peers' emails/names/profile ids. Member-list (index) view
-  // remains separately gated; this is the detail endpoint.
+  // `members.read` (the same grant as the member list) can read other
+  // members' details; everyone else only THEIR OWN membership, so no member
+  // can enumerate peers' emails/profile ids. Was a MANAGER rank floor, which
+  // let BILLING_ADMIN open members the list refuses and kept SUPPORT out of
+  // members it can list (#1527 P0-4).
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
@@ -113,8 +115,7 @@ export async function GET(
   }
 
   const isSelf = membership.id === access.member.id;
-  const isManagerPlus = isAtLeastRole(access.member.role, "MANAGER");
-  if (!isSelf && !isManagerPlus) {
+  if (!isSelf && !hasOrgPermission(access.member.role, "members.read")) {
     return NextResponse.json(
       { error: "Insufficient role to view other members" },
       { status: 403 },

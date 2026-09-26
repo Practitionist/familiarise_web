@@ -15,7 +15,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { orgDetailsInclude } from "@/lib/data/org-details-include";
+import {
+  orgDetailsInclude,
+  redactOrgDetailsForRole,
+} from "@/lib/data/org-details-include";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -117,7 +120,7 @@ export async function GET(
   }
 
   return NextResponse.json({
-    organization: org,
+    organization: redactOrgDetailsForRole(org, access.member.role),
     membership: {
       role: access.member.role,
       status: access.member.status,

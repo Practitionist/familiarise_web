@@ -26,6 +26,7 @@ import {
   sanitizeAuditDescription,
   sanitizeAuditDetails,
 } from "@/lib/enterprise/audit-sanitize";
+import { auditRowScope } from "@/lib/enterprise/audit-visibility";
 
 type AuditExportRow = {
   id: string;
@@ -90,6 +91,14 @@ export async function GET(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, "MAINTAINER");
   if (access.error) return access.error;
+  // Same category split as the viewer (#1527 P0-6).
+  const rowScope = auditRowScope(access.member.role);
+  if (!rowScope) {
+    return NextResponse.json(
+      { error: "Forbidden — your role does not grant audit.read" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse(
@@ -105,6 +114,7 @@ export async function GET(
 
   const where: Prisma.OrgAuditLogWhereInput = {
     organizationId: orgId,
+    AND: [rowScope],
     ...(q.categories.length > 0 ? { category: { in: q.categories } } : {}),
     ...(q.actions.length > 0 ? { action: { in: q.actions } } : {}),
     ...(q.actorMembershipId
