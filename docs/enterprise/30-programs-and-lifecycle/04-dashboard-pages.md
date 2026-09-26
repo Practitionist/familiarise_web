@@ -175,8 +175,10 @@ A few additional surfaces are not in the org-scoped tree:
 The bare `/dashboard/organization` URL is now a server-redirect:
 OrgWorkspace → `/dashboard/org-workspace/<id>/home`; non-OrgWorkspace → `/dashboard`.
 The org grid that used to live there is gone — non-OrgWorkspace members
-(LEARNER, EXPERT) navigate between orgs via the OrganizationSwitcher
-dropdown in the top bar, which never required a list page.
+(LEARNER, EXPERT) navigate between orgs via the `ContextSwitcher`
+(evolved from `OrganizationSwitcher` in PR #1842, part of #1527), anchored at
+the top of every dashboard sidebar and repeated in the mobile Menu sheet,
+which never required a list page.
 
 ## Role-visibility nav-map
 
@@ -267,7 +269,7 @@ readable projection of it.
 > (OWNER, MAINTAINER, SUPPORT) with the CSV export kept at a MAINTAINER
 > rank floor because bulk export is a governance action; and the
 > the `/settings` integration tabs (`webhooks`, `scim`, `data-exports`)
-> use `integrations.read` (the finance set).
+> use `integrations.manage` (OWNER and BILLING_ADMIN; PR #1842, part of #1527, matched this key to the existing server guards — webhook create is `requireOrgBillingAdminOrOwner`, and rotate, branding and domains stay OWNER — replacing the earlier `integrations.read` grant).
 
 ### Billing surface
 
