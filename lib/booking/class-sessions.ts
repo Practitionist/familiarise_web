@@ -29,7 +29,13 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
-import { exitRightFor, seatLedger, seriesLedger } from "./class-series";
+import { MISS_WHERE, missedAt } from "./misses";
+import {
+  exitRightFor,
+  seatLedger,
+  seriesLedger,
+  type SeriesLedger,
+} from "./class-series";
 
 /** A cancelled session must be made up, and HELD, within this many days. */
 export const MAKEUP_WINDOW_DAYS = 14;
@@ -38,6 +44,15 @@ const DAY_MS = 86_400_000;
 /** The dedupe key of one seat's refund for one missed session. */
 export const occurrenceRefundKey = (occurrenceId: string, paymentId: string) =>
   `occ:${occurrenceId}:pay:${paymentId}`;
+
+const isMiss = (o: {
+  completionStatus: OccurrenceCompletionStatus;
+  hostCancelledAt: Date | null;
+  voidedAt: Date | null;
+}) =>
+  (o.completionStatus === OccurrenceCompletionStatus.CANCELLED &&
+    !!o.hostCancelledAt) ||
+  (o.completionStatus === OccurrenceCompletionStatus.VOIDED && !!o.voidedAt);
 
 const SEATED: Prisma.AppointmentParticipantWhereInput = {
   role: "CONSULTEE",
@@ -52,6 +67,25 @@ export interface ClassActor {
   isPrivileged: boolean;
 }
 
+const HOSTED_CLASS_SELECT = {
+  id: true,
+  organizationId: true,
+  class: {
+    select: {
+      id: true,
+      classPlan: {
+        select: {
+          title: true,
+          consultantProfileId: true,
+          consultantProfile: {
+            select: { user: { select: { name: true } } },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentSelect;
+
 /** The class behind an appointment, and whether this actor hosts it. */
 export async function readHostedClass(
   appointmentId: string,
@@ -59,24 +93,7 @@ export async function readHostedClass(
 ) {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    select: {
-      id: true,
-      organizationId: true,
-      class: {
-        select: {
-          id: true,
-          classPlan: {
-            select: {
-              title: true,
-              consultantProfileId: true,
-              consultantProfile: {
-                select: { user: { select: { name: true } } },
-              },
-            },
-          },
-        },
-      },
-    },
+    select: HOSTED_CLASS_SELECT,
   });
   const cls = appointment?.class;
   if (!appointment || !cls) return { found: false as const };
@@ -94,50 +111,56 @@ export type HostedClass = Extract<
 
 /**
  * #1771 — whether the reliability flag is due: never flagged, or the latest
- * event is an ops clear and a host cancellation came after it. An active flag
- * is never repeated. The caller has already checked the miss threshold.
+ * event is an ops clear and a host-attributed miss came after it. An active
+ * flag is never repeated. The caller has already checked the miss threshold.
  */
 export function reliabilityFlagDue(
   latest: { createdAt: Date; context: unknown } | null,
-  lastHostCancelAt: Date,
+  lastMissAt: Date,
 ): boolean {
   if (!latest) return true;
   const cleared =
     (latest.context as { cleared?: unknown } | null)?.cleared === true;
-  return cleared && lastHostCancelAt > latest.createdAt;
+  return cleared && lastMissAt > latest.createdAt;
 }
 
-/** The reliability flag when due, and the exit-right bells when the right first trips. */
+/**
+ * The reliability flag when due, and the exit-right bells when the right first
+ * trips. #1569 D6 — every miss counts toward the learner's exit right; only a
+ * host-attributed one (a cancel, CUT_SHORT, HOST_ABSENT) can raise the flag.
+ */
 async function onExitRightTripped(
   tx: Tx,
   hosted: HostedClass,
-  misses: number,
-  N: number,
+  ledger: SeriesLedger,
   seatUserIds: string[],
-  opts: { cancelledAt: Date; firstTrip: boolean },
+  opts: { missedAt: Date; hostAttributed: boolean; firstTrip: boolean },
 ): Promise<void> {
   const correlationId = `class-reliability:${hosted.cls.id}`;
-  const latest = await tx.systemEvent.findFirst({
-    where: { correlationId },
-    orderBy: { createdAt: "desc" },
-    select: { createdAt: true, context: true },
-  });
-  if (reliabilityFlagDue(latest, opts.cancelledAt)) {
-    await recordSystemError({
-      organizationId: hosted.appointment.organizationId,
-      category: "BOOKING",
-      summary: `Class ${hosted.cls.id} reached the learner exit right`,
-      err: new Error("CLASS_RELIABILITY"),
-      context: {
-        consultantProfileId: hosted.cls.classPlan.consultantProfileId,
-        misses,
-        N,
-      },
-      correlationId,
-      db: tx,
+  if (opts.hostAttributed && exitRightFor(ledger.hostMisses, ledger.N)) {
+    const latest = await tx.systemEvent.findFirst({
+      where: { correlationId },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, context: true },
     });
+    if (reliabilityFlagDue(latest, opts.missedAt)) {
+      await recordSystemError({
+        organizationId: hosted.appointment.organizationId,
+        category: "BOOKING",
+        summary: `Class ${hosted.cls.id} reached the learner exit right`,
+        err: new Error("CLASS_RELIABILITY"),
+        context: {
+          consultantProfileId: hosted.cls.classPlan.consultantProfileId,
+          misses: ledger.hostMisses,
+          N: ledger.N,
+        },
+        correlationId,
+        db: tx,
+      });
+    }
   }
   if (!opts.firstTrip) return;
+  const misses = ledger.misses;
   for (const userId of seatUserIds) {
     await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CLASS_EXIT_AVAILABLE,
@@ -209,17 +232,11 @@ export async function cancelClassSession(
       // Past the threshold every miss re-checks the flag (an ops clear may
       // precede it); the learners' bells go out only on the first trip.
       if (ledger.exitRight) {
-        await onExitRightTripped(
-          tx,
-          hosted,
-          ledger.misses,
-          ledger.N,
-          seatUserIds,
-          {
-            cancelledAt: now,
-            firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
-          },
-        );
+        await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+          missedAt: now,
+          hostAttributed: true,
+          firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+        });
       }
       return {
         occurrenceId,
@@ -230,6 +247,66 @@ export async function cancelClassSession(
       };
     }),
   );
+}
+
+/**
+ * #1569 — the outcome sweep voided one class session, inside its transaction:
+ * the seats hear their make-up window (the cancel bell's voided variant), and
+ * the exit right is re-checked because a void is a miss.
+ */
+export async function onClassSessionVoided(
+  tx: Tx,
+  args: {
+    appointmentId: string;
+    occurrenceId: string;
+    startsAt: Date;
+    voidedAt: Date;
+    hostAttributed: boolean;
+  },
+): Promise<void> {
+  const appointment = await tx.appointment.findUnique({
+    where: { id: args.appointmentId },
+    select: HOSTED_CLASS_SELECT,
+  });
+  const cls = appointment?.class;
+  if (!appointment || !cls) return;
+  const hosted: HostedClass = {
+    found: true,
+    isHost: false,
+    appointment,
+    cls,
+  };
+  const seats = await tx.appointmentParticipant.findMany({
+    where: { appointmentId: args.appointmentId, ...SEATED },
+    select: { userId: true },
+  });
+  const seatUserIds = seats.map((s) => s.userId);
+  if (seatUserIds.length > 0) {
+    await stageBell(tx, {
+      workflowId: NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+      recipients: seatUserIds,
+      payload: {
+        voided: true,
+        planTitle: cls.classPlan.title,
+        consultantName:
+          cls.classPlan.consultantProfile?.user.name ?? "Your host",
+        dateTime: when(args.startsAt),
+        makeUpBy: when(
+          new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
+        ),
+        dashboardUrl: "/dashboard",
+      },
+      dedupeKey: `occ-void:${args.occurrenceId}`,
+    });
+  }
+  const ledger = await seriesLedger(tx, args.appointmentId, args.voidedAt);
+  if (ledger.exitRight) {
+    await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+      missedAt: args.voidedAt,
+      hostAttributed: args.hostAttributed,
+      firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+    });
+  }
 }
 
 /** E-3 — schedule the make-up: same ordinal, held within 14 days. */
@@ -260,24 +337,26 @@ export async function scheduleClassMakeUp(
           endsAt: true,
           completionStatus: true,
           hostCancelledAt: true,
+          voidedAt: true,
           seatsSettledAt: true,
           consultantProfileId: true,
         },
       });
-      const deadline = source?.hostCancelledAt
-        ? source.hostCancelledAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
+      // #1569 — a voided source is in the past; only the make-up must be ahead.
+      const lostAt = source ? missedAt(source) : null;
+      const deadline = lostAt
+        ? lostAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
         : 0;
       if (
         !source ||
-        source.completionStatus !== OccurrenceCompletionStatus.CANCELLED ||
-        !source.hostCancelledAt ||
+        !isMiss(source) ||
         source.seatsSettledAt ||
         (!bypass && startsAt.getTime() > deadline) ||
         startsAt <= now
       ) {
         throw new BookingRuleError(
           "MAKEUP_WINDOW_LAPSED",
-          `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the cancellation, and in the future.`,
+          `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the missed session, and in the future.`,
         );
       }
       const endsAt = new Date(
@@ -351,8 +430,7 @@ export async function skipClassMakeUp(args: {
     where: {
       id: args.sourceOccurrenceId,
       appointmentId: args.appointmentId,
-      completionStatus: OccurrenceCompletionStatus.CANCELLED,
-      hostCancelledAt: { not: null },
+      ...MISS_WHERE,
       seatsSettledAt: null,
     },
     select: { ordinal: true, startsAt: true },

@@ -14,6 +14,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
+import { SessionOutcomesCard } from "./SessionOutcomesCard";
 
 interface PickerRow {
   id: string;
@@ -81,6 +82,7 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
 
   return (
     <div className="space-y-4 p-4 md:p-6 lg:p-8">
+      <SessionOutcomesCard />
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Class series</CardTitle>
@@ -212,11 +214,11 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
             ))}
           </Section>
 
-          <Section title="Sessions the host cancelled">
+          <Section title="Missed sessions (cancelled by the host or voided)">
             {v.cancelledSessions.map((o) => (
               <Row
                 key={o.id}
-                label={`#${o.ordinal} · was ${when(o.startsAt)} · ${
+                label={`#${o.ordinal} · ${o.voided ? "voided" : "cancelled"} · was ${when(o.startsAt)} · ${
                   o.makeUp ? `made up ${when(o.makeUp.startsAt)}` : "no make-up"
                 }${o.seatsSettledAt ? " · settled" : ""}`}
               >

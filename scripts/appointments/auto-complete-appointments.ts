@@ -19,9 +19,9 @@
  *
  * One consultation it deliberately does not complete: a paid session the
  * consultant never joined belongs to `detect-consultant-no-shows` (:57), which
- * cancels and refunds it. Both jobs classify attendance through
- * `lib/booking/attendance.ts` so their candidate sets partition instead of
- * racing (#1504).
+ * cancels and refunds it. Both jobs classify presence through
+ * `lib/booking/session-outcome.ts` so their candidate sets partition instead of
+ * racing (#1504, #1569).
  */
 
 import prisma from "../../lib/prisma";
@@ -46,7 +46,6 @@ import {
   transitionTrial,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
-import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 import { settleSubscriptionCycle } from "@/lib/booking/subscription-cycle";
 import { attemptTrigger } from "@/lib/novu/outbox";
 import {
@@ -54,17 +53,23 @@ import {
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import {
-  classifyConsultantAttendance,
-  isPastNoShowHandoff,
-} from "@/lib/booking/attendance";
+  alertStaleNeedsHuman,
+  decideSlotOutcome,
+  OUTCOME_SLOT_SELECT,
+  readOutageWindows,
+  type SlotDecision,
+} from "@/lib/booking/session-outcome-sweep";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
 const COMPLETION_BUFFER_HOURS = 1;
-// Slot rows each completion pass moves per run; the next hourly run continues.
-const MAX_SLOT_COMPLETIONS_PER_RUN = 2000;
+// #1569 — sessions judged per run; each may ask Stream for its call report, so
+// a backlog drains over several hourly runs instead of one long one.
+const MAX_SLOT_OUTCOMES_PER_RUN = 500;
 
 // #1583 B-P1-16 — "every session has ended" counts live confirmed rows only:
 // a stale tentative hold or a tombstoned row must not veto completion.
@@ -76,6 +81,27 @@ function allLiveOccurrencesEnded(
     some: { ...live, endsAt: { lt: bufferTime } },
     none: { ...live, endsAt: { gte: bufferTime } },
   };
+}
+
+// #1569 — a wrapper owing a make-up or refund, or holding a session the slot
+// pass has not decided, is not finished: completion would release its earnings.
+function endedAndSettled(
+  bufferTime: Date,
+): Prisma.AppointmentWhereInput["AND"] {
+  return [
+    { occurrences: allLiveOccurrencesEnded(bufferTime) },
+    { occurrences: { none: UNSETTLED_MISS } },
+    { occurrences: { none: AWAITING_HUMAN } },
+    {
+      occurrences: {
+        none: {
+          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+          isTentative: false,
+          deletedAt: null,
+        },
+      },
+    },
+  ];
 }
 
 const AUTO_COMPLETE_REASON = "auto-complete";
@@ -125,7 +151,7 @@ async function completeWebinars(): Promise<{
   const webinarsToComplete = await prisma.webinar.findMany({
     where: {
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: { AND: endedAndSettled(bufferTime) },
     },
     include: {
       webinarPlan: { select: { title: true } },
@@ -201,7 +227,7 @@ async function completeClasses(): Promise<{
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: { AND: endedAndSettled(bufferTime) },
     },
     include: {
       classPlan: { select: { title: true } },
@@ -277,7 +303,14 @@ async function completeConsultations(): Promise<{
   const consultationsToComplete = await prisma.consultation.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      // A voided consultation is owed its make-up or refund first (#1569 D4).
+      appointment: {
+        AND: [
+          { occurrences: allLiveOccurrencesEnded(bufferTime) },
+          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
+        ],
+      },
     },
     include: {
       consultationPlan: {
@@ -293,17 +326,10 @@ async function completeConsultations(): Promise<{
       },
       appointment: {
         include: {
-          // #1504 — every slot, not just the latest, because the no-show
-          // handoff below is decided from the attendance rows across all of
-          // this booking's sessions. Still ordered newest-first, so `[0]` is
-          // the last slot the logging and the deadline both want.
+          // Every session, newest first: `[0]` is the last one for logging,
+          // and the deferral below reads each one's completion.
           occurrences: {
             orderBy: { endsAt: "desc" },
-            include: {
-              meeting: {
-                select: { attendances: { select: { userId: true } } },
-              },
-            },
           },
         },
       },
@@ -327,29 +353,21 @@ async function completeConsultations(): Promise<{
         `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
       );
 
-      // #1504 — the consultant no-show refund is only ever issued by
-      // detect-consultant-no-shows, which reads the same two statuses this
-      // sweep does. This one's buffer is an hour and that one's grace window is
-      // two, so completing an unattended consultation here removed it from the
-      // only job that could refund it, and the promised refund could never
-      // fire. A booking in the no-show shape is left alone until the handoff
-      // deadline, after which it completes regardless so a candidate the
-      // detector declined (Stream contradicted our rows, or nobody joined at
-      // all) cannot be stranded live forever.
-      if (consultantUserId && consulteeUserId) {
-        const verdict = classifyConsultantAttendance(
-          consultation.appointment?.occurrences ?? [],
-          { consultantUserId, consulteeUserId },
+      // #1569 — the slot pass decides each session first and leaves a
+      // consultation host no-show SCHEDULED for detect-consultant-no-shows
+      // until the handoff (#1504), so an undecided session holds the parent.
+      if (
+        consultation.appointment?.occurrences.some(
+          (o) =>
+            o.completionStatus === OccurrenceCompletionStatus.SCHEDULED &&
+            !o.isTentative &&
+            !o.deletedAt,
+        )
+      ) {
+        console.log(
+          `   ⏭️ Deferred — a session is not decided yet (live, or the no-show detector owns it)`,
         );
-        if (
-          verdict === "consultant-absent" &&
-          !isPastNoShowHandoff(lastSlot?.endsAt)
-        ) {
-          console.log(
-            `   ⏭️ Deferred — no consultant join yet; detect-consultant-no-shows owns it`,
-          );
-          continue;
-        }
+        continue;
       }
 
       // #836 — guard rides the WHERE: a cancel landing between the sweep's
@@ -425,7 +443,13 @@ async function completeSubscriptions(): Promise<{
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: {
+        AND: [
+          { occurrences: allLiveOccurrencesEnded(bufferTime) },
+          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
+        ],
+      },
     },
     include: {
       subscriptionPlan: {
@@ -568,7 +592,34 @@ async function completeTrials(): Promise<{
   const trialsToComplete = await prisma.trial.findMany({
     where: {
       status: TrialStatus.SCHEDULED,
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      // #1569 D4 — a free trial's void is a record only, so the unsettled-miss
+      // check (which a void never leaves on a trial) is not applied here.
+      appointment: {
+        AND: [
+          { occurrences: allLiveOccurrencesEnded(bufferTime) },
+          { occurrences: { none: AWAITING_HUMAN } },
+          {
+            occurrences: {
+              none: {
+                completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+                isTentative: false,
+                deletedAt: null,
+              },
+            },
+          },
+        ],
+      },
+      // A paid trial that was voided waits for ops.
+      OR: [
+        { paymentId: null },
+        {
+          appointment: {
+            occurrences: {
+              none: { completionStatus: OccurrenceCompletionStatus.VOIDED },
+            },
+          },
+        },
+      ],
     },
     include: {
       subscriptionPlan: { select: { title: true } },
@@ -654,128 +705,135 @@ async function completeTrials(): Promise<{
   return { completed, errors };
 }
 
+type SlotTally = {
+  completed: number;
+  unverified: number;
+  voided: number;
+  deferred: number;
+};
+
+/** Counts one decision; true when it moved the row. */
+function tallyDecision(tally: SlotTally, decision: SlotDecision): boolean {
+  if (decision.kind === "deferred") {
+    tally.deferred++;
+    return false;
+  }
+  if (!decision.moved) return false;
+  if (decision.to === OccurrenceCompletionStatus.COMPLETED) tally.completed++;
+  else if (decision.to === OccurrenceCompletionStatus.VOIDED) tally.voided++;
+  else tally.unverified++;
+  return true;
+}
+
 /**
- * Mark individual AppointmentOccurrence records with per-slot completion status.
- * Runs BEFORE parent-level completion so that parent logic can rely on slot statuses.
- *
- * - Slots past buffer WITH Meeting.endedAt → COMPLETED
- * - Slots past buffer WITHOUT Meeting → UNVERIFIED (may be offline sessions)
+ * #1766 — per distinct subscription wrapper, in a fresh transaction: the
+ * consultee's cycle bell, deduped on the cycle so a re-run is quiet.
+ */
+async function settleCycleBells(wrappers: Set<string>): Promise<void> {
+  for (const appointmentId of wrappers) {
+    const staged = await prisma.$transaction((tx) =>
+      settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+    );
+    for (const row of staged ?? []) {
+      // Best-effort after commit: the relay retries a failed attempt.
+      try {
+        await attemptTrigger(row);
+      } catch (error) {
+        console.error(
+          `   ⚠️ Cycle bell attempt failed for ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * #1569 D2 — the one writer of each past session's outcome. Runs BEFORE the
+ * parent passes so they read decided rows: presence is classified by
+ * `classifySessionOutcome` and written as COMPLETED, VOIDED or UNVERIFIED in
+ * one CAS per row (`decideSlotOutcome`). A live overrun and a consultation host
+ * no-show still inside the detector's handoff are left SCHEDULED.
  */
 async function completeIndividualSlots(): Promise<{
   completed: number;
   unverified: number;
+  voided: number;
+  deferred: number;
   errors: string[];
 }> {
   const errors: string[] = [];
+  const now = new Date();
   const bufferTime = new Date(
-    Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
+    now.getTime() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
-
-  // Doctrine rule 1: the completion column had no CAS here, and the WHERE
-  // reached rows it has no business touching. A tentative hold is an unpaid
-  // reservation, not a session, so a past-dated one was being stamped
-  // UNVERIFIED and thereby put out of reach of the sweeps that free it; a
-  // tombstoned row was being re-stamped after it had already been released.
-  // Both guards ride the CAS WHERE alongside the from-set.
-  const liveHeldSlot = {
-    endsAt: { lt: bufferTime },
-    isTentative: false,
-    deletedAt: null,
+  const tally: SlotTally = {
+    completed: 0,
+    unverified: 0,
+    voided: 0,
+    deferred: 0,
   };
-  // The from-set is SCHEDULED only, narrower than the maps' defaults: this
-  // cron is a fallback for a missed webhook and must never lift a slot a
-  // human parked at UNVERIFIED or pulled back from COMPLETED.
-  const fromScheduled = [OccurrenceCompletionStatus.SCHEDULED];
+  let feedGaps = 0;
 
   try {
-    // One transaction for the three passes: the helper writes the status and
-    // then its history rows, and a slot must never be COMPLETED or UNVERIFIED
-    // without the audit row that says why.
-    // Each pass reads a bounded, oldest-first cohort of SCHEDULED slots and
-    // moves it in chunked transactions, so a backlog can never outlive one
-    // transaction's timeout and roll back with its history rows.
-    const runPass = async (
-      predicate: Prisma.AppointmentOccurrenceWhereInput,
-      to: OccurrenceCompletionStatus,
-      data?: { completedAt: Date },
-    ): Promise<number> => {
-      const cohort = await prisma.appointmentOccurrence.findMany({
-        where: {
-          ...liveHeldSlot,
-          ...predicate,
-          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
-        },
-        select: {
-          id: true,
-          appointmentId: true,
-          appointment: { select: { subscriptionId: true } },
-        },
-        orderBy: { endsAt: "asc" },
-        take: MAX_SLOT_COMPLETIONS_PER_RUN,
-      });
-      const moved = await transitionSlotsInChunks(
-        cohort.map((s) => s.id),
-        (idChunk) => ({
-          where: { id: { in: idChunk }, ...liveHeldSlot, ...predicate },
-          to,
-          ...(data ? { data } : {}),
-          fromIn: fromScheduled,
-          allowZero: true,
-        }),
-      );
-      // #1766 — per distinct subscription wrapper, in a fresh transaction:
-      // the consultee's cycle bell, deduped on the cycle so a re-run is quiet.
-      const wrappers = new Set(
-        cohort
-          .filter((s) => s.appointment?.subscriptionId)
-          .map((s) => s.appointmentId),
-      );
-      for (const appointmentId of wrappers) {
-        const staged = await prisma.$transaction((tx) =>
-          settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
-        );
-        for (const row of staged ?? []) {
-          // Best-effort after commit: the relay retries a failed attempt.
-          try {
-            await attemptTrigger(row);
-          } catch (error) {
-            console.error(
-              `   ⚠️ Cycle bell attempt failed for ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
+    // Doctrine rule 1: a tentative hold is an unpaid reservation and a
+    // tombstoned row was already released; neither is a session to judge.
+    const cohort = await prisma.appointmentOccurrence.findMany({
+      where: {
+        endsAt: { lt: bufferTime },
+        isTentative: false,
+        deletedAt: null,
+        completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+      },
+      select: OUTCOME_SLOT_SELECT,
+      orderBy: { endsAt: "asc" },
+      take: MAX_SLOT_OUTCOMES_PER_RUN,
+    });
+    // The cohort is ordered by end, so the earliest start is not cohort[0]'s.
+    const earliestStart = new Date(
+      Math.min(
+        bufferTime.getTime(),
+        ...cohort.map((slot) => slot.startsAt.getTime()),
+      ),
+    );
+    const outages = await readOutageWindows(prisma, earliestStart);
+    const wrappers = new Set<string>();
+    for (const slot of cohort) {
+      try {
+        const decision = await decideSlotOutcome(slot, {
+          now,
+          outages,
+          onFeedGap: () => feedGaps++,
+        });
+        if (tallyDecision(tally, decision) && slot.appointment.subscriptionId) {
+          wrappers.add(slot.appointmentId);
         }
+      } catch (error) {
+        errors.push(
+          `Failed to decide session ${slot.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-      return moved;
-    };
-    const completedCount = await runPass(
-      { meeting: { endedAt: { not: null } } },
-      OccurrenceCompletionStatus.COMPLETED,
-      { completedAt: new Date() },
-    );
-    const unverifiedCount = await runPass(
-      { meeting: null },
-      OccurrenceCompletionStatus.UNVERIFIED,
-    );
-    const orphanedCount = await runPass(
-      { meeting: { endedAt: null } },
-      OccurrenceCompletionStatus.UNVERIFIED,
-    );
-    if (completedCount > 0 || unverifiedCount > 0 || orphanedCount > 0) {
-      console.log(
-        `   Slot-level: ${completedCount} completed, ${unverifiedCount + orphanedCount} unverified (${orphanedCount} orphaned)`,
-      );
     }
-
-    return {
-      completed: completedCount,
-      unverified: unverifiedCount + orphanedCount,
-      errors,
-    };
+    // Owner decision — a needs-human item older than 72 h is warned about, throttled.
+    await alertStaleNeedsHuman(prisma, now);
+    // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
+    if (feedGaps > 0) {
+      reportSentryMessage("attendance feed gap", {
+        subsystem: "stream",
+        op: "auto-complete-appointments",
+        level: "warning",
+        extra: { sessions: feedGaps },
+      });
+    }
+    await settleCycleBells(wrappers);
+    console.log(
+      `   Sessions: ${tally.completed} completed, ${tally.voided} voided, ${tally.unverified} unverified, ${tally.deferred} deferred`,
+    );
+    return { ...tally, errors };
   } catch (error) {
-    const message = `Failed to complete individual slots: ${error instanceof Error ? error.message : "Unknown error"}`;
+    const message = `Failed to decide session outcomes: ${error instanceof Error ? error.message : "Unknown error"}`;
     console.error(`   ❌ ${message}`);
     errors.push(message);
-    return { completed: 0, unverified: 0, errors };
+    return { ...tally, errors };
   }
 }
 
@@ -825,7 +883,7 @@ async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
   // Summary
   console.log("\n📊 Auto-Complete Summary:");
   console.log(
-    `   Slots: ${slotResult.completed} completed, ${slotResult.unverified} unverified`,
+    `   Sessions: ${slotResult.completed} completed, ${slotResult.voided} voided, ${slotResult.unverified} unverified`,
   );
   console.log(`   Webinars completed: ${webinarResult.completed}`);
   console.log(`   Classes completed: ${classResult.completed}`);

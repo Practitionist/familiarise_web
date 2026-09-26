@@ -58,6 +58,8 @@ const OCC_SELECT = {
   completionStatus: true,
   movedAt: true,
   hostCancelledAt: true,
+  voidedAt: true,
+  outcome: true,
   seatsSettledAt: true,
   deletedAt: true,
 } as const;
@@ -109,20 +111,25 @@ export async function readClassSeries(
         ordinal: o.ordinal,
         startsAt: o.startsAt.toISOString(),
       })),
+    // #1569 — voided sessions are owed the same make-up or refund.
     cancelledSessions: live
-      .filter((o) => o.hostCancelledAt)
+      .filter((o) => o.hostCancelledAt ?? o.voidedAt)
       .map((o) => {
         const makeUp = live.find(
           (m) =>
             m.ordinal === o.ordinal &&
             m.id !== o.id &&
-            m.completionStatus !== "CANCELLED",
+            m.completionStatus !== "CANCELLED" &&
+            m.completionStatus !== "VOIDED",
         );
         return {
           id: o.id,
           ordinal: o.ordinal,
           startsAt: o.startsAt.toISOString(),
-          hostCancelledAt: (o.hostCancelledAt as Date).toISOString(),
+          hostCancelledAt: (
+            (o.hostCancelledAt ?? o.voidedAt) as Date
+          ).toISOString(),
+          voided: !!o.voidedAt,
           seatsSettledAt: o.seatsSettledAt?.toISOString() ?? null,
           makeUp: makeUp
             ? { id: makeUp.id, startsAt: makeUp.startsAt.toISOString() }

@@ -21,6 +21,7 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -71,17 +72,33 @@ export interface ReleaseEarningsOptions {
  * READY (or paid-out) row would pay the consultant money that is leaving.
  * Repeated in the claim's WHERE so a refund opened mid-run keeps the row.
  */
+/**
+ * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
+ * a make-up or a refund for a host-cancelled or voided session, or holding a
+ * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
+ */
+const RELEASABLE_PAYMENT = {
+  refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  OR: [
+    { appointmentId: null },
+    {
+      appointment: {
+        AND: [
+          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
+        ],
+      },
+    },
+  ],
+} satisfies Prisma.PaymentWhereInput;
+
 const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
-  payment: {
-    refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
-  },
+  payment: RELEASABLE_PAYMENT,
 };
 
-/** The same guard on the host-organisation arm (#1775 P-2). */
+/** The same guards on the host-organisation arm (#1775 P-2, #1569). */
 const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
-  payment: {
-    refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
-  },
+  payment: RELEASABLE_PAYMENT,
 };
 
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one

@@ -29,6 +29,8 @@ export interface ClassSessionRow {
   startsAt: Date | string;
   completionStatus: string | null;
   hostCancelledAt?: NullableDate;
+  /** #1569 — a held session that lost too much time; owed a make-up like a cancel. */
+  voidedAt?: NullableDate;
   seatsSettledAt?: NullableDate;
   deletedAt?: NullableDate;
 }
@@ -48,13 +50,16 @@ async function post(url: string, body?: unknown) {
   return data;
 }
 
+const missedAt = (s: ClassSessionRow) => s.hostCancelledAt ?? s.voidedAt;
+
 /**
- * The cancelled source of each ordinal, and its live make-up if one exists —
- * started or held too, so the host is not offered a second one.
+ * The missed source of each ordinal (host-cancelled or voided), and its live
+ * make-up if one exists — started or held too, so the host is not offered a
+ * second one.
  */
 function pairs(sessions: ClassSessionRow[]) {
   return sessions
-    .filter((s) => s.hostCancelledAt && !s.seatsSettledAt)
+    .filter((s) => missedAt(s) && !s.seatsSettledAt)
     .map((source) => ({
       source,
       makeUp: sessions.find(
@@ -63,7 +68,8 @@ function pairs(sessions: ClassSessionRow[]) {
           s.id !== source.id &&
           !s.deletedAt &&
           s.completionStatus !== "CANCELLED" &&
-          s.completionStatus !== "RESCHEDULED",
+          s.completionStatus !== "RESCHEDULED" &&
+          s.completionStatus !== "VOIDED",
       ),
     }));
 }
@@ -224,8 +230,7 @@ export function ClassSessionControls({
         .filter((p) => !p.makeUp)
         .map(({ source }) => {
           const by = new Date(
-            toDate(source.hostCancelledAt!).getTime() +
-              MAKEUP_WINDOW_DAYS * DAY_MS,
+            toDate(missedAt(source)!).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
           );
           return (
             <div
@@ -233,7 +238,8 @@ export function ClassSessionControls({
               className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm"
             >
               <span className="flex-1">
-                Cancelled {when(source.startsAt)} — make up by {when(by)}.
+                {source.voidedAt ? "Missed" : "Cancelled"}{" "}
+                {when(source.startsAt)} — make up by {when(by)}.
               </span>
               <input
                 type="datetime-local"

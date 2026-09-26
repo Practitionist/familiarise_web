@@ -80,6 +80,7 @@ jest.mock("../../lib/prisma", () => {
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
     },
+    maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
     $disconnect: jest.fn(),
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
@@ -143,7 +144,19 @@ function noShowCandidate(payment: {
       ],
       occurrences: [
         {
+          startsAt: new Date("2026-09-01T10:00:00Z"),
+          endsAt: new Date("2026-09-01T11:00:00Z"),
+          // #1569 — the shared classifier reads per-device presence intervals.
+          presences: [
+            {
+              userId: CONSULTEE_USER,
+              joinedAt: new Date("2026-09-01T10:00:00Z"),
+              leftAt: new Date("2026-09-01T11:00:00Z"),
+            },
+          ],
           meeting: {
+            endedAt: new Date("2026-09-01T11:00:00Z"),
+            endedReason: "call_ended",
             // #1280 — the detector now asks Stream to corroborate before any
             // money moves, so the session needs a call id for it to ask about.
             // Without one it refuses, which is the correct behaviour and not
@@ -254,10 +267,11 @@ describe("consultant no-show refunds", () => {
 
   it("leaves a session the consultant actually attended alone", async () => {
     const attended = noShowCandidate({ id: "pay-1", amount: 150000 });
-    attended.appointment.occurrences[0].meeting.attendances = [
-      { userId: CONSULTEE_USER },
-      { userId: CONSULTANT_USER },
-    ];
+    attended.appointment.occurrences[0].presences.push({
+      userId: CONSULTANT_USER,
+      joinedAt: new Date("2026-09-01T10:00:00Z"),
+      leftAt: new Date("2026-09-01T11:00:00Z"),
+    });
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([attended]);
 
     const result = await detectConsultantNoShows();
