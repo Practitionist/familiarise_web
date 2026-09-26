@@ -4,9 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCall } from "@stream-io/video-react-sdk";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { useSession } from "@/lib/auth-client";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
-import { resolveAppointmentsHref } from "@/lib/labels/personal-dashboard";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -23,7 +21,6 @@ import { cn } from "@/utils/tailwind";
 export function ExitMeetingButton({ className }: { className?: string }) {
   const call = useCall();
   const router = useRouter();
-  const { data: session } = useSession();
   const [isLeaving, setIsLeaving] = useState(false);
   // The guard is a ref, not the state: state does not update until React
   // re-renders, so two fast clicks both read `false` and both tear down.
@@ -41,7 +38,9 @@ export function ExitMeetingButton({ className }: { className?: string }) {
       // reports its own failures.
       console.warn("Media teardown failed while leaving setup:", error);
     }
-    router.push(resolveAppointmentsHref(session?.user ?? {}));
+    // #1527 — the go resolver picks the viewer's own side (a consultant who
+    // also books lands where this session lives, not on a guessed tree).
+    router.push("/dashboard/go/auto/appointments");
   };
 
   return (

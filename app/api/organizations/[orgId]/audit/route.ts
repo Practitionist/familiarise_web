@@ -121,9 +121,7 @@ export async function GET(
     organizationId: orgId,
     ...(q.categories.length > 0 ? { category: { in: q.categories } } : {}),
     ...(q.actions.length > 0 ? { action: { in: q.actions } } : {}),
-    ...(q.actorMembershipId
-      ? { actorMembershipId: q.actorMembershipId }
-      : {}),
+    ...(q.actorMembershipId ? { actorMembershipId: q.actorMembershipId } : {}),
     ...(q.from || q.to
       ? {
           createdAt: {
@@ -179,8 +177,12 @@ export async function GET(
   // viewer can render human-readable names without N+1.
   const membershipIds = Array.from(
     new Set([
-      ...pageRows.map((r) => r.actorMembershipId).filter((v): v is string => !!v),
-      ...pageRows.map((r) => r.targetMembershipId).filter((v): v is string => !!v),
+      ...pageRows
+        .map((r) => r.actorMembershipId)
+        .filter((v): v is string => !!v),
+      ...pageRows
+        .map((r) => r.targetMembershipId)
+        .filter((v): v is string => !!v),
     ]),
   );
 
@@ -214,12 +216,24 @@ export async function GET(
       details: sanitizeAuditDetails(r.details),
       createdAt: r.createdAt.toISOString(),
       actor: r.actorMembershipId
-        ? memberMap.get(r.actorMembershipId) ?? null
+        ? (memberMap.get(r.actorMembershipId) ?? null)
         : null,
+      // #1762-2 — platform admins act through a stub membership with no row,
+      // so `actor` is null for them too; say who it was instead of "System".
+      actorKind: auditActorKind(r.actorMembershipId, memberMap),
       target: r.targetMembershipId
-        ? memberMap.get(r.targetMembershipId) ?? null
+        ? (memberMap.get(r.targetMembershipId) ?? null)
         : null,
     })),
     nextCursor,
   });
+}
+
+function auditActorKind(
+  actorMembershipId: string | null,
+  memberMap: Map<string, unknown>,
+): "member" | "platform_admin" | "former_member" | "system" {
+  if (!actorMembershipId) return "system";
+  if (actorMembershipId.startsWith("__admin_stub_")) return "platform_admin";
+  return memberMap.has(actorMembershipId) ? "member" : "former_member";
 }

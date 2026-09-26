@@ -36,6 +36,7 @@ import {
 import {
   AppointmentsType,
   type Currency,
+  type OfferingPlanStatus,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -125,7 +126,10 @@ import {
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
 import { sumPaise } from "@/lib/payments/utils/money";
-import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import {
+  MARKETPLACE_VISIBILITY,
+  planSaleRefusal,
+} from "@/lib/api/plans/visibility";
 import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
@@ -886,10 +890,20 @@ export async function calculateAmountAndValidate(
       p: {
         archivedAt: Date | null;
         visibility: string;
+        status?: OfferingPlanStatus | null;
         consultantProfile: { verificationStatus: string } | null;
       },
       label: string,
     ) => {
+      // #1527 Q4 — new sales only. Pay-links minted for approved requests
+      // (approval-payment.ts) deliberately skip this, so unpublishing a plan
+      // never strands a booking the consultant already accepted.
+      if (planSaleRefusal(p)) {
+        throw new BookingRuleError(
+          "PLAN_NOT_PUBLISHED",
+          `${label} isn't available to book right now.`,
+        );
+      }
       if (
         p.consultantProfile &&
         p.consultantProfile.verificationStatus !== "VERIFIED"

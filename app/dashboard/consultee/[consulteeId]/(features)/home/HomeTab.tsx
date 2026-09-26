@@ -1,31 +1,19 @@
 "use client";
 
-import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
-  ChevronRight,
-  ChevronLeft,
-  Video,
-  Users,
-  Loader2,
   CheckCircle2,
-  Clock,
-  BookOpen,
-  Building2,
+  Loader2,
+  LifeBuoy,
+  MessageSquareText,
+  Users,
+  Video,
 } from "lucide-react";
-import { useSession } from "@/lib/auth-client";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/utils/tailwind";
-import {
-  PendingPaymentsWidget,
-  fetchPendingPayments,
-} from "./PendingPaymentsWidget";
-import { format, differenceInHours, differenceInDays } from "date-fns";
-import { useState, useMemo, useRef } from "react";
+import { differenceInHours, differenceInDays } from "date-fns";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 // #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
@@ -34,14 +22,54 @@ import {
   describeVideoClientWait,
   waitForGlobalVideoClient,
 } from "@/lib/stream/disconnect";
+import { useSession } from "@/lib/auth-client";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/utils/tailwind";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportClientFailure } from "@/lib/errors/classification/client-failure";
 import { failureToast } from "@/components/ui/failure-toast";
 import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import type { NeedsActionReason } from "@/lib/appointments/view-model";
-import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
+import {
+  formatForViewer,
+  formatInViewerZone,
+  type ViewerZone,
+} from "@/lib/time/viewer-zone";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { Section } from "@/components/dashboard/Section";
+import { Stat, StatRow } from "@/components/dashboard/Stat";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
+import {
+  appointmentStatusBadge,
+  eventStatusBadge,
+} from "@/lib/labels/session-labels";
+import {
+  isCancelledLikeStatus,
+  isInactiveStatus,
+  isConfirmedStatus,
+} from "@/lib/appointments/status";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  getOccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
+import {
+  openProposalTarget,
+  type OpenRescheduleProposal,
+} from "@/lib/appointments/consultee-affordances";
+import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
+import type { ConsulteeDocumentsPayload } from "@/lib/data/consultee-documents";
+import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
   type ProcessedEvent,
   processAllEvents,
@@ -49,25 +77,6 @@ import {
   getMonthlyEvents,
   groupSlotsIntoSessions,
 } from "./event-processor";
-import { useQuery } from "@tanstack/react-query";
-import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
-import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
-import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { isExternalPayHref } from "@/lib/payments/pay-link-href";
-import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
-import {
-  appointmentStatusBadge,
-  eventStatusBadge,
-  resolveSponsoringOrgName,
-} from "@/lib/labels/session-labels";
-import {
-  isInactiveStatus,
-  isConfirmedStatus,
-} from "@/lib/appointments/status-guards";
-import {
-  CONSULTEE_JOIN_WINDOW_MS,
-  getOccurrenceJoinState,
-} from "@/lib/appointments/occurrences";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
 // subscriptions carry AppointmentStatus. One resolver so both card
@@ -76,6 +85,16 @@ const processedEventBadge = (event: ProcessedEvent) =>
   event.type === "webinar" || event.type === "class"
     ? eventStatusBadge(event.status?.toUpperCase())
     : appointmentStatusBadge(event.status?.toUpperCase());
+
+const NEXT_UP_LIMIT = 3;
+const RATE_PROMPT_LIMIT = 2;
+
+const TYPE_LABEL: Record<ProcessedEvent["type"], string> = {
+  consultation: "Consultation",
+  subscription: "Subscription",
+  class: "Class",
+  webinar: "Webinar",
+};
 
 interface HomeTabProps {
   /**
@@ -89,24 +108,10 @@ interface HomeTabProps {
     image?: string;
   } | null;
   eventsData: TConsulteeEventsResponse;
-  isRefreshing?: boolean;
   consulteeId: string;
   /** From the RSC page, so server and client format one wall clock. #1703 */
   viewerZone: ViewerZone;
 }
-
-const staggerChildren = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { staggerChildren: 0.08 },
-  },
-};
-
-const fadeInUp = {
-  hidden: { opacity: 0, y: 16 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
-};
 
 /**
  * The card's corner badge. The Appointments row calls a slot-less booking
@@ -148,127 +153,95 @@ function getTimeAway(
   return { text: `${daysAway} days away`, urgent: false };
 }
 
-// Session card for the horizontal scroller. Light Card treatment matching
-// the zinc-50 canvas (the old dark zinc-900 gradient island was the one
-// off-token surface on the page); fixed 340x180 geometry for scroll rhythm.
-function UpcomingSessionCard({
+function initialsOf(name: string): string {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2);
+}
+
+function withWhom(event: ProcessedEvent): string {
+  const collaborators = event.collaborators ?? [];
+  if (collaborators.length === 0) return event.consultantName;
+  if (collaborators.length === 1)
+    return `${event.consultantName} & ${collaborators[0].name}`;
+  return `${event.consultantName} + ${collaborators.length} others`;
+}
+
+/**
+ * One "Next up" card. #1527 — the whole card opens the appointment: the title
+ * link stretches over the card, and Join / Pay sit above it so they stay
+ * their own targets (no nested interactive elements).
+ */
+function NextUpCard({
   event,
+  href,
   viewerZone,
-  onClick,
   onJoin,
   isJoining,
-}: {
+}: Readonly<{
   event: ProcessedEvent;
+  href: string | null;
   viewerZone: ViewerZone;
-  onClick?: () => void;
   onJoin?: () => void;
   isJoining?: boolean;
-}) {
+}>) {
   const timeAway = getTimeAway(event.startsAt, event.needsActionReason);
-  const { data: session } = useSession();
-  const sponsoringOrgName = resolveSponsoringOrgName(
-    event.organizationId,
-    session?.user?.organizationMemberships,
-  );
 
   // Shared guards (lib/appointments/status-guards.ts) — same semantics as the
-  // Appointments tab cards. Moved out of the route folder when the resources
-  // card started using them too.
+  // Appointments tab cards.
   const isInactive = isInactiveStatus(event.status);
-  const isApproved =
-    event.type === "webinar" || event.type === "class"
-      ? event.bookingStatus === "CONFIRMED"
-      : // #1270 — was isApprovedStatus, a strict equality on APPROVED. SCHEDULED
-        // is confirmed but not APPROVED, so a scheduled subscription offered
-        // Join on the Appointments tab and hid it here. Same gate both places.
-        isConfirmedStatus(event.status);
+  const isGroup = event.type === "webinar" || event.type === "class";
+  const isApproved = isGroup
+    ? event.bookingStatus === "CONFIRMED"
+    : // #1270 — SCHEDULED is confirmed but not APPROVED; one gate everywhere.
+      isConfirmedStatus(event.status);
   const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
-  // #1061 — the same predicate the Appointments tabs and the planner use,
-  // over the occurrence's own bounds. The hand-rolled
-  // time comparison this replaces could not see `ended`, so a session the host
-  // had already closed still offered Join for the rest of the booked hour.
+  // #1061 — the same predicate the Appointments tabs use, over the
+  // occurrence's own bounds, so an ended call stops offering Join.
   const isWithinJoinWindow =
     !!event.joinableOccurrence &&
     getOccurrenceJoinState(event.joinableOccurrence, {
-      // #1270 — the shared constant, not a local 10-minute literal. This
-      // page declared its own, which is how the product ended up with four
-      // different answers to "when does Join light up?".
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
     }) === "joinable";
 
-  // Type badges - outline/border style only, no background colors
-  const typeLabels: Record<string, string> = {
-    consultation: "CONSULTATION",
-    subscription: "SUBSCRIPTION",
-    class: "CLASS",
-    webinar: "WEBINAR",
-  };
-
-  const typeLabel = typeLabels[event.type] || "EVENT";
-
   return (
-    <motion.div
-      whileHover={{ y: -2 }}
-      onClick={onClick}
-      className="flex-shrink-0 w-[340px] h-[180px] bg-card rounded-xl border border-border p-4 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all duration-200 shadow-sm hover:shadow-md flex flex-col"
-    >
-      {/* Row 1: Avatar + Title/Name + Time Badge - Fixed height 48px */}
-      <div className="flex items-center gap-3 h-12 shrink-0">
-        <div className="flex items-center -space-x-1.5 shrink-0">
-          <Avatar className="h-10 w-10 ring-2 ring-card z-10">
-            <AvatarImage
-              src={event.consultantImage ?? undefined}
-              alt={event.consultantName}
-            />
-            <AvatarFallback className="bg-muted text-muted-foreground text-xs font-semibold">
-              {event.consultantName
-                .split(" ")
-                .map((n) => n[0])
-                .join("")
-                .slice(0, 2)}
-            </AvatarFallback>
-          </Avatar>
-          {event.collaborators?.slice(0, 1).map((collab, idx) => (
-            <Avatar
-              key={idx}
-              className="h-7 w-7 ring-2 ring-card z-0"
-              title={collab.name}
-            >
-              <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
-              <AvatarFallback className="bg-muted text-muted-foreground text-[9px] font-semibold">
-                {collab.name
-                  .split(" ")
-                  .map((n) => n[0])
-                  .join("")
-                  .slice(0, 2)}
-              </AvatarFallback>
-            </Avatar>
-          ))}
-          {(event.collaborators?.length ?? 0) > 1 && (
-            <div className="h-7 w-7 rounded-full bg-muted ring-2 ring-card flex items-center justify-center text-[9px] font-semibold text-muted-foreground z-0">
-              +{(event.collaborators?.length ?? 0) - 1}
-            </div>
-          )}
-        </div>
-        <div className="flex-1 min-w-0 overflow-hidden">
-          <h4 className="font-semibold text-foreground text-sm leading-tight truncate">
-            {event.title}
-          </h4>
-          <p className="text-xs text-muted-foreground truncate">
-            {event.collaborators && event.collaborators.length > 0
-              ? event.collaborators.length === 1
-                ? `${event.consultantName} & ${event.collaborators[0].name}`
-                : `${event.consultantName} + ${event.collaborators.length} others`
-              : event.consultantName}
+    <div className="relative flex flex-col rounded-xl border border-border bg-card p-4 shadow-elevation-1 transition-colors hover:border-foreground/20">
+      <div className="flex items-center gap-3">
+        <Avatar className="h-10 w-10 shrink-0">
+          <AvatarImage
+            src={event.consultantImage ?? undefined}
+            alt={event.consultantName}
+          />
+          <AvatarFallback className="bg-muted text-xs font-semibold text-muted-foreground">
+            {initialsOf(event.consultantName)}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold text-foreground">
+            {href ? (
+              <Link
+                href={href}
+                className="after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+              >
+                {event.title}
+              </Link>
+            ) : (
+              event.title
+            )}
+          </h3>
+          <p className="truncate text-xs text-muted-foreground">
+            {withWhom(event)}
           </p>
         </div>
         <Badge
           className={cn(
-            "shrink-0 text-[10px] font-medium px-2 py-0.5 border-0 whitespace-nowrap",
+            "shrink-0 whitespace-nowrap border-0 px-2 py-0.5 text-[11px] font-medium",
             timeAway.urgent
-              ? "bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300"
+              ? "bg-rose-50 text-rose-700"
               : "bg-muted text-muted-foreground",
           )}
         >
@@ -276,466 +249,173 @@ function UpcomingSessionCard({
         </Badge>
       </div>
 
-      {/* Row 2: Date and time - Fixed height with top margin */}
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-3 h-5 shrink-0 overflow-hidden">
-        <Calendar className="h-3.5 w-3.5 shrink-0" />
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />
         {event.startsAt ? (
-          <>
-            <span className="truncate">
-              {formatForViewer(event.startsAt, viewerZone, "EEE, d MMM yyyy")}
-            </span>
-            <span className="text-muted-foreground/50 shrink-0">•</span>
-            <span className="shrink-0">
-              {formatForViewer(event.startsAt, viewerZone, "h:mm a")}
-            </span>
-          </>
+          <span className="truncate">
+            {formatForViewer(event.startsAt, viewerZone, "EEE, d MMM · h:mm a")}
+          </span>
         ) : (
-          // Same words as the Appointments row's time slot for a slot-less
-          // booking; the state itself sits in the corner badge.
+          // Same words as the Appointments row for a slot-less booking.
           <span className="truncate">Not scheduled</span>
         )}
-      </div>
+      </p>
 
-      {/* Row 2.5: Sponsor pill — only when org-funded. Placed on its own
-          line so Row 3 stays uncrowded (CONSULTATION + APPROVED + Join). */}
-      {sponsoringOrgName && (
-        <div className="flex items-center mt-1.5 h-5 shrink-0">
-          <span
-            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground rounded-md max-w-full"
-            title={`Sponsored by ${sponsoringOrgName}`}
-          >
-            <Building2 className="h-3 w-3 shrink-0" />
-            <span className="truncate">Sponsored · {sponsoringOrgName}</span>
-          </span>
-        </div>
-      )}
-
-      {/* Spacer to push footer to bottom */}
-      <div className="flex-1" />
-
-      {/* Row 3: Badges and action - Fixed at bottom */}
-      <div className="flex items-center justify-between gap-2 h-8 shrink-0">
+      <div className="mt-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 overflow-hidden">
-          <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-border text-muted-foreground shrink-0 rounded-md">
-            {typeLabel}
-          </Badge>
-          {/* Show booking status badge for webinars and classes */}
-          {(event.type === "webinar" || event.type === "class") &&
-            event.bookingStatus && (
-              <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
-                Registered
-              </Badge>
-            )}
-          {/* Only show event status if not showing booking status */}
-          {!(
-            (event.type === "webinar" || event.type === "class") &&
-            event.bookingStatus
-          ) && (
+          <span className="text-[11px] font-medium text-muted-foreground">
+            {TYPE_LABEL[event.type]}
+          </span>
+          {isGroup && event.bookingStatus ? (
+            <StatusBadge label="Registered" tone="success" size="sm" />
+          ) : (
             <StatusBadge {...processedEventBadge(event)} withDot size="sm" />
           )}
         </div>
-        {/* The Appointments row's primary action for PAY_NOW, verbatim. */}
         {/* #1775 P-1 — the processor resolves the target: our pay page for a
             Razorpay order id (in-app), or a hosted https link (new tab). */}
         {event.needsActionReason === "PAY_NOW" && event.pendingPaymentUrl && (
           <Button
             asChild
             size="sm"
-            className="h-7 px-3 text-xs font-semibold rounded-md shrink-0 bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+            className="relative z-10 h-7 shrink-0 px-3 text-xs"
           >
             {isExternalPayHref(event.pendingPaymentUrl) ? (
               <a
                 href={event.pendingPaymentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
               >
                 Pay now
               </a>
             ) : (
-              <Link
-                href={event.pendingPaymentUrl}
-                onClick={(e) => e.stopPropagation()}
-              >
-                Pay now
-              </Link>
+              <Link href={event.pendingPaymentUrl}>Pay now</Link>
             )}
           </Button>
         )}
         {canShowJoin && (
           <Button
             size="sm"
-            className="h-7 px-3 text-xs font-semibold rounded-md shrink-0"
-            onClick={(e) => {
-              e.stopPropagation();
-              onJoin?.();
-            }}
+            className="relative z-10 h-7 shrink-0 px-3 text-xs"
+            onClick={onJoin}
             disabled={
               isJoining || !isWithinJoinWindow || !event.joinableAppointment
             }
           >
             {isJoining ? (
-              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
             ) : (
-              <Video className="h-3 w-3 mr-1" />
+              <Video className="mr-1 h-3 w-3" />
             )}
             {isJoining ? "Joining..." : "Join"}
           </Button>
         )}
       </div>
-    </motion.div>
-  );
-}
-
-/** The badge row of a monthly item, shared by its desktop and mobile layouts. */
-function MonthlyEventBadges({
-  event,
-  typeLabel,
-  sponsoringOrgName,
-}: {
-  event: ProcessedEvent;
-  typeLabel: string;
-  sponsoringOrgName: string | null;
-}) {
-  const registered =
-    (event.type === "webinar" || event.type === "class") && event.bookingStatus;
-  return (
-    <>
-      {sponsoringOrgName && (
-        <Badge
-          className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
-          title={`Sponsored by ${sponsoringOrgName}`}
-        >
-          <Building2 className="h-3 w-3 shrink-0" />
-          <span className="truncate">Sponsored · {sponsoringOrgName}</span>
-        </Badge>
-      )}
-      <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
-        {typeLabel}
-      </Badge>
-      {/* A seat on a group event shows as Registered instead of the status. */}
-      {registered ? (
-        <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
-          Registered
-        </Badge>
-      ) : (
-        <StatusBadge {...processedEventBadge(event)} size="sm" />
-      )}
-    </>
-  );
-}
-
-// Monthly event item - Elegant minimal design
-function MonthlyEventItem({
-  event,
-  viewerZone,
-  isExpanded,
-  onToggle,
-}: {
-  event: ProcessedEvent;
-  viewerZone: ViewerZone;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  const { data: session } = useSession();
-  const sponsoringOrgName = resolveSponsoringOrgName(
-    event.organizationId,
-    session?.user?.organizationMemberships,
-  );
-
-  // Type labels - border style
-  const typeLabels: Record<string, string> = {
-    consultation: "Consultation",
-    subscription: "Subscription",
-    class: "Class",
-    webinar: "Webinar",
-  };
-
-  const typeLabel = typeLabels[event.type] || "Event";
-
-  return (
-    <div className="border-b border-border last:border-0">
-      <div
-        onClick={onToggle}
-        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-      >
-        <div className="flex items-center -space-x-1.5 flex-shrink-0">
-          <Avatar className="h-10 w-10 ring-2 ring-card z-10">
-            <AvatarImage
-              src={event.consultantImage ?? undefined}
-              alt={event.consultantName}
-            />
-            <AvatarFallback className="bg-muted text-muted-foreground text-xs font-medium">
-              {event.consultantName
-                .split(" ")
-                .map((n) => n[0])
-                .join("")}
-            </AvatarFallback>
-          </Avatar>
-          {event.collaborators?.slice(0, 1).map((collab, idx) => (
-            <Avatar
-              key={idx}
-              className="h-7 w-7 ring-2 ring-card z-0"
-              title={collab.name}
-            >
-              <AvatarImage src={collab.image ?? undefined} alt={collab.name} />
-              <AvatarFallback className="bg-muted text-muted-foreground text-[9px] font-medium">
-                {collab.name
-                  .split(" ")
-                  .map((n) => n[0])
-                  .join("")
-                  .slice(0, 2)}
-              </AvatarFallback>
-            </Avatar>
-          ))}
-          {(event.collaborators?.length ?? 0) > 1 && (
-            <div className="h-7 w-7 rounded-full bg-muted ring-2 ring-card flex items-center justify-center text-[9px] font-medium text-muted-foreground z-0">
-              +{(event.collaborators?.length ?? 0) - 1}
-            </div>
-          )}
-        </div>
-        <div className="flex-1 min-w-0">
-          {/* Desktop: single row layout */}
-          <div className="hidden lg:flex items-center justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <h4 className="font-medium text-foreground text-sm truncate">
-                {event.title}
-              </h4>
-              <p className="text-xs text-muted-foreground truncate">
-                {event.collaborators && event.collaborators.length > 0
-                  ? event.collaborators.length === 1
-                    ? `${event.consultantName} & ${event.collaborators[0].name}`
-                    : `${event.consultantName} + ${event.collaborators.length} others`
-                  : event.consultantName}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <MonthlyEventBadges
-                event={event}
-                typeLabel={typeLabel}
-                sponsoringOrgName={sponsoringOrgName}
-              />
-              <ChevronRight
-                className={cn(
-                  "h-4 w-4 text-muted-foreground/70 transition-transform duration-200",
-                  isExpanded && "rotate-90",
-                )}
-              />
-            </div>
-          </div>
-          {/* Mobile: stacked layout */}
-          <div className="lg:hidden">
-            <div className="flex items-start justify-between gap-2 mb-1">
-              <div className="min-w-0 flex-1">
-                <h4 className="font-medium text-foreground text-sm truncate">
-                  {event.title}
-                </h4>
-                <p className="text-xs text-muted-foreground truncate">
-                  {event.collaborators && event.collaborators.length > 0
-                    ? event.collaborators.length === 1
-                      ? `${event.consultantName} & ${event.collaborators[0].name}`
-                      : `${event.consultantName} + ${event.collaborators.length} others`
-                    : event.consultantName}
-                </p>
-              </div>
-              <ChevronRight
-                className={cn(
-                  "h-4 w-4 text-muted-foreground/70 transition-transform duration-200 flex-shrink-0 mt-0.5",
-                  isExpanded && "rotate-90",
-                )}
-              />
-            </div>
-            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              <MonthlyEventBadges
-                event={event}
-                typeLabel={typeLabel}
-                sponsoringOrgName={sponsoringOrgName}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Expanded sessions (slots grouped by appointment) */}
-      {isExpanded &&
-        event.slots.length > 0 &&
-        (() => {
-          const sessions = groupSlotsIntoSessions(event.slots);
-          return (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="pl-16 pr-4 pb-4"
-            >
-              <div className="space-y-2 bg-muted rounded-lg p-3">
-                {sessions.slice(0, 10).map((session) => (
-                  <div
-                    key={session.id}
-                    className="flex items-center gap-4 text-sm text-muted-foreground"
-                  >
-                    <span
-                      className={cn(
-                        "h-2 w-2 rounded-full flex-shrink-0",
-                        session.status === "completed"
-                          ? "bg-muted-foreground/30"
-                          : "bg-emerald-500 dark:bg-emerald-400",
-                      )}
-                    />
-                    <span className="w-24 font-medium text-foreground">
-                      {formatForViewer(
-                        session.startTime,
-                        viewerZone,
-                        "EEE d MMM",
-                      )}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {formatForViewer(session.startTime, viewerZone, "h:mm a")}{" "}
-                      - {formatForViewer(session.endTime, viewerZone, "h:mm a")}
-                    </span>
-                    <span
-                      className={cn(
-                        "text-xs ml-auto capitalize",
-                        session.status === "completed"
-                          ? "text-muted-foreground/70"
-                          : "text-emerald-600 dark:text-emerald-300",
-                      )}
-                    >
-                      {session.status}
-                    </span>
-                  </div>
-                ))}
-                {sessions.length > 10 && (
-                  <p className="text-xs text-muted-foreground/70 pt-1">
-                    +{sessions.length - 10} more sessions
-                  </p>
-                )}
-              </div>
-            </motion.div>
-          );
-        })()}
     </div>
   );
 }
 
-// Learning Stats Panel — derives all stats from processed events
-function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
-  const stats = useMemo(() => {
-    const now = new Date();
-    const inactive = ["cancelled", "rejected", "expired"];
-    let completedSessions = 0;
-    let hoursLearned = 0;
-    const activePrograms = new Set<string>();
-    const experts = new Set<string>();
+/** Live sessions of this viewer-zone month, across bookings that still stand. */
+function sessionsThisMonth(
+  events: ProcessedEvent[],
+  zone: string,
+  now: Date,
+): number {
+  const monthKey = formatInViewerZone(now, zone, "yyyy-MM");
+  return getMonthlyEvents(events, now, zone)
+    .filter((event) => !isCancelledLikeStatus(event.status))
+    .reduce(
+      (sum, event) =>
+        sum +
+        groupSlotsIntoSessions(event.slots).filter(
+          (s) => formatInViewerZone(s.startTime, zone, "yyyy-MM") === monthKey,
+        ).length,
+      0,
+    );
+}
 
-    for (const event of events) {
-      if (inactive.includes(event.status.toLowerCase())) continue;
+type WithProposals = {
+  id: string;
+  rescheduleRequests?: OpenRescheduleProposal[];
+};
 
-      experts.add(event.consultantName);
-
-      // Count grouped sessions (not raw slots) for "Sessions Completed"
-      const sessions = groupSlotsIntoSessions(event.slots);
-      completedSessions += sessions.filter(
-        (s) => s.status === "completed",
-      ).length;
-
-      // Hours still computed per-slot (correct granularity for duration)
-      let hasUpcoming = false;
-      for (const slot of event.slots) {
-        if (slot.endsAt < now) {
-          hoursLearned +=
-            (slot.endsAt.getTime() - slot.startsAt.getTime()) / 3_600_000;
-        }
-        if (slot.startsAt > now) hasUpcoming = true;
-      }
-      if (hasUpcoming) activePrograms.add(event.id);
-    }
-
-    return {
-      completedSessions,
-      hoursLearned: Math.round(hoursLearned * 10) / 10,
-      activePrograms: activePrograms.size,
-      experts: experts.size,
-    };
-  }, [events]);
-
+/** Proposals from the expert that wait on this learner's answer (#1163). */
+function proposalsAwaiting(
+  eventsData: TConsulteeEventsResponse,
+  viewerId: string | undefined,
+) {
+  if (!viewerId) return [];
   const rows = [
-    {
-      icon: CheckCircle2,
-      label: "Sessions Completed",
-      value: stats.completedSessions,
-      color:
-        "text-emerald-600 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-900/30",
-    },
-    {
-      icon: Clock,
-      label: "Hours Learned",
-      value: stats.hoursLearned,
-      color: "text-foreground bg-muted",
-    },
-    {
-      icon: BookOpen,
-      label: "Active Programs",
-      value: stats.activePrograms,
-      color: "text-foreground bg-muted",
-    },
-    {
-      icon: Users,
-      label: "Experts Consulted",
-      value: stats.experts,
-      color:
-        "text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30",
-    },
+    ...(eventsData.consultations ?? []).map((c) => ({
+      appointment: c.appointment as WithProposals | null | undefined,
+      title: c.consultationPlan?.title ?? "Consultation",
+      counterpartName:
+        c.consultationPlan?.consultantProfile?.user?.name ?? "Your expert",
+    })),
+    ...(eventsData.subscriptions ?? []).map((s) => ({
+      appointment: s.appointment as WithProposals | null | undefined,
+      title: s.subscriptionPlan?.title ?? "Subscription",
+      counterpartName:
+        s.subscriptionPlan?.consultantProfile?.user?.name ?? "Your expert",
+    })),
   ];
+  return rows.flatMap((row) => {
+    const target = openProposalTarget([row.appointment]);
+    // The initiator waits; the other side answers (RescheduleProposalCard).
+    if (!target || target.proposal.initiatedById === viewerId) return [];
+    return [
+      {
+        appointmentId: target.appointmentId,
+        title: row.title,
+        counterpartName: row.counterpartName,
+      },
+    ];
+  });
+}
 
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {rows.map((row) => (
-        <div
-          key={row.label}
-          className="bg-card rounded-xl border border-border shadow-sm p-4 flex flex-col gap-3"
-        >
-          <div className="flex items-center gap-2.5">
-            <div
-              className={cn(
-                "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
-                row.color,
-              )}
-            >
-              <row.icon className="h-4.5 w-4.5" />
-            </div>
-            <span className="text-sm text-muted-foreground font-medium">
-              {row.label}
-            </span>
-          </div>
-          <p className="text-2xl font-bold text-foreground tabular-nums">
-            {row.label === "Hours Learned" ? `${row.value}h` : row.value}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
+interface ReviewableSessionRow {
+  appointmentId: string;
+  consultantProfileId: string;
+  consultantName: string | null;
+  existingReview: unknown;
+}
+
+async function fetchJson<T>(url: string, unwrap: boolean): Promise<T> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  const json = await res.json();
+  return (unwrap ? json.data : json) as T;
+}
+
+function formatSpend(summary: ConsulteeMoneySummary | undefined): string {
+  if (!summary) return "—";
+  if (summary.spentThisMonth.length === 0)
+    return formatCurrencyAmount(0, "INR");
+  // Totalled per currency, never converted.
+  return summary.spentThisMonth
+    .map((s) => formatCurrencyAmount(s.paise, s.currency))
+    .join(" + ");
 }
 
 export default function HomeTab({
   userDetails,
   eventsData,
-  isRefreshing = false,
   consulteeId,
   viewerZone,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const basePath = `/dashboard/consultee/${consulteeId}`;
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
   const guardJoin = useInFlightGuard();
   const { toast } = useToast();
+  const { formatPrice } = useCurrency();
+  const { data: session } = useSession();
+  // Reads keyed on the session (reviews) only answer for the owner; an
+  // inspecting admin would otherwise see their own prompts here.
+  const isOwner = session?.user?.consulteeProfileId === consulteeId;
 
-  // Handle joining a meeting
-  // #1280 2.7 — `setJoiningEventId` is state and is written before the first
-  // await, but state writes are asynchronous: a second click still reads the
-  // stale value and runs the chain again. The ref closes that window.
+  // #1280 2.7 — the ref-backed guard closes the double-click window that the
+  // async `joiningEventId` state write leaves open.
   const handleJoinMeeting = (event: ProcessedEvent) =>
     guardJoin(`join:${event.id}`, () => joinMeetingForEvent(event));
 
@@ -749,20 +429,13 @@ export default function HomeTab({
       return;
     }
 
-    // #248: read the already-connected video client singleton at click time
-    // (same instance <StreamVideo> uses) instead of via useStreamVideoClient,
-    // so the SDK stays off the home bundle. The video connect is now deferred
-    // to requestIdleCallback, so a fast Join click can land before the client
-    // exists — show the joining spinner and briefly wait for it instead of
-    // immediately erroring.
+    // #248: read the already-connected video client singleton at click time,
+    // briefly waiting for the deferred connect instead of erroring.
     setJoiningEventId(event.id);
     const waitStartedAt = Date.now();
     const client = await waitForGlobalVideoClient();
     if (!client) {
       setJoiningEventId(null);
-      // Kept distinct from a chunk failure in Sentry as well as in the toast;
-      // the extras are what tell a cold start from a provider that never
-      // connected at all.
       reportSentryMessage("Video client not ready at Join", {
         subsystem: "client",
         op: "join-meeting",
@@ -808,31 +481,56 @@ export default function HomeTab({
     }
   };
 
-  // Process events into unified format using the utility function
   const processedEvents = useMemo(
     () => processAllEvents(eventsData),
     [eventsData],
   );
-
-  // Get upcoming events
   const upcomingEvents = useMemo(
     () => getUpcomingEvents(processedEvents),
     [processedEvents],
   );
+  // #1527 — Next up is scheduled sessions only: an unpaid request is in Needs
+  // you and a request waiting on the expert is Appointments' concern.
+  const nextUp = upcomingEvents
+    .filter((e) => e.startsAt !== null)
+    .slice(0, NEXT_UP_LIMIT);
 
-  // Same query key PendingPaymentsWidget uses, so react-query serves both
-  // from one cache entry instead of fetching the list twice — hence the same
-  // queryFn, so whichever observer fetches first caches the one shape (#1675).
-  const { data: pendingPayments } = useQuery({
+  // Same key (and cache entry) as the Payments page's Needs-you band.
+  const { data: money } = useQuery({
     queryKey: ["pending-payments", consulteeId],
-    // Shares the key (and cache entry) with PendingPaymentsWidget, which keeps
-    // its own 30s + focus-refetch for the money-critical surface; this reader
-    // only derives counts, so a longer stale window avoids a second fetch.
     staleTime: 2 * 60_000,
     queryFn: () => fetchPendingPayments(consulteeId),
-    select: (payload) => payload.pendingPayments,
+  });
+  const { data: reviewable } = useQuery({
+    queryKey: ["reviewable-sessions"],
+    staleTime: 5 * 60_000,
+    enabled: isOwner,
+    queryFn: () =>
+      fetchJson<ReviewableSessionRow[]>(
+        "/api/user/reviews/reviewable-sessions",
+        true,
+      ),
+  });
+  const { data: revisions } = useQuery({
+    queryKey: ["consultee-documents", consulteeId, "NEEDS_REVISION"],
+    staleTime: 2 * 60_000,
+    queryFn: () =>
+      fetchJson<ConsulteeDocumentsPayload>(
+        `/api/dashboard/consultee/${consulteeId}/documents?status=NEEDS_REVISION&limit=5`,
+        false,
+      ),
+  });
+  const { data: summary } = useQuery({
+    queryKey: ["consultee-payments", consulteeId, "summary"],
+    staleTime: 2 * 60_000,
+    queryFn: () =>
+      fetchJson<ConsulteeMoneySummary>(
+        `/api/dashboard/consultee/${consulteeId}/payments?view=summary`,
+        true,
+      ),
   });
 
+  const pendingPayments = money?.pendingPayments;
   const actionItems = useMemo(
     () =>
       deriveConsulteeActionItems({
@@ -841,8 +539,7 @@ export default function HomeTab({
           (sum, p) => sum + (p.amount ?? 0),
           0,
         ),
-        // startsAt/endsAt already describe the whole run here (#1061), so the
-        // end goes over too — it is what tells "in progress" from "over".
+        // startsAt/endsAt already describe the whole run here (#1061).
         upcomingSessions: upcomingEvents.flatMap((e) =>
           e.startsAt && e.endsAt
             ? [
@@ -856,223 +553,203 @@ export default function HomeTab({
               ]
             : [],
         ),
-        basePath: `/dashboard/consultee/${consulteeId}`,
+        basePath,
+        lapsedPayLinks: (money?.lapsedPayLinks ?? []).map((link) => ({
+          id: link.id,
+          consultantName: link.consultantName,
+          href: link.requestAgainHref,
+        })),
+        rescheduleProposals: proposalsAwaiting(eventsData, userDetails?.id),
+        sessionsToRate: (reviewable ?? [])
+          .filter((s) => !s.existingReview)
+          .slice(0, RATE_PROMPT_LIMIT)
+          .map((s) => ({
+            key: s.appointmentId,
+            consultantName: s.consultantName ?? "your expert",
+            href: `/explore/experts/${s.consultantProfileId}#reviews`,
+          })),
+        documentsToRevise: (revisions?.data ?? [])
+          .filter((d) => d.uploadedByRole === "CONSULTEE")
+          .map((d) => ({
+            id: d.id,
+            name: d.originalName,
+            appointmentId: d.appointmentId,
+          })),
+        failedRefunds: (money?.failedRefunds ?? []).map((r) => ({
+          paymentId: r.paymentId,
+          amountText: formatCurrencyAmount(r.amountPaise, r.currency),
+        })),
       }),
-    [pendingPayments, upcomingEvents, consulteeId],
+    [
+      pendingPayments,
+      money,
+      upcomingEvents,
+      basePath,
+      eventsData,
+      userDetails?.id,
+      reviewable,
+      revisions,
+    ],
   );
 
-  // Get events for current month
-  const monthlyEvents = useMemo(
-    () => getMonthlyEvents(processedEvents, currentMonth, viewerZone.zone),
-    [processedEvents, currentMonth, viewerZone.zone],
+  const monthSessions = useMemo(
+    () => sessionsThisMonth(processedEvents, viewerZone.zone, new Date()),
+    [processedEvents, viewerZone.zone],
   );
-
-  // Scroll handlers
-  const scrollLeft = () => {
-    scrollContainerRef.current?.scrollBy({ left: -300, behavior: "smooth" });
-  };
-
-  const scrollRight = () => {
-    scrollContainerRef.current?.scrollBy({ left: 300, behavior: "smooth" });
-  };
-
-  const toggleExpanded = (id: string) => {
-    setExpandedEvents((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   return (
-    <motion.div
-      variants={staggerChildren}
-      initial="hidden"
-      animate="visible"
-      className="space-y-6"
-    >
-      {/* What's actually blocked on this learner, above the summary. Renders
-          nothing when the queue is clear. */}
-      <ActionRequiredPanel items={actionItems} className="space-y-2" />
+    <div className="space-y-8">
+      <PageHeader
+        className="mb-0"
+        title={
+          userDetails ? (
+            <>Welcome back, {userDetails.name?.split(" ")[0]}</>
+          ) : (
+            <span
+              className="inline-block h-7 w-48 motion-safe:animate-pulse rounded-md bg-muted align-middle"
+              aria-label="Loading greeting"
+            />
+          )
+        }
+        description="What needs you, and what's next."
+      />
 
-      {/* Refreshing indicator */}
-      {isRefreshing && (
-        <div className="fixed top-20 right-4 bg-foreground text-background px-4 py-2 rounded-lg text-sm z-50 shadow-lg flex items-center gap-2">
-          <div className="h-3 w-3 border-2 border-background/30 border-t-background rounded-full animate-spin" />
-          Refreshing...
-        </div>
-      )}
-
-      {/* Welcome + Learning Stats */}
-      <motion.div variants={fadeInUp} className="space-y-5">
-        <div>
-          <h1 className="text-fluid-2xl font-semibold tracking-tight text-foreground">
-            {userDetails ? (
-              <>Welcome back, {userDetails.name?.split(" ")[0]}</>
-            ) : (
-              <span
-                className="inline-block h-7 w-48 motion-safe:animate-pulse rounded-md bg-muted align-middle"
-                aria-label="Loading greeting"
-              />
-            )}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Here&apos;s an overview of your learning journey
-          </p>
-        </div>
-        <LearningStatsPanel events={processedEvents} />
-      </motion.div>
-
-      {/* Upcoming Sessions - Dark cards with horizontal scroll */}
-      <motion.div variants={fadeInUp}>
-        <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-            <h2 className="font-semibold text-foreground text-lg">
-              Upcoming Sessions
-            </h2>
-            {upcomingEvents.length > 3 && (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg"
-                  onClick={scrollLeft}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg"
-                  onClick={scrollRight}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
+      <ActionRequiredPanel
+        items={actionItems}
+        heading="Needs you"
+        className="space-y-2"
+        emptyState={
+          <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+            <CheckCircle2
+              className="h-5 w-5 shrink-0 text-emerald-600"
+              aria-hidden
+            />
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                All caught up
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Nothing is waiting on you right now.
+              </p>
+            </div>
           </div>
+        }
+      />
 
-          <div className="p-5 bg-gradient-to-b from-muted/50 to-card">
-            {upcomingEvents.length > 0 ? (
-              <div
-                ref={scrollContainerRef}
-                className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide"
-                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-              >
-                {upcomingEvents.map((event) => (
-                  <UpcomingSessionCard
-                    key={event.id}
-                    event={event}
-                    viewerZone={viewerZone}
-                    onJoin={() => handleJoinMeeting(event)}
-                    isJoining={joiningEventId === event.id}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-16">
-                <div className="mx-auto h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
-                  <Calendar className="h-8 w-8 text-muted-foreground/70" />
-                </div>
-                <h4 className="font-semibold text-foreground text-lg">
-                  No upcoming sessions
-                </h4>
-                <p className="text-sm text-muted-foreground mt-1 mb-5">
-                  Book a session with an expert to get started
-                </p>
-                <Button asChild>
-                  <Link href="/explore/experts">
-                    <Users className="h-4 w-4 mr-2" />
-                    Find Experts
-                  </Link>
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Main content grid */}
-      <motion.div
-        variants={fadeInUp}
-        className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+      <Section
+        title="Next up"
+        actions={
+          <Link
+            href={`${basePath}/appointments`}
+            className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            All appointments
+          </Link>
+        }
       >
-        {/* Monthly Schedule */}
-        <div className="lg:col-span-2">
-          <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground text-lg">
-                {format(currentMonth, "MMMM yyyy")}
-              </h2>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg"
-                  onClick={() =>
-                    setCurrentMonth(
-                      new Date(
-                        currentMonth.getFullYear(),
-                        currentMonth.getMonth() - 1,
-                        1,
-                      ),
-                    )
-                  }
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg"
-                  onClick={() =>
-                    setCurrentMonth(
-                      new Date(
-                        currentMonth.getFullYear(),
-                        currentMonth.getMonth() + 1,
-                        1,
-                      ),
-                    )
-                  }
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-
-            <div className="max-h-[400px] overflow-y-auto">
-              {monthlyEvents.length > 0 ? (
-                monthlyEvents.map((event) => (
-                  <MonthlyEventItem
-                    key={event.id}
-                    event={event}
-                    viewerZone={viewerZone}
-                    isExpanded={expandedEvents.has(event.id)}
-                    onToggle={() => toggleExpanded(event.id)}
-                  />
-                ))
-              ) : (
-                <div className="text-center py-16">
-                  <Calendar className="h-10 w-10 text-muted-foreground/70 mx-auto mb-3" />
-                  <p className="text-muted-foreground">
-                    No sessions scheduled for this month
-                  </p>
-                </div>
-              )}
-            </div>
+        {nextUp.length > 0 ? (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {nextUp.map((event) => (
+              <NextUpCard
+                key={event.id}
+                event={event}
+                href={
+                  event.appointmentId
+                    ? `${basePath}/appointments/${event.appointmentId}`
+                    : null
+                }
+                viewerZone={viewerZone}
+                onJoin={() => handleJoinMeeting(event)}
+                isJoining={joiningEventId === event.id}
+              />
+            ))}
           </div>
-        </div>
+        ) : (
+          <EmptyState
+            icon={Calendar}
+            title="No upcoming sessions"
+            description="Book a session with an expert to get started."
+            action={
+              <Button asChild>
+                <Link href="/explore/experts">
+                  <Users className="mr-2 h-4 w-4" />
+                  Find experts
+                </Link>
+              </Button>
+            }
+          />
+        )}
+      </Section>
 
-        {/* Right sidebar — stretch to match monthly schedule */}
-        <div className="lg:h-full">
-          <PendingPaymentsWidget consulteeId={consulteeId} />
-          {/* #1778 — held times this learner asked to hear about. */}
-          <div className="mt-4">
-            <WaitingTimesStrip />
-          </div>
-        </div>
-      </motion.div>
-    </motion.div>
+      <Section title="This month">
+        <StatRow columns={3}>
+          <Stat
+            label="Sessions"
+            value={monthSessions}
+            hint="Scheduled or held this month"
+            href={`${basePath}/appointments`}
+          />
+          <Stat
+            label="Spent"
+            value={formatSpend(summary)}
+            hint="Net of refunds"
+            href={`${basePath}/payments?tab=history`}
+          />
+          <Stat
+            label="Credits"
+            value={summary ? formatPrice(summary.creditBalancePaise) : "—"}
+            hint="Available to use"
+            href={`${basePath}/payments?tab=credits`}
+          />
+        </StatRow>
+      </Section>
+
+      {/* #1778 — held times this learner asked to hear about. */}
+      <WaitingTimesStrip />
+
+      {/* Q2 — the two ways into Help & support. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <HelpCard
+          href={`${basePath}/support?tab=requests`}
+          icon={LifeBuoy}
+          title="Need help?"
+          body="Ask about a booking or a payment."
+        />
+        <HelpCard
+          href={`${basePath}/support?tab=feedback`}
+          icon={MessageSquareText}
+          title="Share feedback"
+          body="Tell us what would make this better."
+        />
+      </div>
+    </div>
+  );
+}
+
+function HelpCard({
+  href,
+  icon: Icon,
+  title,
+  body,
+}: Readonly<{
+  href: string;
+  icon: typeof LifeBuoy;
+  title: string;
+  body: string;
+}>) {
+  return (
+    <Link
+      href={href}
+      className="flex items-start gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/20 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <Icon
+        className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
+      <div>
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        <p className="text-sm text-muted-foreground">{body}</p>
+      </div>
+    </Link>
   );
 }

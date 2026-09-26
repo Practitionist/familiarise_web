@@ -12,13 +12,19 @@ import { join } from "path";
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 const SHELL_SOURCES = [
-  "components/dashboard/PersonalDashboardShell.tsx",
+  // #1527: one DashboardShell renders the chrome for the personal, org,
+  // org-workspace and back-office trees.
+  "components/dashboard/DashboardShell.tsx",
+  // The legacy create-wizard frame; OrgSwitcherTopBar is gone (#1527 §7.4).
+  "app/dashboard/organization/(switcher)/layout.tsx",
+] as const;
+
+/** Every tree's chrome must delegate to DashboardShell, never re-roll it. */
+const PORTED_SHELLS = [
+  "components/dashboard/PersonalDashboardLayoutCore.tsx",
   "components/dashboard/OperatorDashboardShell.tsx",
-  // The org shell is the client component; layout.tsx is the server wrapper
-  // that only seeds the org-details query and renders no chrome.
   "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
   "app/dashboard/org-workspace/[orgWorkspaceId]/OrgWorkspaceShell.tsx",
-  "app/dashboard/organization/(switcher)/layout.tsx",
 ] as const;
 
 /**
@@ -96,8 +102,7 @@ describe("dashboard shell overflow contract", () => {
 
       const mains = extractMainTags(src);
       const scrollMains = mains.filter(
-        (tag) =>
-          /\bmin-h-0\b/.test(tag) && /\boverflow-y-auto\b/.test(tag),
+        (tag) => /\bmin-h-0\b/.test(tag) && /\boverflow-y-auto\b/.test(tag),
       );
       expect(scrollMains.length).toBe(1);
       // <main> must be the containing block for every absolutely positioned
@@ -112,8 +117,29 @@ describe("dashboard shell overflow contract", () => {
     },
   );
 
+  it.each(PORTED_SHELLS)(
+    "%s renders DashboardShell instead of its own viewport chrome",
+    (rel) => {
+      const src = read(rel);
+      expect(src).toContain("<DashboardShell");
+      expect(src).not.toContain("h-screen-maintenance");
+      expect(extractMainTags(src)).toEqual([]);
+    },
+  );
+
+  it("mobile nav fits the 4rem budget .h-dashboard-fill subtracts", () => {
+    const nav = read("components/dashboard/MobileNav.tsx");
+    const bar = /<nav\b[^>]*className="([^"]*)"/.exec(nav)?.[1] ?? "";
+    expect(bar).toMatch(/\bh-16\b/);
+    expect(bar).toMatch(/\bmd:hidden\b/);
+    expect(bar).not.toContain("safe-area-inset-bottom");
+  });
+
   it(".h-screen-maintenance uses 100dvh", () => {
-    const rule = extractCssRule(read("app/globals.css"), ".h-screen-maintenance");
+    const rule = extractCssRule(
+      read("app/globals.css"),
+      ".h-screen-maintenance",
+    );
     expect(rule).toContain("100dvh");
     expect(rule).not.toMatch(/100vh(?![\w-])/);
   });
@@ -154,7 +180,7 @@ describe("dashboard shell overflow contract", () => {
 
   it("dashboard loading skeleton never reintroduces a 100vh floor", () => {
     // The consultant/consultee loading branches render
-    // PersonalDashboardShellSkeleton -> CollapsibleSidebarSkeleton. The
+    // DashboardShellSkeleton -> CollapsibleSidebarSkeleton. The
     // gate-state checks above only read the layout FILES, so a min-h-screen
     // inside the skeleton component would slip past them and re-open the
     // mobile over-scroll. Pin the actual loading markup.
@@ -223,7 +249,8 @@ describe("dashboard shell overflow contract", () => {
     for (const rel of [
       "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/new/page.tsx",
       "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/[offeringId]/edit/page.tsx",
-      "app/dashboard/organization/[orgId]/catalog/[type]/new/page.tsx",
+      // ORG-01 (#1527): the page is a server gate; the chrome is its client.
+      "app/dashboard/organization/[orgId]/catalog/[type]/new/NewOrgOfferingClient.tsx",
     ]) {
       expect(read(rel)).toContain("content-flush-bottom");
     }
@@ -255,15 +282,10 @@ describe("dashboard shell overflow contract", () => {
     expect(
       read("app/dashboard/organization/[orgId]/messages/page.tsx"),
     ).not.toContain("DashboardHeader");
-    // Both shells that can show a banner feed its height to the variable.
-    for (const rel of [
-      "components/dashboard/PersonalDashboardShell.tsx",
-      "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
-    ]) {
-      expect(read(rel)).toContain(
-        'useCssVarHeight("--dashboard-banner-height")',
-      );
-    }
+    // The one shell that renders every banner feeds its height to the variable.
+    expect(read("components/dashboard/DashboardShell.tsx")).toContain(
+      'useCssVarHeight("--dashboard-banner-height")',
+    );
   });
 
   it("OfferingEditor sections are real tabs with every panel mounted", () => {
@@ -281,7 +303,8 @@ describe("dashboard shell overflow contract", () => {
     // The sticky band is the page's only title: no second h1 from the page.
     for (const rel of [
       "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/new/page.tsx",
-      "app/dashboard/organization/[orgId]/catalog/[type]/new/page.tsx",
+      // ORG-01 (#1527): the page is a server gate; the chrome is its client.
+      "app/dashboard/organization/[orgId]/catalog/[type]/new/NewOrgOfferingClient.tsx",
     ]) {
       expect(read(rel)).not.toContain("DashboardHeader");
     }
@@ -304,7 +327,10 @@ describe("dashboard shell overflow contract", () => {
     expect(summaryIdx).toBeGreaterThan(0);
     // Card opens shortly before the label; bound the check to that card.
     const cardStart = src.lastIndexOf("<div", summaryIdx);
-    const cardEnd = src.indexOf("</div>", src.indexOf("min-h-[16rem]", summaryIdx));
+    const cardEnd = src.indexOf(
+      "</div>",
+      src.indexOf("min-h-[16rem]", summaryIdx),
+    );
     const card = src.slice(cardStart, cardEnd + 6);
     expect(card).not.toMatch(/\bh-full\b/);
     expect(card).not.toContain("h-[calc(100%-6rem)]");
@@ -315,9 +341,7 @@ describe("dashboard shell overflow contract", () => {
     const loading = read(
       "app/dashboard/org-workspace/[orgWorkspaceId]/loading.tsx",
     );
-    expect(loading).not.toMatch(
-      /import\s*\{[^}]*CollapsibleSidebarSkeleton/,
-    );
+    expect(loading).not.toMatch(/import\s*\{[^}]*CollapsibleSidebarSkeleton/);
     expect(loading).not.toMatch(/<CollapsibleSidebarSkeleton/);
     expect(loading).not.toContain("h-screen-maintenance");
     expect(loading).toMatch(/import\s*\{[^}]*Skeleton/);

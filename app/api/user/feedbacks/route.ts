@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
         userName: session.user.name || "User",
         category: feedback.category || undefined,
         message: feedback.description || feedback.title || "New feedback",
-        dashboardUrl: "/dashboard/admin/feedbacks",
+        dashboardUrl: "/dashboard/admin/feedback",
       },
     );
 

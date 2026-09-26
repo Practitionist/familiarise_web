@@ -1,23 +1,16 @@
-import { SupportHub } from "@/components/dashboard/shared/support/SupportHub";
+import { HelpAndSupportPage } from "@/components/dashboard/shared/support/HelpAndSupportPage";
+import { HelpCenterPanel } from "@/app/support/_components/HelpCenterPanel";
 
-/**
- * #support-hub — the Support tab: one Swiggy-style surface with a Sessions
- * subtab (per-appointment threads) and a Platform subtab (flowchart intake +
- * tickets). Feedback and Help remain sibling destinations, deep-linked from
- * the Platform subtab.
- */
+/** Help & support (#1527 Q2) — Requests · Feedback · Help center (learner topics). */
 export default async function SupportPage({
   params,
-}: {
-  params: Promise<{ consulteeId: string }>;
-}) {
-  const p = await params;
+}: Readonly<{ params: Promise<{ consulteeId: string }> }>) {
+  const { consulteeId } = await params;
   return (
-    <SupportHub
-      profileId={p.consulteeId}
-      appointmentsHrefBase={`/dashboard/consultee/${p.consulteeId}/appointments`}
-      feedbackHref={`/dashboard/consultee/${p.consulteeId}/feedback`}
-      helpHref={`/dashboard/consultee/${p.consulteeId}/help`}
+    <HelpAndSupportPage
+      profileId={consulteeId}
+      basePath={`/dashboard/consultee/${consulteeId}`}
+      helpCenter={<HelpCenterPanel audience="learner" />}
     />
   );
 }

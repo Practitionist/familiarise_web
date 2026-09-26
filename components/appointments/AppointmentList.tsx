@@ -94,6 +94,8 @@ interface AppointmentListProps {
   canOpen?: (vm: AppointmentVM) => boolean;
   highlightedId?: string | null;
   registerRowRef?: (id: string, el: HTMLDivElement | null) => void;
+  /** Consultant Requests URL for "In Requests" chips (#1527). */
+  requestsHref?: string;
   emptyTitle: string;
   emptyDescription: string;
 }
@@ -108,6 +110,7 @@ export function AppointmentList({
   canOpen,
   highlightedId,
   registerRowRef,
+  requestsHref,
   emptyTitle,
   emptyDescription,
 }: AppointmentListProps) {
@@ -142,9 +145,12 @@ export function AppointmentList({
               vm={vm}
               adapter={adapter}
               viewerZone={viewerZone}
-              sponsoredLabel={resolveSponsoredLabel?.(vm.organizationId) ?? null}
+              sponsoredLabel={
+                resolveSponsoredLabel?.(vm.organizationId) ?? null
+              }
               onOpen={!canOpen || canOpen(vm) ? onOpen : undefined}
               highlighted={highlightedId === vm.id}
+              requestsHref={requestsHref}
               registerRef={
                 registerRowRef ? (el) => registerRowRef(vm.id, el) : undefined
               }

@@ -18,10 +18,11 @@ import { getAppUrl } from "@/lib/url";
  *   - Org-hosted work → the org route. Correct for every participant, because
  *     the LEARNER who attended and the EXPERT who delivered both reach the same
  *     `/dashboard/organization/<id>/…` page.
- *   - B2C work → a bare `/dashboard`. Deliberately NOT a guessed personal
- *     route: the consultant and the consultee have different dashboards, and
- *     the capability router already resolves the right one per viewer. The old
- *     bare `/dashboard` was only wrong because it was used for org work too.
+ *   - B2C work → `/dashboard/go/auto/<surface>` (#1527). Deliberately NOT a
+ *     guessed personal route: the consultant and the consultee have different
+ *     dashboards, and the go resolver picks each viewer's own side of the
+ *     surface. A bare `/dashboard` only reached the viewer's role home, so a
+ *     dual-role user landed on the wrong side.
  *
  * Use {@link personalHref} instead when a trigger has exactly one recipient and
  * their side is known — a precise link beats a router bounce.
@@ -43,9 +44,9 @@ export function notificationHref(
 ): string {
   const base = getAppUrl();
   if (!organizationId) {
-    // The router picks the viewer's own dashboard. One payload, N recipients,
-    // possibly on different sides — nothing more specific is correct here.
-    return `${base}/dashboard`;
+    // The go resolver picks the viewer's own dashboard. One payload, N
+    // recipients, possibly on different sides.
+    return `${base}/dashboard/go/auto/${surface}`;
   }
   return `${base}/dashboard/organization/${organizationId}/${surface}`;
 }
@@ -75,7 +76,11 @@ export function scopedHref(args: {
     return notificationHref(args.organizationId, args.surface);
   }
   if (args.personal) {
-    return personalHref(args.personal.kind, args.personal.profileId, args.surface);
+    return personalHref(
+      args.personal.kind,
+      args.personal.profileId,
+      args.surface,
+    );
   }
   return notificationHref(null, args.surface);
 }

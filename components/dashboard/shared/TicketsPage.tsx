@@ -25,7 +25,16 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { Stat, StatRow } from "@/components/dashboard/Stat";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { ticketPriority, ticketStatus } from "@/lib/labels/backoffice-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -40,10 +49,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   Search,
   MessageSquare,
-  Clock,
   AlertCircle,
-  CheckCircle2,
-  XCircle,
   MoreHorizontal,
   RefreshCw,
   Send,
@@ -70,54 +76,6 @@ const EMPTY_COUNTS: TicketCounts = {
   onHold: 0,
   resolved: 0,
   closed: 0,
-};
-
-const getStatusColor = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "OPEN":
-      return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
-    case "IN_PROGRESS":
-      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-    case "ON_HOLD":
-      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
-    case "RESOLVED":
-      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800";
-    case "CLOSED":
-      return "bg-muted text-muted-foreground border-border";
-    default:
-      return "bg-muted text-muted-foreground border-border";
-  }
-};
-
-const getPriorityColor = (priority: string) => {
-  switch (priority.toUpperCase()) {
-    case "URGENT":
-    case "HIGH":
-      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
-    case "MEDIUM":
-      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-    case "LOW":
-      return "bg-muted text-muted-foreground border-border";
-    default:
-      return "bg-muted text-muted-foreground border-border";
-  }
-};
-
-const getStatusIcon = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "OPEN":
-      return <AlertCircle className="h-4 w-4 text-blue-500" />;
-    case "IN_PROGRESS":
-      return <Clock className="h-4 w-4 text-yellow-500" />;
-    case "ON_HOLD":
-      return <Clock className="h-4 w-4 text-orange-500" />;
-    case "RESOLVED":
-      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-    case "CLOSED":
-      return <XCircle className="h-4 w-4 text-muted-foreground" />;
-    default:
-      return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
-  }
 };
 
 const formatDate = (dateString: string) => {
@@ -151,9 +109,64 @@ const formatIssueType = (issueType: string | null) => {
   return issueType.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 };
 
+type TicketView = "mine" | "unassigned" | "all";
+const TICKET_VIEWS: { value: TicketView; label: string }[] = [
+  { value: "mine", label: "Mine" },
+  { value: "unassigned", label: "Unassigned" },
+  { value: "all", label: "All" },
+];
+
+const hours = (ms: number) => Math.max(1, Math.round(Math.abs(ms) / 3_600_000));
+
+/** #1527 — the SLA cell: the tighter clock that is still running. */
+function slaCell(ticket: Ticket) {
+  const sla = ticket.sla;
+  if (!sla) return <span className="text-muted-foreground">—</span>;
+  if (sla.ackBreached)
+    return <StatusBadge label="Reply overdue" tone="critical" />;
+  if (sla.resolutionBreached) {
+    return <StatusBadge label="Resolution overdue" tone="critical" />;
+  }
+  if (sla.msToAckDue !== null) {
+    return (
+      <StatusBadge
+        label={`Reply in ${hours(sla.msToAckDue)}h`}
+        tone="warning"
+      />
+    );
+  }
+  if (sla.msToResolutionDue !== null) {
+    return (
+      <StatusBadge
+        label={`Due in ${hours(sla.msToResolutionDue)}h`}
+        tone="neutral"
+        variant="dot"
+      />
+    );
+  }
+  return <span className="text-muted-foreground">—</span>;
+}
+
 export function TicketsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { basePath, tree, viewerId } = useBackofficeCapability();
+  const searchParams = useSearchParams();
+  // #1527 Q12 — Mine · Unassigned · All; staff open on Unassigned.
+  const [view, setViewState] = useState<TicketView>(() => {
+    const requested = searchParams.get("view");
+    if (TICKET_VIEWS.some((v) => v.value === requested)) {
+      return requested as TicketView;
+    }
+    return tree === "staff" ? "unassigned" : "all";
+  });
+  const setView = (next: TicketView) => {
+    setViewState(next);
+    setPage(1);
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", next);
+    window.history.replaceState(window.history.state, "", `?${params}`);
+  };
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
@@ -180,6 +193,7 @@ export function TicketsPage() {
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: [
       "operator-tickets",
+      view,
       page,
       statusFilter,
       priorityFilter,
@@ -190,6 +204,8 @@ export function TicketsPage() {
         page: page.toString(),
         limit: "20",
         ...(statusFilter !== "all" && { status: statusFilter }),
+        ...(view === "mine" && { assignedToId: viewerId }),
+        ...(view === "unassigned" && { assignedToId: "unassigned" }),
         ...(priorityFilter !== "all" && { priority: priorityFilter }),
         ...(debouncedSearch && { search: debouncedSearch }),
       });
@@ -203,7 +219,29 @@ export function TicketsPage() {
 
   const tickets = data?.tickets ?? [];
   const counts = data?.counts ?? EMPTY_COUNTS;
-  const totalPages = data?.pagination.totalPages ?? 1;
+  const total = data?.pagination.total ?? 0;
+
+  const assignToMe = useMutation({
+    mutationFn: async (ticketId: string) => {
+      const response = await fetch(`/api/staff/support-tickets/${ticketId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignedToId: viewerId }),
+      });
+      if (!response.ok) throw new Error("Failed to assign ticket");
+    },
+    onSuccess: () => {
+      toast({ title: "Assigned to you" });
+      queryClient.invalidateQueries({ queryKey: ["operator-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["operator-ticket-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["backoffice-nav-counts"] });
+    },
+    onError: () =>
+      toast({
+        title: "Could not assign the ticket",
+        variant: "destructive",
+      }),
+  });
 
   const {
     data: ticketDetail,
@@ -388,7 +426,6 @@ export function TicketsPage() {
       primary: true,
       cell: (ticket) => (
         <div className="flex items-center gap-2">
-          {getStatusIcon(ticket.status)}
           <span className="font-medium truncate max-w-[200px]">
             {ticket.title}
           </span>
@@ -419,20 +456,29 @@ export function TicketsPage() {
     {
       key: "status",
       header: "Status",
-      cell: (ticket) => (
-        <Badge variant="outline" className={getStatusColor(ticket.status)}>
-          {ticket.status.replace("_", " ")}
-        </Badge>
-      ),
+      cell: (ticket) => <StatusBadge {...ticketStatus(ticket.status)} />,
     },
     {
       key: "priority",
       header: "Priority",
       cell: (ticket) => (
-        <Badge variant="outline" className={getPriorityColor(ticket.priority)}>
-          {ticket.priority}
-        </Badge>
+        <StatusBadge {...ticketPriority(ticket.priority)} variant="dot" />
       ),
+    },
+    {
+      key: "sla",
+      header: "SLA",
+      cell: slaCell,
+    },
+    {
+      key: "assignee",
+      header: "Assignee",
+      className: "text-sm text-muted-foreground",
+      cell: (ticket) => {
+        if (!ticket.assignedToId) return "Unassigned";
+        if (ticket.assignedToId === viewerId) return "You";
+        return ticket.assignedTo?.name ?? "Someone else";
+      },
     },
     {
       key: "issueType",
@@ -464,6 +510,16 @@ export function TicketsPage() {
         >
           View Details
         </DropdownMenuItem>
+        {ticket.assignedToId !== viewerId && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              assignToMe.mutate(ticket.id);
+            }}
+          >
+            Assign to me
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={(e) => handleQuickAction(ticket.id, "resolve", e)}
@@ -488,9 +544,9 @@ export function TicketsPage() {
 
   return (
     <div className="space-y-6">
-      <DashboardHeader
-        title="Support Tickets"
-        subtitle="Manage all customer support tickets"
+      <PageHeader
+        title="Tickets"
+        description="Support requests from customers, with their response clocks."
         actions={
           <Button
             onClick={() => refetch()}
@@ -506,54 +562,32 @@ export function TicketsPage() {
         }
       />
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6">
-        {[
-          { label: "Open", value: counts.open, color: "text-foreground" },
-          {
-            label: "In Progress",
-            value: counts.inProgress,
-            color: "text-amber-600 dark:text-amber-400",
-          },
-          {
-            label: "On Hold",
-            value: counts.onHold,
-            color: "text-orange-600 dark:text-orange-400",
-          },
-          {
-            label: "Resolved",
-            value: counts.resolved,
-            color: "text-green-600 dark:text-green-400",
-          },
-          {
-            label: "Closed",
-            value: counts.closed,
-            color: "text-muted-foreground",
-          },
-          {
-            label: "Total",
-            value: counts.total,
-            color: "text-foreground",
-          },
-        ].map((stat) => (
-          <Card key={stat.label} className="border-0 shadow-sm">
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                {stat.label}
-              </p>
-              <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* Platform-wide totals by status (the route's groupBy), not a page count. */}
+      <StatRow columns={4}>
+        <Stat label="Open" value={counts.open} />
+        <Stat label="In progress" value={counts.inProgress} />
+        <Stat label="On hold" value={counts.onHold} />
+        <Stat label="Resolved" value={counts.resolved} />
+      </StatRow>
 
       {/* Filters */}
       <Card className="border-0 shadow-sm">
         <CardContent className="p-4">
+          <div className="mb-4">
+            <FilterBar
+              chips={{
+                label: "View",
+                options: TICKET_VIEWS,
+                value: view,
+                onChange: (v) => setView((v as TicketView | null) ?? "all"),
+              }}
+            />
+          </div>
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
               <Input
+                aria-label="Search tickets"
                 placeholder="Search tickets..."
                 value={localSearchValue}
                 onChange={(e) => handleSearchChange(e.target.value)}
@@ -625,30 +659,12 @@ export function TicketsPage() {
         </CardContent>
       </Card>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-          >
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+      <TablePagination
+        page={page}
+        pageSize={20}
+        total={total}
+        onPageChange={setPage}
+      />
 
       {/* Ticket Detail Dialog */}
       <ResponsiveModal
@@ -686,7 +702,7 @@ export function TicketsPage() {
               <>
                 <ResponsiveModalHeader>
                   <ResponsiveModalTitle className="flex items-center gap-2">
-                    {getStatusIcon(ticketDetail.status)}
+                    <StatusBadge {...ticketStatus(ticketDetail.status)} />
                     {ticketDetail.title}
                   </ResponsiveModalTitle>
                   <ResponsiveModalDescription>
@@ -769,19 +785,35 @@ export function TicketsPage() {
                       {ticketDetail.linkedPayment && (
                         <div className="flex items-center gap-2 text-sm">
                           <CreditCard className="h-4 w-4 text-muted-foreground/70" />
-                          <span>
+                          <Link
+                            href={`${basePath}/payments/${ticketDetail.linkedPayment.id}`}
+                            className="underline-offset-4 hover:underline"
+                          >
                             Payment:{" "}
                             {formatCurrency(
                               ticketDetail.linkedPayment.amount,
                               ticketDetail.linkedPayment.currency,
                             )}
-                          </span>
-                          <Badge variant="outline">
-                            {ticketDetail.linkedPayment.paymentStatus}
-                          </Badge>
+                          </Link>
+                          <StatusBadge
+                            {...paymentStatusBadge(
+                              ticketDetail.linkedPayment.paymentStatus,
+                            )}
+                          />
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {ticketDetail.assignedToId !== viewerId && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={assignToMe.isPending}
+                      onClick={() => assignToMe.mutate(ticketDetail.id)}
+                    >
+                      Assign to me
+                    </Button>
                   )}
 
                   {/* Status Update */}

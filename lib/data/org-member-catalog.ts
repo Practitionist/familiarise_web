@@ -54,8 +54,15 @@ export async function getOrgMemberCatalog(
 ): Promise<OrgCatalogEntry[]> {
   const where = memberVisibleWhere(orgId);
   const [consultations, subscriptions, webinars, classes] = await Promise.all([
-    prisma.consultationPlan.findMany({ where, select: CARD_SELECT }),
-    prisma.subscriptionPlan.findMany({ where, select: CARD_SELECT }),
+    // #1527 Q4 — 1:1 and subscription drafts stay with their author.
+    prisma.consultationPlan.findMany({
+      where: { ...where, status: "PUBLISHED" },
+      select: CARD_SELECT,
+    }),
+    prisma.subscriptionPlan.findMany({
+      where: { ...where, status: "PUBLISHED" },
+      select: CARD_SELECT,
+    }),
     prisma.webinarPlan.findMany({ where, select: CARD_SELECT }),
     prisma.classPlan.findMany({ where, select: CARD_SELECT }),
   ]);

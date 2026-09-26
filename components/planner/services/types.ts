@@ -42,6 +42,7 @@ export interface CreateWebinarPayload {
   faqs?: PlanFaqPayload[];
   consultantProfileId: string;
   scheduledAt?: Date | string | null;
+  status?: "DRAFT" | "SCHEDULED";
 }
 
 export interface CreateClassPayload {
@@ -73,6 +74,7 @@ export interface CreateClassPayload {
   /** #1819 — null means "until session 1". */
   lateJoinUntilSession?: number | null;
   lateJoinersGetPastRecordings?: boolean;
+  status?: "DRAFT" | "SCHEDULED";
 }
 
 export interface ClassContentInput {

@@ -1,8 +1,6 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useState, useMemo } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -11,16 +9,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { motion } from "framer-motion";
-import { ArrowUpDown, FolderOpen, RefreshCw } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { ArrowUpDown, FolderOpen } from "lucide-react";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import {
   EventResourceCard,
   type EventResource,
@@ -37,7 +29,6 @@ interface ResourcesData {
 
 interface ResourcesTabProps {
   data: ResourcesData | undefined;
-  onRefresh?: () => void;
   /**
    * Which artifact this view is for. Documents and Recordings are separate
    * destinations now; the event-type tabs stay as GROUPING, because "which
@@ -87,53 +78,12 @@ function sortEvents(
 
 export function ResourcesTab({
   data,
-  onRefresh,
   artifact = "both",
   title,
   subtitle,
 }: ResourcesTabProps) {
-  const { toast } = useToast();
-  const [isSyncing, setIsSyncing] = useState(false);
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [resourceFilter, setResourceFilter] = useState<FilterOption>("all");
-
-  const handleSync = async () => {
-    setIsSyncing(true);
-    try {
-      const response = await fetch("/api/stream/recordings/sync", {
-        method: "POST",
-      });
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to sync recordings");
-      }
-
-      if (result.synced > 0) {
-        toast({
-          title: "Synced",
-          description: `${result.synced} recording(s) synced from Stream.`,
-        });
-        onRefresh?.();
-      } else {
-        toast({
-          title: "Up to date",
-          description: "No new recordings found.",
-        });
-      }
-    } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
-      console.error("Error syncing recordings:", err);
-      toast({
-        title: "Error",
-        description:
-          err instanceof Error ? err.message : "Failed to sync recordings",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   /**
    * Events that actually carry the artifact this page is for.
@@ -198,29 +148,20 @@ export function ResourcesTab({
 
   if (totalResources === 0) {
     return (
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-card rounded-xl shadow-sm"
-      >
-        <div className="w-16 h-16 mb-4 text-muted-foreground/70 flex items-center justify-center">
-          <FolderOpen className="w-12 h-12" />
-        </div>
-        <h3 className="text-xl font-semibold text-foreground mb-2">
-          {artifact === "materials"
-            ? "No documents yet"
-            : artifact === "recordings"
-              ? "No recordings yet"
-              : "No resources yet"}
-        </h3>
-        <p className="text-muted-foreground text-center max-w-md">
-          {artifact === "recordings"
-            ? "Recordings appear here once a session you attended has been recorded and processed."
-            : artifact === "materials"
-              ? "Handouts and materials shared for your sessions will appear here."
-              : "Resources from your enrolled consultations, subscriptions, webinars, and classes will appear here."}
-        </p>
-      </motion.div>
+      <>
+        <PageHeader
+          title={title ?? "Resources"}
+          description={
+            subtitle ?? "Materials and recordings from your enrolled events"
+          }
+        />
+        <EmptyState
+          variant="page"
+          icon={FolderOpen}
+          title={emptyTitle(artifact)}
+          description={emptyDescription(artifact)}
+        />
+      </>
     );
   }
 
@@ -233,45 +174,12 @@ export function ResourcesTab({
 
   const isFiltered = resourceFilter !== "all";
 
-  // Find the first tab that has events (based on unfiltered data)
-  const defaultTab =
-    EVENT_TYPES.find(
-      (t) => (artifactData[t.key as keyof ResourcesData] ?? []).length > 0,
-    )?.key || "consultations";
-
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
-      <DashboardHeader
+    <div>
+      <PageHeader
         title={title ?? "Resources"}
-        subtitle={
+        description={
           subtitle ?? "Materials and recordings from your enrolled events"
-        }
-        actions={
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSync}
-                  disabled={isSyncing}
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`}
-                  />
-                  {isSyncing ? "Syncing..." : "Sync from Stream"}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs">
-                Re-fetch latest recording links from Stream. Use this if a recent
-                recording doesn&apos;t appear.
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
         }
       />
 
@@ -281,7 +189,10 @@ export function ResourcesTab({
           value={resourceFilter}
           onValueChange={(v) => setResourceFilter(v as FilterOption)}
         >
-          <SelectTrigger className="w-full sm:w-[180px]">
+          <SelectTrigger
+            className="w-full sm:w-[180px]"
+            aria-label={`Filter ${artifactNoun}`}
+          >
             <SelectValue placeholder="Filter resources" />
           </SelectTrigger>
           <SelectContent>
@@ -309,48 +220,52 @@ export function ResourcesTab({
         </Button>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="space-y-6">
-        <TabsList>
-          {EVENT_TYPES.map(({ key, label }) => {
-            const total = (artifactData[key as keyof ResourcesData] ?? []).length;
-            const filtered = (filteredData[key as keyof ResourcesData] ?? []).length;
-            return (
-              <TabsTrigger key={key} value={key} disabled={total === 0}>
-                {label}
-                {total > 0 && (
-                  <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground">
-                    {isFiltered ? `${filtered}/${total}` : total}
-                  </span>
-                )}
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-
-        {EVENT_TYPES.map(({ key }) => {
-          const total = (data[key as keyof ResourcesData] ?? []).length;
+      {/* #1527 — the booking-type tabs live in the URL (?tab=); a type with
+          nothing on it has no tab, so the first one with events opens. */}
+      <UrlTabs
+        tabs={EVENT_TYPES.map(({ key, label }) => {
+          const total = (artifactData[key as keyof ResourcesData] ?? []).length;
           const items = filteredData[key as keyof ResourcesData] ?? [];
-          return (
-            <TabsContent key={key} value={key}>
+          return {
+            value: key,
+            label: isFiltered
+              ? `${label} · ${items.length}/${total}`
+              : `${label} · ${total}`,
+            show: total > 0,
+            content: (
               <div className="space-y-4">
-                {items.length === 0 && total > 0 ? (
-                  <p className="text-sm text-muted-foreground/70 text-center py-8">
-                    No resources match the selected filter.
+                {items.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No {artifactNoun} match the selected filter.
                   </p>
                 ) : (
                   items.map((event) => (
                     <EventResourceCard
-                    key={event.id}
-                    event={event}
-                    artifact={artifact}
-                  />
+                      key={event.id}
+                      event={event}
+                      artifact={artifact}
+                    />
                   ))
                 )}
               </div>
-            </TabsContent>
-          );
+            ),
+          };
         })}
-      </Tabs>
-    </motion.div>
+      />
+    </div>
   );
+}
+
+function emptyTitle(artifact: ResourceArtifact): string {
+  if (artifact === "materials") return "No documents yet";
+  if (artifact === "recordings") return "No recordings yet";
+  return "No resources yet";
+}
+
+function emptyDescription(artifact: ResourceArtifact): string {
+  if (artifact === "recordings")
+    return "Recordings appear here once a session you attended has been recorded and processed.";
+  if (artifact === "materials")
+    return "Handouts and materials shared for your sessions will appear here.";
+  return "Resources from your enrolled consultations, subscriptions, webinars, and classes will appear here.";
 }

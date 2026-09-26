@@ -114,7 +114,7 @@ it("renders the hold date on a PENDING row", async () => {
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <EarningsSummaryPanel consultantId="c_1" />
+        <EarningsSummaryPanel consultantId="c_1" view="activity" />
       </QueryClientProvider>,
     );
   });

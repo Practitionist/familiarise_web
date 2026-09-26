@@ -8,11 +8,9 @@ import { SettingsTabs } from "./SettingsTabs";
  * /dashboard/organization/[orgId]/settings — org config, SSO, integrations.
  *
  * Floors at active membership rather than `settings.manage`, because the tabs
- * behind it answer to two different grants: General is `settings.manage`
- * (GOVERNANCE) while the integrations are `integrations.read` (the finance
- * set, which includes BILLING_ADMIN). Gating the page on either one would
- * lock out a role that legitimately holds the other. Each tab enforces its
- * own gate, and `UrlTabs` renders nothing when none apply.
+ * behind it answer to different grants (GOVERNANCE, OWNER, `billing.manage`,
+ * `integrations.manage`) and "Your notifications" is every member's. Each tab
+ * enforces its own gate (SettingsTabs.tsx).
  */
 export default async function OrgSettingsPage({
   params,

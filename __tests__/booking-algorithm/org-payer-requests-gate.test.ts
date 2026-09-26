@@ -13,23 +13,27 @@
  * no way to notice it was stuck.
  *
  * Three cases pinned here: the expert still gets the allocation surface, the
- * payer admin gets the same queue read-only, and everyone else is still sent
- * home rather than shown a page with nothing on it for them.
+ * payer admin is sent (308) to the same queue read-only — Appointments ›
+ * Unscheduled since #1527 Q7 — and everyone else is still sent home rather
+ * than shown a page with nothing on it for them.
  */
 
 import { isPayerAdminRole } from "../../lib/booking/org-actor";
 
 const mockRequireOrgAccess = jest.fn();
-const mockReadOrgPendingRequests = jest.fn();
 const mockRedirect = jest.fn((path: string) => {
   // Next's redirect() throws; a mock that returns would let the caller keep
   // running past a gate it was supposed to be stopped by.
   throw new Error(`NEXT_REDIRECT:${path}`);
 });
+const mockPermanentRedirect = jest.fn((path: string) => {
+  throw new Error(`NEXT_PERMANENT_REDIRECT:${path}`);
+});
 
 jest.mock("next/navigation", () => ({
   __esModule: true,
   redirect: (path: string) => mockRedirect(path),
+  permanentRedirect: (path: string) => mockPermanentRedirect(path),
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
   },
@@ -47,11 +51,6 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: (...a: unknown[]) => mockRequireOrgAccess(...a),
 }));
 
-jest.mock("../../lib/data/org-pending-requests", () => ({
-  __esModule: true,
-  readOrgPendingRequests: (...a: unknown[]) => mockReadOrgPendingRequests(...a),
-}));
-
 jest.mock(
   "../../app/dashboard/organization/[orgId]/requests/RequestsClient",
   () => ({
@@ -60,17 +59,8 @@ jest.mock(
   }),
 );
 
-jest.mock(
-  "../../app/dashboard/organization/[orgId]/requests/PayerRequestsView",
-  () => ({
-    __esModule: true,
-    PayerRequestsView: () => null,
-  }),
-);
-
 import OrgRequestsPage from "../../app/dashboard/organization/[orgId]/requests/page";
 import { RequestsClient } from "../../app/dashboard/organization/[orgId]/requests/RequestsClient";
-import { PayerRequestsView } from "../../app/dashboard/organization/[orgId]/requests/PayerRequestsView";
 
 const ORG = "org-acme";
 
@@ -101,8 +91,9 @@ async function renderPage() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockReadOrgPendingRequests.mockResolvedValue([]);
 });
+
+const UNSCHEDULED = `/dashboard/organization/${ORG}/appointments?tab=unscheduled`;
 
 describe("who may open the org Requests page", () => {
   it("an EXPERT member still gets the allocation surface", async () => {
@@ -113,36 +104,23 @@ describe("who may open the org Requests page", () => {
     const mounted = mountedComponents(await renderPage());
 
     expect(mounted).toContain(RequestsClient);
-    expect(mounted).not.toContain(PayerRequestsView);
     expect(mockRedirect).not.toHaveBeenCalled();
-    // The payer read is not run for someone who has the live one.
-    expect(mockReadOrgPendingRequests).not.toHaveBeenCalled();
+    expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 
-  it("an OWNER who does not deliver gets the queue read-only", async () => {
-    mockRequireOrgAccess.mockResolvedValue(
-      grant({ role: "OWNER", consultantProfileId: null }),
-    );
+  it.each(["OWNER", "MAINTAINER"])(
+    "a %s who does not deliver is sent to Appointments › Unscheduled",
+    async (role) => {
+      mockRequireOrgAccess.mockResolvedValue(
+        grant({ role, consultantProfileId: null }),
+      );
 
-    const mounted = mountedComponents(await renderPage());
-
-    expect(mounted).toContain(PayerRequestsView);
-    // No allocation controls: choosing times is still the expert's act.
-    expect(mounted).not.toContain(RequestsClient);
-    expect(mockRedirect).not.toHaveBeenCalled();
-    expect(mockReadOrgPendingRequests).toHaveBeenCalledWith(ORG);
-  });
-
-  it("a MAINTAINER gets the same view — both payer-side roles qualify", async () => {
-    mockRequireOrgAccess.mockResolvedValue(
-      grant({ role: "MAINTAINER", consultantProfileId: null }),
-    );
-
-    const mounted = mountedComponents(await renderPage());
-
-    expect(mounted).toContain(PayerRequestsView);
-    expect(mockRedirect).not.toHaveBeenCalled();
-  });
+      // No allocation controls: choosing times is still the expert's act.
+      await expect(renderPage()).rejects.toThrow("NEXT_PERMANENT_REDIRECT");
+      expect(mockPermanentRedirect).toHaveBeenCalledWith(UNSCHEDULED);
+      expect(mockRedirect).not.toHaveBeenCalled();
+    },
+  );
 
   it("a LEARNER with no consultant profile is still sent home", async () => {
     mockRequireOrgAccess.mockResolvedValue(
@@ -153,7 +131,7 @@ describe("who may open the org Requests page", () => {
     expect(mockRedirect).toHaveBeenCalledWith(
       `/dashboard/organization/${ORG}/home`,
     );
-    expect(mockReadOrgPendingRequests).not.toHaveBeenCalled();
+    expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 
   it("a MANAGER is sent home too — operations.read is not the payer role", async () => {

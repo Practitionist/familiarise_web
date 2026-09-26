@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Cross-org billing roll-up. Distinct from per-org /billing under
+ * Spend — the cross-org billing roll-up ("Spend" everywhere, #1527 §10). Distinct from per-org /billing under
  * /dashboard/organization/[orgId]/billing — that page shows ONE org's
  * invoices + wallet. This one rolls up the operator's whole portfolio
  * so cash-flow at a glance is one click away.
@@ -34,6 +34,8 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { humanizeEnum } from "@/lib/ui/tone";
+import { formatCurrencyTotals } from "../currency-totals";
 import {
   FUNDING_SOURCE_LABEL,
   FUNDING_SOURCE_BADGE_CLASS,
@@ -57,9 +59,7 @@ const columns: ResponsiveColumn<WorkspaceBillingPerOrgRow>[] = [
         <div className="text-xs text-muted-foreground">
           {r.organizationSlug}
           {r.organizationStatus !== "ACTIVE" && (
-            <span className="ml-2 text-amber-600">
-              · {r.organizationStatus.toLowerCase()}
-            </span>
+            <span className="ml-2">· {humanizeEnum(r.organizationStatus)}</span>
           )}
         </div>
       </Link>
@@ -85,7 +85,8 @@ const columns: ResponsiveColumn<WorkspaceBillingPerOrgRow>[] = [
     header: "Wallet",
     className: "text-right tabular-nums",
     headClassName: "text-right",
-    cell: (r) => formatCurrencyAmount(r.walletBalancePaise, "INR"),
+    // Each org in its own currency (#1527).
+    cell: (r) => formatCurrencyAmount(r.walletBalancePaise, r.currency),
   },
   {
     key: "outstanding",
@@ -94,7 +95,7 @@ const columns: ResponsiveColumn<WorkspaceBillingPerOrgRow>[] = [
     headClassName: "text-right",
     cell: (r) => (
       <div>
-        <div>{formatCurrencyAmount(r.outstandingPaise, "INR")}</div>
+        <div>{formatCurrencyAmount(r.outstandingPaise, r.currency)}</div>
         {r.outstandingCount > 0 && (
           <div className="text-xs text-muted-foreground">
             {r.outstandingCount} open
@@ -126,8 +127,8 @@ export function BillingPageClient({
   return (
     <>
       <DashboardHeader
-        title="Billing overview"
-        subtitle="Outstanding invoices and wallet balances across the organisations you operate"
+        title="Spend"
+        description="Outstanding invoices and wallet balances across the organizations you own."
       />
       <DashboardContent>
         {isError ? (
@@ -158,20 +159,19 @@ export function BillingPageClient({
                 <>
                   <StatCard
                     title="Outstanding"
-                    subtitle={`across ${summary.orgsOwned} organisation${summary.orgsOwned === 1 ? "" : "s"}`}
-                    value={formatCurrencyAmount(
-                      summary.totalOutstandingPaise,
-                      "INR",
-                    )}
+                    subtitle={`across ${summary.orgsOwned} organization${summary.orgsOwned === 1 ? "" : "s"}`}
+                    value={formatCurrencyTotals(summary.outstandingByCurrency)}
                     icon={Receipt}
                     variant={
-                      summary.totalOutstandingPaise > 0 ? "warning" : "default"
+                      summary.outstandingByCurrency.length > 0
+                        ? "warning"
+                        : "default"
                     }
                   />
                   <StatCard
                     title="Wallet balance"
                     subtitle="prepaid funds across orgs"
-                    value={formatCurrencyAmount(summary.totalWalletPaise, "INR")}
+                    value={formatCurrencyTotals(summary.walletByCurrency)}
                     icon={Wallet}
                   />
                   <StatCard

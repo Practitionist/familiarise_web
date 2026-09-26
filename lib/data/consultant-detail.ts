@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
+import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import type { TReviewTrackPresence } from "@/types/review";
 import {
   publicReviewSelect,
@@ -94,8 +95,12 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       tags: true,
       availabilityWindowsWeekly: true,
       availabilityWindowsCustom: true,
-      consultationPlans: true,
+      // #1527 Q4 — this feeds ExpertPricing, the main buy surface: only plans
+      // a buyer can purchase (not DRAFT, archived or ORG_ONLY). The page has
+      // no owner preview; authors see drafts in their planner.
+      consultationPlans: { where: oneOnOnePlanDiscoverableWhere() },
       subscriptionPlans: {
+        where: oneOnOnePlanDiscoverableWhere(),
         include: {
           subscriptionContents: {
             orderBy: { order: "asc" as const },

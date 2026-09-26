@@ -1,18 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { CheckCircle2 } from "lucide-react";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   fetchPendingPayments,
   PendingPaymentsWidget,
 } from "../home/PendingPaymentsWidget";
 
 /**
- * #1675 X4 — the "Needs you" band above the payment history: the approved
- * bookings still waiting on a payment and the pay links that lapsed. It reads
- * the Home widget's `pending-payments` query (one cache entry for both pages)
- * and mounts the widget itself for the rows — the countdown, the Pay button
- * and the cancel dialogs live there and are not forked here. Absent when
- * there is nothing to act on.
+ * #1675 X4 / #1527 — the Payments › Needs you tab: the approved bookings still
+ * waiting on a payment, the pay links that lapsed, and refunds that failed.
+ * It reads the Home inbox's `pending-payments` query (one cache entry for
+ * both pages) and mounts the widget itself for the payable rows — the
+ * countdown, the Pay button and the cancel dialogs live there and are not
+ * forked here. "Nothing needs you" when the queue is clear.
  */
 export function NeedsYouBand({
   consulteeId,
@@ -25,17 +29,45 @@ export function NeedsYouBand({
   });
   const pending = data?.pendingPayments.length ?? 0;
   const lapsed = data?.lapsedPayLinks.length ?? 0;
-  if (pending + lapsed === 0) return null;
+  const failedRefunds = data?.failedRefunds ?? [];
+
+  if (data && pending + lapsed + failedRefunds.length === 0) {
+    return (
+      <EmptyState
+        icon={CheckCircle2}
+        title="Nothing needs you"
+        description="Charges waiting on you and refunds that need a follow-up show up here."
+      />
+    );
+  }
 
   return (
-    <section aria-labelledby="needs-you-heading" className="mb-6">
-      <h2
-        id="needs-you-heading"
-        className="mb-3 text-sm font-semibold text-foreground"
-      >
-        Needs you
-      </h2>
-      <PendingPaymentsWidget consulteeId={consulteeId} />
+    <section aria-label="Needs you" className="space-y-3">
+      {failedRefunds.length > 0 && (
+        <ul className="space-y-2">
+          {failedRefunds.map((refund) => (
+            <li
+              key={refund.paymentId}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm"
+            >
+              <span className="text-foreground">
+                We couldn&apos;t return{" "}
+                {formatCurrencyAmount(refund.amountPaise, refund.currency)} to
+                your payment method.
+              </span>
+              <Link
+                href={`/dashboard/consultee/${consulteeId}/payments/${refund.paymentId}`}
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                View charge
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      {pending + lapsed > 0 && (
+        <PendingPaymentsWidget consulteeId={consulteeId} />
+      )}
     </section>
   );
 }

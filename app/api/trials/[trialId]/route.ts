@@ -56,6 +56,7 @@ import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { EMAIL_BUDGET_MS, sendTrialScheduledEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
+import { goHref } from "@/lib/dashboard/go";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -648,7 +649,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             planTitle: existingTrial.subscriptionPlan.title,
             dateTime: startTime.toISOString(),
             status: TrialStatus.SCHEDULED,
-            dashboardUrl: "/dashboard",
+            // #1527 — single known recipient, the consultee.
+            dashboardUrl: goHref("client", "appointments"),
           });
 
           // #1653 — the email twin, to both parties: the consultee's CTA is
@@ -664,7 +666,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               planTitle: existingTrial.subscriptionPlan.title,
               startsAt: startTime,
               awaitingPayment: false,
-              dashboardUrl: `${getAppUrl()}/dashboard`,
+              // #1527 — sendTrialScheduledEmail fans this to both parties.
+              dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
               paymentUrl: null,
             },
             EMAIL_BUDGET_MS.REQUEST,
@@ -746,7 +749,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               consulteeName: existingTrial.consulteeProfile.user.name || "User",
               planTitle: existingTrial.subscriptionPlan.title,
               status: TrialStatus.COMPLETED,
-              dashboardUrl: "/dashboard",
+              // #1527 — both consultant and consultee are recipients here.
+              dashboardUrl: goHref("auto", "appointments"),
             },
           ),
         );
@@ -766,7 +770,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               consulteeName: existingTrial.consulteeProfile.user.name || "User",
               planTitle: existingTrial.subscriptionPlan.title,
               status,
-              dashboardUrl: "/dashboard",
+              // #1527 — both consultant and consultee are recipients here.
+              dashboardUrl: goHref("auto", "appointments"),
             },
           ),
         );
@@ -1104,7 +1109,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         consulteeName: existingTrial.consulteeProfile.user.name || "User",
         planTitle: existingTrial.subscriptionPlan.title,
         status: TrialStatus.CANCELLED,
-        dashboardUrl: "/dashboard",
+        // #1527 — both consultant and consultee are recipients here.
+        dashboardUrl: goHref("auto", "appointments"),
       },
     );
 

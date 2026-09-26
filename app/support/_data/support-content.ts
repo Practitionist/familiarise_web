@@ -42,6 +42,35 @@ export interface SupportArticle {
   sections: SupportSection[];
 }
 
+/**
+ * #1527 Q2 — which help-centre categories each dashboard audience sees in its
+ * Help & support › Help center tab. Learners never get the expert or
+ * organisation topics (the consultee Help page used to serve the consultant FAQ).
+ */
+export type HelpCenterAudience = "learner" | "expert";
+
+export const HELP_CENTER_AUDIENCE_CATEGORIES: Record<
+  HelpCenterAudience,
+  readonly string[]
+> = {
+  learner: [
+    "getting-started",
+    "booking",
+    "payments",
+    "video",
+    "recordings",
+    "help",
+  ],
+  expert: [
+    "getting-started",
+    "experts",
+    "booking",
+    "video",
+    "recordings",
+    "help",
+  ],
+};
+
 export const supportCategories: SupportCategory[] = [
   {
     slug: "getting-started",
@@ -1492,4 +1521,14 @@ export function articleToMarkdown(article: SupportArticle): string {
     "Policies: /refund, /pricing, /privacy, /terms",
   );
   return lines.join("\n");
+}
+
+/** The categories, with their articles, one dashboard audience sees (#1527 Q2). */
+export function helpCenterFor(
+  audience: HelpCenterAudience,
+): { category: SupportCategory; articles: SupportArticle[] }[] {
+  return HELP_CENTER_AUDIENCE_CATEGORIES[audience].flatMap((slug) => {
+    const category = getCategory(slug);
+    return category ? [{ category, articles: articlesForCategory(slug) }] : [];
+  });
 }

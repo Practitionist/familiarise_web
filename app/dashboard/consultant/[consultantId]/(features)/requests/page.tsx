@@ -19,6 +19,8 @@ import { readRequestsInbox } from "@/lib/data/requests-inbox";
 import prisma from "@/lib/prisma";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
+import { AcceptingRequestsToggle } from "./AcceptingRequestsToggle";
+
 type PageProps = {
   params: Promise<{ consultantId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -77,17 +79,19 @@ export default async function RequestsPage({
       <DashboardHeader
         title="Requests"
         subtitle="Everything waiting on an answer, a payment or a next cycle"
+        actions={<AcceptingRequestsToggle consultantId={consultantId} />}
       />
       {profile?.acceptingRequests === false && (
         <Alert className="mt-6">
           <PauseCircle className="h-4 w-4" />
           <AlertDescription>
-            You&apos;re not accepting new requests —{" "}
+            You&apos;re not accepting new requests. Turn &quot;Accepting
+            requests&quot; back on above, or review your{" "}
             <Link
-              href={`/dashboard/consultant/${consultantId}/settings?tab=booking`}
+              href={`/dashboard/consultant/${consultantId}/settings/booking`}
               className="underline underline-offset-4"
             >
-              turn it back on in Settings
+              booking settings
             </Link>
             .
           </AlertDescription>

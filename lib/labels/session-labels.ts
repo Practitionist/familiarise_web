@@ -45,6 +45,7 @@ import type {
   WaitlistStatus,
   WebinarStatus,
 } from "@prisma/client";
+import { humanizeEnum } from "@/lib/ui/tone";
 
 export interface StatusBadgeStyle {
   label: string;
@@ -55,10 +56,7 @@ export interface StatusBadgeStyle {
 
 /** Title-case an unknown/legacy status string: "SOME_STATE" → "Some State". */
 export function formatStatusLabel(status: string): string {
-  return status
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return humanizeEnum(status);
 }
 
 const FALLBACK_CLASS = "bg-zinc-100 text-zinc-600 border-zinc-200";

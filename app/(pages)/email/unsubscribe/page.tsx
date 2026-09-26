@@ -93,12 +93,18 @@ export default async function EmailUnsubscribePage({
               {!done && !valid && (
                 <p className="text-muted-foreground">
                   This link is not valid. It may have been altered on the way
-                  here. You can still change what we send you from your profile.
+                  here. You can still change what we send you from your
+                  Settings.
                 </p>
               )}
               <p className="text-sm">
-                <Link href="/profile" className="underline underline-offset-4">
-                  Manage preferences on your profile
+                {/* #1527 — /profile routes each viewer to their own
+                    Settings › Notifications (after sign-in if needed). */}
+                <Link
+                  href="/profile?section=notifications"
+                  className="underline underline-offset-4"
+                >
+                  Manage notification preferences in Settings
                 </Link>
               </p>
             </CardContent>

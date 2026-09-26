@@ -42,16 +42,25 @@ import {
   PLATFORM_ISSUE_TYPE_CATEGORIES,
 } from "@/utils/supportTicketUrl";
 
+export interface CreateTicketDefaults {
+  issueType?: string;
+  title?: string;
+  description?: string;
+}
+
 export function CreateTicketDialog({
   trigger,
+  defaults,
 }: {
   /** Custom trigger node; defaults to a "New request" button. */
   trigger?: React.ReactNode;
+  /** Pre-fill, e.g. org Billing's "Request an invoice" (#1527 Q8). */
+  defaults?: CreateTicketDefaults;
 }) {
   const [open, setOpen] = useState(false);
-  const [issueType, setIssueType] = useState<string>("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [issueType, setIssueType] = useState<string>(defaults?.issueType ?? "");
+  const [title, setTitle] = useState(defaults?.title ?? "");
+  const [description, setDescription] = useState(defaults?.description ?? "");
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -78,9 +87,9 @@ export function CreateTicketDialog({
       });
       void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
       setOpen(false);
-      setIssueType("");
-      setTitle("");
-      setDescription("");
+      setIssueType(defaults?.issueType ?? "");
+      setTitle(defaults?.title ?? "");
+      setDescription(defaults?.description ?? "");
       setPriority("MEDIUM");
     },
     onError: (e: unknown) =>
@@ -91,7 +100,8 @@ export function CreateTicketDialog({
       }),
   });
 
-  const valid = !!issueType && title.trim().length > 0 && description.trim().length > 0;
+  const valid =
+    !!issueType && title.trim().length > 0 && description.trim().length > 0;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

@@ -12,6 +12,7 @@ import {
   notifySubscriptionCancelled,
 } from "@/lib/novu";
 import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
+import { goHref } from "@/lib/dashboard/go";
 import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
 import {
   requireApiAuth,
@@ -430,7 +431,8 @@ export async function PATCH(request: NextRequest) {
               subscription.subscriptionPlan?.consultantProfile?.user?.name ||
               "Consultant",
             consulteeName: subscription.requestedBy?.user?.name || undefined,
-            dashboardUrl: "/dashboard",
+            // #1527 — single known recipient, the consultee.
+            dashboardUrl: goHref("client", "appointments"),
           });
         }
       }
@@ -451,7 +453,8 @@ export async function PATCH(request: NextRequest) {
               subscription.subscriptionPlan?.consultantProfile?.user?.name ||
               "Consultant",
             consulteeName: subscription.requestedBy?.user?.name || undefined,
-            dashboardUrl: "/dashboard",
+            // #1527 — both consultant and consultee are recipients here.
+            dashboardUrl: goHref("auto", "appointments"),
           });
         }
 

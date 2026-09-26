@@ -24,8 +24,11 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { Stat, StatRow } from "@/components/dashboard/Stat";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { AwaitingPaymentPanel } from "./AwaitingPaymentPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -34,21 +37,11 @@ import {
   AlertTriangle,
   CheckCircle2,
   Video,
-  Users,
   Monitor,
   BookOpen,
-  MoreHorizontal,
-  Eye,
   RefreshCw,
   Loader2,
-  ArrowUpRight,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { AppointmentTimeline } from "./AppointmentTimeline";
 import type {
@@ -73,35 +66,21 @@ const getTypeIcon = (type: string) => {
   }
 };
 
-const getTypeColor = (type: string) => {
-  switch (type.toLowerCase()) {
-    case "consultation":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
-    case "subscription":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
-    case "webinar":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
-    case "class":
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
+/** #1527 — display status → tone (the derived tabs: scheduled/completed/issue). */
+const STATUS_TONE: Record<string, Tone> = {
+  scheduled: "info",
+  in_progress: "info",
+  completed: "success",
+  cancelled: "neutral",
 };
 
-const getStatusColor = (status: string) => {
-  switch (status.toLowerCase()) {
-    case "scheduled":
-      return "bg-muted text-foreground";
-    case "in_progress":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "completed":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "cancelled":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-};
+const TABS = [
+  "all",
+  "issue",
+  "awaiting-payment",
+  "scheduled",
+  "completed",
+] as const;
 
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString("en-IN", {
@@ -164,9 +143,22 @@ export function OperatorAppointmentsClient({
 }>) {
   const { toast } = useToast();
   // #1771 — the retired class-series URL lands here as `?type=class`.
-  const linkedType = useSearchParams().get("type") ?? "";
+  const searchParams = useSearchParams();
+  const linkedType = searchParams.get("type") ?? "";
+  // Q9 — the retired approval-payments URL lands on `?tab=awaiting-payment`.
+  const linkedTab = searchParams.get("tab") ?? "";
 
-  const [activeTab, setActiveTab] = useState(DEFAULT_TAB);
+  const [activeTab, setActiveTabState] = useState<string>(
+    (TABS as readonly string[]).includes(linkedTab) ? linkedTab : DEFAULT_TAB,
+  );
+  const setActiveTab = (next: string) => {
+    setActiveTabState(next);
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", next);
+    window.history.replaceState(window.history.state, "", `?${params}`);
+  };
+  // An Awaiting-payment row opens its booking: search by id, then open it.
+  const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState(
     TYPE_FILTERS.has(linkedType) ? linkedType : DEFAULT_TYPE,
   );
@@ -209,6 +201,8 @@ export function OperatorAppointmentsClient({
         return response.json();
       },
       refetchOnWindowFocus: false,
+      // The Awaiting payment tab reads its own source (approval payments).
+      enabled: activeTab !== "awaiting-payment",
     });
 
   useEffect(() => {
@@ -237,12 +231,25 @@ export function OperatorAppointmentsClient({
   };
   const totalPages = data?.pagination.totalPages ?? 1;
 
+  const openBooking = (appointmentId: string) => {
+    setActiveTab("all");
+    setTypeFilter(DEFAULT_TYPE);
+    setSearchQuery(appointmentId);
+    setPendingOpenId(appointmentId);
+  };
+  const toOpen = pendingOpenId
+    ? appointments.find((a) => a.id === pendingOpenId)
+    : undefined;
+  if (toOpen) {
+    setPendingOpenId(null);
+    setSelectedAppointment(toOpen);
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <DashboardHeader
-        title="Appointments Management"
-        subtitle="Monitor and manage all scheduled appointments"
+      <PageHeader
+        title="Appointments"
+        description="Every booking on the platform, with its money and ops actions."
         actions={
           <Button
             variant="outline"
@@ -257,55 +264,18 @@ export function OperatorAppointmentsClient({
         }
       />
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <Calendar className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.all}</p>
-              <p className="text-sm text-muted-foreground">
-                Total Appointments
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <AlertTriangle className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.issues}</p>
-              <p className="text-sm text-muted-foreground">Issues (page)</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <Clock className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.scheduled}</p>
-              <p className="text-sm text-muted-foreground">Scheduled (page)</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <CheckCircle2 className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.completed}</p>
-              <p className="text-sm text-muted-foreground">Completed (page)</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Global counts within the filters (#897), not the current page. */}
+      <StatRow>
+        <Stat label="Appointments" value={counts.all} icon={Calendar} />
+        <Stat
+          label="Issues"
+          value={counts.issues}
+          icon={AlertTriangle}
+          tone={counts.issues > 0 ? "warning" : "neutral"}
+        />
+        <Stat label="Scheduled" value={counts.scheduled} icon={Clock} />
+        <Stat label="Completed" value={counts.completed} icon={CheckCircle2} />
+      </StatRow>
 
       {/* Tabs and Filters */}
       <div className="space-y-4">
@@ -327,6 +297,9 @@ export function OperatorAppointmentsClient({
                   </Badge>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="awaiting-payment">
+                Awaiting payment
+              </TabsTrigger>
               <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
               <TabsTrigger value="completed">Completed</TabsTrigger>
             </TabsList>
@@ -335,6 +308,7 @@ export function OperatorAppointmentsClient({
               <div className="relative flex-1 min-w-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
+                  aria-label="Search appointments"
                   placeholder="Search..."
                   className="pl-9"
                   value={searchQuery}
@@ -364,7 +338,9 @@ export function OperatorAppointmentsClient({
 
           {/* All Tabs Content */}
           <TabsContent value={activeTab} className="mt-4">
-            {showLoadingPanel ? (
+            {activeTab === "awaiting-payment" ? (
+              <AwaitingPaymentPanel onOpenBooking={openBooking} />
+            ) : showLoadingPanel ? (
               <div className="flex items-center justify-center h-64">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
@@ -382,19 +358,13 @@ export function OperatorAppointmentsClient({
                   return (
                     <Card
                       key={appointment.id}
-                      className={`cursor-pointer hover:shadow-md transition-shadow ${
-                        appointment.hasIssue
-                          ? "border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/20"
-                          : ""
-                      }`}
+                      className="cursor-pointer transition-shadow hover:shadow-md"
                       onClick={() => setSelectedAppointment(appointment)}
                     >
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3">
-                            <div
-                              className={`p-2 rounded-lg ${getTypeColor(appointment.type)}`}
-                            >
+                            <div className="rounded-lg bg-muted p-2">
                               <TypeIcon className="h-4 w-4" />
                             </div>
                             <div>
@@ -402,23 +372,32 @@ export function OperatorAppointmentsClient({
                                 <p className="font-medium">
                                   {appointment.title}
                                 </p>
-                                <Badge
-                                  className={getTypeColor(appointment.type)}
-                                  variant="secondary"
-                                >
-                                  {appointment.type}
+                                <Badge variant="outline">
+                                  {humanizeEnum(appointment.type)}
                                 </Badge>
-                                <Badge
-                                  className={getStatusColor(appointment.status)}
-                                  variant="secondary"
-                                >
-                                  {appointment.status.replace("_", " ")}
-                                </Badge>
+                                <StatusBadge
+                                  label={humanizeEnum(appointment.status)}
+                                  tone={
+                                    STATUS_TONE[appointment.status] ?? "neutral"
+                                  }
+                                />
                                 {appointment.hasIssue && (
-                                  <Badge variant="destructive">
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    {appointment.issueType}
-                                  </Badge>
+                                  <StatusBadge
+                                    label={appointment.issueType ?? "Issue"}
+                                    tone="warning"
+                                  />
+                                )}
+                                {/* #1486 — a reschedule waiting on a party. */}
+                                {appointment.reschedule && (
+                                  <StatusBadge
+                                    label={
+                                      appointment.reschedule.status ===
+                                      "COUNTERED"
+                                        ? "Reschedule countered"
+                                        : "Reschedule proposed"
+                                    }
+                                    tone="caution"
+                                  />
                                 )}
                               </div>
                               <div className="flex items-center gap-4 mt-2">
@@ -498,36 +477,6 @@ export function OperatorAppointmentsClient({
                               </div>
                             </div>
                           </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              asChild
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View Details
-                              </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                <Users className="h-4 w-4 mr-2" />
-                                Contact Participants
-                              </DropdownMenuItem>
-                              {appointment.hasIssue && (
-                                <DropdownMenuItem>
-                                  <AlertTriangle className="h-4 w-4 mr-2" />
-                                  Resolve Issue
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
                         </div>
                       </CardContent>
                     </Card>
@@ -586,23 +535,18 @@ export function OperatorAppointmentsClient({
               <div className="space-y-4">
                 {/* Status */}
                 <div className="flex items-center gap-2">
-                  <Badge
-                    className={getStatusColor(selectedAppointment.status)}
-                    variant="secondary"
-                  >
-                    {selectedAppointment.status.replace("_", " ")}
-                  </Badge>
-                  <Badge
-                    className={getTypeColor(selectedAppointment.type)}
-                    variant="secondary"
-                  >
-                    {selectedAppointment.type}
+                  <StatusBadge
+                    label={humanizeEnum(selectedAppointment.status)}
+                    tone={STATUS_TONE[selectedAppointment.status] ?? "neutral"}
+                  />
+                  <Badge variant="outline">
+                    {humanizeEnum(selectedAppointment.type)}
                   </Badge>
                   {selectedAppointment.hasIssue && (
-                    <Badge variant="destructive">
-                      <AlertTriangle className="h-3 w-3 mr-1" />
-                      {selectedAppointment.issueType}
-                    </Badge>
+                    <StatusBadge
+                      label={selectedAppointment.issueType ?? "Issue"}
+                      tone="warning"
+                    />
                   )}
                 </div>
 
@@ -724,16 +668,6 @@ export function OperatorAppointmentsClient({
                 <AppointmentTimeline appointmentId={selectedAppointment.id} />
 
                 {renderOps?.(selectedAppointment.id)}
-
-                {/* Staff Notes */}
-                <div>
-                  <Label htmlFor="note">Staff Note</Label>
-                  <Textarea
-                    id="note"
-                    placeholder="Add a note about this appointment..."
-                    className="mt-1"
-                  />
-                </div>
               </div>
               <ResponsiveModalFooter>
                 <Button
@@ -741,10 +675,6 @@ export function OperatorAppointmentsClient({
                   onClick={() => setSelectedAppointment(null)}
                 >
                   Close
-                </Button>
-                <Button variant="outline">
-                  <ArrowUpRight className="h-4 w-4 mr-2" />
-                  Escalate to Admin
                 </Button>
               </ResponsiveModalFooter>
             </>

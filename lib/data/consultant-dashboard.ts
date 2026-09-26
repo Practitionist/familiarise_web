@@ -42,6 +42,10 @@ import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { toPlain } from "@/lib/data/serialize";
+import {
+  readConsultantNeedsYou,
+  readSessionsDelivered,
+} from "@/lib/data/consultant-needs-you";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 // =============================================================================
@@ -917,6 +921,18 @@ export async function getConsultantDashboard(
   );
   // #1766 — the next-cycle strip; sequential like the read above.
   const nextCycles = await readNextCycles(consultantProfileId, now);
+  // #1527 — the Needs you strip and the This month card. A failure degrades
+  // to no strip, never to a broken Home.
+  const needsYou = await readConsultantNeedsYou(consultantProfileId, now).catch(
+    (error) => {
+      reportSentryError(error, { subsystem: "dashboard", expected: true });
+      return undefined;
+    },
+  );
+  const sessionsDelivered = await readSessionsDelivered(
+    consultantProfileId,
+    startOfMonth,
+  ).catch(() => undefined);
 
   // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
   // reads above; a failure degrades to no row, never to a broken Home.
@@ -1058,6 +1074,8 @@ export async function getConsultantDashboard(
     nextCycles,
     responseRate,
     payoutSetup,
+    needsYou,
+    sessionsDelivered,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

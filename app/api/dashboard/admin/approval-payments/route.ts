@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, TrialStatus } from "@prisma/client";
-import { getSession } from "@/lib/auth-server";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   APPROVAL_PAYMENT_EXPIRATION_MS,
   APPROVAL_PAYMENT_REMINDER_MS,
@@ -11,17 +11,13 @@ import {
 /**
  * GET /api/dashboard/admin/approval-payments
  * Fetch all consultations and subscriptions that are in APPROVED_PENDING_PAYMENT status
- * This endpoint is used by admins to monitor approval payments and identify expired payment links
+ * The Appointments "Awaiting payment" tab (#1527 Q9): both trees read it, so
+ * it is gated on `appointments.manage` (it used to be ADMIN-only).
  */
 export async function GET() {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireBackofficeSurface("appointments.manage");
+    if (auth.error) return auth.error;
 
     // Three fully independent reads — run concurrently instead of paying the
     // sum of three round trips serially.
@@ -178,6 +174,7 @@ export async function GET() {
 
         return {
           id: consultation.id,
+          appointmentId: consultation.appointment?.id ?? null,
           type: "consultation" as const,
           title: consultation.consultationPlan?.title || "Consultation",
           consultantName:
@@ -213,6 +210,7 @@ export async function GET() {
 
         return {
           id: subscription.id,
+          appointmentId: subscription.appointment?.id ?? null,
           type: "subscription" as const,
           title: subscription.subscriptionPlan?.title || "Subscription",
           consultantName:
@@ -243,6 +241,7 @@ export async function GET() {
 
         return {
           id: trial.id,
+          appointmentId: trial.appointmentId,
           type: "trial" as const,
           title: `${trial.subscriptionPlan?.title ?? "Trial"} — trial`,
           consultantName:

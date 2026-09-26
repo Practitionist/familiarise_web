@@ -1,11 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Inbox } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { EmptyState } from "@/components/dashboard/DataCard";
-import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { HomeTab } from "./HomeTab";
 import type { ViewerZone } from "@/lib/time/viewer-zone";
@@ -29,10 +29,8 @@ export default function HomePageClient({
   const {
     data: dashboardData,
     isLoading,
-    isFetching,
     error,
     refetch,
-    isStale: _isStale,
   } = useQuery<TConsultantDashboardResponse>(dashboardQuery);
 
   // Show skeleton only for initial load when no data exists
@@ -43,20 +41,11 @@ export default function HomePageClient({
 
   if (error && !dashboardData) {
     return (
-      <DashboardErrorBoundary>
-        <EmptyState
-          icon={AlertCircle}
-          title="Error loading dashboard"
-          description={
-            error.message || "Failed to load dashboard data. Please try again."
-          }
-          action={
-            <Button variant="outline" onClick={() => refetch()}>
-              Retry
-            </Button>
-          }
-        />
-      </DashboardErrorBoundary>
+      <ErrorState
+        title="Couldn't load your dashboard"
+        description="Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
     );
   }
 
@@ -74,21 +63,14 @@ export default function HomePageClient({
 
   return (
     <DashboardErrorBoundary>
-      {/* Show subtle loading indicator when refreshing. `isLoading` is false
-          once data is cached, so a background refetch needs `isFetching`. */}
-      {isFetching && dashboardData && (
-        <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-md text-sm z-50">
-          Refreshing...
-        </div>
-      )}
       <HomeTab
         appointments={dashboardData.appointments}
         consultantId={consultantId}
         pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
-        awaitingPayment={dashboardData.awaitingPayment}
         orgSessions={dashboardData.orgSessions}
         payoutSetup={dashboardData.payoutSetup}
-        nextCycles={dashboardData.nextCycles}
+        needsYou={dashboardData.needsYou}
+        sessionsDelivered={dashboardData.sessionsDelivered}
         responseRate={dashboardData.responseRate}
         viewerZone={viewerZone}
         performanceSnapshot={dashboardData.performanceSnapshot}

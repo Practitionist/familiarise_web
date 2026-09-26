@@ -35,6 +35,7 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
@@ -107,7 +108,9 @@ function LocalDateTime({ value }: { value: string | Date | null | undefined }) {
 
 export default function ConsentPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "consent.read" });
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
+    permission: "consent.read",
+  });
   const qc = useQueryClient();
 
   // Grant-form state. Minimal local state (no RHF) — one member picker,
@@ -244,26 +247,31 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
       cell: (row) => (
         <div className="flex flex-wrap items-center gap-1">
           {row.purposeCodes.map((p) => (
-            <Badge
-              key={p}
-              variant="secondary"
-              className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-            >
+            <Badge key={p} variant="secondary">
               {purposeLabel(p)}
-              <button
-                type="button"
-                title={`Withdraw "${purposeLabel(p)}"`}
-                className="ml-1 text-emerald-700/70 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-200"
-                disabled={withdraw.isPending}
-                onClick={() =>
-                  withdraw.mutate({
+              {/* #1527 Q10 — a DPDP withdrawal is not a one-click action. */}
+              <ConfirmDialog
+                title={`Withdraw "${purposeLabel(p)}"?`}
+                description="The organization stops processing this member's data for this purpose from now on. The withdrawal is recorded and can't be undone; the member can grant it again."
+                confirmLabel="Withdraw"
+                tone="destructive"
+                onConfirm={async () => {
+                  await withdraw.mutateAsync({
                     userId: row.userId,
                     purposeCode: p,
-                  })
+                  });
+                }}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label={`Withdraw "${purposeLabel(p)}"`}
+                    className="ml-1 text-muted-foreground hover:text-foreground"
+                    disabled={withdraw.isPending}
+                  >
+                    ×
+                  </button>
                 }
-              >
-                ×
-              </button>
+              />
             </Badge>
           ))}
         </div>
@@ -287,14 +295,20 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
       headClassName: "text-right",
       className: "text-right",
       cell: (row) => (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={withdraw.isPending}
-          onClick={() => withdraw.mutate({ userId: row.userId })}
-        >
-          Withdraw all
-        </Button>
+        <ConfirmDialog
+          title="Withdraw every purpose?"
+          description="This is the member's full DPDP opt-out: the organization stops processing their data for all purposes from now on. It is recorded and can't be undone."
+          confirmLabel="Withdraw all"
+          tone="destructive"
+          onConfirm={async () => {
+            await withdraw.mutateAsync({ userId: row.userId });
+          }}
+          trigger={
+            <Button size="sm" variant="outline" disabled={withdraw.isPending}>
+              Withdraw all
+            </Button>
+          }
+        />
       ),
     },
   ];
@@ -435,10 +449,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
               </div>
 
               <div>
-                <Button
-                  disabled={!canGrant}
-                  onClick={() => grant.mutate()}
-                >
+                <Button disabled={!canGrant} onClick={() => grant.mutate()}>
                   {grant.isPending ? "Recording…" : "Record consent"}
                 </Button>
               </div>

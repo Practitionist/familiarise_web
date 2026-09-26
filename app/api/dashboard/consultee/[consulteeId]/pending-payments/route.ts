@@ -13,6 +13,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { readLapsedPayLinks } from "@/lib/data/lapsed-pay-links";
+import { readConsulteeFailedRefunds } from "@/lib/data/consultee-payments";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 
 /**
@@ -20,7 +21,8 @@ import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
  * Fetch pending payments for this consultee from two sources:
  * 1. Consultations/subscriptions with APPROVED_PENDING_PAYMENT status (awaiting checkout)
  * 2. Payment records with paymentStatus PENDING (checkout initiated, awaiting gateway confirmation)
- * Alongside, `lapsedPayLinks`: requests whose pay-link lapsed in the last 7 d (#1675).
+ * Alongside, `lapsedPayLinks`: requests whose pay-link lapsed in the last 7 d (#1675),
+ * and `failedRefunds`: recent refunds the gateway rejected (#1527 Needs you).
  */
 export async function GET(
   request: Request,
@@ -103,6 +105,7 @@ export async function GET(
       pendingGatewayPayments,
       pendingTrials,
       lapsedPayLinks,
+      failedRefunds,
     ] = await Promise.all([
       // Source 1: Consultations with APPROVED_PENDING_PAYMENT status
       prisma.consultation.findMany({
@@ -232,6 +235,15 @@ export async function GET(
         });
         return [];
       }),
+      // Same posture as the lapsed rows: informational, never blocking.
+      readConsulteeFailedRefunds(consulteeProfile.userId).catch(
+        (err: unknown) => {
+          Sentry.captureException(err, {
+            tags: { subsystem: "dashboard", op: "failed-refunds" },
+          });
+          return [];
+        },
+      ),
     ]);
 
     // Transform approval-pending consultations
@@ -408,6 +420,7 @@ export async function GET(
         pendingPayments,
         count: pendingPayments.length,
         lapsedPayLinks,
+        failedRefunds,
       },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -423,6 +436,7 @@ export async function GET(
         pendingPayments: [],
         count: 0,
         lapsedPayLinks: [],
+        failedRefunds: [],
       },
       { status: 500 },
     );

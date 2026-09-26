@@ -1,16 +1,9 @@
 "use client";
 
-import { ConsulteeResourcesPage } from "@/components/dashboard/consultee/resources/ConsulteeResourcesPage";
+import { ConsulteeRecordingsPage } from "@/components/dashboard/consultee/resources/ConsulteeRecordingsPage";
 
-export default function ConsulteeRecordingsPage({
+export default function ConsulteeRecordingsRoute({
   params,
 }: Readonly<{ params: Promise<{ consulteeId: string }> }>) {
-  return (
-    <ConsulteeResourcesPage
-      params={params}
-      artifact="recordings"
-      title="Recordings"
-      subtitle="Session recordings from the events you've attended"
-    />
-  );
+  return <ConsulteeRecordingsPage params={params} />;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Org-wide appointments feed — the `?scope=everyone` half of the org
+ * Org-wide appointments feed — the Everyone tab of the org
  * Appointments page. `operations.read` at the org. Calls
  * `/api/organizations/[orgId]/appointments`, which is forced to
  * scope=org:<orgId> server-side and auth-gates via `requireOrgAccess`.
@@ -25,12 +25,12 @@
  */
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { Search } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -43,6 +43,8 @@ import {
   ScopedListTable,
   type Column,
 } from "@/components/dashboard/ScopedListTable";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
 interface AppointmentSlot {
   id: string;
@@ -108,15 +110,14 @@ const STATUS_OPTIONS = [
   "TENTATIVE",
 ] as const;
 
-const STATUS_VARIANT: Record<string, string> = {
-  COMPLETED:
-    "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  CANCELLED: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  RESCHEDULED:
-    "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  TENTATIVE:
-    "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  UNVERIFIED: "bg-muted text-muted-foreground",
+// #1762-4 — labels + tones instead of raw OccurrenceCompletionStatus.
+const STATUS: Record<string, { label: string; tone: Tone }> = {
+  SCHEDULED: { label: "Scheduled", tone: "info" },
+  COMPLETED: { label: "Completed", tone: "success" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
+  RESCHEDULED: { label: "Rescheduled", tone: "caution" },
+  UNVERIFIED: { label: "Awaiting outcome", tone: "caution" },
+  TENTATIVE: { label: "Time not confirmed", tone: "caution" },
 };
 
 function getPlanTitle(row: AppointmentRow): string {
@@ -190,39 +191,50 @@ function rowSessionDate(row: AppointmentRow): string {
   });
 }
 
-const COLUMNS: Column<AppointmentRow>[] = [
-  {
-    header: "Type",
-    accessor: (r) => <Badge variant="outline">{r.appointmentType}</Badge>,
-  },
-  { header: "Plan / Title", accessor: (r) => getPlanTitle(r) },
-  { header: "Member", accessor: (r) => getMember(r) },
-  {
-    header: "Session",
-    accessor: (r) => rowSessionDate(r),
-  },
-  {
-    header: "Status",
-    accessor: (r) => {
-      const status = rowStatus(r);
-      if (status === "—") return "—";
-      return (
-        <span
-          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-            STATUS_VARIANT[status] ??
-            "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-          }`}
-        >
-          {status}
-        </span>
-      );
+function columns(orgId: string): Column<AppointmentRow>[] {
+  return [
+    {
+      header: "Type",
+      accessor: (r) => humanizeEnum(r.appointmentType),
     },
-  },
-  {
-    header: "Booked",
-    accessor: (r) => format(new Date(r.createdAt), "PP"),
-  },
-];
+    {
+      // #1527 — every row opens the detail (metadata view for operators, the
+      // full page for a participant, actions for the funding org's admins).
+      header: "Plan / Title",
+      accessor: (r) => (
+        <Link
+          href={`/dashboard/organization/${orgId}/appointments/${r.id}`}
+          className="font-medium underline-offset-2 hover:underline"
+        >
+          {getPlanTitle(r)}
+        </Link>
+      ),
+    },
+    { header: "Member", accessor: (r) => getMember(r) },
+    {
+      header: "Session",
+      accessor: (r) => rowSessionDate(r),
+    },
+    {
+      header: "Status",
+      accessor: (r) => {
+        const status = rowStatus(r);
+        if (status === "—") return "—";
+        const s = STATUS[status];
+        return (
+          <StatusBadge
+            label={s?.label ?? humanizeEnum(status)}
+            tone={s?.tone ?? "neutral"}
+          />
+        );
+      },
+    },
+    {
+      header: "Booked",
+      accessor: (r) => format(new Date(r.createdAt), "PP"),
+    },
+  ];
+}
 
 export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   const router = useRouter();
@@ -288,12 +300,14 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   }, [items, status, search]);
 
   const isNarrowed = status !== "all" || search.trim().length > 0;
+  const tableColumns = useMemo(() => columns(orgId), [orgId]);
 
   const toolbar = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <div className="relative flex-1 min-w-0">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          aria-label="Search plan or member on this page"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search plan or member on this page…"
@@ -302,28 +316,28 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
       </div>
 
       <Select value={typeFilter ?? "all"} onValueChange={setTypeFilter}>
-        <SelectTrigger className="w-full sm:w-44">
+        <SelectTrigger className="w-full sm:w-44" aria-label="Type">
           <SelectValue placeholder="All types" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All types</SelectItem>
           {APPOINTMENT_TYPES.map((t) => (
             <SelectItem key={t} value={t}>
-              {t}
+              {humanizeEnum(t)}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
 
       <Select value={status} onValueChange={setStatus}>
-        <SelectTrigger className="w-full sm:w-44">
+        <SelectTrigger className="w-full sm:w-44" aria-label="Status">
           <SelectValue placeholder="Any status" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Any status</SelectItem>
           {STATUS_OPTIONS.map((s) => (
             <SelectItem key={s} value={s}>
-              {s}
+              {STATUS[s].label}
             </SelectItem>
           ))}
         </SelectContent>
@@ -348,13 +362,13 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
         total={data?.total ?? 0}
         page={data?.page ?? page}
         perPage={data?.perPage ?? 20}
-        columns={COLUMNS}
+        columns={tableColumns}
         rowKey={(r) => r.id}
         toolbar={toolbar}
         emptyMessage={
           isNarrowed
             ? "No appointments on this page match those filters."
-            : "No appointments under this organization yet. Member bookings will surface here once stamped via checkout (B1-hybrid)."
+            : "No appointments under this organization yet. Bookings members make under it appear here."
         }
       />
     </div>

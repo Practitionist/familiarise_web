@@ -8,9 +8,9 @@
  * invitations still aggregate personally either way — this page only
  * covers the host-perspective "my plans with collaborators" section.
  *
- * Access: ANY active member (requireOrgAccess floors at that); the sidebar
- * additionally gates visibility on canHost + myArrangement.read (see
- * layout.tsx) since only host-capable orgs have collaborator-bearing plans.
+ * Access: ANY active member (requireOrgAccess floors at that). The sidebar
+ * shows it to experts in host orgs as "Plan collaborators"; operators reach
+ * the same panel as Catalog › Collaborators (#1527-4c).
  */
 
 import { notFound } from "next/navigation";
@@ -37,8 +37,8 @@ export default async function OrgCollaborationsPage({
   return (
     <>
       <DashboardHeader
-        title="Collaborations"
-        subtitle={`Manage invitations and active collaborations on ${access.org.name}'s webinar and class plans.`}
+        title="Plan collaborators"
+        description={`Invitations and active collaborations on ${access.org.name}'s webinar and class plans.`}
       />
       <DashboardContent>
         <InvitationsPanel orgScope={orgId} />

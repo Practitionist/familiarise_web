@@ -44,12 +44,20 @@ describe("settings hub redirects (#1785)", () => {
   });
 
   it("sends a bare /settings and an unknown tab to the first section", async () => {
+    // #1527 §14 — Account leads the hub now.
     await expect(redirectOf({})).resolves.toEqual({
-      url: `${BASE}/settings/profile`,
+      url: `${BASE}/settings/account`,
       status: 308,
     });
     await expect(redirectOf({ tab: "nope" })).resolves.toEqual({
-      url: `${BASE}/settings/profile`,
+      url: `${BASE}/settings/account`,
+      status: 308,
+    });
+  });
+
+  it("keeps the retired security key as an alias of Account", async () => {
+    await expect(redirectOf({ tab: "security" })).resolves.toEqual({
+      url: `${BASE}/settings/account`,
       status: 308,
     });
   });
@@ -60,11 +68,9 @@ describe("settings section registry (#1785 L-2)", () => {
     const hrefs = SETTINGS_SECTIONS.map((s) => settingsSectionHref(BASE, s));
     expect(new Set(hrefs).size).toBe(SETTINGS_SECTIONS.length);
     expect(settingsSectionGroups().map((g) => g.title)).toEqual([
-      "Profile & verification",
-      "Booking requests",
-      "Get paid",
-      "Notifications",
-      "Security",
+      "Account",
+      "Public profile",
+      "Business",
     ]);
   });
 

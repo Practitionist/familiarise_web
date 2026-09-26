@@ -55,6 +55,12 @@ export type StaffAppointment = {
   hasIssue: boolean;
   issueType: string | null;
   payment: AppointmentPayment;
+  /** #1486 — an open reschedule proposal (pending review or countered). */
+  reschedule: {
+    status: string;
+    initiatorRole: string;
+    expiresAt: string;
+  } | null;
   createdAt: string;
 };
 
@@ -270,6 +276,13 @@ export async function getStaffAppointments(
     prisma.appointment.findMany({
       where: listWhere,
       include: {
+        // #1486 / #1527 — read-only: a reschedule still waiting on a party.
+        rescheduleRequests: {
+          where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { status: true, initiatorRole: true, expiresAt: true },
+        },
         occurrences: {
           orderBy: { startsAt: "asc" },
           take: 1,
@@ -557,6 +570,13 @@ export async function getStaffAppointments(
             currency: payment.currency,
             status: payment.paymentStatus,
             gateway: payment.paymentGateway,
+          }
+        : null,
+      reschedule: apt.rescheduleRequests[0]
+        ? {
+            status: apt.rescheduleRequests[0].status,
+            initiatorRole: apt.rescheduleRequests[0].initiatorRole,
+            expiresAt: apt.rescheduleRequests[0].expiresAt.toISOString(),
           }
         : null,
       createdAt: apt.createdAt.toISOString(),

@@ -13,7 +13,6 @@ import {
 } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
-import { getAppUrl } from "@/lib/url";
 import {
   generateRecordingTitle,
   getEventAttendeeIds,
@@ -494,7 +493,12 @@ export async function handleRecordingFailed(
         notifyRecordingFailed(userId, {
           streamCallId,
           errorMessage: eventError?.message,
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          // #1527 — every live seat holder (consultant or consultee) is a
+          // recipient here, same as the recording-ready bell above.
+          dashboardUrl: notificationHref(
+            appointment?.organizationId,
+            "recordings",
+          ),
         }),
       ),
     );

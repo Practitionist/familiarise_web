@@ -12,7 +12,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { isFinancialJob } from "@/lib/cron/financial-jobs";
+import type { Tone } from "@/lib/ui/tone";
 import {
   CreditCard,
   Clock,
@@ -27,8 +30,6 @@ import {
   Database,
   Bell,
   History,
-  CheckCircle2,
-  XCircle,
 } from "lucide-react";
 
 // Job configuration
@@ -250,6 +251,26 @@ const CATEGORY_CONFIG: Record<
   Alerts: { icon: Bell },
 };
 
+const EXECUTION_STATUS: Record<
+  JobExecution["status"],
+  { label: string; tone: Tone }
+> = {
+  COMPLETED: { label: "Completed", tone: "success" },
+  FAILED: { label: "Failed", tone: "critical" },
+  RUNNING: { label: "Running", tone: "info" },
+};
+
+/**
+ * #1527 Q10 — a money job moves or mutates real balances, so running one by
+ * hand needs a typed confirmation: the payout pair asks for "RUN PAYOUTS",
+ * any other money job for its own id.
+ */
+function runConfirmPhrase(job: SystemJob): string | undefined {
+  if (job.category === "Payouts" && isFinancialJob(job.id))
+    return "RUN PAYOUTS";
+  return isFinancialJob(job.id) ? job.id : undefined;
+}
+
 interface JobCardProps {
   job: SystemJob;
   isRunning: boolean;
@@ -361,19 +382,24 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
     fetchExecutions();
   }, []);
 
-  const handleRunJob = async (job: SystemJob) => {
+  // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
+  // audit log); a money job also needs a typed confirmation.
+  const [confirmJob, setConfirmJob] = useState<SystemJob | null>(null);
+
+  const handleRunJob = async (job: SystemJob, reason: string) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
 
     try {
       const response = await fetch("/api/admin/system-jobs/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id }),
+        body: JSON.stringify({ jobId: job.id, reason }),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
+        // Shown inside the dialog, which stays open.
         throw new Error(result.error || "Failed to run job");
       }
 
@@ -398,7 +424,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       }
 
       toast({
-        title: `✅ ${job.name} completed`,
+        title: `${job.name} completed`,
         description:
           stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
         variant: "default",
@@ -412,21 +438,13 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
           variant: "destructive",
         });
       }
-    } catch (error) {
-      toast({
-        title: `❌ ${job.name} failed`,
-        description:
-          error instanceof Error ? error.message : "An error occurred",
-        variant: "destructive",
-      });
-      // Refresh executions after job runs
-      fetchExecutions();
     } finally {
       setRunningJobs((prev) => {
         const next = new Set(prev);
         next.delete(job.id);
         return next;
       });
+      fetchExecutions();
     }
   };
 
@@ -450,32 +468,6 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
-
-  const getExecutionStatusBadge = (status: JobExecution["status"]) => {
-    switch (status) {
-      case "COMPLETED":
-        return (
-          <Badge className="bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400 gap-1">
-            <CheckCircle2 className="h-3 w-3" />
-            Completed
-          </Badge>
-        );
-      case "FAILED":
-        return (
-          <Badge className="bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 gap-1">
-            <XCircle className="h-3 w-3" />
-            Failed
-          </Badge>
-        );
-      case "RUNNING":
-        return (
-          <Badge className="bg-muted text-muted-foreground gap-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Running
-          </Badge>
-        );
-    }
   };
 
   return (
@@ -539,7 +531,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                           .join(", ")}
                       </span>
                     )}
-                    {getExecutionStatusBadge(execution.status)}
+                    <StatusBadge {...EXECUTION_STATUS[execution.status]} />
                   </div>
                 </div>
               ))}
@@ -569,12 +561,30 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                 key={job.id}
                 job={job}
                 isRunning={runningJobs.has(job.id)}
-                onRun={() => handleRunJob(job)}
+                onRun={() => setConfirmJob(job)}
               />
             ))}
           </div>
         </div>
       ))}
+
+      {confirmJob && (
+        <ConfirmDialog
+          key={confirmJob.id}
+          open
+          onOpenChange={(open) => !open && setConfirmJob(null)}
+          title={`Run ${confirmJob.name} now?`}
+          description={`${confirmJob.description}. It normally runs ${confirmJob.schedule.toLowerCase()}.`}
+          confirmLabel="Run now"
+          tone={isFinancialJob(confirmJob.id) ? "destructive" : "default"}
+          requireReason={{ label: "Why run it by hand?" }}
+          requireTyped={runConfirmPhrase(confirmJob)}
+          onConfirm={async ({ reason }) => {
+            await handleRunJob(confirmJob, reason ?? "");
+            setConfirmJob(null);
+          }}
+        />
+      )}
     </div>
   );
 }

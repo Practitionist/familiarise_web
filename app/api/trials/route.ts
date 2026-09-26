@@ -20,6 +20,7 @@ import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { planSaleRefusal } from "@/lib/api/plans/visibility";
 
 /**
  * GET /api/trials
@@ -338,6 +339,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Subscription plan does not belong to this consultant" },
         { status: 400 },
+      );
+    }
+
+    // #1527 Q4 — a DRAFT plan takes no new trial requests.
+    if (planSaleRefusal(subscriptionPlan)) {
+      return NextResponse.json(
+        {
+          error: "This plan isn't available to book right now.",
+          code: "PLAN_NOT_PUBLISHED",
+        },
+        { status: 409 },
       );
     }
 

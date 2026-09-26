@@ -9,17 +9,20 @@ import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
+import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
 
 import { EARNINGS_FETCH_CAP } from "@/lib/dashboard/earnings-state";
 
+import { payoutSetupQueryKey } from "../settings/payouts/payout-setup-keys";
 import { EarningsTabs } from "./EarningsTabs";
+import { PayoutStatusChip } from "./PayoutStatusChip";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
 };
 
 /**
- * /dashboard/consultant/[consultantId]/earnings — Summary + Analytics.
+ * /dashboard/consultant/[consultantId]/earnings — Summary · Activity · Analytics.
  *
  * This route was a client component until Analytics folded into it (ADR 19).
  * It is a server component now so the Analytics panel keeps the SSR prefetch it
@@ -34,7 +37,7 @@ export default async function EarningsPage({ params }: Readonly<PageProps>) {
   await requirePersonalProfileAccess("consultant", consultantId);
   const queryClient = new QueryClient();
 
-  // Keys MUST match AnalyticsPageClient's useQuery keys exactly or hydration
+  // Keys MUST match AnalyticsPanel's useQuery keys exactly or hydration
   // won't apply. allSettled so a failed read degrades to a client-side fetch
   // rather than crashing the whole page.
   await Promise.allSettled([
@@ -61,6 +64,11 @@ export default async function EarningsPage({ params }: Readonly<PageProps>) {
           organizationId: null,
         }),
     }),
+    // #1527 — the header's payout-status chip reads the Get-paid seed.
+    queryClient.prefetchQuery({
+      queryKey: payoutSetupQueryKey(consultantId),
+      queryFn: () => readConsultantPayoutSetup(consultantId),
+    }),
     queryClient.prefetchQuery({
       queryKey: ["consultant-appointments", consultantId, "personal"],
       queryFn: () =>
@@ -73,11 +81,12 @@ export default async function EarningsPage({ params }: Readonly<PageProps>) {
 
   return (
     <>
-      <DashboardHeader
-        title="Earnings"
-        subtitle="Income and performance across your practice"
-      />
       <HydrationBoundary state={dehydrate(queryClient)}>
+        <DashboardHeader
+          title="Earnings"
+          subtitle="When you get paid, and what each offering earns"
+          actions={<PayoutStatusChip consultantId={consultantId} />}
+        />
         <EarningsTabs consultantId={consultantId} />
       </HydrationBoundary>
     </>

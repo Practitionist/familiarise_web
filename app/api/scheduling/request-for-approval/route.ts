@@ -31,6 +31,7 @@ import {
   countActiveConsultationRequests,
   pausedRefusal,
 } from "@/lib/booking/request-caps";
+import { planSaleRefusal } from "@/lib/api/plans/visibility";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -156,6 +157,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
         { status: 404 },
+      );
+    }
+
+    // #1527 Q4 — a DRAFT plan takes no new requests.
+    if (planSaleRefusal(consultationPlan)) {
+      return NextResponse.json(
+        {
+          error: "This plan isn't available to book right now.",
+          code: "PLAN_NOT_PUBLISHED",
+        },
+        { status: 409 },
       );
     }
 

@@ -3,12 +3,14 @@
 /**
  * OrgWorkspace operator settings.
  *
- * Three independent sections, each with its own Save button so a slow
+ * Two independent sections, each with its own Save button so a slow
  * Save in one section doesn't block edits in another:
  *
- *   - Default landing organisation
+ *   - Default landing organization (read by lib/dashboard/landing.ts)
  *   - Notification routing
- *   - Locale + currency display
+ *
+ * Locale and currency fields are hidden until something reads them (#1527
+ * §7.4); the columns and API stay.
  *
  * The IDOR-protecting `auth.session.user.orgWorkspaceProfileId !==
  * orgWorkspaceId` check is enforced server-side on every API call.
@@ -27,16 +29,10 @@ import {
   DashboardContent,
   DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 import { DefaultLandingOrgSection } from "./components/DefaultLandingOrgSection";
-import { LocaleAndCurrencySection } from "./components/LocaleAndCurrencySection";
 import { NotificationRoutingSection } from "./components/NotificationRoutingSection";
 import { fetchSettings } from "./utils/api";
 
@@ -53,16 +49,15 @@ export function SettingsPageClient({
   return (
     <>
       <DashboardHeader
-        title="Settings"
-        subtitle="Operator-level preferences across all your organisations. Per-org settings (branding, SSO, billing configuration) live on each organisation's own Settings page."
+        title="Workspace settings"
+        description="Preferences across all your organizations. Each organization's own settings (branding, sign-in, billing) live on its Settings page."
       />
 
       <DashboardContent>
         {settings.isLoading ? (
           <Card>
             <CardContent className="py-8 flex items-center gap-2 text-sm text-zinc-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading
-              preferences…
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading preferences…
             </CardContent>
           </Card>
         ) : settings.isError || !settings.data ? (
@@ -74,8 +69,8 @@ export function SettingsPageClient({
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-zinc-600">
               <p>
-                If the problem persists, contact support — the workspace
-                profile row may be missing.
+                If the problem persists, contact support — the workspace profile
+                row may be missing.
               </p>
               <Button
                 size="sm"
@@ -96,11 +91,6 @@ export function SettingsPageClient({
             <NotificationRoutingSection
               orgWorkspaceId={orgWorkspaceId}
               current={settings.data.profile.notificationRoutingMode}
-            />
-            <LocaleAndCurrencySection
-              orgWorkspaceId={orgWorkspaceId}
-              currentLocale={settings.data.profile.locale}
-              currentCurrency={settings.data.profile.currencyDisplayCode}
             />
           </div>
         )}

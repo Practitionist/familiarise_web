@@ -35,6 +35,7 @@ import {
   notifySubscriptionCancelled,
 } from "@/lib/novu";
 import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
+import { goHref } from "@/lib/dashboard/go";
 import {
   UpdateSubscriptionSchema,
   PatchSubscriptionStatusSchema,
@@ -697,7 +698,8 @@ export async function PATCH(
               subData.subscriptionPlan?.consultantProfile?.user?.name ||
               "Consultant",
             consulteeName: subData.requestedBy?.user?.name || undefined,
-            dashboardUrl: "/dashboard",
+            // #1527 — single known recipient, the consultee.
+            dashboardUrl: goHref("client", "appointments"),
           });
         }
 
@@ -713,7 +715,8 @@ export async function PATCH(
                 subData.subscriptionPlan?.consultantProfile?.user?.name ||
                 "Consultant",
               consulteeName: subData.requestedBy?.user?.name || undefined,
-              dashboardUrl: "/dashboard",
+              // #1527 — both consultant and consultee are recipients here.
+              dashboardUrl: goHref("auto", "appointments"),
             });
           }
 

@@ -18,8 +18,8 @@
  * one oversight away from being editable by the wrong role. Here the gate is
  * the surface.
  *
- * OWNER keeps editing these on General too — that panel is unchanged, and the
- * server settles who may write what either way.
+ * #1527 — this is the only place they are edited now ("Billing contacts");
+ * General no longer repeats them.
  */
 
 import { useEffect, useState } from "react";

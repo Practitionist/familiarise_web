@@ -78,7 +78,16 @@ const paymentDisplaySelect = {
   createdAt: true,
   userId: true,
   // #1365 — the buyer's tax invoice is the receipt; a link, not the row.
-  consumerInvoice: { select: { id: true } },
+  // #1527 — its credit notes ride along so a refund can link its note.
+  consumerInvoice: {
+    select: {
+      id: true,
+      creditNotes: {
+        select: { id: true, creditNoteNumber: true },
+        orderBy: { issuedAt: "asc" },
+      },
+    },
+  },
   // `PaymentStatus` never reaches REFUNDED; the shown status is derived from
   // the refunds that went through (lib/appointments/seat-payments.ts). A
   // PENDING one rides along so the money line can say "on its way" (#1675).
@@ -241,6 +250,18 @@ export function appointmentRaterRole(
   if (consultantUserIds.includes(userId)) return "PROVIDER";
   if (consulteeUserIds.includes(userId)) return "CONSULTEE";
   return null;
+}
+
+/** #1527 — which side(s) of this appointment a user is on (`/dashboard/go/auto`). */
+export function appointmentViewerSides(
+  userId: string,
+  detail: TAppointmentDetail,
+): { asConsultant: boolean; asConsultee: boolean } {
+  const { consulteeUserIds, consultantUserIds } = participantUserIds(detail);
+  return {
+    asConsultant: consultantUserIds.includes(userId),
+    asConsultee: consulteeUserIds.includes(userId),
+  };
 }
 
 export function canAccessAppointment(

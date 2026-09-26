@@ -8,7 +8,7 @@ type PageProps = {
 /**
  * Server-side redirect to the consultee home tab. Resolves during the RSC
  * render — one hop, no skeleton paint + hydration + client replace chain
- * (the old client stub flashed PersonalDashboardShellSkeleton on every
+ * (the old client stub flashed DashboardShellSkeleton on every
  * direct visit to /dashboard/consultee/<id>).
  */
 export default async function ConsulteePage({ params }: Readonly<PageProps>) {

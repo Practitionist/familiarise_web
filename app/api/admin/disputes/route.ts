@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
@@ -71,9 +72,8 @@ export async function GET(req: NextRequest) {
               lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
               gte: new Date(),
             },
-            status: {
-              in: ["WARNING_NEEDS_RESPONSE", "NEEDS_RESPONSE", "UNDER_REVIEW"],
-            },
+            // #1527 — the Disputes nav badge counts OPEN_DISPUTE_WHERE.
+            ...OPEN_DISPUTE_WHERE,
           },
         }),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),
@@ -90,7 +90,10 @@ export async function GET(req: NextRequest) {
       totalPages: Math.ceil(total / limit),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin disputes list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch disputes" },

@@ -7,11 +7,16 @@ import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { isPayerAdminRole } from "@/lib/booking/org-actor";
 import {
   getOrgAppointments,
   getOrgMemberAppointments,
 } from "@/lib/data/org-appointments";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { readOrgPendingRequests } from "@/lib/data/org-pending-requests";
+import {
+  DashboardContent,
+  DashboardHeader,
+} from "@/components/dashboard/PageScaffold";
 import StreamProvider from "@/providers/StreamProvider";
 
 import { AppointmentsPageClient } from "./AppointmentsPageClient";
@@ -19,28 +24,37 @@ import {
   MyAppointmentsClient,
   type MyAppointmentItem,
 } from "./MyAppointmentsClient";
-import { ScopeToggle, type AppointmentScope } from "./ScopeToggle";
+import { PayerRequestsView } from "./PayerRequestsView";
+import { AppointmentTabs, type AppointmentTab } from "./AppointmentTabs";
+
+/** Which tab the URL asks for, falling back to "mine" when not allowed. */
+function resolveTab(
+  sp: { tab?: string; scope?: string },
+  available: AppointmentTab[],
+): AppointmentTab {
+  // `?scope=everyone` predates the tabs; old links keep working.
+  const requested = sp.tab ?? sp.scope;
+  return available.find((t) => t === requested) ?? "mine";
+}
 
 /**
- * /dashboard/organization/[orgId]/appointments — one destination, two scopes.
+ * /dashboard/organization/[orgId]/appointments — Mine · Everyone · Unscheduled.
  *
- * This replaces the `appointments` + `my-appointments` pair that sat next to
- * each other in the sidebar under near-identical names. "Mine" is the member's
- * own participation (attending or delivering); "Everyone" is the org-wide
- * operations feed. Both data sources are unchanged — `getOrgMemberAppointments`
- * and `getOrgAppointments` respectively — only the entry point merged.
+ * "Mine" is the member's own participation (attending or delivering);
+ * "Everyone" is the org-wide operations feed (`operations.read`);
+ * "Unscheduled" is the payer admins' view of org-funded requests nobody has
+ * put times on yet (#1527 Q7, moved from Requests).
  *
- * Access floors at active membership, NOT at `operations.read`: a pure learner
- * has to be able to see their own sessions. The wider scope is gated
- * separately, and a viewer without it never sees the toggle at all, so the
- * page can't offer a control that would 403.
+ * Access floors at active membership: a pure learner must see their own
+ * sessions. A viewer asking for a tab they can't use is quietly served
+ * "Mine" — no error page for a URL they could only have reached by editing it.
  */
 export default async function OrgAppointmentsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ orgId: string }>;
-  searchParams: Promise<{ scope?: string; page?: string }>;
+  searchParams: Promise<{ tab?: string; scope?: string; page?: string }>;
 }) {
   const { orgId } = await params;
   const sp = await searchParams;
@@ -52,31 +66,29 @@ export default async function OrgAppointmentsPage({
     notFound();
   }
 
-  const canReadAll = hasOrgPermission(access.member.role, "operations.read");
-
-  // Default to "mine". An operator who wants the org feed asks for it; the
-  // member view is the one every role can actually use. A non-operator asking
-  // for "everyone" is quietly served their own — no error page for a URL they
-  // could only have reached by editing it.
-  const scope: AppointmentScope =
-    canReadAll && sp.scope === "everyone" ? "everyone" : "mine";
+  const role = access.member.role;
+  const available: AppointmentTab[] = ["mine"];
+  if (hasOrgPermission(role, "operations.read")) available.push("everyone");
+  if (isPayerAdminRole(role)) available.push("unscheduled");
+  const tab = resolveTab(sp, available);
 
   const rawPage = Number(sp.page ?? "1");
   const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
 
+  const descriptions: Record<AppointmentTab, string> = {
+    mine: `Sessions you're attending or delivering under ${access.org.name}.`,
+    everyone: `All bookings made under ${access.org.name}.`,
+    unscheduled: `Bookings ${access.org.name} funded that are still waiting on times.`,
+  };
   const header = (
     <DashboardHeader
       title="Appointments"
-      subtitle={
-        scope === "everyone"
-          ? `All bookings made under ${access.org.name}.`
-          : `Sessions you're attending or delivering under ${access.org.name}.`
-      }
-      actions={canReadAll ? <ScopeToggle scope={scope} /> : undefined}
+      description={descriptions[tab]}
+      actions={<AppointmentTabs active={tab} available={available} />}
     />
   );
 
-  if (scope === "everyone") {
+  if (tab === "everyone") {
     const queryClient = new QueryClient();
     // #890 — prefetch only the default page; filtered/paged views diverge by
     // queryKey and fall back to the client fetch. The trailing `undefined` is
@@ -92,11 +104,23 @@ export default async function OrgAppointmentsPage({
     return (
       <>
         {header}
-        <div className="p-4 sm:p-6 lg:p-8">
+        <DashboardContent>
           <HydrationBoundary state={dehydrate(queryClient)}>
             <AppointmentsPageClient orgId={orgId} />
           </HydrationBoundary>
-        </div>
+        </DashboardContent>
+      </>
+    );
+  }
+
+  if (tab === "unscheduled") {
+    const requests = await readOrgPendingRequests(orgId);
+    return (
+      <>
+        {header}
+        <DashboardContent>
+          <PayerRequestsView requests={requests} />
+        </DashboardContent>
       </>
     );
   }
@@ -111,7 +135,7 @@ export default async function OrgAppointmentsPage({
   return (
     <>
       {header}
-      <div className="p-4 sm:p-6 lg:p-8">
+      <DashboardContent>
         {/* Video-only Stream client, scoped to this subtree so Join has a
             connected client without connecting video on every org route. */}
         <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
@@ -124,7 +148,7 @@ export default async function OrgAppointmentsPage({
             perPage={perPage}
           />
         </StreamProvider>
-      </div>
+      </DashboardContent>
     </>
   );
 }

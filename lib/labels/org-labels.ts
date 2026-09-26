@@ -60,8 +60,7 @@ export const CAPABILITY_BADGE_CLASS: Record<CapabilityKind, string> = {
 export const CAPABILITY_DESCRIPTION: Record<CapabilityKind, string> = {
   SPONSOR:
     "Pays for its members' sessions. Has a BillingAccount; does not host consultants.",
-  HOST:
-    "Hosts consultants who earn through the organization. Has a payout account; does not sponsor anyone.",
+  HOST: "Hosts consultants who earn through the organization. Has a payout account; does not sponsor anyone.",
   HYBRID:
     "Both sponsors its members and hosts consultants. Runs both money flows independently.",
   INERT:
@@ -125,8 +124,9 @@ export const MemberRoleSchema = z.enum([
 
 export const MEMBER_ROLE_DESCRIPTION: Record<MemberRole, string> = {
   OWNER: "Full control: billing, members, settings, deletion.",
+  // #1527 — descriptions follow lib/auth/org-permissions.ts.
   MAINTAINER:
-    "Members, plans, programs, and settings. No billing or deletion.",
+    "Members, programs, contracts and settings. Can view billing but not pay or change it.",
   // Why a separate finance role: large orgs delegate AP / GL to a
   // specialized team that needs invoice + payout + rate-card + wallet
   // mutation rights without the ability to touch SSO, member roster,
@@ -136,10 +136,12 @@ export const MEMBER_ROLE_DESCRIPTION: Record<MemberRole, string> = {
   // BILLING_ADMIN-or-OWNER explicitly allow.
   BILLING_ADMIN:
     "Manages invoices, POs, payouts, rate cards, and outbound webhooks. No member or SSO changes.",
-  MANAGER: "Team analytics, seat management, earnings view.",
+  MANAGER:
+    "Day-to-day operations: appointments, the catalog and consent, with a read-only view of members and money.",
   EXPERT: "Delivers services on behalf of the organization.",
   LEARNER: "Consumes services through the organization's programs.",
-  SUPPORT: "Views support tickets and assists members. No billing.",
+  SUPPORT:
+    "Sees appointments, members and support conversations to help members. No money figures.",
 };
 
 // ───────────────────────────── MemberStatus ─────────────────────────────
@@ -378,15 +380,14 @@ export interface FallbackOrgCandidate {
  * you merely learn in), then organizationSlug ascending as a stable
  * tie-break. Pure, so the router, the layout seed, and tests share it.
  */
-export function selectFallbackOrgMembership<
-  T extends FallbackOrgCandidate,
->(memberships: readonly T[] | null | undefined): T | null {
+export function selectFallbackOrgMembership<T extends FallbackOrgCandidate>(
+  memberships: readonly T[] | null | undefined,
+): T | null {
   if (!memberships || memberships.length === 0) return null;
   let best = memberships[0];
   for (const candidate of memberships) {
     const rank =
-      ORG_ROLE_RANK[candidate.role as MemberRole] ??
-      Number.NEGATIVE_INFINITY;
+      ORG_ROLE_RANK[candidate.role as MemberRole] ?? Number.NEGATIVE_INFINITY;
     const bestRank =
       ORG_ROLE_RANK[best.role as MemberRole] ?? Number.NEGATIVE_INFINITY;
     if (

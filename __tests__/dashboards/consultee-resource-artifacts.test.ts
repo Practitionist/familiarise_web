@@ -41,8 +41,12 @@ describe("the artifact narrows the event set, not just the card", () => {
 
   it.each([
     ["totals", "const totalResources =\n    artifactData.consultations.length"],
-    ["default tab", "artifactData[t.key as keyof ResourcesData]"],
-    ["tab badge counts", "const total = (artifactData[key as keyof ResourcesData] ?? []).length;"],
+    // #1527 — URL tabs: a type with nothing on it has no tab (`show`), so the
+    // first visible one opens, and both read the narrowed set.
+    [
+      "tab visibility and counts",
+      "const total = (artifactData[key as keyof ResourcesData] ?? []).length;",
+    ],
   ])("%s reads the narrowed set", (_label, needle) => {
     expect(src).toContain(needle);
   });
@@ -67,29 +71,40 @@ describe("the artifact narrows the event set, not just the card", () => {
 
   it("still gates the card body, so a combined view stays correct", () => {
     const card = read(CARD);
-    expect(card).toContain('const showMaterials = artifact === "materials" || artifact === "both"');
-    expect(card).toContain('const showRecordings = artifact === "recordings" || artifact === "both"');
+    expect(card).toContain(
+      'const showMaterials = artifact === "materials" || artifact === "both"',
+    );
+    expect(card).toContain(
+      'const showRecordings = artifact === "recordings" || artifact === "both"',
+    );
     expect(card).toContain("showMaterials && event.materials.length > 0");
     expect(card).toContain("showRecordings && event.recordings.length > 0");
   });
 });
 
-describe("the two pages ask for one artifact each", () => {
-  it.each([
-    ["documents", "materials"],
-    ["recordings", "recordings"],
-  ])("the %s page requests artifact=%s", (route, artifact) => {
+describe("the two Library pages read their own sources (#1527)", () => {
+  it("Documents reads the documents aggregate, not the resources read", () => {
     const src = read(
-      `app/dashboard/consultee/[consulteeId]/(features)/${route}/page.tsx`,
+      "components/dashboard/consultee/resources/ConsulteeDocumentsPage.tsx",
     );
-    expect(src).toContain(`artifact="${artifact}"`);
+    expect(src).toContain("/api/dashboard/consultee/${consulteeId}/documents");
+    // The vendor sync button belongs to no Library page any more.
+    expect(src).not.toContain("Sync from Stream");
+    expect(read(TAB)).not.toContain("Sync from Stream");
   });
 
-  it("both pages share one query key, so opening one warms the other", () => {
-    const src = read(
-      "components/dashboard/consultee/resources/ConsulteeResourcesPage.tsx",
+  it("the resources read enforces the late-join rule on class recordings (#1819)", () => {
+    const route = read(
+      "app/api/dashboard/consultee/[consulteeId]/resources/route.ts",
     );
-    expect(src).toContain('queryKey: ["consultee-resources", consulteeId]');
+    expect(route).toContain("lateJoinRecordingAccess(userId)");
+    expect(route).toContain("hiddenFromLateJoiner(");
+    expect(route).toMatch(/access: lateJoin, classId: cl\.id/);
+    const page = read(
+      "components/dashboard/consultee/resources/ConsulteeRecordingsPage.tsx",
+    );
+    expect(page).toContain("/api/dashboard/consultee/${consulteeId}/resources");
+    expect(page).toContain('artifact="recordings"');
   });
 
   it("the retired route redirects rather than 404s", () => {

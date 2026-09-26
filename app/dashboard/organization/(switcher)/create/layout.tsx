@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { requireUserRole } from "@/lib/auth-guard";
 
 /**
@@ -18,7 +17,7 @@ import { requireUserRole } from "@/lib/auth-guard";
  *
  * If such a user comes back via this URL, we render the unbranded shell so
  * they can finish creation. Once their profile is created, this URL
- * server-redirects them into the operator chrome — making the
+ * answers a 308 into the operator chrome (#1527 §17b) — making the
  * dashboard the canonical entry for everyone except half-onboarded
  * recoveries. Do NOT delete this route until the backfill for legacy rows
  * has run; the roadmap item to move the lazy-create into the handoff is
@@ -29,13 +28,7 @@ export default async function CreateOrganizationLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await requireUserRole("ORG_WORKSPACE");
-
-  if (session.user.orgWorkspaceProfileId) {
-    redirect(
-      `/dashboard/org-workspace/${session.user.orgWorkspaceProfileId}/create`,
-    );
-  }
-
+  // Role gate only; the page 308s anyone who has a workspace (#1527).
+  await requireUserRole("ORG_WORKSPACE");
   return <>{children}</>;
 }

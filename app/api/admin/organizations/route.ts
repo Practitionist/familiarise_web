@@ -10,7 +10,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { requireAdminAuth } from "@/lib/auth-helpers";
+import { ORG_AWAITING_VERIFICATION_WHERE } from "@/lib/backoffice/queue-predicates";
 
 const OrgStatusSchema = z.enum([
   "PENDING_VERIFICATION",
@@ -32,17 +34,23 @@ export async function GET(req: NextRequest) {
     Math.max(1, parseInt(url.searchParams.get("limit") ?? "25", 10)),
   );
 
-  const statusFilter = statusRaw
-    ? OrgStatusSchema.safeParse(statusRaw)
-    : null;
+  const statusFilter = statusRaw ? OrgStatusSchema.safeParse(statusRaw) : null;
 
-  const where = {
-    ...(statusFilter?.success ? { status: statusFilter.data } : {}),
+  // #1527 — `queue=verification` is the Verification page's Organizations
+  // tab and its nav badge: the same predicate.
+  const verificationQueue = url.searchParams.get("queue") === "verification";
+  const where: Prisma.OrganizationWhereInput = {
+    ...(verificationQueue ? ORG_AWAITING_VERIFICATION_WHERE : {}),
+    ...(!verificationQueue && statusFilter?.success
+      ? { status: statusFilter.data }
+      : {}),
     ...(search
       ? {
           OR: [
             { name: { contains: search, mode: "insensitive" as const } },
-            { billingEmail: { contains: search, mode: "insensitive" as const } },
+            {
+              billingEmail: { contains: search, mode: "insensitive" as const },
+            },
             { slug: { contains: search, mode: "insensitive" as const } },
           ],
         }

@@ -168,7 +168,7 @@ export async function requirePrivilegedAuth(): Promise<
  * sidebar all agree on who may reach a surface.
  *
  * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
- * merged `/dashboard/admin` renders: those two only express "is this an
+ * merged back-office tree renders: those two only express "is this an
  * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
  * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
  *

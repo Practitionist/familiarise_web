@@ -1,3 +1,10 @@
+import type { MemberRole, MemberStatus, OrgStatus } from "@prisma/client";
+
+import {
+  MEMBER_ROLE_LABEL,
+  MEMBER_STATUS_LABEL,
+} from "@/lib/labels/org-labels";
+
 /**
  * Resolve the href for a user's "Personal Dashboard" link.
  *
@@ -39,68 +46,168 @@ export function resolvePersonalDashboardHref(
   return null;
 }
 
-/**
- * Where "back to my appointments" goes for a given user (#1067).
- *
- * The priority deliberately differs from `resolvePersonalDashboardHref`: an
- * org workspace wins there, but it has no appointments surface at all, so
- * sending someone leaving a meeting to a route that does not exist would be
- * worse than the browser Back button they had before. Consultant still wins
- * over consultee for the same reason as above — someone who both delivers and
- * consumes is far more likely to have been hosting.
- *
- * Falls back to whatever home the user does have, and finally to `/dashboard`,
- * so this never returns null: the lobby always needs somewhere to go.
- */
-export function resolveAppointmentsHref(user: PersonalProfileIds): string {
-  if (user.consultantProfileId) {
-    return `/dashboard/consultant/${user.consultantProfileId}/appointments`;
-  }
-  if (user.consulteeProfileId) {
-    return `/dashboard/consultee/${user.consulteeProfileId}/appointments`;
-  }
-  return resolvePersonalDashboardHref(user) ?? "/dashboard";
-}
+export type DashboardFacetKind =
+  | "expert"
+  | "client"
+  | "workspace"
+  | "organization"
+  | "admin"
+  | "staff";
 
-export type PersonalFacetKind = "org-workspace" | "consultant" | "consultee";
-
-export interface PersonalFacet {
-  kind: PersonalFacetKind;
+export interface DashboardFacet {
+  kind: DashboardFacetKind;
+  /** Stable key: the kind, or `org:<id>` for organizations. */
+  key: string;
   label: string;
   href: string;
+  /** Organization facets only. */
+  organizationId?: string;
+  image?: string | null;
+  /** Humanized member role ("Owner", "Learner"), never the raw enum. */
+  roleLabel?: string;
+  /** Set when the org or membership is not ACTIVE ("Pending verification"). */
+  statusLabel?: string | null;
+}
+
+export interface DashboardFacetMembership {
+  organizationId: string;
+  organizationName: string;
+  organizationLogo?: string | null;
+  role: MemberRole;
+  /** Membership status; the session only carries ACTIVE ones. */
+  status?: MemberStatus;
+  orgStatus?: OrgStatus;
+}
+
+export interface DashboardFacetInput extends PersonalProfileIds {
+  role: string | null | undefined;
+  /**
+   * `canAddConsultantIdentity(user)` from utils/onboarding-shared, computed by
+   * the caller so this label module stays free of the schema/Prisma imports.
+   */
+  canBecomeExpert?: boolean;
+  staffProfileId?: string | null;
+  memberships: readonly DashboardFacetMembership[];
+}
+
+export interface DashboardFacets {
+  you: DashboardFacet[];
+  organizations: DashboardFacet[];
+  platform: DashboardFacet[];
+  actions: {
+    /** Where "Create organization" goes, or null when not entitled. */
+    createOrganizationHref: string | null;
+    /** Where "Become an expert" goes, or null when not entitled. */
+    becomeExpertHref: string | null;
+  };
+}
+
+const ORG_STATUS_LABEL: Record<OrgStatus, string | null> = {
+  ACTIVE: null,
+  PENDING_VERIFICATION: "Pending verification",
+  SUSPENDED: "Suspended",
+  DEACTIVATED: "Deactivated",
+};
+
+function membershipStatusLabel(m: DashboardFacetMembership): string | null {
+  const orgLabel = m.orgStatus ? ORG_STATUS_LABEL[m.orgStatus] : null;
+  if (orgLabel) return orgLabel;
+  return m.status && m.status !== "ACTIVE"
+    ? MEMBER_STATUS_LABEL[m.status]
+    : null;
 }
 
 /**
- * All of a user's personal facets, in priority order — a user who both
- * delivers (consultantProfile) and consumes (consulteeProfile) now has BOTH
- * personal homes, so the switcher can offer each rather than the single
- * priority-winner `resolvePersonalDashboardHref` returns. Identity is driven by
- * capability (which profiles exist), not the singular UserRole.
+ * Every dashboard a user can switch to, grouped You / Organizations / Platform
+ * (#1527 Q1). Facets follow capability (which profiles exist), not the single
+ * UserRole, so a consultant who also booked sessions sees Client too. Org
+ * links go to the bare org route, which lands each role on its own page.
  */
-export function resolvePersonalDashboardFacets(
-  user: PersonalProfileIds,
-): PersonalFacet[] {
-  const facets: PersonalFacet[] = [];
-  if (user.orgWorkspaceProfileId) {
-    facets.push({
-      kind: "org-workspace",
-      label: "Personal (Operator)",
-      href: `/dashboard/org-workspace/${user.orgWorkspaceProfileId}/home`,
+export function resolveDashboardFacets(
+  input: DashboardFacetInput,
+): DashboardFacets {
+  const you: DashboardFacet[] = [];
+  if (input.consultantProfileId) {
+    you.push({
+      kind: "expert",
+      key: "expert",
+      label: "Expert",
+      href: `/dashboard/consultant/${input.consultantProfileId}/home`,
     });
   }
-  if (user.consultantProfileId) {
-    facets.push({
-      kind: "consultant",
-      label: "Personal (Consultant)",
-      href: `/dashboard/consultant/${user.consultantProfileId}/home`,
+  if (input.consulteeProfileId) {
+    you.push({
+      kind: "client",
+      key: "client",
+      label: "Client",
+      href: `/dashboard/consultee/${input.consulteeProfileId}/home`,
     });
   }
-  if (user.consulteeProfileId) {
-    facets.push({
-      kind: "consultee",
-      label: "Personal (Consultee)",
-      href: `/dashboard/consultee/${user.consulteeProfileId}/home`,
+
+  const organizations: DashboardFacet[] = [];
+  if (input.orgWorkspaceProfileId) {
+    organizations.push({
+      kind: "workspace",
+      key: "workspace",
+      label: "All organizations",
+      href: `/dashboard/org-workspace/${input.orgWorkspaceProfileId}/home`,
     });
   }
-  return facets;
+  const seen = new Set<string>();
+  for (const m of input.memberships) {
+    if (seen.has(m.organizationId)) continue;
+    seen.add(m.organizationId);
+    organizations.push({
+      kind: "organization",
+      key: `org:${m.organizationId}`,
+      label: m.organizationName,
+      href: `/dashboard/organization/${m.organizationId}`,
+      organizationId: m.organizationId,
+      image: m.organizationLogo ?? null,
+      roleLabel: MEMBER_ROLE_LABEL[m.role],
+      statusLabel: membershipStatusLabel(m),
+    });
+  }
+
+  const platform: DashboardFacet[] = [];
+  if (input.role === "ADMIN") {
+    platform.push({
+      kind: "admin",
+      key: "admin",
+      label: "Admin",
+      href: "/dashboard/admin/home",
+    });
+  }
+  if (
+    (input.role === "STAFF" || input.role === "ADMIN") &&
+    input.staffProfileId
+  ) {
+    platform.push({
+      kind: "staff",
+      key: "staff",
+      label: "Staff",
+      // #1527 Q12 — one staff tree (no profile id in the URL), opening on Tickets.
+      href: "/dashboard/staff/tickets",
+    });
+  }
+
+  // Creation lives in the workspace; an ORG_WORKSPACE row without its
+  // profile yet uses the legacy backstop route.
+  let createOrganizationHref: string | null = null;
+  if (input.orgWorkspaceProfileId) {
+    createOrganizationHref = `/dashboard/org-workspace/${input.orgWorkspaceProfileId}/create`;
+  } else if (input.role === "ORG_WORKSPACE") {
+    createOrganizationHref = "/dashboard/organization/create";
+  }
+
+  const becomeExpertHref = input.canBecomeExpert
+    ? "/form/onboarding?add=CONSULTANT"
+    : null;
+
+  return {
+    you,
+    organizations,
+    platform,
+    actions: { createOrganizationHref, becomeExpertHref },
+  };
 }

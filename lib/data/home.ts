@@ -10,6 +10,7 @@ import {
   PERSON_SCORE_ORDER,
 } from "@/lib/reviews-display";
 import { toPlain } from "@/lib/data/serialize";
+import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { deriveDirectoryRating } from "@/lib/data/public-stats";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
@@ -58,7 +59,9 @@ export const getHomeExperts = unstable_cache(
           select: { rating: true },
           take: 10,
         },
+        // #1527 Q4 — drafts, archived and ORG_ONLY plans are not on the card.
         subscriptionPlans: {
+          where: oneOnOnePlanDiscoverableWhere(),
           select: {
             id: true,
             title: true,

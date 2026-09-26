@@ -13,14 +13,15 @@
  *    text VERBATIM on its next tick — no re-render, no dispatcher. Scoped to
  *    DEAD_LETTER so a replay can't yank a row that's mid-retry.
  *
- * Access: platform admins only via `requirePrivilegedAuth`. The rendered
- * bodies can carry payment/PII detail, so this never reaches an org UI.
+ * Access: `compliance.manage` (admin only, #1527 Q5 — tightened from
+ * privileged, which admitted staff). The rendered bodies can carry
+ * payment/PII detail, so this never reaches an org UI.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 const ReplayBodySchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(200),
@@ -29,7 +30,7 @@ const ReplayBodySchema = z.object({
 const StatusSchema = z.enum(["PENDING", "RETRY", "SENT", "DEAD_LETTER"]);
 
 export async function GET(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("compliance.manage");
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);
@@ -38,9 +39,7 @@ export async function GET(req: NextRequest) {
     200,
   );
   const statusParam = url.searchParams.get("status");
-  const status = statusParam
-    ? StatusSchema.safeParse(statusParam)
-    : undefined;
+  const status = statusParam ? StatusSchema.safeParse(statusParam) : undefined;
   if (status && !status.success) {
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
@@ -70,7 +69,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("compliance.manage");
   if (auth.error) return auth.error;
 
   const raw = await req.json().catch(() => ({}));

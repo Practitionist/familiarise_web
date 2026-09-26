@@ -11,7 +11,12 @@
  */
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Bot,
   Headset,
@@ -22,6 +27,11 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { threadStatus } from "@/lib/labels/backoffice-labels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -75,22 +85,7 @@ const STATUS_FILTERS = [
   "CLOSED",
 ] as const;
 
-const STATUS_LABELS: Record<string, string> = {
-  OPEN: "Open",
-  IN_PROGRESS: "In progress",
-  ESCALATED: "Escalated",
-  RESOLVED: "Resolved",
-  CLOSED: "Closed",
-};
-
-function statusVariant(
-  status: string,
-): "default" | "secondary" | "outline" | "destructive" {
-  if (status === "RESOLVED") return "secondary";
-  if (status === "CLOSED") return "outline";
-  if (status === "ESCALATED") return "destructive";
-  return "default";
-}
+const PAGE_SIZE = 20;
 
 function planTitleOf(a: ThreadDetail["appointment"]): string {
   return (
@@ -103,7 +98,19 @@ function planTitleOf(a: ThreadDetail["appointment"]): string {
 }
 
 export function SupportThreadsPage() {
-  const [status, setStatus] = useState<string>("");
+  // #1527 — "needs reply" (open or escalated) is the default view and the
+  // nav badge's predicate; "" is every status.
+  const [status, setStatusState] = useState<string>("needs-reply");
+  const [search, setSearchState] = useState("");
+  const [page, setPage] = useState(1);
+  const setStatus = (next: string) => {
+    setStatusState(next);
+    setPage(1);
+  };
+  const setSearch = (next: string) => {
+    setSearchState(next);
+    setPage(1);
+  };
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // The reply draft lives in React state: a DOM-read textarea never cleared
   // after send (duplicate replies on a second click) and bled drafts across
@@ -113,17 +120,24 @@ export function SupportThreadsPage() {
   const { toast } = useToast();
 
   const list = useQuery({
-    queryKey: ["staff-threads", status],
+    queryKey: ["staff-threads", status, search, page],
     queryFn: async (): Promise<{
       data: ThreadListRow[];
       counts: Record<string, number>;
+      pagination: { total: number };
     }> => {
-      const params = new URLSearchParams({ limit: "30" });
-      if (status) params.set("status", status);
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        page: String(page),
+      });
+      if (status === "needs-reply") params.set("view", "needs-reply");
+      else if (status) params.set("status", status);
+      if (search) params.set("search", search);
       const res = await fetch(`/api/staff/support-threads?${params}`);
       if (!res.ok) await throwSupportError(res, "conversations list");
       return res.json();
     },
+    placeholderData: keepPreviousData,
   });
 
   const detail = useQuery({
@@ -191,45 +205,36 @@ export function SupportThreadsPage() {
   const rows = list.data?.data ?? [];
   const d = detail.data;
 
-  const totalOpen = useMemo(
-    () =>
-      (counts.OPEN ?? 0) + (counts.IN_PROGRESS ?? 0) + (counts.ESCALATED ?? 0),
-    [counts],
-  );
+  const needsReply = (counts.OPEN ?? 0) + (counts.ESCALATED ?? 0);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">
-            Support conversations
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Per-appointment threads — {totalOpen} awaiting action. Replies reach
-            the user in their session&apos;s &quot;Get help&quot; panel.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          <Button
-            size="sm"
-            variant={status === "" ? "default" : "outline"}
-            onClick={() => setStatus("")}
-          >
-            All
-          </Button>
-          {STATUS_FILTERS.map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={status === s ? "default" : "outline"}
-              onClick={() => setStatus(s)}
-            >
-              {STATUS_LABELS[s]}
-              {counts[s] ? ` (${counts[s]})` : ""}
-            </Button>
-          ))}
-        </div>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Conversations"
+        description={`Per-appointment threads, ${needsReply} waiting on a reply. Replies reach the user in their session's "Get help" panel.`}
+      />
+      <FilterBar
+        search={{
+          label: "Search conversations",
+          placeholder: "Name, email, thread or appointment id",
+          value: search,
+          onChange: setSearch,
+        }}
+        chips={{
+          label: "Status",
+          options: [
+            { value: "needs-reply", label: "Needs reply", count: needsReply },
+            ...STATUS_FILTERS.map((s) => ({
+              value: s,
+              label: threadStatus(s).label,
+              count: counts[s],
+            })),
+          ],
+          value: status || null,
+          onChange: (v) => setStatus(v ?? ""),
+          clearable: true,
+        }}
+      />
 
       <div className="grid gap-4 lg:grid-cols-5">
         {/* List */}
@@ -280,9 +285,7 @@ export function SupportThreadsPage() {
                   <span className="truncate text-sm font-medium text-foreground">
                     {t.user.name ?? t.user.email}
                   </span>
-                  <Badge variant={statusVariant(t.status)}>
-                    {STATUS_LABELS[t.status] ?? t.status}
-                  </Badge>
+                  <StatusBadge {...threadStatus(t.status)} />
                 </div>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {t.category.replaceAll("_", " ").toLowerCase()} ·{" "}
@@ -347,9 +350,7 @@ export function SupportThreadsPage() {
                         Ticket linked
                       </Badge>
                     )}
-                    <Badge variant={statusVariant(d.status)}>
-                      {STATUS_LABELS[d.status] ?? d.status}
-                    </Badge>
+                    <StatusBadge {...threadStatus(d.status)} />
                   </div>
                 </div>
 
@@ -432,7 +433,7 @@ export function SupportThreadsPage() {
                           {s === "RESOLVED" && (
                             <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
                           )}
-                          {STATUS_LABELS[s]}
+                          {threadStatus(s).label}
                         </Button>
                       ))}
                     </div>
@@ -452,6 +453,12 @@ export function SupportThreadsPage() {
           </div>
         )}
       </div>
+      <TablePagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={list.data?.pagination.total ?? 0}
+        onPageChange={setPage}
+      />
     </div>
   );
 }

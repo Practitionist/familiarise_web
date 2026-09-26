@@ -91,6 +91,14 @@ export interface Ticket {
   issueType: string | null;
   user: TicketUser;
   assignedToId?: string | null;
+  /** #1527 — list rows carry the assignee and the derived SLA clock. */
+  assignedTo?: { id: string; name: string | null } | null;
+  sla?: {
+    ackBreached: boolean;
+    resolutionBreached: boolean;
+    msToAckDue: number | null;
+    msToResolutionDue: number | null;
+  };
   responseCount?: number;
   attachmentCount?: number;
   consultationId?: string | null;

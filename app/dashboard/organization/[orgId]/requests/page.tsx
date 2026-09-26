@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
@@ -6,10 +6,8 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { isPayerAdminRole } from "@/lib/booking/org-actor";
-import { readOrgPendingRequests } from "@/lib/data/org-pending-requests";
 
 import { RequestsClient } from "./RequestsClient";
-import { PayerRequestsView } from "./PayerRequestsView";
 
 /**
  * Requests — slot allocation for sessions this organization funded or hosts.
@@ -30,9 +28,10 @@ import { PayerRequestsView } from "./PayerRequestsView";
  * away entirely, which cost them the one thing they do need: an org-funded
  * booking that no expert has scheduled is the org's money sitting idle, and the
  * only surface showing it was the delivering consultant's. OWNER/MAINTAINER —
- * the payer-side actor, same rule as `isOrgAdminOfAppointment` — now get the
- * list read-only. Everyone else still goes home, because they would be looking
- * at a page with nothing on it for them.
+ * the payer-side actor, same rule as `isOrgAdminOfAppointment` — get that list
+ * read-only as Appointments › Unscheduled (#1527 Q7; this URL 308s there).
+ * Everyone else still goes home, because they would be looking at a page with
+ * nothing on it for them.
  */
 export default async function OrgRequestsPage({
   params,
@@ -54,18 +53,8 @@ export default async function OrgRequestsPage({
     if (!isPayerAdminRole(access.member.role)) {
       redirect(`/dashboard/organization/${orgId}/home`);
     }
-
-    const requests = await readOrgPendingRequests(orgId);
-    return (
-      <>
-        <DashboardHeader
-          title="Requests"
-          subtitle="Bookings this organization funded that are still waiting on times."
-        />
-        <DashboardContent>
-          <PayerRequestsView requests={requests} />
-        </DashboardContent>
-      </>
+    permanentRedirect(
+      `/dashboard/organization/${orgId}/appointments?tab=unscheduled`,
     );
   }
 
@@ -73,7 +62,7 @@ export default async function OrgRequestsPage({
     <>
       <DashboardHeader
         title="Requests"
-        subtitle="Bookings under this organization awaiting slot allocation."
+        description="Bookings under this organization awaiting slot allocation."
       />
       <DashboardContent>
         <RequestsClient

@@ -867,6 +867,24 @@ async function readCounts(
   return counts;
 }
 
+/**
+ * #1527 — the consultant nav badge: the inbox's own tab counts, so badge and
+ * tabs cannot disagree. Personal scope by default (#1345: org-funded requests
+ * belong to that org's dashboard).
+ */
+export async function readRequestsInboxCounts(args: {
+  consultantProfileId: string;
+  orgScope?: Scope;
+  now?: Date;
+}): Promise<Record<InboxType, number>> {
+  return readCounts(
+    args.consultantProfileId,
+    args.orgScope ?? PERSONAL,
+    args.now ?? new Date(),
+    null,
+  );
+}
+
 export async function readRequestsInbox(
   args: ReadRequestsInboxArgs,
 ): Promise<RequestsInboxPayload> {

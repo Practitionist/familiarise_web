@@ -25,7 +25,9 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 const LIST = "app/api/organizations/[orgId]/reimbursements/route.ts";
 const EXPORT = "app/api/organizations/[orgId]/reimbursements/export/route.ts";
-const UI = "app/dashboard/organization/[orgId]/reimbursements/page.tsx";
+// #1527 Q7 — the report is Billing › Member spend now.
+const UI =
+  "app/dashboard/organization/[orgId]/reimbursements/MemberSpendPanel.tsx";
 
 /**
  * The netting rule, mirrored from both routes. Pinning the arithmetic here is
@@ -67,18 +69,24 @@ describe("netting arithmetic", () => {
 });
 
 describe("both routes net, and agree with each other", () => {
-  it.each([LIST, EXPORT])("%s counts only succeeded, non-deleted refunds", (rel) => {
-    const src = read(rel);
-    expect(src).toContain('status: "SUCCEEDED" as const, deletedAt: null');
-    // A PENDING or FAILED refund has not returned any money yet, so deducting
-    // it would under-pay a member whose refund never lands.
-    expect(src).toContain("refunds");
-  });
+  it.each([LIST, EXPORT])(
+    "%s counts only succeeded, non-deleted refunds",
+    (rel) => {
+      const src = read(rel);
+      expect(src).toContain('status: "SUCCEEDED" as const, deletedAt: null');
+      // A PENDING or FAILED refund has not returned any money yet, so deducting
+      // it would under-pay a member whose refund never lands.
+      expect(src).toContain("refunds");
+    },
+  );
 
-  it.each([LIST, EXPORT])("%s no longer drops refunded rows wholesale", (rel) => {
-    // This filter was the under-payment.
-    expect(read(rel)).not.toContain("refunds: { none:");
-  });
+  it.each([LIST, EXPORT])(
+    "%s no longer drops refunded rows wholesale",
+    (rel) => {
+      // This filter was the under-payment.
+      expect(read(rel)).not.toContain("refunds: { none:");
+    },
+  );
 
   it.each([LIST, EXPORT])("%s clamps the net at zero", (rel) => {
     expect(read(rel)).toMatch(/Math\.max\(0,\s*grossPaise - refundedPaise\)/);

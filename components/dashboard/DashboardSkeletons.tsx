@@ -1,11 +1,29 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+
+/**
+ * Root of every skeleton (#1527): announced as loading, and no outer padding
+ * of its own because the shell owns the gutter — the loaded page then lands
+ * without a layout shift.
+ */
+function LoadingRegion({
+  className,
+  children,
+}: Readonly<{ className?: string; children: ReactNode }>) {
+  return (
+    <div role="status" aria-busy="true" className={className}>
+      {children}
+      <span className="sr-only">Loading…</span>
+    </div>
+  );
+}
 
 // Generic page skeleton with title and content
 export function PageSkeleton() {
   return (
-    <div className="p-6 lg:p-8">
+    <LoadingRegion>
       <div className="space-y-6">
         <div className="space-y-2">
           <Skeleton className="h-8 w-48" />
@@ -17,7 +35,7 @@ export function PageSkeleton() {
           ))}
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -52,7 +70,7 @@ export function ChatSkeleton() {
  */
 export function ChatSkeletonPanes() {
   return (
-    <div className="flex h-full w-full overflow-hidden">
+    <LoadingRegion className="flex h-full w-full overflow-hidden">
       {/* Channel list. Mirrors ChatLayout: full-width and visible below `md`,
           a fixed rail above it. The old `hidden sm:block` was the inverse of
           the loaded state — under 640px it showed the conversation and hid the
@@ -91,7 +109,10 @@ export function ChatSkeletonPanes() {
             </div>
           ))}
           {[1, 2].map((i) => (
-            <div key={`out-${i}`} className="flex items-start justify-end gap-3">
+            <div
+              key={`out-${i}`}
+              className="flex items-start justify-end gap-3"
+            >
               <div className="space-y-1 text-right">
                 <Skeleton className="ml-auto h-4 w-40" />
                 <Skeleton className="ml-auto h-3 w-24" />
@@ -105,14 +126,14 @@ export function ChatSkeletonPanes() {
           <Skeleton className="h-10 w-full" />
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 // Documents/Table page skeleton
 export function TableSkeleton() {
   return (
-    <div className="p-6 lg:p-8">
+    <LoadingRegion>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div className="space-y-2">
@@ -152,14 +173,14 @@ export function TableSkeleton() {
           ))}
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 // Requests page skeleton
 export function RequestsSkeleton() {
   return (
-    <div className="flex flex-col lg:flex-row gap-6 p-6 lg:p-8">
+    <LoadingRegion className="flex flex-col lg:flex-row gap-6">
       {/* Left panel */}
       <div className="flex-1 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -200,7 +221,7 @@ export function RequestsSkeleton() {
           ))}
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
@@ -216,16 +237,16 @@ export function HomeSkeleton({
   withHeader = true,
 }: Readonly<{ withHeader?: boolean }> = {}) {
   return (
-    <div className="flex-1 flex flex-col">
+    <LoadingRegion className="flex-1 flex flex-col">
       {withHeader && (
-        <div className="sticky top-0 z-30 border-b border-border/50 bg-muted/80 px-6 py-4 backdrop-blur-xl lg:px-8">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="mt-1 h-4 w-64" />
+        <div className="mb-6">
+          <Skeleton className="h-7 w-48" />
+          <Skeleton className="mt-2 h-4 w-64" />
         </div>
       )}
 
       {/* Content */}
-      <div className="space-y-6 px-6 py-6 lg:px-8">
+      <div className="space-y-6">
         {/* Stats */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
@@ -275,14 +296,14 @@ export function HomeSkeleton({
           </div>
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 // Settings skeleton
 export function SettingsSkeleton() {
   return (
-    <div className="p-6 lg:p-8">
+    <LoadingRegion>
       <div className="space-y-6 max-w-3xl">
         <div className="space-y-2">
           <Skeleton className="h-8 w-32" />
@@ -309,15 +330,15 @@ export function SettingsSkeleton() {
           </div>
         ))}
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 // Help skeleton
 export function HelpSkeleton() {
   return (
-    <div className="w-full bg-background">
-      <div className="w-full px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+    <LoadingRegion className="w-full bg-background">
+      <div className="w-full">
         <div className="space-y-6 sm:space-y-10">
           {/* Header */}
           <div className="space-y-4 sm:space-y-6">
@@ -368,14 +389,14 @@ export function HelpSkeleton() {
           ))}
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 // Planner/Calendar skeleton
 export function PlannerSkeleton() {
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+    <LoadingRegion>
       <div className="space-y-6 sm:space-y-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-0">
@@ -425,15 +446,14 @@ export function PlannerSkeleton() {
           ))}
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
-
 
 /** Appointment detail: banner + content columns. */
 export function AppointmentDetailSkeleton() {
   return (
-    <div className="space-y-6 p-6 lg:p-8">
+    <LoadingRegion className="space-y-6">
       <div className="space-y-3 rounded-xl border border-border bg-card p-6">
         <Skeleton className="h-6 w-32 rounded-full" />
         <Skeleton className="h-8 w-64" />
@@ -455,14 +475,14 @@ export function AppointmentDetailSkeleton() {
           <Skeleton className="h-32 rounded-xl" />
         </div>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }
 
 /** Admin analytics: 4 stat cards + chart panels. */
 export function AnalyticsSkeleton() {
   return (
-    <div className="space-y-6 p-6 lg:p-8">
+    <LoadingRegion className="space-y-6">
       <div className="space-y-2">
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-4 w-64" />
@@ -483,6 +503,6 @@ export function AnalyticsSkeleton() {
         <Skeleton className="h-72 rounded-xl" />
         <Skeleton className="h-72 rounded-xl" />
       </div>
-    </div>
+    </LoadingRegion>
   );
 }

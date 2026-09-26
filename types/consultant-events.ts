@@ -1,3 +1,4 @@
+import type { ConsultantNeedsYou } from "@/lib/data/consultant-needs-you";
 import { TAppointment } from "@/types/appointment";
 
 /**
@@ -109,4 +110,8 @@ export interface TConsultantDashboardResponse {
   financialSummary: TFinancialSummary;
   /** #1675 PR-Y2 — earnings exist and the payout account is what stops them. */
   payoutSetup?: { needed: boolean; href: string; livePayoutsEnabled: boolean };
+  /** #1527 — Home's Needs you strip; absent when its read failed. */
+  needsYou?: ConsultantNeedsYou;
+  /** #1527 — Home's This month card and milestone line. */
+  sessionsDelivered?: { thisMonth: number; lifetime: number };
 }

@@ -14,6 +14,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
+import { THREAD_QUEUE_WHERE } from "@/lib/backoffice/queue-predicates";
 import type { Prisma } from "@prisma/client";
 import {
   SupportThreadCategoryEnum,
@@ -28,6 +29,8 @@ const QuerySchema = z.object({
   // threads that have left the tree, so SELF_SERVE is not a filterable state.
   channel: z.enum(["AI", "HUMAN"]).optional(),
   category: SupportThreadCategoryEnum.optional(),
+  // #1527 — "needs reply": the Conversations nav badge's own predicate.
+  view: z.enum(["needs-reply"]).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -40,6 +43,7 @@ export async function GET(req: NextRequest) {
       status: searchParams.get("status") ?? undefined,
       channel: searchParams.get("channel") ?? undefined,
       category: searchParams.get("category") ?? undefined,
+      view: searchParams.get("view") ?? undefined,
     });
     if (!query.success) {
       return supportError({
@@ -57,11 +61,17 @@ export async function GET(req: NextRequest) {
       return Number.isFinite(parsed) ? parsed : fallback;
     };
     const page = Math.max(1, toInt(searchParams.get("page"), 1));
-    const limit = Math.min(50, Math.max(1, toInt(searchParams.get("limit"), 20)));
+    const limit = Math.min(
+      50,
+      Math.max(1, toInt(searchParams.get("limit"), 20)),
+    );
     const offset = (page - 1) * limit;
 
     const where: Prisma.AppointmentSupportThreadWhereInput = {};
     if (query.data.status) where.status = query.data.status;
+    else if (query.data.view === "needs-reply") {
+      Object.assign(where, THREAD_QUEUE_WHERE);
+    }
     if (query.data.channel) where.activeChannel = query.data.channel;
     if (query.data.category) where.category = query.data.category;
     if (search) {

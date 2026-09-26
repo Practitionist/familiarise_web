@@ -1,12 +1,9 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
-import Link from "next/link";
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
+import { useMemo, useState, useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { EventCarousel } from "./EventCarousel";
+import { useQuery } from "@tanstack/react-query";
+import { LayoutGrid, SearchX } from "lucide-react";
 // #248 bundle discipline: never statically import the Stream SDK or
 // @/lib/meeting (which imports it) — the client singleton is read at
 // click time and the meeting helper is lazy-imported on demand.
@@ -25,33 +22,40 @@ import {
   getJoinableOccurrence,
   getOccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
-import {
-  PlannerWebinarEvent,
-  PlannerClassEvent,
+import type {
   ConsultationPlanEvent,
+  PlannerClassEvent,
+  PlannerWebinarEvent,
   SubscriptionPlanEvent,
 } from "@/types/planner-events";
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
+import { useSession } from "@/lib/auth-client";
+import { useListParams } from "@/hooks/useListParams";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import {
-  useWebinarMutations,
-  useClassMutations,
+  fetchOfferingStats,
+  offeringStatsQueryKey,
+  type OfferingPlanType,
+} from "@/lib/offerings/stats";
+import { OfferingCard } from "@/components/offerings/list/OfferingCard";
+import { NewOfferingMenu } from "@/components/offerings/list/NewOfferingMenu";
+import {
+  OFFERING_TYPE_FILTERS,
+  buildOfferingRows,
+  filterOfferingRows,
+  type OfferingRow,
+} from "@/components/offerings/list/offering-rows";
+import {
+  useArchiveOffering,
   useConsultationPlans,
-  useConsultationPlanMutations,
+  useDeleteOffering,
   useSubscriptionPlans,
-  useSubscriptionPlanMutations,
-  useWebinarPlanMutations,
-  useClassPlanMutations,
 } from "../hooks/usePlanner";
-import {
-  LayoutTemplate,
-  Radio,
-  Plus,
-  MessageSquare,
-  CalendarRange,
-  Video,
-  GraduationCap,
-} from "lucide-react";
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
@@ -63,15 +67,35 @@ interface Props {
   consultantId: string;
   /**
    * Planner payload from the page's ["consultant-planner", …] query — the
-   * SINGLE source of truth. Mutations invalidate that key (usePlanner.ts)
-   * and fresh data flows back down; this component keeps no local copy.
-   * (Previously it seeded useState from this prop while mutations
-   * invalidated a key nobody queried, so the UI went stale after every
-   * create/edit/delete.)
+   * SINGLE source of truth for webinar/class instances. Mutations invalidate
+   * that key (usePlanner.ts) and fresh data flows back down.
    */
   data: PlannerData;
 }
 
+async function fetchPendingTrialCounts(
+  consultantId: string,
+): Promise<Record<string, number>> {
+  const response = await fetch(
+    `/api/trials?consultantProfileId=${encodeURIComponent(consultantId)}&status=PENDING`,
+  );
+  if (!response.ok) return {};
+  const { data } = (await response.json()) as {
+    data: { subscriptionPlanId: string }[];
+  };
+  const counts: Record<string, number> = {};
+  for (const trial of data) {
+    counts[trial.subscriptionPlanId] =
+      (counts[trial.subscriptionPlanId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * The Offerings list (#1527 §7.2, the Event Planner renamed): type pills and a
+ * search held in the URL, one card per offering with its status, stats and
+ * actions. Webinar and class cards keep the host's Join.
+ */
 export function EventManagementDashboard({
   consultantId,
   data,
@@ -79,25 +103,9 @@ export function EventManagementDashboard({
   const webinars = data.webinars;
   const classes = data.classes;
   const { toast } = useToast();
-
-  // React Query hooks for consultation and subscription plans
-  const { data: consultationPlans, isLoading: consultationPlansLoading } =
-    useConsultationPlans(consultantId);
-  const { data: subscriptionPlans, isLoading: subscriptionPlansLoading } =
-    useSubscriptionPlans(consultantId);
-
-  // React Query mutations
-  const { deleteWebinar } = useWebinarMutations(consultantId);
-  const { deleteClass } = useClassMutations(consultantId);
-  const { archiveWebinarPlan } = useWebinarPlanMutations(consultantId);
-  const { archiveClassPlan } = useClassPlanMutations(consultantId);
-  // Create/update moved to the offering editor, which owns its own save; the
-  // planner only deletes now.
-  const { deleteConsultationPlan, archiveConsultationPlan } =
-    useConsultationPlanMutations(consultantId);
-  const { deleteSubscriptionPlan, archiveSubscriptionPlan } =
-    useSubscriptionPlanMutations(consultantId);
   const router = useRouter();
+  const basePath = `/dashboard/consultant/${consultantId}`;
+
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
   // #1280 2.7 — `joiningEventId` is state, and it is set AFTER the first await
   // (`waitForGlobalVideoClient`, which can take a second on a cold provider),
@@ -315,452 +323,214 @@ export function EventManagementDashboard({
     }
   };
 
-  // Trial management state - just counts for badge display
-  const [pendingTrialCounts, setPendingTrialCounts] = useState<
-    Record<string, number>
-  >({});
+  // The stats route is session-derived: only the owner's own stats are theirs.
+  const { data: session } = useSession();
+  const isOwner =
+    (session?.user as { consultantProfileId?: string } | undefined)
+      ?.consultantProfileId === consultantId;
+  const stats = useQuery({
+    queryKey: offeringStatsQueryKey(consultantId),
+    queryFn: fetchOfferingStats,
+    enabled: isOwner,
+    staleTime: 60_000,
+  });
+  const statByKey = useMemo(
+    () =>
+      new Map(
+        (stats.data?.rows ?? []).map((r) => [`${r.planType}:${r.planId}`, r]),
+      ),
+    [stats.data],
+  );
 
-  // Fetch pending trial counts for subscription plans
-  const fetchTrialCounts = useCallback(async () => {
-    if (!consultantId) return;
+  const pendingTrials = useQuery({
+    queryKey: ["trials", consultantId, "PENDING", "counts"],
+    queryFn: () => fetchPendingTrialCounts(consultantId),
+    staleTime: 60_000,
+  });
 
-    try {
-      const response = await fetch(
-        `/api/trials?consultantProfileId=${consultantId}&status=PENDING`,
-      );
-      if (!response.ok) return;
+  const consultationPlans = useConsultationPlans(consultantId);
+  const subscriptionPlans = useSubscriptionPlans(consultantId);
 
-      const { data } = await response.json();
-      // Group by subscriptionPlanId
-      const counts = data.reduce(
-        (
-          acc: Record<string, number>,
-          trial: { subscriptionPlanId: string },
-        ) => {
-          acc[trial.subscriptionPlanId] =
-            (acc[trial.subscriptionPlanId] || 0) + 1;
-          return acc;
-        },
-        {},
-      );
-      setPendingTrialCounts(counts);
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      console.error("Error fetching trial counts:", error);
-    }
-  }, [consultantId]);
-
-  // Fetch trial counts on mount and when subscription plans change
-  useEffect(() => {
-    fetchTrialCounts();
-  }, [fetchTrialCounts, subscriptionPlans]);
-
-  // Trials live on Appointments now (ADR 19 — a trial IS an appointment), so
-  // this deep-links to the tab rather than the retired standalone route.
-  // Prefetchable: threaded to the subscription card as a real link.
-  const trialsHref = `/dashboard/consultant/${consultantId}/appointments?tab=trials`;
-  const handleTrialsClick = () => {
-    router.push(trialsHref);
+  const archive: Record<
+    OfferingPlanType,
+    ReturnType<typeof useArchiveOffering>
+  > = {
+    consultation: useArchiveOffering(consultantId, "consultation"),
+    subscription: useArchiveOffering(consultantId, "subscription"),
+    webinar: useArchiveOffering(consultantId, "webinar"),
+    class: useArchiveOffering(consultantId, "class"),
+  };
+  const remove: Record<
+    OfferingPlanType,
+    ReturnType<typeof useDeleteOffering>
+  > = {
+    consultation: useDeleteOffering(consultantId, "consultation"),
+    subscription: useDeleteOffering(consultantId, "subscription"),
+    webinar: useDeleteOffering(consultantId, "webinar"),
+    class: useDeleteOffering(consultantId, "class"),
   };
 
-  // Handle webinar saved event
+  const list = useListParams({ filterKeys: ["type"] as const });
+  const rows = useMemo(
+    () =>
+      buildOfferingRows({
+        consultationPlans: (consultationPlans.data ?? []).map(
+          (plan: ConsultationPlan & { id: string }): ConsultationPlanEvent => ({
+            type: "consultation",
+            id: plan.id,
+            consultationPlan: plan as ConsultationPlanEvent["consultationPlan"],
+          }),
+        ),
+        subscriptionPlans: (subscriptionPlans.data ?? []).map(
+          (plan: SubscriptionPlan & { id: string }): SubscriptionPlanEvent => ({
+            type: "subscription",
+            id: plan.id,
+            subscriptionPlan: plan as SubscriptionPlanEvent["subscriptionPlan"],
+          }),
+        ),
+        webinars,
+        classes,
+        participantCounts: data.participantCounts ?? {},
+      }),
+    [
+      consultationPlans.data,
+      subscriptionPlans.data,
+      webinars,
+      classes,
+      data.participantCounts,
+    ],
+  );
+  const visible = filterOfferingRows(rows, list.filters.type, list.q);
 
-  // Handle class saved event
-
-  // Editing routes to the offering editor rather than reopening a dialog, so
-  // an offering has one authoring surface and a URL you can return to.
-  //
-  // A row with no id has no editor to open, and both previous spellings built a
-  // URL that could only land on the error boundary: `id ?? ""` collapsed to a
-  // double slash, while a bare `id` stringified undefined into the path. The
-  // card's Edit control is disabled for such a row; this is the backstop.
-  // Prefetchable: cards render this href as a real link; the push below is
-  // only the fallback for surfaces that cannot host one.
-  const getEditHref = (type: string, id: string | undefined): string | null => {
-    if (!id) {
-      reportSentryMessage("Edit requested for an offering with no id", {
-        subsystem: "offerings",
-        op: "edit-navigate",
-        extra: { type, consultantId },
-      });
-      return null;
-    }
-    return `/dashboard/consultant/${consultantId}/offerings/${type}/${id}/edit`;
+  const cardProps = (row: OfferingRow) => {
+    const planId = row.planId;
+    // The editor loads plans by id; a group card also names its instance so
+    // the save lands on this batch, not the plan's first one.
+    const instanceQuery = row.instanceId ? `?instance=${row.instanceId}` : "";
+    const joinable =
+      row.type === "webinar" || row.type === "class"
+        ? {
+            canJoin: joinableEventIds.has(row.instanceId ?? ""),
+            isJoining: joiningEventId === row.instanceId,
+            onJoin: () =>
+              row.type === "webinar"
+                ? handleJoinWebinarMeeting(row.event as PlannerWebinarEvent)
+                : handleJoinClassMeeting(row.event as PlannerClassEvent),
+          }
+        : undefined;
+    const deleteId = row.instanceId ?? planId;
+    return {
+      stat: row.statKey ? statByKey.get(row.statKey) : undefined,
+      editHref: planId
+        ? `${basePath}/offerings/${row.type}/${planId}/edit${instanceQuery}`
+        : null,
+      duplicateHref: planId
+        ? `${basePath}/offerings/${row.type}/new?from=${planId}`
+        : null,
+      trials:
+        row.type === "subscription" && planId
+          ? {
+              // Trial requests are a type tab of the Requests inbox (#1775).
+              href: `${basePath}/requests?type=trial`,
+              pending: pendingTrials.data?.[planId] ?? 0,
+            }
+          : undefined,
+      join: joinable,
+      onArchiveToggle: planId
+        ? () =>
+            archive[row.type].mutateAsync({
+              id: planId,
+              archived: !row.isArchived,
+            })
+        : undefined,
+      onDelete: deleteId
+        ? () => remove[row.type].mutateAsync(deleteId)
+        : undefined,
+    };
   };
 
-  const goToEdit = (type: string, id: string | undefined) => {
-    const href = getEditHref(type, id);
-    if (href) router.push(href);
-  };
+  const plansLoading =
+    (consultationPlans.isLoading && !consultationPlans.data) ||
+    (subscriptionPlans.isLoading && !subscriptionPlans.data);
+  const plansError = consultationPlans.error ?? subscriptionPlans.error;
 
-  const handleEditWebinar = (webinar: PlannerWebinarEvent) => {
-    goToEdit("webinar", webinar.id);
-  };
-
-  const handleEditClass = (classEvent: PlannerClassEvent) => {
-    goToEdit("class", classEvent.id);
-  };
-
-  // Handle webinar delete event using React Query
-  const handleWebinarDelete = async (webinarId: string) => {
-    console.log(`EventManagementDashboard - Deleting webinar: ${webinarId}`);
-    deleteWebinar.mutate(webinarId);
-  };
-
-  // Handle class delete event using React Query
-  const handleClassDelete = async (classId: string) => {
-    console.log(`EventManagementDashboard - Deleting class: ${classId}`);
-    deleteClass.mutate(classId);
-  };
-
-  // Handle consultation plan saved event
-
-  // Handle subscription plan saved event
-
-  const handleEditConsultationPlan = (
-    consultationPlan: ConsultationPlanEvent,
-  ) => {
-    goToEdit("consultation", consultationPlan.id);
-  };
-
-  const handleEditSubscriptionPlan = (
-    subscriptionPlan: SubscriptionPlanEvent,
-  ) => {
-    goToEdit("subscription", subscriptionPlan.id);
-  };
-
-  // Handle consultation plan delete event using React Query
-  const handleConsultationPlanDelete = async (planId: string) => {
-    console.log(
-      `EventManagementDashboard - Deleting consultation plan: ${planId}`,
+  let body: ReactNode;
+  if (plansLoading) {
+    body = (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-52 rounded-xl" />
+        ))}
+      </div>
     );
-    deleteConsultationPlan.mutate(planId);
-  };
-
-  // Handle subscription plan delete event using React Query
-  const handleSubscriptionPlanDelete = async (planId: string) => {
-    console.log(
-      `EventManagementDashboard - Deleting subscription plan: ${planId}`,
+  } else if (rows.length === 0) {
+    body = (
+      <EmptyState
+        icon={LayoutGrid}
+        title="No offerings yet"
+        description="Create a 1:1 session, a subscription, a webinar or a class to start taking bookings."
+        action={<NewOfferingMenu consultantId={consultantId} />}
+      />
     );
-    deleteSubscriptionPlan.mutate(planId);
-  };
-
-  // Archive/restore toggles (#1494) — one handler per plan family, each
-  // wired to the matching PATCH mutation.
-  const handleConsultationPlanArchiveToggle = (
-    planId: string,
-    archived: boolean,
-  ) => archiveConsultationPlan.mutate({ id: planId, archived });
-
-  const handleSubscriptionPlanArchiveToggle = (
-    planId: string,
-    archived: boolean,
-  ) => archiveSubscriptionPlan.mutate({ id: planId, archived });
-
-  const handleWebinarPlanArchiveToggle = (planId: string, archived: boolean) =>
-    archiveWebinarPlan.mutate({ id: planId, archived });
-
-  const handleClassPlanArchiveToggle = (planId: string, archived: boolean) =>
-    archiveClassPlan.mutate({ id: planId, archived });
-
-  // Calculate stats
-  const totalPlans =
-    (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
-  const totalSessions = webinars.length + classes.length;
+  } else if (visible.length === 0) {
+    body = (
+      <EmptyState
+        icon={SearchX}
+        title="Nothing matches"
+        description="Try another type or search."
+        action={
+          <Button variant="outline" size="sm" onClick={list.clear}>
+            Clear filters
+          </Button>
+        }
+      />
+    );
+  } else {
+    body = (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {visible.map((row) => (
+          <OfferingCard key={row.key} row={row} {...cardProps(row)} />
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <div className="w-full">
-        {/* Quick Stats — the page title lives in the page-level
-            DashboardHeader; only the live counters render here. */}
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="mb-8 flex flex-wrap items-center gap-2 sm:mb-10 sm:gap-3"
-        >
-          <div className="flex items-center gap-2 rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2 shadow-sm">
-            <LayoutTemplate className="h-4 w-4 text-zinc-500" />
-            <span className="text-sm font-medium text-zinc-800">
-              {totalPlans}{" "}
-              <span className="font-normal text-zinc-500">Plans</span>
-            </span>
-          </div>
-          <div className="flex items-center gap-2 rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2 shadow-sm">
-            <Radio className="h-4 w-4 text-zinc-500" />
-            <span className="text-sm font-medium text-zinc-800">
-              {totalSessions}{" "}
-              <span className="font-normal text-zinc-500">
-                Upcoming Sessions
-              </span>
-            </span>
-          </div>
-        </motion.div>
-
-        {/* Plan Templates Section */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.1 }}
-          className="mb-12 sm:mb-16"
-        >
-          <div className="mb-6 sm:mb-8">
-            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 sm:text-xl">
-              Plan Templates
-            </h2>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              Create reusable service templates
-            </p>
-          </div>
-
-          {/* Consultation Plans */}
-          <div className="mb-8 sm:mb-10">
-            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-50 ring-1 ring-sky-100">
-                  <MessageSquare className="h-4 w-4 text-sky-700" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
-                    Consultation Plans
-                  </h3>
-                  <p className="text-xs text-zinc-500 sm:text-sm">
-                    One-on-one session templates
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
-                asChild
-              >
-                <Link
-                  href={`/dashboard/consultant/${consultantId}/offerings/consultation/new`}
-                >
-                  <Plus className="h-4 w-4" />
-                  New Plan
-                </Link>
-              </Button>
-            </div>
-            {consultationPlansLoading ? (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
-                {[...Array(3)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-52 animate-pulse rounded-2xl bg-zinc-100"
-                  />
-                ))}
-              </div>
-            ) : (
-              <EventCarousel
-                events={
-                  consultationPlans?.map(
-                    (plan: ConsultationPlan & { id: string }) => ({
-                      type: "consultation" as const,
-                      id: plan.id,
-                      consultationPlan: plan,
-                    }),
-                  ) || []
-                }
-                onEdit={handleEditConsultationPlan}
-                getEditHref={(id) => getEditHref("consultation", id)}
-                onDelete={handleConsultationPlanDelete}
-                eventType="consultation"
-                participantCounts={{}}
-                onArchiveToggle={handleConsultationPlanArchiveToggle}
-                archivingPlanId={
-                  archiveConsultationPlan.isPending
-                    ? (archiveConsultationPlan.variables?.id ?? null)
-                    : null
-                }
-              />
-            )}
-          </div>
-
-          {/* Subscription Plans */}
-          <div>
-            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-50 ring-1 ring-teal-100">
-                  <CalendarRange className="h-4 w-4 text-teal-700" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
-                    Subscription Plans
-                  </h3>
-                  <p className="text-xs text-zinc-500 sm:text-sm">
-                    Recurring mentorship offerings
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
-                asChild
-              >
-                <Link
-                  href={`/dashboard/consultant/${consultantId}/offerings/subscription/new`}
-                >
-                  <Plus className="h-4 w-4" />
-                  New Plan
-                </Link>
-              </Button>
-            </div>
-            {subscriptionPlansLoading ? (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
-                {[...Array(3)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-52 animate-pulse rounded-2xl bg-zinc-100"
-                  />
-                ))}
-              </div>
-            ) : (
-              <EventCarousel
-                events={
-                  subscriptionPlans?.map(
-                    (plan: SubscriptionPlan & { id: string }) => ({
-                      type: "subscription" as const,
-                      id: plan.id,
-                      subscriptionPlan: plan,
-                    }),
-                  ) || []
-                }
-                onEdit={handleEditSubscriptionPlan}
-                getEditHref={(id) => getEditHref("subscription", id)}
-                onDelete={handleSubscriptionPlanDelete}
-                eventType="subscription"
-                participantCounts={{}}
-                pendingTrialCounts={pendingTrialCounts}
-                trialsHref={trialsHref}
-                onTrialsClick={handleTrialsClick}
-                onArchiveToggle={handleSubscriptionPlanArchiveToggle}
-                archivingPlanId={
-                  archiveSubscriptionPlan.isPending
-                    ? (archiveSubscriptionPlan.variables?.id ?? null)
-                    : null
-                }
-              />
-            )}
-          </div>
-        </motion.section>
-
-        {/* Live Sessions Section */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.2 }}
-          className="mb-12 sm:mb-16"
-        >
-          <div className="mb-6 sm:mb-8">
-            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 sm:text-xl">
-              Live Sessions
-            </h2>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              Schedule and manage your live events
-            </p>
-          </div>
-
-          {/* Webinar Events */}
-          <div className="mb-8 sm:mb-10">
-            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 ring-1 ring-emerald-100">
-                  <Video className="h-4 w-4 text-emerald-700" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
-                    Webinar Events
-                  </h3>
-                  <p className="text-xs text-zinc-500 sm:text-sm">
-                    Live sessions with multiple participants
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
-                asChild
-              >
-                <Link
-                  href={`/dashboard/consultant/${consultantId}/offerings/webinar/new`}
-                >
-                  <Plus className="h-4 w-4" />
-                  New Webinar
-                </Link>
-              </Button>
-            </div>
-            <EventCarousel
-              events={webinars}
-              onEdit={handleEditWebinar}
-              getEditHref={(id) => getEditHref("webinar", id)}
-              onDelete={handleWebinarDelete}
-              eventType="webinar"
-              participantCounts={data.participantCounts ?? {}}
-              onJoinMeeting={handleJoinWebinarMeeting}
-              joinableEventIds={joinableEventIds}
-              joiningEventId={joiningEventId}
-              onArchiveToggle={handleWebinarPlanArchiveToggle}
-              archivingPlanId={
-                archiveWebinarPlan.isPending
-                  ? (archiveWebinarPlan.variables?.id ?? null)
-                  : null
-              }
-            />
-          </div>
-
-          {/* Class Events */}
-          <div>
-            <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 ring-1 ring-amber-100">
-                  <GraduationCap className="h-4 w-4 text-amber-700" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-900 sm:text-base">
-                    Class Events
-                  </h3>
-                  <p className="text-xs text-zinc-500 sm:text-sm">
-                    Multi-session structured learning
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
-                asChild
-              >
-                <Link
-                  href={`/dashboard/consultant/${consultantId}/offerings/class/new`}
-                >
-                  <Plus className="h-4 w-4" />
-                  New Class
-                </Link>
-              </Button>
-            </div>
-            <EventCarousel
-              events={classes}
-              onEdit={handleEditClass}
-              getEditHref={(id) => getEditHref("class", id)}
-              onDelete={handleClassDelete}
-              eventType="class"
-              participantCounts={data.participantCounts ?? {}}
-              onJoinMeeting={handleJoinClassMeeting}
-              joinableEventIds={joinableEventIds}
-              joiningEventId={joiningEventId}
-              onArchiveToggle={handleClassPlanArchiveToggle}
-              archivingPlanId={
-                archiveClassPlan.isPending
-                  ? (archiveClassPlan.variables?.id ?? null)
-                  : null
-              }
-            />
-          </div>
-        </motion.section>
-      </div>
+    <div className="space-y-4">
+      {plansError && (
+        <ErrorState
+          variant="inline"
+          title="Some of your plans didn't load"
+          description="Your 1:1 and subscription plans may be missing below."
+          onRetry={() => {
+            void consultationPlans.refetch();
+            void subscriptionPlans.refetch();
+          }}
+        />
+      )}
+      <FilterBar
+        search={{
+          label: "Search offerings",
+          placeholder: "Search by title",
+          value: list.q,
+          onChange: list.setQ,
+        }}
+        chips={{
+          label: "Type",
+          options: [
+            { value: "all", label: "All" },
+            ...OFFERING_TYPE_FILTERS.map((f) => ({
+              ...f,
+              count: rows.filter((r) => r.type === f.value).length,
+            })),
+          ],
+          value: list.filters.type ?? "all",
+          onChange: (value) =>
+            list.setFilter("type", value === "all" ? null : value),
+        }}
+        onClear={list.clear}
+      />
+      {body}
     </div>
   );
 }

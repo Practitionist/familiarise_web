@@ -244,6 +244,8 @@ interface AppointmentDetailClientProps {
   joinWindowMs?: number;
   /** Consultant-only: the dashboard whose Requests/allocate pages answer a request. */
   consultantId?: string;
+  /** Extra buttons for the header action bar, e.g. the consultee's Book again / Add to calendar (#1527). */
+  renderExtraActions?: (vm: AppointmentVM) => ReactNode;
 }
 
 export function AppointmentDetailClient({
@@ -255,6 +257,7 @@ export function AppointmentDetailClient({
   participantsHref,
   joinWindowMs,
   consultantId,
+  renderExtraActions,
 }: AppointmentDetailClientProps) {
   const { data: session } = useSession();
   const router = useRouter();
@@ -550,9 +553,6 @@ export function AppointmentDetailClient({
                 <h1 className="text-xl font-semibold text-foreground">
                   {vm.title}
                 </h1>
-                <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {KIND_LABEL[vm.kind]}
-                </span>
                 <StatusBadge
                   {...toneBadge(bookingState.tone, bookingState.label)}
                   withDot
@@ -564,8 +564,10 @@ export function AppointmentDetailClient({
                   </span>
                 )}
               </div>
+              {/* #1527 — the kind is a fact about the booking, so it reads in
+                  the meta line rather than as a second chip beside the status. */}
               <p className="text-sm text-muted-foreground mt-1">
-                with {vm.counterpart.name}
+                {KIND_LABEL[vm.kind]} with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
                 {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
               </p>
@@ -633,6 +635,7 @@ export function AppointmentDetailClient({
                 {item.label}
               </Button>
             ))}
+            {renderExtraActions?.(vm)}
             <Button
               variant="outline"
               size="sm"
@@ -1033,6 +1036,18 @@ export function AppointmentDetailClient({
                         View receipt
                       </a>
                     )}
+                    {/* #1527 — a refund's s.34 credit note sits beside it. */}
+                    {paidRow?.consumerInvoice?.creditNotes.map((note) => (
+                      <a
+                        key={note.id}
+                        href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-foreground underline underline-offset-4"
+                      >
+                        Credit note {note.creditNoteNumber}
+                      </a>
+                    ))}
                     {role === "consultee" && (
                       <button
                         type="button"
@@ -1075,7 +1090,7 @@ export function AppointmentDetailClient({
                         renderDocuments(vm)
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          Documents for this booking will appear here.
+                          No documents for this booking.
                         </p>
                       )}
                     </ResourceSubgroup>
@@ -1084,10 +1099,14 @@ export function AppointmentDetailClient({
                   </>
                 )}
 
-                <ResourceSubgroup title="Recordings" icon={Video}>
+                <ResourceSubgroup
+                  title={`Recordings · ${recordings.length}`}
+                  icon={Video}
+                >
                   {recordings.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      Recordings of completed sessions will appear here.
+                      No recordings for this booking yet. Recorded sessions are
+                      listed here once they finish processing.
                     </p>
                   ) : (
                     <div className="space-y-2">

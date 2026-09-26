@@ -15,7 +15,10 @@
  * which is why the page-level guard stays on it.
  */
 
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import {
+  DashboardContent,
+  DashboardHeader,
+} from "@/components/dashboard/PageScaffold";
 import { UrlTabs, type UrlTab } from "@/components/dashboard/UrlTabs";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
@@ -66,11 +69,11 @@ export function MembersTabs({ orgId }: { orgId: string }) {
     <>
       <DashboardHeader
         title="Members"
-        subtitle="Everyone in this organization, and the invitations still outstanding"
+        description="Everyone in this organization, and the invitations still outstanding."
       />
-      <div className="p-4 sm:p-6 lg:p-8">
+      <DashboardContent>
         <UrlTabs tabs={tabs} />
-      </div>
+      </DashboardContent>
     </>
   );
 }

@@ -1,13 +1,9 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { DashboardContent } from "@/components/dashboard/PageScaffold";
-import { SecuritySection } from "../sections/SecuritySection";
-
-/** /settings/security — links to the password and session surfaces (#1785 L-2). */
-export default function SecuritySettingsPage() {
-  return (
-    <DashboardContent>
-      <SecuritySection />
-    </DashboardContent>
-  );
+/** Security folded into Settings › Account (#1527 §14); old links 308 there. */
+export default async function SecuritySettingsRedirect({
+  params,
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  const { consultantId } = await params;
+  permanentRedirect(`/dashboard/consultant/${consultantId}/settings/account`);
 }

@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 
@@ -473,16 +474,23 @@ export default function MaintenanceControls() {
                 )}
                 Start Degraded Mode
               </Button>
-              <Button
-                onClick={() => startMaintenance("OFFLINE")}
-                disabled={actionLoading}
-                variant="destructive"
-              >
-                {actionLoading && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Start Offline Mode
-              </Button>
+              {/* #1527 Q10 — taking the whole site down is typed-confirmed. */}
+              <ConfirmDialog
+                trigger={
+                  <Button disabled={actionLoading} variant="destructive">
+                    {actionLoading && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Start Offline Mode
+                  </Button>
+                }
+                title="Take the site offline?"
+                description="Every visitor sees the maintenance page and all system jobs stop until you end maintenance."
+                confirmLabel="Go offline"
+                tone="destructive"
+                requireTyped="OFFLINE"
+                onConfirm={() => startMaintenance("OFFLINE")}
+              />
             </div>
           ) : (
             <div className="flex flex-wrap gap-3 pt-2">
@@ -498,13 +506,19 @@ export default function MaintenanceControls() {
                 </Button>
               )}
               {state?.phase === "DEGRADED" && (
-                <Button
-                  onClick={() => updateMaintenance({ phase: "OFFLINE" })}
-                  disabled={actionLoading}
-                  variant="destructive"
-                >
-                  Escalate to Offline
-                </Button>
+                <ConfirmDialog
+                  trigger={
+                    <Button disabled={actionLoading} variant="destructive">
+                      Escalate to Offline
+                    </Button>
+                  }
+                  title="Escalate to offline?"
+                  description="Every visitor sees the maintenance page and all system jobs stop until you end maintenance."
+                  confirmLabel="Go offline"
+                  tone="destructive"
+                  requireTyped="OFFLINE"
+                  onConfirm={() => updateMaintenance({ phase: "OFFLINE" })}
+                />
               )}
               {state?.phase === "OFFLINE" && (
                 <Button
@@ -604,7 +618,10 @@ export default function MaintenanceControls() {
                 </thead>
                 <tbody>
                   {history.map((w) => (
-                    <tr key={w.id} className="border-b border-border last:border-0">
+                    <tr
+                      key={w.id}
+                      className="border-b border-border last:border-0"
+                    >
                       <td className="py-2.5 pr-4">
                         <PhaseBadge phase={w.phase} />
                       </td>

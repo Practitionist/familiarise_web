@@ -1,6 +1,9 @@
-import { SupportHelpPage } from "@/components/dashboard/shared/support/SupportPages";
+import { permanentRedirect } from "next/navigation";
 
-/** FAQ content is global — no profile id needed. */
-export default function HelpPage() {
-  return <SupportHelpPage />;
+/** Folded into Help & support (#1527 Q2); old links 308 to its help tab. */
+export default async function RetiredHelpPage({
+  params,
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  const { consultantId } = await params;
+  permanentRedirect(`/dashboard/consultant/${consultantId}/support?tab=help`);
 }

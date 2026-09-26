@@ -36,6 +36,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { humanizeEnum } from "@/lib/ui/tone";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -108,11 +109,9 @@ async function fetchSettings(orgId: string): Promise<SettingsResponse> {
 interface PatchPayload {
   name?: string;
   slug?: string;
-  billingEmail?: string | null;
   description?: string | null;
   industry?: string | null;
   website?: string | null;
-  paymentTermsDays?: number;
   isPublic?: boolean;
   canSponsor?: boolean;
   canHost?: boolean;
@@ -160,11 +159,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [billingEmail, setBillingEmail] = useState("");
   const [description, setDescription] = useState("");
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
-  const [paymentTermsDays, setPaymentTermsDays] = useState("60");
   const [isPublic, setIsPublic] = useState(false);
   // #777 §B — Tax & compliance (OrganizationTaxInfo). UNREGISTERED is the
   // #1230 wave-4 — MSME (Udyam) declaration. Drives the MSMED 15/45-day
@@ -195,11 +192,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     if (!data) return;
     setName(data.organization?.name ?? "");
     setSlug(data.organization?.slug ?? "");
-    setBillingEmail(data.profile.billingEmail ?? "");
     setDescription(data.profile.description ?? "");
     setIndustry(data.profile.industry ?? "");
     setWebsite(data.profile.website ?? "");
-    setPaymentTermsDays(String(data.profile.paymentTermsDays));
     setIsPublic(data.profile.isPublic ?? false);
     setGstin(data.profile.taxInfo?.gstin ?? "");
     setGstStateCode(data.profile.taxInfo?.gstStateCode ?? "");
@@ -212,9 +207,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
 
   const mutation = useMutation({
     // #779 §A — the API enforces field-level RBAC: descriptive fields are
-    // MAINTAINER+, slug/isPublic OWNER-only, billingEmail/paymentTermsDays
-    // BILLING_ADMIN-or-OWNER. Send only what this role may touch so a
-    // maintainer's rename doesn't 403 on fields they never edited.
+    // MAINTAINER+, slug/isPublic OWNER-only. Send only what this role may
+    // touch so a maintainer's rename doesn't 403 on fields they never edited.
+    // Billing email and terms live on the Billing contacts tab only (#1527).
     mutationFn: (overrides?: PatchPayload) =>
       patchSettings(orgId, {
         name: name.trim(),
@@ -225,8 +220,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         ...(data && { expectedVersion: data.profile.version }),
         ...(isAtLeast("OWNER") && {
           slug: slug.trim() || undefined,
-          billingEmail: billingEmail.trim() || null,
-          paymentTermsDays: parseInt(paymentTermsDays, 10),
           isPublic,
         }),
         ...overrides,
@@ -407,7 +400,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       )}
       {/* No "SSO settings" button any more — SSO is a sibling tab, so a
           button that navigates to it would duplicate the tab bar. */}
-      <PanelHeader description="Organization profile, billing email, and limits" />
+      <PanelHeader description="Organization profile, shape and tax details" />
       <div className="space-y-6">
         {/* Capability + funding summary. Owners can flip canSponsor /
             canHost in-place; non-owners see the read-only badge.
@@ -434,7 +427,10 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   Funding: {FUNDING_SOURCE_LABEL[fundingSource]}
                 </Badge>
               )}
-              <Badge variant="outline">Status: {data.profile.status}</Badge>
+              {/* #1762-4 — a label, not the raw OrgStatus. */}
+              <Badge variant="outline">
+                Status: {humanizeEnum(data.profile.status)}
+              </Badge>
             </div>
 
             {isAtLeast("OWNER") && (
@@ -493,8 +489,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           <CardContent>
             {/* The MAINTAINER/OWNER split below mirrors the PATCH route's
                 field-level gate (#779 §A), not a blanket owner check: name,
-                description, industry and website are MAINTAINER+, while
-                billing email, slug and payment terms stay OWNER-only. */}
+                description, industry and website are MAINTAINER+, while the
+                slug stays OWNER-only. */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -510,21 +506,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     disabled={!isAtLeast("MAINTAINER")}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="billing-email">Billing email</Label>
-                  <Input
-                    id="billing-email"
-                    type="email"
-                    value={billingEmail}
-                    onChange={(e) => setBillingEmail(e.target.value)}
-                    // #779 §A — finance remit. BILLING_ADMIN edits this on the
-                    // Billing tab, which is gated on `billing.manage`; on THIS
-                    // panel only OWNER may change it. (That tab now exists —
-                    // the comment used to point at a billing page that was
-                    // never built, so the field was OWNER-only in practice.)
-                    disabled={!isAtLeast("OWNER")}
                   />
                 </div>
               </div>
@@ -588,27 +569,6 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     placeholder="https://example.com"
                     disabled={!isAtLeast("MAINTAINER")}
                   />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="terms">Payment terms (days)</Label>
-                  <Input
-                    id="terms"
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={paymentTermsDays}
-                    onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    // #779 §A — finance remit (BILLING_ADMIN edits this on the
-                    // Billing tab; OWNER here).
-                    disabled={!isAtLeast("OWNER")}
-                  />
-                  <p className="text-xs text-zinc-500">
-                    India default is NET-60. Only applies when funding source is
-                    INVOICE.
-                  </p>
                 </div>
               </div>
 

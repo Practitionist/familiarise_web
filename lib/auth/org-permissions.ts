@@ -50,7 +50,7 @@ export type OrgSurface =
   | "payouts.manage"
   | "reimbursements.read"
   | "disputes.read"
-  | "integrations.read"
+  | "integrations.manage"
   // Operations (org-scoped appointments, trials, documents,
   // recordings, analytics — one read grant for the whole group, incl. the
   // L1/L2 SUPPORT carve-out)
@@ -109,7 +109,10 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   "payouts.manage": FINANCE_MUTATORS,
   "reimbursements.read": FINANCE_READERS,
   "disputes.read": FINANCE_READERS,
-  "integrations.read": FINANCE_READERS,
+  // #1527 §17b — webhook create/edit/redeliver are
+  // requireOrgBillingAdminOrOwner; rotate/delete tighten to OWNER at the
+  // route. Data exports ride billing.manage.
+  "integrations.manage": FINANCE_MUTATORS,
 
   // Operations — includes the SUPPORT carve-out (L1/L2 triage reads).
   "operations.read": OPERATIONS_READERS,

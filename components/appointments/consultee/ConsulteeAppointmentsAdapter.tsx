@@ -29,6 +29,7 @@ import {
 } from "@/lib/appointments/consultee-affordances";
 import {
   isApprovedStatus,
+  isCompletedLikeStatus,
   isConfirmedStatus,
   isInactiveStatus,
   isPendingPaymentStatus,
@@ -299,9 +300,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "leave"),
       });
     }
+    // #1527 — a finished booking keeps its files (DOC-1 only closes
+    // cancelled/rejected/expired ones), so COMPLETED lists them too.
     if (
       vm.appointmentId &&
-      isConfirmedStatus(vm.status) &&
+      (isConfirmedStatus(vm.status) || isCompletedLikeStatus(vm.status)) &&
       (vm.kind === "CONSULTATION" ||
         vm.kind === "TRIAL" ||
         vm.kind === "SUBSCRIPTION")
@@ -313,9 +316,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
       });
     }
     if (vm.appointmentId) {
+      // #1527 — one verb for help everywhere ("Get help" on the detail page).
       items.push({
         key: "report",
-        label: "Report issue",
+        label: "Get help",
         onClick: () => openDialog(vm, "report"),
       });
     }
@@ -472,7 +476,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
         />
 
         {activeVm.appointmentId && dialog === "report" && (
-          // #support-hub — "Report issue" now opens the per-appointment
+          // #support-hub — "Get help" opens the per-appointment
           // flowchart thread (same surface as the detail page) instead of the
           // legacy raw-ticket dialog. One system, one data path: intents are
           // stage-gated server-side, escalations land in the ops queue with

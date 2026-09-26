@@ -1,10 +1,11 @@
-import { SupportFeedbackPage } from "@/components/dashboard/shared/support/SupportPages";
+import { permanentRedirect } from "next/navigation";
 
-export default async function FeedbackPage({
+/** Folded into Help & support (#1527 Q2); old links 308 to its feedback tab. */
+export default async function RetiredFeedbackPage({
   params,
-}: {
-  params: Promise<{ consultantId: string }>;
-}) {
-  const p = await params;
-  return <SupportFeedbackPage profileId={p.consultantId} />;
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  const { consultantId } = await params;
+  permanentRedirect(
+    `/dashboard/consultant/${consultantId}/support?tab=feedback`,
+  );
 }

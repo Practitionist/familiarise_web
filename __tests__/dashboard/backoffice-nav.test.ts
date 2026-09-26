@@ -12,6 +12,17 @@ import {
   type BackofficeSurface,
 } from "@/lib/auth/backoffice-permissions";
 import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
+import {
+  resolveBackofficeCapability,
+  type BackofficeTree,
+} from "@/lib/backoffice/capability";
+
+// The tree's own role: an admin in the admin tree, staff in the staff tree.
+const nav = (tree: BackofficeTree, options = {}) =>
+  buildBackofficeNav(
+    resolveBackofficeCapability(tree === "admin" ? "ADMIN" : "STAFF", tree)!,
+    options,
+  );
 
 const flatten = (groups: ReturnType<typeof buildBackofficeNav>) =>
   groups.flatMap((g) => g.items.map((i) => i.path));
@@ -52,6 +63,10 @@ describe("BACKOFFICE_PERMISSIONS", () => {
       "announcements.manage",
       "systemJobs.manage",
       "maintenance.manage",
+      // #1527 — Leads (§17b), compliance (Q5) and the newsletter send.
+      "leads.manage",
+      "compliance.manage",
+      "newsletter.send",
     ] as BackofficeSurface[]) {
       expect(hasBackofficePermission("STAFF", surface)).toBe(false);
       expect(hasBackofficePermission("ADMIN", surface)).toBe(true);
@@ -88,22 +103,24 @@ describe("buildBackofficeNav", () => {
     const forbidden = [
       "money/earnings",
       "money/reconcile",
-      "approval-payments",
       "tds",
       "organizations",
+      "compliance",
       "announcements",
       "system-jobs",
       "maintenance",
       "analytics",
+      "leads",
+      "home",
     ];
-    const staffPaths = flatten(buildBackofficeNav("staff", { showTds: true }));
+    const staffPaths = flatten(nav("staff", { showTds: true }));
     for (const path of forbidden) {
       expect(staffPaths).not.toContain(path);
     }
   });
 
   it("gives the admin tree the full surface list", () => {
-    const adminPaths = flatten(buildBackofficeNav("admin", { showTds: true }));
+    const adminPaths = flatten(nav("admin", { showTds: true }));
     for (const path of [
       "home",
       "tickets",
@@ -111,6 +128,7 @@ describe("buildBackofficeNav", () => {
       "moderation",
       "appointments",
       "waitlist",
+      "leads",
       "users",
       // Each money section is its own item at its /money/<key> URL.
       "money/payments",
@@ -121,8 +139,9 @@ describe("buildBackofficeNav", () => {
       "money/reconcile",
       "invoices",
       "subscriptions",
-      "approval-payments",
       "tds",
+      "verification",
+      "compliance",
       "analytics",
       "organizations",
       "announcements",
@@ -135,7 +154,7 @@ describe("buildBackofficeNav", () => {
 
   it("closes both sidebars with the audit log, outside the Money group", () => {
     for (const tree of ["admin", "staff"] as const) {
-      const groups = buildBackofficeNav(tree);
+      const groups = nav(tree);
       const last = groups[groups.length - 1];
       expect(last.label).toBeUndefined();
       expect(last.items.map((i) => i.path)).toEqual(["money/audit"]);
@@ -145,32 +164,38 @@ describe("buildBackofficeNav", () => {
   it("keeps Metrics staff-only and Analytics admin-only", () => {
     // Not a rename of one another: different endpoints, different questions
     // (support-queue health vs platform revenue).
-    expect(flatten(buildBackofficeNav("staff"))).toContain("metrics");
-    expect(flatten(buildBackofficeNav("staff"))).not.toContain("analytics");
-    expect(flatten(buildBackofficeNav("admin"))).toContain("analytics");
-    expect(flatten(buildBackofficeNav("admin"))).not.toContain("metrics");
+    expect(flatten(nav("staff"))).toContain("metrics");
+    expect(flatten(nav("staff"))).not.toContain("analytics");
+    expect(flatten(nav("admin"))).toContain("analytics");
+    expect(flatten(nav("admin"))).not.toContain("metrics");
   });
 
   it("honours the TDS feature flag on the admin tree", () => {
-    expect(
-      flatten(buildBackofficeNav("admin", { showTds: false })),
-    ).not.toContain("tds");
-    expect(flatten(buildBackofficeNav("admin", { showTds: true }))).toContain(
-      "tds",
-    );
+    expect(flatten(nav("admin", { showTds: false }))).not.toContain("tds");
+    expect(flatten(nav("admin", { showTds: true }))).toContain("tds");
   });
 
   it("emits no empty groups", () => {
     for (const tree of ["admin", "staff"] as const) {
-      for (const group of buildBackofficeNav(tree)) {
+      for (const group of nav(tree)) {
         expect(group.items.length).toBeGreaterThan(0);
       }
     }
   });
 
+  it("shows an admin in the staff tree exactly the staff console", () => {
+    const adminAsStaff = buildBackofficeNav(
+      resolveBackofficeCapability("ADMIN", "staff")!,
+      { showTds: true },
+    );
+    expect(flatten(adminAsStaff)).toEqual(
+      flatten(nav("staff", { showTds: true })),
+    );
+  });
+
   it("gives the staff tree strictly fewer items than the admin tree", () => {
-    const staff = flatten(buildBackofficeNav("staff", { showTds: true }));
-    const admin = flatten(buildBackofficeNav("admin", { showTds: true }));
+    const staff = flatten(nav("staff", { showTds: true }));
+    const admin = flatten(nav("admin", { showTds: true }));
     expect(staff.length).toBeLessThan(admin.length);
   });
 });

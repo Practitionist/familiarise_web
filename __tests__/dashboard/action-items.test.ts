@@ -19,10 +19,7 @@ const inMinutes = (m: number) => new Date(Date.now() + m * 60_000);
 describe("imminentSessionItem", () => {
   it("surfaces nothing when the next session is beyond the hour", () => {
     expect(
-      imminentSessionItem(
-        [{ startsAt: inMinutes(90), title: "Later" }],
-        "/x",
-      ),
+      imminentSessionItem([{ startsAt: inMinutes(90), title: "Later" }], "/x"),
     ).toBeNull();
   });
 
@@ -167,13 +164,13 @@ describe("deriveConsultantActionItems", () => {
     ).toEqual([]);
   });
 
-  it("raises slot allocation and links to Requests", () => {
+  it("counts the requests to answer and links to Requests", () => {
     const [item] = deriveConsultantActionItems({
       pendingApprovals: 3,
       upcomingSessions: [],
       basePath: CONSULTANT_BASE,
     });
-    expect(item.title).toBe("3 requests need slot allocation");
+    expect(item.title).toBe("3 requests to answer");
     expect(item.ctaHref).toBe(`${CONSULTANT_BASE}/requests`);
   });
 
@@ -183,7 +180,7 @@ describe("deriveConsultantActionItems", () => {
       upcomingSessions: [],
       basePath: CONSULTANT_BASE,
     });
-    expect(item.title).toBe("1 request needs slot allocation");
+    expect(item.title).toBe("1 request to answer");
   });
 
   it("orders the imminent session ahead of the backlog", () => {
@@ -211,7 +208,7 @@ describe("deriveConsulteeActionItems", () => {
     });
     expect(item.severity).toBe("critical");
     expect(item.title).toContain("₹1,240");
-    expect(item.ctaHref).toBe(`${CONSULTEE_BASE}/payments`);
+    expect(item.ctaHref).toBe(`${CONSULTEE_BASE}/payments?tab=needs-you`);
   });
 
   it("omits the amount when it isn't known", () => {

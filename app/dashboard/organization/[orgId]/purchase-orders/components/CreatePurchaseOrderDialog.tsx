@@ -135,8 +135,8 @@ export function CreatePurchaseOrderDialog({
               maxLength={64}
             />
             <p className="text-xs text-zinc-500">
-              Use the number your AP team issued. Must be unique within
-              this org.
+              Use the number your AP team issued. Must be unique within this
+              org.
             </p>
           </div>
 
@@ -173,9 +173,7 @@ export function CreatePurchaseOrderDialog({
                 onChange={(e) => setTotalRupees(e.target.value)}
                 placeholder="0.00"
               />
-              <p className="text-xs text-zinc-500">
-                Stored in paise. Will be rounded.
-              </p>
+              <p className="text-xs text-zinc-500">In rupees, to the paisa.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="currency">Currency</Label>

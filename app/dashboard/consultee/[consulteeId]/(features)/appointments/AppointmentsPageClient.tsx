@@ -2,11 +2,9 @@
 
 import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { CalendarX } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { EmptyState } from "@/components/dashboard/DataCard";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
 import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
@@ -37,27 +35,18 @@ export default function AppointmentsPageClient({
 
   return (
     <DashboardErrorBoundary>
-      <DashboardHeader
+      <PageHeader
         title="Appointments"
-        subtitle="Your consultations, subscriptions, webinars, and classes"
+        description="Your consultations, subscriptions, webinars, and classes"
       />
-      <div className="pt-6">
+      <div>
         {isLoading && !eventsData ? (
           <AppointmentsPageSkeleton />
         ) : error ? (
-          <EmptyState
-            icon={CalendarX}
+          <ErrorState
             title="Couldn't load appointments"
-            description={
-              error instanceof Error
-                ? error.message
-                : "Failed to load appointments. Please try again."
-            }
-            action={
-              <Button variant="outline" onClick={() => void refetch()}>
-                Retry
-              </Button>
-            }
+            error={error}
+            onRetry={() => void refetch()}
           />
         ) : (
           <AppointmentsShell
