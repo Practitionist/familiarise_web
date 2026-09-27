@@ -134,9 +134,13 @@ export function OperatorAppointmentsClient({
   const linkedType = searchParams.get("type") ?? "";
   // Q9 — the retired approval-payments URL lands on `?tab=awaiting-payment`.
   const linkedTab = searchParams.get("tab") ?? "";
+  // #1527 — a support case's booking card lands here as `?open=<id>`.
+  const linkedOpen = searchParams.get("open") ?? "";
 
   const [activeTab, setActiveTabState] = useState<string>(
-    (TABS as readonly string[]).includes(linkedTab) ? linkedTab : DEFAULT_TAB,
+    !linkedOpen && (TABS as readonly string[]).includes(linkedTab)
+      ? linkedTab
+      : DEFAULT_TAB,
   );
   const setActiveTab = (next: string) => {
     setActiveTabState(next);
@@ -145,17 +149,21 @@ export function OperatorAppointmentsClient({
     window.history.replaceState(window.history.state, "", `?${params}`);
   };
   // An Awaiting-payment row opens its booking: search by id, then open it.
-  const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
+  const [pendingOpenId, setPendingOpenId] = useState<string | null>(
+    linkedOpen || null,
+  );
   const [typeFilter, setTypeFilter] = useState(
     TYPE_FILTERS.has(linkedType) ? linkedType : DEFAULT_TYPE,
   );
-  const [searchQuery, setSearchQuery] = useState(DEFAULT_SEARCH);
+  const [searchQuery, setSearchQuery] = useState(linkedOpen || DEFAULT_SEARCH);
   const [page, setPage] = useState(DEFAULT_PAGE);
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
 
   // Debounced search
-  const [debouncedSearch, setDebouncedSearch] = useState(DEFAULT_SEARCH);
+  const [debouncedSearch, setDebouncedSearch] = useState(
+    linkedOpen || DEFAULT_SEARCH,
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => {

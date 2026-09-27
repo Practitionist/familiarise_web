@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { RefundDoorDialog } from "@/components/dashboard/backoffice/money/RefundDoorDialog";
 import { ErrorState } from "@/components/dashboard/ErrorState";
@@ -60,7 +61,12 @@ export function PaymentDetailPage({
 }: Readonly<PaymentDetailPageProps>) {
   // #1527 — back-links and cross-links stay inside the viewer's tree.
   const { basePath, can } = useBackofficeCapability();
-  const [refundOpen, setRefundOpen] = useState(false);
+  // #1527 — a support case's "Issue refund" lands here as `?refund=1`; the
+  // dialog still needs `refunds.manage` and a captured payment below.
+  const searchParams = useSearchParams();
+  const [refundOpen, setRefundOpen] = useState(
+    searchParams.get("refund") === "1",
+  );
   const resolvedParams = { paymentId };
 
   const {
@@ -114,20 +120,23 @@ export function PaymentDetailPage({
     );
   }
 
+  const canRefund =
+    can("refunds.manage") && payment.paymentStatus === "SUCCEEDED";
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Payment details"
         back={{ href: `${basePath}/money/payments`, label: "Payments" }}
         actions={
-          can("refunds.manage") && payment.paymentStatus === "SUCCEEDED" ? (
+          canRefund ? (
             <Button variant="outline" onClick={() => setRefundOpen(true)}>
               Issue refund
             </Button>
           ) : undefined
         }
       />
-      {refundOpen && (
+      {refundOpen && canRefund && (
         <RefundDoorDialog
           door="issue"
           presetPaymentId={payment.id}

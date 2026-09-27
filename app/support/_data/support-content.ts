@@ -9,6 +9,9 @@
  * truth where money or compliance is involved.
  */
 
+import { CASE_TOPICS, type CaseTopic } from "@/lib/support/case-topic";
+import type { ArticleLink } from "@/types/support-case";
+
 export interface SupportSubcategory {
   title: string;
   description: string;
@@ -1708,4 +1711,73 @@ export function suggestedArticlesFor(
   return SUGGESTED_ARTICLES[audience].flatMap((ref) =>
     pool.filter((a) => `${a.category}/${a.slug}` === ref),
   );
+}
+
+/**
+ * #1527 — three Help Center answers per support-case topic, for the case
+ * workspace's Assist pane and the user's request page. `category/slug`
+ * refs, most relevant first.
+ */
+const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
+  payments: [
+    "payments/payment-methods-and-failures",
+    "payments/deducted-but-unconfirmed",
+    "payments/gst-invoices",
+  ],
+  cancellation: [
+    "booking/cancel-and-no-show",
+    "payments/refunds-explained",
+    "booking/reschedule",
+  ],
+  scheduling: [
+    "booking/reschedule",
+    "booking/timezones",
+    "booking/picking-slots",
+  ],
+  session: [
+    "booking/cancel-and-no-show",
+    "video/dropped-call",
+    "experts/reviews-feedback",
+  ],
+  technical: ["video/join-errors", "video/how-to-join", "help/browser-support"],
+  recordings: [
+    "recordings/finding-recordings",
+    "recordings/recording-expiry",
+    "video/recording-consent",
+  ],
+  documents: [
+    "recordings/uploading-documents",
+    "recordings/class-materials",
+    "experts/document-reviews",
+  ],
+  account: [
+    "getting-started/sign-in-and-password",
+    "getting-started/how-to-sign-up",
+    "getting-started/age-consent-delete-data",
+  ],
+  organisation: [
+    "organizations/org-support-retention",
+    "organizations/wallet-invoice-billing",
+    "organizations/members-roles",
+  ],
+  other: [
+    "help/tickets-and-contact",
+    "help/notification-preferences",
+    "help/privacy-cookies-safety",
+  ],
+};
+
+/** Every topic's article links; small enough to hand to a client whole. */
+export function articleLinksByTopic(): Record<CaseTopic, ArticleLink[]> {
+  const links = {} as Record<CaseTopic, ArticleLink[]>;
+  for (const topic of CASE_TOPICS) {
+    links[topic] = TOPIC_ARTICLES[topic].flatMap((ref) => {
+      const [category, slug] = ref.split("/");
+      const article = getArticle(category, slug);
+      return article
+        ? [{ title: article.title, href: articleUrl(article) }]
+        : [];
+    });
+  }
+  return links;
 }

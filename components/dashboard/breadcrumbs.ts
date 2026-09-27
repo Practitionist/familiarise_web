@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useMemo } from "react";
 
 import { useBreadcrumbOverride } from "@/components/dashboard/breadcrumb-override";
+import { parseCaseKey } from "@/lib/support/case-key";
 
 /**
  * One breadcrumb hook for every dashboard shell (#1527), driven by per-tree
@@ -31,8 +32,10 @@ export interface DashboardBreadcrumbsInput {
   offeringsConfig?: OfferingsCrumbConfig;
 }
 
-// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
+// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs;
+// nor does a support case key (`t_<id>`, #1527), whose page names itself.
 const looksLikeRecordId = (segment: string) =>
+  parseCaseKey(segment) !== null ||
   /^[a-z0-9]{20,}$/i.test(segment) ||
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     segment,
