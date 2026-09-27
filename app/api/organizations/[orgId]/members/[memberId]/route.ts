@@ -15,6 +15,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -26,7 +27,9 @@ import {
 import {
   MembershipGuardError,
   assertRoleChangeAllowed,
+  assertStatusChangeAllowed,
 } from "@/lib/enterprise/membership-guards";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { removeMember } from "@/lib/enterprise/member-removal";
 import {
   applyMembershipRoleEffects,
@@ -222,157 +225,179 @@ export async function PATCH(
   let stagedRoleEmail: StagedOnboardingEmail | null = null;
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const current = await tx.membership.findFirst({
-        where: { id: memberId, organizationId: orgId },
-      });
-      if (!current) {
-        throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
-      }
+    // N4 — Serializable, so two OWNERs demoting or suspending each other
+    // cannot both count the other as the remaining OWNER (write skew); SSI
+    // aborts one side and the retry sees the committed change.
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const current = await tx.membership.findFirst({
+            where: { id: memberId, organizationId: orgId },
+          });
+          if (!current) {
+            throw Object.assign(new Error("Member not found"), {
+              httpStatus: 404,
+            });
+          }
 
-      const roleChanged =
-        patch.role !== undefined && patch.role !== current.role;
-      // #1846 bucket C — the shared guard: self, OWNER-only roles, the
-      // LEARNER↔EXPERT block, the no-history rule for LEARNER/EXPERT, an
-      // existing expert profile for a move into EXPERT, and the last OWNER.
-      if (roleChanged && patch.role !== undefined) {
-        await assertRoleChangeAllowed(tx, {
-          membership: current,
-          to: patch.role,
-          actor,
-          org: access.org,
-        });
-      }
+          const roleChanged =
+            patch.role !== undefined && patch.role !== current.role;
+          // #1846 bucket C — the shared guard: self, OWNER-only roles, the
+          // LEARNER↔EXPERT block, the no-history rule for LEARNER/EXPERT, an
+          // existing expert profile for a move into EXPERT, and the last OWNER.
+          if (roleChanged && patch.role !== undefined) {
+            await assertRoleChangeAllowed(tx, {
+              membership: current,
+              to: patch.role,
+              actor,
+              org: access.org,
+            });
+          }
 
-      // Role-driven profile reconciliation through the shared helper, so
-      // PATCH stays in sync with invite-accept. The guard above already
-      // required an existing ConsultantProfile for EXPERT, so nothing is
-      // created here. payoutRecipient resets to the role default.
-      const roleEffects =
-        roleChanged && patch.role !== undefined
-          ? await applyMembershipRoleEffects(tx, {
-              userId: current.userId,
-              role: patch.role,
-            })
-          : null;
+          // Role-driven profile reconciliation through the shared helper, so
+          // PATCH stays in sync with invite-accept. The guard above already
+          // required an existing ConsultantProfile for EXPERT, so nothing is
+          // created here. payoutRecipient resets to the role default.
+          const roleEffects =
+            roleChanged && patch.role !== undefined
+              ? await applyMembershipRoleEffects(tx, {
+                  userId: current.userId,
+                  role: patch.role,
+                })
+              : null;
 
-      // #729 — explicit payout-recipient choice, honoured only when the
-      // resulting role is EXPERT. Applied AFTER the role-effect default so an
-      // operator's choice wins over the reset on a role change.
-      const effectiveRole = patch.role ?? current.role;
-      const explicitPayoutRecipient =
-        patch.payoutRecipient !== undefined && effectiveRole === "EXPERT"
-          ? patch.payoutRecipient
-          : undefined;
+          // #729 — explicit payout-recipient choice, honoured only when the
+          // resulting role is EXPERT. Applied AFTER the role-effect default so an
+          // operator's choice wins over the reset on a role change.
+          const effectiveRole = patch.role ?? current.role;
+          const explicitPayoutRecipient =
+            patch.payoutRecipient !== undefined && effectiveRole === "EXPERT"
+              ? patch.payoutRecipient
+              : undefined;
 
-      // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
-      // matches zero rows and 409s instead of being resurrected); the
-      // remaining fields ride a plain update in the same tx.
-      const statusChanged =
-        patch.status !== undefined && patch.status !== current.status;
-      if (statusChanged && patch.status !== undefined) {
-        await transitionMembership(tx, {
-          where: { id: memberId, organizationId: orgId },
-          to: patch.status,
-        });
-      }
+          // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
+          // matches zero rows and 409s instead of being resurrected); the
+          // remaining fields ride a plain update in the same tx. The guard
+          // refuses a self change and suspending the last OWNER (N4).
+          const statusChanged =
+            patch.status !== undefined && patch.status !== current.status;
+          if (statusChanged && patch.status !== undefined) {
+            await assertStatusChangeAllowed(tx, {
+              membership: current,
+              to: patch.status,
+              actor,
+            });
+            await transitionMembership(tx, {
+              where: { id: memberId, organizationId: orgId },
+              to: patch.status,
+            });
+          }
 
-      const otherData = {
-        ...(patch.role !== undefined && { role: patch.role }),
-        ...(patch.departmentLabel !== undefined && {
-          departmentLabel: patch.departmentLabel,
-        }),
-        ...(roleEffects && {
-          consulteeProfileId: roleEffects.consulteeProfileId,
-          consultantProfileId: roleEffects.consultantProfileId,
-          payoutRecipient: roleEffects.payoutRecipient,
-        }),
-        ...(explicitPayoutRecipient !== undefined && {
-          payoutRecipient: explicitPayoutRecipient,
-        }),
-      };
-      const updated =
-        Object.keys(otherData).length > 0
-          ? await tx.membership.update({
-              where: { id: memberId },
-              data: otherData,
-            })
-          : await tx.membership.findUniqueOrThrow({ where: { id: memberId } });
+          const otherData = {
+            ...(patch.role !== undefined && { role: patch.role }),
+            ...(patch.departmentLabel !== undefined && {
+              departmentLabel: patch.departmentLabel,
+            }),
+            ...(roleEffects && {
+              consulteeProfileId: roleEffects.consulteeProfileId,
+              consultantProfileId: roleEffects.consultantProfileId,
+              payoutRecipient: roleEffects.payoutRecipient,
+            }),
+            ...(explicitPayoutRecipient !== undefined && {
+              payoutRecipient: explicitPayoutRecipient,
+            }),
+          };
+          const updated =
+            Object.keys(otherData).length > 0
+              ? await tx.membership.update({
+                  where: { id: memberId },
+                  data: otherData,
+                })
+              : await tx.membership.findUniqueOrThrow({
+                  where: { id: memberId },
+                });
 
-      // Role, status and departmentLabel all ride the session payload, so a
-      // change bumps the generation marker instead of waiting up to 24h for
-      // BetterAuth's session rotation (Phase B.5).
-      if (
-        patch.role !== undefined ||
-        patch.status !== undefined ||
-        patch.departmentLabel !== undefined
-      ) {
-        await bumpUserSessionGeneration(tx, current.userId);
-      }
+          // Role, status and departmentLabel all ride the session payload, so a
+          // change bumps the generation marker instead of waiting up to 24h for
+          // BetterAuth's session rotation (Phase B.5).
+          if (
+            patch.role !== undefined ||
+            patch.status !== undefined ||
+            patch.departmentLabel !== undefined
+          ) {
+            await bumpUserSessionGeneration(tx, current.userId);
+          }
 
-      // A4: an EXPERT leaving EXPERT or ACTIVE shifts the consultant's
-      // HOST-membership count, which drives ConsultantProfile.isIndependent.
-      if (
-        current.role === "EXPERT" &&
-        current.consultantProfileId &&
-        (roleChanged || statusChanged)
-      ) {
-        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
-      }
+          // A4: an EXPERT leaving EXPERT or ACTIVE shifts the consultant's
+          // HOST-membership count, which drives ConsultantProfile.isIndependent.
+          if (
+            current.role === "EXPERT" &&
+            current.consultantProfileId &&
+            (roleChanged || statusChanged)
+          ) {
+            await recomputeConsultantIsIndependent(
+              tx,
+              current.consultantProfileId,
+            );
+          }
 
-      const auditActions: string[] = [];
-      if (roleChanged) auditActions.push(AUDIT_ACTIONS.MEMBER.ROLE_CHANGE);
-      if (statusChanged) auditActions.push(AUDIT_ACTIONS.MEMBER.STATUS_CHANGE);
-      for (const action of auditActions) {
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            targetMembershipId: memberId,
-            category: "MEMBER",
-            action,
-            description:
-              action === AUDIT_ACTIONS.MEMBER.ROLE_CHANGE
-                ? `Role: ${current.role} → ${patch.role}`
-                : `Status: ${current.status} → ${patch.status}`,
-            details: {
-              from: {
-                role: current.role,
-                status: current.status,
+          const auditActions: string[] = [];
+          if (roleChanged) auditActions.push(AUDIT_ACTIONS.MEMBER.ROLE_CHANGE);
+          if (statusChanged)
+            auditActions.push(AUDIT_ACTIONS.MEMBER.STATUS_CHANGE);
+          for (const action of auditActions) {
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: orgId,
+                actorMembershipId: access.member.id,
+                targetMembershipId: memberId,
+                category: "MEMBER",
+                action,
+                description:
+                  action === AUDIT_ACTIONS.MEMBER.ROLE_CHANGE
+                    ? `Role: ${current.role} → ${patch.role}`
+                    : `Status: ${current.status} → ${patch.status}`,
+                details: {
+                  from: {
+                    role: current.role,
+                    status: current.status,
+                  },
+                  to: {
+                    role: patch.role ?? current.role,
+                    status: patch.status ?? current.status,
+                  },
+                },
               },
-              to: {
-                role: patch.role ?? current.role,
-                status: patch.status ?? current.status,
+            });
+          }
+
+          // P3 email twin: a role change notifies the affected member. Staged
+          // inside this transaction so the notice row commits with the change
+          // or rolls back with it (review round 2 on #1700).
+          if (roleChanged) {
+            stagedRoleEmail = await stageOrgMembershipChangedEmail(
+              {
+                userId: current.userId,
+                membershipId: memberId,
+                kind: "ROLE_CHANGED",
+                orgName: access.org.name,
+                roleBefore: current.role,
+                roleAfter: patch.role,
+                actorName:
+                  access.session.user.name ??
+                  access.session.user.email ??
+                  "An operator",
+                dashboardUrl: "/dashboard",
               },
-            },
-          },
-        });
-      }
+              tx,
+            );
+          }
 
-      // P3 email twin: a role change notifies the affected member. Staged
-      // inside this transaction so the notice row commits with the change
-      // or rolls back with it (review round 2 on #1700).
-      if (roleChanged) {
-        stagedRoleEmail = await stageOrgMembershipChangedEmail(
-          {
-            userId: current.userId,
-            membershipId: memberId,
-            kind: "ROLE_CHANGED",
-            orgName: access.org.name,
-            roleBefore: current.role,
-            roleAfter: patch.role,
-            actorName:
-              access.session.user.name ??
-              access.session.user.email ??
-              "An operator",
-            dashboardUrl: "/dashboard",
-          },
-          tx,
-        );
-      }
-
-      return updated;
-    });
+          return updated;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     // Vendor attempt after the response; the row was written in the tx.
     if (stagedRoleEmail) {
