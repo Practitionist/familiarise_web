@@ -184,6 +184,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
             .fn()
             .mockResolvedValue(opts.alreadyRecorded ? { id: "se-1" } : null),
         },
+        // #1846 SM-B13 — the capture's consultation CAS now appends history.
+        bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
         consultation: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -287,6 +289,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
 describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
   function mockTx(consultationStatus: string, casCount: number) {
     return {
+      // #1846 SM-B13 — the capture's consultation CAS now appends history.
+      bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
       appointmentParticipant: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),

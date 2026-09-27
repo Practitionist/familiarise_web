@@ -2,7 +2,7 @@ import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
@@ -1183,7 +1183,7 @@ async function acceptPaidTrial(
   await tx.appointmentOccurrence.create({
     data: { appointmentId, ...session },
   });
-  await setParticipantStatus(
+  await transitionParticipant(
     tx,
     { appointmentId, status: "HELD" },
     "CONFIRMED",

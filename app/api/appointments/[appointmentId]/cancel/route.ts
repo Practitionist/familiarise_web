@@ -8,7 +8,7 @@ import {
 } from "@/utils/appointmentlock";
 import {
   liveParticipant,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import prisma from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
@@ -628,7 +628,7 @@ export async function POST(
             allowZero: true,
           });
           // #1319 A9 — every participant of the cancelled engagement.
-          await setParticipantStatus(tx, sweepScope, "CANCELLED");
+          await transitionParticipant(tx, sweepScope, "CANCELLED");
 
           await declineOpenReschedules(tx, appointmentId, auditMeta);
 

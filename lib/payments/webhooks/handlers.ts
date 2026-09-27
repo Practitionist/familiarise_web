@@ -11,7 +11,7 @@ import {
 import {
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -31,9 +31,12 @@ import {
   EVENT_ALLOWED_FROM,
   CLASS_EVENT_ALLOWED_FROM,
   appendCreationHistory,
+  transitionClassEvent,
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
+  transitionTrial,
+  transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -717,18 +720,26 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           // Phase 2 refunds it in full (the learner never cancelled; the
           // platform closed the trial before the money arrived).
           if (metadata.trialId) {
-            const scheduled = await tx.trial.updateMany({
-              where: {
-                id: metadata.trialId,
-                status: TrialStatus.AWAITING_PAYMENT,
-              },
-              data: {
-                status: TrialStatus.SCHEDULED,
-                paymentId: payment.id,
-                pendingPaymentUrl: null,
-                paymentDueAt: null,
-              },
-            });
+            // #1846 SM-B13 — the same CAS through the helper, which appends
+            // the history row; its zero-row throw is the old `count === 0`.
+            let scheduled = { count: 0 };
+            try {
+              await transitionTrial(tx, {
+                reason: "payment captured",
+                appointmentId: appointment.id,
+                where: { id: metadata.trialId },
+                to: TrialStatus.SCHEDULED,
+                fromIn: [TrialStatus.AWAITING_PAYMENT],
+                data: {
+                  paymentId: payment.id,
+                  pendingPaymentUrl: null,
+                  paymentDueAt: null,
+                },
+              });
+              scheduled = { count: 1 };
+            } catch (err) {
+              if (!(err instanceof IllegalTransitionError)) throw err;
+            }
 
             console.log(
               JSON.stringify({
@@ -1938,6 +1949,44 @@ async function createClass(tx: Tx, data: EventData) {
  * Confirm consultation or subscription status after successful payment
  * Transitions APPROVED_PENDING_PAYMENT → APPROVED
  */
+/**
+ * B2 — the capture's liveness CAS on a group event: SCHEDULED is re-stamped
+ * only from a live state, so a capture after the event was cancelled matches
+ * nothing. #1846 SM-B13 — through the helpers, so the stamp writes its history
+ * row. Returns false on the miss, which the caller reads fresh to tell a
+ * benign replay from a capture after a terminal state.
+ */
+async function restampLiveEvent(
+  tx: Tx,
+  kind: "class" | "webinar",
+  id: string,
+  appointmentId: string,
+): Promise<boolean> {
+  const args = {
+    reason: "seat payment captured",
+    appointmentId,
+    where: { id },
+    to: "SCHEDULED" as const,
+  };
+  try {
+    if (kind === "class") {
+      await transitionClassEvent(tx, {
+        ...args,
+        fromIn: CLASS_EVENT_ALLOWED_FROM.SCHEDULED,
+      });
+    } else {
+      await transitionWebinarEvent(tx, {
+        ...args,
+        fromIn: EVENT_ALLOWED_FROM.SCHEDULED,
+      });
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof IllegalTransitionError) return false;
+    throw err;
+  }
+}
+
 /** The request states a capture may legitimately land on (#1583 A-P0-01). */
 const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.PENDING,
@@ -1970,19 +2019,25 @@ async function confirmApprovalStatus(
     // so a capture landing after a cancel resurrected the booking. Now the
     // guard rides the WHERE; a late capture against a terminal booking is
     // money collected for nothing — surface it for refund instead.
-    const movedConsult = await tx.consultation.updateMany({
-      where: {
-        id: entityId,
-        status: {
-          in: [
-            AppointmentStatus.PENDING,
-            AppointmentStatus.APPROVED_PENDING_PAYMENT,
-          ],
-        },
-      },
-      data: { status: AppointmentStatus.APPROVED },
-    });
-    if (movedConsult.count === 0) {
+    // #1846 SM-B13 — through the helper, so the capture writes its history
+    // row like the subscription arm below; the zero-row throw is the miss.
+    let movedConsult = true;
+    try {
+      await transitionConsultationRequest(tx, {
+        where: { id: entityId },
+        to: AppointmentStatus.APPROVED,
+        fromIn: [
+          AppointmentStatus.PENDING,
+          AppointmentStatus.APPROVED_PENDING_PAYMENT,
+        ],
+        reason: "payment captured",
+        appointmentId,
+      });
+    } catch (err) {
+      if (!(err instanceof IllegalTransitionError)) throw err;
+      movedConsult = false;
+    }
+    if (!movedConsult) {
       // Re-read: the pre-read raced the very transition that made the CAS
       // miss, so logging it would report the wrong state (review catch on
       // #844). The fresh value decides whether this is benign (already
@@ -2228,14 +2283,7 @@ export async function confirmExistingAppointment(
 
   if (appointment.class && userId) {
     const classId = appointment.class.id;
-    const restamped = await tx.class.updateMany({
-      where: {
-        id: classId,
-        status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
-      },
-      data: { status: "SCHEDULED" },
-    });
-    if (restamped.count === 0) {
+    if (!(await restampLiveEvent(tx, "class", classId, appointmentId))) {
       const fresh = await tx.class.findUnique({
         where: { id: classId },
         select: { status: true },
@@ -2259,7 +2307,7 @@ export async function confirmExistingAppointment(
     // capture flips the seat and never the occurrences. Only a HELD seat
     // confirms: a capture landing on a cancelled seat must not resurrect it
     // (the refund arm below handles the money).
-    await setParticipantStatus(
+    await transitionParticipant(
       tx,
       {
         appointment: { classId: appointment.class.id },
@@ -2282,14 +2330,7 @@ export async function confirmExistingAppointment(
   // Webinars share one appointment among all participants
   else if (appointment.webinar && userId) {
     const webinarId = appointment.webinar.id;
-    const restamped = await tx.webinar.updateMany({
-      where: {
-        id: webinarId,
-        status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
-      },
-      data: { status: "SCHEDULED" },
-    });
-    if (restamped.count === 0) {
+    if (!(await restampLiveEvent(tx, "webinar", webinarId, appointmentId))) {
       const fresh = await tx.webinar.findUnique({
         where: { id: webinarId },
         select: { status: true },
@@ -2310,7 +2351,7 @@ export async function confirmExistingAppointment(
 
     // #1554 — same as the class arm: the seat flips, the shared occurrences
     // do not.
-    await setParticipantStatus(
+    await transitionParticipant(
       tx,
       { appointmentId, userId, status: "HELD" },
       "CONFIRMED",
@@ -2333,7 +2374,7 @@ export async function confirmExistingAppointment(
       where: { appointmentId, ...liveOccurrenceWhere },
       data: { isTentative: false },
     });
-    await setParticipantStatus(
+    await transitionParticipant(
       tx,
       { appointmentId, status: "HELD" },
       "CONFIRMED",

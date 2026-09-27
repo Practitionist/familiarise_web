@@ -12,18 +12,18 @@ import * as Sentry from "@sentry/nextjs";
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
-import {
-  refundBookingPayment,
-} from "@/lib/payments/operations/booking-refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { RefundValidationError } from "@/lib/payments/operations/refund";
 import {
   transitionConsultationRequest,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
   transitionClassEvent,
-  RESCHEDULE_OPEN_STATUSES,
+  transitionOccurrenceCompletion,
+  transitionTrial,
   SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -230,6 +230,9 @@ function mergeEffects(into: FreezeEffects, from: FreezeEffects): void {
 }
 
 /** A CAS transition that lost its race is a skip, never an error. */
+/** The history rows' reason for every move a freeze makes (#1846). */
+const MAINTENANCE_REASON = "scheduled platform maintenance";
+
 function skipOnIllegalTransition(err: unknown): FreezeStepResult {
   if (err instanceof IllegalTransitionError) return null;
   throw err;
@@ -391,16 +394,18 @@ async function freezeTrial(
   const trial = ctx.appointment.trial;
   if (!trial) return noEffects();
 
-  // Status-guarded (the trial state table is local to the trials route);
-  // zero rows means already terminal — skip, never resurrect.
-  const moved = await tx.trial.updateMany({
-    where: {
-      id: trial.id,
-      status: { in: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"] },
-    },
-    data: { status: "CANCELLED", pendingPaymentUrl: null },
-  });
-  if (moved.count === 0) return null;
+  // #1846 SM-B13 — through the helper, so the move writes its history row;
+  // a zero-row CAS means already terminal — skip, never resurrect.
+  try {
+    await transitionTrial(tx, {
+      reason: MAINTENANCE_REASON,
+      where: { id: trial.id },
+      to: "CANCELLED",
+      data: { pendingPaymentUrl: null },
+    });
+  } catch (err) {
+    return skipOnIllegalTransition(err);
+  }
 
   const effects = withNotification(
     buildCancellationNotification({
@@ -457,34 +462,13 @@ function refundablePayments(
  */
 async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
   if (ctx.appointment.trial) return;
-  await tx.appointmentOccurrence.updateMany({
-    where: {
-      id: { in: ctx.slots.map((s) => s.id) },
-      completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
-    },
-    data: { completionStatus: "CANCELLED" },
-  });
-}
-
-/**
- * Close any live reschedule proposal — leaving one open reserves
- * openForAppointmentId forever and lets the expiry cron act on a cancelled
- * booking (mirrors cancel/route.ts).
- */
-async function declineOpenReschedules(
-  tx: Tx,
-  appointmentId: string,
-): Promise<void> {
-  await tx.rescheduleRequest.updateMany({
-    where: {
-      appointmentId,
-      status: { in: RESCHEDULE_OPEN_STATUSES },
-    },
-    data: {
-      status: "DECLINED",
-      openForAppointmentId: null,
-      resolvedAt: new Date(),
-    },
+  // #1846 SM-B13 — through the helper, so each slot writes its history row.
+  await transitionOccurrenceCompletion(tx, {
+    reason: MAINTENANCE_REASON,
+    where: { id: { in: ctx.slots.map((s) => s.id) } },
+    to: "CANCELLED",
+    fromIn: SLOT_RESCHEDULABLE_FROM,
+    allowZero: true,
   });
 }
 
@@ -508,7 +492,12 @@ async function freezeOneAppointment(ctx: FreezeContext) {
     effects.refunds.push(...refundablePayments(ctx.appointment.payment));
 
     await closeFrozenSlots(tx, ctx);
-    await declineOpenReschedules(tx, ctx.appointment.id);
+    // Leaving a proposal open reserves openForAppointmentId forever and lets
+    // the expiry sweep act on a cancelled booking. #1846 — the shared helper
+    // declines through the CAS and writes the history row the raw update skipped.
+    await declineOpenReschedules(tx, ctx.appointment.id, {
+      reason: MAINTENANCE_REASON,
+    });
 
     return { skipped: false, ...effects } as const;
   });
@@ -632,7 +621,10 @@ export async function freezeAppointments(
     try {
       await softCancelTrialAppointment(trialAppointmentId);
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "maintenance" } },
+      );
     }
   }
 
@@ -657,7 +649,10 @@ export async function freezeAppointments(
         refundsSkippedAlreadyRefunded++;
         continue;
       }
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "maintenance" } },
+      );
       console.error(
         JSON.stringify({
           event: "maintenance_refund_failed",
@@ -698,7 +693,10 @@ export async function freezeAppointments(
           subscriptionsExtended++;
         }
       } catch (err) {
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "maintenance" } },
+        );
         console.error(
           JSON.stringify({
             event: "maintenance_subscription_extend_failed",
@@ -718,7 +716,10 @@ export async function freezeAppointments(
       await notifyAppointmentCancelled(userIds, data);
       notified += userIds.length;
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" }, level: "warning" });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "maintenance" }, level: "warning" },
+      );
       console.error(
         JSON.stringify({
           event: "maintenance_freeze_notification_failed",
