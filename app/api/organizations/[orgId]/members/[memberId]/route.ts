@@ -241,7 +241,7 @@ export async function PATCH(
         memberId,
         actor,
         actorUserId: access.session.user.id,
-        force: req.nextUrl.searchParams.get("force") === "true",
+        force: new URL(req.url).searchParams.get("force") === "true",
       });
       const membership = await prisma.membership.findFirst({
         where: { id: memberId, organizationId: orgId },
@@ -488,7 +488,7 @@ export async function DELETE(
       memberId,
       actor: { membershipId: access.member.id, role: access.member.role },
       actorUserId: access.session.user.id,
-      force: req.nextUrl.searchParams.get("force") === "true",
+      force: new URL(req.url).searchParams.get("force") === "true",
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {

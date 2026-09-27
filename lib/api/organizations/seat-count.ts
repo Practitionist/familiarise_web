@@ -26,7 +26,6 @@ import type { Tx } from "@/lib/prisma";
  * UPDATE — keeping the call site uniform between program types).
  */
 
-import type { Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgramAssignment } from "@/lib/enterprise/transitions";
 

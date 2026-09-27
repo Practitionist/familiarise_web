@@ -155,7 +155,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
 
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error).toMatch(/only active OWNER/i);
+    expect(body.code).toBe("LAST_OWNER");
     // Critical: membership.update must NOT have fired
     expect(mockedPrisma.membership.update).not.toHaveBeenCalled();
   });
@@ -247,7 +247,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
 
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error).toBe("ROLE_TRANSITION_BLOCKED");
+    expect(body.code).toBe("ROLE_TRANSITION_BLOCKED");
     expect(mockedPrisma.membership.update).not.toHaveBeenCalled();
   });
 });
