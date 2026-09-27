@@ -327,12 +327,17 @@ describe("processOrgPayout — live submission gating", () => {
       .mockResolvedValueOnce([{ id: PAYOUT_ID }])
       .mockResolvedValueOnce([]);
     setupHappyClaim();
+    // The row is APPROVED: the claim lands only if its WHERE admits APPROVED.
+    mockedPrisma.organizationPayout.updateMany.mockImplementation(
+      async (args: { where: { status: { in: string[] } } }) => ({
+        count: args.where.status.in.includes("APPROVED") ? 1 : 0,
+      }),
+    );
     setupVerifiedAccount();
-    setupGatewayService({
-      createPayout: jest
-        .fn()
-        .mockResolvedValue({ id: RAZORPAY_PAYOUT_ID, status: "queued" }),
-    });
+    const createPayout = jest
+      .fn()
+      .mockResolvedValue({ id: RAZORPAY_PAYOUT_ID, status: "queued" });
+    setupGatewayService({ createPayout });
 
     const run = await processPendingOrgPayouts();
 
@@ -349,5 +354,6 @@ describe("processOrgPayout — live submission gating", () => {
       data: { status: "PROCESSING" },
     });
     expect(run.advanced).toBe(1);
+    expect(createPayout).toHaveBeenCalledTimes(1);
   });
 });

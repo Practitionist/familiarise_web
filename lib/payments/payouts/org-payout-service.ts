@@ -689,8 +689,8 @@ export async function processOrgPayout(payoutId: string): Promise<{
       // leave the building. Checked inside the claim tx (READ COMMITTED —
       // race-safety comes from the CAS claim below per ADR 13, and the
       // residual window to gateway submit is backstopped by the LOST
-      // clawback); returning unclaimed keeps
-      // the row PENDING so a later cron run advances it once the dispute
+      // clawback); returning unclaimed leaves
+      // the row payable so a later cron run advances it once the dispute
       // resolves. Residual window to gateway submit is backstopped by the
       // LOST-handler clawback (#1020-2).
       const disputedOrgEarning = await tx.organizationEarnings.findFirst({
@@ -708,8 +708,16 @@ export async function processOrgPayout(payoutId: string): Promise<{
         console.warn(
           `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
         );
+        // #1846 SM-B12 — echo the stored status: a blocked row may be APPROVED.
+        const blocked = await tx.organizationPayout.findUnique({
+          where: { id: payoutId },
+          select: { status: true },
+        });
+        if (!blocked) {
+          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+        }
         return {
-          status: "PENDING" as PayoutStatus,
+          status: blocked.status,
           submittedToGateway: false,
           claimed: false,
         };
