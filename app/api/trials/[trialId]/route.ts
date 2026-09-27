@@ -16,6 +16,7 @@ import {
 import {
   refundCancelledTrial,
   softCancelTrialAppointment,
+  softCancelTrialAppointmentInTx,
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
 import { TrialStatus, AppointmentsType, Prisma } from "@prisma/client";
@@ -32,6 +33,8 @@ import {
   unlockConsulteeBooking,
   BookingLockUnavailableError,
   ApprovalLock,
+  AppointmentBusyError,
+  withAppointmentLock,
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
@@ -1073,18 +1076,30 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // #1009 — same soft-cancel as the PATCH path. CANCELLED drops the trial out
     // of the occupancy filter, which is what frees the slot; the appointment is
     // tombstoned rather than deleted so the payment it carries survives.
-    await transitionTrial(prisma, {
-      where: { id: trialId },
-      to: TrialStatus.CANCELLED,
-      fromIn: cancellableStatuses,
-    });
-    const updatedTrial = await prisma.trial.findUniqueOrThrow({
-      where: { id: trialId },
-    });
-
-    if (existingTrial.appointmentId) {
-      await softCancelTrialAppointment(existingTrial.appointmentId);
-    }
+    //
+    // #1846 SM-D2 / SM-D5 — the status move and the tombstone commit in ONE
+    // transaction on its own client (they were a global-client CAS and a
+    // second transaction, so a crash between them left a CANCELLED trial with
+    // a live session), under the appointment lock every other lifecycle
+    // writer takes. A trial with no appointment yet has no atom to lock; its
+    // CAS alone decides.
+    const { appointmentId } = existingTrial;
+    const cancelTrial = () =>
+      prisma.$transaction(async (tx) => {
+        await transitionTrial(tx, {
+          actorUserId: session.user.id,
+          where: { id: trialId },
+          to: TrialStatus.CANCELLED,
+          fromIn: cancellableStatuses,
+        });
+        if (appointmentId) {
+          await softCancelTrialAppointmentInTx(tx, appointmentId);
+        }
+        return tx.trial.findUniqueOrThrow({ where: { id: trialId } });
+      });
+    const updatedTrial = appointmentId
+      ? await withAppointmentLock(appointmentId, cancelTrial)
+      : await cancelTrial();
 
     // Only the consultee reaches DELETE without privilege, so a privileged
     // caller is acting on the consultant's behalf.
@@ -1120,7 +1135,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     // #1319 — the DB CAS refused the move (stale tab, raced webhook/sweep).
-    if (error instanceof IllegalTransitionError) {
+    // #1846 — a held appointment atom (423) or a Redis outage (503) is an
+    // answer too, never a 500.
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },

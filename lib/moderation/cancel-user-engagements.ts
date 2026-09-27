@@ -8,6 +8,11 @@
  * skipped), refunds run AFTER each cancel commits because refundPayment owns
  * its own Serializable tx. Every step is idempotent, so a re-run after a
  * partial failure (or budget exhaustion) is safe.
+ *
+ * #1846 SM-B14 — each engagement's writes run under its appointment lock, the
+ * atom the cancel, reschedule and withdraw routes take, so a ban cannot
+ * interleave with a consultee's cancel or a consultant's accept. A held lock
+ * fails that one engagement into `failures`, and a re-run picks it up.
  */
 import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
@@ -38,6 +43,8 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
+import { withAppointmentLock } from "@/utils/appointmentlock";
 
 export interface BulkCancelSummary {
   engagementsCancelled: number;
@@ -387,6 +394,7 @@ async function loadExclusiveEngagement(
 async function casCancelExclusiveEngagement(
   kind: "consultation" | "subscription",
   engagementId: string,
+  appointmentId: string | null,
   ctx: { initiatedByUserId: string; notes?: string },
 ): Promise<number> {
   const now = new Date();
@@ -401,41 +409,49 @@ async function casCancelExclusiveEngagement(
     reason: MODERATION_REASON,
   };
 
-  return prisma.$transaction(async (tx) => {
-    // #1583 A-P0-05 — through the helpers so the history row rides along;
-    // the zero-row throw is the old `count === 0` (already terminal).
-    try {
-      if (kind === "consultation") {
-        await transitionConsultationRequest(tx, {
-          ...audit,
-          where: { id: engagementId },
-          to: "CANCELLED",
-          fromIn: [...CANCELLABLE_FROM],
-          data: cancellationData,
-        });
-      } else {
-        await transitionSubscriptionRequest(tx, {
-          ...audit,
-          where: { id: engagementId },
-          to: "CANCELLED",
-          fromIn: [...CANCELLABLE_FROM],
-          data: cancellationData,
-        });
+  const cancel = () =>
+    prisma.$transaction(async (tx) => {
+      // #1583 A-P0-05 — through the helpers so the history row rides along;
+      // the zero-row throw is the old `count === 0` (already terminal).
+      try {
+        if (kind === "consultation") {
+          await transitionConsultationRequest(tx, {
+            ...audit,
+            where: { id: engagementId },
+            to: "CANCELLED",
+            fromIn: [...CANCELLABLE_FROM],
+            data: cancellationData,
+          });
+        } else {
+          await transitionSubscriptionRequest(tx, {
+            ...audit,
+            where: { id: engagementId },
+            to: "CANCELLED",
+            fromIn: [...CANCELLABLE_FROM],
+            data: cancellationData,
+          });
+        }
+      } catch (err) {
+        if (err instanceof IllegalTransitionError) return 0;
+        throw err;
       }
-    } catch (err) {
-      if (err instanceof IllegalTransitionError) return 0;
-      throw err;
-    }
-    await releaseEngagementOccurrences(
-      tx,
-      kind === "consultation"
-        ? { appointment: { consultationId: engagementId } }
-        : { appointment: { subscriptionId: engagementId } },
-      now,
-      audit,
-    );
-    return 1;
-  });
+      await releaseEngagementOccurrences(
+        tx,
+        kind === "consultation"
+          ? { appointment: { consultationId: engagementId } }
+          : { appointment: { subscriptionId: engagementId } },
+        now,
+        audit,
+      );
+      // #1846 SM-B14 — an open proposal on a cancelled booking would keep its
+      // reservation and let the expiry sweep act on a dead booking.
+      if (appointmentId) {
+        await declineOpenReschedules(tx, appointmentId, audit);
+      }
+      return 1;
+    });
+  // A request that never got a wrapper has no atom to lock; its CAS decides.
+  return appointmentId ? withAppointmentLock(appointmentId, cancel) : cancel();
 }
 
 const MODERATION_REASON = "moderation";
@@ -538,7 +554,12 @@ async function cancelExclusiveEngagement(
   const engagement = await loadExclusiveEngagement(kind, engagementId);
   if (!engagement) return;
 
-  const moved = await casCancelExclusiveEngagement(kind, engagementId, ctx);
+  const moved = await casCancelExclusiveEngagement(
+    kind,
+    engagementId,
+    engagement.appointments[0]?.id ?? null,
+    ctx,
+  );
   if (moved === 0) return; // lost the CAS — already terminal, no refund
 
   ctx.summary.engagementsCancelled += 1;
@@ -561,38 +582,48 @@ async function cancelGroupEvent(
     actorUserId: ctx.initiatedByUserId,
     reason: MODERATION_REASON,
   };
-  const moved = await prisma.$transaction(async (tx) => {
-    // #1583 A-P0-05 — same shape as the exclusive arm above.
-    try {
-      if (isWebinar) {
-        await transitionWebinarEvent(tx, {
-          ...audit,
-          where: { id: eventId },
-          to: "CANCELLED",
-          fromIn: EVENT_ALLOWED_FROM.CANCELLED,
-        });
-      } else {
-        await transitionClassEvent(tx, {
-          ...audit,
-          where: { id: eventId },
-          to: "CANCELLED",
-          fromIn: CLASS_EVENT_ALLOWED_FROM.CANCELLED,
-        });
-      }
-    } catch (err) {
-      if (err instanceof IllegalTransitionError) return 0;
-      throw err;
-    }
-    await releaseEngagementOccurrences(
-      tx,
-      {
-        appointment: isWebinar ? { webinarId: eventId } : { classId: eventId },
-      },
-      new Date(),
-      audit,
-    );
-    return 1;
+  const eventWrapper = await prisma.appointment.findFirst({
+    where: isWebinar ? { webinarId: eventId } : { classId: eventId },
+    select: { id: true },
   });
+  const cancel = () =>
+    prisma.$transaction(async (tx) => {
+      // #1583 A-P0-05 — same shape as the exclusive arm above.
+      try {
+        if (isWebinar) {
+          await transitionWebinarEvent(tx, {
+            ...audit,
+            where: { id: eventId },
+            to: "CANCELLED",
+            fromIn: EVENT_ALLOWED_FROM.CANCELLED,
+          });
+        } else {
+          await transitionClassEvent(tx, {
+            ...audit,
+            where: { id: eventId },
+            to: "CANCELLED",
+            fromIn: CLASS_EVENT_ALLOWED_FROM.CANCELLED,
+          });
+        }
+      } catch (err) {
+        if (err instanceof IllegalTransitionError) return 0;
+        throw err;
+      }
+      await releaseEngagementOccurrences(
+        tx,
+        {
+          appointment: isWebinar
+            ? { webinarId: eventId }
+            : { classId: eventId },
+        },
+        new Date(),
+        audit,
+      );
+      return 1;
+    });
+  const moved = eventWrapper
+    ? await withAppointmentLock(eventWrapper.id, cancel)
+    : await cancel();
   if (moved === 0) return;
 
   ctx.summary.engagementsCancelled += 1;
@@ -697,10 +728,18 @@ async function removeAttendee(
     },
   });
   if (upcoming === 0) return;
-  const released = await releaseParticipant(prisma, {
-    appointment: eventFilter,
-    userId: targetUserId,
+  const eventWrapper = await prisma.appointment.findFirst({
+    where: eventFilter,
+    select: { id: true },
   });
+  if (!eventWrapper) return;
+  // #1846 SM-B14 — the seat release serialises with the event's own cancel.
+  const released = await withAppointmentLock(eventWrapper.id, () =>
+    releaseParticipant(prisma, {
+      appointmentId: eventWrapper.id,
+      userId: targetUserId,
+    }),
+  );
   if (released === 0) return;
   ctx.summary.attendeeRemovals += 1;
 
