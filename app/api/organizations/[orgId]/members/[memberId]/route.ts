@@ -34,7 +34,7 @@ import { removeMember } from "@/lib/enterprise/member-removal";
 import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
-  recomputeConsultantIsIndependent,
+  recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
 import {
   attemptOnboardingEmail,
@@ -359,17 +359,11 @@ export async function PATCH(
             await bumpUserSessionGeneration(tx, current.userId);
           }
 
-          // A4: an EXPERT leaving EXPERT or ACTIVE shifts the consultant's
-          // HOST-membership count, which drives ConsultantProfile.isIndependent.
-          if (
-            current.role === "EXPERT" &&
-            current.consultantProfileId &&
-            (roleChanged || statusChanged)
-          ) {
-            await recomputeConsultantIsIndependent(
-              tx,
-              current.consultantProfileId,
-            );
+          // A4: an EXPERT entering or leaving EXPERT or ACTIVE shifts the
+          // consultant's HOST-membership count, which drives
+          // ConsultantProfile.isIndependent.
+          if (roleChanged || statusChanged) {
+            await recomputeIndependenceAcross(tx, [current, updated]);
           }
 
           // #1851 decision 5 — a payout-recipient change is a money event:

@@ -26,6 +26,7 @@ import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
   recomputeConsultantIsIndependent,
+  recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
@@ -277,15 +278,9 @@ export async function createOrReprovisionScimUser(
       // #789 review — only a real move invalidates the session, so the
       // common idempotent heartbeat pays no sessionGeneration write.
       if (roleChanged) {
-        if (
-          existingMembership.role === "EXPERT" &&
-          existingMembership.consultantProfileId
-        ) {
-          await recomputeConsultantIsIndependent(
-            tx,
-            existingMembership.consultantProfileId,
-          );
-        }
+        // Both sides: the profile the old EXPERT row held, and the one a move
+        // into EXPERT now holds.
+        await recomputeIndependenceAcross(tx, [existingMembership, updated]);
         if (!statusChanged) await bumpUserSessionGeneration(tx, user.id);
       }
       await tx.orgAuditLog.create({

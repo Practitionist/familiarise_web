@@ -46,8 +46,9 @@ export interface IssueInvitationInput {
 /**
  * Creates the invitation, or refreshes the pending one for the same email,
  * and stages its bell and email in the same transaction. Refuses a person who
- * is already a member; a REMOVED member may be invited back, and accepting
- * reactivates their row. An ERASED member cannot be invited again.
+ * is already a member. A REMOVED member (or a legacy PENDING import row) may
+ * be invited back, and accepting reactivates their row. An ERASED member
+ * cannot be invited again.
  */
 export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
   const { orgId, email, role, expiresAt, inviter } = input;
@@ -63,12 +64,19 @@ export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
     where: { organizationId: orgId, user: { email } },
     select: { status: true },
   });
-  if (member && member.status !== "REMOVED") {
+  // REMOVED and a legacy PENDING import row are exactly what an invitation
+  // brings back (accepting reactivates the row); a live member is not.
+  if (member?.status === "ERASED") {
     throw new MembershipGuardError(
-      "REMOVED_REQUIRES_REINVITE",
-      member.status === "ERASED"
-        ? "This person erased their data and cannot be invited again."
-        : "This person is already a member of this organization.",
+      "MEMBER_ERASED",
+      "This person erased their data and cannot be invited again.",
+      409,
+    );
+  }
+  if (member && member.status !== "REMOVED" && member.status !== "PENDING") {
+    throw new MembershipGuardError(
+      "ALREADY_MEMBER",
+      "This person is already a member of this organization.",
       409,
     );
   }

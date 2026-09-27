@@ -259,3 +259,20 @@ export async function recomputeConsultantIsIndependent(
     data: { isIndependent: activeExpertCount === 0 },
   });
 }
+
+/**
+ * Recomputes `isIndependent` for every distinct consultant profile an EXPERT
+ * membership held before or holds after a change, so a move INTO Expert
+ * counts as well as a move out of it (#1846 review).
+ */
+export async function recomputeIndependenceAcross(
+  tx: PrismaLike,
+  rows: Array<{ role: string; consultantProfileId: string | null }>,
+): Promise<void> {
+  const ids = new Set(
+    rows
+      .filter((r) => r.role === "EXPERT" && r.consultantProfileId)
+      .map((r) => r.consultantProfileId as string),
+  );
+  for (const id of ids) await recomputeConsultantIsIndependent(tx, id);
+}

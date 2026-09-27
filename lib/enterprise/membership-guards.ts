@@ -24,6 +24,8 @@ export type MembershipGuardCode =
   | "LEARNER_REQUIRES_CANSPONSOR"
   | "LAST_OWNER"
   | "PENDING_REQUIRES_ACCEPT"
+  | "ALREADY_MEMBER"
+  | "MEMBER_ERASED"
   | "REMOVED_REQUIRES_REINVITE"
   | "MEMBER_HAS_OBLIGATIONS";
 
@@ -310,9 +312,10 @@ export interface RemovalObligations {
 
 /**
  * What removing this member would strand at THIS org: upcoming org sessions
- * they attend or deliver, live program seats, and money still moving. Unpaid
- * earnings count only this org's unsettled ones (N5): a REFUNDED earning, or
- * one from another org, no longer blocks the removal forever.
+ * they attend or deliver, live program seats, and money still moving on this
+ * org's payments. Unpaid earnings count only this org's unsettled ones (N5):
+ * a REFUNDED earning, or one from another org, no longer blocks the removal
+ * forever, and neither does a refund on the member's personal booking.
  */
 export async function countRemovalObligations(
   tx: Pick<
@@ -377,7 +380,7 @@ export async function countRemovalObligations(
     tx.overageEvent.count({
       where: {
         chargeStatus: { in: ["PENDING", "ACCRUED"] },
-        payment: { userId: m.userId },
+        payment: { userId: m.userId, organizationId: orgId },
       },
     }),
     m.consultantProfileId
@@ -392,7 +395,10 @@ export async function countRemovalObligations(
         })
       : 0,
     tx.refund.count({
-      where: { status: "PENDING", payment: { userId: m.userId } },
+      where: {
+        status: "PENDING",
+        payment: { userId: m.userId, organizationId: orgId },
+      },
     }),
     tx.dispute.count({
       where: {
@@ -405,7 +411,7 @@ export async function countRemovalObligations(
             "UNDER_REVIEW",
           ],
         },
-        payment: { userId: m.userId },
+        payment: { userId: m.userId, organizationId: orgId },
       },
     }),
   ]);

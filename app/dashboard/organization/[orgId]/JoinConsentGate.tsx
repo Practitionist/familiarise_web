@@ -48,13 +48,17 @@ export function JoinConsentGate({
   orgName,
 }: Readonly<{ orgId: string; orgName: string }>) {
   const { data: session } = useSession();
+  const userId = session?.user?.id;
   const queryClient = useQueryClient();
-  const queryKey = ["org-join-consent", orgId];
+  const queryKey = ["org-join-consent", orgId, userId];
 
   const { data: neverAsked } = useQuery({
     queryKey,
     queryFn: async () => {
-      const res = await fetch(`/api/organizations/${orgId}/consent?limit=200`);
+      // Always the viewer's own records: an operator holding consent.read
+      // would otherwise read every member's artifacts.
+      const qs = new URLSearchParams({ userId: userId ?? "", limit: "200" });
+      const res = await fetch(`/api/organizations/${orgId}/consent?${qs}`);
       // Fail open: a failed read must not lock anyone out of the dashboard.
       if (!res.ok) return false;
       const body = (await res.json()) as { data: Artifact[] };
@@ -64,7 +68,7 @@ export function JoinConsentGate({
         ),
       );
     },
-    enabled: !!session?.user?.id,
+    enabled: !!userId,
     staleTime: Infinity,
   });
 
