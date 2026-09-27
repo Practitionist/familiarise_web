@@ -7,10 +7,12 @@
  * interaction. Real state transitions (PENDING → PROCESSING → COMPLETED)
  * come from the payout cron that talks to the gateway.
  *
- * Allowed manual transitions here:
- *   PENDING → CANCELLED  (releases earnings back to READY)
- *   PENDING → APPROVED   (explicit manager sign-off before cron runs)
- *   FAILED  → CANCELLED  (abandon a failed payout; releases earnings)
+ * Allowed manual transitions are the shared PAYOUT_ALLOWED_FROM map's
+ * (#1846 SM-B12), applied through transitionOrgPayout:
+ *   PENDING  → APPROVED   (explicit manager sign-off)
+ *   PENDING  → CANCELLED  (releases the BATCHED earnings back to READY)
+ *   APPROVED → CANCELLED  (same release; kept pending an owner decision)
+ * A FAILED payout is terminal: its earnings were released when it failed.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -22,6 +24,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 // finance-team actions; allow BILLING_ADMIN alongside OWNER.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  PAYOUT_ALLOWED_FROM,
+  transitionOrgPayout,
+} from "@/lib/enterprise/transitions";
 
 const PatchStatusSchema = z.enum(["APPROVED", "CANCELLED"]);
 
@@ -103,63 +109,25 @@ export async function PATCH(
         throw Object.assign(new Error("Payout not found"), { httpStatus: 404 });
       }
 
-      if (body.status) {
-        const allowed: Record<string, string[]> = {
-          PENDING: ["APPROVED", "CANCELLED"],
-          APPROVED: ["CANCELLED"],
-          PROCESSING: [],
-          COMPLETED: [],
-          FAILED: ["CANCELLED"],
-          CANCELLED: [],
-        };
-        const next = allowed[current.status] ?? [];
-        if (!next.includes(body.status)) {
-          throw Object.assign(
-            new Error(
-              `Cannot transition payout from ${current.status} to ${body.status} manually`,
-            ),
-            { httpStatus: 409 },
-          );
-        }
-      }
-
-      // CAS on the state we validated: two concurrent transitions (e.g.
-      // APPROVED vs CANCELLED from PENDING) both passed the read-based check
-      // before, and the unconditional update let the loser overwrite the
-      // winner — an APPROVED payout whose earnings a racing CANCELLED had
-      // already released. The count check makes the loser fail closed.
-      const claimed = await tx.organizationPayout.updateMany({
-        where: { id: payoutId, organizationId: orgId, status: current.status },
-        data: {
-          ...(body.status && { status: body.status }),
-        },
-      });
-      if (claimed.count === 0) {
+      // Friendly refusal from the read; the CAS inside transitionOrgPayout is
+      // what actually enforces the map, so a concurrent move still loses.
+      if (
+        body.status &&
+        !PAYOUT_ALLOWED_FROM[body.status].includes(current.status)
+      ) {
         throw Object.assign(
-          new Error("Payout state changed concurrently; retry"),
+          new Error(
+            `Cannot transition payout from ${current.status} to ${body.status} manually`,
+          ),
           { httpStatus: 409 },
         );
       }
-      const next = await tx.organizationPayout.findUniqueOrThrow({
-        where: { id: payoutId },
-      });
 
-      // CANCELLED releases the earnings back to READY so a subsequent
-      // payout run can pick them up. We write a PAYOUT_REVERSED entry
-      // (positive, matching the original -netPayout debit) so the ledger
-      // nets to zero for the cancelled window — reusing PAYOUT_SENT for
-      // both sides makes analytics queries lie ("payouts sent" would
-      // double-count every cancel).
-      if (body.status === "CANCELLED") {
-        await tx.organizationEarnings.updateMany({
-          where: { orgPayoutId: payoutId },
-          data: { status: "READY", orgPayoutId: null },
-        });
-      }
-
-      if (body.status && body.status !== current.status) {
-        await tx.orgAuditLog.create({
-          data: {
+      if (body.status) {
+        await transitionOrgPayout(tx, {
+          where: { id: payoutId, organizationId: orgId },
+          to: body.status,
+          audit: {
             organizationId: orgId,
             actorMembershipId: access.member.id,
             category: "PAYOUT",
@@ -179,6 +147,20 @@ export async function PATCH(
         });
       }
 
+      // CANCELLED releases the payout's earnings back to READY so a later run
+      // can pick them up. #1846 SM-B12 — only BATCHED rows: the release used
+      // to match every earning on the payout, so one the refund cascade had
+      // already moved to REFUNDED came back as READY and was paid out again.
+      if (body.status === "CANCELLED") {
+        await tx.organizationEarnings.updateMany({
+          where: { orgPayoutId: payoutId, status: "BATCHED" },
+          data: { status: "READY", orgPayoutId: null },
+        });
+      }
+
+      const next = await tx.organizationPayout.findUniqueOrThrow({
+        where: { id: payoutId },
+      });
       return next;
     });
 

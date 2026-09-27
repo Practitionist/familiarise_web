@@ -21,6 +21,7 @@ import type { Tx } from "@/lib/prisma";
 import type {
   AssignmentStatus,
   ContractStatus,
+  EarningStatus,
   MemberStatus,
   OrgAuditCategory,
   OrgInvoiceStatus,
@@ -311,7 +312,10 @@ export const PAYOUT_ALLOWED_FROM: Record<PayoutStatus, PayoutStatus[]> = {
   PROCESSING: ["APPROVED"],
   COMPLETED: ["PROCESSING"],
   FAILED: ["PROCESSING"],
-  CANCELLED: ["PENDING"],
+  // #1846 SM-B12 — APPROVED is kept because the org payout PATCH has always
+  // allowed it and it is the only exit for an APPROVED org payout (the cron
+  // claims PENDING rows only). Whether it stays is an open owner decision.
+  CANCELLED: ["PENDING", "APPROVED"],
   REVERSED: ["COMPLETED"],
 };
 
@@ -340,6 +344,25 @@ export const WALLET_TOPUP_ALLOWED_FROM: Record<WalletTopUpStatus, WalletTopUpSta
   FAILED: ["PENDING"],
 };
 
+// #1846 — EarningStatus, shared by ConsultantEarnings and
+// OrganizationEarnings. Derived from the live write sites: PENDING_TRUST is an
+// entry state released by release-pending-trust-earnings; HELD returns to its
+// pre-dispute or pre-hold state; BATCHED goes back to READY when its payout
+// fails or is cancelled; PAID re-opens to READY only on a bank reversal
+// (#812); REFUNDED is terminal. A release of a payout's earnings must name
+// BATCHED in its WHERE, never a bare payout id, or a REFUNDED row flips back
+// to READY.
+export const EARNING_ALLOWED_FROM: Record<EarningStatus, EarningStatus[]> = {
+  PENDING_TRUST: [],
+  PENDING: ["PENDING_TRUST", "HELD"],
+  // Moderation also holds PENDING_TRUST rows.
+  HELD: ["PENDING_TRUST", "PENDING", "READY"],
+  READY: ["PENDING", "HELD", "BATCHED", "PAID"],
+  BATCHED: ["READY"],
+  PAID: ["BATCHED"],
+  REFUNDED: ["PENDING_TRUST", "PENDING", "HELD", "READY", "BATCHED", "PAID"],
+};
+
 //////////////////////////////////////////////////// Terminal sets ////////////////////////////////////////////////////
 
 export const TERMINAL_STATES = {
@@ -353,4 +376,5 @@ export const TERMINAL_STATES = {
   OrgPayoutAccountStatus: terminalsOf(ORG_PAYOUT_ACCOUNT_ALLOWED_FROM),
   PayoutStatus: terminalsOf(PAYOUT_ALLOWED_FROM),
   WalletTopUpStatus: terminalsOf(WALLET_TOPUP_ALLOWED_FROM),
+  EarningStatus: terminalsOf(EARNING_ALLOWED_FROM),
 } as const;
