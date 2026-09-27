@@ -612,7 +612,25 @@ const APPROVED_PAYOUT_INCLUDE = {
   },
 } satisfies Prisma.ConsultantPayoutInclude;
 
-export async function processApprovedPayouts(): Promise<PayoutResult[]> {
+/**
+ * #1846 N6 — the bounds for a run started from a request (System Jobs "Run
+ * now"), which executes after the response inside the same function
+ * invocation and is killed at the ~60 s Lambda limit. No new payout is
+ * started after `budgetMs`, so the last one (one gateway call, 30 s timeout)
+ * still finishes, and the lock is taken for `lockTtlMs` instead of the
+ * scheduled job's 35 minutes, so a killed run frees it within two minutes
+ * rather than holding instant payouts "busy" for half an hour. Payouts left
+ * unstarted stay APPROVED for the next run.
+ */
+export const REQUEST_PAYOUT_RUN_BOUNDS = {
+  budgetMs: 20_000,
+  lockTtlMs: 2 * 60_000,
+} as const;
+
+export async function processApprovedPayouts(
+  opts: { budgetMs?: number; lockTtlMs?: number } = {},
+): Promise<PayoutResult[]> {
+  const startedAt = Date.now();
   // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
   // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
   // closed and page. `acquireLock` returns null for both, so without this
@@ -649,7 +667,7 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
 
   const lockToken = await acquireLock(
     PAYOUT_PROCESS_LOCK_KEY,
-    PAYOUT_PROCESS_LOCK_TTL,
+    opts.lockTtlMs ?? PAYOUT_PROCESS_LOCK_TTL,
   );
   if (!lockToken) {
     console.warn(
@@ -680,6 +698,15 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
     const results: PayoutResult[] = [];
 
     for (const payout of approvedPayouts) {
+      if (
+        opts.budgetMs !== undefined &&
+        Date.now() - startedAt >= opts.budgetMs
+      ) {
+        console.warn(
+          `[Payouts] Run budget spent; ${approvedPayouts.length - results.length} approved payout(s) left for the next run`,
+        );
+        break;
+      }
       const result = await processSinglePayout(payout);
       results.push(result);
     }
