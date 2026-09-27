@@ -65,6 +65,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { AddPeopleDialog } from "./AddPeopleDialog";
+import { RemoveMemberDialog } from "./RemoveMemberDialog";
 
 // `MemberRow` (and the response shape) live in `@/schemas/organizations`
 // so the dashboard and any other consumer (e.g. operator tools) share the
@@ -211,17 +212,6 @@ async function updateMember(
   return body;
 }
 
-async function removeMember(orgId: string, memberId: string) {
-  const res = await fetch(`/api/organizations/${orgId}/members/${memberId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const raw = errorMessageFromBody(body, "Failed to remove member");
-    throw new Error(humanizeOrgError(raw));
-  }
-}
-
 export function MembersPageClient({ orgId }: { orgId: string }) {
   // canSponsor/canHost drive the capability-aware role options (LEARNER
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
@@ -292,18 +282,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // the raw browser confirm() because (a) it matches the rest of the
   // dashboard styling, and (b) it gives us room to show the target
   // member's name + email so the user can't mis-click on the wrong row.
+  // #1854 — the dialog reads the member's open obligations before confirming.
   const [memberToRemove, setMemberToRemove] = useState<MemberRow | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-
-  const removeMutation = useMutation({
-    mutationFn: (memberId: string) => removeMember(orgId, memberId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
-      setMemberToRemove(null);
-      setRemoveError(null);
-    },
-    onError: (err: Error) => setRemoveError(err.message),
-  });
 
   // Edit member state. We narrow to the MemberRole / MemberStatus unions
   // so the Select onValueChange handlers can't push a typo into the
@@ -437,9 +417,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           size="icon"
           aria-label="Remove member"
           onClick={() => setMemberToRemove(m)}
-          disabled={
-            removeMutation.isPending || isOwnRow(m) || ownerOnly(m.role)
-          }
+          disabled={isOwnRow(m) || ownerOnly(m.role)}
         >
           <Trash2 className="h-4 w-4 text-red-500" />
         </Button>
@@ -664,45 +642,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       {/* Remove-member confirm dialog. Styled to match the rest of the
           dashboard instead of using window.confirm() so the user sees
           which row they're about to destroy. */}
-      <ResponsiveModal
-        open={!!memberToRemove}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMemberToRemove(null);
-            setRemoveError(null);
-          }
-        }}
-      >
-        <ResponsiveModalContent>
-          <ResponsiveModalHeader>
-            <ResponsiveModalTitle>Remove member?</ResponsiveModalTitle>
-            <ResponsiveModalDescription>
-              {memberToRemove?.user.name ?? memberToRemove?.user.email} will
-              lose access to this organization immediately. You can re-invite
-              them later.
-            </ResponsiveModalDescription>
-          </ResponsiveModalHeader>
-          {removeError && <p className="text-sm text-red-600">{removeError}</p>}
-          <ResponsiveModalFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMemberToRemove(null)}
-              disabled={removeMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() =>
-                memberToRemove && removeMutation.mutate(memberToRemove.id)
-              }
-              disabled={removeMutation.isPending}
-            >
-              {removeMutation.isPending ? "Removing…" : "Remove member"}
-            </Button>
-          </ResponsiveModalFooter>
-        </ResponsiveModalContent>
-      </ResponsiveModal>
+      <RemoveMemberDialog
+        key={memberToRemove?.id ?? "none"}
+        orgId={orgId}
+        member={memberToRemove}
+        canForce={isAtLeast("OWNER")}
+        onClose={() => setMemberToRemove(null)}
+      />
     </>
   );
 }
