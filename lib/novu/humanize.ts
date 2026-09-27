@@ -312,7 +312,11 @@ export function failureReasonLabel(reason: string | null | undefined): string {
   if (!raw) return "the payment could not be processed";
   if (/^[a-z][a-z0-9_]*$/i.test(raw)) {
     const key = raw.toLowerCase();
-    return PAYMENT_FAILURE_REASON_LABEL[key] ?? key.replace(/_/g, " ");
+    // Own-key: Record literals inherit Object.prototype (`constructor`,
+    // `toString`), which would otherwise return a function, not a label.
+    return Object.hasOwn(PAYMENT_FAILURE_REASON_LABEL, key)
+      ? PAYMENT_FAILURE_REASON_LABEL[key]
+      : key.replace(/_/g, " ");
   }
   return raw;
 }
@@ -341,7 +345,9 @@ export function disputeReasonLabel(
   if (!raw) return undefined;
   if (/^[a-z][a-z0-9_]*$/i.test(raw)) {
     const key = raw.toLowerCase();
-    return DISPUTE_REASON_LABEL[key] ?? key.replace(/_/g, " ");
+    return Object.hasOwn(DISPUTE_REASON_LABEL, key)
+      ? DISPUTE_REASON_LABEL[key]
+      : key.replace(/_/g, " ");
   }
   return raw;
 }
@@ -368,7 +374,9 @@ export function disputeStatusLabel(
   const raw = status?.trim();
   if (!raw) return undefined;
   const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
-  return DISPUTE_STATUS_LABEL[key] ?? key.replace(/_/g, " ");
+  return Object.hasOwn(DISPUTE_STATUS_LABEL, key)
+    ? DISPUTE_STATUS_LABEL[key]
+    : key.replace(/_/g, " ");
 }
 
 /**
@@ -394,12 +402,13 @@ export function collaboratorRoleLabel(
   if (!raw) return "Collaborator";
   const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
   return (
-    COLLABORATOR_ROLE_LABEL[key] ??
-    key
-      .toLowerCase()
-      .split("_")
-      .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-      .join(" ")
+    Object.hasOwn(COLLABORATOR_ROLE_LABEL, key)
+      ? COLLABORATOR_ROLE_LABEL[key]
+      : key
+          .toLowerCase()
+          .split("_")
+          .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+          .join(" ")
   );
 }
 
@@ -419,9 +428,12 @@ const SUPPORT_TICKET_STATUS_LABEL: Record<SupportTicketStatus, string> = {
 export function supportTicketStatusLabel(
   status: SupportTicketStatus | string,
 ): string {
+  // Own-key: a hostile status like "toString" would otherwise resolve the
+  // inherited function instead of falling through to the spaced fallback.
   return (
-    SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus] ??
-    status.toLowerCase().replace(/_/g, " ")
+    Object.hasOwn(SUPPORT_TICKET_STATUS_LABEL, status)
+      ? SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus]
+      : status.toLowerCase().replace(/_/g, " ")
   );
 }
 

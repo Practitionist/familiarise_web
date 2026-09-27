@@ -8,10 +8,13 @@
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
 import {
+  appointmentTypeLabel,
+  cancellationReasonLabel,
   collaboratorRoleLabel,
   disputeReasonLabel,
   disputeStatusLabel,
   failureReasonLabel,
+  supportTicketStatusLabel,
 } from "@/lib/novu/humanize";
 
 describe("failureReasonLabel", () => {
@@ -93,5 +96,24 @@ describe("collaboratorRoleLabel", () => {
   it("falls back to a noun, never blank", () => {
     expect(collaboratorRoleLabel(undefined)).toBe("Collaborator");
     expect(collaboratorRoleLabel("")).toBe("Collaborator");
+  });
+});
+
+describe("label lookups", () => {
+  it("never return an inherited property for hostile input", () => {
+    for (const hostile of ["toString", "constructor", "valueOf"]) {
+      expect(typeof failureReasonLabel(hostile)).toBe("string");
+      expect(typeof disputeReasonLabel(hostile)).toBe("string");
+      expect(typeof disputeStatusLabel(hostile)).toBe("string");
+      expect(typeof collaboratorRoleLabel(hostile)).toBe("string");
+      expect(typeof supportTicketStatusLabel(hostile)).toBe("string");
+      expect(typeof appointmentTypeLabel(hostile)).toBe("string");
+      expect(typeof cancellationReasonLabel(hostile)).toBe("string");
+    }
+    // Spot-check the fallbacks stay readable, not functions.
+    expect(failureReasonLabel("toString")).toBe("tostring");
+    expect(disputeStatusLabel("constructor")).toBe("constructor");
+    expect(collaboratorRoleLabel("valueOf")).toBe("Valueof");
+    expect(supportTicketStatusLabel("toString")).toBe("tostring");
   });
 });
