@@ -38,8 +38,8 @@ export interface OrganizationNavInput {
   /** Set when this member also delivers sessions (gates Requests). */
   consultantProfileId: string | null;
   /**
-   * #1527 decision 6 — a SUSPENDED membership keeps only Overview and its
-   * booked sessions; every other page refuses it server-side.
+   * #1527 decision 6 — a SUSPENDED membership keeps Overview, its booked
+   * sessions and their Library files; every other page refuses it server-side.
    */
   suspended?: boolean;
 }
@@ -77,6 +77,15 @@ export function buildOrganizationNav(
   input: OrganizationNavInput,
 ): DashboardNav {
   const { orgId, role, canSponsor, canHost } = input;
+  // #1527 — every member's own session files (Mine); operations.read adds
+  // the Everyone tab inside, so the item itself is ungated.
+  const library: NavGroup = {
+    label: "Library",
+    items: [
+      { name: "Documents", icon: FileText, path: "documents" },
+      { name: "Recordings", icon: Video, path: "recordings" },
+    ],
+  };
   if (input.suspended) {
     return {
       basePath: `/dashboard/organization/${orgId}`,
@@ -87,6 +96,7 @@ export function buildOrganizationNav(
             { name: "Appointments", icon: CalendarCheck, path: "appointments" },
           ],
         },
+        library,
       ],
       support: null,
       mobileTabs: ["home", "appointments"],
@@ -191,18 +201,6 @@ export function buildOrganizationNav(
       path: "support",
       show: can("operations.read"),
     },
-    {
-      name: "Documents",
-      icon: FileText,
-      path: "documents",
-      show: can("operations.read"),
-    },
-    {
-      name: "Recordings",
-      icon: Video,
-      path: "recordings",
-      show: can("operations.read"),
-    },
   ];
 
   const insights: ItemSpec[] = [
@@ -229,6 +227,7 @@ export function buildOrganizationNav(
   // "Hosting", not "Catalog": a group must not restate its only item.
   const groups: NavGroup[] = [
     { items: keep(top) },
+    library,
     { label: "People", items: keep(people) },
     { label: "Sponsorship", items: keep(sponsorship) },
     { label: "Hosting", items: keep(hosting) },

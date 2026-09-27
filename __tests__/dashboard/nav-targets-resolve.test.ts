@@ -213,8 +213,17 @@ describe("org nav targets resolve for every role × capability", () => {
  * walked from the same matrix the page gates and API guards read.
  */
 describe("org nav role walk (#1527 matrix)", () => {
-  const OPS = ["support", "documents", "recordings", "analytics"];
-  const BASE = ["home", "appointments", "messages", "members", "settings"];
+  const OPS = ["support", "analytics"];
+  // #1527 — Library (Documents · Recordings) is every member's.
+  const BASE = [
+    "home",
+    "appointments",
+    "messages",
+    "members",
+    "documents",
+    "recordings",
+    "settings",
+  ];
   const EXPECTED: Record<MemberRole, string[]> = {
     OWNER: [
       ...BASE,

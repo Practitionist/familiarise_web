@@ -87,12 +87,16 @@ describe("requireOrgAccess with a SUSPENDED membership", () => {
 });
 
 describe("where allowSuspended is used", () => {
-  it("is limited to org details, Appointments and the member's own detail", () => {
+  it("is limited to org details, Appointments, the member's own detail and the Library", () => {
     const users = [
       "app/api/organizations/[orgId]/route.ts",
       "lib/data/org-details-server.ts",
       `${DASH}/appointments/page.tsx`,
       `${DASH}/appointments/[appointmentId]/page.tsx`,
+      `${DASH}/documents/page.tsx`,
+      `${DASH}/recordings/page.tsx`,
+      "app/api/organizations/[orgId]/documents/route.ts",
+      "app/api/organizations/[orgId]/recordings/route.ts",
     ];
     for (const file of users) expect(read(file)).toContain("allowSuspended");
   });
@@ -151,7 +155,7 @@ it("a suspended learner can't cancel or reschedule an org-funded booking (#1527 
   );
 });
 
-it("the suspended nav is Overview + Appointments only", () => {
+it("the suspended nav is Overview, Appointments and the Library", () => {
   const nav = buildOrganizationNav({
     orgId: "o",
     role: "OWNER",
@@ -160,7 +164,12 @@ it("the suspended nav is Overview + Appointments only", () => {
     consultantProfileId: null,
     suspended: true,
   });
-  expect(flattenNav(nav).map((i) => i.path)).toEqual(["home", "appointments"]);
+  expect(flattenNav(nav).map((i) => i.path)).toEqual([
+    "home",
+    "appointments",
+    "documents",
+    "recordings",
+  ]);
 });
 
 it("operators get an action item linking to those sessions", () => {

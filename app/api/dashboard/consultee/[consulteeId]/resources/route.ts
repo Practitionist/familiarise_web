@@ -2,13 +2,9 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { RecordingService } from "@/lib/stream/recording-service";
-import {
-  hiddenFromLateJoiner,
-  lateJoinRecordingAccess,
-  type LateJoinAccess,
-} from "@/lib/stream/late-join-recordings";
+import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
+import { extractRecordings } from "@/lib/stream/session-recordings";
 import {
   requireApiAuth,
   isPrivileged,
@@ -163,13 +159,6 @@ type ClassWithResources = Prisma.Result<
 type TrialWithResources = Prisma.Result<
   typeof prisma.trial,
   { include: typeof trialInclude },
-  "findFirstOrThrow"
->;
-
-// Appointment type that has occurrences with meeting recordings
-type AppointmentWithSlots = Prisma.Result<
-  typeof prisma.appointment,
-  { include: typeof slotsWithRecordings },
   "findFirstOrThrow"
 >;
 
@@ -449,52 +438,4 @@ export async function GET(
       { status: 500 },
     );
   }
-}
-
-async function extractRecordings(
-  appointments: AppointmentWithSlots[],
-  lateJoinScope?: {
-    access: LateJoinAccess;
-    classId: string;
-    classPlanId: string;
-  },
-) {
-  // #1819 — a late joiner's seat hides a class's earlier sessions (host
-  // toggle); enforced here so no caller of this read bypasses it (#1527).
-  const recordings = appointments.flatMap((apt) =>
-    apt.occurrences.flatMap((slot) => {
-      if (
-        lateJoinScope &&
-        hiddenFromLateJoiner(
-          {
-            meeting: {
-              occurrence: {
-                startsAt: slot.startsAt,
-                appointment: {
-                  classId: lateJoinScope.classId,
-                  class: { classPlanId: lateJoinScope.classPlanId },
-                },
-              },
-            },
-          },
-          lateJoinScope.access,
-        )
-      ) {
-        return [];
-      }
-      return slot.meeting?.recordings ?? [];
-    }),
-  );
-
-  return Promise.all(
-    recordings.map(async (rec) => ({
-      id: rec.id,
-      title: rec.title,
-      durationInMinutes: rec.durationInMinutes,
-      recordedAt: rec.recordedAt,
-      playbackUrl: await getBestRecordingUrl(rec),
-      thumbnailUrl: rec.thumbnailUrl,
-      status: rec.status,
-    })),
-  );
 }
