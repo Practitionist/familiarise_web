@@ -39,9 +39,11 @@ jest.mock("../../lib/rate-limit", () => ({
 }));
 
 const mockedRequireOrgAccess = requireOrgAccess as jest.Mock;
-const mockedMemberFind = (prisma as unknown as {
-  membership: { findFirst: jest.Mock };
-}).membership.findFirst;
+const mockedMemberFind = (
+  prisma as unknown as {
+    membership: { findFirst: jest.Mock };
+  }
+).membership.findFirst;
 const mockedApplyRateLimit = applyRateLimit as jest.Mock;
 
 function access(role: string) {
