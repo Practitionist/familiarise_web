@@ -55,10 +55,15 @@ export async function handleOverageMemberSuccess(
       return; // already settled
     }
 
-    await tx.payment.update({
-      where: { id: side.id },
+    // #1846 SM-B2 — CAS on the status just read. A plain update let a
+    // concurrent delivery's write be silently overwritten; with the predicate
+    // in the WHERE, Postgres re-checks it after the other transaction commits,
+    // so exactly one delivery settles the side-charge.
+    const claimed = await tx.payment.updateMany({
+      where: { id: side.id, paymentStatus: side.paymentStatus },
       data: { paymentStatus: PaymentStatus.SUCCEEDED },
     });
+    if (claimed.count === 0) return; // a concurrent delivery moved it first
 
     // Every Payment must carry ≥1 leg (the funding invariant). The member paid
     // by card; sourceRef is the gateway order id.
@@ -96,7 +101,9 @@ export async function handleOverageMemberSuccess(
         { fromIn: ["FAILED"] },
       );
       if (moved > 0) {
-        const recarve = await recarveOverageBase(tx, { sidePaymentId: side.id });
+        const recarve = await recarveOverageBase(tx, {
+          sidePaymentId: side.id,
+        });
         if (recarve === "invoiced") {
           // The org was already invoiced for the restored base while the
           // charge sat FAILED; the member's capture now over-relieves the org
@@ -167,10 +174,17 @@ export async function handleOverageMemberFailure(
     if (!side || !side.parentPaymentId) return;
     if (side.paymentStatus === PaymentStatus.SUCCEEDED) return; // don't undo a success
 
-    await tx.payment.update({
-      where: { id: side.id },
+    // #1846 SM-B2 — the money predicate rides the WHERE. The SUCCEEDED
+    // pre-check above reads before the capture transaction commits, so a
+    // failure delivery racing it used to overwrite SUCCEEDED with FAILED while
+    // the OverageEvent stayed CHARGED and the org credit stayed posted. Only a
+    // PENDING side-charge can fail; zero rows means capture (or an earlier
+    // failure) got there first, and nothing below may run.
+    const failed = await tx.payment.updateMany({
+      where: { id: side.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
+    if (failed.count === 0) return;
     const moved = await transitionOverage(tx, { paymentId: side.id }, "FAILED");
     if (moved > 0) {
       // #812 §P0 — the member isn't paying basePaise; return it to the org's

@@ -15,7 +15,10 @@
 
 jest.mock("../../lib/prisma", () => {
   const tx = {
-    payment: { findUnique: jest.fn(), update: jest.fn() },
+    payment: {
+      findUnique: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     paymentLeg: { upsert: jest.fn() },
   };
   return {
@@ -49,7 +52,7 @@ import { handleOverageMemberSuccess } from "../../lib/payments/webhooks/overage-
 const tx = (
   prisma as unknown as {
     __tx: {
-      payment: { findUnique: jest.Mock; update: jest.Mock };
+      payment: { findUnique: jest.Mock; updateMany: jest.Mock };
       paymentLeg: { upsert: jest.Mock };
     };
   }
@@ -66,7 +69,10 @@ const side = {
   parentPaymentId: "parent1",
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  tx.payment.updateMany.mockResolvedValue({ count: 1 });
+});
 
 describe("handleOverageMemberSuccess", () => {
   it("capture: SUCCEEDED + CHARGED, then Dr CASH / Cr ORG_PAYABLE == marginal", async () => {
@@ -75,8 +81,9 @@ describe("handleOverageMemberSuccess", () => {
 
     await handleOverageMemberSuccess("order_abc");
 
-    expect(tx.payment.update).toHaveBeenCalledWith({
-      where: { id: "side1" },
+    // #1846 SM-B2 — the status just read rides the WHERE.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "side1", paymentStatus: "PENDING" },
       data: { paymentStatus: "SUCCEEDED" },
     });
     // funding-invariant CARD leg, idempotent upsert
@@ -122,7 +129,7 @@ describe("handleOverageMemberSuccess", () => {
 
     await handleOverageMemberSuccess("order_abc");
 
-    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(mockTransition).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();
   });
@@ -148,7 +155,7 @@ describe("handleOverageMemberSuccess", () => {
 
     await handleOverageMemberSuccess("order_abc");
 
-    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();
   });
 });
