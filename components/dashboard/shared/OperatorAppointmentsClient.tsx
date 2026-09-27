@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +42,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useListParams } from "@/hooks/useListParams";
 import { AppointmentTimeline } from "./AppointmentTimeline";
 import { useZonedFormat } from "@/lib/time/zoned-format";
 import type {
@@ -99,10 +99,8 @@ const formatCurrency = (amount: number, currency: string = "INR") => {
 // #890 — defaults MUST match the server prefetch's queryKey in page.tsx so the
 // initial (unfiltered, page 1) view hydrates from the dehydrated cache without
 // a fetch waterfall. Filtered/paged views fall back to a client fetch.
-const DEFAULT_PAGE = 1;
 const DEFAULT_TYPE = "all";
 const DEFAULT_TAB = "all";
-const DEFAULT_SEARCH = "";
 const TYPE_FILTERS = new Set([
   "consultation",
   "subscription",
@@ -129,49 +127,55 @@ export function OperatorAppointmentsClient({
 }>) {
   const { toast } = useToast();
   const zoned = useZonedFormat();
-  // #1771 — the retired class-series URL lands here as `?type=class`.
-  const searchParams = useSearchParams();
-  const linkedType = searchParams.get("type") ?? "";
-  // Q9 — the retired approval-payments URL lands on `?tab=awaiting-payment`.
-  const linkedTab = searchParams.get("tab") ?? "";
-  // #1527 — a support case's booking card lands here as `?open=<id>`.
-  const linkedOpen = searchParams.get("open") ?? "";
+  // #1527 QA D2 — page, type, tab and search live in the URL, so reload and
+  // Back keep a triager's place. `?type=class` is the retired class-series
+  // URL (#1771); `?tab=awaiting-payment` the retired approval-payments one (Q9).
+  const list = useListParams({ filterKeys: ["tab", "type", "open"] });
+  const { page, setParams } = list;
+  // #1527 — a support case's booking card lands here as `?open=<id>`: search
+  // for it on All, then open it. Consumed into `q` below.
+  const linkedOpen = list.filters.open;
+  const debouncedSearch = linkedOpen ?? list.q;
+  const urlTab = list.filters.tab ?? DEFAULT_TAB;
+  const activeTab =
+    !linkedOpen && (TABS as readonly string[]).includes(urlTab)
+      ? urlTab
+      : DEFAULT_TAB;
+  const urlType = list.filters.type ?? DEFAULT_TYPE;
+  const typeFilter = TYPE_FILTERS.has(urlType) ? urlType : DEFAULT_TYPE;
+  const setActiveTab = (next: string) =>
+    list.setFilter("tab", next === DEFAULT_TAB ? null : next);
+  const setTypeFilter = (next: string) =>
+    list.setFilter("type", next === DEFAULT_TYPE ? null : next);
 
-  const [activeTab, setActiveTabState] = useState<string>(
-    !linkedOpen && (TABS as readonly string[]).includes(linkedTab)
-      ? linkedTab
-      : DEFAULT_TAB,
-  );
-  const setActiveTab = (next: string) => {
-    setActiveTabState(next);
-    const params = new URLSearchParams(window.location.search);
-    params.set("tab", next);
-    window.history.replaceState(window.history.state, "", `?${params}`);
-  };
   // An Awaiting-payment row opens its booking: search by id, then open it.
-  const [pendingOpenId, setPendingOpenId] = useState<string | null>(
-    linkedOpen || null,
-  );
-  const [typeFilter, setTypeFilter] = useState(
-    TYPE_FILTERS.has(linkedType) ? linkedType : DEFAULT_TYPE,
-  );
-  const [searchQuery, setSearchQuery] = useState(linkedOpen || DEFAULT_SEARCH);
-  const [page, setPage] = useState(DEFAULT_PAGE);
+  const [pendingOpenId, setPendingOpenId] = useState<string | null>(linkedOpen);
+  useEffect(() => {
+    if (linkedOpen) {
+      setParams({ q: linkedOpen, filters: { tab: null, open: null } });
+    }
+  }, [linkedOpen, setParams]);
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
 
-  // Debounced search
-  const [debouncedSearch, setDebouncedSearch] = useState(
-    linkedOpen || DEFAULT_SEARCH,
-  );
-
+  // The input keeps its own draft; the URL gets it after a pause. An outside
+  // change (openBooking, Back) replaces the draft, but the echo of our own
+  // write does not, or it would eat keys typed since (same as FilterBar).
+  const [searchQuery, setSearchQuery] = useState(debouncedSearch);
+  const [seenSearch, setSeenSearch] = useState(debouncedSearch);
+  const [emittedSearch, setEmittedSearch] = useState<string | null>(null);
+  if (debouncedSearch !== seenSearch) {
+    setSeenSearch(debouncedSearch);
+    if (debouncedSearch !== emittedSearch) setSearchQuery(debouncedSearch);
+  }
   useEffect(() => {
+    if (searchQuery.trim() === debouncedSearch) return;
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-      setPage(1);
+      setEmittedSearch(searchQuery.trim());
+      setParams({ q: searchQuery });
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, debouncedSearch, setParams]);
 
   const { data, isLoading, isFetching, refetch, error } =
     useQuery<StaffAppointmentsPayload>({
@@ -227,9 +231,7 @@ export function OperatorAppointmentsClient({
   const totalPages = data?.pagination.totalPages ?? 1;
 
   const openBooking = (appointmentId: string) => {
-    setActiveTab("all");
-    setTypeFilter(DEFAULT_TYPE);
-    setSearchQuery(appointmentId);
+    setParams({ q: appointmentId, filters: { tab: null, type: null } });
     setPendingOpenId(appointmentId);
   };
   const toOpen = pendingOpenId
@@ -274,13 +276,7 @@ export function OperatorAppointmentsClient({
 
       {/* Tabs and Filters */}
       <div className="space-y-4">
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => {
-            setActiveTab(v);
-            setPage(1);
-          }}
-        >
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-col sm:flex-row gap-4 justify-between">
             <TabsList>
               <TabsTrigger value="all">All</TabsTrigger>
@@ -310,13 +306,7 @@ export function OperatorAppointmentsClient({
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-              <Select
-                value={typeFilter}
-                onValueChange={(v) => {
-                  setTypeFilter(v);
-                  setPage(1);
-                }}
-              >
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
                 <SelectTrigger className="w-full max-w-[10rem] sm:w-40">
                   <SelectValue placeholder="Type" />
                 </SelectTrigger>
@@ -490,7 +480,7 @@ export function OperatorAppointmentsClient({
             <Button
               variant="outline"
               disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
+              onClick={() => list.setPage(page - 1)}
             >
               Previous
             </Button>
@@ -500,7 +490,7 @@ export function OperatorAppointmentsClient({
             <Button
               variant="outline"
               disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
+              onClick={() => list.setPage(page + 1)}
             >
               Next
             </Button>
