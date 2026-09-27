@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import {
   ArrowUpRight,
+  Building2,
   Check,
   ChevronDown,
   Copy,
@@ -37,8 +38,29 @@ export interface DashboardAccount {
   image: string | null;
   /** Humanized ("Owner", "Expert"), never a raw enum. */
   roleLabel: string;
-  /** The one "Settings" entry (#1527); null hides it (mid-onboarding). */
+  /** The viewer's personal "Settings" (#1527); null hides it (mid-onboarding). */
   settingsHref: string | null;
+  /**
+   * #1527 — "<Org> settings" / "Workspace settings" inside an org or the
+   * workspace; null when the role holds no settings section.
+   */
+  orgSettings?: { label: string; href: string } | null;
+}
+
+/** The account rows the avatar menu and the mobile Menu sheet both offer. */
+export function accountSettingsLinks(account: DashboardAccount) {
+  const links: { key: string; label: string; href: string }[] = [];
+  const org = account.orgSettings ?? null;
+  // A workspace operator's personal Settings IS the workspace's; list it once.
+  if (account.settingsHref && account.settingsHref !== org?.href) {
+    links.push({
+      key: "personal",
+      label: "Settings",
+      href: account.settingsHref,
+    });
+  }
+  if (org) links.push({ key: "org", label: org.label, href: org.href });
+  return links;
 }
 
 /** Header avatar menu: identity, Settings, Sign out (#1527). */
@@ -50,6 +72,7 @@ export function AccountMenu({
   // client session cannot cause a hydration mismatch.
   const { data: session } = useSession();
   const email = session?.user?.email ?? null;
+  const links = accountSettingsLinks(account);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -81,18 +104,22 @@ export function AccountMenu({
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {account.settingsHref && (
-          <DropdownMenuItem asChild className="cursor-pointer gap-2">
-            <Link
-              href={account.settingsHref}
-              className="flex w-full items-center gap-2"
+        {links.map((link) => {
+          const Icon = link.key === "org" ? Building2 : Settings;
+          return (
+            <DropdownMenuItem
+              key={link.key}
+              asChild
+              className="cursor-pointer gap-2"
             >
-              <Settings className="h-4 w-4 text-zinc-500" />
-              Settings
-            </Link>
-          </DropdownMenuItem>
-        )}
-        {account.settingsHref && <DropdownMenuSeparator />}
+              <Link href={link.href} className="flex w-full items-center gap-2">
+                <Icon className="h-4 w-4 shrink-0 text-zinc-500" />
+                <span className="truncate">{link.label}</span>
+              </Link>
+            </DropdownMenuItem>
+          );
+        })}
+        {links.length > 0 && <DropdownMenuSeparator />}
         <DropdownMenuItem onClick={onSignOut} className="cursor-pointer gap-2">
           <LogOut className="h-4 w-4 text-zinc-500" />
           Sign out

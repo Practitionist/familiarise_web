@@ -147,12 +147,12 @@ export function FinanceLeadViewCard({
     { label: "Payouts", href: `${base}/payouts`, show: canHost },
     {
       label: "Webhooks",
-      href: `${base}/settings?tab=webhooks`,
+      href: `${base}/settings/webhooks`,
       show: true,
     },
     {
       label: "Data exports",
-      href: `${base}/settings?tab=data-exports`,
+      href: `${base}/settings/data-exports`,
       show: true,
     },
   ].filter((l) => l.show);

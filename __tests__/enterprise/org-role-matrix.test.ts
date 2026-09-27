@@ -339,7 +339,7 @@ describe("API guard ↔ page/tab gate parity (#1527)", () => {
     [
       `${API}/sso/route.ts`,
       "identity.read",
-      `${DASH}/settings/SettingsTabs.tsx`,
+      "lib/dashboard/org-settings-sections.ts",
     ],
     [
       `${API}/scim/tokens/route.ts`,
@@ -349,7 +349,7 @@ describe("API guard ↔ page/tab gate parity (#1527)", () => {
     [
       `${API}/branding/[asset]/route.ts`,
       "settings.manage",
-      `${DASH}/settings/SettingsTabs.tsx`,
+      "lib/dashboard/org-settings-sections.ts",
     ],
     [
       `${API}/audit/export/route.ts`,

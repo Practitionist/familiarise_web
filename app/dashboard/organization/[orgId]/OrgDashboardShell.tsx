@@ -34,6 +34,11 @@ import {
   buildOrganizationNav,
   ORGANIZATION_PAGE_LABELS,
 } from "@/lib/dashboard/nav/organization";
+import {
+  canOpenOrgSettings,
+  orgSettingsHref,
+  orgSettingsLabel,
+} from "@/lib/dashboard/org-settings-sections";
 import type { OrgStatus } from "@prisma/client";
 import {
   fetchOrgDetails,
@@ -237,6 +242,15 @@ function OrgDashboardShellInner({
         image: session?.user?.image ?? null,
         roleLabel,
         settingsHref: session?.user ? accountSettingsHref(session.user) : null,
+        // #1527 — org Settings left the rail; roles with no section get none.
+        orgSettings:
+          org.membership.status === "ACTIVE" &&
+          canOpenOrgSettings(org.membership.role)
+            ? {
+                label: orgSettingsLabel(org.organization.name),
+                href: orgSettingsHref(orgId),
+              }
+            : null,
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

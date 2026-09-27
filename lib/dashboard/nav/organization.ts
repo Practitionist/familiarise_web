@@ -13,7 +13,6 @@ import {
   Library,
   LifeBuoy,
   MessageSquare,
-  Settings,
   ShieldCheck,
   UserCog,
   Users,
@@ -22,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
+import { canOpenOrgSettings } from "@/lib/dashboard/org-settings-sections";
 
 import {
   flattenNav,
@@ -236,15 +236,7 @@ export function buildOrganizationNav(
     { label: "Operations", items: keep(operations) },
     { label: "Insights", items: keep(insights) },
   ].filter((g) => g.items.length > 0);
-  // #1527 — an ordinary last item, not a rail footer. Ungated (ADR 23): the
-  // page floors at active membership and each tab carries its own gate, so
-  // members reach their Notifications tab.
-  groups[groups.length - 1].items.push({
-    name: "Organization settings",
-    icon: Settings,
-    path: "settings",
-  });
-
+  // #1527 — org Settings opens from the avatar menu, not the rail.
   return {
     basePath: `/dashboard/organization/${orgId}`,
     groups,
@@ -306,6 +298,12 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   audit: "Audit",
   consent: "Consent",
   settings: "Organization settings",
+  general: "General",
+  branding: "Branding",
+  sso: "Domains & SSO",
+  scim: "Directory sync",
+  webhooks: "Webhooks",
+  "data-exports": "Data exports",
   new: "New",
   edit: "Edit",
 };
@@ -313,7 +311,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
 /**
  * #1762-11 — true when `href` lands on an org page this viewer's nav offers,
  * so Home's CTAs never point at a page that would bounce them. Settings is
- * always reachable (its tabs gate themselves, ADR 23).
+ * off the rail (#1527): it opens when the role holds any settings section.
  */
 export function canOpenOrgPage(
   input: Omit<OrganizationNavInput, "orgId">,
@@ -321,6 +319,9 @@ export function canOpenOrgPage(
 ): boolean {
   const match = /\/dashboard\/organization\/[^/?#]+\/([^/?#]+)/.exec(href);
   if (!match) return true;
+  if (match[1] === "settings") {
+    return !input.suspended && canOpenOrgSettings(input.role);
+  }
   const nav = buildOrganizationNav({ ...input, orgId: "_" });
   return flattenNav(nav).some((item) => item.path === match[1]);
 }

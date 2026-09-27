@@ -167,6 +167,7 @@ export function DashboardShell({
             basePath={nav.basePath}
             groups={groups}
             settings={nav.settings}
+            orgSettings={account.orgSettings}
             support={nav.support}
             tabs={nav.mobileTabs}
             pinnedCta={nav.pinnedCta}

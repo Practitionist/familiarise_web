@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import {
   ArrowUpRight,
+  Building2,
   Inbox,
   LifeBuoy,
   LogOut,
@@ -36,8 +37,10 @@ import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 export interface MobileNavProps {
   basePath: string;
   groups: CollapsibleSidebarGroup[];
-  /** Personal / back-office Settings; org trees carry it as a nav item. */
+  /** Personal / back-office Settings (a nav-relative row). */
   settings?: CollapsibleSidebarItem;
+  /** #1527 — the avatar menu's "<Org> settings", repeated here. */
+  orgSettings?: { label: string; href: string } | null;
   /** The header Help menu's private rows, repeated here (#1527). */
   support: SupportLinks | null;
   /** Paths of up to four items shown as tabs. */
@@ -65,6 +68,7 @@ export function MobileNav({
   basePath,
   groups,
   settings,
+  orgSettings,
   support,
   tabs,
   pinnedCta,
@@ -208,6 +212,16 @@ export function MobileNav({
                 pathname={pathname}
                 onNavigate={close}
               />
+            )}
+            {orgSettings && (
+              <Link
+                href={orgSettings.href}
+                onClick={close}
+                className={SHEET_ROW_CLASS}
+              >
+                <Building2 className="h-5 w-5 shrink-0" />
+                <span className="truncate">{orgSettings.label}</span>
+              </Link>
             )}
             <button
               type="button"

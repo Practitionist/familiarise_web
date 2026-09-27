@@ -27,6 +27,7 @@ import { buildConsulteeNav } from "@/lib/dashboard/nav/consultee";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
 import { buildWorkspaceNav } from "@/lib/dashboard/nav/workspace";
 import { flattenNav, type DashboardNav } from "@/lib/dashboard/nav/types";
+import { canOpenOrgSettings } from "@/lib/dashboard/org-settings-sections";
 
 const APP = join(process.cwd(), "app/dashboard");
 
@@ -222,7 +223,6 @@ describe("org nav role walk (#1527 matrix)", () => {
     "members",
     "documents",
     "recordings",
-    "settings",
   ];
   const EXPECTED: Record<MemberRole, string[]> = {
     OWNER: [
@@ -337,8 +337,9 @@ describe("no redundant group nesting", () => {
   });
 });
 
-// #1527 — Settings: the avatar menu (+ mobile sheet) for personal and back
-// office; an ordinary last nav item for the organization and the workspace.
+// #1527 — Settings: the avatar menu (+ mobile sheet) everywhere. Personal and
+// back office carry it as `nav.settings`; the org and workspace entries come
+// from the shell's account props, so their navs hold no settings row at all.
 describe("where Settings lives", () => {
   const inGroups = (nav: DashboardNav) =>
     nav.groups.flatMap((g) => g.items).some((i) => i.path === "settings");
@@ -357,19 +358,32 @@ describe("where Settings lives", () => {
       "organization",
       buildOrganizationNav({
         orgId: "org-1",
-        role: "LEARNER",
+        role: "OWNER",
         canSponsor: true,
-        canHost: false,
+        canHost: true,
         consultantProfileId: null,
       }),
-      "Organization settings",
     ],
-    ["workspace", buildWorkspaceNav("ow-1"), "Workspace settings"],
-  ] as const)("%s: last item of the last group", (_name, nav, label) => {
+    ["workspace", buildWorkspaceNav("ow-1")],
+  ] as const)("%s: no settings row in the rail", (_name, nav) => {
     expect(nav.settings).toBeUndefined();
-    expect(nav.groups.at(-1)?.items.at(-1)).toMatchObject({
-      name: label,
-      path: "settings",
-    });
+    expect(inGroups(nav)).toBe(false);
+  });
+
+  it("the avatar menu's org entry follows the settings sections", () => {
+    const roles: MemberRole[] = [
+      "OWNER",
+      "MAINTAINER",
+      "BILLING_ADMIN",
+      "MANAGER",
+      "SUPPORT",
+      "EXPERT",
+      "LEARNER",
+    ];
+    expect(roles.filter(canOpenOrgSettings)).toEqual([
+      "OWNER",
+      "MAINTAINER",
+      "BILLING_ADMIN",
+    ]);
   });
 });

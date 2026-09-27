@@ -84,6 +84,10 @@ export function OrgWorkspaceShell({
         image: userImage,
         roleLabel: "Operator",
         settingsHref: accountHref,
+        orgSettings: {
+          label: "Workspace settings",
+          href: `${nav.basePath}/settings`,
+        },
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

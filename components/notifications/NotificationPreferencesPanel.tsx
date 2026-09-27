@@ -150,13 +150,14 @@ export function NotificationPreferencesPanel() {
 
   // Same predicate the Inbox tabs use, so the two surfaces agree on whether
   // this user has an org context at all.
-  const hasOrgMembership = Array.isArray(
-    (session?.user as Record<string, unknown> | undefined)
-      ?.organizationMemberships,
-  )
-    ? ((session?.user as Record<string, unknown>)
-        .organizationMemberships as unknown[]).length > 0
-    : false;
+  const memberships = (session?.user as Record<string, unknown> | undefined)
+    ?.organizationMemberships;
+  const orgNames = Array.isArray(memberships)
+    ? (memberships as { organizationName?: string }[])
+        .map((m) => m.organizationName)
+        .filter((name): name is string => !!name)
+    : [];
+  const hasOrgMembership = Array.isArray(memberships) && memberships.length > 0;
 
   const {
     data: preferences,
@@ -367,6 +368,13 @@ export function NotificationPreferencesPanel() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Organization</CardTitle>
+            {/* #1527 — moved here from each org's Settings. Preferences are
+                per person, so one set covers every membership. */}
+            {orgNames.length > 0 && (
+              <p className="text-xs text-zinc-500">
+                For every organization you belong to: {orgNames.join(", ")}.
+              </p>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
             {ORG_CATEGORY_FIELDS.map((field, index) => (
