@@ -386,7 +386,7 @@ async function readTicketWorkspace(
     payment,
     organization: t.organization,
     pastCases,
-    timeline: timeline.sort(byTime),
+    timeline: timeline.toSorted(byTime),
     attachments: t.attachments.map((a) => ({
       id: a.id,
       name: a.originalName,

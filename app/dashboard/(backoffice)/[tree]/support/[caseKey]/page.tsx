@@ -35,8 +35,9 @@ export default async function SupportCasePage({
       if (typeof value === "string") query.set(key, value);
     }
     const qs = query.toString();
+    const qsSuffix = qs ? `?${qs}` : "";
     redirect(
-      `${cap.basePath}/support/${caseKeyOf({ kind: "ticket", id: ticketId })}${qs ? `?${qs}` : ""}`,
+      `${cap.basePath}/support/${caseKeyOf({ kind: "ticket", id: ticketId })}${qsSuffix}`,
     );
   }
   // Help Center data stays on the server; the client gets title + href.

@@ -251,9 +251,8 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
         {/* Only while the flow is answering: an asynchronous hand-off has
             nobody typing, and dots promising a reply lose people. */}
         {t.turnPending && !t.isHuman && (
-          <div
+          <output
             className="flex w-fit items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
-            role="status"
             aria-label="Support is typing"
           >
             {[0, 150, 300].map((delay) => (
@@ -263,7 +262,7 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
                 style={{ animationDelay: `${delay}ms` }}
               />
             ))}
-          </div>
+          </output>
         )}
         {t.lastActions.map(describeAction).map((desc, i) =>
           desc ? (

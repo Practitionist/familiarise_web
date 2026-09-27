@@ -30,6 +30,19 @@ const ICON = {
   SYSTEM: Bot,
 } as const;
 
+/** Bubble background/border, kept out of the component to hold cognitive
+ * complexity down (#1527, Sonar S3776). */
+function bubbleToneClass(
+  internal: boolean,
+  own: boolean,
+  author: BubbleAuthor,
+) {
+  if (internal) return ["border border-dashed", toneClass("caution").className];
+  if (own) return "bg-primary text-primary-foreground";
+  if (author === "USER") return "border border-border bg-card text-foreground";
+  return "bg-muted text-foreground";
+}
+
 /**
  * #1527 — one chat bubble for both sides of a support conversation. The
  * viewer's own messages sit on the right; a private note (staff only) is
@@ -72,6 +85,9 @@ export function SupportBubble({
         minute: "2-digit",
       })
     : null;
+  const senderName = internal
+    ? `Private note${authorName ? ` · ${authorName}` : ""}`
+    : (authorName ?? DEFAULT_NAME[author]);
   return (
     <div className={cn("flex", own ? "justify-end" : "justify-start")}>
       <div className="max-w-[85%] space-y-1">
@@ -87,30 +103,14 @@ export function SupportBubble({
             ) : (
               <Icon className="h-3 w-3" aria-hidden />
             )}
-            <span>
-              {internal
-                ? `Private note${authorName ? ` · ${authorName}` : ""}`
-                : (authorName ?? DEFAULT_NAME[author])}
-            </span>
+            <span>{senderName}</span>
             {time && <span aria-hidden>· {time}</span>}
           </p>
         )}
         <div
           className={cn(
             "whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm",
-            internal && [
-              "border border-dashed",
-              toneClass("caution").className,
-            ],
-            !internal && own && "bg-primary text-primary-foreground",
-            !internal &&
-              !own &&
-              author === "USER" &&
-              "border border-border bg-card text-foreground",
-            !internal &&
-              !own &&
-              author !== "USER" &&
-              "bg-muted text-foreground",
+            bubbleToneClass(internal, own, author),
             pending && "opacity-70",
           )}
         >

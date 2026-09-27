@@ -94,8 +94,8 @@ export function CaseList({
     placeholderData: keepPreviousData,
   });
 
-  const caseHref = (key: string) =>
-    `${basePath}/support/${key}${search ? `?${search}` : ""}`;
+  const searchSuffix = search ? `?${search}` : "";
+  const caseHref = (key: string) => `${basePath}/support/${key}${searchSuffix}`;
 
   if (cases.isError && !cases.data) {
     return (

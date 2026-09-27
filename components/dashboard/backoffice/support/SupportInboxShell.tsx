@@ -79,7 +79,9 @@ function StatsLine({ className }: Readonly<{ className?: string }>) {
  * below lg they are separate pages. Views and filters live in the URL
  * (useListParams), so a case URL carries them and Back/forward restore both.
  */
-export function SupportInboxShell({ children }: { children: ReactNode }) {
+export function SupportInboxShell({
+  children,
+}: Readonly<{ children: ReactNode }>) {
   const caseKey = useSelectedLayoutSegment();
   const { basePath } = useBackofficeCapability();
   const search = useSearchParams().toString();
@@ -88,6 +90,7 @@ export function SupportInboxShell({ children }: { children: ReactNode }) {
   const view = (f.view as InboxView | null) ?? "needs-reply";
   const pick = (key: InboxFilterKey) => (value: string) =>
     list.setFilter(key, value === ANY ? null : value);
+  const searchSuffix = search ? `?${search}` : "";
 
   return (
     <div className="space-y-3">
@@ -215,7 +218,7 @@ export function SupportInboxShell({ children }: { children: ReactNode }) {
         <div className={cn(!caseKey && "hidden lg:block")}>
           {caseKey && (
             <Link
-              href={`${basePath}/support${search ? `?${search}` : ""}`}
+              href={`${basePath}/support${searchSuffix}`}
               className="mb-3 inline-block text-sm text-muted-foreground underline-offset-4 hover:underline lg:hidden"
             >
               ← All cases
