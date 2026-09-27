@@ -17,7 +17,10 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { checkConsent } from "@/lib/compliance/dpdp";
+import {
+  buildSignupConsentArtifacts,
+  checkConsent,
+} from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -35,6 +38,8 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
+  /** #1854 — the invitee agreed to the sign-up purposes on the accept page. */
+  grantConsent: z.literal(true).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -49,7 +54,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { invitationId } = parsed.data;
+  const { invitationId, grantConsent } = parsed.data;
 
   // Verify the invitation against the authenticated user's email before
   // doing anything mutative. Preventing accept-by-id-guessing means a
@@ -108,18 +113,17 @@ export async function POST(req: NextRequest) {
 
   // #701 — DPDP: the invitee must hold live core-processing consent before we
   // provision membership (which processes their PII on the org's behalf).
-  // Everyone gets PRIMARY_PROCESSING at signup; a withdrawal blocks acceptance
-  // until re-granted. TODO(#701): offer an inline grant step in the accept UI.
-  if (
-    !(await checkConsent({
-      userId,
-      purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
-    }))
-  ) {
+  // #1854 — an SSO-created account (or a withdrawal) has none; the accept
+  // page shows the sign-up consent inline and re-posts with grantConsent,
+  // which stamps the sign-up rows in the accept transaction.
+  const needsConsent = !(await checkConsent({
+    userId,
+    purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
+  }));
+  if (needsConsent && !grantConsent) {
     return NextResponse.json(
       {
-        error:
-          "Consent required to join an organization. Restore data-processing consent in Settings › Account › Data consent, then accept again.",
+        error: "Agree to how we process your data to join this organization.",
         code: "CONSENT_REQUIRED",
       },
       { status: 403 },
@@ -198,6 +202,12 @@ export async function POST(req: NextRequest) {
       if (claim.count === 0) {
         throw Object.assign(new Error("Invitation is no longer pending"), {
           httpStatus: 409,
+        });
+      }
+      // #1854 — consent commits with the join or rolls back with it.
+      if (needsConsent) {
+        await tx.consentArtifact.createMany({
+          data: buildSignupConsentArtifacts(userId),
         });
       }
 

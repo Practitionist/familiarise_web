@@ -34,6 +34,17 @@ export const PURPOSE_CODES = {
 
 export type PurposeCode = (typeof PURPOSE_CODES)[keyof typeof PURPOSE_CODES];
 
+/**
+ * The purposes a sign-up grants. The SSO join gate and the invite-accept
+ * consent step record the same set (#1854).
+ */
+export const SIGNUP_PURPOSES = [
+  PURPOSE_CODES.PRIMARY_PROCESSING,
+  PURPOSE_CODES.STREAM_DATA_PROCESSING,
+  // #701 — gated fail-closed at org-sponsored checkout.
+  PURPOSE_CODES.SESSION_BOOKING,
+] as const satisfies readonly PurposeCode[];
+
 /** Every canonical code as a flat array (e.g. for zod enums, UI lists). */
 export const ALL_PURPOSE_CODES = Object.values(PURPOSE_CODES) as PurposeCode[];
 
@@ -80,8 +91,8 @@ export const PURPOSE_CODE_META: Record<
  */
 export const LEGACY_PURPOSE_CODE_MAP: Record<string, PurposeCode> = {
   "session-booking": PURPOSE_CODES.SESSION_BOOKING,
-  "marketing": PURPOSE_CODES.MARKETING_COMMS,
-  "analytics": PURPOSE_CODES.ANALYTICS,
+  marketing: PURPOSE_CODES.MARKETING_COMMS,
+  analytics: PURPOSE_CODES.ANALYTICS,
   "third-party-sharing-with-stream": PURPOSE_CODES.STREAM_DATA_PROCESSING,
   "account-management": PURPOSE_CODES.PRIMARY_PROCESSING,
 };

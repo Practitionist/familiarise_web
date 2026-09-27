@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -18,6 +18,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
+import {
+  PURPOSE_CODE_META,
+  SIGNUP_PURPOSES,
+} from "@/lib/compliance/purpose-codes";
 
 interface AcceptResponse {
   organization: { id: string; name: string };
@@ -66,7 +70,7 @@ export default function InviteAcceptPage({
 
   const [preview, setPreview] = useState<PreviewState>({ phase: "loading" });
   const [status, setStatus] = useState<
-    "idle" | "accepting" | "success" | "error"
+    "idle" | "accepting" | "consent" | "success" | "error"
   >("idle");
   const [error, setError] = useState<string | null>(null);
   // The raw code, for the one refusal that has a next step of its own.
@@ -120,37 +124,55 @@ export default function InviteAcceptPage({
   // Preview only gates the unauthenticated sign-in prompt; authenticated users
   // always attempt accept so the accept API can surface specific, verified errors
   // (e.g. "you're already a member → go to dashboard" vs. generic "no longer valid").
+  const accept = useCallback(
+    (grantConsent: boolean) => {
+      setStatus("accepting");
+      fetch("/api/organizations/invitations/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invitationId: token,
+          ...(grantConsent && { grantConsent: true }),
+        }),
+      })
+        .then(async (res) => {
+          const body = await res.json();
+          // #1854 — no data-processing consent yet (an SSO-created account):
+          // ask for it here, then accept with it in one request.
+          if (res.status === 403 && body.code === "CONSENT_REQUIRED") {
+            return null;
+          }
+          if (!res.ok) {
+            throw new Error(body.error || "Failed to accept invitation");
+          }
+          return body as AcceptResponse;
+        })
+        .then((body) => {
+          if (!body) {
+            setStatus("consent");
+            return;
+          }
+          setResult(body);
+          setStatus("success");
+        })
+        .catch((err: Error) => {
+          // Accept errors are machine codes (NOT_A_CONSULTANT, ...) — humanize
+          // before display so invitees see the sentence, not the code. Unknown
+          // strings pass through verbatim.
+          setErrorCode(err.message);
+          setError(humanizeOrgError(err.message));
+          setStatus("error");
+        });
+    },
+    [token],
+  );
+
   useEffect(() => {
     if (isPending) return;
     if (!session?.user?.id) return;
     if (status !== "idle") return;
-
-    setStatus("accepting");
-    fetch("/api/organizations/invitations/accept", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invitationId: token }),
-    })
-      .then(async (res) => {
-        const body = await res.json();
-        if (!res.ok) {
-          throw new Error(body.error || "Failed to accept invitation");
-        }
-        return body as AcceptResponse;
-      })
-      .then((body) => {
-        setResult(body);
-        setStatus("success");
-      })
-      .catch((err: Error) => {
-        // Accept errors are machine codes (NOT_A_CONSULTANT, CONSENT_REQUIRED,
-        // ...) — humanize before display so invitees see the sentence, not
-        // the code. Unknown strings pass through verbatim.
-        setErrorCode(err.message);
-        setError(humanizeOrgError(err.message));
-        setStatus("error");
-      });
-  }, [isPending, session, token, preview, status]);
+    accept(false);
+  }, [isPending, session, status, accept]);
 
   // Auto-route on success after a brief confirmation flash.
   useEffect(() => {
@@ -220,7 +242,10 @@ export default function InviteAcceptPage({
               The accept API is identity-verified so it can surface specific,
               helpful errors (e.g. "you're already a member → go to dashboard")
               rather than the generic message the public preview uses. */}
-          {!isPending && session?.user?.id && (
+          {!isPending && session?.user?.id && status === "consent" && (
+            <InviteConsentStep onAgree={() => accept(true)} />
+          )}
+          {!isPending && session?.user?.id && status !== "consent" && (
             <>
               {status === "accepting" || status === "idle" ? (
                 <div className="flex flex-col items-center py-6 gap-2">
@@ -309,6 +334,47 @@ export default function InviteAcceptPage({
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * #1854 — the sign-up consent, shown inline to an invitee who has none (an
+ * account created by SSO sign-in). Agreeing records it and joins in one step.
+ */
+function InviteConsentStep({ onAgree }: Readonly<{ onAgree: () => void }>) {
+  return (
+    <div className="space-y-4 py-2">
+      <p className="text-sm text-zinc-700">
+        To join, we need your consent to process your data for these purposes.
+        You can withdraw it at any time in Account › Data consent.
+      </p>
+      <ul className="space-y-2 text-sm">
+        {SIGNUP_PURPOSES.map((code) => (
+          <li key={code}>
+            <p className="font-medium text-zinc-900">
+              {PURPOSE_CODE_META[code].label}
+            </p>
+            <p className="text-zinc-500">
+              {PURPOSE_CODE_META[code].description}
+            </p>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-zinc-500">
+        By clicking Agree and join, you agree to our Terms of Service and
+        Privacy Policy.
+      </p>
+      <div className="flex flex-col gap-2">
+        <Button className="w-full" onClick={onAgree}>
+          Agree and join
+        </Button>
+        <Link href="/dashboard">
+          <Button variant="outline" className="w-full">
+            Not now
+          </Button>
+        </Link>
+      </div>
     </div>
   );
 }

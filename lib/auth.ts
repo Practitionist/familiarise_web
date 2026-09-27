@@ -24,8 +24,7 @@ import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-t
 import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { buildConsentArtifact } from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
 // AC). Shares defaultAc so statements line up.
@@ -278,27 +277,14 @@ export const auth = betterAuth({
             // #1846 — an account created by an SSO sign-in (JIT) was not
             // made by the person on a signup form, so nothing is stamped
             // for them here. Their first sign-in into the org shows the
-            // consent step (JoinConsentGate), which writes these same rows.
+            // consent step (JoinConsentGate), and accepting an invitation
+            // shows it inline (#1854); both write these same rows.
             const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
-            const signupPurposes = ssoProvisioned
-              ? []
-              : [
-                  PURPOSE_CODES.PRIMARY_PROCESSING,
-                  PURPOSE_CODES.STREAM_DATA_PROCESSING,
-                  // #701 — session-booking consent, gated fail-closed at
-                  // org-sponsored checkout. Granted at signup like the others.
-                  PURPOSE_CODES.SESSION_BOOKING,
-                ];
             try {
-              for (const purposeCode of signupPurposes) {
-                const draft = buildConsentArtifact({
-                  userId: user.id,
-                  dataFiduciary: "Familiarise",
-                  purposeCodes: [purposeCode],
-                  language: "en-IN",
-                  consentManager: null,
-                  version: 1,
-                });
+              const drafts = ssoProvisioned
+                ? []
+                : buildSignupConsentArtifacts(user.id);
+              for (const draft of drafts) {
                 await prisma.consentArtifact.create({ data: draft });
               }
             } catch (consentError) {

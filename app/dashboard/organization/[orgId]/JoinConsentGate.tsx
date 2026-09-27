@@ -18,18 +18,13 @@ import { dataConsentHref } from "@/lib/dashboard/account-href";
 import {
   PURPOSE_CODES,
   PURPOSE_CODE_META,
+  SIGNUP_PURPOSES,
   normalizePurposeCode,
 } from "@/lib/compliance/purpose-codes";
 
-/**
- * The purposes a signup grants (lib/auth.ts user.create hook). A member who
- * joined through SSO JIT or SCIM was never shown them, so this step asks.
- */
-const JOIN_PURPOSES = [
-  PURPOSE_CODES.PRIMARY_PROCESSING,
-  PURPOSE_CODES.STREAM_DATA_PROCESSING,
-  PURPOSE_CODES.SESSION_BOOKING,
-] as const;
+/** The purposes a signup grants (lib/auth.ts user.create hook). A member who
+ * joined through SSO JIT or SCIM was never shown them, so this step asks. */
+const JOIN_PURPOSES = SIGNUP_PURPOSES;
 
 interface Artifact {
   purposeCodes: string[];
