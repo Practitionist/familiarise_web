@@ -59,11 +59,26 @@ export async function handleOverageMemberSuccess(
     // concurrent delivery's write be silently overwritten; with the predicate
     // in the WHERE, Postgres re-checks it after the other transaction commits,
     // so exactly one delivery settles the side-charge.
-    const claimed = await tx.payment.updateMany({
+    let claimed = await tx.payment.updateMany({
       where: { id: side.id, paymentStatus: side.paymentStatus },
       data: { paymentStatus: PaymentStatus.SUCCEEDED },
     });
-    if (claimed.count === 0) return; // a concurrent delivery moved it first
+    if (claimed.count === 0) {
+      // #1846 SM-B2 — a failure delivery can commit FAILED between the read
+      // and the claim. The capture is gateway truth, so claim once more from
+      // FAILED; the FAILED→CHARGED edge below then recarves the base. Any
+      // other status means a concurrent capture already settled it.
+      const current = await tx.payment.findUnique({
+        where: { id: side.id },
+        select: { paymentStatus: true },
+      });
+      if (current?.paymentStatus !== PaymentStatus.FAILED) return;
+      claimed = await tx.payment.updateMany({
+        where: { id: side.id, paymentStatus: PaymentStatus.FAILED },
+        data: { paymentStatus: PaymentStatus.SUCCEEDED },
+      });
+      if (claimed.count === 0) return;
+    }
 
     // Every Payment must carry ≥1 leg (the funding invariant). The member paid
     // by card; sourceRef is the gateway order id.

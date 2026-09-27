@@ -150,6 +150,31 @@ describe("handleOverageMemberSuccess", () => {
     );
   });
 
+  it("failure commits FAILED between the read and the claim: capture still settles", async () => {
+    tx.payment.findUnique
+      .mockResolvedValueOnce(side)
+      .mockResolvedValueOnce({ paymentStatus: "FAILED" });
+    tx.payment.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    mockTransition.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+
+    await handleOverageMemberSuccess("order_abc");
+
+    expect(tx.payment.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "side1", paymentStatus: "FAILED" },
+      data: { paymentStatus: "SUCCEEDED" },
+    });
+    expect(mockTransition).toHaveBeenLastCalledWith(
+      tx,
+      { paymentId: "side1" },
+      "CHARGED",
+      { settledAt: expect.any(Date) },
+      { fromIn: ["FAILED"] },
+    );
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
   it("non-overage payment (no parentPaymentId) is ignored", async () => {
     tx.payment.findUnique.mockResolvedValue({ ...side, parentPaymentId: null });
 
