@@ -73,11 +73,9 @@ export async function authorizeAppointment(
   // org-party branch below keeps the host org: it is about the org's own
   // appointment, not about anyone's seat.
   const hostOrganizationId = detail.appointment.organizationId ?? null;
-  const organizationId = await seatOrganizationId(
-    prisma,
-    detail.appointment,
-    session.user.id,
-  );
+  // #1854 — read only on the branches that admit the caller.
+  const seatOrg = () =>
+    seatOrganizationId(prisma, detail.appointment, session.user.id);
   // Staff who are also on the roster keep the whole view: privilege is
   // decided here, not by which branch admitted them.
   const privileged = isPrivileged(session.user.role);
@@ -85,7 +83,7 @@ export async function authorizeAppointment(
     return {
       userId: session.user.id,
       isOrgParty: false,
-      organizationId,
+      organizationId: await seatOrg(),
       detail: scopeAppointmentDetail(detail, session.user.id, privileged),
     };
   }
@@ -93,7 +91,7 @@ export async function authorizeAppointment(
     return {
       userId: session.user.id,
       isOrgParty: false,
-      organizationId,
+      organizationId: await seatOrg(),
       detail,
     };
   }
@@ -109,7 +107,7 @@ export async function authorizeAppointment(
     return {
       userId: session.user.id,
       isOrgParty: false,
-      organizationId,
+      organizationId: await seatOrg(),
       detail: scopeAppointmentDetail(detail, session.user.id, false),
     };
   }
