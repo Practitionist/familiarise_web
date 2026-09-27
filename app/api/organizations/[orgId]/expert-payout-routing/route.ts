@@ -83,10 +83,9 @@ export async function PATCH(
 
   const parsed = PatchBodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", detail: parsed.error.flatten() },
-      { status: 400 },
-    );
+    // The panel only ever sends a known membership and one of two values, so
+    // a bad body is not a user error worth describing field by field.
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
   const { membershipId, payoutRecipient } = parsed.data;
 
