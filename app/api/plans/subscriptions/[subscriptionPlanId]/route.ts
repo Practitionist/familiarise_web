@@ -18,6 +18,12 @@ import {
 } from "@/lib/api/plans/archive";
 
 import { getSession } from "@/lib/auth-server";
+import {
+  deleteUntouchedOffering,
+  offeringDeleteRefusal,
+  OfferingInUseError,
+  UNTOUCHED_SUBSCRIPTION_PLAN,
+} from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 export async function GET(
@@ -450,45 +456,54 @@ export async function DELETE(
       );
     }
 
-    // Check if there are any associated subscriptions
-    const associatedSubscriptions = await prisma.subscription.findMany({
-      where: { subscriptionPlanId },
-    });
-
-    if (associatedSubscriptions.length > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete subscription plan with associated subscriptions",
-        },
-        { status: 400 },
-      );
-    }
-
-    const subscriptionPlan = await prisma.subscriptionPlan.delete({
-      where: { id: subscriptionPlanId },
-      include: {
-        consultantProfile: {
+    // #1846 CT-02 — the no-history guard rides the DELETE's WHERE inside one
+    // Serializable transaction under the plan's checkout lock
+    // (lib/booking/offering-delete.ts); a trial counts as history too.
+    const ownedPlan = {
+      id: subscriptionPlanId,
+      consultantProfile: { userId: session.user.id },
+    };
+    const subscriptionPlan = await deleteUntouchedOffering(
+      "SUBSCRIPTION",
+      subscriptionPlanId,
+      async (tx) => {
+        const plan = await tx.subscriptionPlan.findFirst({
+          where: ownedPlan,
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+            consultantProfile: {
+              include: {
+                user: {
+                  select: { id: true, name: true, email: true, image: true },
+                },
               },
             },
+            topics: true,
           },
-        },
-        topics: true,
+        });
+        if (!plan) return null;
+        const { count } = await tx.subscriptionPlan.deleteMany({
+          where: { ...ownedPlan, ...UNTOUCHED_SUBSCRIPTION_PLAN },
+        });
+        if (count === 0) throw new OfferingInUseError("SUBSCRIPTION");
+        return plan;
       },
-    });
+    );
+    if (!subscriptionPlan) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(subscriptionPlan) },
       { status: 200 },
     );
   } catch (error) {
+    const refusal = offeringDeleteRefusal(error);
+    if (refusal) {
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
