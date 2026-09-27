@@ -19,7 +19,7 @@ import { setParticipantStatus } from "@/lib/booking/participants";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -50,26 +50,45 @@ export type TrialRefundOutcome = {
 export async function softCancelTrialAppointment(
   appointmentId: string,
 ): Promise<void> {
-  const now = new Date();
-
   await prisma.$transaction(async (tx) => {
-    // Guarded like every other slot release: only live rows move, so a
-    // concurrent capture/accept racing the cancel CASes instead of being
-    // overwritten — and the move is audited. allowZero because the trial may
-    // legitimately have no live rows left (already released, never placed).
-    await transitionOccurrenceCompletion(tx, {
-      where: { appointmentId, deletedAt: null },
-      to: OccurrenceCompletionStatus.CANCELLED,
-      data: { deletedAt: now },
-      allowZero: true,
-    });
-    await tx.appointment.updateMany({
-      where: { id: appointmentId, deletedAt: null },
-      data: { deletedAt: now },
-    });
-    // #1319 A9 — seat released with the tombstone.
-    await setParticipantStatus(tx, { appointmentId }, "CANCELLED");
+    await softCancelTrialAppointmentInTx(tx, appointmentId);
   });
+}
+
+/**
+ * The same retirement on the caller's transaction, so a caller that moves the
+ * trial's status can commit the tombstone with it (#1846 SM-D2): split across
+ * two transactions, a crash in between left a CANCELLED trial whose session
+ * still occupied the consultant's calendar. Returns the sessions it released.
+ */
+export async function softCancelTrialAppointmentInTx(
+  tx: Pick<
+    Tx,
+    | "appointmentOccurrence"
+    | "appointment"
+    | "appointmentParticipant"
+    | "bookingStatusHistory"
+  >,
+  appointmentId: string,
+): Promise<number> {
+  const now = new Date();
+  // Guarded like every other slot release: only live rows move, so a
+  // concurrent capture/accept racing the cancel CASes instead of being
+  // overwritten — and the move is audited. allowZero because the trial may
+  // legitimately have no live rows left (already released, never placed).
+  const released = await transitionOccurrenceCompletion(tx, {
+    where: { appointmentId, deletedAt: null },
+    to: OccurrenceCompletionStatus.CANCELLED,
+    data: { deletedAt: now },
+    allowZero: true,
+  });
+  await tx.appointment.updateMany({
+    where: { id: appointmentId, deletedAt: null },
+    data: { deletedAt: now },
+  });
+  // #1319 A9 — seat released with the tombstone.
+  await setParticipantStatus(tx, { appointmentId }, "CANCELLED");
+  return released;
 }
 
 /**

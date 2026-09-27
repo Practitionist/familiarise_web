@@ -10,7 +10,7 @@ import {
   liveParticipant,
   setParticipantStatus,
 } from "@/lib/booking/participants";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
@@ -60,16 +60,15 @@ import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
-  RESCHEDULE_OPEN_STATUSES,
   SLOT_RESCHEDULABLE_FROM,
   transitionClassEvent,
   transitionConsultationRequest,
-  transitionRescheduleRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -107,41 +106,6 @@ function reportRefundFailure(err: unknown, subsystem: string): void {
  */
 function cancelSweepScope(appointment: { id: string }) {
   return { appointmentId: appointment.id };
-}
-
-/**
- * Close any live reschedule proposal on a booking being cancelled. Leaving one
- * open would keep `openForAppointmentId` reserved forever and let the expiry
- * cron act on a cancelled booking. The helper CASes one row by id — hence the
- * read — and releases the reservation itself on every terminal target, so
- * `data` carries nothing here (#1383).
- */
-async function declineOpenReschedules(
-  tx: Pick<Tx, "rescheduleRequest" | "bookingStatusHistory">,
-  appointmentId: string,
-  auditMeta: CancelAuditMeta,
-): Promise<void> {
-  const openProposals = await tx.rescheduleRequest.findMany({
-    where: { appointmentId, status: { in: RESCHEDULE_OPEN_STATUSES } },
-    select: { id: true },
-  });
-  for (const proposal of openProposals) {
-    try {
-      await transitionRescheduleRequest(tx, {
-        ...auditMeta,
-        appointmentId,
-        where: { id: proposal.id },
-        to: "DECLINED",
-        fromIn: RESCHEDULE_OPEN_STATUSES,
-      });
-    } catch (err) {
-      // The expiry cron holds no appointment lock, so it can answer a
-      // proposal between the read above and this CAS. Either way the
-      // booking ends with no open proposal, which is the whole point;
-      // failing the cancel over it would be the wrong outcome.
-      if (!(err instanceof IllegalTransitionError)) throw err;
-    }
-  }
 }
 
 /**
