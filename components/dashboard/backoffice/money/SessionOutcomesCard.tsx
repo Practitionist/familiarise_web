@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
 interface NeedsHumanSession {
@@ -31,6 +32,8 @@ const QUEUE_KEY = ["sessions-needs-human"] as const;
  */
 export function SessionOutcomesCard() {
   const [target, setTarget] = useState<NeedsHumanSession | null>(null);
+  // #1527 QA — the page's display zone, not the browser's locale and zone.
+  const zoned = useZonedFormat();
   const queue = useQuery({
     queryKey: QUEUE_KEY,
     queryFn: async () => {
@@ -57,7 +60,7 @@ export function SessionOutcomesCard() {
             className="flex flex-wrap items-center justify-between gap-2"
           >
             <span>
-              {new Date(s.startsAt).toLocaleString()} · {whyParked(s)}
+              {zoned(s.startsAt, "d MMM yyyy, hh:mm a")} · {whyParked(s)}
               {s.lostMinutes ? ` · ${s.lostMinutes} minutes lost` : ""}
             </span>
             <Button size="sm" variant="outline" onClick={() => setTarget(s)}>

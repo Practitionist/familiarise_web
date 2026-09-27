@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { MemberRole, MemberStatus, OrgStatus } from "@prisma/client";
 import {
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useSidebarCollapsed } from "@/components/dashboard/CollapsibleSidebar";
 import { useSession } from "@/lib/auth-client";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
 import {
   resolveDashboardFacets,
@@ -167,21 +168,6 @@ function FacetSection({
         />
       ))}
     </>
-  );
-}
-
-const subscribeNever = () => () => {};
-
-/**
- * #1527 QA — false for the server render AND hydration, true after. Better
- * Auth's store hands a resolved session to a Suspense boundary that hydrates
- * late, so the trigger printed the name the server never rendered (#418).
- */
-function useHydrated(): boolean {
-  return useSyncExternalStore(
-    subscribeNever,
-    () => true,
-    () => false,
   );
 }
 
