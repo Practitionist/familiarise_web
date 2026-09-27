@@ -306,32 +306,10 @@ export async function getStaffAppointments(
                 price: true,
                 priceCurrency: true,
                 durationInHours: true,
-                consultantProfile: {
-                  select: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
+                consultantProfile: { select: { userId: true } },
               },
             },
-            requestedBy: {
-              select: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            requestedBy: { select: { userId: true } },
           },
         },
         subscription: {
@@ -344,32 +322,10 @@ export async function getStaffAppointments(
                 title: true,
                 price: true,
                 priceCurrency: true,
-                consultantProfile: {
-                  select: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
+                consultantProfile: { select: { userId: true } },
               },
             },
-            requestedBy: {
-              select: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            requestedBy: { select: { userId: true } },
           },
         },
         webinar: {
@@ -383,18 +339,7 @@ export async function getStaffAppointments(
                 price: true,
                 priceCurrency: true,
                 maxParticipants: true,
-                consultantProfile: {
-                  select: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
+                consultantProfile: { select: { userId: true } },
               },
             },
           },
@@ -410,18 +355,7 @@ export async function getStaffAppointments(
                 price: true,
                 priceCurrency: true,
                 maxParticipants: true,
-                consultantProfile: {
-                  select: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
+                consultantProfile: { select: { userId: true } },
               },
             },
           },
@@ -456,6 +390,33 @@ export async function getStaffAppointments(
     }),
   ]);
 
+  // Sentry FAMILIARISE_WEB-6X (#1527): selecting `user` under each of the six
+  // profile paths made Prisma issue six `users WHERE id IN (…)` loads per
+  // page; one batched read by id replaces them.
+  const userIds = new Set<string>();
+  for (const apt of appointments) {
+    for (const id of [
+      apt.consultation?.consultationPlan.consultantProfile.userId,
+      apt.consultation?.requestedBy.userId,
+      apt.subscription?.subscriptionPlan.consultantProfile.userId,
+      apt.subscription?.requestedBy.userId,
+      apt.webinar?.webinarPlan.consultantProfile?.userId,
+      apt.class?.classPlan.consultantProfile?.userId,
+    ]) {
+      if (id) userIds.add(id);
+    }
+  }
+  const users =
+    userIds.size > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: [...userIds] } },
+          select: { id: true, name: true, email: true, image: true },
+        })
+      : [];
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const userOf = (id: string | null | undefined) =>
+    (id && usersById.get(id)) || null;
+
   // Format appointments for frontend
   const formattedAppointments = appointments.map((apt) => {
     // Get consultant and consultee info based on type
@@ -469,8 +430,10 @@ export async function getStaffAppointments(
     switch (apt.appointmentType) {
       case "CONSULTATION":
         if (apt.consultation) {
-          consultant = apt.consultation.consultationPlan.consultantProfile.user;
-          consultee = apt.consultation.requestedBy.user;
+          consultant = userOf(
+            apt.consultation.consultationPlan.consultantProfile.userId,
+          );
+          consultee = userOf(apt.consultation.requestedBy.userId);
           title = apt.consultation.consultationPlan.title;
           aptStatus = apt.consultation.status;
           duration = apt.consultation.consultationPlan.durationInHours * 60;
@@ -478,15 +441,19 @@ export async function getStaffAppointments(
         break;
       case "SUBSCRIPTION":
         if (apt.subscription) {
-          consultant = apt.subscription.subscriptionPlan.consultantProfile.user;
-          consultee = apt.subscription.requestedBy.user;
+          consultant = userOf(
+            apt.subscription.subscriptionPlan.consultantProfile.userId,
+          );
+          consultee = userOf(apt.subscription.requestedBy.userId);
           title = apt.subscription.subscriptionPlan.title;
           aptStatus = apt.subscription.status;
         }
         break;
       case "WEBINAR":
         if (apt.webinar) {
-          consultant = apt.webinar.webinarPlan.consultantProfile?.user || null;
+          consultant = userOf(
+            apt.webinar.webinarPlan.consultantProfile?.userId,
+          );
           consultee = {
             id: "",
             name: attendeeLabel(attendeeCount, "attendee"),
@@ -499,7 +466,7 @@ export async function getStaffAppointments(
         break;
       case "CLASS":
         if (apt.class) {
-          consultant = apt.class.classPlan.consultantProfile?.user || null;
+          consultant = userOf(apt.class.classPlan.consultantProfile?.userId);
           consultee = {
             id: "",
             name: attendeeLabel(attendeeCount, "student"),
