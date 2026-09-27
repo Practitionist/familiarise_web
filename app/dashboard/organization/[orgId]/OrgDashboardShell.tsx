@@ -151,7 +151,7 @@ function OrgDashboardShellInner({
     if (
       !org?.organization ||
       org.organization.status !== "ACTIVE" ||
-      org.membership.status !== "ACTIVE"
+      org.membership?.status !== "ACTIVE"
     )
       return [];
     const base = `/dashboard/organization/${orgId}`;
