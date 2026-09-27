@@ -124,6 +124,9 @@ function FindList({
   };
 
   // Consecutive entries share a group: render a caption where it changes.
+  // A title can recur (two unlabelled nav groups, or ranking splitting one),
+  // so groups key by their first href: keyed by title, React reused a stale
+  // group and two options stayed aria-selected (#1527 QA G10).
   const groups: {
     title: string;
     items: { entry: FindEntry; index: number }[];
@@ -160,20 +163,26 @@ function FindList({
           className="h-10 pl-8"
         />
       </div>
+      <p
+        role="status"
+        aria-live="polite"
+        className={
+          results.length === 0
+            ? "px-2 py-6 text-center text-sm text-muted-foreground"
+            : "sr-only"
+        }
+      >
+        {results.length === 0 && <>No pages match &ldquo;{query}&rdquo;</>}
+      </p>
       <div
         id={`${baseId}-list`}
         role="listbox"
         aria-label="Pages"
         className="max-h-[60vh] overflow-y-auto"
       >
-        {results.length === 0 && (
-          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-            No page matches &ldquo;{query}&rdquo;.
-          </p>
-        )}
         {groups.map((group, gi) => (
           <div
-            key={group.title}
+            key={group.items[0].entry.href}
             role="group"
             aria-labelledby={`${baseId}-group-${gi}`}
             className="pb-2"

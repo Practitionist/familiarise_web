@@ -1,8 +1,11 @@
 /**
  * #1527 — Find lists exactly the sidebar plus the settings sections the
- * viewer can open, never a page the rail would hide; synonyms match.
+ * viewer can open, never a page the rail would hide; synonyms match, but a
+ * label match ranks first.
  */
 
+import { resolveBackofficeCapability } from "@/lib/backoffice/capability";
+import { buildBackofficeDashboardNav } from "@/lib/dashboard/nav/backoffice";
 import { buildFindIndex, filterFind } from "@/lib/dashboard/nav/find-index";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
 import { flattenNav } from "@/lib/dashboard/nav/types";
@@ -31,5 +34,14 @@ describe("Find index", () => {
     expect(filterFind(index, "invoice").map((e) => e.label)).toContain(
       "Billing",
     );
+  });
+
+  it('an ADMIN\'s "invoice" ranks Invoices above its synonym pages', () => {
+    const nav = buildBackofficeDashboardNav(
+      resolveBackofficeCapability("ADMIN", "admin")!,
+    );
+    const results = filterFind(buildFindIndex({ nav }), "invoice");
+    expect(results[0].href).toBe(`${nav.basePath}/invoices`);
+    expect(results.map((e) => e.label)).toContain("Payments");
   });
 });

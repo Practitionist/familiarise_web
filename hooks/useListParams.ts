@@ -134,8 +134,11 @@ export function useListParams<F extends string = never>(
       // before one lands both closed over the same stale value and the
       // second overwrote the first instead of composing on top of it.
       const qs = nextListSearch(window.location.search, patch, defaultSort);
+      // null, not `history.state`: Next skips its router sync for state that
+      // already carries `__NA`, so `useSearchParams` never saw the write and
+      // a toggle's pressed state lagged until reload (#1527 QA G6).
       window.history.replaceState(
-        window.history.state,
+        null,
         "",
         qs ? `${pathname}?${qs}` : pathname,
       );

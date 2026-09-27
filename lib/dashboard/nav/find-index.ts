@@ -90,9 +90,35 @@ export function buildFindIndex({
   return entries;
 }
 
-/** Every typed word must appear in the label or its synonyms. */
+/**
+ * Rank of an entry for the query, lower first; null when a typed word matches
+ * nothing. Exact label, then label prefix, then every word in the label, then
+ * synonyms, then the group caption (#1527 QA G10: "invoice" must lead with
+ * Invoices, not a page that lists it as a synonym).
+ */
+function rank(entry: FindEntry, query: string, words: string[]): number | null {
+  const label = entry.label.toLowerCase();
+  if (label === query) return 0;
+  if (label.startsWith(query)) return 1;
+  if (words.every((w) => label.includes(w))) return 2;
+  if (words.every((w) => entry.keywords.includes(w))) return 3;
+  const group = entry.group.toLowerCase();
+  if (words.every((w) => entry.keywords.includes(w) || group.includes(w))) {
+    return 4;
+  }
+  return null;
+}
+
+/** Every typed word must match; best-ranked first, ties in index order. */
 export function filterFind(entries: FindEntry[], query: string): FindEntry[] {
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const q = query.trim().toLowerCase().replace(/\s+/g, " ");
+  const words = q.split(" ").filter(Boolean);
   if (words.length === 0) return entries;
-  return entries.filter((e) => words.every((w) => e.keywords.includes(w)));
+  return entries
+    .map((entry, i) => ({ entry, i, r: rank(entry, q, words) }))
+    .filter(
+      (x): x is { entry: FindEntry; i: number; r: number } => x.r !== null,
+    )
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.entry);
 }
