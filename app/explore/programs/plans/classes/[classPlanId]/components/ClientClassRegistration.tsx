@@ -21,6 +21,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { getClassCapacity } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import type { BatchCard } from "@/lib/booking/batch-cards";
+import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
@@ -234,6 +235,7 @@ export function ClientClassRegistration({
           windowHours={plan.refundWindowHours}
           kind="class"
         />
+        <GroupSessionDisclosure className="mt-2" />
       </CardContent>
       <CardFooter>
         <Button

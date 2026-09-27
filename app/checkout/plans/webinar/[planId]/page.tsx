@@ -40,6 +40,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
@@ -724,6 +725,8 @@ export default function WebinarCheckoutPage({
             </div>
           </div>
         </div>
+        {/* #1852 decision 4 — shown before anyone picks who pays. */}
+        <GroupSessionDisclosure />
         <Separator className="bg-border" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}

@@ -42,8 +42,9 @@ function parseBulkEntries(text: string): { email: string; name: string }[] {
 
 /**
  * Invitations › Bulk import (#1527 Q6): up to 200 learners at once through
- * `POST …/members/bulk-import`, which creates LEARNER memberships and emails
- * each person. MAINTAINER+ on the server.
+ * `POST …/members/bulk-import`, which emails each person a LEARNER
+ * invitation; they join when they accept it (#1846). MAINTAINER+ on the
+ * server.
  */
 export function BulkImportDialog({ orgId }: Readonly<{ orgId: string }>) {
   const [open, setOpen] = useState(false);
@@ -75,6 +76,9 @@ export function BulkImportDialog({ orgId }: Readonly<{ orgId: string }>) {
       setResult(data);
       setError(null);
       void queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["org-invitations", orgId],
+      });
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -101,23 +105,23 @@ export function BulkImportDialog({ orgId }: Readonly<{ orgId: string }>) {
             <ResponsiveModalTitle>Bulk import learners</ResponsiveModalTitle>
             <ResponsiveModalDescription>
               Paste one person per line as &quot;email, name&quot;, up to{" "}
-              {MAX_ENTRIES} at a time. Everyone joins as a learner and gets an
-              email.
+              {MAX_ENTRIES} at a time. Everyone gets an email invitation and
+              joins as a learner when they accept it.
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
           {result ? (
             <div className="space-y-2 text-sm">
               <p>
-                Imported {result.imported}
+                Invited {result.imported}
                 {result.failed > 0
-                  ? `; ${result.failed} could not be added.`
+                  ? `; ${result.failed} could not be invited.`
                   : "."}
               </p>
               {failures.length > 0 && (
                 <ul className="max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
                   {failures.map((f) => (
                     <li key={f.email}>
-                      {f.email}: {humanizeOrgError(f.error ?? "Not added")}
+                      {f.email}: {humanizeOrgError(f.error ?? "Not invited")}
                     </li>
                   ))}
                 </ul>

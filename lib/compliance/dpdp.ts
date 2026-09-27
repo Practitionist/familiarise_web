@@ -85,7 +85,11 @@
 
 import { createHash } from "node:crypto";
 import prisma, { type Tx } from "@/lib/prisma";
-import { purposeCodeAliases, type PurposeCode } from "./purpose-codes";
+import {
+  SIGNUP_PURPOSES,
+  purposeCodeAliases,
+  type PurposeCode,
+} from "./purpose-codes";
 
 /**
  * Thrown when a purpose-scoped action is blocked because the user has not
@@ -162,6 +166,22 @@ export function buildConsentArtifact(
     hash,
     auditRetainedUntil,
   };
+}
+
+/** The consent rows a sign-up stamps, one per purpose (#1854 reuses them). */
+export function buildSignupConsentArtifacts(
+  userId: string,
+): ConsentArtifactDraft[] {
+  return SIGNUP_PURPOSES.map((purposeCode) =>
+    buildConsentArtifact({
+      userId,
+      dataFiduciary: "Familiarise",
+      purposeCodes: [purposeCode],
+      language: "en-IN",
+      consentManager: null,
+      version: 1,
+    }),
+  );
 }
 
 /**

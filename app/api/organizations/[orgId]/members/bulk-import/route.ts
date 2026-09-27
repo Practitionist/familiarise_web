@@ -2,33 +2,41 @@
  * POST /api/organizations/[orgId]/members/bulk-import
  *
  * Wave-8 (#1230) — enterprise provisioning. Accepts a JSON array of
- * {email, name} entries and creates LEARNER memberships in bulk.
+ * {email, name} entries and sends each person a LEARNER invitation.
  *
- * CR #1256 fixes applied:
- * - S3776: per-entry processing extracted to importEntry helper
- * - failed count derived from results (was declared but never incremented)
- * - Each entry runs atomically inside Serializable tx with retry
- * - Role resets to LEARNER on reactivation (no OWNER/MAINTAINER regain)
+ * #1846 bucket C — joining is invite + accept only, so an import creates
+ * Invitations, never memberships. It used to create PENDING LEARNER rows
+ * that nothing ever activated, emailed a link whose token was the orgId,
+ * created User rows for unknown emails, skipped the canSponsor check, and
+ * reactivated REMOVED members without their consent (N9). Each person now
+ * accepts their own invitation, with the DPDP consent check, through the
+ * same `issueInvitation` helper "Add people" uses. A removed learner is
+ * invited back like anyone else; accepting reactivates their row.
  *
- * Bulk REMOVE and bulk ROLE-CHANGE remain 405 (anti-lockout risk).
+ * Each entry runs in its own Serializable transaction with retry, so
+ * concurrent imports cannot overshoot the unverified-org seat cap, and one
+ * bad row does not fail the batch. Bulk REMOVE and bulk ROLE-CHANGE remain
+ * 405 (anti-lockout risk).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
+  DomainVerificationRequiredError,
   UNVERIFIED_ORG_SEAT_CAP,
-  hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
+import {
+  issueInvitation,
+  type IssueInvitationInput,
+} from "@/lib/enterprise/invitations";
+import { MembershipGuardError } from "@/lib/enterprise/membership-guards";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import {
   attemptStagedEmail,
   EMAIL_BUDGET_MS,
-  stageOrgInvitationEmail,
   type StagedSend,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
@@ -36,6 +44,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const EntrySchema = z.object({
   email: z.string().trim().toLowerCase().email(),
+  // Kept for the CSV shape; the invitee chooses their own name at signup.
   name: z.string().trim().min(1).max(200),
 });
 
@@ -43,10 +52,13 @@ const BodySchema = z.object({
   entries: z.array(EntrySchema).min(1).max(200),
 });
 
+/** Invitations sent by an import expire like a single invite does. */
+const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
 interface RowResult {
   email: string;
   ok: boolean;
-  membershipId?: string;
+  invitationId?: string;
   error?: string;
 }
 
@@ -66,6 +78,17 @@ export async function POST(
   ) {
     return NextResponse.json({ error: "ORG_NOT_ACTIVE" }, { status: 409 });
   }
+  // Everyone imported joins as a LEARNER, which only a sponsoring org funds
+  // (the same gate the single invite applies).
+  if (!access.org.canSponsor) {
+    return NextResponse.json(
+      {
+        error: "LEARNER can only be assigned on sponsor-capable organizations",
+        code: "LEARNER_REQUIRES_CANSPONSOR",
+      },
+      { status: 400 },
+    );
+  }
 
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -83,38 +106,34 @@ export async function POST(
     return true;
   });
 
-  const results: RowResult[] = [];
-  let imported = 0;
-
-  const invite = {
-    inviterName:
-      access.session.user.name ?? access.session.user.email ?? "An operator",
+  const base: Omit<IssueInvitationInput, "email"> = {
+    orgId,
     orgName: access.org.name,
     role: "LEARNER",
-    inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
-    expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+    inviter: {
+      userId: access.session.user.id,
+      name:
+        access.session.user.name ?? access.session.user.email ?? "An operator",
+      membershipId: access.member.id,
+      role: access.member.role,
+    },
+    origin: new URL(req.url).origin,
   };
+
+  const results: RowResult[] = [];
   const stagedBells: StagedTrigger[] = [];
   const stagedEmails: StagedSend[] = [];
   for (const entry of deduped) {
-    const result = await importEntry(orgId, entry, access.member.id, invite);
-    results.push({
-      email: entry.email,
-      ok: result.ok,
-      membershipId: result.membershipId,
-      error: result.error,
-    });
-    if (result.ok) imported++;
-    if (result.staged) {
-      stagedBells.push(...result.staged.bells);
-      if (result.staged.email) stagedEmails.push(result.staged.email);
-    }
+    const result = await inviteEntry({ ...base, email: entry.email });
+    results.push({ email: entry.email, ...result.row });
+    stagedBells.push(...result.bells);
+    if (result.email) stagedEmails.push(result.email);
   }
 
-  // The invite notices were staged inside each entry's transaction (#1230
-  // wave-8, #1653); only the vendor attempts run after the response, in one
-  // after() — awaiting Novu + Resend per entry in the response path would
-  // multiply provider budgets by the batch size (up to 200).
+  // The notices were staged inside each entry's transaction (#1653); only
+  // the vendor attempts run after the response, in one after(), so the
+  // provider budgets do not multiply by the batch size (up to 200).
   scheduleAfter(async () => {
     for (const row of stagedBells) await attemptTrigger(row);
     for (const staged of stagedEmails) {
@@ -122,154 +141,43 @@ export async function POST(
     }
   });
 
+  const invited = results.filter((r) => r.ok).length;
   return NextResponse.json(
     {
-      imported,
-      failed: results.filter((r) => !r.ok).length,
+      // `imported` is the pre-#1846 name the dialog still reads.
+      imported: invited,
+      invited,
+      failed: results.length - invited,
       results,
     },
     { status: 200 },
   );
 }
 
-// S3776 + CR #1256 r1 — per-entry processing extracted; each entry runs
-// atomically inside Serializable tx with retry so concurrent imports cannot
-// overshoot the seat cap. Role resets to LEARNER on reactivation so a removed
-// OWNER/MAINTAINER can't regain privileged access via bulk import.
-type StagedInvite = { bells: StagedTrigger[]; email: StagedSend | null };
-
-async function importEntry(
-  orgId: string,
-  entry: { email: string; name: string },
-  actorMembershipId: string,
-  invite: {
-    inviterName: string;
-    orgName: string;
-    role: string;
-    inviteUrl: string;
-    expiresAt: string;
-  },
-): Promise<{
-  ok: boolean;
-  membershipId?: string;
-  error?: string;
-  staged?: StagedInvite;
+async function inviteEntry(input: IssueInvitationInput): Promise<{
+  row: Omit<RowResult, "email">;
+  bells: StagedTrigger[];
+  email: StagedSend | null;
 }> {
-  // #1653 — the bell reaches an invitee who already has an account; the
-  // email reaches one who does not. No invitation row exists here, so the
-  // membership is the anchor. Staged inside the entry's transaction so the
-  // rows commit with the membership (review round 2 on #1700).
-  const stageInvite = async (
-    tx: Tx,
-    membershipId: string,
-  ): Promise<StagedInvite> => ({
-    bells: await notifyOrgInviteSent(entry.email, invite, { tx }),
-    email: await stageOrgInvitationEmail(
-      { email: entry.email, ...invite },
-      { tx, entityRef: `membership:${membershipId}` },
-    ),
-  });
   try {
-    return await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          let user = await tx.user.findUnique({
-            where: { email: entry.email },
-            select: { id: true },
-          });
-          if (!user) {
-            user = await tx.user.create({
-              data: { email: entry.email, name: entry.name },
-              select: { id: true },
-            });
-          }
-
-          const existing = await tx.membership.findUnique({
-            where: {
-              userId_organizationId: {
-                userId: user.id,
-                organizationId: orgId,
-              },
-            },
-            select: { id: true, status: true, role: true },
-          });
-          if (existing && existing.status !== "REMOVED") {
-            return { ok: false as const, error: "Already a member" };
-          }
-
-          // Seat cap for unverified domains
-          const verified = await hasVerifiedDomain(tx, orgId);
-          if (!verified) {
-            const activeCount = await tx.membership.count({
-              where: { organizationId: orgId, status: "ACTIVE" },
-            });
-            if (activeCount >= UNVERIFIED_ORG_SEAT_CAP) {
-              return {
-                ok: false as const,
-                error: `Seat cap (${UNVERIFIED_ORG_SEAT_CAP}) reached — verify a domain to add more`,
-              };
-            }
-          }
-
-          if (existing) {
-            // Reset role to LEARNER on reactivation
-            const claimed = await tx.membership.updateMany({
-              where: {
-                id: existing.id,
-                status: "REMOVED",
-                organizationId: orgId,
-                role: "LEARNER",
-              },
-              data: { status: "ACTIVE" },
-            });
-            if (claimed.count === 0) {
-              return {
-                ok: false as const,
-                error: "Cannot reactivate: non-LEARNER removed membership",
-              };
-            }
-            return {
-              ok: true as const,
-              membershipId: existing.id,
-              staged: await stageInvite(tx, existing.id),
-            };
-          }
-
-          const created = await tx.membership.create({
-            data: {
-              userId: user.id,
-              organizationId: orgId,
-              role: "LEARNER",
-              // PENDING until the invitee completes signup and sets a
-              // password. The existing invitation-accept flow flips this to
-              // ACTIVE. Creating as ACTIVE would produce phantom members
-              // who appear on rosters but cannot log in.
-              status: "PENDING",
-            },
-          });
-          await tx.orgAuditLog.create({
-            data: {
-              organizationId: orgId,
-              actorMembershipId,
-              targetMembershipId: created.id,
-              category: "MEMBER",
-              action: AUDIT_ACTIONS.MEMBER.MEMBER_ADDED,
-              description: `Bulk-imported ${entry.email} as LEARNER`,
-            },
-          });
-          return {
-            ok: true as const,
-            membershipId: created.id,
-            staged: await stageInvite(tx, created.id),
-          };
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        },
-      ),
+    const issued = await withSerializableRetry(() =>
+      prisma.$transaction((tx) => issueInvitation(tx, input), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      }),
     );
+    return {
+      row: { ok: true, invitationId: issued.invitation.id },
+      bells: issued.stagedBells,
+      email: issued.stagedEmail,
+    };
   } catch (err) {
-    console.error("[bulk-import] entry failed:", err);
-    return { ok: false as const, error: "Internal error" };
+    let error = "Internal error";
+    if (err instanceof MembershipGuardError) error = err.message;
+    else if (err instanceof DomainVerificationRequiredError) {
+      error = `Seat cap (${UNVERIFIED_ORG_SEAT_CAP}) reached — verify a domain to add more`;
+    } else {
+      console.error("[bulk-import] entry failed:", err);
+    }
+    return { row: { ok: false, error }, bells: [], email: null };
   }
 }

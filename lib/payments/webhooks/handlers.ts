@@ -93,6 +93,10 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
+import {
+  isOrgFundedPaymentMethod,
+  seatPayerOrganizationId,
+} from "@/lib/data/org-sponsored-seats";
 
 // ============================================================================
 // Type Definitions
@@ -160,6 +164,8 @@ interface SubscriptionData {
 interface EventData {
   eventId: string;
   userId: string;
+  /** #1852 — the payer org, stamped on the seat (null for a B2C seat). */
+  organizationId: string | null;
 }
 
 // ============================================================================
@@ -1617,6 +1623,11 @@ async function createAppointmentFromWebhook(
   const userId = payment.user.id;
 
   let appointment;
+  // #1854 — event seats take the org only when the org's money paid for them.
+  const seatOrg = seatPayerOrganizationId(
+    payment.organizationId,
+    isOrgFundedPaymentMethod(payment.paymentMethod),
+  );
 
   switch (appointmentType) {
     case AppointmentsType.CONSULTATION:
@@ -1654,10 +1665,18 @@ async function createAppointmentFromWebhook(
       });
       break;
     case AppointmentsType.WEBINAR:
-      appointment = await createWebinar(tx, { eventId, userId });
+      appointment = await createWebinar(tx, {
+        eventId,
+        userId,
+        organizationId: seatOrg,
+      });
       break;
     case AppointmentsType.CLASS:
-      appointment = await createClass(tx, { eventId, userId });
+      appointment = await createClass(tx, {
+        eventId,
+        userId,
+        organizationId: seatOrg,
+      });
       break;
     default:
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
@@ -1854,7 +1873,7 @@ async function createWebinar(tx: Tx, data: EventData) {
     tx,
     webinar.appointment.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "HELD" },
+    { status: "HELD", organizationId: data.organizationId },
   );
 
   const createdAppointment = await tx.appointment.findUnique({
@@ -1898,7 +1917,7 @@ async function createClass(tx: Tx, data: EventData) {
     tx,
     wrapper.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "HELD" },
+    { status: "HELD", organizationId: data.organizationId },
   );
 
   const createdAppointment = await tx.appointment.findUnique({

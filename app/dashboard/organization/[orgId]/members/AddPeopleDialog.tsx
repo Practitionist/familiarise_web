@@ -32,57 +32,37 @@ import {
 } from "@/lib/fetch-helpers";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { MEMBER_ROLE_LABEL, getInvitableRoles } from "@/lib/labels/org-labels";
-import {
-  AddMemberPayloadSchema,
-  CreateInvitationPayloadSchema,
-} from "@/schemas/organizations";
+import { CreateInvitationPayloadSchema } from "@/schemas/organizations";
 
 import { useOrgRole } from "../useOrgRole";
 
 type InvitableRole = z.infer<typeof CreateInvitationPayloadSchema>["role"];
 
-type Outcome = "added" | "invited";
-
-async function postJson(url: string, body: unknown): Promise<Response> {
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function throwFrom(res: Response, fallback: string): Promise<never> {
-  const body = await res.json().catch(() => null);
-  throw new Error(humanizeOrgError(errorMessageFromBody(body, fallback)));
-}
-
 /**
- * Add an existing account straight away; anyone without one gets an email
- * invitation instead. Both APIs already existed behind two buttons that asked
- * the operator to know which case they were in (#1527 "Add people").
+ * #1846 bucket C — every human-initiated add is an invitation the person
+ * accepts, including the DPDP consent step. This dialog used to add an
+ * existing account straight away as ACTIVE, skipping both; now it always
+ * sends the invitation, whether or not the person already has an account.
  */
-async function addPerson(
+async function invitePerson(
   orgId: string,
   payload: { email: string; role: InvitableRole },
-): Promise<Outcome> {
-  const added = await postJson(
-    `/api/organizations/${orgId}/members`,
-    validateOutboundPayload(AddMemberPayloadSchema, payload),
-  );
-  if (added.ok) return "added";
-  const body = await added
-    .clone()
-    .json()
-    .catch(() => null);
-  if (added.status !== 404 || body?.error !== "USER_NOT_FOUND") {
-    return throwFrom(added, "Couldn't add this person.");
+): Promise<void> {
+  const res = await fetch(`/api/organizations/${orgId}/invitations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(
+      validateOutboundPayload(CreateInvitationPayloadSchema, payload),
+    ),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(
+      humanizeOrgError(
+        errorMessageFromBody(body, "Couldn't send the invitation."),
+      ),
+    );
   }
-  const invited = await postJson(
-    `/api/organizations/${orgId}/invitations`,
-    validateOutboundPayload(CreateInvitationPayloadSchema, payload),
-  );
-  if (!invited.ok) return throwFrom(invited, "Couldn't send the invitation.");
-  return "invited";
 }
 
 export function AddPeopleDialog({
@@ -114,18 +94,15 @@ export function AddPeopleDialog({
 
   const mutation = useMutation({
     mutationFn: () =>
-      addPerson(orgId, { email: email.trim(), role: role as InvitableRole }),
-    onSuccess: (outcome) => {
+      invitePerson(orgId, { email: email.trim(), role: role as InvitableRole }),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
       void queryClient.invalidateQueries({
         queryKey: ["org-invitations", orgId],
       });
       toast({
-        title: outcome === "added" ? "Added" : "Invitation sent",
-        description:
-          outcome === "added"
-            ? `${email.trim()} is now a member.`
-            : `${email.trim()} has no account yet, so we emailed them an invitation.`,
+        title: "Invitation sent",
+        description: `${email.trim()} joins when they accept the emailed invitation.`,
       });
       setOpen(false);
       setEmail("");
@@ -150,8 +127,8 @@ export function AddPeopleDialog({
           <ResponsiveModalHeader>
             <ResponsiveModalTitle>Add people</ResponsiveModalTitle>
             <ResponsiveModalDescription>
-              Someone who already has a Familiarise account joins straight away.
-              Anyone else gets an email invitation to create one.
+              We email them an invitation. They join once they accept it and
+              confirm how their data is used.
             </ResponsiveModalDescription>
           </ResponsiveModalHeader>
           <div className="space-y-4">
@@ -193,7 +170,7 @@ export function AddPeopleDialog({
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending || !email.includes("@")}
             >
-              {mutation.isPending ? "Adding…" : "Add"}
+              {mutation.isPending ? "Sending…" : "Send invitation"}
             </Button>
           </ResponsiveModalFooter>
         </ResponsiveModalContent>

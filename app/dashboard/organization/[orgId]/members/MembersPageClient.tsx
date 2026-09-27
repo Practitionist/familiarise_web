@@ -65,6 +65,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { AddPeopleDialog } from "./AddPeopleDialog";
+import { RemoveMemberDialog } from "./RemoveMemberDialog";
 
 // `MemberRow` (and the response shape) live in `@/schemas/organizations`
 // so the dashboard and any other consumer (e.g. operator tools) share the
@@ -85,6 +86,13 @@ function selectableRoles(
 }
 
 // #1527 — chip order; a role only gets a chip while it has members.
+/** #1851 decision 6 — roles only an OWNER grants or takes away. */
+const OWNER_ONLY_ROLES: ReadonlySet<MemberRole> = new Set([
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+]);
+
 const ROLE_CHIPS: MemberRole[] = [
   "OWNER",
   "MAINTAINER",
@@ -204,17 +212,6 @@ async function updateMember(
   return body;
 }
 
-async function removeMember(orgId: string, memberId: string) {
-  const res = await fetch(`/api/organizations/${orgId}/members/${memberId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const raw = errorMessageFromBody(body, "Failed to remove member");
-    throw new Error(humanizeOrgError(raw));
-  }
-}
-
 export function MembersPageClient({ orgId }: { orgId: string }) {
   // canSponsor/canHost drive the capability-aware role options (LEARNER
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
@@ -285,18 +282,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // the raw browser confirm() because (a) it matches the rest of the
   // dashboard styling, and (b) it gives us room to show the target
   // member's name + email so the user can't mis-click on the wrong row.
+  // #1854 — the dialog reads the member's open obligations before confirming.
   const [memberToRemove, setMemberToRemove] = useState<MemberRow | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-
-  const removeMutation = useMutation({
-    mutationFn: (memberId: string) => removeMember(orgId, memberId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
-      setMemberToRemove(null);
-      setRemoveError(null);
-    },
-    onError: (err: Error) => setRemoveError(err.message),
-  });
 
   // Edit member state. We narrow to the MemberRole / MemberStatus unions
   // so the Select onValueChange handlers can't push a typo into the
@@ -339,8 +326,20 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   });
 
   const canManage = can("members.manage");
-  // The server omits payout routing without `payouts.read` (#1527).
-  const canSetPayout = editMember?.payoutRecipient !== undefined;
+  // #1851 decision 5 — payout routing is finance-only (OWNER, BILLING_ADMIN);
+  // MAINTAINER still sees it. The server omits it without `payouts.read`.
+  const canSetPayout =
+    can("payouts.manage") && editMember?.payoutRecipient !== undefined;
+  // #1851 decision 6 — only an OWNER grants or removes these roles.
+  const ownerOnly = (r: MemberRole) =>
+    OWNER_ONLY_ROLES.has(r) && !isAtLeast("OWNER");
+  const removeBlockedReason = (m: MemberRow): string | undefined => {
+    if (isOwnRow(m)) return "You cannot remove yourself";
+    if (ownerOnly(m.role)) {
+      return "Only an Owner can remove an Owner, Maintainer or Billing admin";
+    }
+    return undefined;
+  };
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
@@ -412,26 +411,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
            <button> elements, so a title on the button
            itself is silently dropped. The span owns
            the title and receives hover regardless. */}
-      <span
-        title={
-          isOwnRow(m)
-            ? "You cannot remove yourself"
-            : m.role === "OWNER" && !isAtLeast("OWNER")
-              ? "Only an OWNER can remove an OWNER"
-              : undefined
-        }
-        className="inline-flex"
-      >
+      <span title={removeBlockedReason(m)} className="inline-flex">
         <Button
           variant="ghost"
           size="icon"
           aria-label="Remove member"
           onClick={() => setMemberToRemove(m)}
-          disabled={
-            removeMutation.isPending ||
-            isOwnRow(m) ||
-            (m.role === "OWNER" && !isAtLeast("OWNER"))
-          }
+          disabled={isOwnRow(m) || ownerOnly(m.role)}
         >
           <Trash2 className="h-4 w-4 text-red-500" />
         </Button>
@@ -573,9 +559,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-status">Status</Label>
+              {/* #1846 — nobody changes their own status either; the last
+                  OWNER suspending themselves locked the org out. */}
               <Select
                 value={editStatus}
                 onValueChange={(v) => setEditStatus(v as MemberStatus)}
+                disabled={editMember !== null && isOwnRow(editMember)}
               >
                 <SelectTrigger id="edit-status">
                   <SelectValue />
@@ -622,10 +611,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 </p>
               )}
             {editMember &&
-              !isAtLeast("OWNER") &&
-              (editMember.role === "OWNER" || editRole === "OWNER") && (
+              (ownerOnly(editMember.role) || ownerOnly(editRole)) && (
                 <p className="text-sm text-red-600">
-                  Only an OWNER can assign or revoke the OWNER role.
+                  Only an Owner can grant or remove the Owner, Maintainer or
+                  Billing admin role.
                 </p>
               )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
@@ -640,8 +629,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 editMutation.isPending ||
                 (editMember !== null &&
                   (isBlockedRoleTransition(editMember.role, editRole) ||
-                    (!isAtLeast("OWNER") &&
-                      (editMember.role === "OWNER" || editRole === "OWNER"))))
+                    ownerOnly(editMember.role) ||
+                    ownerOnly(editRole)))
               }
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
@@ -653,45 +642,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       {/* Remove-member confirm dialog. Styled to match the rest of the
           dashboard instead of using window.confirm() so the user sees
           which row they're about to destroy. */}
-      <ResponsiveModal
-        open={!!memberToRemove}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMemberToRemove(null);
-            setRemoveError(null);
-          }
-        }}
-      >
-        <ResponsiveModalContent>
-          <ResponsiveModalHeader>
-            <ResponsiveModalTitle>Remove member?</ResponsiveModalTitle>
-            <ResponsiveModalDescription>
-              {memberToRemove?.user.name ?? memberToRemove?.user.email} will
-              lose access to this organization immediately. You can re-invite
-              them later.
-            </ResponsiveModalDescription>
-          </ResponsiveModalHeader>
-          {removeError && <p className="text-sm text-red-600">{removeError}</p>}
-          <ResponsiveModalFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMemberToRemove(null)}
-              disabled={removeMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() =>
-                memberToRemove && removeMutation.mutate(memberToRemove.id)
-              }
-              disabled={removeMutation.isPending}
-            >
-              {removeMutation.isPending ? "Removing…" : "Remove member"}
-            </Button>
-          </ResponsiveModalFooter>
-        </ResponsiveModalContent>
-      </ResponsiveModal>
+      <RemoveMemberDialog
+        key={memberToRemove?.id ?? "none"}
+        orgId={orgId}
+        member={memberToRemove}
+        canForce={isAtLeast("OWNER")}
+        onClose={() => setMemberToRemove(null)}
+      />
     </>
   );
 }

@@ -250,20 +250,6 @@ export const MembersListResponseSchema = z.object({
   counts: z.record(MemberRoleSchema, z.number().int().nonnegative()).optional(),
 });
 
-// POST /api/organizations/[orgId]/members
-// Direct-add a member by email (dashboard path) OR userId (SSO /
-// admin tooling). The server accepts either identifier, resolves
-// email → userId internally, and returns 404 USER_NOT_FOUND when the
-// account doesn't exist. The dashboard always sends email; userId is
-// reserved for programmatic callers (SSO provisioning, admin scripts).
-// EXPERT is in the wider HostInvitableMemberRoleSchema. It is only
-// accepted by the server when the target org has canHost=true; the UI
-// hides it for sponsor-only orgs (see MembersPageClient).
-export const AddMemberPayloadSchema = z.object({
-  email: z.string().email(),
-  role: HostInvitableMemberRoleSchema,
-});
-
 // PATCH body shared with the edit-member dialog. At least one of role or
 // status must be set; the server enforces a `.refine()` on the same
 // constraint, so this mirror prevents an empty PATCH from ever leaving

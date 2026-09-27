@@ -8,13 +8,11 @@
  * row with the right profile FKs (ConsulteeProfile vs
  * ConsultantProfile) and a clean audit entry.
  *
- * Other transitions (MAINTAINER <-> MANAGER, MANAGER -> LEARNER,
- * OWNER handoff via a separate flow, etc.) remain allowed and are
- * enforced by the existing role-hierarchy checks at the route layer.
- *
- * This module is the single source of truth for the blocked pairs so
- * the members PATCH route, audit/compliance tooling, and any future
- * bulk-role-change admin surface all read from the same set.
+ * The other role rules (operator roles switch freely, a LEARNER or
+ * EXPERT with history here must be removed and re-invited, OWNER-only
+ * roles, the last OWNER) live in `lib/enterprise/membership-guards.ts`,
+ * which calls this for the blocked pairs. That guard is shared by the
+ * members PATCH route, SCIM provisioning and bulk import (#1846).
  */
 
 import type { MemberRole } from "@prisma/client";
