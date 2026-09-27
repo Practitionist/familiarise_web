@@ -16,7 +16,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -129,6 +129,105 @@ export async function GET(
   }
 
   return NextResponse.json({ membership });
+}
+
+type MemberPatch = z.infer<typeof PatchBodySchema>;
+type MemberRow = Awaited<
+  ReturnType<typeof prisma.membership.findUniqueOrThrow>
+>;
+
+/** The non-status columns a PATCH writes. */
+function memberUpdateData(
+  patch: MemberPatch,
+  currentRole: MemberRow["role"],
+  roleEffects: Awaited<ReturnType<typeof applyMembershipRoleEffects>> | null,
+) {
+  // #729 — an explicit payout-recipient choice counts only when the resulting
+  // role is EXPERT, and wins over the role-change default below it.
+  const explicitPayout =
+    patch.payoutRecipient !== undefined &&
+    (patch.role ?? currentRole) === "EXPERT"
+      ? patch.payoutRecipient
+      : undefined;
+  return {
+    ...(patch.role !== undefined && { role: patch.role }),
+    ...(patch.departmentLabel !== undefined && {
+      departmentLabel: patch.departmentLabel,
+    }),
+    ...(roleEffects && {
+      consulteeProfileId: roleEffects.consulteeProfileId,
+      consultantProfileId: roleEffects.consultantProfileId,
+      payoutRecipient: roleEffects.payoutRecipient,
+    }),
+    ...(explicitPayout !== undefined && { payoutRecipient: explicitPayout }),
+  };
+}
+
+/** The audit rows a PATCH writes, in the same transaction as the change. */
+async function auditMemberChange(
+  tx: Tx,
+  args: {
+    orgId: string;
+    actorMembershipId: string;
+    current: MemberRow;
+    updated: MemberRow;
+    patch: MemberPatch;
+    roleChanged: boolean;
+    statusChanged: boolean;
+  },
+): Promise<void> {
+  const { current, updated, patch } = args;
+  const base = {
+    organizationId: args.orgId,
+    actorMembershipId: args.actorMembershipId,
+    targetMembershipId: current.id,
+  };
+  // #1851 decision 5 — a payout-recipient change is a money event: its own
+  // PAYOUT-category row, visible to the finance readers.
+  if (updated.payoutRecipient !== current.payoutRecipient) {
+    await tx.orgAuditLog.create({
+      data: {
+        ...base,
+        category: "PAYOUT",
+        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
+        description: `Payout recipient: ${current.payoutRecipient} → ${updated.payoutRecipient}`,
+        details: {
+          from: current.payoutRecipient,
+          to: updated.payoutRecipient,
+          viaRoleChange: args.roleChanged,
+        },
+      },
+    });
+  }
+  const details = {
+    from: { role: current.role, status: current.status },
+    to: {
+      role: patch.role ?? current.role,
+      status: patch.status ?? current.status,
+    },
+  };
+  if (args.roleChanged) {
+    await tx.orgAuditLog.create({
+      data: {
+        ...base,
+        category: "MEMBER",
+        action: AUDIT_ACTIONS.MEMBER.ROLE_CHANGE,
+        description: `Role: ${current.role} → ${patch.role}`,
+        details,
+      },
+    });
+  }
+  if (args.statusChanged) {
+    await tx.orgAuditLog.create({
+      data: {
+        ...base,
+        category: "MEMBER",
+        action: AUDIT_ACTIONS.MEMBER.STATUS_CHANGE,
+        description: `Status: ${current.status} → ${patch.status}`,
+        details,
+      },
+    });
+  }
 }
 
 /** Maps a guard refusal or an `httpStatus`-tagged error onto the response. */
@@ -297,15 +396,6 @@ export async function PATCH(
                 })
               : null;
 
-          // #729 — explicit payout-recipient choice, honoured only when the
-          // resulting role is EXPERT. Applied AFTER the role-effect default so an
-          // operator's choice wins over the reset on a role change.
-          const effectiveRole = patch.role ?? current.role;
-          const explicitPayoutRecipient =
-            patch.payoutRecipient !== undefined && effectiveRole === "EXPERT"
-              ? patch.payoutRecipient
-              : undefined;
-
           // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
           // matches zero rows and 409s instead of being resurrected); the
           // remaining fields ride a plain update in the same tx. The guard
@@ -324,20 +414,7 @@ export async function PATCH(
             });
           }
 
-          const otherData = {
-            ...(patch.role !== undefined && { role: patch.role }),
-            ...(patch.departmentLabel !== undefined && {
-              departmentLabel: patch.departmentLabel,
-            }),
-            ...(roleEffects && {
-              consulteeProfileId: roleEffects.consulteeProfileId,
-              consultantProfileId: roleEffects.consultantProfileId,
-              payoutRecipient: roleEffects.payoutRecipient,
-            }),
-            ...(explicitPayoutRecipient !== undefined && {
-              payoutRecipient: explicitPayoutRecipient,
-            }),
-          };
+          const otherData = memberUpdateData(patch, current.role, roleEffects);
           const updated =
             Object.keys(otherData).length > 0
               ? await tx.membership.update({
@@ -366,57 +443,15 @@ export async function PATCH(
             await recomputeIndependenceAcross(tx, [current, updated]);
           }
 
-          // #1851 decision 5 — a payout-recipient change is a money event:
-          // its own PAYOUT-category row, visible to the finance readers.
-          const payoutBefore = current.payoutRecipient;
-          const payoutAfter = updated.payoutRecipient;
-          if (payoutAfter !== payoutBefore) {
-            await tx.orgAuditLog.create({
-              data: {
-                organizationId: orgId,
-                actorMembershipId: access.member.id,
-                targetMembershipId: memberId,
-                category: "PAYOUT",
-                action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
-                description: `Payout recipient: ${payoutBefore} → ${payoutAfter}`,
-                details: {
-                  from: payoutBefore,
-                  to: payoutAfter,
-                  viaRoleChange: roleChanged,
-                },
-              },
-            });
-          }
-
-          const auditActions: string[] = [];
-          if (roleChanged) auditActions.push(AUDIT_ACTIONS.MEMBER.ROLE_CHANGE);
-          if (statusChanged)
-            auditActions.push(AUDIT_ACTIONS.MEMBER.STATUS_CHANGE);
-          for (const action of auditActions) {
-            await tx.orgAuditLog.create({
-              data: {
-                organizationId: orgId,
-                actorMembershipId: access.member.id,
-                targetMembershipId: memberId,
-                category: "MEMBER",
-                action,
-                description:
-                  action === AUDIT_ACTIONS.MEMBER.ROLE_CHANGE
-                    ? `Role: ${current.role} → ${patch.role}`
-                    : `Status: ${current.status} → ${patch.status}`,
-                details: {
-                  from: {
-                    role: current.role,
-                    status: current.status,
-                  },
-                  to: {
-                    role: patch.role ?? current.role,
-                    status: patch.status ?? current.status,
-                  },
-                },
-              },
-            });
-          }
+          await auditMemberChange(tx, {
+            orgId,
+            actorMembershipId: access.member.id,
+            current,
+            updated,
+            patch,
+            roleChanged,
+            statusChanged,
+          });
 
           // P3 email twin: a role change notifies the affected member. Staged
           // inside this transaction so the notice row commits with the change

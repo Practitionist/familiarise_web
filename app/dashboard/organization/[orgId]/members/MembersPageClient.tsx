@@ -353,6 +353,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // #1851 decision 6 — only an OWNER grants or removes these roles.
   const ownerOnly = (r: MemberRole) =>
     OWNER_ONLY_ROLES.has(r) && !isAtLeast("OWNER");
+  const removeBlockedReason = (m: MemberRow): string | undefined => {
+    if (isOwnRow(m)) return "You cannot remove yourself";
+    if (ownerOnly(m.role)) {
+      return "Only an Owner can remove an Owner, Maintainer or Billing admin";
+    }
+    return undefined;
+  };
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
@@ -424,16 +431,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
            <button> elements, so a title on the button
            itself is silently dropped. The span owns
            the title and receives hover regardless. */}
-      <span
-        title={
-          isOwnRow(m)
-            ? "You cannot remove yourself"
-            : ownerOnly(m.role)
-              ? "Only an Owner can remove an Owner, Maintainer or Billing admin"
-              : undefined
-        }
-        className="inline-flex"
-      >
+      <span title={removeBlockedReason(m)} className="inline-flex">
         <Button
           variant="ghost"
           size="icon"

@@ -231,84 +231,15 @@ export async function createOrReprovisionScimUser(
     });
 
     if (existingMembership) {
-      // Terminal tombstones are admin/compliance-owned — an IdP reprovision
-      // heartbeat must not resurrect a REMOVED/ERASED membership (N3).
-      if (TOMBSTONES.has(existingMembership.status)) {
-        return tombstoneConflict(existingMembership.status);
-      }
-      const org = await tx.organization.findUniqueOrThrow({
-        where: { id: organizationId },
-        select: { canHost: true, canSponsor: true },
-      });
-      const roleChanged = existingMembership.role !== targetRole;
-      if (roleChanged) {
-        await assertRoleChangeAllowed(tx, {
-          membership: existingMembership,
-          to: targetRole,
-          actor: IDP_ACTOR,
-          org,
-        });
-      }
-      const statusChanged = await applyScimStatus(
-        tx,
-        existingMembership,
-        active ? "ACTIVE" : "SUSPENDED",
-      );
-      // The guard already required an expert profile for a move into EXPERT,
-      // so the role effects never create one on a reprovision.
-      const roleEffects = roleChanged
-        ? await applyMembershipRoleEffects(tx, {
-            userId: user.id,
-            role: targetRole,
-          })
-        : null;
-      const updated = await tx.membership.update({
-        where: { id: existingMembership.id },
-        data: {
-          role: targetRole,
-          externalScimId:
-            externalId ?? existingMembership.externalScimId ?? null,
-          ...(roleEffects && {
-            consulteeProfileId: roleEffects.consulteeProfileId,
-            consultantProfileId: roleEffects.consultantProfileId,
-            payoutRecipient: roleEffects.payoutRecipient,
-          }),
-        },
-      });
-      // #789 review — only a real move invalidates the session, so the
-      // common idempotent heartbeat pays no sessionGeneration write.
-      if (roleChanged) {
-        // Both sides: the profile the old EXPERT row held, and the one a move
-        // into EXPERT now holds.
-        await recomputeIndependenceAcross(tx, [existingMembership, updated]);
-        if (!statusChanged) await bumpUserSessionGeneration(tx, user.id);
-      }
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId,
-          targetMembershipId: updated.id,
-          category: "SYSTEM",
-          action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_UPDATED,
-          description: `SCIM: updated ${emailLower} (role=${targetRole}, active=${active})`,
-          details: {
-            userName: emailLower,
-            from: {
-              role: existingMembership.role,
-              status: existingMembership.status,
-            },
-            role: targetRole,
-            active,
-            groupNames,
-          },
-        },
-      });
-      return {
-        membershipId: updated.id,
+      return reprovisionScimMembership(tx, {
+        membership: existingMembership,
         userId: user.id,
-        externalScimId: updated.externalScimId,
-        role: updated.role,
-        status: updated.status,
-      } satisfies ScimUserOpResult;
+        emailLower,
+        targetRole,
+        active,
+        externalId,
+        groupNames,
+      });
     }
 
     // #675 parity with the invite path — an unverified org is hard-capped at
@@ -386,6 +317,105 @@ export async function createOrReprovisionScimUser(
       status: created.status,
     } satisfies ScimUserOpResult;
   });
+}
+
+/**
+ * A SCIM create for someone already in the org is a reprovision: the guard
+ * decides whether the mapped role and the active flag may apply, and a
+ * REMOVED or ERASED row is never revived (N3).
+ */
+async function reprovisionScimMembership(
+  tx: Tx,
+  args: {
+    membership: GuardedMembership & { externalScimId: string | null };
+    userId: string;
+    emailLower: string;
+    targetRole: GuardedMembership["role"];
+    active: boolean;
+    externalId?: string;
+    groupNames: string[];
+  },
+): Promise<ScimUserOpResult | ScimOperationError> {
+  const { membership, userId, emailLower, targetRole, active, externalId } =
+    args;
+  const { organizationId } = membership;
+  // Terminal tombstones are admin/compliance-owned — an IdP reprovision
+  // heartbeat must not resurrect a REMOVED/ERASED membership (N3).
+  if (TOMBSTONES.has(membership.status)) {
+    return tombstoneConflict(membership.status);
+  }
+  const org = await tx.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { canHost: true, canSponsor: true },
+  });
+  const roleChanged = membership.role !== targetRole;
+  if (roleChanged) {
+    await assertRoleChangeAllowed(tx, {
+      membership,
+      to: targetRole,
+      actor: IDP_ACTOR,
+      org,
+    });
+  }
+  const statusChanged = await applyScimStatus(
+    tx,
+    membership,
+    active ? "ACTIVE" : "SUSPENDED",
+  );
+  // The guard already required an expert profile for a move into EXPERT,
+  // so the role effects never create one on a reprovision.
+  const roleEffects = roleChanged
+    ? await applyMembershipRoleEffects(tx, {
+        userId,
+        role: targetRole,
+      })
+    : null;
+  const updated = await tx.membership.update({
+    where: { id: membership.id },
+    data: {
+      role: targetRole,
+      externalScimId: externalId ?? membership.externalScimId ?? null,
+      ...(roleEffects && {
+        consulteeProfileId: roleEffects.consulteeProfileId,
+        consultantProfileId: roleEffects.consultantProfileId,
+        payoutRecipient: roleEffects.payoutRecipient,
+      }),
+    },
+  });
+  // #789 review — only a real move invalidates the session, so the
+  // common idempotent heartbeat pays no sessionGeneration write.
+  if (roleChanged) {
+    // Both sides: the profile the old EXPERT row held, and the one a move
+    // into EXPERT now holds.
+    await recomputeIndependenceAcross(tx, [membership, updated]);
+    if (!statusChanged) await bumpUserSessionGeneration(tx, userId);
+  }
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      targetMembershipId: updated.id,
+      category: "SYSTEM",
+      action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_UPDATED,
+      description: `SCIM: updated ${emailLower} (role=${targetRole}, active=${active})`,
+      details: {
+        userName: emailLower,
+        from: {
+          role: membership.role,
+          status: membership.status,
+        },
+        role: targetRole,
+        active,
+        groupNames: args.groupNames,
+      },
+    },
+  });
+  return {
+    membershipId: updated.id,
+    userId,
+    externalScimId: updated.externalScimId,
+    role: updated.role,
+    status: updated.status,
+  } satisfies ScimUserOpResult;
 }
 
 /**
