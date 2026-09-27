@@ -202,12 +202,17 @@ describe("invite and accept gates", () => {
     });
     // A seat cancelled by an earlier removal is restored on re-accept, because
     // createMany skips the existing row (#1580 §3 E2E).
+    // #1846 SM-B9 — the revive widens the map's from-set explicitly.
     expect(tx.appointmentParticipant.updateMany).toHaveBeenCalledWith({
       where: {
-        appointmentId: { in: ["appt-1"] },
-        userId: "u-new",
-        role: "COLLABORATOR",
-        status: "CANCELLED",
+        AND: [
+          {
+            appointmentId: { in: ["appt-1"] },
+            userId: "u-new",
+            role: "COLLABORATOR",
+          },
+          { status: { in: ["CANCELLED"] } },
+        ],
       },
       data: { status: "CONFIRMED" },
     });

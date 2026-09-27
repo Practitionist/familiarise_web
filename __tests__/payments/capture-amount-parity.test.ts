@@ -280,8 +280,9 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
       trialId: "trial1",
     });
 
+    // #1846 SM-B13 — the CAS now rides transitionTrial's from-set.
     expect(trialUpdateMany.mock.calls[0][0]).toMatchObject({
-      where: { id: "trial1", status: "AWAITING_PAYMENT" },
+      where: { id: "trial1", status: { in: ["AWAITING_PAYMENT"] } },
     });
     expect(occurrenceFindMany).not.toHaveBeenCalled();
     expect(refundBookingPayment).toHaveBeenCalledWith(

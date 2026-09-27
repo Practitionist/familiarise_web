@@ -61,6 +61,14 @@ interface SeatWhere {
 }
 
 function matchSeats(where: Row): SeatRow[] {
+  // #1846 SM-B9 — transitionParticipant ANDs the map's from-set with the
+  // caller's scope; every arm must match.
+  const arms = (where as { AND?: Row[] }).AND;
+  if (arms) {
+    return state.seats.filter((seat) =>
+      arms.every((arm) => matchSeats(arm).includes(seat)),
+    );
+  }
   const w = where as SeatWhere;
   return state.seats.filter((seat) => {
     let match = true;
