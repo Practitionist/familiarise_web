@@ -10,8 +10,14 @@ import {
 } from "@/components/support/useSupportThread";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 type ThreadState = ReturnType<typeof useSupportThread>;
+type Option = { id: string; label: string; escalates?: boolean };
+
+/** Enough for staff to act on without a round trip back to the user. */
+const MIN_DESCRIPTION = 20;
 
 function Handoff() {
   return (
@@ -30,9 +36,9 @@ function OptionButtons({
   disabled,
   onPick,
 }: Readonly<{
-  options: { id: string; label: string }[];
+  options: Option[];
   disabled: boolean;
-  onPick: (option: { id: string; label: string }) => void;
+  onPick: (option: Option) => void;
 }>) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -52,12 +58,74 @@ function OptionButtons({
 }
 
 /**
+ * #1527 — an escalating chip opens a ticket for staff, so it never fires on
+ * the click: the user describes the problem first, and only "Send" hands off.
+ */
+function EscalateStep({
+  option,
+  disabled,
+  onSend,
+  onBack,
+}: Readonly<{
+  option: Option;
+  disabled: boolean;
+  onSend: (description: string) => void;
+  onBack: () => void;
+}>) {
+  const [text, setText] = useState("");
+  const short = text.trim().length < MIN_DESCRIPTION;
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!short) onSend(text.trim());
+      }}
+    >
+      <p className="text-sm">
+        <span className="text-muted-foreground">You chose: </span>
+        {option.label}
+      </p>
+      <Label htmlFor="support-escalate-description">
+        Tell us what happened
+      </Label>
+      <Textarea
+        id="support-escalate-description"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={2000}
+        rows={4}
+        required
+        disabled={disabled}
+        placeholder="What went wrong, and what would you like us to do?"
+      />
+      <p className="text-[11px] text-muted-foreground">
+        At least {MIN_DESCRIPTION} characters. Our support team will read this
+        and reply here and by email.
+      </p>
+      <div className="flex items-center justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+          Back
+        </Button>
+        <Button type="submit" size="sm" disabled={disabled || short}>
+          Send to the support team
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
  * #1527 — the session conversation on the request page: the guided flow's
  * steps inline (options at the server's cursor), free text, and the hand-off
  * to our team, with the behaviour the old "Get help" drawer had.
  */
 export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
   const [text, setText] = useState("");
+  const [picked, setPicked] = useState<Option | null>(null);
+  // A poll that moves the cursor retires the chip, and the step with it.
+  const escalating =
+    picked && t.options.some((o) => o.id === picked.id) ? picked : null;
   const endRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -69,13 +137,32 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
 
   const controls = () => {
     if (t.started) {
+      if (escalating) {
+        return (
+          <EscalateStep
+            option={escalating}
+            disabled={t.turnPending}
+            onBack={() => setPicked(null)}
+            onSend={(description) => {
+              const sent = t.submitTurn({
+                chosenOptionId: escalating.id,
+                chosenLabel: escalating.label,
+                userMessage: description,
+              });
+              if (sent) setPicked(null);
+            }}
+          />
+        );
+      }
       return (
         t.options.length > 0 && (
           <OptionButtons
             options={t.options}
             disabled={t.turnPending}
             onPick={(o) =>
-              t.submitTurn({ chosenOptionId: o.id, chosenLabel: o.label })
+              o.escalates
+                ? setPicked(o)
+                : t.submitTurn({ chosenOptionId: o.id, chosenLabel: o.label })
             }
           />
         )
@@ -193,37 +280,40 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
 
       <div className="space-y-3 border-t border-border p-4">
         {controls()}
-        {t.isClosed ? (
-          <p className="text-sm text-muted-foreground">
-            This conversation is closed. Start a new request from Support if you
-            still need help.
-          </p>
-        ) : (
-          <form
-            className="flex items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const msg = text.trim();
-              if (msg && t.submitTurn({ userMessage: msg })) setText("");
-            }}
-          >
-            <Input
-              aria-label="Message"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={t.isHuman ? "Message our team…" : "Type a message…"}
-              disabled={t.turnPending}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              disabled={t.turnPending || !text.trim()}
-              aria-label="Send"
+        {!escalating &&
+          (t.isClosed ? (
+            <p className="text-sm text-muted-foreground">
+              This conversation is closed. Start a new request from Support if
+              you still need help.
+            </p>
+          ) : (
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const msg = text.trim();
+                if (msg && t.submitTurn({ userMessage: msg })) setText("");
+              }}
             >
-              <Send className="h-4 w-4" />
-            </Button>
-          </form>
-        )}
+              <Input
+                aria-label="Message"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={
+                  t.isHuman ? "Message our team…" : "Type a message…"
+                }
+                disabled={t.turnPending}
+              />
+              <Button
+                type="submit"
+                size="icon"
+                disabled={t.turnPending || !text.trim()}
+                aria-label="Send"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </form>
+          ))}
       </div>
     </div>
   );

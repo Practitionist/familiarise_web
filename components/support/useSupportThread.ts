@@ -23,7 +23,8 @@ export type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 interface MessageMetadata {
   /** The flow node this message was emitted from — the option cursor. */
   nodeId?: string;
-  options?: { id: string; label: string }[];
+  /** `escalates`: the chip hands off to staff, so it asks for a description first. */
+  options?: { id: string; label: string; escalates?: boolean }[];
 }
 
 export interface ThreadMessage {
