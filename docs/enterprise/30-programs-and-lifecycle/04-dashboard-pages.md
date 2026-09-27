@@ -251,8 +251,8 @@ readable projection of it.
 | `/billing`     | ✅      | —    | ✅     | `billing.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `billing.manage` (OWNER, BILLING_ADMIN) | yes (if `canSponsor`) | BillingAccount summary + wallet (`WalletTab`) + invoices — one unified surface. The former extra `fundingSource=WALLET` sidebar branch was removed as unreachable (a BillingAccount only exists when `canSponsor=true`). |
 | `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |
 | `/analytics`   | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation. |
-| `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | yes | Branding + policy. |
-| `/settings?tab=sso` | ✅ | ✅ | ✅ | **OWNER** (rank floor — genuine hierarchy) | tab | Tab on Settings. Previously had no sidebar entry at all and was reachable only from a link inside the settings page. |
+| `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | no — avatar menu ("<Org> settings") | Branding + policy. As of PR #1842 (part of #1527), org settings is no longer a sidebar row: it opens from the header avatar menu, shown only to a role holding at least one section, and renders through `SettingsLayout` with one URL per section rather than `?tab=` state; see `docs/decisions/2026-09-27-dashboard-shell-and-context-switcher.md`. |
+| `/settings/sso` | ✅ | ✅ | ✅ | **OWNER** (rank floor — genuine hierarchy) | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
 | `/contracts`   | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER) | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift. |
 | `/purchase-orders` | ✅  | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO` | Receipt icon. |
 | `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.manage` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
@@ -261,9 +261,14 @@ readable projection of it.
 > `OrganizationPlan` model) is gone. Discovery now reads each per-type
 > plan's `OrgPlanVisibility` directly — see
 > [public pages & discovery](05-public-pages-and-discovery.md). The
-> operations surfaces (`/appointments`, `/documents`, `/recordings`)
-> all share the single `operations.read`
-> grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API;
+> operations surface `/appointments` uses the single `operations.read`
+> grant (OWNER, MAINTAINER, MANAGER, SUPPORT) at sidebar, page, and API.
+> `/documents` and `/recordings` moved out from under that grant in PR #1842
+> (part of #1527): both live in a sidebar Library group open to every
+> ACTIVE or SUSPENDED member for their own sessions (`?scope=mine`), and
+> `operations.read` now gates only the org-wide oversight view
+> (`?scope=everyone`), metadata only per ADR 20 — see
+> `docs/decisions/2026-09-27-org-role-matrix.md`.
 > `/reimbursements` uses `reimbursements.read` plus the
 > `fundingSource=PERSONAL` structural gate; `/audit` uses `audit.read`
 > (OWNER, MAINTAINER, SUPPORT) with the CSV export kept at a MAINTAINER

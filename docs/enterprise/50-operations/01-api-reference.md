@@ -193,17 +193,25 @@ These are the host-side money routes for organizations that earn — rate cards,
 
 ## Reimbursements, disputes, documents (read surfaces)
 
-These are read-only roster endpoints — reimbursements, disputes, documents, trials, appointments, and recordings — all gated at MANAGER and none of them emit audit rows.
+These are read-only roster endpoints — reimbursements, disputes, trials, and appointments — all gated at MANAGER and none of them emit audit rows. Documents and recordings are no longer MANAGER-only: PR #1842 (part of #1527) turned them into the org Library, open to every ACTIVE or SUSPENDED member for their own sessions, with an `operations.read` scope for the org-wide oversight view.
 
 | Path                                               | Verb  | Min role | Purpose                      | Audit actions |
 | -------------------------------------------------- | ----- | -------- | ---------------------------- | ------------- |
 | `/api/organizations/[orgId]/reimbursements`        | `GET` | MANAGER  | Reimbursement roster         | —             |
 | `/api/organizations/[orgId]/reimbursements/export` | `GET` | MANAGER  | CSV export of reimbursements | —             |
 | `/api/organizations/[orgId]/disputes`              | `GET` | MANAGER  | Dispute roster (org-scoped)  | —             |
-| `/api/organizations/[orgId]/documents`             | `GET` | MANAGER  | Org document list            | —             |
 | `/api/organizations/[orgId]/trials`                | `GET` | MANAGER  | Trial roster                 | —             |
 | `/api/organizations/[orgId]/appointments`          | `GET` | MANAGER  | Org appointment feed         | —             |
-| `/api/organizations/[orgId]/recordings`            | `GET` | MANAGER  | Stream recording roster      | —             |
+
+## Library and org support tickets
+
+The org Library (Documents · Recordings) pages a session's files by `scope`, so both routes below accept the same query shape: `scope` (`mine`, the default, or `everyone`), `q`, `kind`, `from`, `to` (`YYYY-MM-DD`), `source`, and `page`. `scope=mine` is open to any ACTIVE or SUSPENDED member of the org, reading only their own sessions with full file URLs; `scope=everyone` requires `operations.read` and returns metadata only per ADR 20. The recordings read's Mine scope applies the #1819 late-join rule through the extractor shared with the consultee resources read.
+
+| Path                                                | Verb  | Min role                                             | Purpose                                                                                        | Audit actions |
+| ---------------------------------------------------- | ----- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------- |
+| `/api/organizations/[orgId]/documents`               | `GET` | active member (`scope=mine`) · `operations.read` (`scope=everyone`) | Org Library documents, paged by session                                                          | —             |
+| `/api/organizations/[orgId]/recordings`              | `GET` | active member (`scope=mine`) · `operations.read` (`scope=everyone`) | Org Library recordings, paged by session, late-join rule applied on `scope=mine`                 | —             |
+| `/api/organizations/[orgId]/support-tickets`         | `GET` | `supportRequests.org` (`operations.read` OR `billing.read`) | The org Support page's "Organization requests" tab — subject, category, status, requester name only; `page`/`pageSize` | —             |
 
 ## SSO and domains
 

@@ -18,6 +18,12 @@ The consequence was concrete, not cosmetic. A consultant who booked a session wi
 
 The header, redesigned twice after this PR opened following an owner review of a Cloudflare dashboard screenshot, carries — right to left — the tree's persona call-to-action, a **Help ▾** menu, the notification bell, and an avatar menu holding the signed-in person's name, email, role, a Settings link and Sign out. A standalone sidebar-collapse toggle (bound to Ctrl/⌘ \\) sits to the left of the breadcrumb trail, ahead of everything else in the header.
 
+A later commit on this PR moved organization and workspace settings out of the sidebar and into that same avatar menu, so the menu now also carries "<Org name> settings" for a role holding at least one section on `ORG_SETTINGS_SECTIONS`, or "Workspace settings" inside an org-workspace shell; the org and workspace sidebars no longer have a settings row of their own. Both settings surfaces render through the shared `SettingsLayout` primitive, one URL per section, and old `?tab=<key>` links 308-redirect to the matching section.
+
+### Find
+
+A further commit added "Find," a quick-jump box rendered just under the `ContextSwitcher` in every sidebar (an icon on the collapsed rail, a row in the mobile Menu sheet), opened either by clicking it or by Ctrl/⌘ K from anywhere in the shell — Ctrl/⌘ \\ is unchanged and still toggles the rail. `lib/dashboard/nav/find-index.ts` builds the index from the same nav-builder output the sidebar renders, plus the settings registries and the avatar menu's settings links, so Find can only ever surface a page or settings section the viewer's own sidebar and gates already allow. It is pages only, matched on label and a small synonym table, with no record search; `components/dashboard/FindDialog.tsx` presents it as a `ResponsiveModal` with a labelled, keyboard-navigable combobox.
+
 ### One switcher
 
 `components/dashboard/ContextSwitcher.tsx`, evolved from the existing `OrganizationSwitcher`, renders at the top of every sidebar and again inside the mobile Menu sheet, fed by `resolveDashboardFacets()` in `lib/labels/personal-dashboard.ts`. It groups the facets available to the signed-in person as:
