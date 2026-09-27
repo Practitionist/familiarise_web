@@ -16,6 +16,7 @@ import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { fetchConsulteeDetails } from "@/lib/user";
 import { PERSONAL_SIDE_LABEL } from "@/lib/labels/personal-dashboard";
 import { UserProvider } from "./UserContext";
+import { consulteeSettingsGroups } from "./(features)/settings/settings";
 
 const PREFETCH_SUFFIXES = ["home"];
 
@@ -46,12 +47,17 @@ export default function ConsulteeLayout(props: Readonly<PageProps>) {
 function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
   const nav = useMemo(() => buildConsulteeNav(consulteeId), [consulteeId]);
+  const settingsGroups = useMemo(
+    () => consulteeSettingsGroups(consulteeId),
+    [consulteeId],
+  );
   const badges = usePersonalNavBadges({});
 
   return (
     <PersonalDashboardLayoutCore
       routeParam={consulteeId}
       nav={nav}
+      settingsGroups={settingsGroups}
       badges={badges}
       chipRole={PERSONAL_SIDE_LABEL.consultee}
       identityFallbackName={PERSONAL_SIDE_LABEL.consultee}

@@ -283,6 +283,8 @@ export interface CollapsibleSidebarProps {
   pathname: string;
   /** Top slot — the ContextSwitcher (#1527 Q1). */
   header?: ReactNode;
+  /** Under the header: the Find entry point (#1527). */
+  find?: ReactNode;
   /** From the shell's `usePersistedCollapse`; the toggle is in the header. */
   collapsed: boolean;
   className?: string;
@@ -297,6 +299,7 @@ export function CollapsibleSidebar({
   basePath,
   pathname,
   header,
+  find,
   collapsed,
   className,
 }: Readonly<CollapsibleSidebarProps>) {
@@ -313,6 +316,14 @@ export function CollapsibleSidebar({
         <div className="flex h-14 items-center border-b border-border px-2">
           <div className="w-full min-w-0">{header}</div>
         </div>
+
+        {find && (
+          <div
+            className={cn("pt-3", collapsed ? "flex justify-center" : "px-3")}
+          >
+            {find}
+          </div>
+        )}
 
         <nav
           aria-label="Dashboard"

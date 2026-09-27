@@ -21,6 +21,7 @@ import { usePrefetchNavPaths } from "@/hooks/usePrefetchNavPaths";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   buildWorkspaceNav,
+  workspaceSettingsGroups,
   WORKSPACE_PAGE_LABELS,
 } from "@/lib/dashboard/nav/workspace";
 
@@ -78,6 +79,7 @@ export function OrgWorkspaceShell({
     <DashboardShell
       kind="workspace"
       nav={nav}
+      findSettings={workspaceSettingsGroups(orgWorkspaceId)}
       switcher={<ContextSwitcher />}
       account={{
         name: displayName,

@@ -32,6 +32,10 @@ import {
 } from "@/components/verification/VerificationPendingOverlay";
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
 import { useVerificationStatus } from "./hooks/useVerificationStatus";
+import {
+  settingsSectionGroups,
+  settingsSectionHref,
+} from "./(features)/settings/settings";
 
 const PREFETCH_SUFFIXES = ["home", "appointments", "requests"];
 
@@ -286,6 +290,20 @@ export default function ConsultantLayout(props: Readonly<PageProps>) {
 function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consultantId } = use(params);
   const nav = useMemo(() => buildConsultantNav(consultantId), [consultantId]);
+  const settingsGroups = useMemo(
+    () =>
+      settingsSectionGroups().map((group) => ({
+        title: group.title,
+        sections: group.sections.map((section) => ({
+          label: section.label,
+          href: settingsSectionHref(
+            `/dashboard/consultant/${consultantId}`,
+            section,
+          ),
+        })),
+      })),
+    [consultantId],
+  );
 
   const badges = usePersonalNavBadges({
     requestsForConsultantId: consultantId,
@@ -295,6 +313,7 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     <PersonalDashboardLayoutCore<ConsultantDetails>
       routeParam={consultantId}
       nav={nav}
+      settingsGroups={settingsGroups}
       badges={badges}
       chipRole={PERSONAL_SIDE_LABEL.consultant}
       identityFallbackName={PERSONAL_SIDE_LABEL.consultant}

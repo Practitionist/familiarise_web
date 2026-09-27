@@ -38,6 +38,7 @@ import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { personalAccessDecision } from "@/lib/dashboard/personal-access";
 import { fetchUserDetails } from "@/lib/user";
 import type { DashboardNav } from "@/lib/dashboard/nav/types";
+import type { FindSettingsGroup } from "@/lib/dashboard/nav/find-index";
 
 /** Minimal user shape the core reads. Fetchers return richer types. */
 export interface PersonalDashboardUser {
@@ -68,6 +69,8 @@ export interface PersonalDashboardCoreProps<P> {
   routeParam: string;
   /** Pure nav from `lib/dashboard/nav/{consultant,consultee}.ts`. */
   nav: DashboardNav;
+  /** This tree's Settings sections, listed in Find for the owner (#1527). */
+  settingsGroups?: FindSettingsGroup[];
   /** Counts keyed by `NavItem.badgeKey`. */
   badges?: Record<string, number | undefined>;
   /** Avatar-menu role ("Expert" / "Learner") + identity fallback name. */
@@ -210,6 +213,7 @@ function OperatorViewBanner({
 export function PersonalDashboardLayoutCore<P>({
   routeParam,
   nav,
+  settingsGroups,
   badges,
   chipRole,
   identityFallbackName,
@@ -499,6 +503,8 @@ export function PersonalDashboardLayoutCore<P>({
     <DashboardShell
       kind="personal"
       nav={nav}
+      // An operator inspecting someone's dashboard can't open their settings.
+      findSettings={ownsProfile ? settingsGroups : undefined}
       badges={badges}
       switcher={<ContextSwitcher />}
       account={{

@@ -32,6 +32,7 @@ import {
   HeaderCta,
 } from "@/components/dashboard/DashboardShellParts";
 import { isActiveRoute } from "@/components/dashboard/route-active";
+import { FindButton } from "@/components/dashboard/FindDialog";
 import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 
 export interface MobileNavProps {
@@ -39,6 +40,8 @@ export interface MobileNavProps {
   groups: CollapsibleSidebarGroup[];
   /** Personal / back-office Settings (a nav-relative row). */
   settings?: CollapsibleSidebarItem;
+  /** Opens Find (#1527); the sheet closes first. */
+  onOpenFind?: () => void;
   /** #1527 — the avatar menu's "<Org> settings", repeated here. */
   orgSettings?: { label: string; href: string } | null;
   /** The header Help menu's private rows, repeated here (#1527). */
@@ -69,6 +72,7 @@ export function MobileNav({
   groups,
   settings,
   orgSettings,
+  onOpenFind,
   support,
   tabs,
   pinnedCta,
@@ -160,6 +164,14 @@ export function MobileNav({
             Switch dashboard, navigate, or sign out.
           </SheetDescription>
           <div className="pr-8">{switcher}</div>
+          {onOpenFind && (
+            <FindButton
+              onOpen={() => {
+                close();
+                onOpenFind();
+              }}
+            />
+          )}
           <SidebarNavGroups
             groups={groups}
             basePath={basePath}

@@ -36,6 +36,7 @@ import {
 } from "@/lib/dashboard/nav/organization";
 import {
   canOpenOrgSettings,
+  orgSettingsGroups,
   orgSettingsHref,
   orgSettingsLabel,
 } from "@/lib/dashboard/org-settings-sections";
@@ -223,11 +224,17 @@ function OrgDashboardShellInner({
     org.organization.canHost,
   );
   const fundingSource = org.organization.fundingSource;
+  const settingsOpen =
+    org.membership.status === "ACTIVE" &&
+    canOpenOrgSettings(org.membership.role);
 
   return (
     <DashboardShell
       kind="organization"
       nav={nav}
+      findSettings={
+        settingsOpen ? orgSettingsGroups(orgId, org.membership.role) : undefined
+      }
       switcher={
         <ContextSwitcher
           current={{
@@ -243,14 +250,12 @@ function OrgDashboardShellInner({
         roleLabel,
         settingsHref: session?.user ? accountSettingsHref(session.user) : null,
         // #1527 — org Settings left the rail; roles with no section get none.
-        orgSettings:
-          org.membership.status === "ACTIVE" &&
-          canOpenOrgSettings(org.membership.role)
-            ? {
-                label: orgSettingsLabel(org.organization.name),
-                href: orgSettingsHref(orgId),
-              }
-            : null,
+        orgSettings: settingsOpen
+          ? {
+              label: orgSettingsLabel(org.organization.name),
+              href: orgSettingsHref(orgId),
+            }
+          : null,
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{

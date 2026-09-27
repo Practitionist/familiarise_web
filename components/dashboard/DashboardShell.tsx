@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { useCssVarHeight } from "@/components/dashboard/useCssVarHeight";
 import {
@@ -20,14 +20,24 @@ import {
   AccountMenu,
   HeaderCta,
   HelpMenu,
+  accountSettingsLinks,
   type DashboardAccount,
 } from "@/components/dashboard/DashboardShellParts";
+import {
+  FindButton,
+  FindDialog,
+  useFindShortcut,
+} from "@/components/dashboard/FindDialog";
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import NovuProvider from "@/providers/NovuProvider";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import type { DashboardNav, NavItem } from "@/lib/dashboard/nav/types";
+import {
+  buildFindIndex,
+  type FindSettingsGroup,
+} from "@/lib/dashboard/nav/find-index";
 
 export type DashboardShellKind =
   | "personal"
@@ -50,6 +60,8 @@ export interface DashboardShellProps {
   contextBar: Omit<DashboardContextBarProps, "rightSlot" | "leadingSlot">;
   /** Full-width strip above <main> (verification / org status). */
   banner?: ReactNode;
+  /** Settings sections Find lists beside the nav (#1527); none by default. */
+  findSettings?: FindSettingsGroup[];
   pathname: string;
   children: ReactNode;
 }
@@ -87,6 +99,7 @@ export function DashboardShell({
   onSignOut,
   contextBar,
   banner,
+  findSettings,
   pathname,
   children,
 }: Readonly<DashboardShellProps>) {
@@ -110,6 +123,20 @@ export function DashboardShell({
   );
   useSidebarShortcut(toggleSidebar);
 
+  // #1527 — Find lists exactly what the rail and the settings registries do.
+  const [findOpen, setFindOpen] = useState(false);
+  const openFind = useCallback(() => setFindOpen(true), []);
+  useFindShortcut(openFind);
+  const findEntries = useMemo(
+    () =>
+      buildFindIndex({
+        nav,
+        settings: findSettings,
+        account: accountSettingsLinks(account),
+      }),
+    [nav, findSettings, account],
+  );
+
   return (
     <NovuProvider>
       {/* Clips the document so a tall page cannot window-scroll the context
@@ -123,6 +150,7 @@ export function DashboardShell({
             pathname={pathname}
             collapsed={collapsed}
             header={switcher}
+            find={<FindButton onOpen={openFind} collapsed={collapsed} />}
           />
         </div>
 
@@ -168,6 +196,7 @@ export function DashboardShell({
             groups={groups}
             settings={nav.settings}
             orgSettings={account.orgSettings}
+            onOpenFind={openFind}
             support={nav.support}
             tabs={nav.mobileTabs}
             pinnedCta={nav.pinnedCta}
@@ -177,6 +206,11 @@ export function DashboardShell({
           />
         </div>
       </div>
+      <FindDialog
+        open={findOpen}
+        onOpenChange={setFindOpen}
+        entries={findEntries}
+      />
     </NovuProvider>
   );
 }
