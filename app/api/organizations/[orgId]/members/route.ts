@@ -18,9 +18,11 @@ import { z } from "zod";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import prisma from "@/lib/prisma";
 import {
+  MEMBER_EXPERT_SELECT,
   buildOrgMembersQuery,
   toRoleCounts,
 } from "@/lib/data/org-members-query";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { MembersListQuerySchema } from "@/schemas/organizations";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
@@ -75,16 +77,7 @@ export async function GET(
         // including them here means the consultants page gets
         // `headline / rating / isVerified` in one round-trip without
         // needing a separate /consultants endpoint.
-        consultantProfile: {
-          select: {
-            id: true,
-            headline: true,
-            // The published two-track scores, never the raw mean (#1300).
-            publishedRatingOneToOne: true,
-            publishedRatingGroup: true,
-            isVerified: true,
-          },
-        },
+        consultantProfile: { select: MEMBER_EXPERT_SELECT },
         consulteeProfile: {
           select: { id: true },
         },
@@ -102,8 +95,13 @@ export async function GET(
     }),
   ]);
 
+  // #1527 — payout routing is finance data: `payouts.read` holders only.
+  // members.manage ⊂ payouts.read, so every editor still receives it.
+  const canSeePayout = hasOrgPermission(access.member.role, "payouts.read");
   return NextResponse.json({
-    data,
+    data: canSeePayout
+      ? data
+      : data.map((m) => ({ ...m, payoutRecipient: undefined })),
     meta: { total, page, perPage },
     counts: toRoleCounts(groups),
   });

@@ -52,6 +52,20 @@ export function buildOrgMembersQuery(orgId: string, query: MembersListQuery) {
   };
 }
 
+/**
+ * #1527 — what an EXPERT row shows under the name (headline, 1:1 score and its
+ * count, verified). Selected on the page's findMany, so one batched read.
+ */
+export const MEMBER_EXPERT_SELECT = {
+  id: true,
+  headline: true,
+  // The published two-track scores, never the raw mean (#1300).
+  publishedRatingOneToOne: true,
+  publishedRatingGroup: true,
+  ratedClientsOneToOne: true,
+  isVerified: true,
+} satisfies Prisma.ConsultantProfileSelect;
+
 export function toRoleCounts(
   groups: { role: MemberRole; _count: { _all: number } }[],
 ): Partial<Record<MemberRole, number>> {

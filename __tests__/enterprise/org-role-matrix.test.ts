@@ -362,6 +362,8 @@ describe("API guard ↔ page/tab gate parity (#1527)", () => {
       "members.directory",
       `${DASH}/members/MembersTabs.tsx`,
     ],
+    // #1527 — payout routing on member rows is shaped by payouts.read.
+    [`${API}/members/route.ts`, "payouts.read", `${DASH}/members/page.tsx`],
   ])("%s ↔ %s", (route, key, gate) => {
     expect(read(route)).toContain(`"${key}"`);
     expect(read(gate)).toContain(`"${key}"`);

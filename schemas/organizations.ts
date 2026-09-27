@@ -128,10 +128,22 @@ export const MemberRowSchema = z.object({
   memberId: z.string().optional(),
   role: MemberRoleSchema,
   status: MemberStatusSchema,
-  // #729 — payout routing for EXPERT members (SELF / ORGANIZATION). Defaulted
-  // for non-host rows; the edit dialog only surfaces the control for EXPERTs.
-  payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).default("SELF"),
+  // #729 — payout routing for EXPERT members (SELF / ORGANIZATION). Absent
+  // unless the viewer holds `payouts.read` (#1527): never default it, or an
+  // edit would write SELF over ORGANIZATION.
+  payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).optional(),
   createdAt: z.string(),
+  // #1527 — the EXPERT row's secondary line.
+  consultantProfile: z
+    .object({
+      headline: z.string().nullable(),
+      publishedRatingOneToOne: z.number().nullable(),
+      publishedRatingGroup: z.number().nullable(),
+      ratedClientsOneToOne: z.number().int().nonnegative(),
+      isVerified: z.boolean(),
+    })
+    .nullable()
+    .optional(),
   user: z.object({
     id: z.string(),
     name: z.string().nullable(),

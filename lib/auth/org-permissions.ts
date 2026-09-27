@@ -29,8 +29,6 @@ export type OrgSurface =
   | "members.read"
   | "members.manage"
   | "invitations.manage"
-  | "learners.read"
-  | "experts.read"
   // Floor for the Audit page/API = holds either category grant below; rows
   // are then filtered per grant (#1527 audit split).
   | "audit.read"
@@ -120,8 +118,6 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   "members.read": OPERATIONS_READERS,
   "members.manage": GOVERNANCE,
   "invitations.manage": GOVERNANCE,
-  "learners.read": OPERATORS,
-  "experts.read": OPERATORS,
   // #1527 — split by category so SUPPORT reads people/ops history without a
   // single money figure, and BILLING_ADMIN reads the money trail it owns.
   "audit.read": new Set([...AUDIT_OPS_READERS, ...AUDIT_MONEY_READERS]),

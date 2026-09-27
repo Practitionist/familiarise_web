@@ -37,6 +37,7 @@ import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { useSession } from "@/lib/auth-client";
 import { useListParams } from "@/hooks/useListParams";
+import { displayedScore } from "@/lib/reviews-display";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { FilterBar } from "@/components/dashboard/FilterBar";
@@ -100,6 +101,34 @@ const STATUS_OPTIONS = MEMBER_LIST_STATUSES.map((value) => ({
   value,
   label: MEMBER_STATUS_LABEL[value],
 }));
+
+const PAYOUT_LABEL = { SELF: "Paid to self", ORGANIZATION: "Paid to org" };
+
+/** #1527 — what the retired Experts tab showed, under an EXPERT's name. */
+function ExpertLine({ member }: Readonly<{ member: MemberRow }>) {
+  const profile = member.consultantProfile;
+  // The published 1:1 score or nothing; null means not enough rated sessions.
+  const score = profile ? displayedScore(profile).score : null;
+  const parts = [
+    profile?.headline,
+    score === null
+      ? null
+      : `★ ${score.toFixed(1)} (${profile?.ratedClientsOneToOne ?? 0})`,
+    member.payoutRecipient && PAYOUT_LABEL[member.payoutRecipient],
+  ].filter(Boolean);
+  return (
+    <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+      {parts.length > 0 && (
+        <span className="max-w-xs truncate">{parts.join(" · ")}</span>
+      )}
+      <StatusBadge
+        size="sm"
+        label={profile?.isVerified ? "Verified" : "Unverified"}
+        tone={profile?.isVerified ? "success" : "neutral"}
+      />
+    </span>
+  );
+}
 
 async function fetchMembers(
   orgId: string,
@@ -285,7 +314,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     setEditMember(m);
     setEditRole(m.role);
     setEditStatus(m.status as MemberStatus);
-    setEditPayoutRecipient(m.payoutRecipient);
+    setEditPayoutRecipient(m.payoutRecipient ?? "SELF");
     setEditError(null);
   };
 
@@ -295,10 +324,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         role: editRole,
         status: editStatus,
         // #729 — only an EXPERT's payout routing is meaningful; the server
-        // ignores it for other roles anyway.
-        ...(editRole === "EXPERT" && {
-          payoutRecipient: editPayoutRecipient,
-        }),
+        // ignores it for other roles anyway. Never sent unless it was read.
+        ...(editRole === "EXPERT" &&
+          canSetPayout && {
+            payoutRecipient: editPayoutRecipient,
+          }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
@@ -309,6 +339,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   });
 
   const canManage = can("members.manage");
+  // The server omits payout routing without `payouts.read` (#1527).
+  const canSetPayout = editMember?.payoutRecipient !== undefined;
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
@@ -322,6 +354,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             {m.user.name ?? "—"}
           </span>
           <span className="text-xs text-muted-foreground">{m.user.email}</span>
+          {m.role === "EXPERT" && <ExpertLine member={m} />}
         </div>
       ),
     },
@@ -554,7 +587,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               </Select>
             </div>
             {/* #729 — payout routing, only meaningful for an EXPERT. */}
-            {editRole === "EXPERT" && (
+            {editRole === "EXPERT" && canSetPayout && (
               <div className="space-y-2">
                 <Label htmlFor="edit-payout">Payout recipient</Label>
                 <Select

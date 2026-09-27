@@ -15,6 +15,7 @@
 
 import prisma from "@/lib/prisma";
 import {
+  MEMBER_EXPERT_SELECT,
   buildOrgMembersQuery,
   toRoleCounts,
 } from "@/lib/data/org-members-query";
@@ -31,6 +32,7 @@ import type {
 export async function getOrgMembers(
   orgId: string,
   query: MembersListQuery,
+  opts: { canSeePayout: boolean },
 ): Promise<MembersListResult> {
   const { where, countsWhere, orderBy, skip, take } = buildOrgMembersQuery(
     orgId,
@@ -48,6 +50,7 @@ export async function getOrgMembers(
         payoutRecipient: true,
         createdAt: true,
         user: { select: { id: true, name: true, email: true, image: true } },
+        consultantProfile: { select: MEMBER_EXPERT_SELECT },
       },
       orderBy,
       skip,
@@ -69,9 +72,11 @@ export async function getOrgMembers(
       role: r.role,
       // The query's status filter never admits ERASED.
       status: r.status as MemberRow["status"],
-      payoutRecipient: r.payoutRecipient,
+      // Finance data: `payouts.read` only, as the members route shapes it.
+      ...(opts.canSeePayout && { payoutRecipient: r.payoutRecipient }),
       createdAt: r.createdAt.toISOString(),
       user: r.user,
+      consultantProfile: r.consultantProfile,
     })),
   };
 }

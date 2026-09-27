@@ -72,7 +72,10 @@ export default async function OrgMembersPage({
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: membersListKey(orgId, query),
-      queryFn: () => getOrgMembers(orgId, query),
+      queryFn: () =>
+        getOrgMembers(orgId, query, {
+          canSeePayout: hasOrgPermission(access.member.role, "payouts.read"),
+        }),
     }),
   ]);
 
