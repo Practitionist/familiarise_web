@@ -3,22 +3,16 @@
 import Link from "next/link";
 import { CalendarPlus, RotateCcw } from "lucide-react";
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
-import { AppointmentDocumentsList } from "@/components/appointments/detail/AppointmentDocumentsList";
+import { ConsulteeDocuments } from "@/components/appointments/detail/ConsulteeDocuments";
 import { Button } from "@/components/ui/button";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   isDeadOccurrence,
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
-import {
-  isCompletedLikeStatus,
-  isConfirmedStatus,
-} from "@/lib/appointments/status";
-import { supportsDocuments } from "@/lib/appointments/kind-capabilities";
 import { buildIcs } from "@/lib/appointments/ics";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
-import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
@@ -103,35 +97,9 @@ export default function DetailPageClient({
         backHref={`/dashboard/consultee/${consulteeId}/appointments`}
         joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
         renderExtraActions={(vm) => <ConsulteeExtraActions vm={vm} />}
-        renderDocuments={(vm) => {
-          if (!supportsDocuments(vm.kind)) return null;
-          // #1527 P0 — a finished booking keeps its files: read-only, the
-          // learner's uploads beside the expert's responses.
-          if (isCompletedLikeStatus(vm.status)) {
-            return (
-              <AppointmentDocumentsList
-                appointmentId={appointmentId}
-                viewer="consultee"
-              />
-            );
-          }
-          if (isConfirmedStatus(vm.status)) {
-            return (
-              <DocumentUpload
-                appointmentId={appointmentId}
-                appointmentTitle={vm.title}
-                appointmentType={
-                  vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()
-                }
-              />
-            );
-          }
-          return (
-            <p className="text-xs text-muted-foreground">
-              Documents can be shared once the booking is confirmed.
-            </p>
-          );
-        }}
+        renderDocuments={(vm) => (
+          <ConsulteeDocuments vm={vm} appointmentId={appointmentId} />
+        )}
       />
     </DisplayZoneProvider>
   );

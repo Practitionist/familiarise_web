@@ -4,13 +4,9 @@ import { useMemo } from "react";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { readOnlyAdapter } from "@/lib/appointments/adapter";
-import { DocumentUpload } from "@/components/appointments/DocumentUpload";
+import { ConsulteeDocuments } from "@/components/appointments/detail/ConsulteeDocuments";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
-import { isConfirmedStatus } from "@/lib/appointments/status";
-import { supportsDocuments } from "@/lib/appointments/kind-capabilities";
-
-/** Only these kinds carry documents; a webinar or class has no per-attendee file. */
 
 /**
  * Detail view for one of the member's own org-funded sessions.
@@ -73,19 +69,9 @@ export default function DetailPageClient({
       adapter={adapter}
       backHref={`/dashboard/organization/${orgId}/appointments`}
       joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
-      renderDocuments={(vm) =>
-        supportsDocuments(vm.kind) && isConfirmedStatus(vm.status) ? (
-          <DocumentUpload
-            appointmentId={appointmentId}
-            appointmentTitle={vm.title}
-            appointmentType={vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()}
-          />
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            Documents can be shared once the booking is confirmed.
-          </p>
-        )
-      }
+      renderDocuments={(vm) => (
+        <ConsulteeDocuments vm={vm} appointmentId={appointmentId} />
+      )}
     />
   );
 }
