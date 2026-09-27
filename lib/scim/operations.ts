@@ -43,7 +43,10 @@ import {
   type GuardedMembership,
   type MembershipActor,
 } from "@/lib/enterprise/membership-guards";
-import { transitionMembership } from "@/lib/enterprise/transitions";
+import {
+  IllegalTransitionError,
+  transitionMembership,
+} from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveRoleFromGroupNames } from "./resource-user";
 
@@ -76,7 +79,12 @@ async function guardedScimWrite<T>(
       }),
     );
   } catch (err) {
-    if (err instanceof MembershipGuardError) {
+    // #1854 — a lost status CAS (a concurrent removal or erasure) is a
+    // conflict for the IdP, not a 500.
+    if (
+      err instanceof MembershipGuardError ||
+      err instanceof IllegalTransitionError
+    ) {
       return { kind: "CONFLICT", detail: err.message };
     }
     throw err;
