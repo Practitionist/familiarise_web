@@ -486,34 +486,36 @@ export async function readOrgLibraryRecordings(
   const groups = await Promise.all(
     rows.map(async (row) => {
       const session = toSession(row, row.occurrences[0]?.startsAt ?? null);
-      const recordings: LibraryRecording[] = mine
-        ? (
-            await extractRecordings(
-              [row],
-              lateJoin && row.class
-                ? {
-                    access: lateJoin,
-                    classId: row.class.id,
-                    classPlanId: row.class.classPlanId,
-                  }
-                : undefined,
-            )
-          ).map((r) => ({
+      let recordings: LibraryRecording[];
+      if (mine) {
+        const lateJoinAccess =
+          lateJoin && row.class
+            ? {
+                access: lateJoin,
+                classId: row.class.id,
+                classPlanId: row.class.classPlanId,
+              }
+            : undefined;
+        recordings = (await extractRecordings([row], lateJoinAccess)).map(
+          (r) => ({
             id: r.id,
             title: r.title,
             recordedAt: r.recordedAt.toISOString(),
             durationInMinutes: r.durationInMinutes,
             status: r.status as RecordingStatus,
             playbackUrl: r.playbackUrl,
-          }))
-        : visibleSessionRecordings([row]).map((r) => ({
-            id: r.id,
-            title: r.title,
-            recordedAt: r.recordedAt.toISOString(),
-            durationInMinutes: r.durationInMinutes,
-            status: r.status,
-            playbackUrl: null,
-          }));
+          }),
+        );
+      } else {
+        recordings = visibleSessionRecordings([row]).map((r) => ({
+          id: r.id,
+          title: r.title,
+          recordedAt: r.recordedAt.toISOString(),
+          durationInMinutes: r.durationInMinutes,
+          status: r.status,
+          playbackUrl: null,
+        }));
+      }
       return {
         session,
         files: keepNamed(recordings, session, query.q, (r) => r.title),

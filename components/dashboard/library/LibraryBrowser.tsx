@@ -320,7 +320,7 @@ export function LibraryBrowser({
         empty={empty}
       />
     );
-  } else if (data && data.groups.length === 0) {
+  } else if (data?.groups.length === 0) {
     body = empty;
   } else {
     body = (

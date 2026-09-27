@@ -191,10 +191,7 @@ function OperatorViewBanner({
   tree,
 }: Readonly<{ name: string | null; tree: "admin" | "staff" }>) {
   return (
-    <div
-      role="status"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 sm:px-6 lg:px-8"
-    >
+    <output className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 sm:px-6 lg:px-8">
       <span>
         Operator view — you&apos;re viewing{" "}
         <strong>{name ?? "this user"}</strong>&apos;s dashboard. Actions run as
@@ -206,7 +203,7 @@ function OperatorViewBanner({
       >
         Back to back office
       </Link>
-    </div>
+    </output>
   );
 }
 

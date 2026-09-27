@@ -230,6 +230,14 @@ export function OperatorAppointmentsClient({
   };
   const totalPages = data?.pagination.totalPages ?? 1;
 
+  // Sonar S3358 — an if/else chain instead of a nested ternary for which
+  // tab panel renders.
+  let tabPanelKind: "awaiting-payment" | "loading" | "empty" | "list";
+  if (activeTab === "awaiting-payment") tabPanelKind = "awaiting-payment";
+  else if (showLoadingPanel) tabPanelKind = "loading";
+  else if (appointments.length === 0) tabPanelKind = "empty";
+  else tabPanelKind = "list";
+
   const openBooking = (appointmentId: string) => {
     setParams({ q: appointmentId, filters: { tab: null, type: null } });
     setPendingOpenId(appointmentId);
@@ -323,20 +331,23 @@ export function OperatorAppointmentsClient({
 
           {/* All Tabs Content */}
           <TabsContent value={activeTab} className="mt-4">
-            {activeTab === "awaiting-payment" ? (
+            {tabPanelKind === "awaiting-payment" && (
               <AwaitingPaymentPanel onOpenBooking={openBooking} />
-            ) : showLoadingPanel ? (
+            )}
+            {tabPanelKind === "loading" && (
               <div className="flex items-center justify-center h-64">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
-            ) : appointments.length === 0 ? (
+            )}
+            {tabPanelKind === "empty" && (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
                   <Calendar className="h-12 w-12 mb-4 text-muted-foreground/40" />
                   <p>No appointments found</p>
                 </CardContent>
               </Card>
-            ) : (
+            )}
+            {tabPanelKind === "list" && (
               <div className="space-y-3">
                 {appointments.map((appointment) => {
                   const TypeIcon = getTypeIcon(appointment.type);

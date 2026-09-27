@@ -163,7 +163,7 @@ function LoadingBody({
   const rowKeys = Array.from({ length: rowCount }, (_, i) => `sk-row-${i}`);
   const colKeys = Array.from({ length: columnCount }, (_, i) => `sk-col-${i}`);
   return (
-    <div role="status" aria-busy="true">
+    <output aria-busy="true">
       <span className="sr-only">Loading…</span>
       <div className={cn(sw.table, "space-y-3 py-2")}>
         {rowKeys.map((rk) => (
@@ -179,7 +179,7 @@ function LoadingBody({
           <Skeleton key={rk} className="h-24 rounded-xl" />
         ))}
       </div>
-    </div>
+    </output>
   );
 }
 

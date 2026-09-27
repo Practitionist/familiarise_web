@@ -13,10 +13,10 @@ function LoadingRegion({
   children,
 }: Readonly<{ className?: string; children: ReactNode }>) {
   return (
-    <div role="status" aria-busy="true" className={className}>
+    <output aria-busy="true" className={className}>
       {children}
       <span className="sr-only">Loading…</span>
-    </div>
+    </output>
   );
 }
 
