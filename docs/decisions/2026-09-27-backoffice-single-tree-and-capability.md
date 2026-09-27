@@ -23,7 +23,7 @@ The back office is now one route tree, `app/dashboard/(backoffice)/[tree]/**`, w
 - `resolveBackofficeCapability(role, tree)` returns `null` when the role may not open the requested tree at all — a non-operator, or a STAFF role requesting the `admin` tree — and otherwise returns a `BackofficeCapability` carrying the tree, its `basePath` (`/dashboard/<tree>`), the viewer's own role, and the tree's `audience` (`ADMIN` for the admin tree, `STAFF` for the staff tree).
 - `can(cap, surface)` requires **both** `hasBackofficePermission(cap.audience, surface)` and `hasBackofficePermission(cap.role, surface)` to be true. This is deliberate: the tree segment controls what that _console_ is allowed to show at all, and the viewer's own role caps it further, so an admin who opens the staff tree sees exactly what a staff member would see there — never more, because the tree's audience is STAFF regardless of who is looking at it.
 - `BackofficeCapabilityProvider` exposes the same `BackofficeCapability` to client components through `useBackofficeCapability()`, which is what replaced the `isAdmin`/`canManage`/`basePath` props previously passed down through roughly 26 files by hand.
-- `backofficeLandingHref(cap)` encodes owner decision Q12: admins land on "Needs attention" (`/dashboard/admin/home`), and staff land on their Tickets queue (`/dashboard/staff/tickets`).
+- `backofficeLandingHref(cap)` encodes owner decision Q12: admins land on "Needs attention" (`/dashboard/admin/home`), and staff land on the Support inbox (`/dashboard/staff/support`) — the Tickets queue this originally pointed at was itself replaced by the inbox later in this PR; see [the support-inbox ADR](2026-09-27-support-inbox-and-case-pages.md).
 
 ### Legacy URLs
 

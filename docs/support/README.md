@@ -47,11 +47,11 @@ The table below lists every file the support subsystem is built from and what ea
 | `lib/api/appointment-access.ts`                         | The one authorization gate for appointment-scoped routes                                          |
 | `app/api/appointments/[appointmentId]/support/route.ts` | Per-appointment scope: `GET` thread and gated intents, `POST` one turn                            |
 | `app/api/support/platform/route.ts`                     | Platform scope: `GET` the intent catalogue for the caller's role, `POST` one turn                 |
-| `components/support/SupportThreadSheet.tsx`             | The per-appointment drawer                                                                        |
-| `components/support/PlatformSupportSheet.tsx`           | The platform drawer                                                                               |
+| `app/support/_components/SupportRequestCasePage.tsx`    | The per-appointment full page (#1527 round 5), replacing the drawer                                |
+| `components/support/PlatformSupportSheet.tsx`           | The platform drawer (kept: it serves a chat-unavailable caller, not an ongoing conversation)      |
 | `components/support/AppointmentSupportStatusCard.tsx`   | The status card on an appointment                                                                 |
 | `components/dashboard/shared/support/SupportHub.tsx`    | The consultee and consultant Support tab                                                          |
-| `components/dashboard/shared/SupportThreadsPage.tsx`    | The back-office inbox                                                                             |
+| `components/dashboard/backoffice/support/CaseWorkspace.tsx` | The back-office Support inbox's case workspace (#1527 round 5), replacing the separate Tickets and Conversations pages |
 | `schemas/support.ts`, `schemas/enums.ts`                | Route-parameter schemas, and the one definition of the category and status lists                  |
 
 ## Related decisions
