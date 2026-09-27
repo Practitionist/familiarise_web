@@ -376,6 +376,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "reconcile-payment-status.yml": "scheduled",
   "reconcile-payout-status.yml": "scheduled",
   "reconcile-pending-refunds.yml": "scheduled",
+  "retry-auto-refunds.yml": "scheduled",
   "release-earnings.yml": "scheduled",
   "release-pending-trust-earnings.yml": "scheduled",
   "retry-failed-emails.yml": "scheduled",

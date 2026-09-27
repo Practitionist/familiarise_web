@@ -46,6 +46,12 @@ import {
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  AUTO_REFUND_PENDING_PREFIX,
+  DOUBLE_BOOKING_BLOCKED_NOTE,
+  autoRefundPendingDescription,
+  settledAutoRefundDescription,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   normalizeLegacySlotKeys,
@@ -479,9 +485,10 @@ export async function handlePaymentSuccess(
                 },
               },
             );
-            // #837 — mark SUCCEEDED (gateway truth) + stamp REQUIRES_MANUAL_RECOVERY as
-            // the FALLBACK. Phase 2 auto-refunds the wrong-amount capture; the manual
-            // marker only survives if that refund call itself throws.
+            // #837 — mark SUCCEEDED (gateway truth) + stamp the auto-refund
+            // marker. Phase 2 auto-refunds the wrong-amount capture; if that
+            // call throws, the marker keeps it in retry-auto-refunds' queue
+            // (#1846 N2).
             // #1439 — the stamp is a CAS: a late capture on an EXPIRED order
             // resurrected it to SUCCEEDED and its tentative hold leaked, so the
             // status rides the WHERE (ADR 21). Count 0 = already terminal:
@@ -495,7 +502,9 @@ export async function handlePaymentSuccess(
                 // carries only `pay_…`, and without the column it cannot find
                 // the Payment it is reversing.
                 ...capturedGatewayId,
-                description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed; auto-refund attempted.`,
+                description: autoRefundPendingDescription(
+                  `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
+                ),
               },
             });
             if (stamped.count === 0) {
@@ -796,6 +805,21 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           const blocked =
             confirmResult.capturedAfterTerminal ||
             confirmResult.doubleBookingBlocked;
+          if (blocked) {
+            // #1846 N2 — the refund these two outcomes owe happens after
+            // commit, once. The marker is written in this transaction so a
+            // failed or killed refund stays in retry-auto-refunds' queue.
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: {
+                description: autoRefundPendingDescription(
+                  confirmResult.doubleBookingBlocked
+                    ? DOUBLE_BOOKING_BLOCKED_NOTE
+                    : "capture landed after the booking was cancelled",
+                ),
+              },
+            });
+          }
           const appointmentForEmails = blocked
             ? null
             : await loadAppointmentForEmails(tx, appointment.id);
@@ -877,8 +901,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // match the row.
         ...capturedGatewayId,
         capturedAt: new Date(), // #1775 C-2
-        description:
-          "Refund pending: legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap) — booking NOT confirmed.",
+        // #1846 N2 — the shared marker, so retry-auto-refunds picks it up
+        // when the refund below throws.
+        description: autoRefundPendingDescription(
+          "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
+        ),
       },
     });
     if (restamped.count === 0) {
@@ -915,7 +942,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
-        "Failed to auto-refund GiST-overlap legacy capture; payment keeps its Refund-pending marker for manual recovery:",
+        "Failed to auto-refund GiST-overlap legacy capture; retry-auto-refunds re-drives its marker:",
         refundError,
       );
     }
@@ -927,8 +954,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // #837 — the gateway captured a different amount than we ordered. Auto-refund
   // the whole capture (never confirm a booking for the wrong money) and skip
-  // Phase 2. REQUIRES_MANUAL_RECOVERY stays stamped as the fallback if the
-  // refund throws. Idempotent: on webhook replay the payment is already
+  // Phase 2. The pending marker stays stamped for retry-auto-refunds if the
+  // refund throws (#1846 N2). Idempotent: on webhook replay the payment is already
   // SUCCEEDED so the SUCCEEDED early-return fires before this path is reached,
   // and refundPayment's refundable-balance guard blocks any double-refund.
   if (txResult.outcome === "amount_mismatch") {
@@ -938,8 +965,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason: "capture amount mismatch",
         initiatedByUserId: null,
       });
-      // Refund succeeded — clear the Phase 1 REQUIRES_MANUAL_RECOVERY marker so
-      // ops dashboards don't flag a payment that no longer needs manual recovery.
+      // Refund succeeded — settle the Phase 1 marker so the retry sweep and
+      // ops dashboards stop treating the payment as owed.
       await prisma.payment.update({
         where: { id: txResult.paymentId },
         data: {
@@ -958,7 +985,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         },
       });
       console.error(
-        "Failed to auto-refund amount-mismatch capture; REQUIRES_MANUAL_RECOVERY (Phase 2):",
+        "Failed to auto-refund amount-mismatch capture; retry-auto-refunds re-drives its marker (Phase 2):",
         refundError,
       );
     }
@@ -1010,6 +1037,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason: "capture after cancellation",
         initiatedByUserId: null,
       });
+      await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
@@ -1033,20 +1061,12 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     try {
       await refundPayment({
         paymentId: txResult.paymentId,
-        reason: "double-booking blocked at confirmation",
+        reason: DOUBLE_BOOKING_BLOCKED_NOTE,
         initiatedByUserId: null,
       });
       // Release the tentative hold only once the money is back.
-      await withSerializableRetry(() =>
-        prisma.$transaction(
-          (tx) => cleanupFailedPaymentAppointment(tx, txResult.appointmentId),
-          {
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            maxWait: 10_000,
-            timeout: 15_000,
-          },
-        ),
-      );
+      await releaseBlockedBookingHold(txResult.appointmentId);
+      await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, {
         subsystem: "payments",
@@ -2373,6 +2393,43 @@ async function markBookedWindows(
       windowEnd: w.endsAt,
     });
   }
+}
+
+/**
+ * #1846 N2 — rewrite a pending auto-refund marker to its settled form. A CAS
+ * on the marker itself, so a concurrent writer that already settled or
+ * replaced the description is left alone.
+ */
+export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { description: true },
+  });
+  const pending = row?.description;
+  if (!pending?.startsWith(AUTO_REFUND_PENDING_PREFIX)) return;
+  await prisma.payment.updateMany({
+    where: { id: paymentId, description: pending },
+    data: { description: settledAutoRefundDescription(pending) },
+  });
+}
+
+/**
+ * Release the tentative hold of a double-booking loser once its money is
+ * back. Shared by Phase 2 and retry-auto-refunds (#1846 N2).
+ */
+export async function releaseBlockedBookingHold(
+  appointmentId: string,
+): Promise<void> {
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) => cleanupFailedPaymentAppointment(tx, appointmentId),
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
+    ),
+  );
 }
 
 /**
