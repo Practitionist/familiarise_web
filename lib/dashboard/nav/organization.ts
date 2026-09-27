@@ -195,11 +195,12 @@ export function buildOrganizationNav(
 
   const operations: ItemSpec[] = [
     {
-      // Metadata-only triage (ADR 20), never transcripts.
+      // Metadata-only triage (ADR 20) and org-tagged requests (#1527);
+      // each tab carries its own gate.
       name: "Support",
       icon: LifeBuoy,
       path: "support",
-      show: can("operations.read"),
+      show: can("supportRequests.org"),
     },
   ];
 

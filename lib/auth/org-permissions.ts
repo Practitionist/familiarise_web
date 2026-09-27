@@ -74,6 +74,8 @@ export type OrgSurface =
   // recordings, analytics — one read grant for the whole group, incl. the
   // L1/L2 SUPPORT carve-out)
   | "operations.read"
+  // Platform requests a member tagged "About: <org>" (#1527).
+  | "supportRequests.org"
   | "quality.read"
   // Acting for the org on an org-funded booking (#1527 decision 8). Cancel is
   // narrower: it refunds.
@@ -175,6 +177,9 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
 
   // Operations — includes the SUPPORT carve-out (L1/L2 triage reads).
   "operations.read": OPERATIONS_READERS,
+  // #1527 — operations.read OR billing.read: an ops lead or the finance team
+  // raises requests about the org and reads the ones raised.
+  "supportRequests.org": new Set([...OPERATIONS_READERS, ...FINANCE_READERS]),
 
   // #1300 — the quality signal over the organisation's own sessions. Its own key
   // rather than riding `operations.read`, which is the grant that opens the

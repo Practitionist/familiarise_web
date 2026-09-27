@@ -124,6 +124,7 @@ export function BillingPageClient({
               <CreateTicketDialog
                 defaults={{
                   issueType: "BILLING_QUESTION",
+                  organizationId: orgId,
                   title: `Invoice request for ${orgName}`,
                   description:
                     "Please issue an invoice for: \n\nBilling period or bookings covered: \nPurchase order number (if any): ",

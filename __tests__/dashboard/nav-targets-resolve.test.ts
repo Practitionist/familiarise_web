@@ -247,13 +247,15 @@ describe("org nav role walk (#1527 matrix)", () => {
       "audit",
       "consent",
     ],
-    // Finance track: no operations, catalog or consent; contracts + programs read.
+    // Finance track: no operations, catalog or consent; contracts + programs
+    // read; Support for org-tagged requests (#1527).
     BILLING_ADMIN: [
       ...BASE,
       "programs",
       "contracts",
       "billing",
       "payouts",
+      "support",
       "audit",
     ],
     // Decision 1 (no Payouts) and no Contracts; programs for seat assignment.

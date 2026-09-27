@@ -71,6 +71,8 @@ interface TicketRow {
   updatedAt: string;
   createdAt: string;
   responses?: { message: string; createdAt: string; isInternal: boolean }[];
+  /** Set when raised "About" an org (#1527). */
+  organization?: { id: string; name: string } | null;
 }
 
 interface AppointmentRow {
@@ -549,6 +551,12 @@ function PlatformTab({
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-foreground">
                                 {t.title || "Support request"}
+                                {t.organization && (
+                                  <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                                    <Building2 className="h-3 w-3" />
+                                    {t.organization.name}
+                                  </span>
+                                )}
                               </p>
                               {t.referenceNumber && (
                                 <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
