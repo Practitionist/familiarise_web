@@ -571,19 +571,20 @@ async function cancelExclusiveEngagement(
   await notifyExclusiveCancellation(kind, engagement);
 }
 
-async function cancelGroupEvent(
-  kind: "webinar-event" | "class-event",
+/**
+ * The event's guarded status move plus the slot release, under the event
+ * wrapper's appointment lock (#1846 SM-B14). Returns 0 when the CAS found
+ * nothing to move — the event was already terminal.
+ */
+async function casCancelGroupEvent(
+  isWebinar: boolean,
   eventId: string,
-  ctx: { initiatedByUserId: string; summary: BulkCancelSummary },
-) {
-  const isWebinar = kind === "webinar-event";
-
-  const audit = {
-    actorUserId: ctx.initiatedByUserId,
-    reason: MODERATION_REASON,
-  };
+  initiatedByUserId: string,
+): Promise<number> {
+  const audit = { actorUserId: initiatedByUserId, reason: MODERATION_REASON };
+  const eventScope = isWebinar ? { webinarId: eventId } : { classId: eventId };
   const eventWrapper = await prisma.appointment.findFirst({
-    where: isWebinar ? { webinarId: eventId } : { classId: eventId },
+    where: eventScope,
     select: { id: true },
   });
   const cancel = () =>
@@ -611,19 +612,27 @@ async function cancelGroupEvent(
       }
       await releaseEngagementOccurrences(
         tx,
-        {
-          appointment: isWebinar
-            ? { webinarId: eventId }
-            : { classId: eventId },
-        },
+        { appointment: eventScope },
         new Date(),
         audit,
       );
       return 1;
     });
-  const moved = eventWrapper
-    ? await withAppointmentLock(eventWrapper.id, cancel)
-    : await cancel();
+  return eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel();
+}
+
+async function cancelGroupEvent(
+  kind: "webinar-event" | "class-event",
+  eventId: string,
+  ctx: { initiatedByUserId: string; summary: BulkCancelSummary },
+) {
+  const isWebinar = kind === "webinar-event";
+
+  const moved = await casCancelGroupEvent(
+    isWebinar,
+    eventId,
+    ctx.initiatedByUserId,
+  );
   if (moved === 0) return;
 
   ctx.summary.engagementsCancelled += 1;
