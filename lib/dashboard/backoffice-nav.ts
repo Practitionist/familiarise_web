@@ -10,10 +10,10 @@ import {
   CreditCard,
   FileWarning,
   Home,
+  Inbox,
   Landmark,
   ListChecks,
   Megaphone,
-  MessagesSquare,
   Play,
   Receipt,
   RefreshCw,
@@ -22,7 +22,6 @@ import {
   ScrollText,
   Shield,
   Star,
-  Ticket,
   Users,
   Wrench,
   Target,
@@ -60,8 +59,7 @@ import {
 
 /** Queue counts from `/api/backoffice/nav-counts`, keyed into the shell's badges. */
 export type BackofficeBadgeKey =
-  | "tickets"
-  | "conversations"
+  | "support"
   | "moderation"
   | "verification"
   | "refunds"
@@ -117,7 +115,7 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
   return [
     {
       items: [
-        // Q12 — admin's "Needs attention"; staff land on Tickets instead.
+        // Q12 — admin's "Needs attention"; staff land on the Support inbox.
         // Reaching the tree is the grant, so `users.read` stands in.
         {
           name: "Home",
@@ -132,19 +130,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
       label: "Support",
       items: [
         {
-          name: "Tickets",
-          icon: Ticket,
-          path: "tickets",
+          // #1527 — tickets and conversations are one inbox of cases.
+          name: "Support inbox",
+          icon: Inbox,
+          path: "support",
           surface: "tickets.manage",
-          badgeKey: "tickets",
-        },
-        {
-          // #support-hub — the per-appointment conversation inbox.
-          name: "Conversations",
-          icon: MessagesSquare,
-          path: "threads",
-          surface: "threads.manage",
-          badgeKey: "conversations",
+          badgeKey: "support",
         },
         {
           name: "Feedback",

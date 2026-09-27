@@ -2,6 +2,7 @@ import {
   backofficeLandingHref,
   type BackofficeTree,
 } from "@/lib/backoffice/capability";
+import { caseKeyOf } from "@/lib/support/case-key";
 
 /**
  * #1527 Q3 — where a retired back-office URL lives now. Pure and jest-pinned;
@@ -34,6 +35,11 @@ function withQuery(
   return qs ? `${path}?${qs}` : path;
 }
 
+const LEGACY_SUPPORT: Record<string, "ticket" | "thread"> = {
+  tickets: "ticket",
+  threads: "thread",
+};
+
 export function legacyBackofficeHref(
   tree: BackofficeTree,
   segments: readonly string[],
@@ -55,6 +61,20 @@ export function legacyBackofficeHref(
       legacyBackofficeHref(tree, rest, searchParams) ??
       withQuery(`${base}/${rest.join("/")}`, searchParams)
     );
+  }
+
+  // #1527 — Tickets and Conversations became the one Support inbox; an
+  // item (a path id, or the modal-era `?id=`) opens as its case.
+  const supportCase = LEGACY_SUPPORT[head];
+  if (supportCase && rest.length <= 1) {
+    const { id, ...query } = searchParams;
+    const itemId = rest[0] ?? (typeof id === "string" ? id : undefined);
+    return itemId
+      ? withQuery(
+          `${base}/support/${caseKeyOf({ kind: supportCase, id: itemId })}`,
+          query,
+        )
+      : withQuery(`${base}/support`, searchParams);
   }
 
   if (rest.length === 0) {

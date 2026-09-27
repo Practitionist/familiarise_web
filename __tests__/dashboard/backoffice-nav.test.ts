@@ -123,7 +123,7 @@ describe("buildBackofficeNav", () => {
     const adminPaths = flatten(nav("admin", { showTds: true }));
     for (const path of [
       "home",
-      "tickets",
+      "support",
       "feedback",
       "moderation",
       "appointments",

@@ -44,7 +44,7 @@ const FILTER_DRIVEN_QUERIES = [
   // Already correct before this sweep — kept so they cannot regress.
   "components/dashboard/shared/DisputesPage.tsx",
   "components/dashboard/shared/FeedbackPage.tsx",
-  "components/dashboard/shared/TicketsPage.tsx",
+  "components/dashboard/backoffice/support/CaseList.tsx",
   "components/dashboard/shared/SubscriptionsPage.tsx",
 ];
 

@@ -208,8 +208,8 @@ export function resolveDashboardFacets(
       kind: "staff",
       key: "staff",
       label: "Staff",
-      // #1527 Q12 — one staff tree (no profile id in the URL), opening on Tickets.
-      href: "/dashboard/staff/tickets",
+      // #1527 Q12 — one staff tree (no profile id in the URL), opening on the Support inbox.
+      href: "/dashboard/staff/support",
     });
   }
 

@@ -60,10 +60,6 @@ describe("client money interfaces name the field the schema declares", () => {
     // carried whatever the model declared and nothing typechecked the gap.
     ["Refund", "types/payments.ts", "PaymentDetailRefund"],
     ["Dispute", "types/payments.ts", "PaymentDetailDispute"],
-    // Dormant when found — nothing renders the ticket's linked refund yet — so
-    // this was a primed "₹NaN" rather than a live one. Covered because the
-    // whole point is to catch these before someone wires up the JSX.
-    ["Refund", "types/tickets.ts", "LinkedRefund"],
     ["Dispute", "types/disputes.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "DisputeDetails"],
     // The `Payment`-backed interfaces. These are correct today and cost
@@ -73,7 +69,8 @@ describe("client money interfaces name the field the schema declares", () => {
     ["Payment", "types/payments.ts", "Payment"],
     ["Payment", "types/payments.ts", "RecentPayment"],
     ["Payment", "types/payments.ts", "PaymentDetail"],
-    ["Payment", "types/tickets.ts", "LinkedPayment"],
+    // #1527 — the support case's payment card (types/tickets.ts retired).
+    ["Payment", "types/support-case.ts", "CasePayment"],
     ["Payment", "types/subscriptions.ts", "SubscriptionListItem"],
     ["ConsultantPayout", "types/payouts.ts", "Payout"],
   ])("%s (schema) matches %s → %s", (model, file, iface) => {
@@ -151,7 +148,9 @@ describe("paise values reach a paise formatter", () => {
     // That is the more dangerous half of this bug class: ₹NaN is obviously
     // broken and gets reported, whereas a plausible-looking number that is
     // 100x off gets believed and acted on.
-    const src = read("app/dashboard/(backoffice)/[tree]/home/AdminHomePageClient.tsx");
+    const src = read(
+      "app/dashboard/(backoffice)/[tree]/home/AdminHomePageClient.tsx",
+    );
     for (const field of [
       "totalPaymentsValue",
       "pendingPaymentsValue",

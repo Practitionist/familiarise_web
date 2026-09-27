@@ -1011,7 +1011,7 @@ const MultiStepForm: React.FC = () => {
         );
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
         // #1527 Q12 — one staff tree, opening on Tickets.
-        router.replace("/dashboard/staff/tickets");
+        router.replace("/dashboard/staff/support");
       } else {
         router.replace("/dashboard");
       }

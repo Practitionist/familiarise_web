@@ -7,11 +7,11 @@ import { supportRequestsHref } from "@/lib/dashboard/account-href";
 
 // #1527 §6 — where /dashboard lands and how /dashboard/go resolves a viewer.
 describe("resolveDashboardLanding", () => {
-  it("routes the back office: admin to Home, staff to Tickets (Q12)", () => {
+  it("routes the back office: admin to Home, staff to the Support inbox (Q12)", () => {
     expect(resolveDashboardLanding({ role: "ADMIN" })).toBe(
       "/dashboard/admin/home",
     );
-    expect(backofficeLandingHref("STAFF")).toBe("/dashboard/staff/tickets");
+    expect(backofficeLandingHref("STAFF")).toBe("/dashboard/staff/support");
   });
 
   it("sends ORG_WORKSPACE to its default org only while an ACTIVE member", () => {

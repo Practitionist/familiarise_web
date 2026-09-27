@@ -7,11 +7,11 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
+import { DEAD_LETTER_EMAIL_WHERE } from "@/lib/backoffice/queue-predicates";
 import {
-  DEAD_LETTER_EMAIL_WHERE,
-  TICKET_QUEUE_FILTERS,
-  ticketListWhere,
-} from "@/lib/backoffice/queue-predicates";
+  inboxBadgeFilters,
+  parseInboxFilters,
+} from "@/lib/support/inbox-query";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
@@ -19,8 +19,8 @@ const NAV_COUNTS = read("app/api/backoffice/nav-counts/route.ts");
 
 // [the shared name, the page-side file that must use it]
 const SHARED: Array<[string, string]> = [
-  ["ticketListWhere", "app/api/staff/support-tickets/route.ts"],
-  ["THREAD_QUEUE_WHERE", "app/api/staff/support-threads/route.ts"],
+  // #1527 — the Support inbox list and its badge read the same builders.
+  ["inboxBadgeCountReads", "lib/support/case-read.ts"],
   ["PENDING_REPORT_WHERE", "app/api/staff/moderation/stats/route.ts"],
   [
     "PENDING_CONSULTANT_VERIFICATION_WHERE",
@@ -40,11 +40,14 @@ describe("nav badges reuse their page's predicate", () => {
     expect(read(page)).toContain(name);
   });
 
-  it("the Tickets badge is the Unassigned view of open tickets", () => {
-    expect(ticketListWhere(TICKET_QUEUE_FILTERS)).toEqual({
-      status: "OPEN",
-      assignedToId: null,
-    });
+  it("the Support badge is the inbox's default view (Needs reply)", () => {
+    expect(inboxBadgeFilters("u1")).toEqual(
+      parseInboxFilters(() => null, "u1"),
+    );
+    expect(inboxBadgeFilters("u1").view).toBe("needs-reply");
+    const read_ = read("lib/support/case-read.ts");
+    expect(read_).toContain("inboxTicketWhere(f)");
+    expect(read_).toContain("inboxThreadWhere(f)");
   });
 
   it("the failed-emails tab opens on the badge's dead-letter state", () => {

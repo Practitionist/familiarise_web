@@ -46,19 +46,19 @@ describe("resolveBackofficeCapability / can", () => {
     );
   });
 
-  it("lands admin on Home and staff on Tickets (Q12)", () => {
+  it("lands admin on Home and staff on the Support inbox (Q12)", () => {
     expect(backofficeLandingHref({ tree: "admin" })).toBe(
       "/dashboard/admin/home",
     );
     expect(backofficeLandingHref({ tree: "staff" })).toBe(
-      "/dashboard/staff/tickets",
+      "/dashboard/staff/support",
     );
   });
 });
 
 describe("legacyBackofficeHref", () => {
   it.each([
-    ["staff", [UUID], {}, "/dashboard/staff/tickets"],
+    ["staff", [UUID], {}, "/dashboard/staff/support"],
     [
       "staff",
       [UUID, "money", "payouts"],
@@ -92,6 +92,17 @@ describe("legacyBackofficeHref", () => {
       "/dashboard/admin/compliance?tab=breaches&id=b1",
     ],
     ["admin", [], {}, "/dashboard/admin/home"],
+    // #1527 — Tickets + Conversations → the Support inbox, items as cases.
+    [
+      "staff",
+      ["tickets"],
+      { view: "mine" },
+      "/dashboard/staff/support?view=mine",
+    ],
+    ["admin", ["tickets", "t1"], {}, "/dashboard/admin/support/t_t1"],
+    ["admin", ["tickets"], { id: "t1" }, "/dashboard/admin/support/t_t1"],
+    ["staff", ["threads", "s1"], {}, "/dashboard/staff/support/s_s1"],
+    ["staff", ["threads"], {}, "/dashboard/staff/support"],
   ] as const)("%s %j %j → %s", (tree, segments, query, expected) => {
     expect(legacyBackofficeHref(tree, segments, query)).toBe(expected);
   });
@@ -108,7 +119,7 @@ describe("legacyBackofficeHref", () => {
     expect(staffTwinHref("/dashboard/admin/money/payments?x=1")).toBe(
       "/dashboard/staff/money/payments?x=1",
     );
-    expect(staffTwinHref("/dashboard/admin")).toBe("/dashboard/staff/tickets");
-    expect(staffTwinHref(null)).toBe("/dashboard/staff/tickets");
+    expect(staffTwinHref("/dashboard/admin")).toBe("/dashboard/staff/support");
+    expect(staffTwinHref(null)).toBe("/dashboard/staff/support");
   });
 });

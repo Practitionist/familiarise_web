@@ -51,11 +51,11 @@ export function can(
   );
 }
 
-/** Q12 — admins land on "Needs attention", staff on their ticket queue. */
+/** Q12 — admins land on "Needs attention", staff on the Support inbox. */
 export function backofficeLandingHref(
   cap: Pick<BackofficeCapability, "tree">,
 ): string {
   return cap.tree === "admin"
     ? "/dashboard/admin/home"
-    : "/dashboard/staff/tickets";
+    : "/dashboard/staff/support";
 }

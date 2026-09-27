@@ -8,10 +8,10 @@ import type { BackofficeCapability } from "@/lib/backoffice/capability";
 
 import type { DashboardNav } from "./types";
 
-// #1527 Q12 — staff land on Tickets, so their tabs lead with the queues.
+// #1527 Q12 — staff land on the Support inbox, so their tabs lead with it.
 const MOBILE_TABS: Record<BackofficeCapability["tree"], string[]> = {
-  admin: ["home", "tickets", "appointments", "money/payments"],
-  staff: ["tickets", "threads", "appointments", "users"],
+  admin: ["home", "support", "appointments", "money/payments"],
+  staff: ["support", "appointments", "users", "moderation"],
 };
 
 /** Adapts `buildBackofficeNav` to the shared shell (#1527). */

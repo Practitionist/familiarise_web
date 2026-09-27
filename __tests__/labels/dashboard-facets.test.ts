@@ -135,7 +135,7 @@ describe("resolveDashboardFacets", () => {
       staffProfileId: "sp-1",
     });
     expect(f.platform.map((x) => [x.label, x.href])).toEqual([
-      ["Staff", "/dashboard/staff/tickets"],
+      ["Staff", "/dashboard/staff/support"],
     ]);
     expect(f.actions.becomeExpertHref).toBeNull();
   });

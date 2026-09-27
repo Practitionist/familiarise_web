@@ -1,12 +1,4 @@
-import type {
-  DisputeStatus,
-  ErasureStatus,
-  Prisma,
-  SupportIssueType,
-  SupportPriority,
-  SupportThreadStatus,
-  SupportTicketStatus,
-} from "@prisma/client";
+import type { DisputeStatus, ErasureStatus, Prisma } from "@prisma/client";
 
 /**
  * #1527 Q12 — the `where` behind every back-office queue, shared by the page's
@@ -14,63 +6,11 @@ import type {
  * different set than the page it opens (#1345). Pure: no Prisma client.
  */
 
-// ── Tickets ─────────────────────────────────────────────────────────────
+// ── Support ─────────────────────────────────────────────────────────────
 
-export interface TicketListFilters {
-  status?: SupportTicketStatus | null;
-  priority?: SupportPriority | null;
-  issueType?: SupportIssueType | null;
-  /** A user id, or "unassigned". */
-  assignedToId?: string | null;
-  search?: string | null;
-}
-
-export function ticketListWhere(
-  f: TicketListFilters,
-): Prisma.SupportTicketWhereInput {
-  const where: Prisma.SupportTicketWhereInput = {};
-  if (f.status) where.status = f.status;
-  if (f.priority) where.priority = f.priority;
-  if (f.issueType) where.issueType = f.issueType;
-  if (f.assignedToId) {
-    where.assignedToId =
-      f.assignedToId === "unassigned" ? null : f.assignedToId;
-  }
-  if (f.search) {
-    const search = f.search;
-    where.OR = [
-      { title: { contains: search, mode: "insensitive" } },
-      { description: { contains: search, mode: "insensitive" } },
-      { id: { contains: search, mode: "insensitive" } },
-      {
-        user: {
-          OR: [
-            { name: { contains: search, mode: "insensitive" } },
-            { email: { contains: search, mode: "insensitive" } },
-          ],
-        },
-      },
-    ];
-  }
-  return where;
-}
-
-/** The Tickets badge: open and nobody has picked it up (the Unassigned view). */
-export const TICKET_QUEUE_FILTERS: TicketListFilters = {
-  status: "OPEN",
-  assignedToId: "unassigned",
-};
-
-// ── Conversations ───────────────────────────────────────────────────────
-
-/** A conversation is waiting on support while open or escalated. */
-export const THREAD_QUEUE_STATUSES: SupportThreadStatus[] = [
-  "OPEN",
-  "ESCALATED",
-];
-export const THREAD_QUEUE_WHERE: Prisma.AppointmentSupportThreadWhereInput = {
-  status: { in: THREAD_QUEUE_STATUSES },
-};
+// The Support inbox (tickets + not-yet-escalated conversations) owns its
+// builders in lib/support/inbox-query.ts; the badge reads them through
+// `inboxBadgeCountReads` (lib/support/case-read.ts).
 
 // ── Moderation ──────────────────────────────────────────────────────────
 

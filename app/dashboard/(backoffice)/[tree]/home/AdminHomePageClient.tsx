@@ -7,11 +7,10 @@ import {
   Banknote,
   BadgeCheck,
   FileWarning,
-  MessagesSquare,
+  Inbox,
   RotateCcw,
   Scale,
   Shield,
-  Ticket,
   type LucideIcon,
 } from "lucide-react";
 
@@ -60,20 +59,12 @@ const QUEUES: Array<{
   icon: LucideIcon;
 }> = [
   {
-    key: "tickets",
-    label: "Unassigned tickets",
-    hint: "Open, nobody on them",
-    path: "tickets?view=unassigned",
+    key: "support",
+    label: "Support inbox",
+    hint: "Waiting on a reply from us",
+    path: "support",
     surface: "tickets.manage",
-    icon: Ticket,
-  },
-  {
-    key: "conversations",
-    label: "Conversations",
-    hint: "Open or escalated",
-    path: "threads",
-    surface: "threads.manage",
-    icon: MessagesSquare,
+    icon: Inbox,
   },
   {
     key: "moderation",

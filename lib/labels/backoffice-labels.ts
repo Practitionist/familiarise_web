@@ -74,6 +74,12 @@ export const THREAD_STATUS: Record<SupportThreadStatus, ToneLabel> = {
 export const threadStatus = (v: string | null | undefined) =>
   resolve(THREAD_STATUS, v);
 
+/** #1527 — a Support inbox case: a ticket, or a not-yet-escalated conversation. */
+export const caseStatus = (
+  kind: "ticket" | "thread",
+  v: string | null | undefined,
+) => (kind === "ticket" ? ticketStatus(v) : threadStatus(v));
+
 export const ORG_STATUS: Record<OrgStatus, ToneLabel> = {
   PENDING_VERIFICATION: { label: "Pending verification", tone: "warning" },
   ACTIVE: { label: "Active", tone: "success" },

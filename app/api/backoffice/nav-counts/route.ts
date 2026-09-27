@@ -30,11 +30,9 @@ import {
   ORG_AWAITING_VERIFICATION_WHERE,
   PENDING_CONSULTANT_VERIFICATION_WHERE,
   PENDING_REPORT_WHERE,
-  THREAD_QUEUE_WHERE,
-  TICKET_QUEUE_FILTERS,
   UNREPORTED_BREACH_WHERE,
-  ticketListWhere,
 } from "@/lib/backoffice/queue-predicates";
+import { inboxBadgeCountReads } from "@/lib/support/case-read";
 import type { BackofficeBadgeKey } from "@/lib/dashboard/backoffice-nav";
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
@@ -54,21 +52,13 @@ export async function GET(req: NextRequest) {
   }
 
   // [badge, count] pairs; a badge with two sources (verification,
-  // compliance) appears twice and is summed below.
+  // compliance, support) appears twice and is summed below.
   const reads: Array<[BackofficeBadgeKey, PrismaPromise<number>]> = [];
   if (can(cap, "tickets.manage")) {
-    reads.push([
-      "tickets",
-      prisma.supportTicket.count({
-        where: ticketListWhere(TICKET_QUEUE_FILTERS),
-      }),
-    ]);
-  }
-  if (can(cap, "threads.manage")) {
-    reads.push([
-      "conversations",
-      prisma.appointmentSupportThread.count({ where: THREAD_QUEUE_WHERE }),
-    ]);
+    // The inbox's default view (Needs reply), over both of its tables.
+    for (const read of inboxBadgeCountReads(auth.session.user.id)) {
+      reads.push(["support", read]);
+    }
   }
   if (can(cap, "moderation.manage")) {
     reads.push([
