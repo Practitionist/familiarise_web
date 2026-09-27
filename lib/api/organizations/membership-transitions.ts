@@ -35,6 +35,8 @@
 
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import type { PrismaLike } from "@/lib/prisma";
+import type { PayoutRecipient } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 export type RoleEffectInput = {
   userId: string;
@@ -275,4 +277,39 @@ export async function recomputeIndependenceAcross(
       .map((r) => r.consultantProfileId as string),
   );
   for (const id of ids) await recomputeConsultantIsIndependent(tx, id);
+}
+
+/**
+ * Writes the PAYOUT-category audit row for an EXPERT's payout-recipient
+ * change. A recipient change is a money event (#1851 decision 5), so it gets
+ * its own row that the finance readers can see. Both the member PATCH and
+ * the Org › Payouts routing endpoint (#1846) write it through here, so the
+ * row has one shape wherever the change comes from.
+ */
+export async function auditPayoutRecipientChange(
+  tx: PrismaLike,
+  args: {
+    organizationId: string;
+    actorMembershipId: string;
+    targetMembershipId: string;
+    from: PayoutRecipient;
+    to: PayoutRecipient;
+    viaRoleChange: boolean;
+  },
+): Promise<void> {
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: args.organizationId,
+      actorMembershipId: args.actorMembershipId,
+      targetMembershipId: args.targetMembershipId,
+      category: "PAYOUT",
+      action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
+      description: `Payout recipient: ${args.from} → ${args.to}`,
+      details: {
+        from: args.from,
+        to: args.to,
+        viaRoleChange: args.viaRoleChange,
+      },
+    },
+  });
 }

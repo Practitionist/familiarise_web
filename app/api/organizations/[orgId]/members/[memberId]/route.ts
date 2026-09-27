@@ -33,6 +33,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { removeMember } from "@/lib/enterprise/member-removal";
 import {
   applyMembershipRoleEffects,
+  auditPayoutRecipientChange,
   bumpUserSessionGeneration,
   recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
@@ -185,18 +186,11 @@ async function auditMemberChange(
   // #1851 decision 5 — a payout-recipient change is a money event: its own
   // PAYOUT-category row, visible to the finance readers.
   if (updated.payoutRecipient !== current.payoutRecipient) {
-    await tx.orgAuditLog.create({
-      data: {
-        ...base,
-        category: "PAYOUT",
-        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
-        description: `Payout recipient: ${current.payoutRecipient} → ${updated.payoutRecipient}`,
-        details: {
-          from: current.payoutRecipient,
-          to: updated.payoutRecipient,
-          viaRoleChange: args.roleChanged,
-        },
-      },
+    await auditPayoutRecipientChange(tx, {
+      ...base,
+      from: current.payoutRecipient,
+      to: updated.payoutRecipient,
+      viaRoleChange: args.roleChanged,
     });
   }
   const details = {

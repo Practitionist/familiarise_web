@@ -18,10 +18,11 @@ import { PayoutRunsPanel } from "./PayoutRunsPanel";
 import { OrgEarningsPanel } from "./OrgEarningsPanel";
 import { PayoutAccountPanel } from "./PayoutAccountPanel";
 import { RateCardsPanel } from "./RateCardsPanel";
+import { ExpertPayoutRoutingPanel } from "./ExpertPayoutRoutingPanel";
 
 /**
- * Org Payouts (#1527 Q6/Q7): Runs · Earnings · Payout account · Rate cards —
- * everything a hosting org is paid through, one page.
+ * Org Payouts (#1527 Q6/Q7): Runs · Earnings · Payout account · Rate cards ·
+ * Expert routing — everything a hosting org is paid through, one page.
  */
 export function PayoutsPageClient({
   params,
@@ -83,6 +84,18 @@ export function PayoutsPageClient({
               label: "Rate cards",
               content: (
                 <RateCardsPanel
+                  orgId={orgId}
+                  canManage={can("payouts.manage")}
+                />
+              ),
+            },
+            {
+              value: "expert-routing",
+              label: "Expert routing",
+              // #1846 — a Billing admin changes where experts are paid here,
+              // without the member list it cannot read.
+              content: (
+                <ExpertPayoutRoutingPanel
                   orgId={orgId}
                   canManage={can("payouts.manage")}
                 />
