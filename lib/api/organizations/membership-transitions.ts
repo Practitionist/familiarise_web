@@ -26,10 +26,11 @@
  * Callers pass the enclosing Prisma transaction. The helper does its
  * profile-side work in the same tx so a failure rolls everything back.
  *
- * The LEARNER↔EXPERT block lives in `lib/enterprise/role-transitions.ts`
- * (`isBlockedRoleTransition`) and is enforced at the route layer — this
- * helper does not re-implement it. By the time the helper runs, the
- * transition is already known to be allowed.
+ * Role-change legality (the LEARNER↔EXPERT block, the no-history rule, an
+ * existing expert profile for a move into EXPERT) lives in the shared guard
+ * `lib/enterprise/membership-guards.ts` (#1846). By the time this helper
+ * runs, the transition is already known to be allowed, so its EXPERT
+ * lazy-create is reachable only from SSO JIT and SCIM provisioning.
  */
 
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
