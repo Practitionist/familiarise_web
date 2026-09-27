@@ -5,7 +5,10 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { processApprovedPayouts } from "@/lib/payments/payouts";
+import {
+  processApprovedPayouts,
+  REQUEST_PAYOUT_RUN_BOUNDS,
+} from "@/lib/payments/payouts";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 
 /**
@@ -17,8 +20,10 @@ export async function POST(_req: NextRequest) {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    // Process approved payouts
-    const results = await processApprovedPayouts();
+    // #1846 N6 — a request-bound run: no new payout after the budget and a
+    // short lock, so a function killed at the Lambda limit cannot hold the
+    // payout lock for 35 minutes. Unstarted payouts stay APPROVED.
+    const results = await processApprovedPayouts(REQUEST_PAYOUT_RUN_BOUNDS);
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;

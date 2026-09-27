@@ -40,6 +40,8 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "expire-unpaid-trials",
   // #1780 row 4 — refunds a cancelled class session not made up in 14 days.
   "settle-cancelled-sessions",
+  // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
+  "retry-auto-refunds",
   // Added by the wave-5 sweep: each of these either moves money directly or
   // mutates the org contract/program state the checkout sponsorship resolver
   // reads, so a partial deployment can bill against a half-written entitlement.

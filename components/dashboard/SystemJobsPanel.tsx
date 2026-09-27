@@ -414,6 +414,16 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
         throw new Error(result.error || "Failed to run job");
       }
 
+      // #1846 N6 — the payout jobs answer 202 and finish after the response.
+      if (result.dispatched) {
+        toast({
+          title: `${job.name} started`,
+          description: result.message,
+          variant: "default",
+        });
+        return;
+      }
+
       // Format result message
       const stats = [];
       if (result.totalProcessed !== undefined)

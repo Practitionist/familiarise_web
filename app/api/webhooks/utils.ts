@@ -2159,6 +2159,7 @@ export async function handleRazorpayPayoutWebhook(
     status: string;
     failure_reason?: string;
     utr?: string;
+    reference_id?: string;
   },
 ): Promise<void> {
   // First: is this an OrganizationPayout? Look up by gatewayPayoutId.
@@ -2281,6 +2282,7 @@ export async function handleRazorpayPayoutWebhook(
     // UTR — forward the bank reference so a completing consultant payout
     // persists it, mirroring the org branch above.
     payoutData.utr,
+    payoutData.reference_id,
   );
 
   console.log(

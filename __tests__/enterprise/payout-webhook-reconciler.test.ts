@@ -228,6 +228,7 @@ describe("handleRazorpayPayoutWebhook — OrganizationPayout reconciliation", ()
         id: "pout_orphan",
         status: "processed",
         utr: "X",
+        reference_id: "cpo_1",
       }),
     ).resolves.toBeUndefined();
 
@@ -235,13 +236,15 @@ describe("handleRazorpayPayoutWebhook — OrganizationPayout reconciliation", ()
     expect(mockedMarkCompleted).not.toHaveBeenCalled();
     expect(mockedMarkFailed).not.toHaveBeenCalled();
     expect(mockedMarkReversed).not.toHaveBeenCalled();
-    // Consultant fallback was attempted (with mapped status + forwarded UTR).
+    // Consultant fallback was attempted (with mapped status, forwarded UTR
+    // and, #1846 N1, the reference id that matches an unstamped payout).
     expect(mockedHandlePayoutWebhook).toHaveBeenCalledWith(
       "RAZORPAY",
       "pout_orphan",
       "COMPLETED",
       undefined,
       "X",
+      "cpo_1",
     );
   });
 
@@ -301,6 +304,7 @@ describe("handleRazorpayPayoutWebhook — OrganizationPayout reconciliation", ()
       "pout_consultant",
       "FAILED",
       "Insufficient bank balance",
+      undefined,
       undefined,
     );
   });

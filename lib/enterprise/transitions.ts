@@ -21,6 +21,7 @@ import type { Tx } from "@/lib/prisma";
 import type {
   AssignmentStatus,
   ContractStatus,
+  EarningStatus,
   MemberStatus,
   OrgAuditCategory,
   OrgInvoiceStatus,
@@ -81,7 +82,9 @@ async function finalize(
 }
 
 /** States with no outgoing edge — reconcile jobs may assert these never change. */
-function terminalsOf<S extends string>(allowed: Record<S, S[]>): ReadonlySet<S> {
+function terminalsOf<S extends string>(
+  allowed: Record<S, S[]>,
+): ReadonlySet<S> {
   const froms = new Set(Object.values<S[]>(allowed).flat());
   return new Set((Object.keys(allowed) as S[]).filter((s) => !froms.has(s)));
 }
@@ -164,7 +167,10 @@ export async function transitionProgram(
 //////////////////////////////////////////////////// ProgramAssignment ////////////////////////////////////////////////////
 
 // ROLLED only from ACTIVE — the cycle engine skips PAUSED assignments.
-export const ASSIGNMENT_ALLOWED_FROM: Record<AssignmentStatus, AssignmentStatus[]> = {
+export const ASSIGNMENT_ALLOWED_FROM: Record<
+  AssignmentStatus,
+  AssignmentStatus[]
+> = {
   ACTIVE: ["PAUSED"],
   ROLLED: ["ACTIVE"],
   PAUSED: ["ACTIVE"],
@@ -224,7 +230,10 @@ export async function transitionMembership(
 // VOID is pre-payment cancellation of an issued invoice; REFUNDED is
 // post-payment (see the OrgInvoiceStatus enum docstring). CANCELLED only
 // kills DRAFTs that were never issued.
-export const INVOICE_ALLOWED_FROM: Record<OrgInvoiceStatus, OrgInvoiceStatus[]> = {
+export const INVOICE_ALLOWED_FROM: Record<
+  OrgInvoiceStatus,
+  OrgInvoiceStatus[]
+> = {
   DRAFT: [],
   ISSUED: ["DRAFT"],
   PAID: ["ISSUED", "OVERDUE"],
@@ -288,7 +297,10 @@ export async function transitionOrgPayoutAccount(
   tx: Pick<Tx, "organizationPayoutAccount" | "orgAuditLog">,
   args: TransitionArgs<
     OrgPayoutAccountStatus,
-    Omit<Prisma.OrganizationPayoutAccountUncheckedUpdateManyInput, "status" | "version">
+    Omit<
+      Prisma.OrganizationPayoutAccountUncheckedUpdateManyInput,
+      "status" | "version"
+    >
   >,
 ): Promise<void> {
   const res = await tx.organizationPayoutAccount.updateMany({
@@ -298,7 +310,13 @@ export async function transitionOrgPayoutAccount(
     },
     data: { status: args.to, ...args.data },
   });
-  await finalize(tx, "OrganizationPayoutAccount", args.to, res.count, args.audit);
+  await finalize(
+    tx,
+    "OrganizationPayoutAccount",
+    args.to,
+    res.count,
+    args.audit,
+  );
 }
 
 //////////////////////////////////////////////////// OrganizationPayout ////////////////////////////////////////////////////
@@ -308,9 +326,14 @@ export async function transitionOrgPayoutAccount(
 export const PAYOUT_ALLOWED_FROM: Record<PayoutStatus, PayoutStatus[]> = {
   PENDING: [],
   APPROVED: ["PENDING"],
-  PROCESSING: ["APPROVED"],
+  // #1846 SM-B12 — the disbursement claim reads this list: sign-off is
+  // optional, so an unapproved PENDING batch is payable, and an APPROVED one
+  // must be too or approving it strands it.
+  PROCESSING: ["PENDING", "APPROVED"],
   COMPLETED: ["PROCESSING"],
   FAILED: ["PROCESSING"],
+  // #1846 SM-B12 — cancel only before sign-off; afterwards the payout can
+  // only fail or be reversed.
   CANCELLED: ["PENDING"],
   REVERSED: ["COMPLETED"],
 };
@@ -334,10 +357,32 @@ export async function transitionOrgPayout(
 // WalletTopUp's live CAS sites stay in lib/api/organizations/wallet.ts until
 // the #812 §P0 top-up work lands (PR-B) — declared here so the map is the
 // single documented source of legality.
-export const WALLET_TOPUP_ALLOWED_FROM: Record<WalletTopUpStatus, WalletTopUpStatus[]> = {
+export const WALLET_TOPUP_ALLOWED_FROM: Record<
+  WalletTopUpStatus,
+  WalletTopUpStatus[]
+> = {
   PENDING: [],
   CONFIRMED: ["PENDING"],
   FAILED: ["PENDING"],
+};
+
+// #1846 — EarningStatus, shared by ConsultantEarnings and
+// OrganizationEarnings. Derived from the live write sites: PENDING_TRUST is an
+// entry state released by release-pending-trust-earnings; HELD returns to its
+// pre-dispute or pre-hold state; BATCHED goes back to READY when its payout
+// fails or is cancelled; PAID re-opens to READY only on a bank reversal
+// (#812); REFUNDED is terminal. A release of a payout's earnings must name
+// BATCHED in its WHERE, never a bare payout id, or a REFUNDED row flips back
+// to READY.
+export const EARNING_ALLOWED_FROM: Record<EarningStatus, EarningStatus[]> = {
+  PENDING_TRUST: [],
+  PENDING: ["PENDING_TRUST", "HELD"],
+  // Moderation also holds PENDING_TRUST rows.
+  HELD: ["PENDING_TRUST", "PENDING", "READY"],
+  READY: ["PENDING", "HELD", "BATCHED", "PAID"],
+  BATCHED: ["READY"],
+  PAID: ["BATCHED"],
+  REFUNDED: ["PENDING_TRUST", "PENDING", "HELD", "READY", "BATCHED", "PAID"],
 };
 
 //////////////////////////////////////////////////// Terminal sets ////////////////////////////////////////////////////
@@ -353,4 +398,5 @@ export const TERMINAL_STATES = {
   OrgPayoutAccountStatus: terminalsOf(ORG_PAYOUT_ACCOUNT_ALLOWED_FROM),
   PayoutStatus: terminalsOf(PAYOUT_ALLOWED_FROM),
   WalletTopUpStatus: terminalsOf(WALLET_TOPUP_ALLOWED_FROM),
+  EarningStatus: terminalsOf(EARNING_ALLOWED_FROM),
 } as const;

@@ -31,6 +31,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     organizationPayout: {
+      findMany: jest.fn(),
       updateMany: jest.fn(),
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
@@ -64,10 +65,14 @@ jest.mock("../../lib/novu/org-workflows", () => ({
 
 import prisma from "@/lib/prisma";
 import { getRazorpayPayoutsService } from "@/lib/payments/payouts/razorpay-payouts";
-import { processOrgPayout } from "@/lib/payments/payouts/org-payout-service";
+import {
+  processOrgPayout,
+  processPendingOrgPayouts,
+} from "@/lib/payments/payouts/org-payout-service";
 
 const mockedPrisma = prisma as unknown as {
   organizationPayout: {
+    findMany: jest.Mock;
     updateMany: jest.Mock;
     findUnique: jest.Mock;
     findUniqueOrThrow: jest.Mock;
@@ -313,5 +318,42 @@ describe("processOrgPayout — live submission gating", () => {
     // The factory should also not be touched on the no-op path —
     // confirms we early-returned BEFORE the submission helper.
     expect(mockedGetService).not.toHaveBeenCalled();
+  });
+
+  it("#1846 SM-B12 — the payout run scans and claims APPROVED org payouts, not only PENDING", async () => {
+    process.env.ENABLE_LIVE_PAYOUTS = "true";
+    // First scan is the payable set; the second is the stale-PROCESSING redrive.
+    mockedPrisma.organizationPayout.findMany
+      .mockResolvedValueOnce([{ id: PAYOUT_ID }])
+      .mockResolvedValueOnce([]);
+    setupHappyClaim();
+    // The row is APPROVED: the claim lands only if its WHERE admits APPROVED.
+    mockedPrisma.organizationPayout.updateMany.mockImplementation(
+      async (args: { where: { status: { in: string[] } } }) => ({
+        count: args.where.status.in.includes("APPROVED") ? 1 : 0,
+      }),
+    );
+    setupVerifiedAccount();
+    const createPayout = jest
+      .fn()
+      .mockResolvedValue({ id: RAZORPAY_PAYOUT_ID, status: "queued" });
+    setupGatewayService({ createPayout });
+
+    const run = await processPendingOrgPayouts();
+
+    const payable = expect.objectContaining({
+      in: expect.arrayContaining(["PENDING", "APPROVED"]),
+    });
+    expect(
+      mockedPrisma.organizationPayout.findMany.mock.calls[0][0].where,
+    ).toEqual({
+      status: payable,
+    });
+    expect(mockedPrisma.organizationPayout.updateMany).toHaveBeenCalledWith({
+      where: { id: PAYOUT_ID, status: payable },
+      data: { status: "PROCESSING" },
+    });
+    expect(run.advanced).toBe(1);
+    expect(createPayout).toHaveBeenCalledTimes(1);
   });
 });
