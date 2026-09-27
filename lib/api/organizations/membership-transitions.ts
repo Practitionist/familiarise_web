@@ -3,7 +3,7 @@
  * place: which profile FKs to hydrate, which to clear, and what the
  * default `payoutRecipient` should be.
  *
- * Before this helper, four call sites (POST /members, PATCH
+ * Before this helper, four call sites (the since-retired POST /members, PATCH
  * /members/[memberId], invitations/accept, SSO auto-join in
  * `lib/auth.ts`) each had their own inline branching for profile FK
  * hydration. PATCH only touched role/status/departmentLabel — so a
@@ -226,7 +226,7 @@ async function ensureConsultantProfile(
  * Recompute `ConsultantProfile.isIndependent` from current membership
  * state. Call this AFTER any membership mutation that touches the
  * consultant's EXPERT memberships:
- *   - POST /api/organizations/[orgId]/members (create EXPERT)
+ *   - SCIM provisioning (create or reprovision EXPERT)
  *   - PATCH /api/organizations/[orgId]/members/[memberId] (role / status change)
  *   - DELETE /api/organizations/[orgId]/members/[memberId] (soft-delete)
  *   - invitation accept (create EXPERT via accept flow)

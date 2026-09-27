@@ -44,7 +44,7 @@ import {
 import { scheduleAfter } from "@/lib/api/after-safe";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
-// omitted BILLING_ADMIN — invitable via POST /members but un-PATCH-able
+// omitted BILLING_ADMIN — invitable but un-PATCH-able
 // here, so OWNERs couldn't promote a MAINTAINER to BILLING_ADMIN via
 // the dashboard ("Invalid body" 400). Caught during the 2026-06 role
 // audit. We could import lib/labels/org-labels.ts:MemberRoleSchema to

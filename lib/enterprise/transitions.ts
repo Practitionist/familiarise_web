@@ -191,11 +191,13 @@ export async function transitionProgramAssignment(
 //////////////////////////////////////////////////// Membership ////////////////////////////////////////////////////
 
 // ERASED is the DPDP §12 tombstone — reachable from everything, including
-// REMOVED, and the only state REMOVED may still move to.
+// REMOVED. REMOVED leaves only to ERASED, or to ACTIVE when the person
+// accepts a new invitation (#1846).
 export const MEMBER_ALLOWED_FROM: Record<MemberStatus, MemberStatus[]> = {
   PENDING: [],
-  // REMOVED → ACTIVE is a deliberate product edge (direct-add reactivation
-  // preserves the Membership row's downstream FKs) and MUST go through
+  // REMOVED → ACTIVE is a deliberate product edge (invitation-accept
+  // reactivation preserves the Membership row's downstream FKs; the
+  // dashboard PATCH refuses it, #1846) and MUST go through
   // transitionMembership so its CAS guards it. ERASED is deliberately NOT an
   // allowed source for anything but itself — a DPDP tombstone can never be
   // resurrected, even by a stale read-then-write.

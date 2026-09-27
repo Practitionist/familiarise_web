@@ -261,9 +261,9 @@ export async function POST(req: NextRequest) {
       // "invite-accept as LEARNER" as a sanctioned creation point — gating
       // it broke sponsored-employee onboarding). EXPERT stays strict: a
       // consultant identity carries domain/rates/verification/payout
-      // prerequisites that no invite click can substitute for. Admin
-      // direct-add (POST /members) stays strict for BOTH roles, and SSO
-      // JIT keeps its own lazy path.
+      // prerequisites that no invite click can substitute for. SSO JIT and
+      // SCIM keep their own lazy path; there is no admin direct-add any
+      // more (#1846).
       if (normalizedRole === "EXPERT") {
         const existingConsultant = await tx.consultantProfile.findUnique({
           where: { userId },
