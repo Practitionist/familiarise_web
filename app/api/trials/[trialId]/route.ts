@@ -1083,30 +1083,37 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // a live session), under the appointment lock every other lifecycle
     // writer takes. A trial with no appointment yet has no atom to lock; its
     // CAS alone decides.
-    const { appointmentId } = existingTrial;
+    //
+    // The CAS narrows to the status the caller saw, so a trial accepted or
+    // paid since the read 409s instead of being cancelled on a stale view,
+    // and the tombstone and refund read the committed row, not the pre-read.
+    const lockId = existingTrial.appointmentId;
     const cancelTrial = () =>
       prisma.$transaction(async (tx) => {
         await transitionTrial(tx, {
           actorUserId: session.user.id,
           where: { id: trialId },
           to: TrialStatus.CANCELLED,
-          fromIn: cancellableStatuses,
+          fromIn: [existingTrial.status],
         });
-        if (appointmentId) {
-          await softCancelTrialAppointmentInTx(tx, appointmentId);
+        const cancelled = await tx.trial.findUniqueOrThrow({
+          where: { id: trialId },
+        });
+        if (cancelled.appointmentId) {
+          await softCancelTrialAppointmentInTx(tx, cancelled.appointmentId);
         }
-        return tx.trial.findUniqueOrThrow({ where: { id: trialId } });
+        return cancelled;
       });
-    const updatedTrial = appointmentId
-      ? await withAppointmentLock(appointmentId, cancelTrial)
+    const updatedTrial = lockId
+      ? await withAppointmentLock(lockId, cancelTrial)
       : await cancelTrial();
 
     // Only the consultee reaches DELETE without privilege, so a privileged
     // caller is acting on the consultant's behalf.
     const refund = await refundCancelledTrial({
       trialId,
-      appointmentId: existingTrial.appointmentId,
-      paymentId: existingTrial.paymentId,
+      appointmentId: updatedTrial.appointmentId,
+      paymentId: updatedTrial.paymentId,
       initiatedByUserId: session.user.id,
       isConsultantInitiated:
         session.user.consulteeProfileId !== existingTrial.consulteeProfileId,

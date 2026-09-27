@@ -89,6 +89,19 @@ function expireProposal(tx: Tx, id: string, now: Date): Promise<void> {
 }
 
 /**
+ * A restore that cannot land: the overlap constraint, or a parent request CAS
+ * that missed. The proposal's own CAS miss is not one — that means it was
+ * answered, and the answer wins.
+ */
+function isRestoreMiss(error: unknown): boolean {
+  if (isExclusionViolation(error)) return true;
+  return (
+    error instanceof IllegalTransitionError &&
+    error.entity !== "RescheduleRequest"
+  );
+}
+
+/**
  * Expire one lapsed proposal and restore its booking, under the appointment
  * lock every other lifecycle writer takes (#1846), so an answer or a cancel
  * cannot interleave with the restore. Throws on anything but a lost race or a
@@ -113,11 +126,13 @@ async function expireOneProposal(
         reportPartialRestore(row, restored, "reschedule-expiry");
         return "restored";
       } catch (error) {
-        if (!isExclusionViolation(error)) throw error;
+        if (!isRestoreMiss(error)) throw error;
         // The consultant's original time was booked while the proposal was
-        // open. The restore's transaction rolled back whole, so expire alone:
-        // the slots stay released and the booking waits in the allocate queue,
-        // which is the pre-#1846 behaviour and the only one that fits.
+        // open, or the request moved off PENDING under it. The restore's
+        // transaction rolled back whole, so expire alone: the slots stay
+        // released and the booking waits in the allocate queue, which is the
+        // pre-#1846 behaviour. Without this the row would be skipped on every
+        // tick and never expire.
         await prisma.$transaction((tx) => expireProposal(tx, row.id, now));
         reportSentryError(error, {
           subsystem: "jobs",
