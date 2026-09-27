@@ -16,6 +16,24 @@ import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
 /** The org-funded rails; a card payment merely tagged to the org is not its money. */
 const ORG_FUNDED_METHODS = ["WALLET", "INVOICE", "LICENSE"];
 
+export function isOrgFundedPaymentMethod(
+  method: string | null | undefined,
+): boolean {
+  return ORG_FUNDED_METHODS.includes(method ?? "");
+}
+
+/**
+ * #1854 (ADR 19) — a webinar or class seat carries the org only when the
+ * org's money paid for it; a personal purchase by a member carries none, so
+ * the sponsor view never shows it.
+ */
+export function seatPayerOrganizationId(
+  organizationId: string | null,
+  orgFunded: boolean,
+): string | null {
+  return orgFunded ? organizationId : null;
+}
+
 export function sponsoredSeatsWhere(
   orgId: string,
 ): Prisma.AppointmentParticipantWhereInput {

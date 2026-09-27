@@ -140,6 +140,7 @@ import {
   type OpenClassEnrolment,
 } from "@/lib/booking/class-enrolment";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -2799,7 +2800,7 @@ export async function handleWebinarCheckout(
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
-  /** #1852 — the payer org for this seat; null for a B2C registration. */
+  /** #1852 — the org whose money paid for this seat; null for a personal purchase. */
   payerOrganizationId: string | null = null,
 ) {
   const webinar = await tx.webinar.findUnique({
@@ -2959,7 +2960,7 @@ export async function handleClassCheckout(
   _skipPayment: boolean,
   /** #1819 — the sessions the quote priced; null skips the stale-quote check. */
   quotedSessions: number | null = null,
-  /** #1852 — the payer org for this seat; null for a B2C enrolment. */
+  /** #1852 — the org whose money paid for this seat; null for a personal purchase. */
   payerOrganizationId: string | null = null,
 ) {
   const classInstance = await tx.class.findUnique({
@@ -3892,7 +3893,10 @@ export async function handleCheckout(
                   validatedData,
                   userId,
                   skipPayment,
-                  organizationId,
+                  seatPayerOrganizationId(
+                    organizationId,
+                    isOrgSponsoredPayment,
+                  ),
                 );
                 createdAppointment = webinarResult.appointment;
                 engagementsForCap = 1;
@@ -3906,7 +3910,10 @@ export async function handleCheckout(
                   userId,
                   skipPayment,
                   classSessionsQuoted,
-                  organizationId,
+                  seatPayerOrganizationId(
+                    organizationId,
+                    isOrgSponsoredPayment,
+                  ),
                 );
                 // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;

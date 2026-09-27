@@ -87,6 +87,10 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
+import {
+  isOrgFundedPaymentMethod,
+  seatPayerOrganizationId,
+} from "@/lib/data/org-sponsored-seats";
 
 // ============================================================================
 // Type Definitions
@@ -1599,6 +1603,11 @@ async function createAppointmentFromWebhook(
   const userId = payment.user.id;
 
   let appointment;
+  // #1854 — event seats take the org only when the org's money paid for them.
+  const seatOrg = seatPayerOrganizationId(
+    payment.organizationId,
+    isOrgFundedPaymentMethod(payment.paymentMethod),
+  );
 
   switch (appointmentType) {
     case AppointmentsType.CONSULTATION:
@@ -1639,14 +1648,14 @@ async function createAppointmentFromWebhook(
       appointment = await createWebinar(tx, {
         eventId,
         userId,
-        organizationId: payment.organizationId,
+        organizationId: seatOrg,
       });
       break;
     case AppointmentsType.CLASS:
       appointment = await createClass(tx, {
         eventId,
         userId,
-        organizationId: payment.organizationId,
+        organizationId: seatOrg,
       });
       break;
     default:

@@ -19,6 +19,8 @@ jest.mock("../../lib/prisma", () => ({
 import prisma from "../../lib/prisma";
 import {
   getOrgSponsoredGroupSeats,
+  isOrgFundedPaymentMethod,
+  seatPayerOrganizationId,
   sponsoredSeatsWhere,
 } from "../../lib/data/org-sponsored-seats";
 
@@ -70,4 +72,15 @@ it("lists only the sponsor's own funded seats, with member, title, date and atte
       attended: true,
     },
   ]);
+});
+
+// #1854 (ADR 19) — a member's personal purchase carries no org; the org's
+// own money tags the seat.
+it("tags a seat with the org only when the org's money paid for it", () => {
+  const seat = (method: string) =>
+    seatPayerOrganizationId("org-1", isOrgFundedPaymentMethod(method));
+  expect(seat("CARD")).toBeNull();
+  expect(seat("UPI")).toBeNull();
+  expect(seat("WALLET")).toBe("org-1");
+  expect(seat("LICENSE")).toBe("org-1");
 });
