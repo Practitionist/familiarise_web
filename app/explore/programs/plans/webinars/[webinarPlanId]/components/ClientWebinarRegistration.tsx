@@ -20,6 +20,7 @@ import { getWebinarCapacity } from "@/lib/events/capacity";
 import { isUserRegisteredForWebinar } from "@/lib/payments/utils/participants";
 import type { TSessionStatus } from "../types";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
+import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 
 type ClientWebinarRegistrationProps = {
   webinarPlanId: string; // The WebinarPlan ID (for URL path)
@@ -279,6 +280,7 @@ export function ClientWebinarRegistration({
             windowHours={refundWindowHours}
           />
         )}
+        <GroupSessionDisclosure className="mt-2" />
       </CardContent>
       <CardFooter>
         {checkoutUrl && !buttonDisabled ? (

@@ -38,6 +38,7 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
@@ -649,6 +650,8 @@ export default function ClassCheckoutPage({
             </div>
           </div>
         </div>
+        {/* #1852 decision 4 — shown before anyone picks who pays. */}
+        <GroupSessionDisclosure />
         <Separator className="bg-border" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
