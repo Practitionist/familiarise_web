@@ -263,7 +263,8 @@ export const CASE_ORDER_BY = [
 
 /** Mirrors CASE_ORDER_BY: latest activity first, never-active rows last. */
 export function compareCases(a: SortKey, b: SortKey): number {
-  if (!a.lastMessageAt !== !b.lastMessageAt) return a.lastMessageAt ? -1 : 1;
+  if (Boolean(a.lastMessageAt) !== Boolean(b.lastMessageAt))
+    return a.lastMessageAt ? -1 : 1;
   const byLast =
     (b.lastMessageAt?.getTime() ?? 0) - (a.lastMessageAt?.getTime() ?? 0);
   if (byLast !== 0) return byLast;

@@ -134,6 +134,20 @@ export function CaseWorkspace({
   const { viewerId, basePath, can } = useBackofficeCapability();
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
   const detailsToggle = useRef<HTMLButtonElement | null>(null);
+  const detailsPanel = useRef<HTMLElement | null>(null);
+  // Esc closes Details only from inside it: the conversation keeps its keys.
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (!detailsPanel.current?.contains(document.activeElement)) return;
+      e.stopPropagation();
+      setDetailsOpen(false);
+      detailsToggle.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [detailsOpen, setDetailsOpen]);
   const query = useQuery({
     queryKey: ["support-case", caseKey],
     queryFn: async (): Promise<CaseData> => {
@@ -416,14 +430,8 @@ export function CaseWorkspace({
           id={DETAILS_ID}
           aria-label="Case details"
           hidden={!detailsOpen}
+          ref={detailsPanel}
           className={DETAILS_PANEL}
-          // Esc closes only from inside: the conversation keeps its keys.
-          onKeyDown={(e) => {
-            if (e.key !== "Escape") return;
-            e.stopPropagation();
-            setDetailsOpen(false);
-            detailsToggle.current?.focus();
-          }}
         >
           <CaseDetails data={data} />
         </aside>
