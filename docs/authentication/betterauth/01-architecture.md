@@ -111,12 +111,13 @@ Fields marked `input: false` cannot be set by the client during sign-up — they
 
 ### 4.2 Database Hooks
 
-Three hooks fire at key lifecycle events:
+Four hooks fire at key lifecycle events:
 
 | Hook | When | What it does |
 |---|---|---|
 | `user.create.after` | After a new user signs up | Creates `CookiePreference` + `NotificationPreference`. Sends welcome email (fire-and-forget). Syncs Novu subscriber. |
-| `session.create.before` | Before issuing a session cookie | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). |
+| `session.create.before` | Before issuing a session cookie | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). On the allow path, stamps `deviceLabel` + `lastSeenAt` onto the row (#1856). |
+| `session.create.after` | After the session row commits | Concurrent-session cap: fire-and-forget `enforceSessionCapForUser()` (cap 10, #1856). |
 | `account.create.after` | After linking a non-credential account | Sends "account linked" notification email (fire-and-forget). |
 
 > [!NOTE]
@@ -130,7 +131,7 @@ Every authenticated request reads `customSession()`. It does three things:
 
 2. **Org membership payload:** Loads all ACTIVE memberships for the user — org name, slug, logo, capabilities (`canSponsor`, `canHost`), funding source, wallet balance. This powers the `OrgSwitcher` and checkout without an extra roundtrip.
 
-3. **SSO enforcement flag:** Checks if the user's email domain is enforced and whether they have an account linked via a registered SSO provider. Sets `ssoEnforcementFailed: true` for defense-in-depth (the primary gate is `session.create.before`).
+3. **SSO enforcement flag (removed):** This used to mirror the `session.create.before` logic into a `ssoEnforcementFailed: true` session flag. The flag never had a consumer and was removed (#1242) — enforcement lives solely in `session.create.before`.
 
 ### 4.4 Auth Guard Functions
 

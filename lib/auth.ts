@@ -26,6 +26,8 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { deriveDeviceLabel } from "@/lib/auth/device-label";
+import { enforceSessionCapForUser } from "@/lib/auth/session-cap";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
 // AC). Shares defaultAc so statements line up.
@@ -395,6 +397,32 @@ export const auth = betterAuth({
               code: "SSO_REQUIRED",
             });
           }
+
+          // Device metadata (#1856), stamped with zero extra writes:
+          // `create.before` may return `{ data }` merged into the insert.
+          // `session.userAgent` is already populated by BetterAuth's
+          // internal adapter at this point (request headers), so the
+          // label derives from the live value. `lastSeenAt` starts at
+          // creation; the throttled touch in `lib/auth/last-seen.ts`
+          // advances it thereafter.
+          return {
+            data: {
+              deviceLabel: deriveDeviceLabel(session.userAgent),
+              lastSeenAt: new Date(),
+            },
+          };
+        },
+        after: async (session) => {
+          // Concurrent-session cap (#1856) — eventually consistent and
+          // MUST never fail sign-in, so fire-and-forget with a Sentry
+          // report. The just-created session is the newest and is always
+          // kept; see `lib/auth/session-cap.ts` for the ordering proof.
+          void enforceSessionCapForUser(session.userId).catch((err) => {
+            Sentry.captureException(
+              err instanceof Error ? err : new Error(String(err)),
+              { tags: { subsystem: "auth" }, level: "warning" },
+            );
+          });
         },
       },
     },

@@ -897,6 +897,19 @@ model Session {
   // itself is not enabled (#693).
   impersonatedBy       String?
 
+  // Device management (#1856). Both nullable so every existing row stays
+  // valid without a backfill — additive-only per the #705 schema freeze.
+  // lastSeenAt is the last server-validated activity for this session,
+  // accurate to ~5 min (throttled touch in lib/auth/last-seen.ts); it is
+  // NOT true "last active", because the 5-min cookie cache means most
+  // requests never reach the database. deviceLabel is a server-derived
+  // human label ("Chrome on Windows") stamped at session creation by
+  // databaseHooks.session.create.before; rows written before this deploy
+  // (or by direct Prisma writes, which skip BetterAuth hooks) fall back
+  // to read-time derivation from userAgent.
+  lastSeenAt  DateTime?
+  deviceLabel String?
+
   @@index([userId])
   @@map("sessions")
 }

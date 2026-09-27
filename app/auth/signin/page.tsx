@@ -128,6 +128,11 @@ function SignInContent() {
     [searchParams],
   );
 
+  // #1856 — landed here because a session was revoked elsewhere
+  // (another device, or "sign out other devices"). Exact-match on a fixed
+  // string: the param carries no data, so there is nothing to inject.
+  const wasRevokedElsewhere = searchParams.get("reason") === "session-revoked";
+
   // #booking-journey — is this sign-in a detour out of a purchase? Derived
   // from the ALREADY-VALIDATED callbackUrl, never the raw param, so a crafted
   // "/\\evil.example/checkout/..." cannot light up a trust banner. Drives
@@ -434,6 +439,14 @@ function SignInContent() {
                 You&apos;re almost there — sign in to continue your booking.
                 Your selection is saved and will resume right where you left
                 off.
+              </p>
+            </div>
+          )}
+          {wasRevokedElsewhere && (
+            <div className="mb-4 rounded-md border border-sky-600/60 bg-sky-900/30 p-3">
+              <p className="text-sm text-sky-300">
+                You were signed out — on this device or another one. Sign in
+                again to continue.
               </p>
             </div>
           )}

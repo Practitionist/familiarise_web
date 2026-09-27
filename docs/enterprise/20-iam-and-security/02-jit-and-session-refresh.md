@@ -286,3 +286,18 @@ The table below maps the symptoms you are most likely to observe back to their p
 | User keeps acting as old role well past the 5-min cookie-cache window after promotion | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
 | `customSession` slow under high SSO sign-in load | The bareMembers loop is running for many orgs without `preloadedProfiles`. | Ensure the pre-fetch at the top of `customSession` is still in place; passes through `preloadedProfiles` to `applyMembershipRoleEffects`. |
 | Settings page shows a role dropdown for `defaultRoleForAutoJoin` | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`. | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block. |
+
+---
+
+## §6 — Correction (2026-09-27) — #1856: the admin plugin IS installed
+
+Two passages in §2 ("The fix" and "Why we don't force logout") state
+that BetterAuth's `admin` plugin "is not installed" and conclude no
+server-side revoke-by-userId exists. The premise was wrong:
+`lib/auth.ts` installs `admin({...})`. The conclusion stood anyway —
+the plugin's `revokeUserSessions` endpoint is caller-scoped (it checks
+the *calling* admin's session), so system-initiated revokes still go
+through Prisma — but the dangerous case (removed member, demoted
+OWNER) is no longer kill-less by necessity. Human-initiated revokes
+now hard-revoke through `lib/auth/session-revoke.ts`; see ADR 10's
+addendum and ADR 35 for the full story.

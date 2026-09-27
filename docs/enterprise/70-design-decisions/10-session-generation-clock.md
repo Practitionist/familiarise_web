@@ -127,3 +127,27 @@ refetch for a cheap counter comparison. Shrinking `cookieCache.maxAge`
 toward zero is the other lever — it trades database load for fresher roles
 — but the current value deliberately favours throughput for the benign
 case.
+
+## Addendum (2026-09-27) — #1856: the admin plugin IS installed
+
+Three passages above state that BetterAuth's `admin` plugin "is not
+installed", and use that to justify why removal and downgrade get the
+generation bump rather than a hard kill. That premise was wrong when
+written: `lib/auth.ts` installs `admin({...})` with `adminRoles:
+["ADMIN","STAFF"]`, so `auth.api.revokeUserSessions` has always been
+available. The conclusion stood anyway, for a reason nobody wrote
+down: the plugin endpoint is **caller-scoped** — it runs
+`adminMiddleware` plus a `session:["revoke"]` permission check against
+the *calling* admin's session, so a system-initiated revoke of another
+user (a membership transition, a moderation transaction, the session
+cap) still correctly goes through Prisma, not the plugin.
+
+What changes: the dangerous case is no longer kill-less by necessity.
+Human-initiated revokes (the user's own device list, the
+`users.moderate` staff door) hard-revoke through the shared choke
+point in `lib/auth/session-revoke.ts`, and the removal/downgrade
+transitions *could* join them. They deliberately do not yet — a removed
+member's `organizationMemberships` still drops silently on the next
+round-trip rather than signing them out mid-call, which is the UX call
+this ADR originally made. If that call ever flips, the primitive is
+`revokeAllUserSessions`, not a new mechanism. See ADR 35.

@@ -39,7 +39,8 @@ try {
 
 | Limiter | Endpoint | Key | Limit | Window |
 |---|---|---|---|---|
-| `authLimiter` | POST `/api/auth/sign-in`, `sign-up`, `forget-password` | IP | 10 | 15 min |
+| `authLimiter` | POST `/api/auth/sign-in`, `sign-up`, `forget-password`, `reset-password`, `verify-email`, `change-password` (#1856: the latter three close the original gap; `sign-out`/link/unlink stay out deliberately) | IP | 10 | 15 min |
+| `sessionMgmtLimiter` | `/api/user/sessions*` — device list, revokes, revocation-signal (#1856; own limiter so session traffic can't exhaust the sign-in budget) | IP | 30 | 15 min |
 | `searchLimiter` | GET `/api/user/consultants` | IP | 60 | 1 min |
 | `eligibilityLimiter` | GET `/api/trials/check-eligibility` | IP | 20 | 1 min |
 | `newsletterLimiter` | POST `/api/newsletter/subscribe` | IP | 3 | 1 hr |

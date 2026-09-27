@@ -12,6 +12,7 @@ import {
 } from "@/lib/maintenance-edge";
 import {
   authLimiter,
+  sessionMgmtLimiter,
   searchLimiter,
   eligibilityLimiter,
   waitlistLimiter,
@@ -253,13 +254,35 @@ const RATE_LIMIT_RULES: RateRule[] = [
     // Auth brute-force protection (POST only). `isBypassableIp` returns false in
     // production for every value (incl. the `unknown_ip` sentinel), so a
     // misconfigured proxy / missing header in prod still incurs the penalty.
-    label: "auth: sign-in / sign-up / forget-password",
+    //
+    // #1856 — also covers the guessable-secret endpoints the original rule
+    // missed: reset-password (token), verify-email (token) and
+    // change-password (current-password guessing, session-bound). Deliberately
+    // NOT sign-out / update-user / link-social / unlink-account /
+    // revoke-other-sessions: session-bound with no guessable secret, and
+    // throttling sign-out is actively harmful (it strands a user on a
+    // compromised device).
+    label: "auth: sign-in / sign-up / password + verification",
     match: (p, m) =>
       m === "POST" &&
       (p.startsWith("/api/auth/sign-in") ||
         p.startsWith("/api/auth/sign-up") ||
-        p.startsWith("/api/auth/forget-password")),
+        p.startsWith("/api/auth/forget-password") ||
+        p.startsWith("/api/auth/reset-password") ||
+        p.startsWith("/api/auth/verify-email") ||
+        p.startsWith("/api/auth/change-password")),
     limiter: authLimiter,
+    skipLocalhost: true,
+  },
+  {
+    // #1856 — session/device management. Own limiter, not authLimiter:
+    // the device list reloads after every revoke and the opt-in signal
+    // poll ticks every few seconds, and none of that traffic may eat
+    // the 10/15m sign-in budget. IP-keyed (middleware is cookie-presence
+    // only and cannot resolve a user id — see the meeting-join rule).
+    label: "auth: session/device management",
+    match: (p) => p.startsWith("/api/user/sessions"),
+    limiter: sessionMgmtLimiter,
     skipLocalhost: true,
   },
   {

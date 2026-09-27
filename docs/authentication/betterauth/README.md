@@ -15,6 +15,7 @@ other.
 | 7 | [`sso/README.md`](./sso/README.md) | Enterprise SSO in depth — SAML/OIDC, enforcement layers, domain claims, provider schemas, PKCE, cert rotation. |
 | 8 | [`oauth/README.md`](./oauth/README.md) | OAuth providers (Google, GitHub, Facebook), account linking, how to add a new provider. |
 | 9 | [`08-redirects-and-navigation.md`](./08-redirects-and-navigation.md) | **The anti-flicker contract**: auth redirect rules (`replace` not `push`, idempotency refs, force-fresh destination checks, `safeSameOriginPath`, server-side dashboard entry redirects). Read before touching any redirect. |
+| 10 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, the cap, propagation tiers, the staff doors. Read before touching any session row or the Sessions UI. |
 
 Authorization (role hierarchy, capability gates, `requireOrgAccess`) lives in [`docs/authorization/`](../../authorization/README.md).
 

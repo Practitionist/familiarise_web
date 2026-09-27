@@ -4,8 +4,8 @@
 |---|---|
 | Status | Stable |
 | Audience | All engineers |
-| Last reviewed | 2026-06-17 |
-| Source files | `lib/auth.ts` (lines 83–530), `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx` |
+| Last reviewed | 2026-09-27 |
+| Source files | `lib/auth.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx`, `lib/auth/device-label.ts`, `lib/auth/session-cap.ts`, `lib/auth/last-seen.ts`, `lib/auth/session-revoke.ts`, `lib/auth/session-select.ts` |
 
 ## 1. Background
 
@@ -52,6 +52,10 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 - If domain is enforced (`enforceSSO=true`, verified claim, active org), checks whether user has an `account` row matching one of the org's registered `ssoProvider.providerId` values
 - **Fails open** if the org has no providers configured yet (prevents lockout during setup)
 - Throws `APIError("FORBIDDEN")` with `code: "SSO_REQUIRED"` if rejected
+- On the allow path, stamps `deviceLabel` + `lastSeenAt` onto the row via the returned `{ data }` (merged into the insert — zero extra writes, #1856)
+
+**`session.create.after`** — Fires after the session row commits (#1856):
+- Fire-and-forget `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry). Eventually consistent by design and must never fail sign-in — failures are Sentry-reported and swallowed.
 
 **`account.create.after`** — Fires after linking a non-credential account:
 - Sends "account linked" notification email (fire-and-forget)
@@ -95,9 +99,9 @@ Loads all ACTIVE memberships with org metadata. This powers the `OrgSwitcher` an
 }
 ```
 
-**3. SSO Enforcement Flag**
+**3. SSO Enforcement Flag (removed)**
 
-Defense-in-depth: mirrors the `session.create.before` logic to set `ssoEnforcementFailed: true` on existing sessions. Page layouts check this flag and redirect. Not the primary gate — exists for sessions created before enforcement was configured.
+This used to mirror the `session.create.before` logic to set `ssoEnforcementFailed: true` on existing sessions. The flag never had a consumer and was removed (#1242) — do not re-introduce it without its consumer. Enforcement lives solely in `session.create.before`.
 
 ### 2.4 Auth Guard vs Auth Helper
 
@@ -114,9 +118,11 @@ The client reads auth state through BetterAuth's `useSession()` hook, which fetc
 
 Two pieces work together to make the rendered auth state correct and consistent across tabs:
 
-1. **Server seeding.** The root layout (`app/layout.tsx`) resolves the session on the server with `getSession()` and passes it to the `Navbar` as `initialSession`. The Navbar renders that server value while `useSession()` is still pending, so the first paint already shows the right state and there is no flash. Because this reads the session on every render of the root layout, it relies on the five-minute cookie cache to stay cheap, and it opts the layout into dynamic rendering.
+1. **Remembered shape, not server seeding.** An earlier version of this doc claimed the root layout resolves the session server-side and passes it as `initialSession`. That was removed (#932): `getSession()` in the root layout invokes `headers()`, forcing the entire app dynamic and stalling even `loading.tsx` skeletons ~20–30s on a cold instance. Instead the Navbar paints the last-known name+avatar from `localStorage` (`lib/auth-broadcast.ts`, `hooks/useRememberedAuth.ts` — name and image ONLY, never an authz signal) while `useSession()` resolves, then reconciles. The brief unknown state renders as a neutral placeholder, not a signed-out flash.
 
 2. **Cross-tab propagation.** BetterAuth's client only broadcasts a session change to other tabs on sign-out and user-update, never on sign-in, and OAuth or SSO logins complete through a full-page redirect with no client fetch hook at all. As a result an already-open tab would not reflect a login elsewhere until it next regained focus (BetterAuth's built-in `visibilitychange` refetch). `AuthSyncProvider` (mounted once in the root layout) closes that gap: it detects this tab's logged-out to logged-in transition and pings peer tabs over a `BroadcastChannel`, and on receiving a ping it calls the `useSession` `refetch` so every consumer re-renders. The helper in `lib/auth-broadcast.ts` falls back to a `storage` event for browsers without `BroadcastChannel`. The provider renders nothing and shares the existing session atom, so it adds no extra `/get-session` request.
+
+3. **Revocation classification (#1856).** When a tab goes from authed to null without initiating it, one authoritative re-check (`disableCookieCache`) classifies: error → refetch and stay put (a failed lookup is never a revocation, #1716 client-side); user present → cookie-cache race, refetch to recover; confirmed null → clean sign-out to `/auth/signin?reason=session-revoked`. Three triggers feed it: the `session-revoked` BroadcastChannel ping from the revoking tab (same-browser), a throttled `visibilitychange` re-check (cross-device, one tab-switch), and the opt-in Redis counter poll (`NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`, default off). See `09-sessions-devices.md`.
 
 ## 3. Operational Concerns
 
