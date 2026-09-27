@@ -140,20 +140,26 @@ async function retryOne(
   const pending = payment.description ?? "";
 
   if (payment.refunds.length >= MAX_AUTO_REFUND_ATTEMPTS) {
-    // CAS on the marker: only the run that retires it pages.
-    const retired = await prisma.payment.updateMany({
-      where: { id: payment.id, description: pending },
-      data: { description: stuckAutoRefundDescription(pending) },
+    // CAS on the marker: only the run that retires it pages. The handoff row
+    // commits with the retirement, so a killed run leaves the pending marker
+    // for the next sweep instead of a stuck one nobody was told about.
+    const retired = await prisma.$transaction(async (tx) => {
+      const moved = await tx.payment.updateMany({
+        where: { id: payment.id, description: pending },
+        data: { description: stuckAutoRefundDescription(pending) },
+      });
+      if (moved.count === 0) return false;
+      await recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Auto-refund of payment ${payment.id} failed ${payment.refunds.length} times — refund by hand`,
+        err: new Error("AUTO_REFUND_STUCK"),
+        context: { paymentId: payment.id, marker: pending },
+        db: tx,
+      });
+      return true;
     });
-    if (retired.count === 0) return;
-    result.stuck.push(payment.id);
-    await recordSystemError({
-      organizationId: null,
-      category: "PAYMENT",
-      summary: `Auto-refund of payment ${payment.id} failed ${payment.refunds.length} times — refund by hand`,
-      err: new Error("AUTO_REFUND_STUCK"),
-      context: { paymentId: payment.id, marker: pending },
-    });
+    if (retired) result.stuck.push(payment.id);
     return;
   }
 
