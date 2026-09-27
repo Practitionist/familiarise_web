@@ -1254,6 +1254,13 @@ async function processSinglePayout(payout: {
       console.warn(
         `[Payouts] Payout ${payout.id} left PROCESSING before submission — skipping`,
       );
+      // This run claimed the row a moment ago, so another writer moving it
+      // before submission is an anomaly an operator should see.
+      reportSentryMessage("Claimed payout moved before gateway submission", {
+        subsystem: "payments",
+        level: "warning",
+        extra: { payoutId: payout.id },
+      });
       return { payoutId: payout.id, success: false, skipped: true };
     }
 
@@ -1643,6 +1650,11 @@ export async function handlePayoutWebhook(
       return;
   }
 
+  // A row matched by reference id is stamped in the same CAS, and only while
+  // it is still unstamped.
+  const stampWhere = stampProviderId ? { providerPayoutId: null } : {};
+  const stampData = stampProviderId ? { providerPayoutId } : {};
+
   await prisma.$transaction(async (tx) => {
     // Atomic conditional update. Two guards:
     //  - Terminal incoming statuses (COMPLETED/FAILED/CANCELLED) may claim any
@@ -1661,7 +1673,7 @@ export async function handlePayoutWebhook(
     const { count } = await tx.consultantPayout.updateMany({
       where: {
         id: matched.id,
-        ...(stampProviderId ? { providerPayoutId: null } : {}),
+        ...stampWhere,
         status: terminalIncoming
           ? {
               notIn: [
@@ -1683,7 +1695,7 @@ export async function handlePayoutWebhook(
           payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
             ? gatewayUtr
             : undefined,
-        ...(stampProviderId ? { providerPayoutId } : {}),
+        ...stampData,
       },
     });
 
