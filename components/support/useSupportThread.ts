@@ -408,7 +408,10 @@ export function useSupportThread(
     if (!seedCategory || seeded.current || !data) return;
     const t = data.thread;
     const intent = data.intents.find((i) => i.category === seedCategory);
-    if ((t?.activeChannel === "HUMAN" && t.status !== "RESOLVED") || !intent) {
+    // #1527 — CodeRabbit delta: seed only into a fresh or resolved thread;
+    // an open BOT-only thread was falling through and got re-seeded on
+    // every remount, duplicating the intent turn.
+    if ((t && t.status !== "RESOLVED") || !intent) {
       seeded.current = true;
       return;
     }
