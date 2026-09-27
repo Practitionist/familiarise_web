@@ -112,10 +112,10 @@ describe("personal + workspace nav targets resolve", () => {
     expect(buildConsulteeNav("ce-1").pinnedCta?.href).toBe("/explore/experts");
     // #1527 — the header Help menu's Support requests rows are the viewer's
     // own page; the back office has only the public Help Center.
-    expect(buildBackofficeDashboardNav(backofficeCap("admin")).support).toBe(
-      null,
-    );
-    expect(buildWorkspaceNav("ow-1").support?.feedbackHref).toBe(null);
+    expect(
+      buildBackofficeDashboardNav(backofficeCap("admin")).support,
+    ).toBeNull();
+    expect(buildWorkspaceNav("ow-1").support?.feedbackHref).toBeNull();
     const helpPages = [
       buildConsultantNav("cp-1").support?.requestsHref,
       buildConsulteeNav("ce-1").support?.requestsHref,

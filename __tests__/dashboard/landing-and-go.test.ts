@@ -114,6 +114,6 @@ describe("support requests targets", () => {
     expect(
       supportRequestsHref({ role: "CONSULTEE", consulteeProfileId: "ce-1" }),
     ).toBe("/dashboard/consultee/ce-1/support");
-    expect(supportRequestsHref({ role: "STAFF" })).toBe(null);
+    expect(supportRequestsHref({ role: "STAFF" })).toBeNull();
   });
 });

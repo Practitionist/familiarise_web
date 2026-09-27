@@ -1000,14 +1000,14 @@ const MultiStepForm: React.FC = () => {
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
         router.replace(
-          `/dashboard/consultant/${result.user.consultantProfileId}`,
+          `/dashboard/consultant/${String(result.user.consultantProfileId)}`,
         );
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
       ) {
         router.replace(
-          `/dashboard/consultee/${result.user.consulteeProfileId}`,
+          `/dashboard/consultee/${String(result.user.consulteeProfileId)}`,
         );
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
         // #1527 Q12 — one staff tree, opening on Tickets.

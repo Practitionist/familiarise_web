@@ -55,7 +55,8 @@ export default async function OrgMembersPage({
     const next = new URLSearchParams();
     if (legacyRole) next.set("role", legacyRole);
     const qs = next.toString();
-    redirect(`/dashboard/organization/${orgId}/members${qs ? `?${qs}` : ""}`);
+    const qsSuffix = qs ? `?${qs}` : "";
+    redirect(`/dashboard/organization/${orgId}/members${qsSuffix}`);
   }
 
   if (

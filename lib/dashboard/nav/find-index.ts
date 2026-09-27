@@ -48,7 +48,7 @@ const SYNONYMS: Record<string, string[]> = {
 };
 
 const lastSegment = (path: string) =>
-  path.split(/[/?#]/).filter(Boolean).at(-1) ?? path;
+  path.split(/[/?#]/).findLast(Boolean) ?? path;
 
 export function buildFindIndex({
   nav,
