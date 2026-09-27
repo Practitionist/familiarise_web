@@ -131,3 +131,37 @@ export async function linkParticipantsToPayment(
     data: { paymentId },
   });
 }
+
+/**
+ * #1852 — which org a user's feedback or support thread on this appointment
+ * belongs to. A webinar or class seats B2C attendees and members of several
+ * orgs at once, so for an attendee it is the org on THEIR OWN seat (null for a
+ * B2C seat), never the host's: a public attendee's rating must not move the
+ * host org's quality score, and a sponsor must see feedback on the seats it
+ * paid for elsewhere. Anyone without an attendee seat there (the deliverer,
+ * staff, an org operator) keeps the appointment's org, as do 1:1 kinds, whose
+ * appointment org already is the payer's.
+ */
+export async function seatOrganizationId(
+  tx: ParticipantTx,
+  appointment: {
+    id: string;
+    appointmentType: string;
+    organizationId: string | null;
+  },
+  userId: string,
+): Promise<string | null> {
+  if (
+    appointment.appointmentType !== "WEBINAR" &&
+    appointment.appointmentType !== "CLASS"
+  ) {
+    return appointment.organizationId;
+  }
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: { appointmentId_userId: { appointmentId: appointment.id, userId } },
+    select: { role: true, organizationId: true },
+  });
+  return seat?.role === "CONSULTEE"
+    ? seat.organizationId
+    : appointment.organizationId;
+}

@@ -19,6 +19,7 @@ import type {
   SupportThreadCategory,
   SupportThreadStatus,
 } from "@prisma/client";
+import { seatOrganizationId } from "@/lib/booking/participants";
 import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
@@ -89,9 +90,15 @@ export async function runSupportTurn(
 ): Promise<RunTurnResult | null> {
   const appt = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    select: { organizationId: true },
+    select: { id: true, appointmentType: true, organizationId: true },
   });
   if (!appt) return null;
+  // #1852 — the thread belongs to the caller's seat org on a group session
+  // (B2C or a sponsor), not to the host's; an org operator's own thread keeps
+  // the host org, which is the org it acts for.
+  const threadOrgId = input.isOrgParty
+    ? appt.organizationId
+    : await seatOrganizationId(prisma, appt, userId);
 
   // Find-or-create — the @@unique([appointmentId, userId]) makes this the single
   // conversation for this order, and guards against a double-open race.
@@ -100,7 +107,7 @@ export async function runSupportTurn(
     create: {
       appointmentId,
       userId,
-      organizationId: appt.organizationId,
+      organizationId: threadOrgId,
       category: input.category ?? "OTHER",
     },
     update: {},

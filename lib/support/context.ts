@@ -12,6 +12,7 @@ import {
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { liveOccurrencesOf } from "@/lib/appointments/occurrences";
+import { seatOrganizationId } from "@/lib/booking/participants";
 import type { SupportContext, SupportStage } from "./types";
 
 /**
@@ -247,13 +248,17 @@ export async function buildSupportContext(
       !!membership && hasOrgPermission(membership.role, "operations.read");
   }
 
+  // #1852 — an attendee of a group session talks to support about THEIR
+  // seat, which may be B2C or funded by another org than the host.
+  const seatOrgId = await seatOrganizationId(prisma, appt, userId);
+
   return {
     threadId,
     appointmentId: appt.id,
     userId,
-    organizationId: appt.organizationId,
+    organizationId: seatOrgId,
     appointmentType: appt.appointmentType,
-    isOrgContext: appt.organizationId !== null,
+    isOrgContext: seatOrgId !== null,
     isProvider,
     isOrgOperator,
     stage,
