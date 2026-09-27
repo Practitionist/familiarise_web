@@ -28,8 +28,6 @@ import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   REQUEST_ALLOWED_FROM,
-  EVENT_ALLOWED_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
   appendCreationHistory,
   transitionClassEvent,
   transitionConsultationRequest,
@@ -1969,16 +1967,14 @@ async function restampLiveEvent(
     to: "SCHEDULED" as const,
   };
   try {
+    // SCHEDULED only: the map also allows IN_PROGRESS → SCHEDULED (reschedule
+    // re-entry), and a seat bought during a live session must not pull the
+    // event back. An IN_PROGRESS event misses here and the caller's fresh
+    // read treats it as benign, so the seat still confirms.
     if (kind === "class") {
-      await transitionClassEvent(tx, {
-        ...args,
-        fromIn: CLASS_EVENT_ALLOWED_FROM.SCHEDULED,
-      });
+      await transitionClassEvent(tx, { ...args, fromIn: ["SCHEDULED"] });
     } else {
-      await transitionWebinarEvent(tx, {
-        ...args,
-        fromIn: EVENT_ALLOWED_FROM.SCHEDULED,
-      });
+      await transitionWebinarEvent(tx, { ...args, fromIn: ["SCHEDULED"] });
     }
     return true;
   } catch (err) {

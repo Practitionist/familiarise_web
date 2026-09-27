@@ -237,6 +237,16 @@ export async function DELETE(
           }),
     };
 
+    // Ownership first, so a stranger cannot hold the buyers' checkout lock
+    // for this event by calling DELETE in a loop.
+    const mine = await prisma.webinar.findFirst({
+      where: owned,
+      select: { id: true },
+    });
+    if (!mine) {
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+    }
+
     // #1846 CT-02 — Delete only while nobody has booked or paid (#1527
     // decision 6). The guard counts payments of EVERY status, since a
     // PENDING or FAILED Payment cascades with the appointment as surely as a

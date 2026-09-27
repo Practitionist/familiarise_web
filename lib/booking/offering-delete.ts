@@ -74,6 +74,17 @@ export const UNTOUCHED_SUBSCRIPTION_PLAN = {
 } satisfies Prisma.SubscriptionPlanWhereInput;
 
 /**
+ * The lock must outlive every attempt the retry loop can make, or a checkout
+ * could take the expired key while a delete attempt is still running. Two
+ * attempts of maxWait + timeout are 50 s; 75 s covers them, the retry backoff
+ * and the lock's clock-drift allowance.
+ */
+const TX_MAX_WAIT_MS = 10_000;
+const TX_TIMEOUT_MS = 15_000;
+const DELETE_MAX_RETRIES = 1;
+const OFFERING_DELETE_LOCK_TTL_MS = 75_000;
+
+/**
  * Run `remove` under the offering's checkout lock in one Serializable
  * transaction. `remove` returns the deleted row, `null` when the offering is
  * missing or not the caller's, and throws OfferingInUseError when the guard
@@ -90,16 +101,18 @@ export async function deleteUntouchedOffering<T>(
   const lock = await lockEventCheckout(
     kind,
     id,
-    undefined,
+    OFFERING_DELETE_LOCK_TTL_MS,
     REQUEST_PATH_RETRY_CONFIG,
   );
   try {
-    return await withSerializableRetry(() =>
-      prisma.$transaction(remove, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 10_000,
-        timeout: 15_000,
-      }),
+    return await withSerializableRetry(
+      () =>
+        prisma.$transaction(remove, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: TX_MAX_WAIT_MS,
+          timeout: TX_TIMEOUT_MS,
+        }),
+      DELETE_MAX_RETRIES,
     );
   } finally {
     await unlockEventCheckout(lock);

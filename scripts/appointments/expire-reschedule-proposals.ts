@@ -133,7 +133,8 @@ async function expireOneProposal(
         // released and the booking waits in the allocate queue, which is the
         // pre-#1846 behaviour. Without this the row would be skipped on every
         // tick and never expire.
-        await prisma.$transaction((tx) => expireProposal(tx, row.id, now));
+        // Reported first, so the miss is on record even if the fallback below
+        // loses to an answer or fails.
         reportSentryError(error, {
           subsystem: "jobs",
           op: "reschedule-expiry-overlap",
@@ -141,6 +142,7 @@ async function expireOneProposal(
           level: "warning",
           extra: { rescheduleRequestId: row.id },
         });
+        await prisma.$transaction((tx) => expireProposal(tx, row.id, now));
         return "unrestored";
       }
     });
