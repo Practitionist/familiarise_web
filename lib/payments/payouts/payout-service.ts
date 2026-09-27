@@ -1532,7 +1532,10 @@ async function processStripePayout(
     currency: payout.currency.toLowerCase(),
     destinationAccountId: account.stripeAccountId,
     description: `Payout ${payout.id}`,
-    idempotencyKey: payout.idempotencyKey ?? undefined,
+    // #1846 — a legacy row with no stored key falls back to the same
+    // deterministic per-row key the RazorpayX path derives
+    // (generateIdempotencyKey), never to none.
+    idempotencyKey: payout.idempotencyKey || `payout_${payout.id}`,
     metadata: {
       payoutId: payout.id,
       source: "familiarise_platform",
