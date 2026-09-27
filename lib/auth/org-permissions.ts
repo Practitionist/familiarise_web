@@ -37,9 +37,9 @@ export type OrgSurface =
   // Home activity feed — audit rows, row-filtered like the Audit page.
   | "activity.read"
   | "consent.read"
-  // Record a member's withdrawal request. Granting is the member's own act,
-  // never an operator's (#1527 decision 5).
-  | "consent.withdraw"
+  // Record a member's withdrawal request. Granting and withdrawing are the
+  // member's own acts, never an operator's (#1527 decision 5).
+  | "consent.requestWithdrawal"
   | "settings.manage"
   // Domains & SSO / directory-sync reads — never secrets (#1527).
   | "identity.read"
@@ -126,7 +126,7 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // #1527 — was a MANAGER rank floor, which admitted BILLING_ADMIN (rank 70).
   "activity.read": OPERATORS,
   "consent.read": OPERATORS,
-  "consent.withdraw": OPERATORS,
+  "consent.requestWithdrawal": OPERATORS,
   "settings.manage": GOVERNANCE,
   // #1527 — was a MANAGER rank floor; MAINTAINER reads status, OWNER keeps
   // every write and secret at the route.

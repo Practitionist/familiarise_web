@@ -12,10 +12,11 @@
  * consent-manager + notice-versioning workflow is documented in the dpdp
  * stub header. #1527 decision 5 — only the member grants their own consent:
  * any active member may POST for themselves; an operator granting on behalf
- * of someone else is refused (CONSENT_GRANT_SELF_ONLY). Operators view
- * (consent.read) and record withdrawal requests (consent.withdraw). Any
- * active member may also read and withdraw their OWN consent — the Account
- * settings "Data consent" section (#1527 3c).
+ * of someone else is refused (CONSENT_GRANT_SELF_ONLY). Withdrawing is the
+ * member's own act too: operators view (consent.read) and record withdrawal
+ * requests (consent.requestWithdrawal, ./withdrawal-requests). Any active
+ * member reads and withdraws their OWN consent — the Account settings "Data
+ * consent" section (#1527 3c), which also lists their open requests.
  *
  * Retention: `auditRetainedUntil` = grantedAt + 7y per DPDP Rules (Nov
  * 2025). A daily cron sweeper (jobs/compliance/consent-retention-sweeper)
@@ -34,6 +35,78 @@ import {
   normalizePurposeCode,
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
+
+const RequestDetailsSchema = z.object({
+  purposeCode: z.string(),
+  reason: z.string().nullable().optional(),
+});
+
+/**
+ * #1527 decision 5 — the member's open withdrawal requests from this org: the
+ * newest per purpose, while that consent is live and was not given again after
+ * the request. Withdrawing (or re-granting) closes it.
+ */
+async function openWithdrawalRequests(
+  orgId: string,
+  membershipId: string,
+  userId: string,
+) {
+  const rows = await prisma.orgAuditLog.findMany({
+    where: {
+      organizationId: orgId,
+      targetMembershipId: membershipId,
+      action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWAL_REQUESTED,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: { id: true, createdAt: true, details: true },
+  });
+  if (rows.length === 0) return [];
+
+  const artifacts = await prisma.consentArtifact.findMany({
+    where: {
+      userId,
+      withdrawnAt: null,
+      auditRetainedUntil: { gt: new Date() },
+    },
+    select: { purposeCodes: true, grantedAt: true },
+  });
+  const latestGrant = new Map<PurposeCode, number>();
+  for (const a of artifacts) {
+    for (const raw of a.purposeCodes) {
+      const code = normalizePurposeCode(raw);
+      if (!code) continue;
+      const at = a.grantedAt.getTime();
+      if (at > (latestGrant.get(code) ?? 0)) latestGrant.set(code, at);
+    }
+  }
+
+  const open = new Map<
+    PurposeCode,
+    {
+      id: string;
+      purposeCode: PurposeCode;
+      reason: string | null;
+      requestedAt: Date;
+    }
+  >();
+  for (const row of rows) {
+    const details = RequestDetailsSchema.safeParse(row.details);
+    if (!details.success) continue;
+    const code = normalizePurposeCode(details.data.purposeCode);
+    if (!code || open.has(code)) continue;
+    const grantedAt = latestGrant.get(code);
+    if (grantedAt !== undefined && grantedAt < row.createdAt.getTime()) {
+      open.set(code, {
+        id: row.id,
+        purposeCode: code,
+        reason: details.data.reason ?? null,
+        requestedAt: row.createdAt,
+      });
+    }
+  }
+  return [...open.values()];
+}
 
 // Schedule VIII of the Indian Constitution enumerates 22 languages.
 // Plus English as the lingua franca for enterprise UIs. Accept ISO 639-1
@@ -109,7 +182,16 @@ export async function GET(
     take: q.limit,
   });
 
-  return NextResponse.json({ data: consents });
+  // Only the member themselves sees the requests addressed to them.
+  const withdrawalRequests =
+    userId === selfId
+      ? await openWithdrawalRequests(orgId, access.member.id, selfId)
+      : undefined;
+
+  return NextResponse.json({
+    data: consents,
+    ...(withdrawalRequests && { withdrawalRequests }),
+  });
 }
 
 export async function POST(
@@ -152,7 +234,9 @@ export async function POST(
     raw: c,
     code: normalizePurposeCode(c),
   }));
-  const unknown = normalized.filter((n) => n.code === undefined).map((n) => n.raw);
+  const unknown = normalized
+    .filter((n) => n.code === undefined)
+    .map((n) => n.raw);
   if (unknown.length > 0) {
     return NextResponse.json(
       { error: "Unknown purpose code(s)", detail: { unknown } },
@@ -220,26 +304,26 @@ export async function POST(
 }
 
 /**
- * DELETE /api/organizations/[orgId]/consent?userId=<uuid>&purposeCode=<code>
+ * DELETE /api/organizations/[orgId]/consent?purposeCode=<code>[&userId=<self>]
  *
- * Stamps `withdrawnAt=now()` on the user's active ConsentArtifacts.
+ * The member withdraws their OWN consent for one purpose: stamps
+ * `withdrawnAt=now()` on their active ConsentArtifacts carrying it.
  *
  *  - Withdrawal is irreversible in our model: a subsequent "re-grant"
  *    goes through `POST` and produces a NEW artifact with a fresh hash.
  *    That keeps the chain-of-custody intact for DPDP auditors.
  *
- *  - `purposeCode` scopes the withdrawal to artifacts whose purpose-code
- *    list contains that value. Omit it to withdraw ALL active consents
- *    for the user (full DPDP §12 opt-out).
+ *  - `purposeCode` is required. The consent table has no org column, so a
+ *    withdrawal here is platform-wide; an omitted code must not silently
+ *    become a withdraw-all through an org route.
  *
- *  - Operators (`consent.withdraw`: OWNER, MAINTAINER, MANAGER) record a
- *    member's withdrawal request — the org-side of the data principal's
- *    right to withdraw (#1527 decision 5). Any active member may withdraw
- *    their own consent (`userId` = the caller) from Account settings.
+ *  - #1527 decision 5 — only the member withdraws (CONSENT_WITHDRAW_SELF_ONLY
+ *    for anyone else). Operators record a withdrawal request instead
+ *    (./withdrawal-requests), which the member sees in Account settings.
  */
 const DeleteQuerySchema = z.object({
-  userId: z.string().min(1).max(128),
-  purposeCode: z.string().min(1).max(64).optional(),
+  userId: z.string().min(1).max(128).optional(),
+  purposeCode: z.string().min(1).max(64),
 });
 
 export async function DELETE(
@@ -260,34 +344,34 @@ export async function DELETE(
       { status: 400 },
     );
   }
-  const { userId } = parsed.data;
-  if (
-    userId !== access.session.user.id &&
-    !hasOrgPermission(access.member.role, "consent.withdraw")
-  ) {
+  const userId = parsed.data.userId ?? access.session.user.id;
+  if (userId !== access.session.user.id) {
     return NextResponse.json(
-      { error: "Forbidden — your role does not grant consent.withdraw" },
+      {
+        error:
+          "Only the member can withdraw their own consent. Record a withdrawal request instead.",
+        code: "CONSENT_WITHDRAW_SELF_ONLY",
+      },
       { status: 403 },
     );
   }
   // Normalise a legacy kebab-case scope to canonical so a withdrawal targets
   // the same code the gate/storage uses (e.g. third-party-sharing-with-stream
   // → STREAM_DATA_PROCESSING). An unknown code must 400 — NOT fall back to
-  // undefined, which `withdrawConsent` reads as "withdraw ALL consents" and
-  // would silently escalate a scoped request into a full opt-out.
-  let purposeCode: PurposeCode | undefined;
-  if (parsed.data.purposeCode) {
-    purposeCode = normalizePurposeCode(parsed.data.purposeCode);
-    if (purposeCode === undefined) {
-      return NextResponse.json(
-        { error: "Unknown purpose code", detail: { purposeCode: parsed.data.purposeCode } },
-        { status: 400 },
-      );
-    }
+  // undefined, which `withdrawConsent` reads as "withdraw ALL consents".
+  const purposeCode = normalizePurposeCode(parsed.data.purposeCode);
+  if (purposeCode === undefined) {
+    return NextResponse.json(
+      {
+        error: "Unknown purpose code",
+        detail: { purposeCode: parsed.data.purposeCode },
+      },
+      { status: 400 },
+    );
   }
 
   // Cross-org guard: same logic as POST — only members of this org can
-  // have their consent withdrawn through this endpoint.
+  // withdraw through this endpoint.
   const member = await prisma.membership.findUnique({
     where: {
       userId_organizationId: { userId, organizationId: orgId },
@@ -314,18 +398,19 @@ export async function DELETE(
           action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWN,
           // Same PII-hygiene rule as CONSENT_GRANTED: no raw userId
           // in the description; the membership FK is the pivot.
-          description: purposeCode
-            ? `Consent withdrawn (purpose=${purposeCode}) for member ${member.id}`
-            : `All consents withdrawn for member ${member.id}`,
+          description: `Consent withdrawn (purpose=${purposeCode}) for member ${member.id}`,
           details: {
             membershipId: member.id,
-            purposeCode: purposeCode ?? null,
+            purposeCode,
             withdrawnCount,
           },
         },
       })
       .catch((err) => {
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "enterprise" } },
+        );
         console.error("[consent DELETE] audit write failed", err);
       });
   }

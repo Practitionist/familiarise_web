@@ -239,7 +239,7 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
     );
   });
 
-  it("an operator can't grant consent for a member (decision 5)", async () => {
+  it("an operator can't grant or withdraw a member's consent (decision 5)", async () => {
     mockRequireOrgAccess.mockResolvedValue({
       session: { user: { id: "operator-user" } },
       member: { id: "m-op", role: "OWNER" },
@@ -259,8 +259,25 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
     );
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("CONSENT_GRANT_SELF_ONLY");
-    // Operators still record withdrawals.
-    expect(hasOrgPermission("MANAGER", "consent.withdraw")).toBe(true);
+    // Nor withdraw it: operators only record the member's request.
+    const params = { params: Promise.resolve({ orgId: "o" }) };
+    const del = await deleteConsent(
+      new Request(
+        "http://x/api?userId=someone-else&purposeCode=SESSION_BOOKING",
+        {
+          method: "DELETE",
+        },
+      ) as never,
+      params,
+    );
+    expect((await del.json()).code).toBe("CONSENT_WITHDRAW_SELF_ONLY");
+    // Self-withdraw names a purpose — no silent withdraw-all.
+    const all = await deleteConsent(
+      new Request("http://x/api", { method: "DELETE" }) as never,
+      params,
+    );
+    expect(all.status).toBe(400);
+    expect(hasOrgPermission("MANAGER", "consent.requestWithdrawal")).toBe(true);
   });
 
   it("a member reads + withdraws only their own consent (#1527 3c)", async () => {

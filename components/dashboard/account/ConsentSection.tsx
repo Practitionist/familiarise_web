@@ -32,6 +32,18 @@ interface Artifact {
   auditRetainedUntil: string;
 }
 
+/** An operator's record that you asked this org to stop (#1527 decision 5). */
+interface WithdrawalRequest {
+  id: string;
+  purposeCode: PurposeCode;
+  reason: string | null;
+}
+
+interface OrgConsent {
+  data: Artifact[];
+  withdrawalRequests?: WithdrawalRequest[];
+}
+
 /** Same predicate as checkConsent: live, not withdrawn, carrying the purpose. */
 function grantedPurposes(artifacts: Artifact[]): Set<PurposeCode> {
   const now = Date.now();
@@ -49,9 +61,10 @@ function grantedPurposes(artifacts: Artifact[]): Set<PurposeCode> {
 const CONSENT_KEY = "account-org-consent";
 
 /**
- * #1527 3c — operators can no longer grant consent for a member (decision 5),
+ * #1527 3c — only the member grants or withdraws their consent (decision 5),
  * so this is the member's own Grant / Withdraw for each organisation they
- * belong to, through that org's consent route (self-only for non-operators).
+ * belong to, through that org's self-only consent routes. An operator's
+ * recorded withdrawal request shows on its purpose, next to Withdraw.
  * Checkout's CONSENT_REQUIRED links here via `dataConsentHref`.
  */
 export function ConsentSection() {
@@ -80,7 +93,7 @@ export function ConsentSection() {
           `/api/organizations/${org.organizationId}/consent?${qs}`,
         );
         if (!res.ok) throw new Error("Couldn't load your consent");
-        return ((await res.json()) as { data: Artifact[] }).data;
+        return (await res.json()) as OrgConsent;
       },
       enabled: !!userId,
     })),
@@ -150,7 +163,13 @@ export function ConsentSection() {
       <div className="space-y-6">
         {orgs.map((org, i) => {
           const query = consents[i];
-          const granted = grantedPurposes(query?.data ?? []);
+          const granted = grantedPurposes(query?.data?.data ?? []);
+          const requests = new Map(
+            (query?.data?.withdrawalRequests ?? []).map((r) => [
+              r.purposeCode,
+              r,
+            ]),
+          );
           return (
             <div key={org.organizationId} className="space-y-2">
               <h3 className="text-sm font-medium text-foreground">
@@ -165,6 +184,7 @@ export function ConsentSection() {
                   {ALL_PURPOSE_CODES.map((code) => {
                     const meta = PURPOSE_CODE_META[code];
                     const isGranted = granted.has(code);
+                    const request = isGranted ? requests.get(code) : undefined;
                     const busy =
                       change.isPending &&
                       change.variables?.orgId === org.organizationId &&
@@ -181,6 +201,14 @@ export function ConsentSection() {
                           <p className="text-sm text-muted-foreground">
                             {meta.description}
                           </p>
+                          {request && (
+                            <p className="mt-1 text-sm text-amber-700 dark:text-amber-400">
+                              {org.orgName} asked you to review your consent for{" "}
+                              {meta.label.toLowerCase()}.
+                              {request.reason && ` “${request.reason}”`} Only
+                              you can withdraw it.
+                            </p>
+                          )}
                         </div>
                         <div className="flex shrink-0 items-center gap-3">
                           <StatusBadge

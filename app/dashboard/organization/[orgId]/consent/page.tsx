@@ -5,20 +5,16 @@
  *
  * DPDP (Digital Personal Data Protection Act 2023) consent-artifact
  * dashboard. Lists this org's `ConsentArtifact`s (active + withdrawn
- * history) and lets an operator record a member's withdrawal request.
- * Granting is the member's own act (#1527 decision 5): the API refuses an
- * operator grant on someone else's behalf, so this page offers none.
+ * history) read-only. Granting and withdrawing are the member's own acts
+ * (#1527 decision 5): an operator records a member's withdrawal request,
+ * which the member sees in Account settings next to their Withdraw control.
  *
  * Gated via the org permission matrix (consent.read: OWNER, MAINTAINER,
- * MANAGER); withdrawals are consent.withdraw, the same three roles.
- *
- * Withdrawal is irreversible in our model: a re-grant goes through POST
- * and mints a NEW artifact with a fresh hash, keeping chain-of-custody
- * intact for auditors.
+ * MANAGER); requests are consent.requestWithdrawal, the same three roles.
  */
 
-import { use, useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { use, useEffect, useId, useMemo, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
@@ -34,11 +30,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Textarea } from "@/components/ui/textarea";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
+import { useToast } from "@/hooks/use-toast";
 
 type ConsentArtifact = {
   id: string;
@@ -71,14 +71,88 @@ function LocalDateTime({ value }: { value: string | Date | null | undefined }) {
   return <span suppressHydrationWarning>{text || "—"}</span>;
 }
 
+type RequestVars = { purposeCode: string; reason?: string };
+
+/** #1527 decision 5 — records the member's ask; it withdraws nothing. */
+function RecordRequestDialog({
+  purposes,
+  purposeLabel,
+  disabled,
+  onRecord,
+}: Readonly<{
+  purposes: string[];
+  purposeLabel: (code: string) => string;
+  disabled: boolean;
+  onRecord: (vars: RequestVars) => Promise<unknown>;
+}>) {
+  const [purpose, setPurpose] = useState(purposes[0] ?? "");
+  const [reason, setReason] = useState("");
+  const reasonId = useId();
+  const purposeId = useId();
+
+  return (
+    <ConfirmDialog
+      title="Record a withdrawal request?"
+      description="Only the member can withdraw their consent. This records that they asked the organization to stop, and shows the request in their Account settings next to the Withdraw control. Nothing is withdrawn until they do it."
+      confirmLabel="Record request"
+      onOpenChange={(open) => {
+        if (!open) {
+          setPurpose(purposes[0] ?? "");
+          setReason("");
+        }
+      }}
+      onConfirm={async () => {
+        await onRecord({
+          purposeCode: purpose,
+          reason: reason.trim() || undefined,
+        });
+      }}
+      trigger={
+        <Button size="sm" variant="outline" disabled={disabled}>
+          Record withdrawal request
+        </Button>
+      }
+    >
+      <div className="space-y-1.5">
+        <Label id={purposeId}>Purpose</Label>
+        <RadioGroup
+          value={purpose}
+          onValueChange={setPurpose}
+          aria-labelledby={purposeId}
+        >
+          {purposes.map((p) => (
+            <div key={p} className="flex items-center gap-2">
+              <RadioGroupItem id={`${purposeId}-${p}`} value={p} />
+              <Label htmlFor={`${purposeId}-${p}`} className="font-normal">
+                {purposeLabel(p)}
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={reasonId}>Reason (optional)</Label>
+        <Textarea
+          id={reasonId}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={500}
+          rows={3}
+        />
+        <p className="text-xs text-muted-foreground">
+          The request and its reason are kept in the audit log.
+        </p>
+      </div>
+    </ConfirmDialog>
+  );
+}
+
 export default function ConsentPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
     permission: "consent.read",
   });
-  const qc = useQueryClient();
-
-  const [actionError, setActionError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   // Names for the artifact table only — there is no grant picker (#1527).
   const members = useQuery<Member[]>({
@@ -115,25 +189,23 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     return map;
   }, [members.data]);
 
-  // Withdrawal scopes to a single purposeCode when provided; omitting it
-  // is the full DPDP §12 opt-out. The DELETE endpoint is idempotent.
-  const withdraw = useMutation({
-    mutationFn: async (vars: { userId: string; purposeCode?: string }) => {
-      const qs = new URLSearchParams({ userId: vars.userId });
-      if (vars.purposeCode) qs.set("purposeCode", vars.purposeCode);
+  // Failures show inside the dialog, which rethrows them.
+  const requestWithdrawal = useMutation({
+    mutationFn: async (vars: RequestVars & { userId: string }) => {
       const res = await fetch(
-        `/api/organizations/${orgId}/consent?${qs.toString()}`,
-        { method: "DELETE" },
+        `/api/organizations/${orgId}/consent/withdrawal-requests`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(vars),
+        },
       );
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Failed to withdraw consent");
-      return body as { withdrawnCount: number };
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(body.error ?? "Couldn't record the request");
+      }
     },
-    onSuccess: () => {
-      setActionError(null);
-      qc.invalidateQueries({ queryKey: ["org-consents", orgId] });
-    },
-    onError: (err) => setActionError(err.message),
+    onSuccess: () => toast({ title: "Withdrawal request recorded" }),
   });
 
   if (isGateLoading || !allowed) return null;
@@ -170,29 +242,6 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
           {row.purposeCodes.map((p) => (
             <Badge key={p} variant="secondary">
               {purposeLabel(p)}
-              {/* #1527 Q10 — a DPDP withdrawal is not a one-click action. */}
-              <ConfirmDialog
-                title={`Withdraw "${purposeLabel(p)}"?`}
-                description="The organization stops processing this member's data for this purpose from now on. The withdrawal is recorded and can't be undone; the member can grant it again."
-                confirmLabel="Record withdrawal"
-                tone="destructive"
-                onConfirm={async () => {
-                  await withdraw.mutateAsync({
-                    userId: row.userId,
-                    purposeCode: p,
-                  });
-                }}
-                trigger={
-                  <button
-                    type="button"
-                    aria-label={`Withdraw "${purposeLabel(p)}"`}
-                    className="ml-1 text-muted-foreground hover:text-foreground"
-                    disabled={withdraw.isPending}
-                  >
-                    ×
-                  </button>
-                }
-              />
             </Badge>
           ))}
         </div>
@@ -211,23 +260,17 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
       cell: (row) => <LocalDateTime value={row.grantedAt} />,
     },
     {
-      key: "withdraw",
-      header: "Withdrawal",
+      key: "request",
+      header: "Withdrawal request",
       headClassName: "text-right",
       className: "text-right",
       cell: (row) => (
-        <ConfirmDialog
-          title="Withdraw every purpose?"
-          description="This is the member's full DPDP opt-out: the organization stops processing their data for all purposes from now on. It is recorded and can't be undone."
-          confirmLabel="Record withdrawal"
-          tone="destructive"
-          onConfirm={async () => {
-            await withdraw.mutateAsync({ userId: row.userId });
-          }}
-          trigger={
-            <Button size="sm" variant="outline" disabled={withdraw.isPending}>
-              Record withdrawal
-            </Button>
+        <RecordRequestDialog
+          purposes={row.purposeCodes}
+          purposeLabel={purposeLabel}
+          disabled={requestWithdrawal.isPending}
+          onRecord={(vars) =>
+            requestWithdrawal.mutateAsync({ ...vars, userId: row.userId })
           }
         />
       ),
@@ -289,18 +332,15 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
         subtitle="Tamper-evident consent artifacts per the Digital Personal Data Protection Act 2023. Retained 7 years from grant or withdrawal."
       />
       <DashboardContent>
-        {actionError && (
-          <p className="mb-4 text-sm text-red-600">{actionError}</p>
-        )}
-
         <Card>
           <CardHeader>
             <CardTitle>Active consents</CardTitle>
             <CardDescription>
-              Consents members have granted. Record a member&apos;s withdrawal
-              request for one purpose or all of them — it stamps the artifact
-              and stops downstream processing. Only the member can grant consent
-              again.
+              Consents members have granted. Only the member can give or
+              withdraw their consent, in their Account settings. When a member
+              asks the organization to stop, record their withdrawal request: it
+              withdraws nothing, and the member sees it next to their Withdraw
+              control.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0 sm:p-4">
