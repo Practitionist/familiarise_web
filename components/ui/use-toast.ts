@@ -167,6 +167,15 @@ function toast({ ...props }: Toast) {
   };
 }
 
+/**
+ * A progress toast ("Signing in...") that its outcome replaces in place, so the
+ * two never stack now that more than one toast can show at once.
+ */
+function pendingToast(props: Toast) {
+  const { id, update } = toast(props);
+  return (outcome: Toast) => update({ ...outcome, id, open: true });
+}
+
 function useToast() {
   const [state, setState] = React.useState<State>(memoryState);
 
@@ -187,4 +196,4 @@ function useToast() {
   };
 }
 
-export { useToast, toast };
+export { useToast, toast, pendingToast };

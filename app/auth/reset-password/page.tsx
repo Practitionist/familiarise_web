@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { pendingToast, useToast } from "@/hooks/use-toast";
 import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
@@ -73,7 +73,7 @@ function ResetPasswordContent() {
     setIsLoading(true);
     setMessage("");
     setError("");
-    toast({ title: "Resetting password..." });
+    const settle = pendingToast({ title: "Resetting password..." });
 
     try {
       const { error: resetError } = await authClient.resetPassword({
@@ -83,7 +83,7 @@ function ResetPasswordContent() {
       if (resetError) {
         const copy = humanizeAuthError("reset", resetError);
         setError(copy.description);
-        toast({
+        settle({
           title: copy.title,
           description: copy.description,
           variant: "destructive",
@@ -91,7 +91,7 @@ function ResetPasswordContent() {
       } else {
         const successMessage = "Password has been reset successfully.";
         setMessage(successMessage);
-        toast({ title: "Success", description: successMessage });
+        settle({ title: "Success", description: successMessage });
         setTimeout(() => router.push("/auth/signin"), 3000);
       }
     } catch (err: unknown) {
@@ -102,7 +102,7 @@ function ResetPasswordContent() {
       console.error("Reset password error:", err);
       const copy = humanizeAuthError("reset", { status: 0 });
       setError(copy.description);
-      toast({
+      settle({
         title: copy.title,
         description: copy.description,
         variant: "destructive",

@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { pendingToast, useToast } from "@/hooks/use-toast";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
@@ -343,7 +343,7 @@ function SignInContent() {
     setNeedsVerification(false);
     setFieldError({});
     setIsLoading(true);
-    toast({ title: "Signing in..." });
+    const settle = pendingToast({ title: "Signing in..." });
 
     try {
       const { data, error } = await signIn.email({
@@ -355,10 +355,10 @@ function SignInContent() {
         const copy = humanizeAuthError("signin", error);
         if (copy.needsVerification) {
           setNeedsVerification(true);
-          toast({ title: copy.title, description: copy.description });
+          settle({ title: copy.title, description: copy.description });
         } else {
           if (copy.field) setFieldError({ [copy.field]: copy.description });
-          toast({
+          settle({
             title: copy.title,
             description: copy.description,
             variant: "destructive",
@@ -366,7 +366,7 @@ function SignInContent() {
         }
       } else if (data) {
         Sentry.setUser({ id: data.user.id });
-        toast({
+        settle({
           title: "Sign In Successful",
           description: callbackUrl
             ? "Redirecting to your destination..."
@@ -382,7 +382,7 @@ function SignInContent() {
         { tags: { subsystem: "auth" } },
       );
       console.error("Sign in error:", error);
-      toast({
+      settle({
         title: "Sign In Error",
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive",

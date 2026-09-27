@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { pendingToast, useToast } from "@/hooks/use-toast";
 import {
   signUp,
   useSession,
@@ -272,7 +272,7 @@ function SignUpContent() {
       return;
     }
     setIsLoading(true);
-    toast({ title: "Creating account..." });
+    const settle = pendingToast({ title: "Creating account..." });
 
     try {
       const { data, error } = await signUp.email({
@@ -285,7 +285,7 @@ function SignUpContent() {
       if (error) {
         const copy = humanizeAuthError("signup", error);
         if (copy.field) setFieldError({ [copy.field]: copy.description });
-        toast({
+        settle({
           title: copy.title,
           description: copy.description,
           variant: "destructive",
@@ -294,7 +294,7 @@ function SignUpContent() {
         // requireEmailVerification: the account is created but no session is
         // issued until the email is verified. Show the check-your-email panel.
         setVerificationSent(true);
-        toast({
+        settle({
           title: "Check your email",
           description: `We sent a verification link to ${email}.`,
         });
@@ -304,7 +304,7 @@ function SignUpContent() {
         // (covers OAuth + verified-email paths uniformly). #880
         // Replace, never push: leaving /auth/signup in history makes Back from
         // onboarding/dashboard ping-pong forward again.
-        toast({
+        settle({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
         });
@@ -320,7 +320,7 @@ function SignUpContent() {
         error instanceof Error
           ? error.message
           : "An unexpected error occurred.";
-      toast({
+      settle({
         title: "Sign Up Failed",
         description: message,
         variant: "destructive",
