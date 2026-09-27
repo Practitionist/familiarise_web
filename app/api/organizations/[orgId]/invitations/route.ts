@@ -16,23 +16,19 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { HostInvitableMemberRoleSchema } from "@/lib/labels/org-labels";
-import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   DomainVerificationRequiredError,
-  hasVerifiedDomain,
   UNVERIFIED_ORG_SEAT_CAP,
 } from "@/lib/enterprise/governance";
-import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
+import { issueInvitation } from "@/lib/enterprise/invitations";
+import { MembershipGuardError } from "@/lib/enterprise/membership-guards";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import {
   attemptStagedEmail,
   EMAIL_BUDGET_MS,
-  stageOrgInvitationEmail,
   type StagedSend,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
@@ -146,21 +142,6 @@ export async function POST(
   // mixed-case duplicate must not slip past the pre-check or the insert.
   const email = parsed.data.email.trim().toLowerCase();
 
-  // OWNER role gate (#789): only an OWNER can invite another OWNER. Without it
-  // a MAINTAINER could invite an OWNER and, once accepted, gain the
-  // security-sensitive surface by proxy — the same hole the members PATCH route
-  // already closes. The accept route trusts the invitation's stored role, so
-  // the check has to live here at invite time.
-  if (role === "OWNER" && !isAtLeastRole(access.member.role, "OWNER")) {
-    return NextResponse.json(
-      {
-        error: "Only an OWNER can invite a member as OWNER",
-        code: "OWNER_ROLE_REQUIRES_OWNER",
-      },
-      { status: 403 },
-    );
-  }
-
   // EXPERT is only valid for orgs that host consultants. Sponsor-only
   // orgs have no payout account / RateCard / settlement path for an
   // EXPERT's earnings, so the role is rejected even if a stale
@@ -191,20 +172,12 @@ export async function POST(
 
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 
-  // De-dupe active invitations by (orgId, email). An inviter retrying
-  // from the UI shouldn't spawn two tokens that both resolve to the
-  // same membership — the second POST extends the expiry instead.
-  //
-  // The findFirst → create/update sequence is wrapped in a Serializable
-  // tx because two concurrent POSTs against the same (orgId, email) would
-  // otherwise both observe `existing = null` under the default Read
-  // Committed isolation and both INSERT, leaving two pending rows.
-  //
-  // The invariant is also DB-enforced (#747/#685): a partial unique index
-  // on (organizationId, lower(email)) WHERE status='pending' lives in
-  // prisma/sql/check-constraints.sql. The Serializable tx stays as the
-  // first line so the common case returns the typed 409 instead of a
-  // surfaced P2002.
+  // De-dupe active invitations by (orgId, email): a retry refreshes the
+  // pending invitation instead of minting a second token. The helper also
+  // refuses an existing member and applies the unverified-org seat cap and
+  // the OWNER-only roles (#1851 decision 6). Serializable because two
+  // concurrent POSTs would otherwise both read "no pending row" and insert;
+  // the partial unique index (#747/#685) is the backstop, surfaced as P2002.
   let wasExisting = false;
   let invitation;
   // Staged inside the transaction below: the notice rows commit with the
@@ -213,96 +186,39 @@ export async function POST(
   let stagedEmail: StagedSend | null = null;
   const origin = new URL(req.url).origin;
   try {
-    // #1132 follow-up — the tx below assumed a retry budget that never
-    // existed; a P2034 abort surfaced as a raw 500 to the invite sender.
-    // Transient serialization failures now retry via the house helper.
+    // #1132 follow-up — P2034 aborts retry via the house helper.
     invitation = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
-          const existing = await tx.invitation.findFirst({
-            where: {
-              organizationId: orgId,
-              email,
-              status: "pending",
-            },
-          });
-          wasExisting = !!existing;
-
-          // PR-1d / #675: an unverified org may onboard a small founding
-          // team but is hard-capped until at least one OrgDomainClaim is
-          // verified. Skip the gate for re-invites (the seat is already
-          // counted in the active+pending sum from the original send).
-          if (!existing) {
-            const verified = await hasVerifiedDomain(tx, orgId);
-            if (!verified) {
-              const [activeMembers, pendingInvites] = await Promise.all([
-                tx.membership.count({
-                  where: { organizationId: orgId, status: "ACTIVE" },
-                }),
-                tx.invitation.count({
-                  where: { organizationId: orgId, status: "pending" },
-                }),
-              ]);
-              if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
-                throw new DomainVerificationRequiredError("BULK_SEATS");
-              }
-            }
-          }
-
-          const token = existing?.id ?? crypto.randomUUID();
-          const record = existing
-            ? await tx.invitation.update({
-                where: { id: existing.id },
-                data: { role, expiresAt },
-              })
-            : await tx.invitation.create({
-                data: {
-                  id: token,
-                  organizationId: orgId,
-                  email,
-                  role,
-                  status: "pending",
-                  expiresAt,
-                  inviterId: access.session.user.id,
-                },
-              });
-
-          await tx.orgAuditLog.create({
-            data: {
-              organizationId: orgId,
-              actorMembershipId: access.member.id,
-              category: "MEMBER",
-              action: existing
-                ? AUDIT_ACTIONS.MEMBER.INVITE_RESENT
-                : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
-              description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
-              details: { email, role, expiresAt: expiresAt.toISOString() },
-            },
-          });
-
-          // The bell reaches an invitee who already has an account; the
-          // email is the channel that reaches one who does not (#1653). Both
-          // outbox rows are written HERE, so they exist iff the invitation
-          // does; the vendor attempts run in after() below.
-          const invite = {
-            inviterName: access.session.user.name ?? access.session.user.email,
+          const issued = await issueInvitation(tx, {
+            orgId,
             orgName: access.org.name,
+            email,
             role,
-            inviteUrl: `${origin}/organizations/invite/${record.id}`,
-            expiresAt: expiresAt.toISOString(),
-          };
-          stagedBells = await notifyOrgInviteSent(email, invite, { tx });
-          stagedEmail = await stageOrgInvitationEmail(
-            { email, ...invite },
-            { tx, entityRef: `orgInvite:${record.id}` },
-          );
-
-          return record;
+            expiresAt,
+            inviter: {
+              userId: access.session.user.id,
+              name: access.session.user.name ?? access.session.user.email,
+              membershipId: access.member.id,
+              role: access.member.role,
+            },
+            origin,
+          });
+          wasExisting = issued.wasExisting;
+          stagedBells = issued.stagedBells;
+          stagedEmail = issued.stagedEmail;
+          return issued.invitation;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
   } catch (err) {
+    if (err instanceof MembershipGuardError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.httpStatus },
+      );
+    }
     if (err instanceof DomainVerificationRequiredError) {
       return NextResponse.json(
         {

@@ -41,6 +41,7 @@ import {
   orgSettingsLabel,
 } from "@/lib/dashboard/org-settings-sections";
 import type { OrgStatus } from "@prisma/client";
+import { JoinConsentGate } from "./JoinConsentGate";
 import {
   fetchOrgDetails,
   orgDetailsQueryKey,
@@ -286,6 +287,10 @@ function OrgDashboardShellInner({
       }
       pathname={pathname}
     >
+      {/* #1846 — the first-sign-in consent step for SSO JIT and SCIM joiners. */}
+      {org.membership.status === "ACTIVE" && (
+        <JoinConsentGate orgId={orgId} orgName={org.organization.name} />
+      )}
       {children}
     </DashboardShell>
   );

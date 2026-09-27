@@ -242,7 +242,7 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        after: async (user) => {
+        after: async (user, ctx) => {
           try {
             // NOTE: ConsulteeProfile used to be auto-created here for every
             // signup. It is now lazy — created on the first consumer action
@@ -274,14 +274,23 @@ export const auth = betterAuth({
             // on the signup form (P1 follow-up; see #701). When a user
             // hits the in-app withdrawal flow (/api/.../consent), this
             // artifact is superseded and `checkConsent` fails closed.
+            //
+            // #1846 — an account created by an SSO sign-in (JIT) was not
+            // made by the person on a signup form, so nothing is stamped
+            // for them here. Their first sign-in into the org shows the
+            // consent step (JoinConsentGate), which writes these same rows.
+            const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
+            const signupPurposes = ssoProvisioned
+              ? []
+              : [
+                  PURPOSE_CODES.PRIMARY_PROCESSING,
+                  PURPOSE_CODES.STREAM_DATA_PROCESSING,
+                  // #701 — session-booking consent, gated fail-closed at
+                  // org-sponsored checkout. Granted at signup like the others.
+                  PURPOSE_CODES.SESSION_BOOKING,
+                ];
             try {
-              for (const purposeCode of [
-                PURPOSE_CODES.PRIMARY_PROCESSING,
-                PURPOSE_CODES.STREAM_DATA_PROCESSING,
-                // #701 — session-booking consent, gated fail-closed at
-                // org-sponsored checkout. Granted at signup like the others.
-                PURPOSE_CODES.SESSION_BOOKING,
-              ] as const) {
+              for (const purposeCode of signupPurposes) {
                 const draft = buildConsentArtifact({
                   userId: user.id,
                   dataFiduciary: "Familiarise",

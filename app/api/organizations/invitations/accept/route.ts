@@ -15,16 +15,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
+import { transitionMembership } from "@/lib/enterprise/transitions";
 import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
+  recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
@@ -221,9 +223,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // User may already have a Membership in this org from a direct
-      // admin add or an SSO auto-join. Idempotent upsert keeps the
-      // UI's "accept" button safe to click twice.
+      // The user may already hold a Membership here from SSO JIT or SCIM.
+      // A live row makes the accept idempotent, so the button is safe to
+      // click twice. A REMOVED row, or a PENDING row from a pre-#1846 bulk
+      // import, is what an invitation brings back: accepting is the only
+      // door into ACTIVE for it (#1846 bucket C). An ERASED tombstone never
+      // comes back.
       const existing = await tx.membership.findUnique({
         where: {
           userId_organizationId: {
@@ -232,7 +237,15 @@ export async function POST(req: NextRequest) {
           },
         },
       });
-      if (existing) {
+      if (existing?.status === "ERASED") {
+        throw Object.assign(
+          new Error("This membership was erased and cannot be restored."),
+          { httpStatus: 409 },
+        );
+      }
+      const rejoining =
+        existing?.status === "REMOVED" || existing?.status === "PENDING";
+      if (existing && !rejoining) {
         return {
           membership: existing,
           organization: org,
@@ -282,32 +295,15 @@ export async function POST(req: NextRequest) {
         role: normalizedRole,
       });
 
-      // BetterAuth Member row is kept for org-scoped session flows.
-      // Membership.betterAuthMemberId preserves the linkage even after
-      // BetterAuth's own adapter writes are done.
-      const betterAuthMember = await tx.member.create({
-        data: {
-          organizationId: inv.organizationId,
-          userId,
-          // BetterAuth's Member.role is a free-form string; we write the
-          // typed MemberRole value here so third-party tools that read
-          // the BetterAuth table see the correct role.
-          role: normalizedRole,
-        },
-      });
-
-      const created = await tx.membership.create({
-        data: {
-          userId,
-          organizationId: inv.organizationId,
-          role: normalizedRole,
-          status: "ACTIVE",
-          consulteeProfileId: roleEffects.consulteeProfileId,
-          consultantProfileId: roleEffects.consultantProfileId,
-          payoutRecipient: roleEffects.payoutRecipient,
-          betterAuthMemberId: betterAuthMember.id,
-        },
-      });
+      const roleData = {
+        role: normalizedRole,
+        consulteeProfileId: roleEffects.consulteeProfileId,
+        consultantProfileId: roleEffects.consultantProfileId,
+        payoutRecipient: roleEffects.payoutRecipient,
+      };
+      const created = rejoining
+        ? await rejoin(tx, existing.id, roleData)
+        : await createMembership(tx, roleData);
 
       await tx.orgAuditLog.create({
         data: {
@@ -317,7 +313,11 @@ export async function POST(req: NextRequest) {
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.INVITE_ACCEPTED,
           description: `User ${userId} accepted invitation to join as ${normalizedRole}`,
-          details: { invitationId: inv.id, role: normalizedRole },
+          details: {
+            invitationId: inv.id,
+            role: normalizedRole,
+            ...(rejoining && { rejoinedFrom: existing.status }),
+          },
         },
       });
 
@@ -362,5 +362,57 @@ export async function POST(req: NextRequest) {
         stagedWelcome,
       };
     });
+  }
+
+  type RoleData = {
+    role: typeof normalizedRole;
+    consulteeProfileId: string | null;
+    consultantProfileId: string | null;
+    payoutRecipient: "SELF" | "ORGANIZATION";
+  };
+
+  /** A first-time joiner: the BetterAuth Member sibling plus the Membership. */
+  async function createMembership(tx: Tx, roleData: RoleData) {
+    // BetterAuth's Member row is kept for org-scoped session flows; its role
+    // is a free-form string, so the typed value is written for third-party
+    // readers. Membership.betterAuthMemberId preserves the linkage.
+    const betterAuthMember = await tx.member.create({
+      data: {
+        organizationId: inv.organizationId,
+        userId,
+        role: normalizedRole,
+      },
+    });
+    return tx.membership.create({
+      data: {
+        userId,
+        organizationId: inv.organizationId,
+        status: "ACTIVE",
+        betterAuthMemberId: betterAuthMember.id,
+        ...roleData,
+      },
+    });
+  }
+
+  /**
+   * A removed member invited back (or a legacy PENDING import row) keeps the
+   * same Membership row, so ProgramAssignment and audit FKs stay intact. The
+   * invitation's role applies: "remove, then re-invite with the new role" is
+   * exactly how a LEARNER becomes an EXPERT. The CAS refuses a row that
+   * changed underneath (for example an erasure landing first).
+   */
+  async function rejoin(tx: Tx, membershipId: string, roleData: RoleData) {
+    await transitionMembership(tx, {
+      where: { id: membershipId, organizationId: inv.organizationId },
+      to: "ACTIVE",
+      data: roleData,
+    });
+    const rejoined = await tx.membership.findUniqueOrThrow({
+      where: { id: membershipId },
+    });
+    if (rejoined.role === "EXPERT" && rejoined.consultantProfileId) {
+      await recomputeConsultantIsIndependent(tx, rejoined.consultantProfileId);
+    }
+    return rejoined;
   }
 }
