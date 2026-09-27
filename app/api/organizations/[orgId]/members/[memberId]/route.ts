@@ -172,7 +172,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -184,6 +184,37 @@ export async function PATCH(
     );
   }
   const patch = parsed.data;
+
+  // Gated per field. Role, status and department are people management
+  // (OWNER, MAINTAINER). #1851 decision 5 — an EXPERT's payout recipient
+  // decides where money goes, so only the finance roles (OWNER,
+  // BILLING_ADMIN) change it; MAINTAINER can see it but not change it.
+  const touchesPeople =
+    patch.role !== undefined ||
+    patch.status !== undefined ||
+    patch.departmentLabel !== undefined;
+  if (
+    touchesPeople &&
+    !hasOrgPermission(access.member.role, "members.manage")
+  ) {
+    return NextResponse.json(
+      { error: "Insufficient role to manage members" },
+      { status: 403 },
+    );
+  }
+  if (
+    patch.payoutRecipient !== undefined &&
+    !hasOrgPermission(access.member.role, "payouts.manage")
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Only an Owner or Billing admin can change where an expert is paid.",
+        code: "PAYOUT_RECIPIENT_REQUIRES_FINANCE",
+      },
+      { status: 403 },
+    );
+  }
   const actor = {
     kind: "member" as const,
     membershipId: access.member.id,
@@ -339,6 +370,28 @@ export async function PATCH(
               tx,
               current.consultantProfileId,
             );
+          }
+
+          // #1851 decision 5 — a payout-recipient change is a money event:
+          // its own PAYOUT-category row, visible to the finance readers.
+          const payoutBefore = current.payoutRecipient;
+          const payoutAfter = updated.payoutRecipient;
+          if (payoutAfter !== payoutBefore) {
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: orgId,
+                actorMembershipId: access.member.id,
+                targetMembershipId: memberId,
+                category: "PAYOUT",
+                action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
+                description: `Payout recipient: ${payoutBefore} → ${payoutAfter}`,
+                details: {
+                  from: payoutBefore,
+                  to: payoutAfter,
+                  viaRoleChange: roleChanged,
+                },
+              },
+            });
           }
 
           const auditActions: string[] = [];

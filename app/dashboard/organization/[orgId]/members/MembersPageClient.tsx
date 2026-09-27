@@ -85,6 +85,13 @@ function selectableRoles(
 }
 
 // #1527 — chip order; a role only gets a chip while it has members.
+/** #1851 decision 6 — roles only an OWNER grants or takes away. */
+const OWNER_ONLY_ROLES: ReadonlySet<MemberRole> = new Set([
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+]);
+
 const ROLE_CHIPS: MemberRole[] = [
   "OWNER",
   "MAINTAINER",
@@ -339,8 +346,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   });
 
   const canManage = can("members.manage");
-  // The server omits payout routing without `payouts.read` (#1527).
-  const canSetPayout = editMember?.payoutRecipient !== undefined;
+  // #1851 decision 5 — payout routing is finance-only (OWNER, BILLING_ADMIN);
+  // MAINTAINER still sees it. The server omits it without `payouts.read`.
+  const canSetPayout =
+    can("payouts.manage") && editMember?.payoutRecipient !== undefined;
+  // #1851 decision 6 — only an OWNER grants or removes these roles.
+  const ownerOnly = (r: MemberRole) =>
+    OWNER_ONLY_ROLES.has(r) && !isAtLeast("OWNER");
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
@@ -416,8 +428,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         title={
           isOwnRow(m)
             ? "You cannot remove yourself"
-            : m.role === "OWNER" && !isAtLeast("OWNER")
-              ? "Only an OWNER can remove an OWNER"
+            : ownerOnly(m.role)
+              ? "Only an Owner can remove an Owner, Maintainer or Billing admin"
               : undefined
         }
         className="inline-flex"
@@ -428,9 +440,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           aria-label="Remove member"
           onClick={() => setMemberToRemove(m)}
           disabled={
-            removeMutation.isPending ||
-            isOwnRow(m) ||
-            (m.role === "OWNER" && !isAtLeast("OWNER"))
+            removeMutation.isPending || isOwnRow(m) || ownerOnly(m.role)
           }
         >
           <Trash2 className="h-4 w-4 text-red-500" />
@@ -573,9 +583,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-status">Status</Label>
+              {/* #1846 — nobody changes their own status either; the last
+                  OWNER suspending themselves locked the org out. */}
               <Select
                 value={editStatus}
                 onValueChange={(v) => setEditStatus(v as MemberStatus)}
+                disabled={editMember !== null && isOwnRow(editMember)}
               >
                 <SelectTrigger id="edit-status">
                   <SelectValue />
@@ -622,10 +635,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 </p>
               )}
             {editMember &&
-              !isAtLeast("OWNER") &&
-              (editMember.role === "OWNER" || editRole === "OWNER") && (
+              (ownerOnly(editMember.role) || ownerOnly(editRole)) && (
                 <p className="text-sm text-red-600">
-                  Only an OWNER can assign or revoke the OWNER role.
+                  Only an Owner can grant or remove the Owner, Maintainer or
+                  Billing admin role.
                 </p>
               )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
@@ -640,8 +653,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 editMutation.isPending ||
                 (editMember !== null &&
                   (isBlockedRoleTransition(editMember.role, editRole) ||
-                    (!isAtLeast("OWNER") &&
-                      (editMember.role === "OWNER" || editRole === "OWNER"))))
+                    ownerOnly(editMember.role) ||
+                    ownerOnly(editRole)))
               }
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
