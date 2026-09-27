@@ -193,7 +193,7 @@ These are the host-side money routes for organizations that earn — rate cards,
 
 ## Reimbursements, disputes, documents (read surfaces)
 
-These are read-only roster endpoints — reimbursements, disputes, trials, and appointments — all gated at MANAGER and none of them emit audit rows. Documents and recordings are no longer MANAGER-only: PR #1842 (part of #1527) turned them into the org Library, open to every ACTIVE or SUSPENDED member for their own sessions, with an `operations.read` scope for the org-wide oversight view.
+These are read-only roster endpoints — reimbursements, disputes, and trials — gated on the finance-reader set (`reimbursements.read` / `disputes.read`, held by OWNER, MAINTAINER, BILLING_ADMIN, MANAGER) and none of them emit audit rows. Documents and recordings are no longer MANAGER-only: PR #1842 (part of #1527) turned them into the org Library, open to every ACTIVE or SUSPENDED member for their own sessions, with an `operations.read` scope for the org-wide oversight view.
 
 | Path                                               | Verb  | Min role | Purpose                      | Audit actions |
 | -------------------------------------------------- | ----- | -------- | ---------------------------- | ------------- |
@@ -201,7 +201,8 @@ These are read-only roster endpoints — reimbursements, disputes, trials, and a
 | `/api/organizations/[orgId]/reimbursements/export` | `GET` | MANAGER  | CSV export of reimbursements | —             |
 | `/api/organizations/[orgId]/disputes`              | `GET` | MANAGER  | Dispute roster (org-scoped)  | —             |
 | `/api/organizations/[orgId]/trials`                | `GET` | MANAGER  | Trial roster                 | —             |
-| `/api/organizations/[orgId]/appointments`          | `GET` | MANAGER  | Org appointment feed         | —             |
+
+The org appointment feed sits on a different gate from the roster endpoints above: `/api/organizations/[orgId]/appointments` (`GET`) requires `operations.read`, the operations-reader set (OWNER, MAINTAINER, MANAGER, SUPPORT). SUPPORT holds this grant for member-facing triage but does not hold `reimbursements.read` or `disputes.read`; BILLING_ADMIN holds the reverse. Neither role set is a subset of the other, so the two gates should not be read as one "MANAGER and up" floor.
 
 ## Library and org support tickets
 

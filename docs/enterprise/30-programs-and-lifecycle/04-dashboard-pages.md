@@ -86,9 +86,13 @@ The list below is the actual `page.tsx` set under
 /dashboard/organization/[orgId]/audit          → per-org OrgAuditLog (rich filters)
 /dashboard/organization/[orgId]/consent        → ConsentArtifact roster + DPDP
                                                   withdraw/grant (DPDP §6(4))
-/dashboard/organization/[orgId]/settings       → branding + policy, with
-                                                  ?tab=sso | webhooks | scim |
-                                                  data-exports
+/dashboard/organization/[orgId]/settings       → branding + policy, opened
+                                                  from the header avatar menu
+                                                  (PR #1842, part of #1527);
+                                                  /settings/sso | webhooks |
+                                                  scim | data-exports are now
+                                                  section URLs, and the old
+                                                  ?tab= links to them redirect
 ```
 
 ### Surfaces that are tabs, not routes
@@ -209,8 +213,8 @@ flowchart TD
   end
   subgraph OWN["+ OWNER only (rank 70)"]
     direction LR
-    O1["/settings?tab=sso<br/>(policy + providers + domain claims)"]
-    O2["/settings?tab=data-exports<br/>(DPDP §11, OWNER + BILLING_ADMIN)"]
+    O1["/settings/sso<br/>(policy + providers + domain claims; MAINTAINER also reads, writes are OWNER-only)"]
+    O2["/settings/data-exports<br/>(DPDP §11, OWNER + BILLING_ADMIN)"]
   end
   HOME --> MGR --> MNT --> OWN
 
@@ -252,7 +256,7 @@ readable projection of it.
 | `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |
 | `/analytics`   | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation. |
 | `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | no — avatar menu ("<Org> settings") | Branding + policy. As of PR #1842 (part of #1527), org settings is no longer a sidebar row: it opens from the header avatar menu, shown only to a role holding at least one section, and renders through `SettingsLayout` with one URL per section rather than `?tab=` state; see `docs/decisions/2026-09-27-dashboard-shell-and-context-switcher.md`. |
-| `/settings/sso` | ✅ | ✅ | ✅ | **OWNER** (rank floor — genuine hierarchy) | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
+| `/settings/sso` | ✅ | ✅ | ✅ | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes and break-glass stay **OWNER**-only (rank floor — genuine hierarchy) | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
 | `/contracts`   | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER) | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift. |
 | `/purchase-orders` | ✅  | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO` | Receipt icon. |
 | `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.manage` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
@@ -346,7 +350,7 @@ The UI is convenience; the server is authoritative in both cases.
 
 Two compliance surfaces sit under the org dashboard:
 
-- **`/settings?tab=data-exports`** — DPDP §11 right-to-access. OWNER +
+- **`/settings/data-exports`** (the retired `/settings?tab=data-exports` link now redirects here) — DPDP §11 right-to-access. OWNER +
   BILLING_ADMIN request a bundle (rate-limited 1/24h via `orgDataExportLimiter`);
   a worker picks up the `OrgDataExportJob` within ~10 min, uploads to Supabase
   Storage, and the page exposes a 7-day signed-URL download. The page polls every

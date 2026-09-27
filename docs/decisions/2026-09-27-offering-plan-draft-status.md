@@ -46,7 +46,7 @@ Unpublishing a plan does not touch anything that already happened against it. Pa
 
 ### Negative
 
-- Two related gaps were found and left open at PR-open time, then closed in this same PR's later commits once caught: the plan-detail page's `generateMetadata` initially still put a `DRAFT` plan's title into the page `<title>` even though the page itself correctly 404'd, and `api/topics`'s public counts initially still counted `DRAFT` (and ORG_ONLY, and archived) plans, over-counting what a visitor sees advertised. Both were fixed before merge; the `generateMetadata` fix is landed, and the `api/topics` fix is tracked to completion in issue #1845 for the reads that were not yet migrated onto the same visibility helper.
+- Two related gaps were found at PR-open time: the plan-detail page's `generateMetadata` initially still put a `DRAFT` plan's title into the page `<title>` even though the page itself correctly 404'd, and `api/topics`'s public counts initially still counted `DRAFT` (and ORG_ONLY, and archived) plans, over-counting what a visitor sees advertised. Only the first is fixed: the `generateMetadata` fix landed in this PR. The `api/topics` count is not yet fixed — `withProgramCount` still counts every `ConsultationPlan`/`SubscriptionPlan` row against a topic with no status filter — and remains tracked in issue #1845 for the reads that were not yet migrated onto the same visibility helper.
 - The reserved schema fields from the wider #1527 decision 5 (`ProgramStatus.DRAFT`, `Contract.version`, `Program.version`, `RescheduleRequest.supersedesId`, `Trial.refundedAt`) remain out of scope; only the consultation/subscription draft status shipped in this PR.
 
 ## References
