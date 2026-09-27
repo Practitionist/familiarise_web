@@ -41,14 +41,19 @@ const COPY: Record<
 export function RefundDoorDialog({
   door,
   presetPaymentId,
+  presetOccurrenceId,
+  presetAmountRupees,
   onClose,
 }: Readonly<{
   door: RefundDoor | null;
   presetPaymentId?: string;
+  /** #1834 — a held-seat item: the refund is keyed to this session. */
+  presetOccurrenceId?: string;
+  presetAmountRupees?: string;
   onClose: () => void;
 }>) {
   const [paymentId, setPaymentId] = useState(presetPaymentId ?? "");
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(presetAmountRupees ?? "");
   // One key per set of inputs: a double-click or a retry of the same refund
   // reuses it, while a corrected payment or amount is a new refund.
   const inputs = `${door}|${paymentId}|${value}`;
@@ -79,10 +84,13 @@ export function RefundDoorDialog({
   }[door];
   const body = (): Record<string, unknown> => {
     const id = (presetPaymentId ?? paymentId).trim();
+    const session = presetOccurrenceId
+      ? { occurrenceId: presetOccurrenceId }
+      : {};
     if (door === "issue")
       return value === ""
-        ? { paymentId: id }
-        : { paymentId: id, amountPaise: paise };
+        ? { paymentId: id, ...session }
+        : { paymentId: id, amountPaise: paise, ...session };
     if (door === "override") return { paymentId: id, tierOverridePct: num };
     return { paymentId: id, sessions: Math.round(num) };
   };

@@ -12,6 +12,11 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { OpsRefusal } from "./ops-refusal-error";
+import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 
 /**
  * The cancellation quote with every rung replaced by `tierOverridePct`: the
@@ -107,4 +112,86 @@ export async function refundInFlightOr(err: unknown, dedupeKey: string) {
     rail: "GATEWAY" as const,
     status: row.status,
   };
+}
+
+/** #1834 — the occurrence must sit on the payment's booking under a live seat it funds. */
+async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId, deletedAt: null },
+    select: {
+      appointmentId: true,
+      userId: true,
+      amount: true,
+      createdAt: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  const occurrence = await prisma.appointmentOccurrence.findUnique({
+    where: { id: occurrenceId },
+    select: { appointmentId: true, startsAt: true },
+  });
+  const seat =
+    payment?.appointmentId &&
+    occurrence?.appointmentId === payment.appointmentId
+      ? await prisma.appointmentParticipant.findFirst({
+          where: {
+            appointmentId: payment.appointmentId,
+            userId: payment.userId,
+            status: { in: LIVE_PARTICIPANT_STATUSES },
+            OR: [{ paymentId }, { paymentId: null }],
+          },
+          select: { createdAt: true },
+        })
+      : null;
+  if (!seat || !payment || !occurrence) {
+    throw new OpsRefusal(
+      "SESSION_NOT_ON_PAYMENT",
+      "That session is not part of this payment's booking, or the payment holds no live seat for it.",
+    );
+  }
+  // The ledger's join time: the later of the seat row and its payment.
+  const joinedAt = Math.max(
+    seat.createdAt.getTime(),
+    payment.createdAt.getTime(),
+  );
+  if (occurrence.startsAt.getTime() <= joinedAt) {
+    throw new OpsRefusal(
+      "SESSION_BEFORE_SEAT",
+      "That session started before this seat was bought, so the seat was never owed it.",
+    );
+  }
+  return payment;
+}
+
+/**
+ * #1834 — a session key refunds once. A retry that resolves to the first
+ * refund's amount replays it; any other amount is refused, never deduped.
+ */
+export async function assertSessionRefundable(args: {
+  paymentId: string;
+  occurrenceId: string;
+  dedupeKey: string;
+  amountPaise: number | undefined;
+}): Promise<void> {
+  const payment = await assertSessionOnPayment(
+    args.paymentId,
+    args.occurrenceId,
+  );
+  const prior = await prisma.refund.findUnique({
+    where: { dedupeKey: args.dedupeKey },
+    select: { amountPaise: true, status: true },
+  });
+  if (!prior || prior.status === "FAILED" || prior.status === "CANCELLED") {
+    return;
+  }
+  // A full refund resolves to the balance the first refund saw: today's plus its own amount.
+  const asked =
+    args.amountPaise ??
+    refundableBalancePaise(Number(payment.amount), payment) +
+      Number(prior.amountPaise);
+  if (asked === Number(prior.amountPaise)) return;
+  throw new OpsRefusal(
+    "SESSION_ALREADY_REFUNDED",
+    "This session was already refunded at a different amount. Issue any further refund without the session link.",
+  );
 }

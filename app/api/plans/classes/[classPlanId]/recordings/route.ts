@@ -11,6 +11,10 @@ import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
 import { isPrivileged } from "@/lib/auth-helpers";
+import {
+  hiddenFromLateJoiner,
+  lateJoinRecordingAccess,
+} from "@/lib/stream/late-join-recordings";
 
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
@@ -72,6 +76,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Attendee path: must have purchased a class from this plan.
+    const viaSeat = !hasAccess;
     if (!hasAccess) {
       const enrollment = await prisma.payment.findFirst({
         where: {
@@ -95,25 +100,34 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Get recordings for this class plan
-    const recordings =
-      await RecordingService.getClassPlanRecordings(classPlanId);
+    const all = await RecordingService.getClassPlanRecordings(classPlanId);
+    // #1819 — a late joiner's seat hides the sessions before it (host toggle).
+    const lateJoin = viaSeat
+      ? await lateJoinRecordingAccess(session.user.id)
+      : {
+          floors: new Map<string, Date>(),
+          lateSeatBatches: new Map<string, Set<string>>(),
+        };
+    const recordings = all.filter((r) => !hiddenFromLateJoiner(r, lateJoin));
 
     // Map recordings to response format (async — presigned URLs)
-    const formattedRecordings = await Promise.all(recordings.map(async (recording) => ({
-      id: recording.id,
-      title: recording.title,
-      durationInMinutes: recording.durationInMinutes,
-      recordedAt: recording.recordedAt,
-      status: recording.status,
-      storageType: recording.storageType,
-      playbackUrl: await getBestRecordingUrl(recording),
-      thumbnailUrl: recording.thumbnailUrl,
-      resolution: recording.resolution,
-      previewClipUrl: recording.previewClipUrl,
-      previewClipDuration: recording.previewClipDuration,
-      streamUrlExpiresAt: recording.streamUrlExpiresAt,
-      createdAt: recording.createdAt,
-    })));
+    const formattedRecordings = await Promise.all(
+      recordings.map(async (recording) => ({
+        id: recording.id,
+        title: recording.title,
+        durationInMinutes: recording.durationInMinutes,
+        recordedAt: recording.recordedAt,
+        status: recording.status,
+        storageType: recording.storageType,
+        playbackUrl: await getBestRecordingUrl(recording),
+        thumbnailUrl: recording.thumbnailUrl,
+        resolution: recording.resolution,
+        previewClipUrl: recording.previewClipUrl,
+        previewClipDuration: recording.previewClipDuration,
+        streamUrlExpiresAt: recording.streamUrlExpiresAt,
+        createdAt: recording.createdAt,
+      })),
+    );
 
     return NextResponse.json({
       planId: classPlanId,

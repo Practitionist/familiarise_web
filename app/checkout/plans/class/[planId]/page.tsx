@@ -45,6 +45,8 @@ import {
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { deriveBatchCards } from "@/lib/booking/batch-cards";
+import { sessionsBoughtLabel } from "@/lib/booking/class-enrolment";
 
 import type {
   Appointment,
@@ -77,10 +79,14 @@ export type CheckoutClassPlanData = Omit<ClassPlan, "price"> & {
         tags: PrismaTag[];
       })
     | null;
+  // #1554 — one wrapper per batch; the seat ids feed the capacity count.
   classes: (PrismaClass & {
-    appointments: (Appointment & {
-      occurrences: AppointmentOccurrence[];
-    })[];
+    appointment:
+      | (Appointment & {
+          occurrences: AppointmentOccurrence[];
+          participants: { userId: string }[];
+        })
+      | null;
   })[];
   topics: PrismaTopic[];
   classContents: ClassContent[];
@@ -197,13 +203,25 @@ export default function ClassCheckoutPage({
     }
   }, [checkoutPlanQuery.error]);
 
-  // Derive the first available class ID — used by both component renders and handleCheckout
-  const availableClassId = useMemo(() => {
-    const availableClass = planData?.data?.classes?.find(
-      (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
-    );
-    return availableClass?.id ?? null;
-  }, [planData]);
+  // #1819 — the batch named by ?eventId= (never silently another one), else
+  // the first joinable batch; its card carries the late-join price.
+  const batch = useMemo(() => {
+    const plan = planData?.data;
+    if (!plan) return null;
+    const cards = deriveBatchCards(plan, plan.classes, new Date(), {
+      hostUserId: plan.consultantProfile?.userId,
+    });
+    const wanted = validatedSearchParams?.eventId;
+    const pick = wanted
+      ? cards.find((c) => c.classId === wanted)
+      : cards.find((c) => c.canEnrol);
+    return pick?.canEnrol ? pick : null;
+  }, [planData, validatedSearchParams?.eventId]);
+  const availableClassId = batch?.classId ?? null;
+  const batchPricePaise =
+    batch?.enrolment.state === "open"
+      ? batch.enrolment.basePaise
+      : planData?.data?.price || 0;
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -222,7 +240,7 @@ export default function ClassCheckoutPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code: codeToApply,
-          amount: planData?.data?.price || 0,
+          amount: batchPricePaise,
         }),
       });
 
@@ -379,7 +397,7 @@ export default function ClassCheckoutPage({
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
-    const basePrice = planData?.data?.price || 0;
+    const basePrice = batchPricePaise;
     let discountPercent = 0;
     let discountAmount = 0;
     if (appliedDiscount) {
@@ -401,7 +419,7 @@ export default function ClassCheckoutPage({
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
-    planData?.data?.price,
+    batchPricePaise,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
@@ -414,12 +432,20 @@ export default function ClassCheckoutPage({
     if (!planData?.data?.classes) return;
 
     const checkStaleness = () => {
-      const hasAvailable = planData.data.classes.some(
-        (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
-      );
+      // #1819 — also stale once every batch is past its enrolment cutoff.
+      const hasAvailable = deriveBatchCards(
+        planData.data,
+        planData.data.classes,
+        new Date(),
+        { hostUserId: planData.data.consultantProfile?.userId },
+      ).some((c) => c.canEnrol);
       if (!hasAvailable) {
         setStaleError(
-          "No available class sessions. All sessions may be full, cancelled, or completed.",
+          "No batch of this class is open for enrolment. Batches may be full, closed to late joiners, cancelled, or completed.",
+        );
+      } else if (!batch) {
+        setStaleError(
+          "This batch is no longer open for enrolment. Please go back and choose another batch.",
         );
       }
     };
@@ -427,7 +453,7 @@ export default function ClassCheckoutPage({
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [planData]);
+  }, [planData, batch]);
 
   if (isLoading) {
     return <CheckoutPlanSkeleton />;
@@ -472,11 +498,16 @@ export default function ClassCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  // The class the checkout books (availableClassId), not whichever is listed first.
-  const nextClassSession = (
-    planDetails?.classes?.find((c) => c.id === availableClassId) ??
-    planDetails?.classes?.[0]
-  )?.appointments?.[0]?.occurrences?.[0];
+  // The batch the checkout books; a late joiner's first session is the next one.
+  const nextClassSession = planDetails?.classes
+    ?.find((c) => c.id === availableClassId)
+    ?.appointment?.occurrences?.filter(
+      (o) =>
+        !o.deletedAt &&
+        o.completionStatus === "SCHEDULED" &&
+        new Date(o.startsAt).getTime() > Date.now(),
+    )
+    .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt))[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -536,10 +567,30 @@ export default function ClassCheckoutPage({
         <div className="grid gap-2">
           <div className="font-semibold">Class Details</div>
           <div className="grid gap-2">
+            {batch && (
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-muted-foreground">Batch</div>
+                <div className="text-right">{batch.label}</div>
+              </div>
+            )}
+            {batch?.enrolment.state === "open" &&
+              batch.enrolment.isLateJoin && (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-muted-foreground">You are buying</div>
+                  <div className="text-right">
+                    {sessionsBoughtLabel(
+                      batch.enrolment.remaining,
+                      batch.enrolment.N,
+                    )}
+                  </div>
+                </div>
+              )}
             {nextClassSession && (
               <>
                 <div className="flex items-center justify-between">
-                  <div className="text-muted-foreground">First Session</div>
+                  <div className="text-muted-foreground">
+                    Your first session
+                  </div>
                   <div>
                     {new Date(nextClassSession.startsAt).toLocaleDateString(
                       undefined,
@@ -702,7 +753,7 @@ export default function ClassCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Enrollment Fee</div>
-                <div>{formatPrice(planDetails?.price || 0)}</div>
+                <div>{formatPrice(batchPricePaise)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">

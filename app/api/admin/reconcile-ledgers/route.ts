@@ -19,7 +19,7 @@
  *    RUNNING and younger than the stale window answers 409 with its id.
  *  - `GET` lists the most recent reports (paginated), or one by `?id=`.
  *
- * Access: platform admins only via `requireBackofficeSurface("payouts.read")`
+ * Access: platform admins only via `requireBackofficeSurface("payouts.manage")`
  * (ADMIN-only — STAFF is deliberately excluded: the reports expose cross-org
  * ledger aggregates incl. per-org wallet balances, which the settlement
  * surfaces keep ADMIN-only). Does NOT
@@ -86,7 +86,7 @@ async function kickReconcileDriver(args: {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireBackofficeSurface("payouts.read");
+  const auth = await requireBackofficeSurface("payouts.manage");
   if (auth.error) return auth.error;
 
   const raw = await req.json().catch(() => ({}));
@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireBackofficeSurface("payouts.read");
+  const auth = await requireBackofficeSurface("payouts.manage");
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);

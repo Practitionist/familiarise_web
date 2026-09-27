@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
+import { findMoneyTab } from "@/lib/backoffice/money-tabs";
 
 const APP = join(process.cwd(), "app/dashboard");
 
@@ -24,10 +25,16 @@ function resolves(...candidates: string[]): boolean {
   return candidates.some((c) => existsSync(join(APP, c, "page.tsx")));
 }
 
+/** A money section resolves through the shared `money/[tab]` page, if known. */
+function moneyTarget(path: string): string {
+  const key = path.replace(/^money\//, "");
+  return path.startsWith("money/") && findMoneyTab(key) ? "money/[tab]" : path;
+}
+
 describe("back-office nav targets resolve", () => {
   it.each(["admin", "staff"] as const)("%s tree", (tree) => {
     const paths = buildBackofficeNav(tree, { showTds: true }).flatMap((g) =>
-      g.items.map((i) => i.path),
+      g.items.map((i) => moneyTarget(i.path)),
     );
     expect(paths.length).toBeGreaterThan(0);
 

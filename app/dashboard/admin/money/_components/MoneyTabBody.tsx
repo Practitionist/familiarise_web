@@ -4,7 +4,6 @@ import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
 import { PayoutsBoard } from "@/app/dashboard/admin/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
-import { ClassSeriesTab } from "./ClassSeriesTab";
 import { ReconcileTab } from "./ReconcileTab";
 import { AuditTab } from "./AuditTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
@@ -47,7 +46,7 @@ export async function MoneyTabBody({
         </>
       );
     case "payouts":
-      return <PayoutsBoard />;
+      return <PayoutsBoard canManage={isAdmin} />;
     case "earnings":
       return <EarningsTab />;
     case "disputes":
@@ -63,8 +62,6 @@ export async function MoneyTabBody({
           }
         />
       );
-    case "class-series":
-      return <ClassSeriesTab isAdmin={isAdmin} />;
     case "reconcile":
       return <ReconcileTab />;
     case "audit":

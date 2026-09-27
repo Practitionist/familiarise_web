@@ -8,8 +8,9 @@
  *   - N is ClassPlan.totalSessions.
  *   - A seat "holds" a session that starts after the seat was created, so a
  *     mid-series joiner never pays for, or is refunded for, sessions before it.
- *   - heldCount = the held sessions that are delivered or still live, by
- *     distinct ordinal, capped at N; zero falls back to N.
+ *   - heldCount = the seat's stored sessionsPurchased (#1819); on a legacy
+ *     seat, the held sessions delivered or still live, by distinct ordinal,
+ *     capped at N, with zero falling back to N.
  *   - unit = floor(seat amount / heldCount), in BigInt; rounding favours the
  *     buyer on every series-level amount (amount − unit × delivered).
  *   - delivered = endsAt ≤ now and not CANCELLED/RESCHEDULED/VOIDED; remaining =
@@ -74,6 +75,8 @@ export function seatLedgerFrom(args: {
   joinedAt: Date;
   occurrences: LedgerOccurrence[];
   now: Date;
+  /** #1819 — the stored fact; null on a legacy seat, which falls back to the derivation. */
+  sessionsPurchased?: number | null;
 }): SeatLedger {
   const { N, joinedAt, now } = args;
   const held = args.occurrences.filter((o) => o.startsAt > joinedAt);
@@ -87,7 +90,7 @@ export function seatLedgerFrom(args: {
   const ordinals = new Set(
     [...delivered, ...remaining, ...missed].map((o) => o.ordinal),
   );
-  const heldCount = Math.min(N, ordinals.size) || N;
+  const heldCount = args.sessionsPurchased || Math.min(N, ordinals.size) || N;
   const deliveredHeld = Math.min(delivered.length, heldCount);
   return {
     N,
@@ -129,7 +132,11 @@ const LEDGER_OCCURRENCE_SELECT = {
 /** Reads the seat's sessions and its plan size, on the caller's client. */
 export async function seatLedger(
   db: Pick<Tx, "appointment" | "appointmentOccurrence">,
-  seat: { appointmentId: string; createdAt: Date },
+  seat: {
+    appointmentId: string;
+    createdAt: Date;
+    sessionsPurchased?: number | null;
+  },
   amountPaise: bigint | number,
   now = new Date(),
 ): Promise<SeatLedger> {
@@ -154,6 +161,7 @@ export async function seatLedger(
     joinedAt: seat.createdAt,
     occurrences,
     now,
+    sessionsPurchased: seat.sessionsPurchased,
   });
 }
 

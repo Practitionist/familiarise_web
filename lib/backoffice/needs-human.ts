@@ -1,4 +1,8 @@
 import prisma from "@/lib/prisma";
+import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
+
+/** #1834 — the settle sweep's key for a paid seat still HELD at settle time. */
+export const HELD_PAID_SEAT_PREFIX = "held-paid-seat:";
 
 /** The ₹0 row restoreClassSeatCredits writes for an ops credit return. */
 const isOpsCreditReturn = (metadata: unknown) =>
@@ -42,5 +46,32 @@ export async function dropSettled<
         isOpsCreditReturn(r.metadata),
     );
     return !returnedSince && (stillUsed.get(item.paymentId) ?? 0) > 0;
+  });
+}
+
+/**
+ * #1834 — a held paid seat leaves the queue only when a refund keyed to its
+ * own occurrence and payment (`occ:<occurrence>:pay:<payment>`) is pending or done.
+ */
+export async function dropAnsweredHeldSeats<
+  T extends { paymentId: string | null; occurrenceId: string | null },
+>(items: T[]): Promise<T[]> {
+  const keyOf = (i: T) =>
+    i.paymentId && i.occurrenceId
+      ? occurrenceRefundKey(i.occurrenceId, i.paymentId)
+      : null;
+  const keys = items.flatMap((i) => keyOf(i) ?? []);
+  if (keys.length === 0) return items;
+  const answered = await prisma.refund.findMany({
+    where: {
+      dedupeKey: { in: keys },
+      status: { in: ["PENDING", "SUCCEEDED"] },
+    },
+    select: { dedupeKey: true },
+  });
+  const done = new Set(answered.map((r) => r.dedupeKey));
+  return items.filter((i) => {
+    const key = keyOf(i);
+    return !key || !done.has(key);
   });
 }

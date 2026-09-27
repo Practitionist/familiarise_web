@@ -24,12 +24,23 @@ export interface WebinarEventSchedule {
   appointment: AppointmentSchedule | null;
 }
 
+/** #1819 — a class session carries what the batch card derivation reads. */
+export interface ClassSlotSchedule extends SlotSchedule {
+  ordinal: number;
+  completionStatus: string;
+  deletedAt: string | null;
+}
+
+/** #1554 — one wrapper appointment per class batch. */
 export interface ClassEventSchedule {
   id: string;
   status: string;
   schedulingPeriodStartsAt: string | null;
   schedulingPeriodEndsAt: string | null;
-  appointments: AppointmentSchedule[];
+  appointment: {
+    occurrences: ClassSlotSchedule[];
+    _count: { participants: number };
+  } | null;
 }
 
 // ─── Collaborator perspective types ──────────────────────────────────────────
@@ -77,6 +88,7 @@ export interface Collaboration {
     sessionsPerWeek: number;
     durationInMonths: number;
     totalSessions: number;
+    lateJoinUntilSession: number | null;
     classes: ClassEventSchedule[];
     consultantProfile: PlanOwner | null;
     collaborators: PlanCollaboratorInfo[];
@@ -127,6 +139,7 @@ export interface HostedClassPlan {
   sessionsPerWeek: number;
   durationInMonths: number;
   totalSessions: number;
+  lateJoinUntilSession: number | null;
   collaborators: CollaboratorInfo[];
   classes: ClassEventSchedule[];
 }
@@ -160,9 +173,11 @@ export interface WebinarPlanSchedule {
 }
 
 export interface ClassPlanSchedule {
+  price: number;
   sessionDurationInHours: number;
   maxParticipants: number;
   sessionsPerWeek: number;
   totalSessions: number;
+  lateJoinUntilSession: number | null;
   classes: ClassEventSchedule[];
 }

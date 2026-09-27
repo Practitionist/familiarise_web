@@ -14,9 +14,8 @@ import { GET } from "../../app/api/admin/payouts/trend/route";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
-// The route moved from requirePrivilegedAuth (admits STAFF) to the
-// surface-scoped guard, because BACKOFFICE_PERMISSIONS makes payouts.read
-// ADMIN_ONLY — payouts are settlement data with no support use case.
+// The route is gated by the surface-scoped guard on payouts.read, which
+// BACKOFFICE_PERMISSIONS grants to ADMIN and STAFF (a read, no mutation).
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
   requireBackofficeSurface: jest.fn(),

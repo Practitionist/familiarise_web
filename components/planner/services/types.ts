@@ -70,6 +70,9 @@ export interface CreateClassPayload {
   consultantProfileId: string;
   /** ISO string to set; `null` clears; omit to leave unchanged on PATCH. */
   startDate?: string | null;
+  /** #1819 — null means "until session 1". */
+  lateJoinUntilSession?: number | null;
+  lateJoinersGetPastRecordings?: boolean;
 }
 
 export interface ClassContentInput {

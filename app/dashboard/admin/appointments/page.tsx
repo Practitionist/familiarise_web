@@ -1,5 +1,6 @@
 import { OperatorAppointmentsPage } from "@/components/dashboard/shared/OperatorAppointmentsPage";
 import { requireBackofficePage } from "@/lib/auth-guard";
+import { AppointmentsWithOps } from "@/app/dashboard/admin/money/_components/AppointmentsWithOps";
 
 /** Platform-wide appointment triage — shared with the staff tree. */
 export default async function AdminAppointmentsPage() {
@@ -7,5 +8,9 @@ export default async function AdminAppointmentsPage() {
   await requireBackofficePage("appointments.manage");
   // Platform-wide by design: operators triage every tenant. Stated
   // explicitly so the widest scope on the platform is never a default (#674).
-  return <OperatorAppointmentsPage scope={{ kind: "all" }} />;
+  return (
+    <OperatorAppointmentsPage scope={{ kind: "all" }}>
+      <AppointmentsWithOps tree="admin" treePath="/dashboard/admin" />
+    </OperatorAppointmentsPage>
+  );
 }

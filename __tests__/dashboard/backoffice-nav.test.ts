@@ -24,6 +24,7 @@ describe("BACKOFFICE_PERMISSIONS", () => {
       "disputes.read",
       "invoices.read",
       "subscriptions.read",
+      "payouts.read",
     ] as BackofficeSurface[]) {
       expect(hasBackofficePermission("STAFF", surface)).toBe(true);
     }
@@ -36,7 +37,6 @@ describe("BACKOFFICE_PERMISSIONS", () => {
       "disputes.manage",
       "invoices.manage",
       "subscriptions.manage",
-      "payouts.read",
       "payouts.manage",
       "approvalPayments.manage",
       "tds.read",
@@ -86,7 +86,8 @@ describe("buildBackofficeNav", () => {
     // The exact class of bug the matrix exists to prevent: a visible tab whose
     // page guard 403s. Every rendered path must resolve to a granted surface.
     const forbidden = [
-      "payouts",
+      "money/earnings",
+      "money/reconcile",
       "approval-payments",
       "tds",
       "organizations",
@@ -111,8 +112,13 @@ describe("buildBackofficeNav", () => {
       "appointments",
       "waitlist",
       "users",
-      // #1771 K-2 — payments, refunds, disputes and payouts are hub tabs.
-      "money",
+      // Each money section is its own item at its /money/<key> URL.
+      "money/payments",
+      "money/refunds",
+      "money/disputes",
+      "money/payouts",
+      "money/earnings",
+      "money/reconcile",
       "invoices",
       "subscriptions",
       "approval-payments",
@@ -124,6 +130,15 @@ describe("buildBackofficeNav", () => {
       "maintenance",
     ]) {
       expect(adminPaths).toContain(path);
+    }
+  });
+
+  it("closes both sidebars with the audit log, outside the Money group", () => {
+    for (const tree of ["admin", "staff"] as const) {
+      const groups = buildBackofficeNav(tree);
+      const last = groups[groups.length - 1];
+      expect(last.label).toBeUndefined();
+      expect(last.items.map((i) => i.path)).toEqual(["money/audit"]);
     }
   });
 

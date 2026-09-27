@@ -11,8 +11,8 @@ jest.mock("../../lib/booking/class-sessions", () => ({
 import { setSessionOutcome } from "@/lib/backoffice/session-outcomes";
 import type { Tx } from "@/lib/prisma";
 
-it("refuses to overturn a void once an occ: refund exists (409)", async () => {
-  const tx = {
+const voidedTx = (refund: { id: string } | null) =>
+  ({
     appointmentOccurrence: {
       findUnique: async () => ({
         id: "occ-1",
@@ -29,8 +29,11 @@ it("refuses to overturn a void once an occ: refund exists (409)", async () => {
       }),
       findFirst: async () => null,
     },
-    refund: { findFirst: async () => ({ id: "rf-1" }) },
-  } as unknown as Tx;
+    refund: { findFirst: async () => refund },
+  }) as unknown as Tx;
+
+it("refuses to overturn a void once an occ: refund exists (409)", async () => {
+  const tx = voidedTx({ id: "rf-1" });
   await expect(
     setSessionOutcome(tx, {
       occurrenceId: "occ-1",
@@ -38,4 +41,15 @@ it("refuses to overturn a void once an occ: refund exists (409)", async () => {
       actorUserId: "ops-1",
     }),
   ).rejects.toMatchObject({ code: "OUTCOME_SETTLED", httpStatus: 409 });
+});
+
+// #1834 — VOIDED → UNVERIFIED is not in the transition map, so the door refuses it.
+it("refuses an outcome whose status move the transition map forbids", async () => {
+  await expect(
+    setSessionOutcome(voidedTx(null), {
+      occurrenceId: "occ-1",
+      outcome: "INCONCLUSIVE",
+      actorUserId: "ops-1",
+    }),
+  ).rejects.toMatchObject({ code: "TRANSITION_NOT_ALLOWED", httpStatus: 409 });
 });

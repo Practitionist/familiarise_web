@@ -4,10 +4,12 @@ import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
 import {
+  assertSessionRefundable,
   ladderOverrideAmount,
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
 /**
  * #1771 K-5 — "Issue refund" and "Ladder override". A full refund (no
@@ -24,6 +26,8 @@ export const POST = withOpsAction(
     idempotencyKey: z.string().uuid().optional(),
     amountPaise: z.number().int().positive().optional(),
     tierOverridePct: z.number().min(0).max(100).optional(),
+    /** #1834 — a held-seat queue item: the refund carries that session's own key. */
+    occurrenceId: z.string().min(1).optional(),
   },
   {
     mode: "gateway",
@@ -51,7 +55,17 @@ export const POST = withOpsAction(
         );
       }
       const amountPaise = override?.amountPaise ?? body.amountPaise;
-      const dedupeKey = `ops:${body.idempotencyKey ?? opsActionId}`;
+      const dedupeKey = body.occurrenceId
+        ? occurrenceRefundKey(body.occurrenceId, body.paymentId)
+        : `ops:${body.idempotencyKey ?? opsActionId}`;
+      if (body.occurrenceId) {
+        await assertSessionRefundable({
+          paymentId: body.paymentId,
+          occurrenceId: body.occurrenceId,
+          dedupeKey,
+          amountPaise,
+        });
+      }
       const result = await refundBookingPayment({
         paymentId: body.paymentId,
         amountPaise,

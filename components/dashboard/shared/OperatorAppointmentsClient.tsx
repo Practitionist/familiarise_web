@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -137,6 +138,12 @@ const DEFAULT_PAGE = 1;
 const DEFAULT_TYPE = "all";
 const DEFAULT_TAB = "all";
 const DEFAULT_SEARCH = "";
+const TYPE_FILTERS = new Set([
+  "consultation",
+  "subscription",
+  "webinar",
+  "class",
+]);
 
 // #890 — queryKey is structural: [scope, { page, type, status, search }].
 // The page.tsx prefetch uses the identical default object below.
@@ -149,11 +156,20 @@ function appointmentsKey(args: {
   return ["staff-appointments", args] as const;
 }
 
-export function OperatorAppointmentsClient() {
+export function OperatorAppointmentsClient({
+  renderOps,
+}: Readonly<{
+  /** #1771 — the tree's per-booking Ops actions panel, supplied by app/. */
+  renderOps?: (appointmentId: string) => ReactNode;
+}>) {
   const { toast } = useToast();
+  // #1771 — the retired class-series URL lands here as `?type=class`.
+  const linkedType = useSearchParams().get("type") ?? "";
 
   const [activeTab, setActiveTab] = useState(DEFAULT_TAB);
-  const [typeFilter, setTypeFilter] = useState(DEFAULT_TYPE);
+  const [typeFilter, setTypeFilter] = useState(
+    TYPE_FILTERS.has(linkedType) ? linkedType : DEFAULT_TYPE,
+  );
   const [searchQuery, setSearchQuery] = useState(DEFAULT_SEARCH);
   const [page, setPage] = useState(DEFAULT_PAGE);
   const [selectedAppointment, setSelectedAppointment] =
@@ -706,6 +722,8 @@ export function OperatorAppointmentsClient() {
                 {/* Audit trail (#1319 PR 8 / #448) — mounted with the modal, so
                     the trail is fetched only for the row an operator opened. */}
                 <AppointmentTimeline appointmentId={selectedAppointment.id} />
+
+                {renderOps?.(selectedAppointment.id)}
 
                 {/* Staff Notes */}
                 <div>

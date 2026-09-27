@@ -119,9 +119,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "recordings.read": OPERATORS,
   "recordings.play": ADMIN_ONLY,
 
-  // Money — read for context, mutate only as admin. Payouts, approval
-  // payments and TDS have no staff-facing read either: they are settlement
-  // and statutory surfaces with no support use case.
+  // Money — read for context, mutate only as admin. Staff read payouts to
+  // answer "where is my payout" tickets (owner, 2026-09-26); every payout
+  // and earnings mutation stays `payouts.manage`. Approval payments and TDS
+  // have no staff-facing read: they have no support use case.
   "payments.read": OPERATORS,
   "payments.manage": ADMIN_ONLY,
   "refunds.read": OPERATORS,
@@ -132,7 +133,7 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "invoices.manage": ADMIN_ONLY,
   "subscriptions.read": OPERATORS,
   "subscriptions.manage": ADMIN_ONLY,
-  "payouts.read": ADMIN_ONLY,
+  "payouts.read": OPERATORS,
   "payouts.manage": ADMIN_ONLY,
   "approvalPayments.manage": ADMIN_ONLY,
   "tds.read": ADMIN_ONLY,

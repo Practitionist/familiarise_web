@@ -40,6 +40,10 @@ const state = {
   madeUp: null as { id: string } | null,
   due: [CLASS_SESSION] as unknown[],
   wrapperRows: [] as unknown[],
+  seatStatus: undefined as string | undefined,
+  spent: new Set<string>(),
+  seatPaymentId: null as string | null,
+  events: [] as { correlationId: string; context: unknown }[],
   undecided: 0,
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
@@ -69,14 +73,35 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: async () => ({ refunds: [], disputes: [] }),
     },
     appointmentParticipant: {
-      findFirst: async () => ({ createdAt: new Date("2026-08-01T00:00:00Z") }),
+      // The seat row answers only its own payment's lookup (or any, when unlinked).
+      findFirst: async ({
+        where,
+      }: {
+        where: { OR?: { paymentId: string | null }[] };
+      }) =>
+        state.seatPaymentId &&
+        !where.OR?.some((o) => o.paymentId === state.seatPaymentId)
+          ? null
+          : {
+              id: "seat-1",
+              status: state.seatStatus,
+              createdAt: new Date("2026-08-01T00:00:00Z"),
+            },
+    },
+    systemEvent: {
+      findFirst: async ({ where }: { where: { correlationId: string } }) =>
+        state.events.find((e) => e.correlationId === where.correlationId) ??
+        null,
+      create: async ({
+        data,
+      }: {
+        data: { correlationId: string; context: unknown };
+      }) => state.events.push(data),
     },
     refund: {
       // pay-a skipped the make-up already: its key is spent.
       findUnique: async ({ where }: { where: { dedupeKey: string } }) =>
-        where.dedupeKey === "occ:occ-5:pay:pay-a"
-          ? { status: "SUCCEEDED" }
-          : null,
+        state.spent.has(where.dedupeKey) ? { status: "SUCCEEDED" } : null,
     },
   },
 }));
@@ -87,7 +112,29 @@ beforeEach(() => {
   jest.clearAllMocks();
   state.madeUp = null;
   state.due = [CLASS_SESSION];
+  state.seatStatus = undefined;
+  state.seatPaymentId = null;
+  state.spent = new Set(["occ:occ-5:pay:pay-a"]);
+  state.events = [];
   state.undecided = 0;
+});
+
+it("#1834 — a paid seat still HELD goes to the ops queue once, never refunded", async () => {
+  state.seatStatus = "HELD";
+  // The seat is funded by pay-b; pay-a is an older order and is not this seat's.
+  state.seatPaymentId = "pay-b";
+  await settleCancelledSessions();
+  await settleCancelledSessions();
+  expect(refundBookingPayment).not.toHaveBeenCalled();
+  expect(state.events.map((e) => e.correlationId)).toEqual([
+    "held-paid-seat:occ-5:pay-b",
+  ]);
+  expect(state.events[0].context).toMatchObject({
+    occurrenceId: "occ-5",
+    paymentId: "pay-b",
+    participantId: "seat-1",
+    unitPaise: 10_000,
+  });
 });
 
 it("refunds only the seat whose key is not spent, then stamps the session", async () => {
@@ -153,6 +200,36 @@ it("#1569 D4 — an unused subscription void is refunded at plan end, per sessio
       dedupeKey: "void-unused:occ-5:pay:pay-b",
     }),
   );
+});
+
+it("#1834 — a replayed plan-end void refund pays nothing twice and still settles", async () => {
+  const sub = {
+    status: "APPROVED",
+    sessionsTotal: 8,
+    subscriptionPlan: { title: "Mentoring", totalSessions: 8 },
+  };
+  state.due = [
+    {
+      ...CLASS_SESSION,
+      completionStatus: "VOIDED",
+      appointment: { subscription: sub },
+    },
+  ];
+  state.wrapperRows = [
+    ...Array.from({ length: 7 }, (_, i) => ({
+      id: `d${i}`,
+      completionStatus: "COMPLETED",
+      seatsSettledAt: null,
+    })),
+    { id: "occ-5", completionStatus: "VOIDED", seatsSettledAt: null },
+  ];
+  state.spent = new Set([
+    "void-unused:occ-5:pay:pay-a",
+    "void-unused:occ-5:pay:pay-b",
+  ]);
+  const result = await settleCancelledSessions();
+  expect(refundBookingPayment).not.toHaveBeenCalled();
+  expect(result.stamped).toBe(1);
 });
 
 it("#1569 D4 — the refundable voids are the latest ones, whatever order the sweep takes them in", async () => {

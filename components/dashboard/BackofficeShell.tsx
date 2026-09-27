@@ -50,7 +50,7 @@ const TREE_COPY: Record<
     footerLabel: "Familiarise Admin v1.0",
     avatarFallback: "A",
     chipRole: "Admin",
-    prefetchSuffixes: ["home", "payments"],
+    prefetchSuffixes: ["home", "money/payments"],
   },
   staff: {
     title: "Staff Portal",

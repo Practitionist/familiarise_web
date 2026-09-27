@@ -131,6 +131,11 @@ import {
   resolveCheckoutCancellationPolicyId,
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
+import {
+  classEnrolmentFrom,
+  type OpenClassEnrolment,
+} from "@/lib/booking/class-enrolment";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -848,6 +853,7 @@ export async function calculateAmountAndValidate(
     let amount = 0;
     let plan;
     let priceCurrency: Currency = "INR";
+    let classSessionsQuoted: number | null = null;
 
     // Lazy-create ConsulteeProfile if this is the user's first
     // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
@@ -1080,7 +1086,18 @@ export async function calculateAmountAndValidate(
           });
         }
 
-        amount = plan.price;
+        // #1819 — a late joiner pays for the sessions left; the tx re-derives this.
+        const enrolment = assertClassEnrolmentOpen(
+          classEnrolmentFrom({
+            pricePaise: plan.price,
+            N: plan.totalSessions,
+            lateJoinUntilSession: plan.lateJoinUntilSession,
+            sessions: classInstance.appointment?.occurrences ?? [],
+            now: new Date(),
+          }),
+        );
+        amount = enrolment.basePaise;
+        classSessionsQuoted = enrolment.remaining;
         priceCurrency = plan.priceCurrency;
         break;
       }
@@ -1203,6 +1220,7 @@ export async function calculateAmountAndValidate(
       creditsApplied,
       buyerCountry,
       isInternational,
+      classSessionsQuoted,
     };
   });
 }
@@ -2894,11 +2912,31 @@ export async function handleWebinarCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
+/** #1819 — a batch past its host's cutoff refuses with ENROLMENT_CLOSED (409). */
+function assertClassEnrolmentOpen(
+  enrolment: ReturnType<typeof classEnrolmentFrom>,
+): OpenClassEnrolment {
+  if (enrolment.state === "unscheduled") {
+    throw new Error(
+      "This class has not been scheduled yet. Enrollment opens once all sessions are scheduled.",
+    );
+  }
+  if (enrolment.state === "closed") {
+    throw new BookingRuleError(
+      "ENROLMENT_CLOSED",
+      "Enrolment for this batch has closed. Please choose a batch that has not started yet.",
+    );
+  }
+  return enrolment;
+}
+
 export async function handleClassCheckout(
   tx: Tx,
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
+  /** #1819 — the sessions the quote priced; null skips the stale-quote check. */
+  quotedSessions: number | null = null,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
@@ -2982,21 +3020,47 @@ export async function handleClassCheckout(
     throw new Error("No class sessions found");
   }
 
+  // #1819 — re-derived at commit over the quote's rows (cancelled ones too): a
+  // session that started since the quote re-prices the order.
+  const enrolment = assertClassEnrolmentOpen(
+    classEnrolmentFrom({
+      pricePaise: plan.price,
+      N: plan.totalSessions,
+      lateJoinUntilSession: plan.lateJoinUntilSession,
+      sessions: await tx.appointmentOccurrence.findMany({
+        where: { appointmentId: wrapper.id, deletedAt: null },
+        select: { ordinal: true, startsAt: true, completionStatus: true },
+      }),
+      now: new Date(),
+    }),
+  );
+  if (quotedSessions !== null && enrolment.remaining !== quotedSessions) {
+    throw new BookingRuleError(
+      "CLASS_PRICE_CHANGED",
+      "A session of this batch started while you were checking out, so its price has changed. Please review the new price and try again. You have not been charged.",
+    );
+  }
+
   // Class participants attend every session on the consultant's occurrences;
   // the seat is one participant row on the wrapper (#1554), never new rows.
   await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
     status: _skipPayment ? "CONFIRMED" : "HELD",
   });
-  // #1780 row 2 — the seat keeps the refund window it was sold under.
+  // #1780 row 2 — the seat keeps the refund window it was sold under; #1819 —
+  // and the sessions it paid for, which fix its refund unit.
   await tx.appointmentParticipant.updateMany({
     where: { appointmentId: wrapper.id, userId },
-    data: { refundWindowHours: plan.refundWindowHours },
+    data: {
+      refundWindowHours: plan.refundWindowHours,
+      sessionsPurchased: enrolment.remaining,
+    },
   });
 
   return {
     appointment: wrapper,
     plan,
-    amount: plan.price,
+    amount: enrolment.basePaise,
+    sessionsPurchased: enrolment.remaining,
     slotsLinked: sessions.length,
     // For enterprise cap counting (issue #710): one engagement per
     // class session. The learner is enrolling in every existing session
@@ -3365,6 +3429,7 @@ export async function handleCheckout(
       creditsApplied,
       buyerCountry: detectedBuyerCountry,
       isInternational,
+      classSessionsQuoted,
     } = await calculateAmountAndValidate(
       validatedData,
       userId,
@@ -3813,6 +3878,7 @@ export async function handleCheckout(
                   validatedData,
                   userId,
                   skipPayment,
+                  classSessionsQuoted,
                 );
                 // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
