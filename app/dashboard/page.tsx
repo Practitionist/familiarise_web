@@ -1,52 +1,19 @@
 import { redirect } from "next/navigation";
 import { requireOnboarded } from "@/lib/auth-guard";
-import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
-import { selectFallbackOrgMembership } from "@/lib/labels/org-labels";
+import {
+  readWorkspaceLandingOrgId,
+  resolveDashboardLanding,
+} from "@/lib/dashboard/landing";
 
 // Server-side dashboard router. requireOnboarded() guarantees an onboarded
 // session carrying role + profile FKs + organizationMemberships (auth.ts
-// customSession), so we resolve the landing here — no client fetch. redirect()
-// throws by design; do not wrap it in a swallowing try/catch.
-//
-// Operator/staff/admin are distinct identities and route by role. Consumer
-// identities route by CAPABILITY: prefer the onboarding role's home, then any
-// personal facet the user's profiles provide, then an org they belong to — so a
-// dual-profile / org-only user is never stranded on a role whose profile is absent.
+// customSession), so the landing resolves here — no client fetch. The rules
+// live in lib/dashboard/landing.ts (#1527). redirect() throws by design; do
+// not wrap it in a swallowing try/catch. This page takes no callbackUrl
+// today: sign-in honours it before ever reaching /dashboard.
 export default async function Dashboard() {
   const { user } = await requireOnboarded();
-
-  let target: string;
-  if (user.role === "ADMIN") {
-    target = "/dashboard/admin/home";
-  } else if (user.role === "STAFF") {
-    target = user.staffProfileId
-      ? `/dashboard/staff/${user.staffProfileId}/home`
-      : "/";
-  } else if (user.role === "ORG_WORKSPACE") {
-    // Mirrors /dashboard/organization so a multi-org operator lands on the
-    // cross-org portfolio. No profile yet (#724) → the create wizard.
-    target = user.orgWorkspaceProfileId
-      ? `/dashboard/org-workspace/${user.orgWorkspaceProfileId}/home`
-      : "/dashboard/organization";
-  } else {
-    const roleHome =
-      user.role === "CONSULTEE" && user.consulteeProfileId
-        ? `/dashboard/consultee/${user.consulteeProfileId}/home`
-        : user.role === "CONSULTANT" && user.consultantProfileId
-          ? `/dashboard/consultant/${user.consultantProfileId}/home`
-          : null;
-    // Deterministic multi-org fallback: highest-ranked membership wins, slug
-    // breaks ties — the session array has no ORDER BY, so [0] used to
-    // flicker between orgs across logins.
-    const firstOrg = selectFallbackOrgMembership(
-      user.organizationMemberships,
-    )?.organizationId;
-    target =
-      roleHome ??
-      resolvePersonalDashboardHref(user) ??
-      (firstOrg ? `/dashboard/organization/${firstOrg}/home` : null) ??
-      "/dashboard/error";
-  }
-
-  redirect(target);
+  // One extra read, ORG_WORKSPACE only (the workspace's default org).
+  const workspaceLandingOrgId = await readWorkspaceLandingOrgId(user);
+  redirect(resolveDashboardLanding(user, { workspaceLandingOrgId }));
 }

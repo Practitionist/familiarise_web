@@ -136,7 +136,7 @@ describe("Requests inbox anatomy (A-4)", () => {
 
   it("the approve toast follows the allocate response's awaitingPayment flag", () => {
     expect(approvedToast({ awaitingPayment: true })).toBe(
-      "Approved — the client has 24 h to pay",
+      "Approved — the learner has 24 h to pay",
     );
     // Absent or false → today's behaviour.
     expect(approvedToast({})).toBe("Approved");

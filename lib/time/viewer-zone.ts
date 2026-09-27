@@ -8,6 +8,7 @@
  * rendered string is a function of (instant, zone, pattern) and nothing else.
  */
 
+import { enUS } from "date-fns/locale";
 import { formatInTimeZone } from "date-fns-tz";
 
 export const UTC_ZONE = "UTC";
@@ -107,7 +108,10 @@ export const ZONE_ABBREVIATION: Record<string, string> = {
 export function zoneLabel(date: Date | string | number, zone: string): string {
   const canonical = canonicalZone(zone);
   return (
-    ZONE_ABBREVIATION[canonical] ?? formatInTimeZone(date, canonical, "zzz")
+    ZONE_ABBREVIATION[canonical] ??
+    // #1527 — an explicit locale: without one, date-fns-tz names the zone in
+    // the runtime locale, which differs between the server and the browser.
+    formatInTimeZone(date, canonical, "zzz", { locale: enUS })
   );
 }
 

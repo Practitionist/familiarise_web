@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { AppointmentsType } from "@prisma/client";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 
+import { BulkBar } from "@/components/dashboard/BulkBar";
 import { Button } from "@/components/ui/button";
 import type { AllocationAttemptKey } from "@/hooks/scheduling/useScheduling";
 import type { InboxRowInput } from "@/lib/dashboard/requests-inbox-state";
@@ -88,65 +89,54 @@ export function BatchApproveBar({
     : idle;
 
   return (
-    <section
-      className="sticky bottom-0 z-10 mt-4 rounded-lg border border-border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80"
+    <BulkBar
+      count={rows.length}
+      status={status}
+      busy={running}
+      onClear={() => {
+        setOutcomes([]);
+        onClear();
+      }}
       aria-label="Batch approval"
+      footer={
+        outcomes.length > 0 && (
+          <ul className="mt-2 space-y-1 text-xs">
+            {outcomes.map((o) => (
+              <li
+                key={o.id}
+                className={cn(
+                  "flex items-center gap-1.5",
+                  o.ok ? "text-foreground" : "text-destructive",
+                )}
+              >
+                {o.ok ? (
+                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <XCircle className="h-3.5 w-3.5" aria-hidden />
+                )}
+                <span className="font-medium">{o.name}</span>
+                <span>· {o.note}</span>
+              </li>
+            ))}
+          </ul>
+        )
+      }
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-foreground" aria-live="polite">
-          {status}
-        </p>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="min-h-11 sm:min-h-8"
-            disabled={running}
-            onClick={() => {
-              setOutcomes([]);
-              onClear();
-            }}
-          >
-            Clear
-          </Button>
-          <Button
-            size="sm"
-            className="min-h-11 sm:min-h-8"
-            disabled={running || busy || rows.length === 0}
-            onClick={() => void run()}
-          >
-            {running ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                Approving…
-              </>
-            ) : (
-              `Approve ${rows.length}`
-            )}
-          </Button>
-        </div>
-      </div>
-      {outcomes.length > 0 && (
-        <ul className="mt-2 space-y-1 text-xs">
-          {outcomes.map((o) => (
-            <li
-              key={o.id}
-              className={cn(
-                "flex items-center gap-1.5",
-                o.ok ? "text-foreground" : "text-destructive",
-              )}
-            >
-              {o.ok ? (
-                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
-              ) : (
-                <XCircle className="h-3.5 w-3.5" aria-hidden />
-              )}
-              <span className="font-medium">{o.name}</span>
-              <span>· {o.note}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+      <Button
+        size="sm"
+        className="min-h-11 sm:min-h-8"
+        disabled={running || busy || rows.length === 0}
+        onClick={() => void run()}
+      >
+        {running ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+            Approving…
+          </>
+        ) : (
+          `Approve ${rows.length}`
+        )}
+      </Button>
+    </BulkBar>
   );
 }

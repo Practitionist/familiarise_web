@@ -614,12 +614,17 @@ async function escalate(
       });
       if (claimed.count === 0) return null;
       // Same rule as the self-serve turn: record the chip the user pressed, so
-      // the escalated transcript staff read contains both halves.
-      const userSaid = userMessage ?? turn.chosenLabel;
+      // the escalated transcript staff read contains both halves. An escalating
+      // chip arrives WITH the user's description (#1527), so both are kept.
+      const userSaid = [turn.chosenLabel, userMessage].filter(
+        (s): s is string => !!s,
+      );
       const outgoing = [
-        ...(userSaid
-          ? [{ sender: "USER" as const, body: userSaid, metadata: undefined }]
-          : []),
+        ...userSaid.map((body) => ({
+          sender: "USER" as const,
+          body,
+          metadata: undefined,
+        })),
         ...turn.messages.map((m) => ({
           sender: m.sender as "BOT" | "SYSTEM" | "USER" | "AGENT",
           body: m.body,
@@ -657,7 +662,13 @@ async function escalate(
           data: {
             userId: ctx.userId,
             title: `Support for ${ctx.planTitle ?? `${ctx.appointmentType.toLowerCase()} appointment`}`,
-            description: `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
+            // #1527: the user's own words lead, so staff aren't handed a blank ticket.
+            description: [
+              userMessage,
+              `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
             priority,
             referenceNumber,
             ackDueAt,

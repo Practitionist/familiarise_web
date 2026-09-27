@@ -174,7 +174,7 @@ export function ProfileSection({
               name="description"
               value={formData.description}
               onChange={onInputChange}
-              placeholder="Share your professional journey, achievements, and what clients can expect when working with you..."
+              placeholder="Share your professional journey, achievements, and what learners can expect when working with you..."
               className="min-h-[16rem] resize-none"
             />
           </div>

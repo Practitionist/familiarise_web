@@ -176,7 +176,7 @@ export function mapAppointmentDetail(
     counterpart,
     consultantProfileId: facts.consultantProfileId,
     status: facts.status,
-    ...deriveBucket({ status: facts.status, occurrences, now }),
+    ...deriveBucket({ status: facts.status, occurrences, now }, role),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: isGroup

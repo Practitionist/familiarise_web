@@ -134,13 +134,13 @@ export const getConsumeeName = (appointment: TAppointment): string => {
       // For webinars, show the consultant (host) name
       return (
         appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-        "Unknown Consultant"
+        "Unknown expert"
       );
     case "CLASS":
       // For classes, show the consultant (instructor) name
       return (
         appointment.class?.classPlan?.consultantProfile?.user?.name ??
-        "Unknown Consultant"
+        "Unknown expert"
       );
     default:
       return "Unknown User";

@@ -76,6 +76,7 @@ import {
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
   processQualifyingAction,
@@ -1539,7 +1540,8 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         consultantName,
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
-        retryUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the payer.
+        retryUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       },
       // Payment failure is urgent: bypass quiet-hours deferral.
       { tx, entityRef: `payment:${payment.id}`, deferrable: false },
@@ -2568,7 +2570,8 @@ async function stagePaymentSuccessEmail(
         | "class",
       amount,
       currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always the payer.
+      dashboardUrl: `${getAppUrl()}${goHref("client", "appointments")}`,
       paymentReference: payment.id,
     });
   } catch (error) {
@@ -2664,7 +2667,9 @@ async function stagePaymentFailedEmail(
 
   let consultantName = "Consultant";
   let appointmentType: "consultation" | "subscription" = "consultation";
-  let retryUrl = `${getAppUrl()}/dashboard`;
+  // #1527 — the recipient is always the payer; overridden below when a
+  // specific booking is known.
+  let retryUrl = `${getAppUrl()}${goHref("client", "payments")}`;
 
   // Get consultant name and appointment type
   if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {

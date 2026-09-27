@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Consent required to join an organization. Restore data-processing consent in your privacy settings, then accept again.",
+          "Consent required to join an organization. Restore data-processing consent in Settings › Account › Data consent, then accept again.",
         code: "CONSENT_REQUIRED",
       },
       { status: 403 },

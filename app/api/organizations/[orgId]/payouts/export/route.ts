@@ -26,7 +26,8 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 decision 1 — the same grant as the payouts list it exports.
+  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
   if (access.error) return access.error;
 
   await prisma.orgAuditLog.create({

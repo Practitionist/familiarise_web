@@ -9,7 +9,10 @@ import {
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
+import {
+  oneOnOnePlanListCacheControl,
+  oneOnOnePlanListWhere,
+} from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 
 import { getSession } from "@/lib/auth-server";
@@ -29,11 +32,19 @@ export async function GET(request: NextRequest) {
     );
     const skip = (page - 1) * limit;
 
-    // #726 — public marketplace must not surface ORG_ONLY plans.
-    const where = {
-      ...(consultantId ? { consultantProfileId: consultantId } : {}),
-      ...marketplaceVisibilityWhere(),
-    };
+    // #726 — public marketplace must not surface ORG_ONLY plans; #1527 Q4 —
+    // nor drafts, except to the owner's planner (the only consultantId caller).
+    // A failed session read degrades to the public list, never a 500.
+    const viewer = consultantId
+      ? await getSession(true).catch((error: unknown) => {
+          Sentry.captureException(error, { tags: { subsystem: "plans" } });
+          return null;
+        })
+      : null;
+    const where = oneOnOnePlanListWhere(
+      consultantId,
+      viewer?.user?.consultantProfileId,
+    );
 
     const [subscriptionPlans, total] = await Promise.all([
       prisma.subscriptionPlan.findMany({
@@ -71,7 +82,7 @@ export async function GET(request: NextRequest) {
         status: 200,
         // Public marketplace list — CDN-cached like the sibling plan lists.
         headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+          "Cache-Control": oneOnOnePlanListCacheControl(consultantId),
         },
       },
     );
@@ -210,6 +221,8 @@ export async function POST(request: NextRequest) {
         faqs: faqCreateNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
         recordingStoragePolicy: validatedData.recordingStoragePolicy,
+        // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+        status: validatedData.status,
         trialEnabled,
         trialDurationMinutes,
         trialPriceInPaise,

@@ -9,6 +9,9 @@
  * truth where money or compliance is involved.
  */
 
+import { CASE_TOPICS, type CaseTopic } from "@/lib/support/case-topic";
+import type { ArticleLink } from "@/types/support-case";
+
 export interface SupportSubcategory {
   title: string;
   description: string;
@@ -41,6 +44,35 @@ export interface SupportArticle {
   related: string[];
   sections: SupportSection[];
 }
+
+/**
+ * #1527 — which Help Center categories each dashboard audience draws its
+ * suggested articles from. Learners never get the expert or organisation
+ * topics.
+ */
+export type HelpCenterAudience = "learner" | "expert";
+
+export const HELP_CENTER_AUDIENCE_CATEGORIES: Record<
+  HelpCenterAudience,
+  readonly string[]
+> = {
+  learner: [
+    "getting-started",
+    "booking",
+    "payments",
+    "video",
+    "recordings",
+    "help",
+  ],
+  expert: [
+    "getting-started",
+    "experts",
+    "booking",
+    "video",
+    "recordings",
+    "help",
+  ],
+};
 
 export const supportCategories: SupportCategory[] = [
   {
@@ -610,6 +642,7 @@ export const supportArticles: SupportArticle[] = [
         heading: "Earning and using credits",
         paragraphs: [
           "Referrals reward both sides (for example ₹300 each, rising toward ₹500 in promotions). Credits apply automatically at checkout above the minimum order value (for example ₹500+), oldest-expiring first, and expire 90 days after they are issued. Credits are INR-only.",
+          "Your referral link is on the Invite & earn page of your dashboard. A referral earns its rewards when the person you invited completes their first paid booking within 30 days of signing up; until then it stays pending, and a sign-up alone earns nothing.",
         ],
       },
       {
@@ -790,6 +823,7 @@ export const supportArticles: SupportArticle[] = [
         heading: "If a recording never appears",
         paragraphs: [
           "First confirm recording was consented and enabled for that session (declined 1-on-1 sessions are never recorded). If an expected recording is still missing well after the session, contact support with the appointment date and expert name.",
+          "Experts can also press Sync from Stream on their Recordings page, which checks the video provider for recordings that have not been linked to their session yet.",
         ],
       },
     ],
@@ -970,6 +1004,13 @@ export const supportArticles: SupportArticle[] = [
         ],
       },
       {
+        heading: "Hold periods and the minimum payout",
+        paragraphs: [
+          "Each earning is held for a short period after the later of the payment and the end of the session, so a cancellation or refund can still be settled. The hold is 24 hours for consultations and classes, 48 hours for webinars, and 7 days for subscriptions; moving a session moves its release date with it.",
+          "A payout is sent once your available balance reaches ₹500. Smaller balances stay available and join the next payout. An earning marked Refunded was returned to the learner after a cancellation and is not paid out. On bookings you sell yourself, Familiarise keeps a 20% platform fee; sessions an organisation pays for follow that organisation's agreement.",
+        ],
+      },
+      {
         heading: "Bank errors and eligibility",
         paragraphs: [
           "A “returned by your bank” or “rejected transfer” status means your bank refused the credit — verify account number, IFSC, and name match, then re-trigger. Payouts are currently India-only; experts outside India cannot receive bank payouts yet.",
@@ -997,6 +1038,142 @@ export const supportArticles: SupportArticle[] = [
         heading: "Unfair scores",
         paragraphs: [
           "Low ratings carry a cause (for example scheduling or technical issues). Ratings caused by proven platform faults can be excluded from your aggregate after review — contact support with the appointment reference instead of asking the learner to change it.",
+        ],
+      },
+    ],
+  },
+
+  // #1527 — migrated from the retired dashboard expert FAQ, re-verified
+  // against current behaviour so the Help Center is the single source.
+  {
+    slug: "expert-profile",
+    category: "experts",
+    title: "How do I set up my expert profile?",
+    excerpt:
+      "Your expertise, headline, background, and credentials — and where each one lives.",
+    updated: "September 2026",
+    contactCategory: "consultant",
+    related: ["experts/become-expert", "experts/create-offerings"],
+    sections: [
+      {
+        heading: "Profile",
+        paragraphs: [
+          "Open Settings and choose Profile. Pick your field of expertise, then add specialties and skills so learners searching for a topic can find you. Your headline, professional summary, years of experience, mentoring style, and an optional video introduction make up the story on your public page, and the languages you speak help learners choose.",
+        ],
+      },
+      {
+        heading: "Experience, education, and verification",
+        paragraphs: [
+          "Settings › Experience & education holds your work history, education, certifications, and achievements. Settings › Verification is where you upload the documents that let you publish offerings; each document is reviewed on its own.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "create-offerings",
+    category: "experts",
+    title: "How do I create, publish, and duplicate offerings?",
+    excerpt:
+      "The four offering types, drafts, publishing, duplicating, archiving, and deleting.",
+    updated: "September 2026",
+    contactCategory: "consultant",
+    related: ["booking/session-types", "experts/availability-and-pricing"],
+    sections: [
+      {
+        heading: "Create and publish",
+        paragraphs: [
+          "Open Offerings and create a 1-on-1 consultation, a subscription, a webinar, or a class. Each editor asks for a title, description, topics, learning outcomes, prerequisites, who it is for, what is included, and a price, plus the scheduling details its type needs.",
+          "Save draft keeps an offering private while you work on it: drafts never appear on your public page. Publish makes it bookable. A published consultation or subscription can be taken back to draft, while a published webinar or class cannot.",
+        ],
+      },
+      {
+        heading: "Duplicate, archive, or delete",
+        paragraphs: [
+          "Duplicate opens a new draft prefilled from an existing offering, so a variation takes minutes. Delete is offered only for an offering nobody has booked or paid for; once there is booking history, archive it instead, which hides it from new learners and keeps the history intact.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "trial-sessions",
+    category: "experts",
+    title: "How do trial sessions work?",
+    excerpt:
+      "Offering a trial on a subscription, answering trial requests, and what happens after.",
+    updated: "September 2026",
+    contactCategory: "consultant",
+    related: ["experts/booking-requests", "experts/create-offerings"],
+    sections: [
+      {
+        heading: "Offering a trial",
+        paragraphs: [
+          "Trials belong to subscription plans. In the subscription editor, turn on Offer a trial session, choose a length between 15 and 120 minutes, and set a trial price in whole rupees. A small price usually means fewer no-shows, but ₹0 makes the trial free.",
+        ],
+      },
+      {
+        heading: "Answering trial requests",
+        paragraphs: [
+          "Learners request a trial from your public page, and the request arrives in Requests under Trials. Accept it by picking a time, or decline it; a learner who paid for a declined trial is refunded automatically. Each learner can take one trial with you.",
+        ],
+      },
+      {
+        heading: "After the trial",
+        paragraphs: [
+          "Once the trial is held, the learner can subscribe to the plan from your page. A trial that leads to a subscription is marked as converted.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "collaborations",
+    category: "experts",
+    title: "How do collaborations and revenue sharing work?",
+    excerpt:
+      "Co-delivering webinars and classes with other experts, their roles, and how revenue is split.",
+    updated: "September 2026",
+    contactCategory: "consultant",
+    related: ["experts/create-offerings", "experts/payouts"],
+    sections: [
+      {
+        heading: "Inviting collaborators",
+        paragraphs: [
+          "The host of a webinar or class can invite other experts to deliver it with them. Invitations you send and receive live under Offerings › Collaborations, where each invited expert accepts or declines.",
+        ],
+      },
+      {
+        heading: "Roles",
+        paragraphs: [
+          "Each collaborator has a role. A co-host or co-instructor presents: they see the attendee list and hold host controls during the session, and each plan has one such presenter. The other roles — moderator, guest speaker, technical support, teaching assistant, guest lecturer, and content creator — help deliver the session without those controls.",
+        ],
+      },
+      {
+        heading: "Revenue sharing",
+        paragraphs: [
+          "The host sets each collaborator's percentage when inviting them. Shares are taken from the expert portion of each sale, after the platform fee, and only collaborators who have accepted are paid. The host always keeps at least 10%, so collaborator shares on one plan can add up to 90% at most.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "document-reviews",
+    category: "experts",
+    title: "How do I review documents learners share with me?",
+    excerpt:
+      "The Documents page, review statuses, and sending a response document.",
+    updated: "September 2026",
+    contactCategory: "consultant",
+    related: ["recordings/uploading-documents", "experts/booking-requests"],
+    sections: [
+      {
+        heading: "Reviewing a document",
+        paragraphs: [
+          "Documents that learners attach to their sessions with you appear on your Documents page. Open one, add review notes, and set its status: Pending, In review, Approved, Rejected, or Needs revision. You can update several documents at once.",
+        ],
+      },
+      {
+        heading: "Sending a response",
+        paragraphs: [
+          "Use Upload Response to send back an annotated copy, written feedback, or extra material, up to 10 MB per file. The response is linked to the learner's document and shared on the same session.",
         ],
       },
     ],
@@ -1492,4 +1669,120 @@ export function articleToMarkdown(article: SupportArticle): string {
     "Policies: /refund, /pricing, /privacy, /terms",
   );
   return lines.join("\n");
+}
+
+/** The categories, with their articles, one dashboard audience sees (#1527). */
+export function helpCenterFor(
+  audience: HelpCenterAudience,
+): { category: SupportCategory; articles: SupportArticle[] }[] {
+  return HELP_CENTER_AUDIENCE_CATEGORIES[audience].flatMap((slug) => {
+    const category = getCategory(slug);
+    return category ? [{ category, articles: articlesForCategory(slug) }] : [];
+  });
+}
+
+/** `category/slug` refs, most-asked first, for each dashboard audience (#1527). */
+const SUGGESTED_ARTICLES: Record<HelpCenterAudience, readonly string[]> = {
+  learner: [
+    "booking/reschedule",
+    "booking/cancel-and-no-show",
+    "payments/refunds-explained",
+    "video/how-to-join",
+    "help/tickets-and-contact",
+  ],
+  expert: [
+    "experts/booking-requests",
+    "experts/payouts",
+    "experts/create-offerings",
+    "experts/availability-and-pricing",
+    "help/tickets-and-contact",
+  ],
+};
+
+/**
+ * The Support requests page's suggested articles (#1527): drawn only from the
+ * audience's own Help Center categories, so a learner never gets an expert
+ * article.
+ */
+export function suggestedArticlesFor(
+  audience: HelpCenterAudience,
+): SupportArticle[] {
+  const pool = helpCenterFor(audience).flatMap(({ articles }) => articles);
+  return SUGGESTED_ARTICLES[audience].flatMap((ref) =>
+    pool.filter((a) => `${a.category}/${a.slug}` === ref),
+  );
+}
+
+/**
+ * #1527 — three Help Center answers per support-case topic, for the case
+ * composer's suggestions and the user's request page. `category/slug`
+ * refs, most relevant first.
+ */
+const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
+  payments: [
+    "payments/payment-methods-and-failures",
+    "payments/deducted-but-unconfirmed",
+    "payments/gst-invoices",
+  ],
+  cancellation: [
+    "booking/cancel-and-no-show",
+    "payments/refunds-explained",
+    "booking/reschedule",
+  ],
+  scheduling: [
+    "booking/reschedule",
+    "booking/timezones",
+    "booking/picking-slots",
+  ],
+  session: [
+    "booking/cancel-and-no-show",
+    "video/dropped-call",
+    "experts/reviews-feedback",
+  ],
+  technical: ["video/join-errors", "video/how-to-join", "help/browser-support"],
+  recordings: [
+    "recordings/finding-recordings",
+    "recordings/recording-expiry",
+    "video/recording-consent",
+  ],
+  documents: [
+    "recordings/uploading-documents",
+    "recordings/class-materials",
+    "experts/document-reviews",
+  ],
+  account: [
+    "getting-started/sign-in-and-password",
+    "getting-started/how-to-sign-up",
+    "getting-started/age-consent-delete-data",
+  ],
+  organisation: [
+    "organizations/org-support-retention",
+    "organizations/wallet-invoice-billing",
+    "organizations/members-roles",
+  ],
+  other: [
+    "help/tickets-and-contact",
+    "help/notification-preferences",
+    "help/privacy-cookies-safety",
+  ],
+};
+
+/** Every topic's article links; small enough to hand to a client whole. */
+export function articleLinksByTopic(): Record<CaseTopic, ArticleLink[]> {
+  const links = {} as Record<CaseTopic, ArticleLink[]>;
+  for (const topic of CASE_TOPICS) {
+    links[topic] = TOPIC_ARTICLES[topic].flatMap((ref) => {
+      const [category, slug] = ref.split("/");
+      const article = getArticle(category, slug);
+      return article
+        ? [{ title: article.title, href: articleUrl(article) }]
+        : [];
+    });
+  }
+  return links;
+}
+
+/** #1527 — every Help Center article as a link, for the composer's search. */
+export function helpCenterArticleLinks(): ArticleLink[] {
+  return supportArticles.map((a) => ({ title: a.title, href: articleUrl(a) }));
 }

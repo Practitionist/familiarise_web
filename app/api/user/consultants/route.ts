@@ -12,6 +12,7 @@ import {
 import { apiError } from "@/lib/errors";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 import { personScoreAtLeast } from "@/lib/reviews-display";
+import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 
 // #1560 — Netlify's durable cache keys on the query string only for the
 // parameters `Netlify-Vary` names; without it every filter served page 1.
@@ -140,14 +141,25 @@ export async function GET(request: NextRequest) {
     if (experience > 0) {
       conditions.push({ experience: { gte: experience } });
     }
+    // #1527 Q4 — price filters match only plans a buyer can actually see.
     if (minPrice !== undefined && !isNaN(minPrice)) {
       conditions.push({
-        subscriptionPlans: { some: { price: { gte: minPrice } } },
+        subscriptionPlans: {
+          some: {
+            price: { gte: minPrice },
+            ...oneOnOnePlanDiscoverableWhere(),
+          },
+        },
       });
     }
     if (maxPrice !== undefined && !isNaN(maxPrice)) {
       conditions.push({
-        subscriptionPlans: { some: { price: { lte: maxPrice } } },
+        subscriptionPlans: {
+          some: {
+            price: { lte: maxPrice },
+            ...oneOnOnePlanDiscoverableWhere(),
+          },
+        },
       });
     }
     if (minRating !== undefined && !isNaN(minRating)) {
@@ -185,10 +197,7 @@ export async function GET(request: NextRequest) {
             organization: {
               ...(orgKind
                 ? {
-                    kind: orgKind as
-                      | "AGENCY"
-                      | "ENTERPRISE"
-                      | "SOLO_PRACTICE",
+                    kind: orgKind as "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE",
                   }
                 : {}),
               ...(orgSlug ? { slug: orgSlug } : {}),

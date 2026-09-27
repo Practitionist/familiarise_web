@@ -135,15 +135,15 @@ describe("Novu workflow templates", () => {
     expect(
       toWire("support-ticket-activity", {
         ticketId: "t1",
-        dashboardUrl: "/dashboard/admin/tickets",
+        dashboardUrl: "/dashboard/admin/support",
       }),
     ).toEqual({
       workflowId: "support-ticket",
       payload: {
         ticketId: "t1",
-        dashboardUrl: "/dashboard/admin/tickets",
+        dashboardUrl: "/dashboard/admin/support",
         event: "support-ticket-activity",
-        href: "/dashboard/admin/tickets",
+        href: "/dashboard/admin/support",
       },
     });
     // The destination follows the event's own field, and is absent when the

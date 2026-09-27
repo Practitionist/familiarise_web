@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { pendingToast } from "@/hooks/use-toast";
 import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { authClient, useSession } from "@/lib/auth-client";
 import { GlobeIcon } from "@/components/auth/auth-icons";
@@ -13,7 +13,6 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 
 export default function ForgotPassword() {
-  const { toast } = useToast();
   const router = useRouter();
   const { data: session, isPending } = useSession();
   const [email, setEmail] = useState("");
@@ -39,7 +38,7 @@ export default function ForgotPassword() {
     e.preventDefault();
     setIsLoading(true);
     setMessage(null); // Clear previous messages
-    toast({ title: "Sending reset link..." });
+    const settle = pendingToast({ title: "Sending reset link..." });
 
     try {
       const { error } = await authClient.requestPasswordReset({
@@ -49,7 +48,7 @@ export default function ForgotPassword() {
       if (error) {
         const copy = humanizeAuthError("forgot", error);
         setMessage({ kind: "error", text: copy.description });
-        toast({
+        settle({
           title: copy.title,
           description: copy.description,
           variant: "destructive",
@@ -58,7 +57,7 @@ export default function ForgotPassword() {
         // The server answers the same way whether or not the address exists.
         const successMessage = `If an account exists for ${email}, we've sent a reset link. It works once and expires in 30 minutes.`;
         setMessage({ kind: "success", text: successMessage });
-        toast({ title: "Request Sent", description: successMessage });
+        settle({ title: "Request Sent", description: successMessage });
       }
     } catch (error: unknown) {
       Sentry.captureException(
@@ -68,7 +67,7 @@ export default function ForgotPassword() {
       console.error("Forgot password error:", error);
       const copy = humanizeAuthError("forgot", { status: 0 });
       setMessage({ kind: "error", text: copy.description });
-      toast({
+      settle({
         title: copy.title,
         description: copy.description,
         variant: "destructive",

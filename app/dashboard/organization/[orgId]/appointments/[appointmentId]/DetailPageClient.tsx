@@ -3,13 +3,10 @@
 import { useMemo } from "react";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
-import { DocumentUpload } from "@/components/appointments/DocumentUpload";
+import { readOnlyAdapter } from "@/lib/appointments/adapter";
+import { ConsulteeDocuments } from "@/components/appointments/detail/ConsulteeDocuments";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
-import { isConfirmedStatus } from "@/lib/appointments/status";
-import { supportsDocuments } from "@/lib/appointments/kind-capabilities";
-
-/** Only these kinds carry documents; a webinar or class has no per-attendee file. */
 
 /**
  * Detail view for one of the member's own org-funded sessions.
@@ -43,24 +40,27 @@ export default function DetailPageClient({
   orgId,
   appointmentId,
   consulteeId,
+  readOnly = false,
 }: Readonly<{
   orgId: string;
   appointmentId: string;
   consulteeId: string;
+  /** SUSPENDED membership: view and Join only (#1527 decision 6). */
+  readOnly?: boolean;
 }>) {
   const base = useConsulteeAppointmentsAdapter({
     consulteeId,
     rescheduleReturnTo: `/dashboard/organization/${orgId}/appointments/${appointmentId}`,
   });
 
-  const adapter = useMemo(
-    () => ({
+  const adapter = useMemo(() => {
+    const scoped = {
       ...base,
       detailHref: () =>
         `/dashboard/organization/${orgId}/appointments/${appointmentId}`,
-    }),
-    [base, orgId, appointmentId],
-  );
+    };
+    return readOnly ? readOnlyAdapter(scoped) : scoped;
+  }, [base, orgId, appointmentId, readOnly]);
 
   return (
     <AppointmentDetailClient
@@ -68,20 +68,11 @@ export default function DetailPageClient({
       role="consultee"
       adapter={adapter}
       backHref={`/dashboard/organization/${orgId}/appointments`}
+      supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
-      renderDocuments={(vm) =>
-        supportsDocuments(vm.kind) && isConfirmedStatus(vm.status) ? (
-          <DocumentUpload
-            appointmentId={appointmentId}
-            appointmentTitle={vm.title}
-            appointmentType={vm.kind.charAt(0) + vm.kind.slice(1).toLowerCase()}
-          />
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            Documents can be shared once the booking is confirmed.
-          </p>
-        )
-      }
+      renderDocuments={(vm) => (
+        <ConsulteeDocuments vm={vm} appointmentId={appointmentId} />
+      )}
     />
   );
 }

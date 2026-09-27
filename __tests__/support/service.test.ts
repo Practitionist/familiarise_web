@@ -215,7 +215,7 @@ describe("runSupportTurn", () => {
     // The concurrent case: staff close the thread between the read and the
     // write, so `persistHumanTurn`'s guarded updateMany matches nothing. The
     // contract is `accepted: false` plus the thread's REAL status, and no
-    // message row — SupportThreadSheet keys its "your message wasn't sent"
+    // message row — useSupportThread keys its "your message wasn't sent"
     // recovery on exactly `accepted === false`, so this branch silently
     // regressing is what puts a delivered-looking bubble on a closed thread.
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(

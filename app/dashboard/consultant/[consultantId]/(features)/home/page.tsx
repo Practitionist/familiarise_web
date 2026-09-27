@@ -90,11 +90,8 @@ async function NeedsYouSection({
     () => null,
   );
   if (!needsYou) return null;
-  return (
-    <div className="px-4 pt-4 sm:px-6 lg:px-8">
-      <NeedsYouCard summary={needsYou} />
-    </div>
-  );
+  // The shell owns the gutter (#1527 §15); no padding wrapper here.
+  return <NeedsYouCard summary={needsYou} />;
 }
 
 /**

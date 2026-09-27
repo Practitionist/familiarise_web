@@ -1,49 +1,32 @@
 /**
- * GET /api/organizations/[orgId]/documents
+ * GET /api/organizations/[orgId]/documents — the org Library's Documents
+ * (#1527), one page of sessions with their files.
  *
- * Org-scoped AppointmentDocument list (#674 / B1-hybrid). MANAGER+ at
- * the org. Documents inherit org context via the parent
- * `Appointment.organizationId`.
+ * `?scope=mine` (default): any ACTIVE or SUSPENDED member's own org sessions,
+ * with plan materials, their uploads and the other party's, URLs included.
+ * `?scope=everyone`: every org session, metadata only (ADR 20) —
+ * `operations.read` on an ACTIVE membership.
+ *
+ * Filters: `q`, `kind`, `from`, `to` (YYYY-MM-DD), `source`, `page`.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { listDocumentsScoped } from "@/lib/api/scope/list-documents";
-import { parsePagination } from "@/lib/enterprise/validators";
 
-const QuerySchema = z.object({
-  reviewStatus: z
-    .enum(["PENDING", "APPROVED", "REJECTED", "IN_REVIEW", "NEEDS_REVISION"])
-    .optional(),
-});
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { readOrgLibraryDocuments } from "@/lib/data/org-library";
+import { libraryRequest } from "@/lib/library/library-route";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
   if (access.error) return access.error;
 
-  const url = new URL(req.url);
-  const filters = QuerySchema.safeParse({
-    reviewStatus: url.searchParams.get("reviewStatus") ?? undefined,
-  });
-  if (!filters.success) {
-    return NextResponse.json(
-      { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
-    );
-  }
-  const pagination = parsePagination(url);
-
-  const result = await listDocumentsScoped({
-    scope: { kind: "org", orgId },
-    userId: access.session.user.id,
-    reviewStatus: filters.data.reviewStatus,
-    page: pagination.page,
-    perPage: pagination.pageSize,
-  });
-  return NextResponse.json(result);
+  const request = libraryRequest(req, access);
+  if (!request.ok) return request.response;
+  return NextResponse.json(
+    await readOrgLibraryDocuments({ orgId, ...request.args }),
+  );
 }

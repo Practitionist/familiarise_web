@@ -32,9 +32,14 @@ describe("member-role schema drift (#817)", () => {
     expect(SelfServiceMemberRoleSchema.options).not.toContain("SUPPORT");
   });
 
-  it("host-invitable set is exactly self-service + EXPERT (SUPPORT stays owner-console-only)", () => {
+  // #1527 — SUPPORT is invitable from the dashboard (not the wizard).
+  it("host-invitable set is exactly self-service + EXPERT + SUPPORT", () => {
     const host = [...HostInvitableMemberRoleSchema.options].sort();
-    const expected = [...SelfServiceMemberRoleSchema.options, "EXPERT"].sort();
+    const expected = [
+      ...SelfServiceMemberRoleSchema.options,
+      "EXPERT",
+      "SUPPORT",
+    ].sort();
     expect(host).toEqual(expected);
   });
 });

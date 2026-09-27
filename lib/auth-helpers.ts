@@ -168,7 +168,7 @@ export async function requirePrivilegedAuth(): Promise<
  * sidebar all agree on who may reach a surface.
  *
  * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
- * merged `/dashboard/admin` renders: those two only express "is this an
+ * merged back-office tree renders: those two only express "is this an
  * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
  * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
  *
@@ -333,7 +333,10 @@ export async function authorizeEventAccess(
 // ============================================================================
 
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
-import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
+import {
+  hasAnyOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -360,9 +363,10 @@ export type OrgCapabilityGate = {
    * (lib/auth/org-permissions.ts) — the preferred gate for surface access.
    * Unlike `minimumRole` it expresses the operations/finance track split
    * (SUPPORT reads operations; BILLING_ADMIN is operator-blind) that the
-   * rank ladder cannot. Both may be set; both must pass.
+   * rank ladder cannot. Both may be set; both must pass. A list means any-of
+   * (a surface two grants open, e.g. Settings GET — #1527).
    */
-  permission?: OrgSurface;
+  permission?: OrgSurface | readonly OrgSurface[];
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
@@ -375,6 +379,14 @@ export type OrgCapabilityGate = {
    * distinguish this from plain 403.
    */
   requireActive?: true;
+  /**
+   * #1527 decision 6 — also admit a SUSPENDED membership, for the member's
+   * already-booked sessions ONLY: the org shell's details read, Appointments ›
+   * Mine, and their own appointment detail. A suspended member never passes a
+   * role or permission gate, so this refuses when combined with
+   * `minimumRole` / `permission`; callers branch on `member.status`.
+   */
+  allowSuspended?: true;
 };
 
 /**
@@ -401,6 +413,7 @@ export async function requireOrgAccess(
     canHost,
     fundingSource,
     requireActive,
+    allowSuspended,
   } = options;
 
   const auth = await requireApiAuth();
@@ -554,7 +567,12 @@ export async function requireOrgAccess(
     };
   }
 
-  if (member.status !== "ACTIVE") {
+  const suspendedAdmitted =
+    allowSuspended === true && member.status === "SUSPENDED";
+  if (
+    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
+    (suspendedAdmitted && (minimumRole || permission))
+  ) {
     return {
       error: NextResponse.json(
         { error: `Membership is ${member.status.toLowerCase()}` },
@@ -572,10 +590,12 @@ export async function requireOrgAccess(
     };
   }
 
-  if (permission && !hasOrgPermission(member.role, permission)) {
+  if (permission && !hasAnyOrgPermission(member.role, permission)) {
+    const named =
+      typeof permission === "string" ? permission : permission.join(" or ");
     return {
       error: NextResponse.json(
-        { error: `Forbidden — your role does not grant ${permission}` },
+        { error: `Forbidden — your role does not grant ${named}` },
         { status: 403 },
       ),
     };

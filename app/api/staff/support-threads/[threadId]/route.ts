@@ -21,7 +21,8 @@ import {
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
-import { notificationHref } from "@/lib/novu/resolve-href";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { caseKeyOf } from "@/lib/support/case-key";
 import {
   EMAIL_BUDGET_MS,
   sendSupportTicketResponseEmail,
@@ -209,12 +210,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     });
 
     if (thread.supportTicketId) {
-      // Org-hosted threads land on the org appointments surface; B2C stays a
-      // bare /dashboard and the capability router picks the viewer's tree
-      // (resolve-href doctrine — never guess the personal route).
-      const dashboardUrl = notificationHref(
+      // #1527 — the request's own page: the org's dashboard for an org
+      // session, else the go resolver picks the viewer's tree.
+      const dashboardUrl = supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: thread.supportTicketId }),
         thread.organizationId,
-        "appointments",
       );
       const reference = thread.supportTicket?.referenceNumber ?? undefined;
       const ticketTitle = thread.supportTicket?.title ?? "Support";
@@ -361,9 +361,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // #705 — the user is the only party who cannot see the ops queue, and this
     // route was the one status change nobody told them about.
     if (thread.supportTicketId) {
-      const dashboardUrl = notificationHref(
+      const dashboardUrl = supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: thread.supportTicketId }),
         thread.organizationId,
-        "appointments",
       );
       const reference = thread.supportTicket?.referenceNumber ?? undefined;
       const ticketTitle = thread.supportTicket?.title ?? "Support";

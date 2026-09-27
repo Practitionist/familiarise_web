@@ -9,7 +9,7 @@
  * /api/cookie-preferences (which was read-but-never-written since MVP).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import CookieConsent from "react-cookie-consent";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -27,10 +27,46 @@ const DEFAULTS: Prefs = {
   functional: false,
 };
 
+// #1527 3c — globals.css reserves this much at the end of every scrollport so
+// the fixed bar never covers content. Unset whenever the bar is not shown.
+const BAR_HEIGHT_VAR = "--cookie-bar-height";
+
+function useReserveBarHeight() {
+  const [bar, setBar] = useState<HTMLElement | null>(null);
+  // Our content mounts and unmounts with the library's bar, so its container
+  // is the element to measure.
+  const contentRef = useCallback((node: HTMLDivElement | null) => {
+    setBar(node?.closest<HTMLElement>(".CookieConsent") ?? null);
+  }, []);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!bar) return;
+    const publish = () =>
+      root.style.setProperty(BAR_HEIGHT_VAR, `${bar.offsetHeight}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(bar);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty(BAR_HEIGHT_VAR);
+    };
+  }, [bar]);
+  return contentRef;
+}
+
+// Equal weight: declining must be as easy to find as accepting.
+const CHOICE_STYLE = {
+  background: "#fafafa",
+  color: "#18181b",
+  fontSize: "13px",
+  borderRadius: "6px",
+};
+
 export default function CookieConsentBanner() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
+  const contentRef = useReserveBarHeight();
 
   useEffect(() => {
     fetch("/api/cookie-preferences")
@@ -65,14 +101,16 @@ export default function CookieConsentBanner() {
       enableDeclineButton
       cookieName="cookie_consent"
       style={{ background: "#18181b", fontSize: "13px" }}
-      buttonStyle={{ background: "#7c3aed", color: "#fff", fontSize: "13px" }}
-      declineButtonStyle={{ background: "#3f3f46", color: "#d4d4d8" }}
+      buttonStyle={CHOICE_STYLE}
+      declineButtonStyle={CHOICE_STYLE}
       expires={365}
-      onAccept={() => void save({ analytics: true, marketing: true, functional: true })}
+      onAccept={() =>
+        void save({ analytics: true, marketing: true, functional: true })
+      }
       onDecline={() => void save(DEFAULTS)}
       overlay={false}
     >
-      <div className="space-y-2">
+      <div ref={contentRef} className="space-y-2">
         <p>
           We use cookies to improve your experience. Essential cookies are
           always on.

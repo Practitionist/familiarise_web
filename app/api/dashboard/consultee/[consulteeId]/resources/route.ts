@@ -2,8 +2,9 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { RecordingService } from "@/lib/stream/recording-service";
+import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
+import { extractRecordings } from "@/lib/stream/session-recordings";
 import {
   requireApiAuth,
   isPrivileged,
@@ -161,13 +162,6 @@ type TrialWithResources = Prisma.Result<
   "findFirstOrThrow"
 >;
 
-// Appointment type that has occurrences with meeting recordings
-type AppointmentWithSlots = Prisma.Result<
-  typeof prisma.appointment,
-  { include: typeof slotsWithRecordings },
-  "findFirstOrThrow"
->;
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
@@ -206,6 +200,7 @@ export async function GET(
     }
 
     const userId = consulteeProfile.userId;
+    const lateJoin = await lateJoinRecordingAccess(userId);
 
     // Get paid plan IDs via shared RecordingService method
     const {
@@ -406,6 +401,7 @@ export async function GET(
             materials: cl.classPlan.materials,
             recordings: await extractRecordings(
               cl.appointment ? [cl.appointment] : [],
+              { access: lateJoin, classId: cl.id, classPlanId: cl.classPlanId },
             ),
           })),
         )
@@ -442,22 +438,4 @@ export async function GET(
       { status: 500 },
     );
   }
-}
-
-async function extractRecordings(appointments: AppointmentWithSlots[]) {
-  const recordings = appointments.flatMap((apt) =>
-    apt.occurrences.flatMap((slot) => slot.meeting?.recordings ?? []),
-  );
-
-  return Promise.all(
-    recordings.map(async (rec) => ({
-      id: rec.id,
-      title: rec.title,
-      durationInMinutes: rec.durationInMinutes,
-      recordedAt: rec.recordedAt,
-      playbackUrl: await getBestRecordingUrl(rec),
-      thumbnailUrl: rec.thumbnailUrl,
-      status: rec.status,
-    })),
-  );
 }

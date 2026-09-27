@@ -14,7 +14,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 
@@ -28,7 +28,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  // #1527 decision 7 — MAINTAINER reads status (no secrets are listed);
+  // every write below stays requireOrgOwner.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const mappings = await prisma.scimGroupMapping.findMany({

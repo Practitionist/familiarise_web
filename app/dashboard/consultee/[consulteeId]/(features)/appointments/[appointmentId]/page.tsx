@@ -11,6 +11,7 @@ import {
 } from "@/lib/data/appointment-detail";
 import DetailPageClient from "./DetailPageClient";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consulteeId: string; appointmentId: string }>;
@@ -44,9 +45,14 @@ export default async function AppointmentDetailPage({
     appointment.consultation?.requestedBy?.id === consulteeId ||
     appointment.subscription?.requestedBy?.id === consulteeId ||
     appointment.trial?.consulteeProfile?.id === consulteeId ||
-    appointment.participants.some((seat) => seat.userId === profile.userId);
+    appointment.participants.some((seat) => seat.userId === profile.userId) ||
+    // A payer whose seat was released (e.g. after a refund) still opens the
+    // booking their payment links to; the rows are scoped to their own below.
+    appointment.payment.some((p) => p.userId === profile.userId);
   if (!owns) notFound();
 
+  // One zone for the server render and hydration (#418, #1527 QA).
+  const viewerZone = await getViewerZone();
   const queryClient = new QueryClient();
   // The attending side: hydrate only this attendee's own payment rows, the
   // same shape the API route answers, or the first paint would show every
@@ -61,6 +67,7 @@ export default async function AppointmentDetailPage({
       <DetailPageClient
         consulteeId={consulteeId}
         appointmentId={appointmentId}
+        viewerZone={viewerZone.zone}
       />
     </HydrationBoundary>
   );

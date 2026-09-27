@@ -11,6 +11,7 @@ import {
   BookOpen,
   CalendarRange,
   FileText,
+  Gift,
   IndianRupee,
   Layers,
   MessageSquareQuote,
@@ -287,6 +288,51 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
   ],
 });
 
+/**
+ * #1527 §7.2 — the subscription trial the API has always accepted
+ * (schemas/plans.ts) but no form could set. The price is edited in whole
+ * rupees like `price`; the service converts it to paise.
+ */
+const trialSection: SectionSpec = {
+  id: "trial",
+  title: "Trial",
+  description: "One short paid or free session before someone subscribes.",
+  icon: Gift,
+  fields: [
+    {
+      name: "trialEnabled",
+      kind: "switch",
+      label: "Offer a trial session",
+      description: "Trial requests arrive in Requests, under Trials.",
+      span: 6,
+    },
+    {
+      name: "trialDurationMinutes",
+      kind: "number",
+      label: "Trial length (minutes)",
+      min: 15,
+      max: 120,
+      step: 15,
+      description: "From 15 to 120 minutes.",
+      span: 3,
+    },
+    {
+      name: "trialPriceInPaise",
+      kind: "number",
+      label: "Trial price (₹)",
+      min: 0,
+      step: 1,
+      description: "Whole rupees. Use ₹0 for a free trial.",
+      span: 3,
+    },
+  ],
+};
+
+/** Field names only the personal (sole-owner) plan routes persist. */
+export const TRIAL_FIELD_NAMES: readonly string[] = trialSection.fields.map(
+  (f) => f.name,
+);
+
 export const CONSULTATION_MANIFEST: OfferingManifest = {
   type: "consultation",
   noun: "consultation",
@@ -321,6 +367,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
         supportLevelField,
       ],
     },
+    trialSection,
     contentSection("subscription"),
     extrasSection(false),
     {

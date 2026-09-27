@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -80,7 +80,7 @@ import { SessionTimeline } from "../SessionTimeline";
 import { ClassSessionControls } from "./ClassSessionControls";
 import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
@@ -144,6 +144,7 @@ type MoneyRow = PaymentDisplayLike & {
 
 /** One line per charge: amount, status, the rail it rode, the date — and the receipt. */
 function MoneyLine({ payment }: { payment: MoneyRow }) {
+  const format = useZonedFormat();
   const rail = paymentRailLabel(payment);
   const receipt = receiptHref(payment);
   return (
@@ -244,6 +245,10 @@ interface AppointmentDetailClientProps {
   joinWindowMs?: number;
   /** Consultant-only: the dashboard whose Requests/allocate pages answer a request. */
   consultantId?: string;
+  /** Extra buttons for the header action bar, e.g. the consultee's Book again / Add to calendar (#1527). */
+  renderExtraActions?: (vm: AppointmentVM) => ReactNode;
+  /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
+  supportRequestsBase: string;
 }
 
 export function AppointmentDetailClient({
@@ -255,7 +260,10 @@ export function AppointmentDetailClient({
   participantsHref,
   joinWindowMs,
   consultantId,
+  renderExtraActions,
+  supportRequestsBase,
 }: AppointmentDetailClientProps) {
+  const format = useZonedFormat();
   const { data: session } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -302,11 +310,11 @@ export function AppointmentDetailClient({
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   const payments = detail?.appointment.payment ?? [];
-  // One support sheet, two doors: "Get help" opens on the intent chips,
-  // "Problem with this charge" opens already on PAYMENT_STATUS.
-  const [help, setHelp] = useState<{ open: boolean; seed?: string }>({
-    open: false,
-  });
+  // #1527 — one request page, two doors: "Get help" opens on the intent
+  // options, "Problem with this charge" already on PAYMENT_STATUS.
+  const supportHref = `${supportRequestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
+  const openHelp = (intent?: string) =>
+    router.push(intent ? `${supportHref}?intent=${intent}` : supportHref);
 
   if (isLoading && !detail) {
     return (
@@ -550,9 +558,6 @@ export function AppointmentDetailClient({
                 <h1 className="text-xl font-semibold text-foreground">
                   {vm.title}
                 </h1>
-                <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {KIND_LABEL[vm.kind]}
-                </span>
                 <StatusBadge
                   {...toneBadge(bookingState.tone, bookingState.label)}
                   withDot
@@ -564,8 +569,10 @@ export function AppointmentDetailClient({
                   </span>
                 )}
               </div>
+              {/* #1527 — the kind is a fact about the booking, so it reads in
+                  the meta line rather than as a second chip beside the status. */}
               <p className="text-sm text-muted-foreground mt-1">
-                with {vm.counterpart.name}
+                {KIND_LABEL[vm.kind]} with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
                 {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
               </p>
@@ -633,11 +640,8 @@ export function AppointmentDetailClient({
                 {item.label}
               </Button>
             ))}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setHelp({ open: true })}
-            >
+            {renderExtraActions?.(vm)}
+            <Button variant="outline" size="sm" onClick={() => openHelp()}>
               <LifeBuoy className="mr-1.5 h-4 w-4" />
               Get help
             </Button>
@@ -666,7 +670,7 @@ export function AppointmentDetailClient({
               exists. */}
           <AppointmentSupportStatusCard
             appointmentId={appointmentId}
-            isOrgContext={!!orgName}
+            href={supportHref}
           />
 
           {/* #1766 — a subscription's header already carries "h of T"; a
@@ -734,7 +738,7 @@ export function AppointmentDetailClient({
                 }
               : undefined
           }
-          onHelp={() => setHelp({ open: true })}
+          onHelp={() => openHelp()}
         >
           {nextAction.kind === "JOIN" && action.kind === "join" ? (
             <RowPrimaryAction action={action} size="default" />
@@ -756,6 +760,7 @@ export function AppointmentDetailClient({
             appointmentId={appointmentId}
             proposal={openProposal}
             role={role}
+            readOnly={adapter.readOnly}
           />
         )}
 
@@ -1033,13 +1038,23 @@ export function AppointmentDetailClient({
                         View receipt
                       </a>
                     )}
+                    {/* #1527 — a refund's s.34 credit note sits beside it. */}
+                    {paidRow?.consumerInvoice?.creditNotes.map((note) => (
+                      <a
+                        key={note.id}
+                        href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-foreground underline underline-offset-4"
+                      >
+                        Credit note {note.creditNoteNumber}
+                      </a>
+                    ))}
                     {role === "consultee" && (
                       <button
                         type="button"
                         className="text-xs font-medium text-foreground underline underline-offset-4"
-                        onClick={() =>
-                          setHelp({ open: true, seed: "PAYMENT_STATUS" })
-                        }
+                        onClick={() => openHelp("PAYMENT_STATUS")}
                       >
                         {hasOwnCharge
                           ? "Problem with this charge"
@@ -1075,7 +1090,7 @@ export function AppointmentDetailClient({
                         renderDocuments(vm)
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          Documents for this booking will appear here.
+                          No documents for this booking.
                         </p>
                       )}
                     </ResourceSubgroup>
@@ -1084,10 +1099,14 @@ export function AppointmentDetailClient({
                   </>
                 )}
 
-                <ResourceSubgroup title="Recordings" icon={Video}>
+                <ResourceSubgroup
+                  title={`Recordings · ${recordings.length}`}
+                  icon={Video}
+                >
                   {recordings.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      Recordings of completed sessions will appear here.
+                      No recordings for this booking yet. Recorded sessions are
+                      listed here once they finish processing.
                     </p>
                   ) : (
                     <div className="space-y-2">
@@ -1140,13 +1159,6 @@ export function AppointmentDetailClient({
           and was: the consultee's detail page never did, leaving Reschedule,
           Cancel and Report issue setting state nothing was listening for. */}
       {adapter.renderDialogs()}
-      <SupportThreadSheet
-        appointmentId={appointmentId}
-        isOrgContext={!!orgName}
-        open={help.open}
-        onOpenChange={(open) => setHelp(open ? { ...help, open } : { open })}
-        seedCategory={help.seed}
-      />
     </DashboardErrorBoundary>
   );
 }

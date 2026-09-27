@@ -28,7 +28,9 @@ export async function GET(
   },
 ) {
   const { orgId, providerId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
+  // floor that admitted BILLING_ADMIN; secrets stay OWNER-only below.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const provider = await prisma.ssoProvider.findFirst({
@@ -153,7 +155,7 @@ export async function DELETE(
       providerId,
       deletedByName:
         access.session.user.name ?? access.session.user.email,
-      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings?tab=sso`,
+      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
     }).catch((err) => {
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
       console.error("[notifyOrgSsoProviderDeleted] failed:", err);

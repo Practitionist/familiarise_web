@@ -30,24 +30,20 @@ export function getConsultantName(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
       return (
-        event.consultationPlan.consultantProfile?.user?.name ||
-        "Unknown Consultant"
+        event.consultationPlan.consultantProfile?.user?.name || "Unknown expert"
       );
     case "Subscription":
       return (
-        event.subscriptionPlan.consultantProfile?.user?.name ||
-        "Unknown Consultant"
+        event.subscriptionPlan.consultantProfile?.user?.name || "Unknown expert"
       );
     case "Webinar":
       return (
-        event.webinarPlan.consultantProfile?.user?.name || "Unknown Consultant"
+        event.webinarPlan.consultantProfile?.user?.name || "Unknown expert"
       );
     case "Class":
-      return (
-        event.classPlan.consultantProfile?.user?.name || "Unknown Consultant"
-      );
+      return event.classPlan.consultantProfile?.user?.name || "Unknown expert";
     default:
-      return "Unknown Consultant";
+      return "Unknown expert";
   }
 }
 

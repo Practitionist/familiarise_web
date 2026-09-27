@@ -86,7 +86,7 @@ export function InvoicesPage({
       "Currency",
       "Gateway",
       "Type",
-      "Consultant",
+      "Expert",
       "Date",
     ];
     const rows = data.invoices.map((inv: Invoice) => [

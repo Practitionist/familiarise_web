@@ -23,6 +23,7 @@ import { deriveBucket } from "@/lib/appointments/bucket";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
+  isInactiveStatus,
   isPendingPaymentStatus,
   isPendingStatus,
 } from "@/lib/appointments/status";
@@ -600,6 +601,19 @@ export function getUpcomingEvents(events: ProcessedEvent[]): ProcessedEvent[] {
         e.slots.some((s) => s.startsAt > now),
     )
     .sort((a, b) => anchor(a) - anchor(b));
+}
+
+/**
+ * Home's "Next up" (#1527 QA): booked sessions that can still happen. A
+ * cancelled, rejected, expired or finished booking is history, not next.
+ */
+export function selectNextUp(
+  upcoming: ProcessedEvent[],
+  limit: number,
+): ProcessedEvent[] {
+  return upcoming
+    .filter((e) => e.startsAt !== null && !isInactiveStatus(e.status))
+    .slice(0, limit);
 }
 
 /**

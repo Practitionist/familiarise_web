@@ -50,9 +50,11 @@ function isPersonalChannel(channel: Channel): boolean {
  */
 function loadedChannels(client: StreamChat): Channel[] {
   return Object.values(
-    (client as unknown as {
-      activeChannels?: Record<string, Channel>;
-    }).activeChannels ?? {},
+    (
+      client as unknown as {
+        activeChannels?: Record<string, Channel>;
+      }
+    ).activeChannels ?? {},
   );
 }
 
@@ -169,14 +171,11 @@ export function useChatUnreadCount(): number {
       ) {
         return;
       }
-      // Server-computed total spans EVERY personal channel — hydrated or not.
-      // The local sum below only sees channels the sidebar has loaded, so
-      // when Stream hands us the authoritative number we take it verbatim
-      // instead of a possibly-partial recount.
-      if (typeof event.total_unread_count === "number") {
-        setUnreadCount(event.total_unread_count);
-        return;
-      }
+      // #1527 review — `event.total_unread_count` is Stream's GLOBAL count
+      // (every channel, org-tagged included), the exact number this hook's
+      // top comment documents replacing; taking it verbatim here reintroduced
+      // the bug it was written to fix (a personal badge lighting up for an
+      // org conversation). Always recount, personal-filtered, instead.
       scheduleRefresh();
     });
 

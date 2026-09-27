@@ -27,6 +27,7 @@ import {
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import {
   confirmTopUp,
   walletCredit,
@@ -1181,12 +1182,14 @@ export async function handleRefundCreated(
           {
             // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
             // inherits the org-ness of the payment it reverses. dashboardUrl stays a
-            // router bounce deliberately: this goes to the PAYER, and an org billing
+            // personal route deliberately: this goes to the PAYER, and an org billing
             // page is not readable by a LEARNER whose booking was org-sponsored.
             ...notificationScope(payment.organizationId),
             amount,
             currency,
-            dashboardUrl: `${getAppUrl()}/dashboard`,
+            // #1527 — was a bare `/dashboard` router bounce; the recipient is
+            // always the payer.
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
           },
           { tx, entityRef: `payment:${payment.id}` },
         );
@@ -1427,7 +1430,8 @@ export async function handleDisputeCreated(
             currency,
             reason,
             status: createdStatus ?? "NEEDS_RESPONSE",
-            dashboardUrl: `${getAppUrl()}/dashboard`,
+            // #1527 — the recipient is always the payer.
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
           },
           { tx, entityRef: `dispute:${disputeId}` },
         );
@@ -1835,7 +1839,8 @@ export async function handleDisputeUpdated(
                 currency: dispute.currency,
                 reason: dispute.reason || undefined,
                 status: mappedStatus,
-                dashboardUrl: `${getAppUrl()}/dashboard`,
+                // #1527 — the recipient is always the payer.
+                dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
               },
               { tx, entityRef: `dispute:${disputeId}` },
             );

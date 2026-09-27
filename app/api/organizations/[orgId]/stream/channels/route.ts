@@ -2,12 +2,12 @@
  * GET /api/organizations/[orgId]/stream/channels
  *
  * Lists Stream Chat channels tagged with `custom.organization_id = <orgId>`.
- * Surfaces the messaging side of an org's footprint to MANAGER+ org workspace operators
+ * Surfaces the messaging side of an org's footprint to org operators
  * for compliance, member-management, and audit workflows. Backed by Stream's
  * native `queryChannels` so we don't shadow channel state in our DB.
  *
- * AUTH: MANAGER+ on the target org (matches the rest of the org-workspace
- * surface area; viewing chat metadata is on par with viewing audit logs).
+ * AUTH: `messaging.read` (OWNER, MAINTAINER, MANAGER — #1527); viewing chat
+ * metadata is on par with viewing audit logs.
  *
  * PAGINATION: Stream caps `queryChannels` at 30 per call; we ship 20/page
  * with offset-based pagination to keep the URL simple. `?page=` is 1-based.
@@ -51,7 +51,8 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
+  const access = await requireOrgAccess(orgId, { permission: "messaging.read" });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

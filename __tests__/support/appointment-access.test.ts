@@ -74,7 +74,11 @@ const mockedReadDetail = readAppointmentDetail as jest.Mock;
 const mockedCanAccess = canAccessAppointment as jest.Mock;
 
 const DETAIL = {
-  appointment: { id: "demo0813-appt-ba", organizationId: "org-1" },
+  appointment: {
+    id: "demo0813-appt-ba",
+    organizationId: "org-1",
+    payment: [{ userId: "payer-1" }],
+  },
 } as unknown as TAppointmentDetail;
 
 beforeEach(() => {
@@ -143,6 +147,20 @@ describe("authorizeAppointment — legitimate access", () => {
     const auth = await authorizeAppointment("a1");
     expect(auth).toMatchObject({ userId: "staff1", isOrgParty: false });
     expect(mockedMembershipFind).not.toHaveBeenCalled();
+  });
+});
+
+describe("authorizeAppointment — the payer's own support thread (#1527 QA)", () => {
+  it("support routes admit the payer off the roster; detail/feedback do not", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "payer-1" } });
+    expect(await authorizeAppointment("a1", true)).toMatchObject({
+      userId: "payer-1",
+      isOrgParty: false,
+    });
+    expect(await authorizeAppointment("a1")).toEqual({
+      code: "FORBIDDEN",
+      status: 403,
+    });
   });
 });
 

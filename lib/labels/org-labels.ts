@@ -28,6 +28,7 @@ import type {
   OrgSizeBucket,
 } from "@prisma/client";
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
+import type { Tone } from "@/lib/ui/tone";
 
 // ───────────────────────────── Capability ─────────────────────────────
 
@@ -60,8 +61,7 @@ export const CAPABILITY_BADGE_CLASS: Record<CapabilityKind, string> = {
 export const CAPABILITY_DESCRIPTION: Record<CapabilityKind, string> = {
   SPONSOR:
     "Pays for its members' sessions. Has a BillingAccount; does not host consultants.",
-  HOST:
-    "Hosts consultants who earn through the organization. Has a payout account; does not sponsor anyone.",
+  HOST: "Hosts consultants who earn through the organization. Has a payout account; does not sponsor anyone.",
   HYBRID:
     "Both sponsors its members and hosts consultants. Runs both money flows independently.",
   INERT:
@@ -125,8 +125,9 @@ export const MemberRoleSchema = z.enum([
 
 export const MEMBER_ROLE_DESCRIPTION: Record<MemberRole, string> = {
   OWNER: "Full control: billing, members, settings, deletion.",
+  // #1527 — descriptions follow lib/auth/org-permissions.ts.
   MAINTAINER:
-    "Members, plans, programs, and settings. No billing or deletion.",
+    "Members, programs, contracts and settings. Can view billing but not pay or change it.",
   // Why a separate finance role: large orgs delegate AP / GL to a
   // specialized team that needs invoice + payout + rate-card + wallet
   // mutation rights without the ability to touch SSO, member roster,
@@ -136,10 +137,12 @@ export const MEMBER_ROLE_DESCRIPTION: Record<MemberRole, string> = {
   // BILLING_ADMIN-or-OWNER explicitly allow.
   BILLING_ADMIN:
     "Manages invoices, POs, payouts, rate cards, and outbound webhooks. No member or SSO changes.",
-  MANAGER: "Team analytics, seat management, earnings view.",
+  MANAGER:
+    "Day-to-day operations: appointments, the catalog and consent, with a read-only view of members and money.",
   EXPERT: "Delivers services on behalf of the organization.",
   LEARNER: "Consumes services through the organization's programs.",
-  SUPPORT: "Views support tickets and assists members. No billing.",
+  SUPPORT:
+    "Sees appointments, members and support conversations to help members. No money figures.",
 };
 
 // ───────────────────────────── MemberStatus ─────────────────────────────
@@ -154,14 +157,13 @@ export const MEMBER_STATUS_LABEL: Record<MemberStatus, string> = {
   ERASED: "Erased",
 };
 
-export const MEMBER_STATUS_BADGE_CLASS: Record<MemberStatus, string> = {
-  PENDING: "bg-amber-100 text-amber-900 border-amber-200",
-  ACTIVE: "bg-green-100 text-green-900 border-green-200",
-  SUSPENDED: "bg-orange-100 text-orange-900 border-orange-200",
-  REMOVED: "bg-zinc-100 text-zinc-600 border-zinc-200",
-  // Deliberately darker than REMOVED — visually communicates
-  // "permanent, regulatory" rather than "operator action, reversible".
-  ERASED: "bg-zinc-200 text-zinc-700 border-zinc-300 italic",
+/** #1527 — member status → tone; pending waits on the invitee. */
+export const MEMBER_STATUS_TONE: Record<MemberStatus, Tone> = {
+  PENDING: "caution",
+  ACTIVE: "success",
+  SUSPENDED: "warning",
+  REMOVED: "neutral",
+  ERASED: "neutral",
 };
 
 // ───────────────────────────── Zod narrowing schemas ─────────────────────────────
@@ -195,13 +197,12 @@ export type SelfServiceFundingSource = z.infer<
 export const SELF_SERVICE_FUNDING_SOURCES =
   SelfServiceFundingSourceSchema.options;
 
-// Self-service onboarding for a sponsor-only org exposes the four
-// non-privileged MemberRoles. EXPERT is assigned only on canHost=true
-// orgs (see HostInvitableMemberRoleSchema below); SUPPORT is an
-// operator role assigned by owners from Settings.
+// Self-service onboarding (the org-creation wizard) for a sponsor-only org.
+// EXPERT is assigned only on canHost=true orgs (see
+// HostInvitableMemberRoleSchema below); SUPPORT is invited from the
+// dashboard's Members › Add people by an OWNER or MAINTAINER (#1527).
 // BILLING_ADMIN is included here so OWNERs can invite a finance lead
 // from the org-creation wizard onwards without leaving the dashboard.
-// SUPPORT remains operator-only (assigned by OWNERs from Settings).
 export const SelfServiceMemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
@@ -246,6 +247,7 @@ export const HostInvitableMemberRoleSchema = z.enum([
   "MAINTAINER",
   "BILLING_ADMIN",
   "MANAGER",
+  "SUPPORT",
   "LEARNER",
   "EXPERT",
 ]);
@@ -253,9 +255,11 @@ export const HOST_INVITABLE_MEMBER_ROLES =
   HostInvitableMemberRoleSchema.options;
 
 /**
- * Returns the role list a self-service inviter can pick on the given
- * org, gated by capability:
- *   - operator roles (OWNER / MAINTAINER / BILLING_ADMIN / MANAGER) always render
+ * Returns the role list `viewerRole` can pick when inviting or re-roling on
+ * the given org:
+ *   - OWNER only for an OWNER inviter — the members + invitations routes
+ *     refuse anyone else (OWNER_ROLE_REQUIRES_OWNER, #789 / #1527 P1-7)
+ *   - operator roles (MAINTAINER / BILLING_ADMIN / MANAGER / SUPPORT) always
  *   - LEARNER only when canSponsor=true (sponsor-side; needs Contract/Program/Wallet
  *     to actually fund sessions — host-only orgs have no settlement path)
  *   - EXPERT only when canHost=true (host-side; needs payout account / RateCard)
@@ -265,15 +269,12 @@ export const HOST_INVITABLE_MEMBER_ROLES =
  * `EXPERT_REQUIRES_CANHOST` in the members + invitations routes).
  */
 export function getInvitableRoles(
+  viewerRole: MemberRole,
   canSponsor: boolean,
   canHost: boolean,
 ): MemberRole[] {
-  const roles: MemberRole[] = [
-    "OWNER",
-    "MAINTAINER",
-    "BILLING_ADMIN",
-    "MANAGER",
-  ];
+  const roles: MemberRole[] = viewerRole === "OWNER" ? ["OWNER"] : [];
+  roles.push("MAINTAINER", "BILLING_ADMIN", "MANAGER", "SUPPORT");
   if (canSponsor) roles.push("LEARNER");
   if (canHost) roles.push("EXPERT");
   return roles;
@@ -378,15 +379,14 @@ export interface FallbackOrgCandidate {
  * you merely learn in), then organizationSlug ascending as a stable
  * tie-break. Pure, so the router, the layout seed, and tests share it.
  */
-export function selectFallbackOrgMembership<
-  T extends FallbackOrgCandidate,
->(memberships: readonly T[] | null | undefined): T | null {
+export function selectFallbackOrgMembership<T extends FallbackOrgCandidate>(
+  memberships: readonly T[] | null | undefined,
+): T | null {
   if (!memberships || memberships.length === 0) return null;
   let best = memberships[0];
   for (const candidate of memberships) {
     const rank =
-      ORG_ROLE_RANK[candidate.role as MemberRole] ??
-      Number.NEGATIVE_INFINITY;
+      ORG_ROLE_RANK[candidate.role as MemberRole] ?? Number.NEGATIVE_INFINITY;
     const bestRank =
       ORG_ROLE_RANK[best.role as MemberRole] ?? Number.NEGATIVE_INFINITY;
     if (

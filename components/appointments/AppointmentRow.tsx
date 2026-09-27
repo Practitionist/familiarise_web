@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -42,6 +43,8 @@ interface AppointmentRowProps {
   sponsoredLabel?: string | null;
   onOpen?: (vm: AppointmentVM) => void;
   highlighted?: boolean;
+  /** Consultant Requests URL: pre-confirmation rows link there (#1527). */
+  requestsHref?: string;
   registerRef?: (el: HTMLDivElement | null) => void;
 }
 
@@ -52,15 +55,16 @@ export function AppointmentRow({
   sponsoredLabel,
   onOpen,
   highlighted = false,
+  requestsHref,
   registerRef,
 }: AppointmentRowProps) {
   const action = adapter.primaryAction(vm);
   const overflow = adapter.overflowItems(vm);
   const badge = eventUnionStatusBadge(vm.status);
   const proximity =
-    vm.bucket === "upcoming" || vm.bucket === "needsAction"
-      ? getProximityLabel(vm.nextAt)
-      : null;
+    vm.bucket === "past" || vm.bucket === "cancelled"
+      ? null
+      : getProximityLabel(vm.nextAt);
 
   const timeLabel = vm.nextAt
     ? formatInViewerZone(vm.nextAt, viewerZone.zone, "h:mm a")
@@ -138,6 +142,17 @@ export function AppointmentRow({
               <span className="shrink-0 font-medium text-foreground/80">
                 {vm.group.completed}/{vm.group.total} sessions
               </span>
+            )}
+            {vm.bucket === "inRequests" && requestsHref && (
+              // Requests owns pre-confirmation work; the row points there.
+              <Link
+                href={requestsHref}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+                className="shrink-0 rounded border border-border bg-muted px-1.5 py-px text-[10px] font-medium text-foreground hover:bg-accent"
+              >
+                In Requests
+              </Link>
             )}
             {sponsoredLabel && (
               <span className="shrink-0 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">

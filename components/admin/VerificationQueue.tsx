@@ -78,7 +78,7 @@ const formatRelativeTime = (dateString: string) => {
 const PAGE_SIZE = 20;
 
 export function VerificationQueue({
-  apiBasePath = "/api/staff/moderation/profiles",
+  apiBasePath = "/api/admin/verification",
 }: VerificationQueueProps) {
   const [verifications, setVerifications] = useState<ProfileVerification[]>([]);
   const [loading, setLoading] = useState(true);

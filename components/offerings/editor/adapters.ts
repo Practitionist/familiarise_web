@@ -60,6 +60,12 @@ const toIsoDate = (value: unknown): string | null | undefined => {
   return undefined;
 };
 
+/** Which group-event instance a save addresses, and its current status. */
+export interface OfferingSaveContext {
+  instanceId?: string;
+  instanceStatus?: string | null;
+}
+
 export interface OfferingAdapter {
   schema: ZodTypeAny;
   /** Which bucket the image uploader writes to. */
@@ -71,6 +77,7 @@ export interface OfferingAdapter {
   save: (
     values: Record<string, unknown>,
     consultantId: string,
+    ctx?: OfferingSaveContext,
   ) => Promise<unknown>;
 }
 
@@ -105,6 +112,65 @@ const toFormValues = (
   topics: topicNames(plan.topics),
 });
 
+/**
+ * #1527 Q4 — the container speaks the webinar/class vocabulary (SCHEDULED or
+ * DRAFT); 1:1 and subscription plans store PUBLISHED or DRAFT.
+ */
+/**
+ * #1527 — webinar/class drafts live on the instance. A create takes the
+ * status as sent; an update moves only a DRAFT instance, because publishing
+ * is one-way (EVENT_PUBLISHABLE_FROM) and a published event never goes back.
+ */
+const eventStatus = (
+  values: Record<string, unknown>,
+  ctx: OfferingSaveContext | undefined,
+): { status?: "DRAFT" | "SCHEDULED" } => {
+  const status = values.status === "DRAFT" ? "DRAFT" : "SCHEDULED";
+  const isUpdate = typeof values.id === "string" && values.id !== "";
+  return !isUpdate || ctx?.instanceStatus === "DRAFT" ? { status } : {};
+};
+
+/** Copies carry no row ids, so saving one creates fresh plan children. */
+const withoutIds = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map((item) => {
+        if (!item || typeof item !== "object") return item;
+        const { id: _id, ...rest } = item as Record<string, unknown>;
+        return rest;
+      })
+    : value;
+
+/**
+ * #1527 §7.2 Duplicate — the source's form values as a new, unsaved offering:
+ * no id, a "Copy of" title, and no session date (a copy must be scheduled
+ * afresh).
+ */
+export function duplicateFormValues(
+  plan: Record<string, unknown>,
+): Record<string, unknown> {
+  const {
+    id: _id,
+    status: _status,
+    scheduledAt: _scheduledAt,
+    schedulingStartDate: _start,
+    ...rest
+  } = plan;
+  return {
+    ...rest,
+    title: `Copy of ${String(plan.title ?? "")}`.trim(),
+    faqs: withoutIds(plan.faqs),
+    classContents: withoutIds(plan.classContents),
+    subscriptionContents: withoutIds(plan.subscriptionContents),
+  };
+}
+
+const withPlanStatus = (
+  values: Record<string, unknown>,
+): Record<string, unknown> => ({
+  ...values,
+  status: values.status === "DRAFT" ? "DRAFT" : "PUBLISHED",
+});
+
 export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
   consultation: {
     schema: ConsultationPlanSchema,
@@ -122,7 +188,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     },
     save: (values, consultantId) =>
       ConsultationService.saveConsultationPlan(
-        { consultationPlan: values } as never,
+        { consultationPlan: withPlanStatus(values) } as never,
         consultantId,
       ),
   },
@@ -139,15 +205,25 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       subscriptionContents: [],
       recordingEnabled: false,
       recordingStoragePolicy: "STREAM_ONLY",
+      trialEnabled: false,
+      trialDurationMinutes: 30,
+      trialPriceInPaise: 0,
     },
     planOf: (event) => {
       const plan = (event as { subscriptionPlan?: Record<string, unknown> })
         ?.subscriptionPlan;
-      return plan ? toFormValues(plan) : undefined;
+      if (!plan) return undefined;
+      // The trial price is edited in rupees like `price`; the service converts back.
+      const trialPaise = plan.trialPriceInPaise;
+      return {
+        ...toFormValues(plan),
+        trialPriceInPaise:
+          typeof trialPaise === "number" ? trialPaise / 100 : trialPaise,
+      };
     },
     save: (values, consultantId) =>
       SubscriptionService.saveSubscriptionPlan(
-        { subscriptionPlan: values } as never,
+        { subscriptionPlan: withPlanStatus(values) } as never,
         consultantId,
       ),
   },
@@ -171,9 +247,13 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
         ?.webinarPlan;
       return plan ? toFormValues(plan) : undefined;
     },
-    save: (values, consultantId) =>
+    save: (values, consultantId, ctx) =>
       WebinarService.saveWebinar(
-        { webinarPlan: values } as never,
+        {
+          id: ctx?.instanceId,
+          ...eventStatus(values, ctx),
+          webinarPlan: values,
+        } as never,
         (values.scheduledAt as string | Date | null) ?? null,
         consultantId,
       ),
@@ -215,9 +295,13 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
           : null,
       };
     },
-    save: (values, consultantId) =>
+    save: (values, consultantId, ctx) =>
       ClassService.saveClass(
-        { classPlan: values } as never,
+        {
+          id: ctx?.instanceId,
+          ...eventStatus(values, ctx),
+          classPlan: values,
+        } as never,
         consultantId,
         toIsoDate(values.schedulingStartDate),
       ),

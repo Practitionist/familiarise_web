@@ -489,6 +489,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },
+  // #1527 Q4 — a new sale against a DRAFT 1:1 or subscription plan.
+  {
+    code: "PLAN_NOT_PUBLISHED",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage: "This plan isn't available to book right now.",
+  },
   {
     code: "PAYMENT_LINK_FAILED",
     errorType: ErrorTypes.BOOKING_RULE,

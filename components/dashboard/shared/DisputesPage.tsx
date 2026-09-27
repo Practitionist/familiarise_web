@@ -1,5 +1,6 @@
 "use client";
 
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -92,8 +93,6 @@ const getDaysUntilDue = (dueBy: string | null) => {
 };
 
 export interface DisputesPageProps {
-  /** Base URL for navigation links to the dispute detail page (e.g. "/dashboard/admin", "/dashboard/staff/abc") */
-  basePath: string;
   /** API endpoint for fetching disputes */
   apiEndpoint?: string;
   /** Page title */
@@ -103,11 +102,11 @@ export interface DisputesPageProps {
 }
 
 export function DisputesPage({
-  basePath,
   apiEndpoint = "/api/admin/disputes",
   title = "Disputes",
   description = "View and track payment disputes",
 }: DisputesPageProps) {
+  const { basePath } = useBackofficeCapability();
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");

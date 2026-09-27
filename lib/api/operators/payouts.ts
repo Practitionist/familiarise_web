@@ -1,9 +1,8 @@
 /**
  * Shared operator payout listing.
  *
- * Used by both `app/api/admin/payouts/route.ts` (GET) and
- * `app/api/staff/payouts/route.ts` (GET) — extracted to remove the
- * near-duplicated query/response shape between the two routes.
+ * Used by `app/api/admin/payouts/route.ts` (GET), which both trees read
+ * (the staff twin was deleted, #1527).
  *
  * The admin route additionally exposes a POST handler for creating payout
  * batches; that logic stays inline in the admin route file because staff
@@ -21,6 +20,8 @@ import { getPayoutStats } from "@/lib/payments/payouts";
 
 export type OperatorPayoutFilters = {
   status?: PayoutStatus | null;
+  /** #1527 — any of these statuses; ignored when `status` is set. */
+  statusIn?: PayoutStatus[] | null;
   /** #1771 K-4 — 'INSTANT' narrows to above-cap instant payouts (PR-2). */
   kind?: "INSTANT" | null;
   search?: string | null;
@@ -95,18 +96,21 @@ function sanitizePagination(
   return floored;
 }
 
-export async function getOperatorPayouts(
-  filters: OperatorPayoutFilters = {},
-): Promise<OperatorPayoutResult> {
+/**
+ * The payout list's `where`. #1527 — also the Payouts nav badge
+ * (`{ status: "PENDING" }`, the Awaiting approval tab), so the two agree.
+ */
+export function payoutListWhere(
+  filters: OperatorPayoutFilters,
+): Prisma.ConsultantPayoutWhereInput {
   const status = filters.status ?? null;
   const search = filters.search ?? null;
-  const limit = sanitizePagination(filters.limit, 50, 1, 200);
-  const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
-
   const orgId = filters.orgId ?? null;
   const where: Prisma.ConsultantPayoutWhereInput = {};
   if (status) {
     where.status = status;
+  } else if (filters.statusIn?.length) {
+    where.status = { in: filters.statusIn };
   }
   if (filters.kind) {
     where.kind = filters.kind;
@@ -127,6 +131,22 @@ export async function getOperatorPayouts(
       some: { payment: { is: { organizationId: orgId } } },
     };
   }
+
+  return where;
+}
+
+export async function getOperatorPayouts(
+  filters: OperatorPayoutFilters = {},
+): Promise<OperatorPayoutResult> {
+  const limit = sanitizePagination(filters.limit, 50, 1, 200);
+  const offset = sanitizePagination(
+    filters.offset,
+    0,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
+
+  const where = payoutListWhere(filters);
 
   const [payouts, total, stats] = await Promise.all([
     prisma.consultantPayout.findMany({

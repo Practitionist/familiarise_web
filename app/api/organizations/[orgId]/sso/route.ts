@@ -233,7 +233,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
+  // floor that admitted BILLING_ADMIN; secrets stay OWNER-only below.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const [settings, providers, claims] = await Promise.all([

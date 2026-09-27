@@ -10,8 +10,8 @@
  *   - [x] getOperatorDashboardStats  ← used by /api/admin/stats
  *   - [x] getStaffDashboardStats     ← used by /api/staff/stats
  *   - [x] getOperatorInvoices        ← used by /api/admin/invoices (both dashboards)
- *   - [x] getOperatorPayouts         ← used by /api/admin/payouts, /api/staff/payouts
- *   - [x] getVerificationQueue       ← used by /api/admin/verification, /api/staff/moderation/profiles
+ *   - [x] getOperatorPayouts         ← used by /api/admin/payouts
+ *   - [x] getVerificationQueue       ← used by /api/admin/verification
  *   - [ ] getOperatorPayments        ← TODO: unify /api/admin/payments, /api/staff/payments
  *   - [ ] getOperatorDisputes        ← TODO
  *   - [ ] getOperatorFeedback        ← TODO

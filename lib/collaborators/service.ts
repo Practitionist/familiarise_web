@@ -21,6 +21,7 @@ import {
   notifyCollaboratorWithdrawn,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { reportSentryError } from "@/lib/observability/report";
 import { PRESENTER_ROLES, tierForRole } from "@/lib/collaborators/roles";
@@ -344,7 +345,8 @@ export async function inviteCollaborator(
           role,
           revenueSharePercentage,
           ownerName: inviterProfile?.user?.name ?? "Plan Owner",
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          // #1527 — the recipient is always a consultant collaborator.
+          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
         });
       }
     } catch (error) {
@@ -549,7 +551,8 @@ async function notifyHostOfResponse(
       planType,
       collaboratorName: collabProfile?.user?.name ?? "Collaborator",
       role: updated.role,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always a consultant collaborator.
+      dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
     };
     if (updated.status === "ACCEPTED") {
       await notifyCollaboratorAccepted(plan.consultantProfile.userId, payload);
@@ -687,7 +690,8 @@ async function notifyHostOfWithdrawal(
       planTitle: plan.title,
       planType,
       collaboratorName,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always a consultant collaborator.
+      dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
     });
   } catch (error) {
     reportSentryError(error, {
@@ -729,7 +733,8 @@ export async function revokeCollaboratorAccess(
       await notifyCollaboratorRemoved(userId, {
         planTitle: plan?.title ?? "Unknown Plan",
         planType,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always a consultant collaborator.
+        dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
       });
     } catch (error) {
       Sentry.captureException(
@@ -1203,13 +1208,30 @@ export async function getHostedCollaborations(
   consultantProfileId: string,
   scope: Scope = { kind: "personal" },
 ) {
-  const orgFilter = scopeToWhereOrgId(scope);
+  return hostedCollaborationsWhere({
+    consultantProfileId,
+    ...scopeToWhereOrgId(scope),
+  });
+}
 
+/**
+ * #1527 P1-8 — every plan this org hosts that has collaborators, whoever
+ * delivers it: Catalog › Collaborators for operators holding
+ * `catalog.manage` (read-only; each plan names its host).
+ */
+export async function getOrgHostedCollaborations(organizationId: string) {
+  return hostedCollaborationsWhere({ organizationId });
+}
+
+async function hostedCollaborationsWhere(
+  planFilter:
+    | { consultantProfileId: string; organizationId?: string | null }
+    | { organizationId: string },
+) {
   const [webinarPlans, classPlans] = await Promise.all([
     prisma.webinarPlan.findMany({
       where: {
-        consultantProfileId,
-        ...orgFilter,
+        ...planFilter,
         archivedAt: null,
         collaborators: {
           some: { status: { in: ["PENDING", "ACCEPTED"] } },
@@ -1223,6 +1245,10 @@ export async function getHostedCollaborations(
         maxParticipants: true,
         language: true,
         level: true,
+        // #1527 P1-8 — the org-wide read names each plan's host.
+        consultantProfile: {
+          select: { user: { select: { name: true, image: true } } },
+        },
         collaborators: {
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {
@@ -1259,8 +1285,7 @@ export async function getHostedCollaborations(
     }),
     prisma.classPlan.findMany({
       where: {
-        consultantProfileId,
-        ...orgFilter,
+        ...planFilter,
         archivedAt: null,
         collaborators: {
           some: { status: { in: ["PENDING", "ACCEPTED"] } },
@@ -1276,6 +1301,10 @@ export async function getHostedCollaborations(
         durationInMonths: true,
         totalSessions: true,
         lateJoinUntilSession: true,
+        // #1527 P1-8 — the org-wide read names each plan's host.
+        consultantProfile: {
+          select: { user: { select: { name: true, image: true } } },
+        },
         collaborators: {
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {

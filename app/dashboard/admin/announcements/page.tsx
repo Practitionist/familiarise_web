@@ -1,8 +1,0 @@
-import { AnnouncementsPage } from "@/components/dashboard/shared/AnnouncementsPage";
-import { requireBackofficePage } from "@/lib/auth-guard";
-
-export default async function AdminAnnouncementsPage() {
-  // Page-level back-office gate (C5): sidebar hiding is not access control.
-  await requireBackofficePage("announcements.manage");
-  return <AnnouncementsPage queryKeyPrefix="admin-announcements" />;
-}
