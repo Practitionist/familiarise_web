@@ -4,6 +4,7 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -11,7 +12,12 @@ import {
   getOrgAppointments,
   getOrgMemberAppointments,
 } from "@/lib/data/org-appointments";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { readOrgPendingRequests } from "@/lib/data/org-pending-requests";
+import {
+  DashboardContent,
+  DashboardHeader,
+} from "@/components/dashboard/PageScaffold";
+import { Skeleton } from "@/components/ui/skeleton";
 import StreamProvider from "@/providers/StreamProvider";
 
 import { AppointmentsPageClient } from "./AppointmentsPageClient";
@@ -19,64 +25,47 @@ import {
   MyAppointmentsClient,
   type MyAppointmentItem,
 } from "./MyAppointmentsClient";
-import { ScopeToggle, type AppointmentScope } from "./ScopeToggle";
+import { PayerRequestsView } from "./PayerRequestsView";
+import { AppointmentTabs, type AppointmentTab } from "./AppointmentTabs";
 
-/**
- * /dashboard/organization/[orgId]/appointments — one destination, two scopes.
- *
- * This replaces the `appointments` + `my-appointments` pair that sat next to
- * each other in the sidebar under near-identical names. "Mine" is the member's
- * own participation (attending or delivering); "Everyone" is the org-wide
- * operations feed. Both data sources are unchanged — `getOrgMemberAppointments`
- * and `getOrgAppointments` respectively — only the entry point merged.
- *
- * Access floors at active membership, NOT at `operations.read`: a pure learner
- * has to be able to see their own sessions. The wider scope is gated
- * separately, and a viewer without it never sees the toggle at all, so the
- * page can't offer a control that would 403.
- */
-export default async function OrgAppointmentsPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ orgId: string }>;
-  searchParams: Promise<{ scope?: string; page?: string }>;
-}) {
-  const { orgId } = await params;
-  const sp = await searchParams;
+/** Which tab the URL asks for, falling back to "mine" when not allowed. */
+function resolveTab(
+  sp: { tab?: string; scope?: string },
+  available: AppointmentTab[],
+): AppointmentTab {
+  // `?scope=everyone` predates the tabs; old links keep working.
+  const requested = sp.tab ?? sp.scope;
+  return available.find((t) => t === requested) ?? "mine";
+}
 
-  // Floor at active membership — requireOrgAccess rejects non-members, and we
-  // keep the URL tree honest with a 404 rather than leaking the shell.
-  const access = await requireOrgAccess(orgId);
-  if (access.error) {
-    notFound();
-  }
-
-  const canReadAll = hasOrgPermission(access.member.role, "operations.read");
-
-  // Default to "mine". An operator who wants the org feed asks for it; the
-  // member view is the one every role can actually use. A non-operator asking
-  // for "everyone" is quietly served their own — no error page for a URL they
-  // could only have reached by editing it.
-  const scope: AppointmentScope =
-    canReadAll && sp.scope === "everyone" ? "everyone" : "mine";
-
-  const rawPage = Number(sp.page ?? "1");
-  const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
-
-  const header = (
-    <DashboardHeader
-      title="Appointments"
-      subtitle={
-        scope === "everyone"
-          ? `All bookings made under ${access.org.name}.`
-          : `Sessions you're attending or delivering under ${access.org.name}.`
-      }
-      actions={canReadAll ? <ScopeToggle scope={scope} /> : undefined}
-    />
+/** The tab body's own skeleton; the header stays put above it. */
+function TabBodySkeleton() {
+  return (
+    <div
+      className="space-y-3"
+      aria-busy="true"
+      aria-label="Loading appointments"
+    >
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-16 w-full rounded-lg" />
+      ))}
+    </div>
   );
+}
 
-  if (scope === "everyone") {
+/** One tab's server read + list. */
+async function AppointmentsTabBody({
+  tab,
+  orgId,
+  page,
+  userId,
+}: Readonly<{
+  tab: AppointmentTab;
+  orgId: string;
+  page: number;
+  userId: string;
+}>) {
+  if (tab === "everyone") {
     const queryClient = new QueryClient();
     // #890 — prefetch only the default page; filtered/paged views diverge by
     // queryKey and fall back to the client fetch. The trailing `undefined` is
@@ -90,18 +79,17 @@ export default async function OrgAppointmentsPage({
     ]);
 
     return (
-      <>
-        {header}
-        <div className="p-4 sm:p-6 lg:p-8">
-          <HydrationBoundary state={dehydrate(queryClient)}>
-            <AppointmentsPageClient orgId={orgId} />
-          </HydrationBoundary>
-        </div>
-      </>
+      <HydrationBoundary state={dehydrate(queryClient)}>
+        <AppointmentsPageClient orgId={orgId} />
+      </HydrationBoundary>
     );
   }
 
-  const userId = access.session.user.id;
+  if (tab === "unscheduled") {
+    const requests = await readOrgPendingRequests(orgId);
+    return <PayerRequestsView requests={requests} />;
+  }
+
   const { items, total, perPage } = await getOrgMemberAppointments(
     orgId,
     userId,
@@ -109,22 +97,97 @@ export default async function OrgAppointmentsPage({
   );
 
   return (
+    // Video-only Stream client, scoped to this subtree so Join has a
+    // connected client without connecting video on every org route.
+    <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
+      <MyAppointmentsClient
+        orgId={orgId}
+        viewerId={userId}
+        items={items as unknown as MyAppointmentItem[]}
+        total={total}
+        page={page}
+        perPage={perPage}
+      />
+    </StreamProvider>
+  );
+}
+
+/**
+ * /dashboard/organization/[orgId]/appointments — Mine · Everyone · Unscheduled.
+ *
+ * "Mine" is the member's own participation (attending or delivering);
+ * "Everyone" is the org-wide operations feed (`operations.read`);
+ * "Unscheduled" is the payer admins' view of org-funded requests nobody has
+ * put times on yet (#1527 Q7, moved from Requests).
+ *
+ * Access floors at active membership: a pure learner must see their own
+ * sessions. A viewer asking for a tab they can't use is quietly served
+ * "Mine" — no error page for a URL they could only have reached by editing it.
+ */
+export default async function OrgAppointmentsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ orgId: string }>;
+  searchParams: Promise<{ tab?: string; scope?: string; page?: string }>;
+}) {
+  const { orgId } = await params;
+  const sp = await searchParams;
+
+  // Floor at active membership — requireOrgAccess rejects non-members, and we
+  // keep the URL tree honest with a 404 rather than leaking the shell.
+  // #1527 decision 6 — a SUSPENDED member keeps "Mine" (sessions already
+  // booked) and nothing else: no grant-gated tab is offered below.
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  if (access.error) {
+    notFound();
+  }
+
+  const role = access.member.role;
+  const active = access.member.status === "ACTIVE";
+  const available: AppointmentTab[] = ["mine"];
+  if (active && hasOrgPermission(role, "operations.read")) {
+    available.push("everyone");
+  }
+  // #1527 decision 8 — MANAGER reads Unscheduled too.
+  if (active && hasOrgPermission(role, "appointments.unscheduled.read")) {
+    available.push("unscheduled");
+  }
+  const tab = resolveTab(sp, available);
+
+  const rawPage = Number(sp.page ?? "1");
+  const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+
+  const descriptions: Record<AppointmentTab, string> = {
+    mine: `Sessions you're attending or delivering under ${access.org.name}.`,
+    everyone: `All bookings made under ${access.org.name}.`,
+    unscheduled: `Bookings ${access.org.name} funded that are still waiting on times.`,
+  };
+  const header = (
+    <DashboardHeader
+      title="Appointments"
+      description={descriptions[tab]}
+      actions={<AppointmentTabs active={tab} available={available} />}
+    />
+  );
+
+  return (
     <>
       {header}
-      <div className="p-4 sm:p-6 lg:p-8">
-        {/* Video-only Stream client, scoped to this subtree so Join has a
-            connected client without connecting video on every org route. */}
-        <StreamProvider userId={userId} enableChat={false} enableVideo={true}>
-          <MyAppointmentsClient
+      <DashboardContent>
+        {/* #1527 QA wave 3 — Next keeps the previous tab on screen while a
+            search-param navigation's server render runs (no loading.tsx), so
+            "Everyone" looked dead. A boundary keyed per tab swaps in a
+            skeleton the moment the header lands. */}
+        <Suspense key={tab} fallback={<TabBodySkeleton />}>
+          <AppointmentsTabBody
+            tab={tab}
             orgId={orgId}
-            viewerId={userId}
-            items={items as unknown as MyAppointmentItem[]}
-            total={total}
             page={page}
-            perPage={perPage}
+            userId={access.session.user.id}
           />
-        </StreamProvider>
-      </div>
+        </Suspense>
+      </DashboardContent>
     </>
   );
 }

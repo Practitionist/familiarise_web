@@ -261,6 +261,30 @@ main > div:has(> .content-flush-bottom) {
   padding-bottom: 0;
 }
 
+/*
+ * Cookie bar reserve (#1527 3c). The consent bar is fixed over the bottom of
+ * the viewport until the visitor chooses, and it hid the end of every page
+ * (the newsletter Send button). It publishes its live height as
+ * --cookie-bar-height on <html> (unset once dismissed), and each scrollport
+ * reserves that much at its end:
+ *   - dashboards: the shell's <main>, the only scrollport. Padding the
+ *     document there would re-open the dead over-scroll this file forbids;
+ *     sticky save bars lift by the same amount so they stay above the bar.
+ *   - every other page: the document itself, via body.
+ * UNLAYERED so it outranks the layered spacing utilities.
+ */
+.h-screen-maintenance main.overflow-y-auto {
+  padding-bottom: var(--cookie-bar-height, 0px);
+}
+
+.h-screen-maintenance main .sticky.bottom-0 {
+  bottom: var(--cookie-bar-height, 0px);
+}
+
+body:not(:has(.h-screen-maintenance)) {
+  padding-bottom: var(--cookie-bar-height, 0px);
+}
+
 @layer utilities {
   /* Maintenance banner offset for fixed/sticky elements */
   .top-maintenance {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { Video, Loader2, ChevronDown, CreditCard } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import {
@@ -172,6 +172,7 @@ export function SessionTimeline({
   onCompletePayment,
   heldRowLabel,
 }: SessionTimelineProps) {
+  const format = useZonedFormat();
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
     setExpanded(defaultExpanded);

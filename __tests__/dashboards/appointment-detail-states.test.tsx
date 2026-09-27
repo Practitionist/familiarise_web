@@ -40,9 +40,6 @@ jest.mock("../../hooks/useSessionFeedback", () => ({
 jest.mock("../../components/dashboard/breadcrumb-override", () => ({
   useSetBreadcrumbLabel: () => undefined,
 }));
-jest.mock("../../components/support/SupportThreadSheet", () => ({
-  SupportThreadSheet: () => null,
-}));
 jest.mock("../../components/support/AppointmentSupportStatusCard", () => ({
   AppointmentSupportStatusCard: () => null,
 }));
@@ -147,6 +144,7 @@ function render(role: "consultee" | "consultant") {
       role={role}
       adapter={adapter(role)}
       backHref="/back"
+      supportRequestsBase="/support/requests"
       consultantId="cp-1"
     />,
   );

@@ -28,7 +28,10 @@ jest.mock("../../utils/contentValidation", () => ({
   cleanProfanity: (text: string) => text,
 }));
 
-import { OFFERING_ADAPTERS } from "@/components/offerings/editor/adapters";
+import {
+  OFFERING_ADAPTERS,
+  duplicateFormValues,
+} from "@/components/offerings/editor/adapters";
 
 describe("webinar adapter topic mapping", () => {
   it("maps mixed Topic-relation objects and plain strings to names", () => {
@@ -52,5 +55,30 @@ describe("webinar adapter topic mapping", () => {
         webinarPlan: { price: 0, topics: [] },
       })?.topics,
     ).toEqual([]);
+  });
+});
+
+// #1527 QA D5 — Duplicate (`new?from=`) must carry topics like every other
+// list field; the 1:1 GET answers them as names.
+describe("duplicate prefill", () => {
+  it("keeps topics and content, drops ids and the schedule", () => {
+    const source = OFFERING_ADAPTERS.consultation.planOf({
+      consultationPlan: {
+        id: "p1",
+        status: "PUBLISHED",
+        title: "Basic Consultation",
+        price: 50000,
+        topics: ["Career growth"],
+        faqs: [{ id: "f1", question: "Q", answer: "A" }],
+      },
+    });
+    const copy = duplicateFormValues(source ?? {});
+    expect(copy).toMatchObject({
+      title: "Copy of Basic Consultation",
+      topics: ["Career growth"],
+      faqs: [{ question: "Q", answer: "A" }],
+    });
+    expect(copy).not.toHaveProperty("id");
+    expect(copy).not.toHaveProperty("status");
   });
 });

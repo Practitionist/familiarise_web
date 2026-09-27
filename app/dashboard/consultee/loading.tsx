@@ -1,5 +1,5 @@
-import { PersonalDashboardShellSkeleton } from "@/components/dashboard/PersonalDashboardShell";
+import { DashboardShellSkeleton } from "@/components/dashboard/DashboardShell";
 
 export default function Loading() {
-  return <PersonalDashboardShellSkeleton />;
+  return <DashboardShellSkeleton />;
 }

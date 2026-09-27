@@ -1,21 +1,11 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import {
-  DashboardHeader,
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
-import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
-
-export default function CollaborationsPage() {
-  return (
-    <>
-      <DashboardHeader
-        title="Collaborations"
-        subtitle="Manage invitations and active collaborations on webinars and classes"
-      />
-      <DashboardContent>
-        <InvitationsPanel />
-      </DashboardContent>
-    </>
+/** #1527 §13 — Collaborations is a tab of Offerings now; the old URL 308s there. */
+export default async function CollaborationsRedirectPage({
+  params,
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  const { consultantId } = await params;
+  permanentRedirect(
+    `/dashboard/consultant/${consultantId}/offerings/collaborations`,
   );
 }

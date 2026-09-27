@@ -19,18 +19,19 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
+import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
     const { subscriptionPlanId } = await params;
+    // #1527 Q4 — no booking rows: this GET is open to any caller, and neither
+    // the editor nor checkout reads them.
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
       where: { id: subscriptionPlanId },
       include: {
         consultantProfile: { select: planConsultantSelect },
-        // The booking rows only: another subscriber's name and email are not part of a plan.
-        subscriptions: true,
         topics: true,
         faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {
@@ -38,6 +39,14 @@ export async function GET(
         },
       },
     });
+
+    // #1527 Q4 — a draft is readable by its author only.
+    if (await isHiddenDraft(subscriptionPlan)) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(subscriptionPlan) },
@@ -227,6 +236,8 @@ export async function PUT(
           faqs: faqReplaceNested(validatedData.faqs),
           recordingEnabled: validatedData.recordingEnabled,
           recordingStoragePolicy: validatedData.recordingStoragePolicy,
+          // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+          status: validatedData.status,
           trialEnabled: validatedData.trialEnabled,
           trialDurationMinutes: validatedData.trialDurationMinutes,
           trialPriceInPaise: validatedData.trialPriceInPaise,

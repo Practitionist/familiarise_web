@@ -20,13 +20,7 @@ import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 
 export interface DashboardRouteErrorProps {
   error: Error & { digest?: string };
@@ -71,33 +65,20 @@ export function DashboardRouteError({
     );
   }, [error, event, scope, entityKey, entityId]);
 
+  // #1527: the shell owns the gutter, so no public-page geometry here.
   return (
-    <div className="container mx-auto pt-24 py-8 px-4 min-h-[calc(100vh-400px)]">
-      <Card className="max-w-2xl mx-auto text-center">
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            {process.env.NODE_ENV === "development"
-              ? error.message || devFallbackMessage
-              : "An unexpected error occurred. Please try again."}
-          </p>
-          {error.digest && (
-            <p className="text-xs text-muted-foreground mt-2">
-              Error ID: {error.digest}
-            </p>
-          )}
-        </CardContent>
-        <CardFooter className="justify-center space-x-4">
-          <Button variant="outline" onClick={() => reset()}>
-            Try again
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href={escape.href}>{escape.label}</Link>
-          </Button>
-        </CardFooter>
-      </Card>
-    </div>
+    <ErrorState
+      variant="page"
+      title={title}
+      description="An unexpected error occurred. Please try again."
+      error={error.message ? error : devFallbackMessage}
+      digest={error.digest}
+      onRetry={reset}
+      action={
+        <Button variant="outline" size="sm" asChild>
+          <Link href={escape.href}>{escape.label}</Link>
+        </Button>
+      }
+    />
   );
 }

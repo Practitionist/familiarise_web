@@ -52,4 +52,28 @@ export interface AppointmentActionAdapter {
    *  open them — AppointmentsShell for the list, AppointmentDetailClient for
    *  the detail page. Callers of those do NOT mount it themselves. */
   renderDialogs(): ReactNode;
+  /** Set by `readOnlyAdapter`: surfaces outside the adapter (the reschedule
+   *  proposal card) hide their actions too. */
+  readOnly?: boolean;
+}
+
+/**
+ * #1527 decision 6 — a SUSPENDED org member sees their booked session and can
+ * join it, nothing else: no overflow actions, and any primary action other
+ * than Join/View is shown disabled.
+ */
+export function readOnlyAdapter(
+  adapter: AppointmentActionAdapter,
+): AppointmentActionAdapter {
+  return {
+    ...adapter,
+    primaryAction: (vm) => {
+      const action = adapter.primaryAction(vm);
+      return action.kind === "join" || action.kind === "view"
+        ? action
+        : { ...action, onClick: undefined, href: undefined, disabled: true };
+    },
+    overflowItems: () => [],
+    readOnly: true,
+  };
 }

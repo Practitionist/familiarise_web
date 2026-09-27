@@ -5,6 +5,9 @@
 
 import type { Prisma } from "@prisma/client";
 
+/** A cancelled session must be made up, and HELD, within this many days. */
+export const MAKEUP_WINDOW_DAYS = 14;
+
 /**
  * #1569 — a miss is a host-cancelled session or a voided one. Either keeps its
  * row, is owed a make-up within 14 days, or a refund; one row is never both.

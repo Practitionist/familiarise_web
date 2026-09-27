@@ -20,6 +20,7 @@ import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { planSaleRefusal } from "@/lib/api/plans/visibility";
 
 /**
  * GET /api/trials
@@ -281,6 +282,52 @@ export async function POST(request: NextRequest) {
     const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
     if (rl) return rl;
 
+    // #1527 review — the plan lookup + refusal checks used to run AFTER the
+    // freed-trial deleteMany below, so a request against a DRAFT plan (409)
+    // still consumed the consultee's freed trial slot. Verify the plan first.
+    const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
+      where: { id: subscriptionPlanId },
+      include: {
+        consultantProfile: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+
+    if (!subscriptionPlan) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
+
+    if (subscriptionPlan.consultantProfileId !== consultantProfileId) {
+      return NextResponse.json(
+        { error: "Subscription plan does not belong to this consultant" },
+        { status: 400 },
+      );
+    }
+
+    // #1527 Q4 — a DRAFT plan takes no new trial requests.
+    if (planSaleRefusal(subscriptionPlan)) {
+      return NextResponse.json(
+        {
+          error: "This plan isn't available to book right now.",
+          code: "PLAN_NOT_PUBLISHED",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (!subscriptionPlan.trialEnabled) {
+      return NextResponse.json(
+        { error: "A trial is not available for this plan" },
+        { status: 400 },
+      );
+    }
+
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trial.findUnique({
       where: {
@@ -313,39 +360,6 @@ export async function POST(request: NextRequest) {
       // answer for. A count of 0 means somebody else freed it; either way the
       // slot is clear and the insert decides who gets it.
       await prisma.trial.deleteMany({ where: { id: existingTrial.id } });
-    }
-
-    // Verify the subscription plan exists and has trials enabled
-    const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
-      where: { id: subscriptionPlanId },
-      include: {
-        consultantProfile: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
-
-    if (!subscriptionPlan) {
-      return NextResponse.json(
-        { error: "Subscription plan not found" },
-        { status: 404 },
-      );
-    }
-
-    if (subscriptionPlan.consultantProfileId !== consultantProfileId) {
-      return NextResponse.json(
-        { error: "Subscription plan does not belong to this consultant" },
-        { status: 400 },
-      );
-    }
-
-    if (!subscriptionPlan.trialEnabled) {
-      return NextResponse.json(
-        { error: "A trial is not available for this plan" },
-        { status: 400 },
-      );
     }
 
     // #1775 C-7 — a paid trial is charged at request and refunded in full on

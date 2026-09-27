@@ -15,10 +15,15 @@ export async function generateMetadata({
   params: Promise<{ subscriptionPlanId: string }>;
 }>): Promise<Metadata> {
   const { subscriptionPlanId } = await params;
-  const plan = await getSubscriptionPlanDetail(subscriptionPlanId).catch(
-    () => null,
-  );
-  if (!plan) return { title: "Programme not found" };
+  const [plan, session] = await Promise.all([
+    getSubscriptionPlanDetail(subscriptionPlanId).catch(() => null),
+    getSession().catch(() => null),
+  ]);
+  // #1527 Q4 — the page's own gate: a draft, archived or ORG_ONLY plan must
+  // not leak its title through the tab or link previews.
+  if (!plan || !(await canViewPlanDetail(plan, session))) {
+    return { title: "Programme not found" };
+  }
   const mentor = plan.consultantProfile?.user?.name;
   return {
     title: `${plan.title}${mentor ? ` with ${mentor}` : ""} — Familiarise`,

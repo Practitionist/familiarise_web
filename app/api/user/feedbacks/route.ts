@@ -85,8 +85,10 @@ export async function POST(req: NextRequest) {
     // to their own queue — and the bell names a person, not "User".
     const adminUsers = await prisma.user.findMany({
       where: { role: { in: ["STAFF", "ADMIN"] } },
-      select: { id: true, role: true, staffProfileId: true },
+      select: { id: true, role: true },
     });
+    // One staff tree now ([tree]): role picks the queue, no profile id.
+    // The bell names a person, not "User".
     const feedbackPayload = {
       feedbackId: feedback.id,
       userName: session.user.name || "Someone",
@@ -97,10 +99,7 @@ export async function POST(req: NextRequest) {
       const queue =
         u.role === UserRole.ADMIN
           ? "/dashboard/admin/feedback"
-          : u.staffProfileId
-            ? `/dashboard/staff/${u.staffProfileId}/feedback`
-            : null;
-      if (!queue) continue;
+          : "/dashboard/staff/feedback";
       await notifyFeedbackReceived([u.id], {
         ...feedbackPayload,
         dashboardUrl: queue,

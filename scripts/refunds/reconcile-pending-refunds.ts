@@ -35,6 +35,7 @@ import {
 } from "@/lib/email/send-to-recipients";
 import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Threshold: Only reconcile refunds older than 1 hour
@@ -412,7 +413,8 @@ async function reconcilePendingRefundsUnlocked(
               ...notificationScope(refund.payment.organizationId),
               amount: refund.amountPaise,
               currency: refund.currency,
-              dashboardUrl: `${getAppUrl()}/dashboard`,
+              // The payer's money view, matching the other money bells.
+              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
             },
             { tx, entityRef: `payment:${refund.payment.id}` },
           );
@@ -677,7 +679,7 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
       amount: refund.amountPaise,
       currency: refund.currency,
       reason: failureReason,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     });
     // #1653 — the email twin; the sender never throws.
     await sendRefundFailedEmail({

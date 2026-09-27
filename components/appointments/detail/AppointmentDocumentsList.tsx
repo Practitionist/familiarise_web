@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,13 +19,25 @@ interface AppointmentDocument {
   createdAt?: string | null;
 }
 
-/** Read-only document list for the detail page (consultant side — the
- *  consultee side embeds its upload widget instead). */
+const UPLOADER_LABEL: Record<
+  "consultee" | "consultant",
+  Record<string, string>
+> = {
+  consultant: { CONSULTEE: "From the client", CONSULTANT: "Your response" },
+  consultee: { CONSULTEE: "Your upload", CONSULTANT: "From your expert" },
+};
+
+/** Read-only document list for the detail page: the consultant's view, and
+ *  the consultee's once a booking is completed (#1527 — uploads close, the
+ *  files stay readable). */
 export function AppointmentDocumentsList({
   appointmentId,
+  viewer = "consultant",
 }: {
   appointmentId: string;
+  viewer?: "consultee" | "consultant";
 }) {
+  const format = useZonedFormat();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["appointment-documents", appointmentId] as const,
     queryFn: async (): Promise<AppointmentDocument[]> => {
@@ -54,6 +66,9 @@ export function AppointmentDocumentsList({
 
   return (
     <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        {data.length} {data.length === 1 ? "file" : "files"} shared
+      </p>
       {data.map((doc) => (
         <div
           key={doc.id}
@@ -66,6 +81,8 @@ export function AppointmentDocumentsList({
                 {doc.originalName ?? doc.fileName}
               </p>
               <p className="text-[11px] text-muted-foreground truncate">
+                {doc.uploadedByRole &&
+                  `${UPLOADER_LABEL[viewer][doc.uploadedByRole] ?? ""} · `}
                 {doc.description ??
                   (doc.createdAt
                     ? format(new Date(doc.createdAt), "d MMM yyyy")

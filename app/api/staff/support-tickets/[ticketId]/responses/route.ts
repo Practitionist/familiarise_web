@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import { allocateMessageSeq } from "@/lib/support/message-seq";
 import { applyStaffReply } from "@/lib/support/sla";
@@ -41,6 +43,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // Verify the ticket exists
     const ticket = await prisma.supportTicket.findUnique({
       where: { id: ticketId },
+      // #1527 — an org session's request opens in that org's dashboard.
+      include: {
+        appointmentSupportThread: { select: { organizationId: true } },
+      },
     });
 
     if (!ticket) {
@@ -136,7 +142,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         // responder rendered an empty attribution — same shape as the blank
         // reschedule times.
         respondedBy: response.user?.name ?? "Support",
-        dashboardUrl: "/dashboard",
+        dashboardUrl: supportRequestHref(
+          caseKeyOf({ kind: "ticket", id: ticket.id }),
+          ticket.appointmentSupportThread?.organizationId,
+        ),
         // ADR 23 — inherit the ticket's org-ness (attribution only).
         ...notificationScope(ticket.organizationId),
       });

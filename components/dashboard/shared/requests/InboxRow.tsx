@@ -177,7 +177,10 @@ function Countdown({ deadline }: Readonly<{ deadline: Date }>) {
   const { minutesLeft, isExpired } = useHoldCountdown(deadline);
   const text = countdownText(minutesLeft, isExpired);
   return (
+    // #1527 QA — the server and the hydrating browser read the clock seconds
+    // apart, so the minute can differ (#418); the interval corrects it.
     <span
+      suppressHydrationWarning
       className={cn(
         "inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium tabular-nums",
         isExpired

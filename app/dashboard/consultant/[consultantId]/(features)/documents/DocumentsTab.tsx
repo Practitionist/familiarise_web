@@ -405,7 +405,7 @@ export function DocumentsTab({
     },
     {
       key: "client",
-      header: "Client",
+      header: "Learner",
       cell: (document) => (
         <div className="text-sm">
           <div className="font-medium text-foreground">
@@ -491,7 +491,7 @@ export function DocumentsTab({
         No documents for review
       </p>
       <p className="mx-auto mt-1 max-w-md text-sm">
-        When clients submit files for their consultations or subscriptions, you
+        When learners submit files for their consultations or subscriptions, you
         can review, approve, or request revisions from this tab.
       </p>
     </div>
@@ -501,7 +501,7 @@ export function DocumentsTab({
     <>
       <DashboardHeader
         title="Documents For Review"
-        subtitle="Review documents submitted by your consultees and subscribers"
+        subtitle="Review documents submitted by your learners and subscribers"
         actions={
           <Badge variant="secondary" className="text-sm">
             {debouncedSearch && filteredDocuments.length !== documents.length
@@ -517,7 +517,7 @@ export function DocumentsTab({
         <div className="relative w-full min-w-0 sm:w-auto sm:max-w-sm sm:flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search by name, client, or appointment..."
+            placeholder="Search by name, learner, or appointment..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 pr-9"
@@ -697,7 +697,7 @@ export function DocumentsTab({
             {selectedDocument && (
               <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                 <p>
-                  <strong>Client:</strong> {selectedDocument.clientName}
+                  <strong>Learner:</strong> {selectedDocument.clientName}
                 </p>
                 <p>
                   <strong>File:</strong> {selectedDocument.originalName}

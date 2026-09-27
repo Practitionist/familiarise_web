@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +23,11 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { Stat, StatRow } from "@/components/dashboard/Stat";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { AwaitingPaymentPanel } from "./AwaitingPaymentPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -34,23 +36,15 @@ import {
   AlertTriangle,
   CheckCircle2,
   Video,
-  Users,
   Monitor,
   BookOpen,
-  MoreHorizontal,
-  Eye,
   RefreshCw,
   Loader2,
-  ArrowUpRight,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { useListParams } from "@/hooks/useListParams";
 import { AppointmentTimeline } from "./AppointmentTimeline";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import type {
   StaffAppointment,
   StaffAppointmentsPayload,
@@ -73,55 +67,26 @@ const getTypeIcon = (type: string) => {
   }
 };
 
-const getTypeColor = (type: string) => {
-  switch (type.toLowerCase()) {
-    case "consultation":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
-    case "subscription":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
-    case "webinar":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
-    case "class":
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
+/** #1527 — display status → tone (the derived tabs: scheduled/completed/issue). */
+const STATUS_TONE: Record<string, Tone> = {
+  scheduled: "info",
+  in_progress: "info",
+  completed: "success",
+  cancelled: "neutral",
 };
 
-const getStatusColor = (status: string) => {
-  switch (status.toLowerCase()) {
-    case "scheduled":
-      return "bg-muted text-foreground";
-    case "in_progress":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "completed":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "cancelled":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-};
+const TABS = [
+  "all",
+  "issue",
+  "awaiting-payment",
+  "scheduled",
+  "completed",
+] as const;
 
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
-
-const formatFullDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+// #1527 QA — date-fns patterns in the page's display zone (DisplayZoneProvider
+// in OperatorAppointmentsPage), not toLocaleString in the runtime zone.
+const DATE_PATTERN = "d MMM, hh:mm a";
+const FULL_DATE_PATTERN = "EEE, d MMM yyyy, hh:mm a";
 
 const formatCurrency = (amount: number, currency: string = "INR") => {
   return new Intl.NumberFormat("en-IN", {
@@ -134,10 +99,8 @@ const formatCurrency = (amount: number, currency: string = "INR") => {
 // #890 — defaults MUST match the server prefetch's queryKey in page.tsx so the
 // initial (unfiltered, page 1) view hydrates from the dehydrated cache without
 // a fetch waterfall. Filtered/paged views fall back to a client fetch.
-const DEFAULT_PAGE = 1;
 const DEFAULT_TYPE = "all";
 const DEFAULT_TAB = "all";
-const DEFAULT_SEARCH = "";
 const TYPE_FILTERS = new Set([
   "consultation",
   "subscription",
@@ -163,28 +126,56 @@ export function OperatorAppointmentsClient({
   renderOps?: (appointmentId: string) => ReactNode;
 }>) {
   const { toast } = useToast();
-  // #1771 — the retired class-series URL lands here as `?type=class`.
-  const linkedType = useSearchParams().get("type") ?? "";
+  const zoned = useZonedFormat();
+  // #1527 QA D2 — page, type, tab and search live in the URL, so reload and
+  // Back keep a triager's place. `?type=class` is the retired class-series
+  // URL (#1771); `?tab=awaiting-payment` the retired approval-payments one (Q9).
+  const list = useListParams({ filterKeys: ["tab", "type", "open"] });
+  const { page, setParams } = list;
+  // #1527 — a support case's booking card lands here as `?open=<id>`: search
+  // for it on All, then open it. Consumed into `q` below.
+  const linkedOpen = list.filters.open;
+  const debouncedSearch = linkedOpen ?? list.q;
+  const urlTab = list.filters.tab ?? DEFAULT_TAB;
+  const activeTab =
+    !linkedOpen && (TABS as readonly string[]).includes(urlTab)
+      ? urlTab
+      : DEFAULT_TAB;
+  const urlType = list.filters.type ?? DEFAULT_TYPE;
+  const typeFilter = TYPE_FILTERS.has(urlType) ? urlType : DEFAULT_TYPE;
+  const setActiveTab = (next: string) =>
+    list.setFilter("tab", next === DEFAULT_TAB ? null : next);
+  const setTypeFilter = (next: string) =>
+    list.setFilter("type", next === DEFAULT_TYPE ? null : next);
 
-  const [activeTab, setActiveTab] = useState(DEFAULT_TAB);
-  const [typeFilter, setTypeFilter] = useState(
-    TYPE_FILTERS.has(linkedType) ? linkedType : DEFAULT_TYPE,
-  );
-  const [searchQuery, setSearchQuery] = useState(DEFAULT_SEARCH);
-  const [page, setPage] = useState(DEFAULT_PAGE);
+  // An Awaiting-payment row opens its booking: search by id, then open it.
+  const [pendingOpenId, setPendingOpenId] = useState<string | null>(linkedOpen);
+  useEffect(() => {
+    if (linkedOpen) {
+      setParams({ q: linkedOpen, filters: { tab: null, open: null } });
+    }
+  }, [linkedOpen, setParams]);
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
 
-  // Debounced search
-  const [debouncedSearch, setDebouncedSearch] = useState(DEFAULT_SEARCH);
-
+  // The input keeps its own draft; the URL gets it after a pause. An outside
+  // change (openBooking, Back) replaces the draft, but the echo of our own
+  // write does not, or it would eat keys typed since (same as FilterBar).
+  const [searchQuery, setSearchQuery] = useState(debouncedSearch);
+  const [seenSearch, setSeenSearch] = useState(debouncedSearch);
+  const [emittedSearch, setEmittedSearch] = useState<string | null>(null);
+  if (debouncedSearch !== seenSearch) {
+    setSeenSearch(debouncedSearch);
+    if (debouncedSearch !== emittedSearch) setSearchQuery(debouncedSearch);
+  }
   useEffect(() => {
+    if (searchQuery.trim() === debouncedSearch) return;
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-      setPage(1);
+      setEmittedSearch(searchQuery.trim());
+      setParams({ q: searchQuery });
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, debouncedSearch, setParams]);
 
   const { data, isLoading, isFetching, refetch, error } =
     useQuery<StaffAppointmentsPayload>({
@@ -209,6 +200,8 @@ export function OperatorAppointmentsClient({
         return response.json();
       },
       refetchOnWindowFocus: false,
+      // The Awaiting payment tab reads its own source (approval payments).
+      enabled: activeTab !== "awaiting-payment",
     });
 
   useEffect(() => {
@@ -237,12 +230,31 @@ export function OperatorAppointmentsClient({
   };
   const totalPages = data?.pagination.totalPages ?? 1;
 
+  // Sonar S3358 — an if/else chain instead of a nested ternary for which
+  // tab panel renders.
+  let tabPanelKind: "awaiting-payment" | "loading" | "empty" | "list";
+  if (activeTab === "awaiting-payment") tabPanelKind = "awaiting-payment";
+  else if (showLoadingPanel) tabPanelKind = "loading";
+  else if (appointments.length === 0) tabPanelKind = "empty";
+  else tabPanelKind = "list";
+
+  const openBooking = (appointmentId: string) => {
+    setParams({ q: appointmentId, filters: { tab: null, type: null } });
+    setPendingOpenId(appointmentId);
+  };
+  const toOpen = pendingOpenId
+    ? appointments.find((a) => a.id === pendingOpenId)
+    : undefined;
+  if (toOpen) {
+    setPendingOpenId(null);
+    setSelectedAppointment(toOpen);
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <DashboardHeader
-        title="Appointments Management"
-        subtitle="Monitor and manage all scheduled appointments"
+      <PageHeader
+        title="Appointments"
+        description="Every booking on the platform, with its money and ops actions."
         actions={
           <Button
             variant="outline"
@@ -257,65 +269,22 @@ export function OperatorAppointmentsClient({
         }
       />
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <Calendar className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.all}</p>
-              <p className="text-sm text-muted-foreground">
-                Total Appointments
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <AlertTriangle className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.issues}</p>
-              <p className="text-sm text-muted-foreground">Issues (page)</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <Clock className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.scheduled}</p>
-              <p className="text-sm text-muted-foreground">Scheduled (page)</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 rounded-lg bg-muted">
-              <CheckCircle2 className="h-5 w-5 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{counts.completed}</p>
-              <p className="text-sm text-muted-foreground">Completed (page)</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Global counts within the filters (#897), not the current page. */}
+      <StatRow>
+        <Stat label="Appointments" value={counts.all} icon={Calendar} />
+        <Stat
+          label="Issues"
+          value={counts.issues}
+          icon={AlertTriangle}
+          tone={counts.issues > 0 ? "warning" : "neutral"}
+        />
+        <Stat label="Scheduled" value={counts.scheduled} icon={Clock} />
+        <Stat label="Completed" value={counts.completed} icon={CheckCircle2} />
+      </StatRow>
 
       {/* Tabs and Filters */}
       <div className="space-y-4">
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => {
-            setActiveTab(v);
-            setPage(1);
-          }}
-        >
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-col sm:flex-row gap-4 justify-between">
             <TabsList>
               <TabsTrigger value="all">All</TabsTrigger>
@@ -327,6 +296,9 @@ export function OperatorAppointmentsClient({
                   </Badge>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="awaiting-payment">
+                Awaiting payment
+              </TabsTrigger>
               <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
               <TabsTrigger value="completed">Completed</TabsTrigger>
             </TabsList>
@@ -335,19 +307,14 @@ export function OperatorAppointmentsClient({
               <div className="relative flex-1 min-w-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
+                  aria-label="Search appointments"
                   placeholder="Search..."
                   className="pl-9"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-              <Select
-                value={typeFilter}
-                onValueChange={(v) => {
-                  setTypeFilter(v);
-                  setPage(1);
-                }}
-              >
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
                 <SelectTrigger className="w-full max-w-[10rem] sm:w-40">
                   <SelectValue placeholder="Type" />
                 </SelectTrigger>
@@ -364,37 +331,36 @@ export function OperatorAppointmentsClient({
 
           {/* All Tabs Content */}
           <TabsContent value={activeTab} className="mt-4">
-            {showLoadingPanel ? (
+            {tabPanelKind === "awaiting-payment" && (
+              <AwaitingPaymentPanel onOpenBooking={openBooking} />
+            )}
+            {tabPanelKind === "loading" && (
               <div className="flex items-center justify-center h-64">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
-            ) : appointments.length === 0 ? (
+            )}
+            {tabPanelKind === "empty" && (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center h-64 text-muted-foreground">
                   <Calendar className="h-12 w-12 mb-4 text-muted-foreground/40" />
                   <p>No appointments found</p>
                 </CardContent>
               </Card>
-            ) : (
+            )}
+            {tabPanelKind === "list" && (
               <div className="space-y-3">
                 {appointments.map((appointment) => {
                   const TypeIcon = getTypeIcon(appointment.type);
                   return (
                     <Card
                       key={appointment.id}
-                      className={`cursor-pointer hover:shadow-md transition-shadow ${
-                        appointment.hasIssue
-                          ? "border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/20"
-                          : ""
-                      }`}
+                      className="cursor-pointer transition-shadow hover:shadow-md"
                       onClick={() => setSelectedAppointment(appointment)}
                     >
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3">
-                            <div
-                              className={`p-2 rounded-lg ${getTypeColor(appointment.type)}`}
-                            >
+                            <div className="rounded-lg bg-muted p-2">
                               <TypeIcon className="h-4 w-4" />
                             </div>
                             <div>
@@ -402,23 +368,32 @@ export function OperatorAppointmentsClient({
                                 <p className="font-medium">
                                   {appointment.title}
                                 </p>
-                                <Badge
-                                  className={getTypeColor(appointment.type)}
-                                  variant="secondary"
-                                >
-                                  {appointment.type}
+                                <Badge variant="outline">
+                                  {humanizeEnum(appointment.type)}
                                 </Badge>
-                                <Badge
-                                  className={getStatusColor(appointment.status)}
-                                  variant="secondary"
-                                >
-                                  {appointment.status.replace("_", " ")}
-                                </Badge>
+                                <StatusBadge
+                                  label={humanizeEnum(appointment.status)}
+                                  tone={
+                                    STATUS_TONE[appointment.status] ?? "neutral"
+                                  }
+                                />
                                 {appointment.hasIssue && (
-                                  <Badge variant="destructive">
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    {appointment.issueType}
-                                  </Badge>
+                                  <StatusBadge
+                                    label={appointment.issueType ?? "Issue"}
+                                    tone="warning"
+                                  />
+                                )}
+                                {/* #1486 — a reschedule waiting on a party. */}
+                                {appointment.reschedule && (
+                                  <StatusBadge
+                                    label={
+                                      appointment.reschedule.status ===
+                                      "COUNTERED"
+                                        ? "Reschedule countered"
+                                        : "Reschedule proposed"
+                                    }
+                                    tone="caution"
+                                  />
                                 )}
                               </div>
                               <div className="flex items-center gap-4 mt-2">
@@ -478,7 +453,7 @@ export function OperatorAppointmentsClient({
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3 w-3" />
-                                  {formatDate(appointment.scheduledAt)}
+                                  {zoned(appointment.scheduledAt, DATE_PATTERN)}
                                 </span>
                                 {appointment.duration > 0 && (
                                   <span className="flex items-center gap-1">
@@ -498,36 +473,6 @@ export function OperatorAppointmentsClient({
                               </div>
                             </div>
                           </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              asChild
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View Details
-                              </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                <Users className="h-4 w-4 mr-2" />
-                                Contact Participants
-                              </DropdownMenuItem>
-                              {appointment.hasIssue && (
-                                <DropdownMenuItem>
-                                  <AlertTriangle className="h-4 w-4 mr-2" />
-                                  Resolve Issue
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
                         </div>
                       </CardContent>
                     </Card>
@@ -538,13 +483,15 @@ export function OperatorAppointmentsClient({
           </TabsContent>
         </Tabs>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
+        {/* Pagination — #1527 review — hidden on Awaiting payment, which owns
+            its own list; without this, placeholderData could carry a
+            previous tab's totalPages onto a tab that renders no pager. */}
+        {activeTab !== "awaiting-payment" && totalPages > 1 && (
           <div className="flex justify-center gap-2 mt-4">
             <Button
               variant="outline"
               disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
+              onClick={() => list.setPage(page - 1)}
             >
               Previous
             </Button>
@@ -554,7 +501,7 @@ export function OperatorAppointmentsClient({
             <Button
               variant="outline"
               disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
+              onClick={() => list.setPage(page + 1)}
             >
               Next
             </Button>
@@ -586,23 +533,18 @@ export function OperatorAppointmentsClient({
               <div className="space-y-4">
                 {/* Status */}
                 <div className="flex items-center gap-2">
-                  <Badge
-                    className={getStatusColor(selectedAppointment.status)}
-                    variant="secondary"
-                  >
-                    {selectedAppointment.status.replace("_", " ")}
-                  </Badge>
-                  <Badge
-                    className={getTypeColor(selectedAppointment.type)}
-                    variant="secondary"
-                  >
-                    {selectedAppointment.type}
+                  <StatusBadge
+                    label={humanizeEnum(selectedAppointment.status)}
+                    tone={STATUS_TONE[selectedAppointment.status] ?? "neutral"}
+                  />
+                  <Badge variant="outline">
+                    {humanizeEnum(selectedAppointment.type)}
                   </Badge>
                   {selectedAppointment.hasIssue && (
-                    <Badge variant="destructive">
-                      <AlertTriangle className="h-3 w-3 mr-1" />
-                      {selectedAppointment.issueType}
-                    </Badge>
+                    <StatusBadge
+                      label={selectedAppointment.issueType ?? "Issue"}
+                      tone="warning"
+                    />
                   )}
                 </div>
 
@@ -611,7 +553,7 @@ export function OperatorAppointmentsClient({
                   {selectedAppointment.consultant && (
                     <div className="p-3 rounded-lg bg-muted">
                       <Label className="text-xs text-muted-foreground">
-                        Consultant
+                        Expert
                       </Label>
                       <div className="flex items-center gap-2 mt-2">
                         <Avatar>
@@ -642,7 +584,7 @@ export function OperatorAppointmentsClient({
                   {selectedAppointment.consultee && (
                     <div className="p-3 rounded-lg bg-muted">
                       <Label className="text-xs text-muted-foreground">
-                        Consultee
+                        Learner
                       </Label>
                       <div className="flex items-center gap-2 mt-2">
                         <Avatar>
@@ -678,7 +620,12 @@ export function OperatorAppointmentsClient({
                     <Label className="text-xs text-muted-foreground">
                       Scheduled At
                     </Label>
-                    <p>{formatFullDate(selectedAppointment.scheduledAt)}</p>
+                    <p>
+                      {zoned(
+                        selectedAppointment.scheduledAt,
+                        FULL_DATE_PATTERN,
+                      )}
+                    </p>
                   </div>
                   {selectedAppointment.duration > 0 && (
                     <div>
@@ -724,16 +671,6 @@ export function OperatorAppointmentsClient({
                 <AppointmentTimeline appointmentId={selectedAppointment.id} />
 
                 {renderOps?.(selectedAppointment.id)}
-
-                {/* Staff Notes */}
-                <div>
-                  <Label htmlFor="note">Staff Note</Label>
-                  <Textarea
-                    id="note"
-                    placeholder="Add a note about this appointment..."
-                    className="mt-1"
-                  />
-                </div>
               </div>
               <ResponsiveModalFooter>
                 <Button
@@ -741,10 +678,6 @@ export function OperatorAppointmentsClient({
                   onClick={() => setSelectedAppointment(null)}
                 >
                   Close
-                </Button>
-                <Button variant="outline">
-                  <ArrowUpRight className="h-4 w-4 mr-2" />
-                  Escalate to Admin
                 </Button>
               </ResponsiveModalFooter>
             </>

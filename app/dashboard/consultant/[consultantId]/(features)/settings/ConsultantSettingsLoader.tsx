@@ -49,7 +49,7 @@ export function ConsultantSettingsLoader({
             title="Couldn't load your settings"
             description={
               error.message ||
-              "Failed to load consultant settings. Please try again."
+              "Failed to load expert settings. Please try again."
             }
             action={
               <Button
@@ -73,7 +73,7 @@ export function ConsultantSettingsLoader({
           <EmptyState
             icon={SettingsIcon}
             title="No profile yet"
-            description="We could not find a consultant profile for this account."
+            description="We could not find an expert profile for this account."
           />
         </CardContent>
       </Card>

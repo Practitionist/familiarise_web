@@ -1,22 +1,14 @@
 /**
- * /dashboard/organization is no longer a standalone "your orgs" list.
+ * /dashboard/organization is no longer a standalone "your orgs" list; the
+ * portfolio lives at /dashboard/org-workspace/<id>/home. This page only
+ * keeps old bookmarks and bell payloads working.
  *
- * The org grid moved into /dashboard/org-workspace/<id>/home — the
- * canonical operator dashboard with sidebar navigation, cross-org
- * stats, activity feed, and billing roll-up. This page exists only as
- * a redirect target so old bookmarks, dropdown links, and Novu bell
- * payloads keep working.
- *
- * Routing rules:
- *   - User has an OrgWorkspaceProfile → /dashboard/org-workspace/<id>/home
- *   - User has no OrgWorkspaceProfile → /dashboard (role-router lands
- *     them on consultant/consultee home; they hop between orgs via
- *     the OrganizationSwitcher dropdown)
- *   - Unauthenticated → /auth/signin
- *
- * Non-OrgWorkspace members never needed this page — the
- * OrganizationSwitcher dropdown already lets them hop between orgs,
- * and they don't own a portfolio that needs cross-org roll-ups.
+ * RT-D1 (#1527): it used to send an ORG_WORKSPACE user without a workspace
+ * profile to /dashboard, whose landing sends that user straight back here —
+ * a two-hop loop. Every case now resolves in one redirect:
+ *   - workspace profile → the portfolio home
+ *   - ORG_WORKSPACE without one (legacy rows, #724) → the create wizard
+ *   - anyone else → /dashboard, which routes by role
  */
 
 import { redirect } from "next/navigation";
@@ -26,12 +18,13 @@ export default async function OrganizationSwitcherRedirect() {
   const session = await getSession(true);
   if (!session?.user?.id) redirect("/auth/signin");
 
-  // `Session["user"].orgWorkspaceProfileId` is part of the customSession
-  // return shape in lib/auth.ts — the inferred Session type
-  // exposes it directly. No cast needed; the field is real and typed.
   if (session.user.orgWorkspaceProfileId) {
-    redirect(`/dashboard/org-workspace/${session.user.orgWorkspaceProfileId}/home`);
+    redirect(
+      `/dashboard/org-workspace/${session.user.orgWorkspaceProfileId}/home`,
+    );
   }
-
+  if (session.user.role === "ORG_WORKSPACE") {
+    redirect("/dashboard/organization/create");
+  }
   redirect("/dashboard");
 }

@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { FileText } from "lucide-react";
 
 import { CategoryGrid } from "./_components/CategoryGrid";
+import { StillStuckCard } from "./_components/StillStuckCard";
 import { SupportSearch } from "./_components/SupportSearch";
 import {
   SupportSidebar,
@@ -22,6 +23,9 @@ export const metadata: Metadata = {
   description:
     "Find answers about booking, payments, refunds, video sessions, payouts, and organisations on Familiarise.",
 };
+
+const CARD_CLASS =
+  "rounded-2xl border border-border bg-card p-5 shadow-elevation-1 transition-all hover:-translate-y-0.5 hover:shadow-elevation-2";
 
 /** Most-visited guides, mirroring the reference layout's popular list. */
 const POPULAR: [string, string][] = [
@@ -98,16 +102,11 @@ export default function SupportIndexPage() {
                   body: "How expert pricing and fees work.",
                   href: "/pricing",
                 },
-                {
-                  title: "Still stuck?",
-                  body: "Contact us — we reply in 24–48h on business days.",
-                  href: "/contactus",
-                },
               ].map((card) => (
                 <Link
                   key={card.href + card.title}
                   href={card.href}
-                  className="rounded-2xl border border-border bg-card p-5 shadow-elevation-1 transition-all hover:-translate-y-0.5 hover:shadow-elevation-2"
+                  className={CARD_CLASS}
                 >
                   <p className="font-semibold">{card.title}</p>
                   <p className="mt-1 text-sm text-muted-foreground">
@@ -115,6 +114,7 @@ export default function SupportIndexPage() {
                   </p>
                 </Link>
               ))}
+              <StillStuckCard className={CARD_CLASS} />
             </div>
           </div>
         </div>

@@ -3,8 +3,7 @@
  * GET /api/admin/verification - List profile verifications.
  *
  * Thin shell — query/formatting lives in
- * `lib/api/operators/verification.ts` and is shared with
- * `/api/staff/moderation/profiles`.
+ * `lib/api/operators/verification.ts` (the staff twin was deleted, #1527).
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -29,7 +28,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching verifications:", error);
     return NextResponse.json(
       { error: "Failed to fetch verifications" },

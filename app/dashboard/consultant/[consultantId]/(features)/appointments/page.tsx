@@ -33,8 +33,7 @@ export default async function AppointmentsPage({
   // role/session-dependent (org members + admins default to "all" via
   // useOrgScope({ defaultForOrgMember: "all" }), B2C users to "personal").
   // We prefetch only "personal" — the deterministic, session-independent
-  // default — mirroring the existing client prefetch hook
-  // (useConsultantPrefetchDashboard). Org/all-scope landings correctly fall
+  // default. Org/all-scope landings correctly fall
   // back to a client fetch (acceptable per #890). The scope handed down is the
   // same `Scope` the route's resolveOrgScope produces, so both paths project
   // it identically (#674 defect 13).

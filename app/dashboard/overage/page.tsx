@@ -71,6 +71,13 @@ function formatAmount(amountPaise: number, currency: string): string {
 export default function OveragePage() {
   const searchParams = useSearchParams();
   const highlightId = searchParams.get("charge");
+  // #1527 — back to the org the member came from when the link names it,
+  // else the go resolver's role-aware home (not a bare /dashboard bounce).
+  const fromOrg = searchParams.get("org");
+  const backHref =
+    fromOrg && /^[A-Za-z0-9_-]+$/.test(fromOrg)
+      ? `/dashboard/organization/${fromOrg}`
+      : "/dashboard/go/auto";
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const highlightRef = useRef<HTMLDivElement | null>(null);
@@ -167,10 +174,9 @@ export default function OveragePage() {
           focused settlement task, like /checkout, and the notification deep
           link (`/dashboard/overage?charge=<id>`) carries no org context to
           route into an org dashboard with. Without a way out, though, anyone
-          arriving from that notification was stranded on a chrome-less page.
-          /dashboard re-routes each role to their own home. */}
+          arriving from that notification was stranded on a chrome-less page. */}
       <Link
-        href="/dashboard"
+        href={backHref}
         className="mb-4 inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900"
       >
         <ArrowLeft className="h-4 w-4" />

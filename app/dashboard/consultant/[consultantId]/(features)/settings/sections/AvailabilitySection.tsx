@@ -131,7 +131,7 @@ export function AvailabilitySection({
           Schedule Type Filtering
         </h3>
         <p className="text-sm text-blue-700">
-          <strong>Important:</strong> Consultees will only see slots from your
+          <strong>Important:</strong> Learners will only see slots from your
           selected schedule type. Choose &quot;Weekly Recurring&quot; for
           regular appointments or &quot;Custom Schedule&quot; for specific dates
           only.

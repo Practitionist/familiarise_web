@@ -27,7 +27,7 @@ export interface Column<T> {
 
 export interface ScopedListTableProps<T> {
   title: string;
-  description?: string;
+  description?: React.ReactNode;
   isLoading: boolean;
   isError: boolean;
   errorMessage?: string;

@@ -86,7 +86,7 @@ export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
 /** One verb per toast. */
 export const TOAST = {
   approved: "Approved",
-  approvedAwaitingPayment: "Approved — the client has 24 h to pay",
+  approvedAwaitingPayment: "Approved — the learner has 24 h to pay",
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",

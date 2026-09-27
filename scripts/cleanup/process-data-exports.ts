@@ -42,6 +42,12 @@ import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
 import { deliver, SENDERS } from "../../lib/email";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import type { OrgDataExportKind } from "@prisma/client";
+import {
+  bundleKinds,
+  canHandleExportKind,
+  type DataExportKind,
+} from "@/lib/enterprise/data-export-kinds";
 
 export interface DataExportResult {
   picked: number;
@@ -60,20 +66,79 @@ interface ExportBundle {
   organizationId: string;
   generatedAt: string;
   schemaVersion: 1;
+  /** #1527 — which kinds this bundle carries; the other kind's keys are absent. */
+  kinds: DataExportKind[];
   organization: unknown;
-  members: unknown[];
-  memberships: unknown[];
-  contracts: unknown[];
-  programs: unknown[];
-  invoices: unknown[];
-  earnings: unknown[];
-  payouts: unknown[];
-  auditLog: unknown[];
+  members?: unknown[];
+  memberships?: unknown[];
+  contracts?: unknown[];
+  programs?: unknown[];
+  invoices?: unknown[];
+  earnings?: unknown[];
+  payouts?: unknown[];
+  auditLog?: unknown[];
   /** #701 — count of members whose PII was withheld for lack of consent. */
-  excludedForConsent: number;
+  excludedForConsent?: number;
 }
 
-async function buildBundleFor(organizationId: string): Promise<ExportBundle> {
+/**
+ * #1527 decision 4 — the bundle carries only the requested kind: people
+ * (members, memberships, audit log, consent-withheld count) or finance
+ * (contracts, programs, invoices, earnings, payouts). A pre-split FULL job
+ * builds both, as before.
+ */
+async function buildBundleFor(
+  organizationId: string,
+  kind: OrgDataExportKind,
+): Promise<ExportBundle> {
+  const kinds = bundleKinds(kind);
+  const full = await buildFullBundleFor(organizationId);
+  const people = kinds.includes("PEOPLE");
+  const finance = kinds.includes("FINANCE");
+  return {
+    organizationId: full.organizationId,
+    generatedAt: full.generatedAt,
+    schemaVersion: full.schemaVersion,
+    kinds,
+    organization: full.organization,
+    ...(people && {
+      members: full.members,
+      memberships: full.memberships,
+      auditLog: full.auditLog,
+      excludedForConsent: full.excludedForConsent,
+    }),
+    ...(finance && {
+      contracts: full.contracts,
+      programs: full.programs,
+      invoices: full.invoices,
+      earnings: full.earnings,
+      payouts: full.payouts,
+    }),
+  };
+}
+
+/**
+ * Whether the requester may still receive this kind — re-checked at build
+ * time so a role change between request and build can't widen the bundle.
+ * Platform admins act through a stub membership with OWNER reach.
+ */
+async function requesterMayExport(
+  requestedByMembershipId: string,
+  kind: OrgDataExportKind,
+): Promise<boolean> {
+  if (requestedByMembershipId.startsWith("__admin_stub_")) return true;
+  const requester = await prisma.membership.findUnique({
+    where: { id: requestedByMembershipId },
+    select: { status: true, role: true },
+  });
+  return (
+    requester?.status === "ACTIVE" && canHandleExportKind(requester.role, kind)
+  );
+}
+
+async function buildFullBundleFor(
+  organizationId: string,
+): Promise<Omit<Required<ExportBundle>, "kinds">> {
   // Each query is small + indexed (organizationId is on every relevant
   // table). The 8-entity walk is a few hundred KB even for established
   // orgs; we don't paginate because the export caller wants
@@ -305,7 +370,13 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
   });
 
   try {
-    const bundle = await buildBundleFor(job.organizationId);
+    if (!(await requesterMayExport(job.requestedByMembershipId, job.kind))) {
+      // Org-visible (job.error) — plain words, no internals.
+      throw new Error(
+        "The member who requested this export no longer holds the grant for it.",
+      );
+    }
+    const bundle = await buildBundleFor(job.organizationId, job.kind);
     const uploaded = await uploadBundle(job.organizationId, job.id, bundle);
     if (!uploaded) {
       throw new Error("Bundle upload returned null");
@@ -364,9 +435,9 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
         fileSizeBytes: uploaded.sizeBytes,
         expiresAt: uploaded.expiresAt.toISOString(),
         downloadUrl: uploaded.url,
-        // The exports panel lives on organization settings, not the
+        // The exports panel is a settings section (#1842), not the
         // long-removed /integrations/data-exports route.
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${job.organizationId}/settings`,
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${job.organizationId}/settings/data-exports`,
       });
     }
 

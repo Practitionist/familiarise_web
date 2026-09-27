@@ -57,7 +57,11 @@ export async function GET(
   },
 ) {
   const { orgId, endpointId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER" });
+  // #1527 P0-4 — the same grant as the Webhooks tab and the writes (OWNER +
+  // BILLING_ADMIN); was a MANAGER rank floor.
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const endpoint = await prisma.webhookEndpoint.findFirst({

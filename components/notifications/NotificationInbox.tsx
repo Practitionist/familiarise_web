@@ -6,6 +6,7 @@ import { Bell as BellIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { useToast } from "@/hooks/use-toast";
+import { useHydrated } from "@/hooks/use-hydrated";
 import {
   Popover,
   PopoverContent,
@@ -24,6 +25,7 @@ export function NotificationInbox() {
   const { data: session } = useSession();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const hydrated = useHydrated();
 
   const memberships = useMemo(() => {
     const raw = (session?.user as Record<string, unknown> | undefined)
@@ -36,7 +38,8 @@ export function NotificationInbox() {
     return raw.flatMap((m): OrgMembershipLite[] => {
       if (typeof m !== "object" || m === null) return [];
       const { organizationId, organizationName } = m as Record<string, unknown>;
-      if (typeof organizationId !== "string" || organizationId === "") return [];
+      if (typeof organizationId !== "string" || organizationId === "")
+        return [];
       return [
         {
           organizationId,
@@ -72,7 +75,9 @@ export function NotificationInbox() {
     ];
   }, [memberships]);
 
-  if (!session?.user?.id || !NOVU_APP_ID) {
+  // #1527 QA — the server never renders the bell (no session there), so it
+  // waits for hydration; a session resolved first threw #418 on slow pages.
+  if (!hydrated || !session?.user?.id || !NOVU_APP_ID) {
     return null;
   }
 

@@ -13,6 +13,7 @@ import {
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { applyReversal, readRefundableBalances } from "./reversal-engine";
 import { refundPayment, RefundValidationError } from "./refund";
@@ -582,7 +583,8 @@ export async function refundRemovedAttendeeSeat(args: {
         reason: isOrganiserInitiated
           ? `You were removed from this ${args.kind}.`
           : `You left this ${args.kind}.`,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the attendee who paid.
+        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       }).catch(() => {});
       // #1653 — the email twin; the sender never throws, the catch is belt
       // and braces so a settled refund can never fail on its receipt.

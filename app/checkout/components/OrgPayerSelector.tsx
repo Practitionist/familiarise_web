@@ -3,8 +3,10 @@
 import { useSession } from "@/lib/auth-client";
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
+import Link from "next/link";
 import { Building2, CreditCard, AlertTriangle, Ban, Info } from "lucide-react";
 import type { CoveredPlanType } from "@prisma/client";
+import { dataConsentHref } from "@/lib/dashboard/account-href";
 
 interface OveragePreview {
   applicable: boolean;
@@ -98,6 +100,8 @@ function ConsentPreflightNotice({
 }: {
   organizationId: string;
 }) {
+  const { data: session } = useSession();
+  const consentHref = session?.user ? dataConsentHref(session.user) : null;
   const { data } = useQuery<{ hasConsent: boolean }>({
     queryKey: ["checkout-consent-preview", organizationId],
     queryFn: async () => {
@@ -117,9 +121,16 @@ function ConsentPreflightNotice({
     <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
       <span className="text-blue-900">
-        You have not granted session-booking consent yet. Your organization
-        cannot book or pay for a session on your behalf until you grant it in
-        your privacy settings.
+        You have not given session-booking consent yet. Your organization cannot
+        book or pay for a session on your behalf until you give it in{" "}
+        {consentHref ? (
+          <Link href={consentHref} className="font-medium underline">
+            Settings › Account › Data consent
+          </Link>
+        ) : (
+          "Settings › Account › Data consent"
+        )}
+        .
       </span>
     </div>
   );

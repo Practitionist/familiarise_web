@@ -40,6 +40,8 @@ export interface OrgActivationSnapshot {
   creditPoolMaxUtilizationPct: number | null;
   /** #1744 — live programmes still set to the refused CHARGE_MEMBER. */
   memberBilledOverageProgramNames?: string[];
+  /** #1527 decision 6 — upcoming booked sessions of suspended members. */
+  suspendedMemberUpcomingCount?: number;
 }
 
 export interface ActivationStep {
@@ -116,7 +118,8 @@ export function deriveActivationChecklist(
 
   steps.push({
     key: "invite",
-    label: s.canHost && !s.canSponsor ? "Invite your experts" : "Invite members",
+    label:
+      s.canHost && !s.canSponsor ? "Invite your experts" : "Invite members",
     done: s.memberCount > 1,
     // #1132 — `${base}/invitations` is a hard 404: ADR 19 folded invitations
     // into the members page as a tab and this link was never updated, so the
@@ -159,7 +162,8 @@ export function deriveActionCenter(
       key: "pending-verification",
       severity: "warning",
       title: "Verification pending",
-      body: "Inviting members and moving money unlocks once a platform admin verifies your organization.",
+      // #1762-1 — checkout accepts unverified orgs; say what verification lifts.
+      body: "Until a platform admin verifies your organization, invitations are capped and invoice-funded bookings carry a starter credit limit.",
       ctaLabel: "Review setup",
       ctaHref: `${base}/settings`,
     });
@@ -186,7 +190,10 @@ export function deriveActionCenter(
     });
   }
 
-  if (s.creditPoolMaxUtilizationPct != null && s.creditPoolMaxUtilizationPct >= 80) {
+  if (
+    s.creditPoolMaxUtilizationPct !== null &&
+    s.creditPoolMaxUtilizationPct >= 80
+  ) {
     items.push({
       key: "credit-pool-near-cap",
       severity: "warning",
@@ -207,6 +214,19 @@ export function deriveActionCenter(
       body: "Charging members is no longer offered: the member pays after the session while the consultant is paid on the full price. Switch the programme to BLOCK or CHARGE_ORG.",
       ctaLabel: "Edit programme",
       ctaHref: `${base}/programs`,
+    });
+  }
+
+  const suspendedSessions = s.suspendedMemberUpcomingCount ?? 0;
+  if (suspendedSessions > 0) {
+    // #1527 decision 6 — suspension keeps these bookings; the org decides.
+    items.push({
+      key: "suspended-member-sessions",
+      severity: "warning",
+      title: `${suspendedSessions} upcoming session${suspendedSessions === 1 ? "" : "s"} for suspended members`,
+      body: "Suspended members keep sessions that were already booked. Cancel and refund them deliberately, or restore the member.",
+      ctaLabel: "Review sessions",
+      ctaHref: `${base}/appointments?tab=everyone&members=suspended`,
     });
   }
 
@@ -251,7 +271,7 @@ export function deriveActionCenter(
   }
 
   if (
-    s.walletLowBalancePaise != null &&
+    s.walletLowBalancePaise !== null &&
     s.walletLowBalancePaise < WALLET_LOW_BALANCE_PAISE
   ) {
     items.push({

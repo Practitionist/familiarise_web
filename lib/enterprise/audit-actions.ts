@@ -162,6 +162,9 @@ export const AUDIT_ACTIONS = {
   CONSENT: {
     CONSENT_GRANTED: "CONSENT_GRANTED",
     CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN",
+    // An operator's record that a member asked to withdraw; only the member
+    // withdraws (#1527 decision 5). Their Account › Data consent reads it.
+    CONSENT_WITHDRAWAL_REQUESTED: "CONSENT_WITHDRAWAL_REQUESTED",
     DATA_BREACH_REPORTED: "DATA_BREACH_REPORTED",
   },
   CATALOG: {

@@ -306,7 +306,7 @@ function TaxCard({
           <p id="gstin" className="scroll-mt-24 text-xs text-muted-foreground">
             {taxInfo.gstin
               ? "Your GSTIN is on file."
-              : "If you are GST-registered, add your GSTIN; most consultants are below the threshold and can skip it."}
+              : "If you are GST-registered, add your GSTIN; most experts are below the threshold and can skip it."}
           </p>
         </div>
       ) : (

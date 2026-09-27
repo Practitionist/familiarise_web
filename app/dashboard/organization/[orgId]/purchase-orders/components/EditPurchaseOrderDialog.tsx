@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select";
 
 import { patchPurchaseOrder } from "../utils/api";
+import { PO_STATUS, PO_STATUSES } from "../utils/formatting";
 import type {
   PatchPurchaseOrderBody,
   PoStatus,
@@ -137,9 +138,11 @@ export function EditPurchaseOrderDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="ACTIVE">ACTIVE</SelectItem>
-                <SelectItem value="CLOSED">CLOSED</SelectItem>
-                <SelectItem value="CANCELLED">CANCELLED</SelectItem>
+                {PO_STATUSES.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {PO_STATUS[value].label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

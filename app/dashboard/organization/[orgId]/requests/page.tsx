@@ -1,15 +1,14 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
-import { isPayerAdminRole } from "@/lib/booking/org-actor";
-import { readOrgPendingRequests } from "@/lib/data/org-pending-requests";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { orgTabHref } from "@/lib/dashboard/org-tab-redirect";
 
 import { RequestsClient } from "./RequestsClient";
-import { PayerRequestsView } from "./PayerRequestsView";
 
 /**
  * Requests — slot allocation for sessions this organization funded or hosts.
@@ -29,15 +28,18 @@ import { PayerRequestsView } from "./PayerRequestsView";
  * #1166 B2B gap 8 — a payer admin who does not deliver used to be redirected
  * away entirely, which cost them the one thing they do need: an org-funded
  * booking that no expert has scheduled is the org's money sitting idle, and the
- * only surface showing it was the delivering consultant's. OWNER/MAINTAINER —
- * the payer-side actor, same rule as `isOrgAdminOfAppointment` — now get the
- * list read-only. Everyone else still goes home, because they would be looking
- * at a page with nothing on it for them.
+ * only surface showing it was the delivering consultant's. Holders of
+ * `appointments.unscheduled.read` (OWNER, MAINTAINER, MANAGER) get that list
+ * read-only as Appointments › Unscheduled (#1527 Q7; this URL 308s there).
+ * Everyone else still goes home, because they would be looking at a page with
+ * nothing on it for them.
  */
 export default async function OrgRequestsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ orgId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { orgId } = await params;
 
@@ -51,21 +53,14 @@ export default async function OrgRequestsPage({
   const consultantProfileId = access.member.consultantProfileId;
 
   if (!consultantProfileId) {
-    if (!isPayerAdminRole(access.member.role)) {
+    if (
+      !hasOrgPermission(access.member.role, "appointments.unscheduled.read")
+    ) {
       redirect(`/dashboard/organization/${orgId}/home`);
     }
-
-    const requests = await readOrgPendingRequests(orgId);
-    return (
-      <>
-        <DashboardHeader
-          title="Requests"
-          subtitle="Bookings this organization funded that are still waiting on times."
-        />
-        <DashboardContent>
-          <PayerRequestsView requests={requests} />
-        </DashboardContent>
-      </>
+    // Keeps the old query like the other retired routes (#1527 QA wave 3).
+    permanentRedirect(
+      orgTabHref(orgId, "appointments", "unscheduled", await searchParams),
     );
   }
 
@@ -73,7 +68,7 @@ export default async function OrgRequestsPage({
     <>
       <DashboardHeader
         title="Requests"
-        subtitle="Bookings under this organization awaiting slot allocation."
+        description="Bookings under this organization awaiting slot allocation."
       />
       <DashboardContent>
         <RequestsClient

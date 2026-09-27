@@ -18,7 +18,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { OrgAuditCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -26,6 +26,7 @@ import {
   sanitizeAuditDescription,
   sanitizeAuditDetails,
 } from "@/lib/enterprise/audit-sanitize";
+import { auditRowScope } from "@/lib/enterprise/audit-visibility";
 
 type AuditExportRow = {
   id: string;
@@ -38,18 +39,9 @@ type AuditExportRow = {
   createdAt: Date;
 };
 
-const CategorySchema = z.enum([
-  "MEMBER",
-  "CONTRACT",
-  "PROGRAM",
-  "WALLET",
-  "INVOICE",
-  "PAYOUT",
-  "SETTINGS",
-  "CONSENT",
-  "CATALOG",
-  "SYSTEM",
-]);
+// Derived from Prisma so a new category (WEBHOOK) can't drift out of the
+// filter again (#1527 3c); the row scope still applies the money/ops split.
+const CategorySchema = z.nativeEnum(OrgAuditCategory);
 
 const QuerySchema = z.object({
   categories: z
@@ -88,8 +80,21 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  // #1527 decision 4 — the audit trail is part of the people bundle, so the
+  // CSV follows dataExports.people (OWNER, MAINTAINER; was a MAINTAINER rank
+  // floor — the same roles).
+  const access = await requireOrgAccess(orgId, {
+    permission: "dataExports.people",
+  });
   if (access.error) return access.error;
+  // Same category split as the viewer (#1527 P0-6).
+  const rowScope = auditRowScope(access.member.role);
+  if (!rowScope) {
+    return NextResponse.json(
+      { error: "Forbidden — your role does not grant audit.read" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse(
@@ -105,6 +110,7 @@ export async function GET(
 
   const where: Prisma.OrgAuditLogWhereInput = {
     organizationId: orgId,
+    AND: [rowScope],
     ...(q.categories.length > 0 ? { category: { in: q.categories } } : {}),
     ...(q.actions.length > 0 ? { action: { in: q.actions } } : {}),
     ...(q.actorMembershipId

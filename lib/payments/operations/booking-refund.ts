@@ -75,6 +75,7 @@ import {
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
@@ -121,7 +122,8 @@ async function stageRefundNotice(
       ...notificationScope(payment.organizationId),
       amount: amountPaise,
       currency: payment.currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always the payer.
+      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     },
     { tx, entityRef: `payment:${payment.id}` },
   );

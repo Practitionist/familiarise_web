@@ -1,8 +1,8 @@
 /**
  * GET /api/organizations/[orgId]/stream/calls
  *
- * Org-scoped Stream call + recording metadata export. MANAGER+ gate
- * because the call log is a compliance surface (who met with whom,
+ * Org-scoped Stream call + recording metadata export. `messaging.read`
+ * (OWNER, MAINTAINER, MANAGER) because the call log is a compliance surface (who met with whom,
  * when, for how long). Reads from local Meeting (indexed by
  * organizationId, #674) rather than Stream's API — every page load
  * would otherwise re-do the join over the network.
@@ -17,7 +17,7 @@
  * Every successful GET writes a `STREAM_CALLS_EXPORTED` audit row.
  *
  * #1270 — this route used to return `Recording.recordingUrl` verbatim to any
- * MANAGER+. That column holds Stream's pre-signed S3 link: it is valid for
+ * caller it admitted. That column holds Stream's pre-signed S3 link: it is valid for
  * fourteen days and carries its own credentials, so anyone who ends up holding
  * the string — a forwarded email, a pasted Slack message, an exported CSV, a
  * third-party BI tool consuming this endpoint — can fetch the video with no
@@ -44,7 +44,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER" });
+  // #1527 P0-4 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
+  const access = await requireOrgAccess(orgId, {
+    permission: "messaging.read",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

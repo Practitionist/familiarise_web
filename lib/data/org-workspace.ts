@@ -63,7 +63,11 @@ export async function getOperatorOrganizations(
           canHost: true,
           brandingProfile: { select: { logo: true } },
           billingAccount: {
-            select: { fundingSource: true, walletBalance: true, currency: true },
+            select: {
+              fundingSource: true,
+              walletBalance: true,
+              currency: true,
+            },
           },
         },
       },
@@ -95,11 +99,17 @@ export async function getOperatorOrganizations(
  * GET /api/org-workspace/[id]/billing                                 *
  * ------------------------------------------------------------------ */
 
+export interface CurrencyTotal {
+  currency: string;
+  paise: number;
+}
+
 export interface WorkspaceBillingSummary {
   orgsOwned: number;
   totalActiveMembers: number;
-  totalOutstandingPaise: number;
-  totalWalletPaise: number;
+  /** One entry per currency (#1527) — never summed across currencies. */
+  outstandingByCurrency: CurrencyTotal[];
+  walletByCurrency: CurrencyTotal[];
 }
 
 export interface WorkspaceBillingPerOrgRow {
@@ -158,8 +168,8 @@ export async function getWorkspaceBillingRollup(
       summary: {
         orgsOwned: 0,
         totalActiveMembers: 0,
-        totalOutstandingPaise: 0,
-        totalWalletPaise: 0,
+        outstandingByCurrency: [],
+        walletByCurrency: [],
       },
       perOrg: [],
     };
@@ -212,17 +222,33 @@ export async function getWorkspaceBillingRollup(
     };
   });
 
+  // #1527 — one total per currency: a USD org's paise are not rupees.
   const summary = {
     orgsOwned: ownedMemberships.length,
     totalActiveMembers: perOrg.reduce((sum, o) => sum + o.activeMembers, 0),
-    totalOutstandingPaise: perOrg.reduce(
-      (sum, o) => sum + o.outstandingPaise,
-      0,
-    ),
-    totalWalletPaise: perOrg.reduce((sum, o) => sum + o.walletBalancePaise, 0),
+    outstandingByCurrency: totalsByCurrency(perOrg, (o) => o.outstandingPaise),
+    walletByCurrency: totalsByCurrency(perOrg, (o) => o.walletBalancePaise),
   };
 
   return { summary, perOrg };
+}
+
+/** Sum per currency, largest first; zero totals are dropped. */
+function totalsByCurrency<T extends { currency: string }>(
+  rows: T[],
+  pick: (row: T) => number,
+): CurrencyTotal[] {
+  const byCurrency = new Map<string, number>();
+  for (const row of rows) {
+    byCurrency.set(
+      row.currency,
+      (byCurrency.get(row.currency) ?? 0) + pick(row),
+    );
+  }
+  return [...byCurrency.entries()]
+    .filter(([, paise]) => paise !== 0)
+    .map(([currency, paise]) => ({ currency, paise }))
+    .sort((a, b) => b.paise - a.paise);
 }
 
 /* ------------------------------------------------------------------ *
@@ -271,7 +297,9 @@ export async function getWorkspaceActivity(
     },
   });
   const orgIds = ownedOrgs.map((o) => o.organizationId);
-  const orgById = new Map(ownedOrgs.map((o) => [o.organizationId, o.organization]));
+  const orgById = new Map(
+    ownedOrgs.map((o) => [o.organizationId, o.organization]),
+  );
 
   if (orgIds.length === 0) {
     return {
@@ -298,10 +326,12 @@ export async function getWorkspaceActivity(
 
   const hasMore = rows.length > limit;
   const slice = hasMore ? rows.slice(0, limit) : rows;
-  const nextCursor = hasMore ? slice[slice.length - 1]?.id ?? null : null;
+  const nextCursor = hasMore ? (slice[slice.length - 1]?.id ?? null) : null;
 
   const actorIds = Array.from(
-    new Set(slice.map((r) => r.actorMembershipId).filter((v): v is string => !!v)),
+    new Set(
+      slice.map((r) => r.actorMembershipId).filter((v): v is string => !!v),
+    ),
   );
   const actors = actorIds.length
     ? await prisma.membership.findMany({
@@ -394,7 +424,10 @@ export async function getWorkspaceSettings(
     // client-side fetch (see docstring above) — captured for visibility
     // into how often the IDOR-checked id resolves to no row.
     const notFoundErr = new Error("OrgWorkspaceProfile not found");
-    reportSentryError(notFoundErr, { subsystem: "organizations", expected: true });
+    reportSentryError(notFoundErr, {
+      subsystem: "organizations",
+      expected: true,
+    });
     throw notFoundErr;
   }
 

@@ -1,23 +1,19 @@
-import { SupportHub } from "@/components/dashboard/shared/support/SupportHub";
+import { PersonalSupportRequests } from "@/app/support/_components/PersonalSupportRequests";
 
-/**
- * #support-hub — the Support tab: one Swiggy-style surface with a Sessions
- * subtab (per-appointment threads, including sessions the consultant
- * delivers) and a Platform subtab (flowchart intake + tickets). Feedback and
- * Help remain sibling destinations, deep-linked from the Platform subtab.
- */
+/** Support requests (#1527) — Requests · Feedback, plus suggested articles. */
 export default async function SupportPage({
   params,
-}: {
+  searchParams,
+}: Readonly<{
   params: Promise<{ consultantId: string }>;
-}) {
-  const p = await params;
+  searchParams: Promise<{ tab?: string | string[] }>;
+}>) {
+  const [{ consultantId }, { tab }] = await Promise.all([params, searchParams]);
   return (
-    <SupportHub
-      profileId={p.consultantId}
-      appointmentsHrefBase={`/dashboard/consultant/${p.consultantId}/appointments`}
-      feedbackHref={`/dashboard/consultant/${p.consultantId}/feedback`}
-      helpHref={`/dashboard/consultant/${p.consultantId}/help`}
+    <PersonalSupportRequests
+      tree="consultant"
+      profileId={consultantId}
+      tab={tab}
     />
   );
 }

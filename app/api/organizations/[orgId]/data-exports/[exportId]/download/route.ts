@@ -6,13 +6,15 @@
  * `DATA_EXPORT_DOWNLOADED` audit row before issuing the redirect so
  * the audit trail captures "who pulled what bundle when".
  *
- * Gate: OWNER + BILLING_ADMIN, same as the request route.
+ * Gate: an export grant, and the job's kind must be one the caller holds
+ * (#1527 decision 4) — a MAINTAINER can't pull a finance bundle.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { canHandleExportKind } from "@/lib/enterprise/data-export-kinds";
 
 export async function GET(
   _req: NextRequest,
@@ -23,13 +25,16 @@ export async function GET(
   },
 ) {
   const { orgId, exportId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: ["dataExports.people", "dataExports.finance"],
+  });
   if (access.error) return access.error;
 
   const job = await prisma.orgDataExportJob.findFirst({
     where: { id: exportId, organizationId: orgId },
   });
-  if (!job) {
+  // A kind the caller can't export reads as absent, not forbidden.
+  if (!job || !canHandleExportKind(access.member.role, job.kind)) {
     return NextResponse.json(
       { error: "Export job not found" },
       { status: 404 },
@@ -61,7 +66,10 @@ export async function GET(
       category: "SYSTEM",
       action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOADED,
       description: `Downloaded export bundle ${exportId}`,
-      details: { exportId, fileSizeBytes: job.fileSizeBytes?.toString() ?? null },
+      details: {
+        exportId,
+        fileSizeBytes: job.fileSizeBytes?.toString() ?? null,
+      },
     },
   });
 

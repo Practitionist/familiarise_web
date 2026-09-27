@@ -8,9 +8,8 @@
  * session can't exfiltrate signing material. Rotate via the dedicated
  * `/rotate-secret` route (OWNER-only) if it's lost.
  *
- * GET is MANAGER+ (read-only view shows up on the billing dashboard's
- * Integrations card). POST is OWNER + BILLING_ADMIN per the gate
- * matrix in `docs/enterprise/00-foundations/04-roles-and-permissions.md`.
+ * GET and POST are `integrations.manage` (OWNER + BILLING_ADMIN) — the
+ * same grant as the Settings › Webhooks tab (#1527).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -71,7 +70,11 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER" });
+  // #1527 P0-4 — the same grant as the Webhooks tab and the writes (OWNER +
+  // BILLING_ADMIN); was a MANAGER rank floor.
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const endpoints = await prisma.webhookEndpoint.findMany({

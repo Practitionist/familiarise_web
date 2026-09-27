@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Pencil, Megaphone, Loader2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 
 interface Announcement {
   id: string;
@@ -123,14 +124,13 @@ export function AnnouncementsPage({
       const response = await fetch(`${apiBasePath}/${id}`, {
         method: "DELETE",
       });
+      // Shown inside the confirm dialog, which stays open.
+      if (!response.ok) throw new Error("The announcement was not deleted.");
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
       toast({ title: "Announcement deleted" });
-    },
-    onError: () => {
-      toast({ title: "Failed to delete announcement", variant: "destructive" });
     },
   });
 
@@ -326,14 +326,22 @@ export function AnnouncementsPage({
                   >
                     {announcement.isActive ? "Deactivate" : "Activate"}
                   </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => deleteMutation.mutate(announcement.id)}
-                  >
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Delete
-                  </Button>
+                  {/* #1527 Q10 — a platform-wide delete is confirmed. */}
+                  <ConfirmDialog
+                    trigger={
+                      <Button variant="destructive" size="sm">
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Delete
+                      </Button>
+                    }
+                    title="Delete this announcement?"
+                    description={`"${announcement.title}" disappears for every user. This cannot be undone.`}
+                    confirmLabel="Delete"
+                    tone="destructive"
+                    onConfirm={async () => {
+                      await deleteMutation.mutateAsync(announcement.id);
+                    }}
+                  />
                 </div>
               </CardContent>
             </Card>

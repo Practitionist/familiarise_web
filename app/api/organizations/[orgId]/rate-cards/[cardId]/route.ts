@@ -43,7 +43,11 @@ export async function GET(
   },
 ) {
   const { orgId, cardId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canHost: true });
+  // #1527 decision 1 — the Payouts › Rate cards tab's grant.
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.read",
+    canHost: true,
+  });
   if (access.error) return access.error;
 
   const card = await prisma.rateCard.findFirst({

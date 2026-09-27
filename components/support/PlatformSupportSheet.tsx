@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LifeBuoy, Send, CheckCircle2, Ticket } from "lucide-react";
 import {
@@ -75,12 +76,15 @@ export function PlatformSupportSheet({
   onOpenChange,
   trigger,
   orgId,
+  requestHref,
 }: {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: React.ReactNode;
   /** Active org for operator flows (attribution, server-validated). */
   orgId?: string;
+  /** #1527 — the escalated request's page, linked once it exists. */
+  requestHref?: (ticketId: string) => string;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -298,7 +302,7 @@ export function PlatformSupportSheet({
           <SheetDescription>
             {flowId
               ? "Pick an option, or type a message."
-              : "Pick a topic, or browse the Help section for quick answers."}
+              : "Pick a topic, or browse the Help Center for quick answers."}
           </SheetDescription>
         </SheetHeader>
 
@@ -437,6 +441,14 @@ export function PlatformSupportSheet({
                     Ticket created — our team will reply here in &quot;My
                     requests&quot; and by email.
                   </>
+                )}
+                {requestHref && (
+                  <Link
+                    href={requestHref(done.ticketId)}
+                    className="ml-1 font-medium text-foreground underline underline-offset-4"
+                  >
+                    Open the request
+                  </Link>
                 )}
               </div>
             )}

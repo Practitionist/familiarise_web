@@ -33,10 +33,11 @@ import {
 } from "@/lib/novu/humanize";
 import type { NovuPayload } from "@/lib/novu/outbox";
 import type { NovuWorkflowId } from "@/lib/novu/templates/types";
+import { goHref } from "@/lib/dashboard/go";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
-import { MISS_WHERE, missedAt } from "./misses";
+import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
 import {
   exitRightFor,
   seatLedger,
@@ -44,8 +45,8 @@ import {
   type SeriesLedger,
 } from "./class-series";
 
-/** A cancelled session must be made up, and HELD, within this many days. */
-export const MAKEUP_WINDOW_DAYS = 14;
+// Lives with the miss predicates so light readers (Home, #1527) skip this module.
+export { MAKEUP_WINDOW_DAYS };
 const DAY_MS = 86_400_000;
 
 /** The dedupe key of one seat's refund for one missed session. */
@@ -204,7 +205,8 @@ async function onExitRightTripped(
       payload: {
         planTitle: hosted.cls.classPlan.title,
         misses,
-        dashboardUrl: "/dashboard",
+        // #1527 — every seat holder here is a consultee.
+        dashboardUrl: goHref("client", "appointments"),
       },
       dedupeKey: `exit-avail:${hosted.cls.id}:${userId}`,
     });
@@ -260,7 +262,8 @@ export async function cancelClassSession(
               hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
             dateTime: zoned(session.startsAt, zone),
             makeUpBy: zoned(makeUpBy, zone),
-            dashboardUrl: "/dashboard",
+            // #1527 — every seat holder here is a consultee.
+            dashboardUrl: goHref("client", "appointments"),
           }),
           `occ-cancel:${occurrenceId}`,
         );
@@ -333,7 +336,8 @@ export async function onClassSessionVoided(
           new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
           zone,
         ),
-        dashboardUrl: "/dashboard",
+        // #1527 — every seat holder here is a consultee.
+        dashboardUrl: goHref("client", "appointments"),
       }),
       `occ-void:${args.occurrenceId}`,
     );
@@ -444,7 +448,8 @@ export async function scheduleClassMakeUp(
           (zone) => ({
             planTitle: hosted.cls.classPlan.title,
             dateTime: zoned(startsAt, zone),
-            dashboardUrl: "/dashboard",
+            // #1527 — every seat holder here is a consultee.
+            dashboardUrl: goHref("client", "appointments"),
           }),
           `makeup:${sourceOccurrenceId}`,
         );

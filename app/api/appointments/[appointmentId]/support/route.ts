@@ -71,6 +71,14 @@ export async function GET(
     // (stage/provider/org gating is server truth; the sheet renders exactly
     // this list instead of a hardcoded menu).
     let intents: { category: string; title: string }[] = [];
+    // #1527 — the booking card on the request page, from the same context.
+    let booking: {
+      title: string | null;
+      kind: string;
+      startsAt: Date | null;
+      paymentId: string | null;
+      organizationId: string | null;
+    } | null = null;
     try {
       // Deliberately UNSCOPED: this context decides which intents to OFFER,
       // so it must describe the current-or-next session. Scoping it to the
@@ -82,6 +90,14 @@ export async function GET(
         auth.userId,
       );
       if (ctx) {
+        booking = {
+          title: ctx.planTitle,
+          kind: ctx.appointmentType,
+          startsAt: ctx.startsAt,
+          // An org party is not the payer (ADR 20): no payment handle.
+          paymentId: auth.isOrgParty ? null : ctx.paymentId,
+          organizationId: ctx.organizationId,
+        };
         // An org party sees only the intents the POST will accept from it; the
         // sheet used to offer "Recording access" to an operator and then fail.
         intents = flowsForContext(ctx)
@@ -101,7 +117,7 @@ export async function GET(
       });
     }
 
-    return NextResponse.json({ data: thread, intents });
+    return NextResponse.json({ data: thread, intents, booking });
   } catch (cause) {
     return supportError({
       status: 500,

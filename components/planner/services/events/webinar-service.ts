@@ -5,6 +5,7 @@
 import { toast } from "@/hooks/use-toast";
 import { WebinarEvent } from "@/types/planner-events";
 import {
+  eventStatusPayload,
   positioningPayload,
   priceToPaise,
 } from "@/components/planner/services/shared/plan-payload";
@@ -228,6 +229,8 @@ export class WebinarService {
       topics: topicNames,
       consultantProfileId: consultantId,
       scheduledAt: scheduledAtDate,
+      // #1527 — Save draft must never publish: the route defaults to SCHEDULED.
+      ...eventStatusPayload(webinarData.status),
     };
 
     if (isUpdate) {

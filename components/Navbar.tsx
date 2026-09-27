@@ -20,6 +20,7 @@ import {
   Star,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
@@ -686,7 +687,14 @@ const Navbar = () => {
                 </div>
               ) : isAuthedView ? (
                 <div className="flex items-center gap-3">
-                  <Link href="/profile">
+                  {/* #1527 — straight to the viewer's Settings › Account;
+                      /profile would only 308 there. */}
+                  <Link
+                    href={
+                      accountSettingsHref(session?.user ?? {}) ?? "/profile"
+                    }
+                    aria-label="Account settings"
+                  >
                     <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
                       <AvatarImage src={getUserImage()} alt="Profile" />
                       <AvatarFallback className="bg-zinc-900 text-white text-sm">
