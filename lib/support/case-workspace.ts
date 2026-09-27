@@ -65,6 +65,7 @@ const BOOKING_SELECT = {
   },
   webinar: {
     select: {
+      status: true,
       webinarPlan: {
         select: {
           title: true,
@@ -75,6 +76,7 @@ const BOOKING_SELECT = {
   },
   class: {
     select: {
+      status: true,
       classPlan: {
         select: {
           title: true,
@@ -89,7 +91,14 @@ const BOOKING_SELECT = {
   },
 } as const;
 
-async function readBooking(appointmentId: string): Promise<CaseBooking | null> {
+/**
+ * `requesterName` fills the learner for a class or webinar: those hold no
+ * per-seat requester, and the case's requester is the attendee (#1527).
+ */
+async function readBooking(
+  appointmentId: string,
+  requesterName: string | null,
+): Promise<CaseBooking | null> {
   const a = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: BOOKING_SELECT,
@@ -106,7 +115,7 @@ async function readBooking(appointmentId: string): Promise<CaseBooking | null> {
     a.consultation?.requestedBy.user?.name ??
     a.subscription?.requestedBy.user?.name ??
     a.trial?.consulteeProfile.user?.name ??
-    null;
+    (a.class || a.webinar ? requesterName : null);
   return {
     appointmentId: a.id,
     kind: a.appointmentType,
@@ -119,6 +128,8 @@ async function readBooking(appointmentId: string): Promise<CaseBooking | null> {
       a.consultation?.status ??
       a.subscription?.status ??
       a.trial?.status ??
+      a.class?.status ??
+      a.webinar?.status ??
       null,
   };
 }
@@ -343,7 +354,7 @@ async function readTicketWorkspace(
     appointmentId = c?.appointment?.id ?? null;
   }
   const [booking, payment, pastCases] = await Promise.all([
-    appointmentId ? readBooking(appointmentId) : null,
+    appointmentId ? readBooking(appointmentId, t.user.name) : null,
     grants.showPayment ? readPayment(t.paymentId) : null,
     readPastCases(t.user.id, key),
   ]);
@@ -416,7 +427,7 @@ async function readThreadWorkspace(
   if (!t) return null;
   const key = caseKeyOf({ kind: "thread", id: t.id });
   const [booking, payment, pastCases] = await Promise.all([
-    readBooking(t.appointmentId),
+    readBooking(t.appointmentId, t.user.name),
     grants.showPayment
       ? readPayment(t.appointment.payment[0]?.id ?? null)
       : null,

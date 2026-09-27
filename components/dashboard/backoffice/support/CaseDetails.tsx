@@ -7,12 +7,15 @@ import type { ReactNode } from "react";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { Button } from "@/components/ui/button";
 import { caseStatus } from "@/lib/labels/backoffice-labels";
-import { paymentStatusBadge } from "@/lib/labels/session-labels";
-import { savedRepliesFor } from "@/lib/support/saved-replies";
+import {
+  appointmentStatusBadge,
+  eventStatusBadge,
+  paymentStatusBadge,
+  trialStatusBadge,
+} from "@/lib/labels/session-labels";
 import { humanizeEnum } from "@/lib/ui/tone";
-import type { ArticleLink, CaseWorkspace } from "@/types/support-case";
+import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 const day = (iso: string | null) =>
@@ -44,13 +47,26 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
 export const bookingHref = (basePath: string, appointmentId: string) =>
   `${basePath}/appointments?open=${encodeURIComponent(appointmentId)}`;
 
-/** #1527 — the left pane: who is asking, about what, and what came before. */
-export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
+/** #1527 — each booking kind's status lives on a different enum. */
+function bookingStatusLabel(booking: CaseBooking): string {
+  if (!booking.status) return "—";
+  if (booking.kind === "TRIAL") return trialStatusBadge(booking.status).label;
+  if (booking.kind === "CLASS" || booking.kind === "WEBINAR") {
+    return eventStatusBadge(booking.status).label;
+  }
+  return appointmentStatusBadge(booking.status).label;
+}
+
+/**
+ * #1527 — the Details panel's body: who is asking, about what, and what came
+ * before. The header carries the Open booking / payment / User 360 links.
+ */
+export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
   const { basePath, can } = useBackofficeCapability();
   const { person, booking, payment, organization } = data;
   return (
-    <div className="space-y-4">
-      <Section title="Person" variant="card">
+    <div className="space-y-5">
+      <Section title="Person">
         <Facts
           items={[
             ["Name", person.name ?? "—"],
@@ -61,18 +77,10 @@ export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
             ["Joined", day(person.joinedAt)],
           ]}
         />
-        {can("users.read") && (
-          <Link
-            href={`${basePath}/users/${person.id}`}
-            className={`${linkClass} mt-3 inline-block`}
-          >
-            Open User 360
-          </Link>
-        )}
       </Section>
 
       {booking && (
-        <Section title="Booking" variant="card">
+        <Section title="Booking">
           <Facts
             items={[
               ["Session", `${booking.title} · ${humanizeEnum(booking.kind)}`],
@@ -85,22 +93,14 @@ export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
                   ? `${day(booking.firstStartsAt)} – ${day(booking.lastStartsAt)}`
                   : day(booking.firstStartsAt),
               ],
-              ["Status", humanizeEnum(booking.status) || "—"],
+              ["Status", bookingStatusLabel(booking)],
             ]}
           />
-          {can("appointments.manage") && (
-            <Link
-              href={bookingHref(basePath, booking.appointmentId)}
-              className={`${linkClass} mt-3 inline-block`}
-            >
-              Open booking
-            </Link>
-          )}
         </Section>
       )}
 
       {payment && (
-        <Section title="Payment" variant="card">
+        <Section title="Payment">
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-medium tabular-nums text-foreground">
               {formatCurrencyAmount(payment.amount, payment.currency)}
@@ -110,17 +110,11 @@ export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
           <p className="mt-1 text-xs text-muted-foreground">
             {day(payment.createdAt)}
           </p>
-          <Link
-            href={`${basePath}/payments/${payment.id}`}
-            className={`${linkClass} mt-3 inline-block`}
-          >
-            Open payment
-          </Link>
         </Section>
       )}
 
       {organization && (
-        <Section title="Organisation" variant="card">
+        <Section title="Organisation">
           <p className="text-sm text-foreground">{organization.name}</p>
           {can("organizations.manage") && (
             <Link
@@ -133,7 +127,7 @@ export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
         </Section>
       )}
 
-      <Section title="Past cases" variant="card">
+      <Section title="Past cases">
         {data.pastCases.length === 0 ? (
           <p className="text-sm text-muted-foreground">No earlier cases.</p>
         ) : (
@@ -162,7 +156,7 @@ export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
       </Section>
 
       {data.attachments.length > 0 && (
-        <Section title="Attachments" variant="card">
+        <Section title="Attachments">
           <ul className="space-y-1.5">
             {data.attachments.map((a) => (
               <li key={a.id}>
@@ -181,119 +175,6 @@ export function CaseContextPane({ data }: Readonly<{ data: CaseWorkspace }>) {
           </ul>
         </Section>
       )}
-    </div>
-  );
-}
-
-/**
- * #1527 — the right pane: Help Center answers and saved replies to insert,
- * and quick actions that only deep-link EXISTING guarded flows. "Issue
- * refund" opens the payment page's own refund dialog (admin only); nothing
- * here moves money.
- */
-export function CaseAssistPane({
-  data,
-  articles,
-  onInsert,
-}: Readonly<{
-  data: CaseWorkspace;
-  articles: ArticleLink[];
-  onInsert: (text: string) => void;
-}>) {
-  const { basePath, can } = useBackofficeCapability();
-  const actions: { label: string; href: string }[] = [];
-  if (data.booking && can("appointments.manage")) {
-    actions.push({
-      label: "Open booking",
-      href: bookingHref(basePath, data.booking.appointmentId),
-    });
-  }
-  if (data.payment) {
-    actions.push({
-      label: "Open payment",
-      href: `${basePath}/payments/${data.payment.id}`,
-    });
-    if (can("refunds.manage") && data.payment.status === "SUCCEEDED") {
-      actions.push({
-        label: "Issue refund",
-        href: `${basePath}/payments/${data.payment.id}?refund=1`,
-      });
-    }
-  }
-  if (can("users.read")) {
-    actions.push({
-      label: "Open User 360",
-      href: `${basePath}/users/${data.person.id}`,
-    });
-  }
-  if (data.organization && can("organizations.manage")) {
-    actions.push({
-      label: "Open organisation",
-      href: `${basePath}/organizations/${data.organization.id}`,
-    });
-  }
-
-  return (
-    <div className="space-y-4">
-      <Section title="Quick actions" variant="card">
-        <div className="flex flex-wrap gap-2">
-          {actions.map((a) => (
-            <Button key={a.label} variant="outline" size="sm" asChild>
-              <Link href={a.href}>{a.label}</Link>
-            </Button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Suggested articles" variant="card">
-        <ul className="space-y-2">
-          {articles.map((a) => (
-            <li key={a.href} className="flex items-start justify-between gap-2">
-              <a
-                href={a.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-foreground underline-offset-4 hover:underline"
-              >
-                {a.title}
-              </a>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-xs"
-                onClick={() =>
-                  onInsert(`${a.title}: ${window.location.origin}${a.href}`)
-                }
-              >
-                Insert link
-              </Button>
-            </li>
-          ))}
-        </ul>
-      </Section>
-
-      <Section title="Saved replies" variant="card">
-        <ul className="space-y-2">
-          {savedRepliesFor(data.topic).map((r) => (
-            <li key={r.id} className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">{r.title}</p>
-                <p className="line-clamp-2 text-xs text-muted-foreground">
-                  {r.body}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-xs"
-                onClick={() => onInsert(r.body)}
-              >
-                Insert
-              </Button>
-            </li>
-          ))}
-        </ul>
-      </Section>
     </div>
   );
 }

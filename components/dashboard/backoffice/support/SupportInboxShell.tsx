@@ -33,8 +33,14 @@ const withAny = (
   options: { value: string; label: string }[],
 ) => [{ value: ANY, label }, ...options];
 
+function avgFirstResponse(s: InboxStats | undefined): string {
+  if (!s) return "—";
+  if (s.avgFirstResponseMs === null) return "No replies yet";
+  return durationLabel(s.avgFirstResponseMs);
+}
+
 /** #1527 — the neutral stats line: counts, not colourful KPI tiles. */
-function StatsLine() {
+function StatsLine({ className }: Readonly<{ className?: string }>) {
   const stats = useQuery({
     queryKey: ["support-inbox-stats"],
     queryFn: async (): Promise<InboxStats> => {
@@ -48,13 +54,15 @@ function StatsLine() {
   const items: [string, string][] = [
     ["Open cases", s ? String(s.openCases) : "—"],
     ["SLA breaches", s ? String(s.slaBreaches) : "—"],
-    [
-      `Avg first response (${s?.windowDays ?? 7} days)`,
-      s ? durationLabel(s.avgFirstResponseMs) : "—",
-    ],
+    [`Avg first response (${s?.windowDays ?? 7} days)`, avgFirstResponse(s)],
   ];
   return (
-    <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+    <dl
+      className={cn(
+        "flex flex-wrap gap-x-5 gap-y-1 text-sm sm:pt-1.5",
+        className,
+      )}
+    >
       {items.map(([label, value]) => (
         <div key={label} className="flex items-baseline gap-1.5">
           <dt className="text-muted-foreground">{label}</dt>
@@ -82,13 +90,14 @@ export function SupportInboxShell({ children }: { children: ReactNode }) {
     list.setFilter(key, value === ANY ? null : value);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* #1527 — title and stats share one line; no description. */}
       <PageHeader
         title="Support inbox"
-        description="Tickets and session conversations as one list of cases."
+        className="mb-0"
+        actions={<StatsLine className={cn(caseKey && "hidden lg:flex")} />}
       />
-      <div className={cn("space-y-4", caseKey && "hidden lg:block")}>
-        <StatsLine />
+      <div className={cn("space-y-3", caseKey && "hidden lg:block")}>
         <Tabs
           value={view}
           onValueChange={(v) =>

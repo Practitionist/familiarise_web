@@ -1715,7 +1715,7 @@ export function suggestedArticlesFor(
 
 /**
  * #1527 — three Help Center answers per support-case topic, for the case
- * workspace's Assist pane and the user's request page. `category/slug`
+ * composer's suggestions and the user's request page. `category/slug`
  * refs, most relevant first.
  */
 const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
@@ -1780,4 +1780,9 @@ export function articleLinksByTopic(): Record<CaseTopic, ArticleLink[]> {
     });
   }
   return links;
+}
+
+/** #1527 — every Help Center article as a link, for the composer's search. */
+export function helpCenterArticleLinks(): ArticleLink[] {
+  return supportArticles.map((a) => ({ title: a.title, href: articleUrl(a) }));
 }

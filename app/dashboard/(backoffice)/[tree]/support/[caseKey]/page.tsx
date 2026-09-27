@@ -1,7 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 
 import { CaseWorkspace } from "@/components/dashboard/backoffice/support/CaseWorkspace";
-import { articleLinksByTopic } from "@/app/support/_data/support-content";
+import {
+  articleLinksByTopic,
+  helpCenterArticleLinks,
+} from "@/app/support/_data/support-content";
 import { requireBackofficePage } from "@/lib/auth-guard";
 import { caseKeyOf, parseCaseKey } from "@/lib/support/case-key";
 import { escalatedTicketOf } from "@/lib/support/case-workspace";
@@ -37,5 +40,11 @@ export default async function SupportCasePage({
     );
   }
   // Help Center data stays on the server; the client gets title + href.
-  return <CaseWorkspace caseKey={caseKey} articles={articleLinksByTopic()} />;
+  return (
+    <CaseWorkspace
+      caseKey={caseKey}
+      articles={articleLinksByTopic()}
+      helpArticles={helpCenterArticleLinks()}
+    />
+  );
 }

@@ -6,8 +6,11 @@ import { Lock, Send } from "lucide-react";
 import { SupportBubble } from "@/components/support/SupportBubble";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { CaseWorkspace } from "@/types/support-case";
+import type { SavedReply } from "@/lib/support/saved-replies";
+import type { ArticleLink, CaseWorkspace } from "@/types/support-case";
 import { cn } from "@/utils/tailwind";
+
+import { articleInsertText, CaseInsertMenu } from "./CaseInsertMenu";
 
 export type ComposerMode = "reply" | "note";
 
@@ -30,10 +33,14 @@ function writeNote(caseKey: string, value: string) {
   }
 }
 
+const NOTE_HINT_ID = "support-note-hint";
+
 /**
  * #1527 — the case timeline and its composer. Reply and Private note keep
  * separate drafts, so switching modes can never send a note's text to the
  * user; the note draft is kept per case in this browser (localStorage).
+ * Saved replies and Help Center links come in through the Insert menu and
+ * the suggestion chips, always into the reply.
  */
 export function CaseConversation({
   data,
@@ -43,6 +50,10 @@ export function CaseConversation({
   onReplyDraftChange,
   sending,
   onSend,
+  replies,
+  suggested,
+  helpArticles,
+  onInsert,
 }: Readonly<{
   data: CaseWorkspace;
   mode: ComposerMode;
@@ -51,6 +62,10 @@ export function CaseConversation({
   onReplyDraftChange: (value: string) => void;
   sending: boolean;
   onSend: (message: string, note: boolean) => Promise<unknown>;
+  replies: SavedReply[];
+  suggested: ArticleLink[];
+  helpArticles: ArticleLink[];
+  onInsert: (text: string) => void;
 }>) {
   const canNote = !!data.ticketId;
   const [note, setNote] = useState("");
@@ -109,26 +124,70 @@ export function CaseConversation({
       </div>
 
       <div className="space-y-2 border-t border-border p-3">
-        <div role="tablist" aria-label="Composer mode" className="flex gap-1">
-          {(["reply", "note"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="tab"
-              aria-selected={mode === m}
-              disabled={m === "note" && !canNote}
-              onClick={() => onModeChange(m)}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50",
-                mode === m
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {m === "note" && <Lock className="h-3 w-3" aria-hidden />}
-              {m === "reply" ? "Reply" : "Private note"}
-            </button>
-          ))}
+        {suggested.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Suggested:</span>
+            {suggested.slice(0, 3).map((a) => (
+              <button
+                key={a.href}
+                type="button"
+                title="Insert a link to this article"
+                onClick={() => onInsert(articleInsertText(a))}
+                className="max-w-[16rem] truncate rounded-full border border-border px-2.5 py-0.5 text-xs text-foreground transition-colors hover:bg-muted"
+              >
+                {a.title}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div
+            role="tablist"
+            aria-label="Composer mode"
+            className="flex items-center gap-1"
+          >
+            {(["reply", "note"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="tab"
+                aria-selected={mode === m}
+                disabled={m === "note" && !canNote}
+                aria-describedby={
+                  m === "note" && !canNote ? NOTE_HINT_ID : undefined
+                }
+                title={
+                  m === "note" && !canNote
+                    ? "Private notes need a ticket; this conversation has not been escalated."
+                    : undefined
+                }
+                onClick={() => onModeChange(m)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50",
+                  mode === m
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m === "note" && <Lock className="h-3 w-3" aria-hidden />}
+                {m === "reply" ? "Reply" : "Private note"}
+              </button>
+            ))}
+            {!canNote && (
+              <span
+                id={NOTE_HINT_ID}
+                className="text-[11px] text-muted-foreground"
+              >
+                Needs a ticket
+              </span>
+            )}
+          </div>
+          <CaseInsertMenu
+            replies={replies}
+            suggested={suggested}
+            all={helpArticles}
+            onInsert={onInsert}
+          />
         </div>
         <Textarea
           aria-label={isNote ? "Private note" : "Reply to the customer"}
@@ -157,9 +216,6 @@ export function CaseConversation({
               (noteSaved && note
                 ? "Draft saved on this device."
                 : "Note drafts are saved on this device.")}
-            {!isNote &&
-              !canNote &&
-              "Private notes need a ticket; this conversation has not been escalated."}
           </p>
           <Button
             size="sm"
