@@ -26,8 +26,9 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
-import { deriveDeviceLabel } from "@/lib/auth/device-label";
 import { enforceSessionCapForUser } from "@/lib/auth/session-cap";
+import { stampSessionDeviceMetadata } from "@/lib/auth/session-stamp";
+import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
 // AC). Shares defaultAc so statements line up.
@@ -50,6 +51,16 @@ export const auth = betterAuth({
   trustedOrigins: process.env.BETTER_AUTH_TRUSTED_ORIGINS
     ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")
     : [],
+
+  // #1856 — BetterAuth swallows endpoint exceptions into 500 responses
+  // (nothing ever throws out of `app/api/auth/[...all]`), and schema
+  // errors take a message-only log branch. Without this, an auth-wide
+  // outage is invisible: it lands on console (Netlify function logs)
+  // and never reaches Sentry. Only `error` forwards; every level keeps
+  // its console behavior — see `lib/auth/auth-logger.ts`.
+  logger: {
+    log: reportAuthLogToSentry,
+  },
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
@@ -398,21 +409,19 @@ export const auth = betterAuth({
             });
           }
 
-          // Device metadata (#1856), stamped with zero extra writes:
-          // `create.before` may return `{ data }` merged into the insert.
-          // `session.userAgent` is already populated by BetterAuth's
-          // internal adapter at this point (request headers), so the
-          // label derives from the live value. `lastSeenAt` starts at
-          // creation; the throttled touch in `lib/auth/last-seen.ts`
-          // advances it thereafter.
-          return {
-            data: {
-              deviceLabel: deriveDeviceLabel(session.userAgent),
-              lastSeenAt: new Date(),
-            },
-          };
+          // NOTE (#1856): device metadata is stamped in `create.after`,
+          // NOT by returning `{ data }` here. Merging the columns into
+          // the insert made the stamp load-bearing for auth — a missing
+          // column bricked ALL sign-ins pre-push. This hook stays a pure
+          // veto: reject, or fall through to the insert untouched.
         },
         after: async (session) => {
+          // Device metadata (#1856) — awaited (one PK update on a rare
+          // path) so a serverless freeze cannot drop it; failures are
+          // caught inside and never fail sign-in. See
+          // `lib/auth/session-stamp.ts` for why this is an update and
+          // not an insert merge.
+          await stampSessionDeviceMetadata(session.id, session.userAgent);
           // Concurrent-session cap (#1856) — eventually consistent and
           // MUST never fail sign-in, so fire-and-forget with a Sentry
           // report. The just-created session is the newest and is always

@@ -2,10 +2,10 @@
  * Server-derived human label for an auth session ("Chrome on Windows").
  *
  * Stamped onto `Session.deviceLabel` at creation by
- * `databaseHooks.session.create.before` (zero extra writes — the hook
- * returns `{ data }` merged into the insert), and re-derived at read time
- * for rows written before this deploy or by direct Prisma writes, which
- * skip BetterAuth hooks.
+ * `databaseHooks.session.create.after` (awaited PK update — deliberately
+ * not merged into the insert, so a missing column can never brick
+ * sign-in), and re-derived at read time for rows written before this
+ * deploy or by direct Prisma writes, which skip BetterAuth hooks.
  *
  * Deliberately dependency-free (~40 lines of regex, no ua-parser-js):
  * the label is coarse by design — browser family + OS family only. The

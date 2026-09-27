@@ -52,7 +52,7 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 - If domain is enforced (`enforceSSO=true`, verified claim, active org), checks whether user has an `account` row matching one of the org's registered `ssoProvider.providerId` values
 - **Fails open** if the org has no providers configured yet (prevents lockout during setup)
 - Throws `APIError("FORBIDDEN")` with `code: "SSO_REQUIRED"` if rejected
-- On the allow path, stamps `deviceLabel` + `lastSeenAt` onto the row via the returned `{ data }` (merged into the insert — zero extra writes, #1856)
+- The allow path falls through untouched: device metadata is stamped in `session.create.after`, never merged into the insert (a missing column must never brick sign-in, #1856)
 
 **`session.create.after`** — Fires after the session row commits (#1856):
 - Fire-and-forget `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry). Eventually consistent by design and must never fail sign-in — failures are Sentry-reported and swallowed.

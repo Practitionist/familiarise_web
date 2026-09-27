@@ -116,7 +116,7 @@ Four hooks fire at key lifecycle events:
 | Hook | When | What it does |
 |---|---|---|
 | `user.create.after` | After a new user signs up | Creates `CookiePreference` + `NotificationPreference`. Sends welcome email (fire-and-forget). Syncs Novu subscriber. |
-| `session.create.before` | Before issuing a session cookie | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). On the allow path, stamps `deviceLabel` + `lastSeenAt` onto the row (#1856). |
+| `session.create.before` | Before issuing a session cookie | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). Pure veto: device metadata is stamped in `create.after`, never merged into the insert (#1856). |
 | `session.create.after` | After the session row commits | Concurrent-session cap: fire-and-forget `enforceSessionCapForUser()` (cap 10, #1856). |
 | `account.create.after` | After linking a non-credential account | Sends "account linked" notification email (fire-and-forget). |
 
