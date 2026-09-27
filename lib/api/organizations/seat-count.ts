@@ -27,6 +27,8 @@ import type { Tx } from "@/lib/prisma";
  */
 
 import type { Prisma } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { transitionProgramAssignment } from "@/lib/enterprise/transitions";
 
 export class SeatCountUnderflowError extends Error {
   constructor(public billingSubscriptionId: string) {
@@ -186,4 +188,66 @@ export async function releaseSeatsForTerminatedAssignments(
     }
   }
   return seen.size;
+}
+
+/**
+ * #1846 SM-C14 / #1851 decision 3 — a contract that ends (manual TERMINATED or
+ * EXPIRED, or the nightly expiry job) closes every live seat under it: ACTIVE
+ * and PAUSED assignments move to CLOSED through the assignment CAS, a seat
+ * still in period ends now, the billed seat count is released, and each seat
+ * gets its own audit row so the member's timeline shows why it ended. The
+ * programs themselves move to EXPIRED. Returns the number of seats closed.
+ */
+export async function closeContractSeats(
+  tx: Tx,
+  args: {
+    contractId: string;
+    organizationId: string;
+    /** Null for the expiry job, which acts as the platform. */
+    actorMembershipId: string | null;
+    contractStatus: "TERMINATED" | "EXPIRED";
+    now: Date;
+  },
+): Promise<number> {
+  const { contractId, organizationId, actorMembershipId, now } = args;
+  await tx.program.updateMany({
+    where: { contractId, status: { in: ["ACTIVE", "PAUSED"] } },
+    data: { status: "EXPIRED" },
+  });
+  const live = await tx.programAssignment.findMany({
+    where: { program: { contractId }, status: { in: ["ACTIVE", "PAUSED"] } },
+    select: { id: true, programId: true, membershipId: true, periodEnd: true },
+  });
+  const closedPerProgram = new Map<string, number>();
+  for (const seat of live) {
+    await transitionProgramAssignment(tx, {
+      where: { id: seat.id },
+      to: "CLOSED",
+      // A seat past its period keeps its real end; one still in period ends now.
+      ...(seat.periodEnd > now && { data: { periodEnd: now } }),
+      audit: {
+        organizationId,
+        actorMembershipId,
+        targetMembershipId: seat.membershipId,
+        category: "PROGRAM",
+        action: AUDIT_ACTIONS.PROGRAM.ASSIGNMENT_CLOSED_BY_CONTRACT,
+        description: `Seat ${seat.id} closed: contract ${contractId} ${args.contractStatus.toLowerCase()}`,
+        details: {
+          contractId,
+          programId: seat.programId,
+          assignmentId: seat.id,
+          membershipId: seat.membershipId,
+          contractStatus: args.contractStatus,
+        },
+      },
+    });
+    closedPerProgram.set(
+      seat.programId,
+      (closedPerProgram.get(seat.programId) ?? 0) + 1,
+    );
+  }
+  for (const [programId, count] of closedPerProgram) {
+    await releaseSeatsForClosedAssignments(tx, programId, count);
+  }
+  return live.length;
 }

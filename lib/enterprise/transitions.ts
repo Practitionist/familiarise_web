@@ -51,6 +51,8 @@ export class IllegalTransitionError extends Error {
 interface AuditSpec {
   organizationId: string;
   actorMembershipId: string | null;
+  /** The member the row is about, so it shows on their timeline. */
+  targetMembershipId?: string | null;
   category: OrgAuditCategory;
   action: string;
   description: string;
