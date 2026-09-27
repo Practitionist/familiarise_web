@@ -4,15 +4,16 @@
  *
  * GET returns a single payout with its attached earnings. PATCH is narrow:
  * it permits only manual admin transitions that don't require bank-side
- * interaction. Real state transitions (PENDING → PROCESSING → COMPLETED)
- * come from the payout cron that talks to the gateway.
+ * interaction. Real state transitions (PENDING or APPROVED → PROCESSING →
+ * COMPLETED) come from the payout cron that talks to the gateway.
  *
  * Allowed manual transitions are the shared PAYOUT_ALLOWED_FROM map's
  * (#1846 SM-B12), applied through transitionOrgPayout:
- *   PENDING  → APPROVED   (explicit manager sign-off)
+ *   PENDING  → APPROVED   (explicit manager sign-off; the cron still pays it)
  *   PENDING  → CANCELLED  (releases the BATCHED earnings back to READY)
- *   APPROVED → CANCELLED  (same release; kept pending an owner decision)
- * A FAILED payout is terminal: its earnings were released when it failed.
+ * An APPROVED payout cannot be cancelled: after sign-off it can only fail or
+ * be reversed. A FAILED payout is terminal: its earnings were released when
+ * it failed.
  */
 
 import * as Sentry from "@sentry/nextjs";
