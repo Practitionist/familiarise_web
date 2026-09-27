@@ -287,6 +287,123 @@ function rawRefundReasonLabel(raw: string): string | undefined {
 }
 
 /**
+ * Why a payment failed, as the sentence after "did not go through".
+ *
+ * `payment.description` is merchant-set prose in most flows but carries a
+ * gateway code (`card_declined`, …) often enough that the bell must not
+ * print it raw. Code-shaped input is mapped or spaced out; prose a human
+ * wrote passes through verbatim.
+ */
+const PAYMENT_FAILURE_REASON_LABEL: Record<string, string> = {
+  card_declined: "your card was declined",
+  expired_card: "your card has expired",
+  incorrect_cvc: "the card security code was incorrect",
+  incorrect_number: "the card number was incorrect",
+  insufficient_funds: "your account had insufficient funds",
+  authentication_required: "your card needs additional authentication",
+  processing_error: "an error while processing your payment",
+  gateway_error: "an error at the payment gateway",
+  network_error: "a network error while processing your payment",
+  bad_request_error: "invalid payment details",
+};
+
+export function failureReasonLabel(reason: string | null | undefined): string {
+  const raw = reason?.trim();
+  if (!raw) return "the payment could not be processed";
+  if (/^[a-z][a-z0-9_]*$/i.test(raw)) {
+    const key = raw.toLowerCase();
+    return PAYMENT_FAILURE_REASON_LABEL[key] ?? key.replace(/_/g, " ");
+  }
+  return raw;
+}
+
+/**
+ * Why a dispute was opened, as the clause after "was opened". Stripe and
+ * Razorpay reason codes (`fraudulent`, `product_not_received`, …) reach the
+ * bell verbatim otherwise. Same code-shaped rule as
+ * {@link failureReasonLabel}; prose passes through.
+ */
+const DISPUTE_REASON_LABEL: Record<string, string> = {
+  fraudulent: "a fraudulent-payment claim",
+  product_not_received: "goods that never arrived",
+  product_unacceptable: "goods not as described",
+  subscription_canceled: "a cancelled subscription",
+  credit_not_processed: "a credit that was never processed",
+  unrecognized: "a charge the cardholder does not recognize",
+  duplicate: "a duplicate charge",
+  general: "a general dispute",
+};
+
+export function disputeReasonLabel(
+  reason: string | null | undefined,
+): string | undefined {
+  const raw = reason?.trim();
+  if (!raw) return undefined;
+  if (/^[a-z][a-z0-9_]*$/i.test(raw)) {
+    const key = raw.toLowerCase();
+    return DISPUTE_REASON_LABEL[key] ?? key.replace(/_/g, " ");
+  }
+  return raw;
+}
+
+/**
+ * Where a dispute stands, as the clause after "has been resolved". The
+ * template used to downcase the enum inline (`WON` → "won" works, but
+ * `WARNING_CLOSED` → "warning closed" is gateway jargon), so the mapping
+ * lives here with the other status labels.
+ */
+const DISPUTE_STATUS_LABEL: Record<string, string> = {
+  needs_response: "needs a response",
+  under_review: "under review",
+  warning_needs_response: "needs a response to an early warning",
+  warning_under_review: "under review after an early warning",
+  warning_closed: "closed after an early warning",
+  won: "won",
+  lost: "lost",
+};
+
+export function disputeStatusLabel(
+  status: string | null | undefined,
+): string | undefined {
+  const raw = status?.trim();
+  if (!raw) return undefined;
+  const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  return DISPUTE_STATUS_LABEL[key] ?? key.replace(/_/g, " ");
+}
+
+/**
+ * A collaborator's role as prose ("Co-host", not "CO_HOST").
+ *
+ * The template downcases whatever it gets, so the payload carries Title
+ * Case with real hyphens — `co host` (underscore replaced after the fact)
+ * is what the raw enum produced.
+ */
+const COLLABORATOR_ROLE_LABEL: Record<string, string> = {
+  CO_HOST: "Co-host",
+  MODERATOR: "Moderator",
+  GUEST_SPEAKER: "Guest speaker",
+  TECHNICAL_SUPPORT: "Technical support",
+  CO_INSTRUCTOR: "Co-instructor",
+  TEACHING_ASSISTANT: "Teaching assistant",
+};
+
+export function collaboratorRoleLabel(
+  role: string | null | undefined,
+): string {
+  const raw = role?.trim();
+  if (!raw) return "Collaborator";
+  const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  return (
+    COLLABORATOR_ROLE_LABEL[key] ??
+    key
+      .toLowerCase()
+      .split("_")
+      .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+      .join(" ")
+  );
+}
+
+/**
  * A ticket status as the clause that follows "is now": `IN_PROGRESS` reaches
  * the inbox as "in progress". Exhaustive over the enum so a new status fails
  * the build rather than shouting its identifier at a customer.

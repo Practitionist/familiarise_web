@@ -41,7 +41,7 @@ import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
 import { reportSentryError } from "@/lib/observability/report";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatNotificationMoney } from "@/lib/novu/humanize";
 
 export interface SettleCancelledSessionsResult {
   success: boolean;
@@ -462,7 +462,7 @@ async function refundAndTell(
       recipients: [payment.userId],
       payload: {
         planTitle: planTitleOf(session),
-        amount: formatCurrencyAmount(
+        amount: formatNotificationMoney(
           refund.amountRefundedPaise,
           payment.currency,
         ),

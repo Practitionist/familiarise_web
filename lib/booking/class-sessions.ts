@@ -10,7 +10,6 @@
  */
 
 import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
-import { format } from "date-fns";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
@@ -26,6 +25,14 @@ import {
 } from "@/lib/payments/operations/refund";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
+import {
+  DEFAULT_NOTIFICATION_TIMEZONE,
+  formatNotificationDateTime,
+  groupRecipientsByTimezone,
+  resolveRecipientTimezones,
+} from "@/lib/novu/humanize";
+import type { NovuPayload } from "@/lib/novu/outbox";
+import type { NovuWorkflowId } from "@/lib/novu/templates/types";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
@@ -59,7 +66,36 @@ const SEATED: Prisma.AppointmentParticipantWhereInput = {
   status: { in: ["CONFIRMED", "ATTENDED"] },
 };
 
-const when = (d: Date) => format(d, "EEE d MMM yyyy, HH:mm 'UTC'");
+/**
+ * One rendered instant can only be correct for one zone, and seat holders
+ * span them (#536): stage one bell per distinct recipient zone (usually
+ * one) instead of stamping every copy in UTC. Re-runs upsert the same rows
+ * — the transaction id covers the recipients — so the dedupe key stays
+ * zone-free.
+ */
+async function stageBellsByZone(
+  tx: Tx,
+  workflowId: NovuWorkflowId,
+  userIds: string[],
+  payload: (zone: string) => NovuPayload,
+  dedupeKey: string,
+): Promise<void> {
+  const zones = await resolveRecipientTimezones(userIds, tx);
+  for (const [zone, ids] of groupRecipientsByTimezone(userIds, zones)) {
+    await stageBell(tx, {
+      workflowId,
+      recipients: ids,
+      payload: payload(zone),
+      dedupeKey,
+    });
+  }
+}
+
+/** House format in the recipient's zone (`Sat, 6 Sep 2026 · 7:53 AM IST`). */
+const zoned = (d: Date, zone: string): string =>
+  formatNotificationDateTime(d, zone) ??
+  formatNotificationDateTime(d, DEFAULT_NOTIFICATION_TIMEZONE) ??
+  d.toISOString();
 
 export interface ClassActor {
   userId: string;
@@ -214,19 +250,20 @@ export async function cancelClassSession(
       });
       const seatUserIds = seats.map((s) => s.userId);
       if (seatUserIds.length > 0) {
-        await stageBell(tx, {
-          workflowId: NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-          recipients: seatUserIds,
-          payload: {
+        await stageBellsByZone(
+          tx,
+          NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+          seatUserIds,
+          (zone) => ({
             planTitle: hosted.cls.classPlan.title,
             consultantName:
               hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
-            dateTime: when(session.startsAt),
-            makeUpBy: when(makeUpBy),
+            dateTime: zoned(session.startsAt, zone),
+            makeUpBy: zoned(makeUpBy, zone),
             dashboardUrl: "/dashboard",
-          },
-          dedupeKey: `occ-cancel:${occurrenceId}`,
-        });
+          }),
+          `occ-cancel:${occurrenceId}`,
+        );
       }
       const ledger = await seriesLedger(tx, appointmentId, now);
       // Past the threshold every miss re-checks the flag (an ops clear may
@@ -282,22 +319,24 @@ export async function onClassSessionVoided(
   });
   const seatUserIds = seats.map((s) => s.userId);
   if (seatUserIds.length > 0) {
-    await stageBell(tx, {
-      workflowId: NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-      recipients: seatUserIds,
-      payload: {
+    await stageBellsByZone(
+      tx,
+      NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+      seatUserIds,
+      (zone) => ({
         voided: true,
         planTitle: cls.classPlan.title,
         consultantName:
           cls.classPlan.consultantProfile?.user.name ?? "Your host",
-        dateTime: when(args.startsAt),
-        makeUpBy: when(
+        dateTime: zoned(args.startsAt, zone),
+        makeUpBy: zoned(
           new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
+          zone,
         ),
         dashboardUrl: "/dashboard",
-      },
-      dedupeKey: `occ-void:${args.occurrenceId}`,
-    });
+      }),
+      `occ-void:${args.occurrenceId}`,
+    );
   }
   const ledger = await seriesLedger(tx, args.appointmentId, args.voidedAt);
   if (ledger.exitRight) {
@@ -398,16 +437,17 @@ export async function scheduleClassMakeUp(
         select: { userId: true },
       });
       if (seats.length > 0) {
-        await stageBell(tx, {
-          workflowId: NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
-          recipients: seats.map((s) => s.userId),
-          payload: {
+        await stageBellsByZone(
+          tx,
+          NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
+          seats.map((s) => s.userId),
+          (zone) => ({
             planTitle: hosted.cls.classPlan.title,
-            dateTime: when(startsAt),
+            dateTime: zoned(startsAt, zone),
             dashboardUrl: "/dashboard",
-          },
-          dedupeKey: `makeup:${sourceOccurrenceId}`,
-        });
+          }),
+          `makeup:${sourceOccurrenceId}`,
+        );
       }
       return { occurrenceId: makeUp.id, startsAt, endsAt };
     }),

@@ -66,6 +66,13 @@ import {
   formatNotificationMoney,
 } from "./humanize";
 
+/**
+ * What a date field carries when its input does not parse: the dashboard
+ * always shows the real date, so the bell degrades to pointing at it
+ * instead of printing raw ISO (the recording-expiring bell's wording).
+ */
+const DATE_FALLBACK = "the date shown in your dashboard";
+
 // ============================================================================
 // Internal trigger helpers — thin wrappers over the service cores (#691)
 // ============================================================================
@@ -199,7 +206,7 @@ export async function notifyOrgInviteSent(
       formatNotificationDateTime(
         payload.expiresAt,
         DEFAULT_NOTIFICATION_TIMEZONE,
-      ) ?? payload.expiresAt,
+      ) ?? DATE_FALLBACK,
     expiresAtIso: payload.expiresAt,
   };
   return triggerOne(NOVU_WORKFLOWS.ORG_INVITE_SENT, inviteeEmail, wire, opts);
@@ -245,8 +252,7 @@ export async function notifyOrgInvoiceIssued(
       ...payload,
       total: formatNotificationMoney(payload.totalPaise, payload.currency),
       dueDate:
-        formatNotificationDateTime(payload.dueDate, timezone) ??
-        payload.dueDate,
+        formatNotificationDateTime(payload.dueDate, timezone) ?? DATE_FALLBACK,
       dueDateIso: payload.dueDate,
     }),
     opts,
@@ -270,7 +276,7 @@ export async function notifyOrgInvoicePaid(
       ...payload,
       total: formatNotificationMoney(payload.totalPaise, payload.currency),
       paidAt:
-        formatNotificationDateTime(payload.paidAt, timezone) ?? payload.paidAt,
+        formatNotificationDateTime(payload.paidAt, timezone) ?? DATE_FALLBACK,
       paidAtIso: payload.paidAt,
     }),
     opts,
@@ -349,7 +355,7 @@ export async function notifyOrgLicenseRenewalUpcoming(
       cycleCode: payload.cycle,
       renewalDate:
         formatNotificationDateTime(payload.renewalDate, timezone) ??
-        payload.renewalDate,
+        DATE_FALLBACK,
       renewalDateIso: payload.renewalDate,
       expectedTotal: formatNotificationMoney(
         payload.expectedTotalPaise,
@@ -380,7 +386,7 @@ export async function notifyOrgDataExportReady(
       ...payload,
       expiresAt:
         formatNotificationDateTime(payload.expiresAt, timezone) ??
-        payload.expiresAt,
+        DATE_FALLBACK,
       expiresAtIso: payload.expiresAt,
     }),
     opts,
@@ -496,6 +502,9 @@ export async function notifyOrgPayoutFailed(
       : NOVU_WORKFLOWS.ORG_PAYOUT_FAILED;
   const wire: OrgPayoutFailedPayload = {
     ...payload,
+    // The template prints the reason ungated after a colon — a blank
+    // gateway string would hang the sentence on it.
+    reason: payload.reason?.trim() ? payload.reason : "no reason was given",
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
     // #1474 — same withheld split as the COMPLETED bell; FAILED carries no
     // withholding so the clause stays absent there.
@@ -619,7 +628,7 @@ export async function notifyOrgSsoCertExpiring(
       ...payload,
       notAfter:
         formatNotificationDateTime(payload.notAfter, timezone) ??
-        payload.notAfter,
+        DATE_FALLBACK,
       notAfterIso: payload.notAfter,
     }),
     opts,

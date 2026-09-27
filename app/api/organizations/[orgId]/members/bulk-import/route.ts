@@ -91,7 +91,11 @@ export async function POST(
       access.session.user.name ?? access.session.user.email ?? "An operator",
     orgName: access.org.name,
     role: "LEARNER",
-    inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+    // No invitation row exists on this path (the membership is the
+    // anchor), so there is no /organizations/invite/<token> to point
+    // at — the orgId-based URL previewed "invalid". The org home is
+    // where a fresh member lands instead.
+    inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/organization/${orgId}/home`,
     expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
   };
   const stagedBells: StagedTrigger[] = [];

@@ -183,10 +183,13 @@ async function runSsoCertExpiryAlertUnlocked(): Promise<SsoCertExpiryAlertResult
         select: { name: true },
       });
       if (org) {
-        const dashboardUrl = `/dashboard/organization/${provider.organizationId}/settings/sso`;
+        // The SSO panel lives on organization settings (?tab=sso), not a
+        // /settings/sso sub-route — and the bell names the domain owners
+        // recognize, not the provider slug.
+        const dashboardUrl = `/dashboard/organization/${provider.organizationId}/settings?tab=sso`;
         await notifyOrgSsoCertExpiring(provider.organizationId, {
           orgName: org.name,
-          providerId: provider.providerId,
+          providerId: provider.domain,
           daysRemaining,
           severity,
           notAfter: notAfter.toISOString(),
@@ -207,7 +210,7 @@ async function runSsoCertExpiryAlertUnlocked(): Promise<SsoCertExpiryAlertResult
             orgId: provider.organizationId,
             recipientUserIds: owners.map((m) => m.userId),
             orgName: org.name,
-            providerName: provider.providerId,
+            providerName: provider.domain,
             severity,
             daysRemaining,
             notAfter,

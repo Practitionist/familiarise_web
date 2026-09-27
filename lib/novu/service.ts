@@ -81,6 +81,9 @@ import {
   cancellationReasonLabel,
   cancelledByLabel,
   DEFAULT_NOTIFICATION_TIMEZONE,
+  disputeReasonLabel,
+  disputeStatusLabel,
+  failureReasonLabel,
   formatNotificationAmountBare,
   formatNotificationDateTime,
   formatNotificationMoney,
@@ -626,6 +629,7 @@ export async function notifyPaymentFailed(
     amountPaise: payload.amount,
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
+    failureReason: failureReasonLabel(payload.failureReason),
   };
   return triggerWorkflow(
     NOVU_WORKFLOWS.PAYMENT_FAILED,
@@ -985,8 +989,12 @@ export async function notifyPayoutFailed(
   consultantUserId: string,
   payload: PayoutInput,
 ) {
+  // The row id stays out of the prose: the template printed it in
+  // parentheses after the amount, and a UUID is not something a person
+  // can act on — the payouts queue is the lookup path.
+  const { payoutId: _payoutId, ...rest } = payload;
   const wire: PayoutPayload = {
-    ...payload,
+    ...rest,
     amount: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
   };
@@ -1042,10 +1050,15 @@ export async function notifyNewConsultantApplication(
 // ============================================================================
 
 function disputeWire(payload: DisputeInput): DisputePayload {
+  const { reason: rawReason, status: rawStatus, ...rest } = payload;
+  const reason = disputeReasonLabel(rawReason);
+  const status = disputeStatusLabel(rawStatus);
   return {
-    ...payload,
+    ...rest,
     amount: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
+    ...(reason ? { reason } : {}),
+    ...(status ? { status } : {}),
   };
 }
 
@@ -1097,10 +1110,14 @@ export async function notifyRecordingFailed(
   subscriberId: string,
   payload: RecordingFailedPayload,
 ) {
+  // The vendor's raw error (an ffmpeg exit, an SDK message) is not prose
+  // anyone can act on — it stays in the logs and Sentry, and the template
+  // renders its clean sentence without it.
+  const { errorMessage: _vendorDetail, ...rest } = payload;
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
     subscriberId,
-    payload,
+    rest,
   );
 }
 
