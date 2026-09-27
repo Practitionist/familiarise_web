@@ -154,6 +154,8 @@ interface SubscriptionData {
 interface EventData {
   eventId: string;
   userId: string;
+  /** #1852 — the payer org, stamped on the seat (null for a B2C seat). */
+  organizationId: string | null;
 }
 
 // ============================================================================
@@ -1634,10 +1636,18 @@ async function createAppointmentFromWebhook(
       });
       break;
     case AppointmentsType.WEBINAR:
-      appointment = await createWebinar(tx, { eventId, userId });
+      appointment = await createWebinar(tx, {
+        eventId,
+        userId,
+        organizationId: payment.organizationId,
+      });
       break;
     case AppointmentsType.CLASS:
-      appointment = await createClass(tx, { eventId, userId });
+      appointment = await createClass(tx, {
+        eventId,
+        userId,
+        organizationId: payment.organizationId,
+      });
       break;
     default:
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
@@ -1834,7 +1844,7 @@ async function createWebinar(tx: Tx, data: EventData) {
     tx,
     webinar.appointment.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "HELD" },
+    { status: "HELD", organizationId: data.organizationId },
   );
 
   const createdAppointment = await tx.appointment.findUnique({
@@ -1878,7 +1888,7 @@ async function createClass(tx: Tx, data: EventData) {
     tx,
     wrapper.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "HELD" },
+    { status: "HELD", organizationId: data.organizationId },
   );
 
   const createdAppointment = await tx.appointment.findUnique({
