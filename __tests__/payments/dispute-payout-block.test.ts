@@ -168,7 +168,8 @@ describe("consultant rail — TDS_ENGINE defaults to 194O", () => {
     // ₹5,000 payout under the ₹50K LEGACY gate would withhold nothing; pure
     // 194-O taxes the full amount — at the 5 % no-PAN rate here, since the
     // fixture has no ConsultantTaxInfo on file.
-    const processingWrite = mocks.consultantPayout.update.mock.calls.find(
+    // #1846 — the TDS outcome is staged by CAS before the gateway call.
+    const processingWrite = mocks.consultantPayout.updateMany.mock.calls.find(
       ([arg]: [{ data: { tdsDeducted?: number } }]) =>
         arg.data.tdsDeducted !== undefined && arg.data.tdsDeducted > 0,
     );

@@ -76,6 +76,9 @@ const payoutEntitySchema = z.object({
   // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
   // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
   utr: z.string().nullable().optional(),
+  // #1846 N1 — our payout row id, sent as `reference_id` at creation. It
+  // matches a consultant payout whose submit reply was lost.
+  reference_id: z.string().nullable().optional(),
 });
 
 /**
@@ -446,6 +449,7 @@ export async function processRazorpayWebhookEvent(
           status: payoutEvent.status,
           failure_reason: payoutEvent.failure_reason ?? undefined,
           utr: payoutEvent.utr ?? undefined,
+          reference_id: payoutEvent.reference_id ?? undefined,
         });
         break;
       }
