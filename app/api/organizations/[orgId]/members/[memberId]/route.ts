@@ -26,6 +26,7 @@ import {
 } from "@/lib/enterprise/transitions";
 import {
   MembershipGuardError,
+  assertNotTombstone,
   assertRoleChangeAllowed,
   assertStatusChangeAllowed,
 } from "@/lib/enterprise/membership-guards";
@@ -363,6 +364,9 @@ export async function PATCH(
               httpStatus: 404,
             });
           }
+
+          // #1854 — the label rides the session payload, so a tombstone keeps it.
+          if (patch.departmentLabel !== undefined) assertNotTombstone(current);
 
           const roleChanged =
             patch.role !== undefined && patch.role !== current.role;

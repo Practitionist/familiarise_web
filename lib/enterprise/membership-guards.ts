@@ -181,6 +181,17 @@ export interface RoleChangeInput {
   org: { canHost: boolean; canSponsor: boolean };
 }
 
+/** REMOVED and ERASED rows are tombstones: no field on them changes here. */
+export function assertNotTombstone(m: Pick<GuardedMembership, "status">): void {
+  if (m.status === "REMOVED" || m.status === "ERASED") {
+    throw new MembershipGuardError(
+      "REMOVED_REQUIRES_REINVITE",
+      "This member was removed. Send them a new invitation to bring them back.",
+      409,
+    );
+  }
+}
+
 /**
  * #1846 bucket C rule 1. Operator roles switch freely (audited by the caller,
  * OWNER rules still apply). LEARNER and EXPERT change role only while they
@@ -195,6 +206,9 @@ export async function assertRoleChangeAllowed(
 ): Promise<void> {
   const { membership: m, to, actor, org } = input;
   if (to === m.role) return;
+  // #1854 — a role write on a tombstone would lazy-create a profile for an
+  // erased user; a REMOVED row only comes back through an invitation.
+  assertNotTombstone(m);
 
   if (isSelf(actor, m.id)) {
     throw new MembershipGuardError(
@@ -281,14 +295,7 @@ export async function assertStatusChangeAllowed(
     );
   }
   assertActorMayManage(actor, m.role);
-
-  if (m.status === "REMOVED" || m.status === "ERASED") {
-    throw new MembershipGuardError(
-      "REMOVED_REQUIRES_REINVITE",
-      "This member was removed. Send them a new invitation to bring them back.",
-      409,
-    );
-  }
+  assertNotTombstone(m);
   if (m.status === "PENDING" && to === "ACTIVE" && actor.kind === "member") {
     throw new MembershipGuardError(
       "PENDING_REQUIRES_ACCEPT",
