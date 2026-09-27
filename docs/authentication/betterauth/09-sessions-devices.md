@@ -54,8 +54,10 @@ checks the _calling_ admin's session) and cannot join a transaction.
 `Session.deviceLabel` + `Session.lastSeenAt` are nullable (additive
 under the #705 freeze, no backfill). The label is stamped by
 `session.create.after` (awaited PK update — deliberately NOT merged into
-the insert, so a missing column can never brick sign-in) via the
-dependency-free `deriveDeviceLabel()`
+the insert, so a stamp failure never fails sign-in) via the
+dependency-free `deriveDeviceLabel()`. Note the limit: the INSERT itself
+still requires the columns until the push, because the regenerated client
+selects all model fields by default — no hook placement avoids that.
 (`lib/auth/device-label.ts`); rows predating the deploy fall back to
 read-time derivation. `lastSeenAt` starts at creation and advances via
 the throttled touch in `lib/auth/last-seen.ts`, fired from
