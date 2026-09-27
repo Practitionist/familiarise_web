@@ -10,6 +10,7 @@ import {
   restoreRescheduledBooking,
 } from "@/lib/booking/reschedule-restore";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { notifyAppointmentRescheduled } from "@/lib/novu";
 import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -90,6 +91,13 @@ export async function withdrawRescheduleRequest(args: {
     // 500 instead of the 409 this actually is.
     if (err instanceof IllegalTransitionError) {
       return { withdrawn: false, reason: "PROPOSAL_NOT_OPEN" };
+    }
+    // #1846 SM-B15 — the original time was booked while the proposal was open,
+    // so flipping the released rows back to confirmed hits the overlap
+    // constraint. The transaction rolled back whole, so the proposal is still
+    // open and nothing moved; that is an answer (409), not a fault (500).
+    if (isExclusionViolation(err)) {
+      return { withdrawn: false, reason: "ORIGINAL_TIME_TAKEN" };
     }
     reportSentryError(err, {
       subsystem: "bookings",
