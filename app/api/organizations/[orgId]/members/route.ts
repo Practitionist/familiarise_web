@@ -3,9 +3,10 @@
  * POST   /api/organizations/[orgId]/members
  *
  * The single members endpoint subsumes the old /consultants and /learners
- * views — callers pass `?role=EXPERT` or `?role=LEARNER` to filter. Also
- * accepts a comma-separated role list (`?role=EXPERT,LEARNER`) for the
- * union case, plus `status` / `departmentLabel` / `q` / pagination.
+ * views. GET takes `role` and `status` (comma lists), `q`, `departmentLabel`,
+ * `sort` (name|role|joined) + `dir` and pagination, all bounded by
+ * `MembersListQuerySchema`, and returns `counts` by role for the filter chips
+ * (#1527). ERASED rows are never listed.
  *
  * Everything is parsed through Zod. Runtime narrowing never relies on
  * `as` assertions.
@@ -16,9 +17,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import prisma from "@/lib/prisma";
+import {
+  buildOrgMembersQuery,
+  toRoleCounts,
+} from "@/lib/data/org-members-query";
+import { MembersListQuerySchema } from "@/schemas/organizations";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
-import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
@@ -30,50 +35,6 @@ import {
 
 // #817 — the canonical full-enum Zod mirror lives in org-labels; the local
 // duplicate here drifted (BILLING_ADMIN went missing), so import it instead.
-
-const MemberStatusSchema = z.enum([
-  "PENDING",
-  "ACTIVE",
-  "SUSPENDED",
-  "REMOVED",
-]);
-
-/**
- * Accepts a string like "EXPERT" or "EXPERT,LEARNER" and returns the
- * narrowed list. Empty/invalid → undefined (no filter applied).
- */
-function parseRoleFilter(raw: string | null): MemberRole[] | undefined {
-  if (!raw) return undefined;
-  const parts = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const parsed: MemberRole[] = [];
-  for (const p of parts) {
-    const result = MemberRoleSchema.safeParse(p);
-    if (result.success) parsed.push(result.data);
-  }
-  return parsed.length ? parsed : undefined;
-}
-
-function parseStatusFilter(raw: string | null): MemberStatus[] | undefined {
-  if (!raw) return undefined;
-  const parts = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const parsed: MemberStatus[] = [];
-  for (const p of parts) {
-    const result = MemberStatusSchema.safeParse(p);
-    if (result.success) parsed.push(result.data);
-  }
-  return parsed.length ? parsed : undefined;
-}
-
-const ListQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  perPage: z.coerce.number().int().min(1).max(100).default(20),
-});
 
 export async function GET(
   req: NextRequest,
@@ -87,42 +48,22 @@ export async function GET(
   const access = await requireOrgAccess(orgId, { permission: "members.read" });
   if (access.error) return access.error;
 
-  const url = new URL(req.url);
-  const roles = parseRoleFilter(url.searchParams.get("role"));
-  const statuses = parseStatusFilter(url.searchParams.get("status"));
-  const departmentLabel =
-    url.searchParams.get("departmentLabel")?.trim() || undefined;
-  const q = url.searchParams.get("q")?.trim() || undefined;
-  const parsedPagination = ListQuerySchema.safeParse(
-    Object.fromEntries(url.searchParams.entries()),
+  const parsed = MembersListQuerySchema.safeParse(
+    Object.fromEntries(new URL(req.url).searchParams.entries()),
   );
-  if (!parsedPagination.success) {
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid pagination", detail: parsedPagination.error.flatten() },
+      { error: "Invalid query", detail: parsed.error.flatten() },
       { status: 400 },
     );
   }
-  const { page, perPage } = parsedPagination.data;
+  const { page, perPage } = parsed.data;
+  const { where, countsWhere, orderBy, skip, take } = buildOrgMembersQuery(
+    orgId,
+    parsed.data,
+  );
 
-  // Query-param-driven filter; role and status accept lists so the same
-  // endpoint serves the sidebar filters (?role=LEARNER) and consultants
-  // management (?role=EXPERT&status=ACTIVE) without new routes.
-  const where = {
-    organizationId: orgId,
-    ...(roles && { role: { in: roles } }),
-    ...(statuses && { status: { in: statuses } }),
-    ...(departmentLabel && { departmentLabel }),
-    ...(q && {
-      user: {
-        OR: [
-          { name: { contains: q, mode: "insensitive" as const } },
-          { email: { contains: q, mode: "insensitive" as const } },
-        ],
-      },
-    }),
-  };
-
-  const [total, data] = await prisma.$transaction([
+  const [total, data, groups] = await prisma.$transaction([
     prisma.membership.count({ where }),
     prisma.membership.findMany({
       where,
@@ -148,15 +89,23 @@ export async function GET(
           select: { id: true },
         },
       },
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+      orderBy,
+      skip,
+      take,
+    }),
+    // #1527 — one groupBy feeds every role chip.
+    prisma.membership.groupBy({
+      by: ["role"],
+      where: countsWhere,
+      _count: { _all: true },
+      orderBy: { role: "asc" },
     }),
   ]);
 
   return NextResponse.json({
     data,
     meta: { total, page, perPage },
+    counts: toRoleCounts(groups),
   });
 }
 

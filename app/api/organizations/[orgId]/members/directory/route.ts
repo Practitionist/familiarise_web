@@ -5,7 +5,8 @@
  * read: name, avatar and role label of ACTIVE members, nothing else (no
  * email, status or usage). Operators with `members.read` use the full
  * roster route beside this one. Search matches names only, so the endpoint
- * can't be used to test whether an email address belongs to the org.
+ * can't be used to test whether an email address belongs to the org. `role`
+ * narrows to one role label, which the response already carries (#1527).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -13,9 +14,11 @@ import { z } from "zod";
 
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { MemberRoleSchema } from "@/lib/labels/org-labels";
 
 const QuerySchema = z.object({
   q: z.string().trim().max(100).optional(),
+  role: MemberRoleSchema.optional(),
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -39,11 +42,12 @@ export async function GET(
       { status: 400 },
     );
   }
-  const { q, page, perPage } = parsed.data;
+  const { q, role, page, perPage } = parsed.data;
 
   const where = {
     organizationId: orgId,
     status: "ACTIVE" as const,
+    ...(role && { role }),
     ...(q && { user: { name: { contains: q, mode: "insensitive" as const } } }),
   };
   const [total, rows] = await prisma.$transaction([

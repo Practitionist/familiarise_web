@@ -28,6 +28,7 @@ import type {
   OrgSizeBucket,
 } from "@prisma/client";
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
+import type { Tone } from "@/lib/ui/tone";
 
 // ───────────────────────────── Capability ─────────────────────────────
 
@@ -156,14 +157,13 @@ export const MEMBER_STATUS_LABEL: Record<MemberStatus, string> = {
   ERASED: "Erased",
 };
 
-export const MEMBER_STATUS_BADGE_CLASS: Record<MemberStatus, string> = {
-  PENDING: "bg-amber-100 text-amber-900 border-amber-200",
-  ACTIVE: "bg-green-100 text-green-900 border-green-200",
-  SUSPENDED: "bg-orange-100 text-orange-900 border-orange-200",
-  REMOVED: "bg-zinc-100 text-zinc-600 border-zinc-200",
-  // Deliberately darker than REMOVED — visually communicates
-  // "permanent, regulatory" rather than "operator action, reversible".
-  ERASED: "bg-zinc-200 text-zinc-700 border-zinc-300 italic",
+/** #1527 — member status → tone; pending waits on the invitee. */
+export const MEMBER_STATUS_TONE: Record<MemberStatus, Tone> = {
+  PENDING: "caution",
+  ACTIVE: "success",
+  SUSPENDED: "warning",
+  REMOVED: "neutral",
+  ERASED: "neutral",
 };
 
 // ───────────────────────────── Zod narrowing schemas ─────────────────────────────

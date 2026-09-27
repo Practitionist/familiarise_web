@@ -1,21 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Pencil, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { Trash2, Pencil, Users } from "lucide-react";
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
+  MEMBER_STATUS_TONE,
   getInvitableRoles,
 } from "@/lib/labels/org-labels";
 import {
+  MEMBER_LIST_STATUSES,
   MembersListResponseSchema,
   UpdateMemberPayloadSchema,
-  ORG_MEMBERS_PER_PAGE,
+  membersListKey,
+  membersListQueryFromUrl,
   type MemberRow,
+  type MembersListQuery,
+  type MembersListResult,
 } from "@/schemas/organizations";
 import {
   parseJsonResponse,
@@ -25,13 +36,14 @@ import {
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { useSession } from "@/lib/auth-client";
+import { useListParams } from "@/hooks/useListParams";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -71,17 +83,37 @@ function selectableRoles(
   }));
 }
 
-// #777 §B — q + pagination are passed through to the existing members
-// API (it already supports `q` contains-search on name/email and returns
-// meta {total,page,perPage}).
+// #1527 — chip order; a role only gets a chip while it has members.
+const ROLE_CHIPS: MemberRole[] = [
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "SUPPORT",
+  "BILLING_ADMIN",
+  "EXPERT",
+  "LEARNER",
+];
+const ALL_ROLES = "ALL";
+const FILTER_KEYS = ["role", "status"] as const;
+const DEFAULT_SORT = { key: "name", dir: "asc" } as const;
+const STATUS_OPTIONS = MEMBER_LIST_STATUSES.map((value) => ({
+  value,
+  label: MEMBER_STATUS_LABEL[value],
+}));
+
 async function fetchMembers(
   orgId: string,
-  opts: { q?: string; page: number; perPage: number },
-): Promise<{ members: MemberRow[]; total: number }> {
-  const sp = new URLSearchParams();
-  if (opts.q) sp.set("q", opts.q);
-  sp.set("page", String(opts.page));
-  sp.set("perPage", String(opts.perPage));
+  query: MembersListQuery,
+): Promise<MembersListResult> {
+  const sp = new URLSearchParams({
+    sort: query.sort,
+    dir: query.dir,
+    page: String(query.page),
+    perPage: String(query.perPage),
+  });
+  if (query.q) sp.set("q", query.q);
+  if (query.role) sp.set("role", query.role.join(","));
+  if (query.status) sp.set("status", query.status.join(","));
   const res = await fetch(
     `/api/organizations/${orgId}/members?${sp.toString()}`,
   );
@@ -93,6 +125,7 @@ async function fetchMembers(
   return {
     members: parsed.data,
     total: parsed.meta?.total ?? parsed.data.length,
+    counts: parsed.counts ?? {},
   };
 }
 
@@ -181,36 +214,43 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   });
   const queryClient = useQueryClient();
   const roleOptions = selectableRoles(viewerRole, canSponsor, canHost);
-  // #777 §B — roster search + server pagination. `search` is the live
-  // input; `debouncedSearch` is what actually hits the API (250ms) so a
-  // fast typist doesn't fire a request per keystroke. Page resets to 1
-  // whenever the search term changes.
-  const PER_PAGE = ORG_MEMBERS_PER_PAGE;
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [page, setPage] = useState(1);
+  // #1527 — role, status, search, sort and page all live in the URL.
+  const list = useListParams({
+    filterKeys: FILTER_KEYS,
+    defaultSort: DEFAULT_SORT,
+  });
+  const searchParams = useSearchParams();
+  const query = useMemo(
+    () => membersListQueryFromUrl((key) => searchParams.get(key)),
+    [searchParams],
+  );
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedSearch(search.trim());
-      setPage(1);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["org-members", orgId, debouncedSearch, page],
-    queryFn: () =>
-      fetchMembers(orgId, {
-        q: debouncedSearch || undefined,
-        page,
-        perPage: PER_PAGE,
-      }),
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: membersListKey(orgId, query),
+    queryFn: () => fetchMembers(orgId, query),
+    placeholderData: keepPreviousData,
     enabled: allowed,
   });
 
-  const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
+  const counts = data?.counts ?? {};
+  const pickedRole = query.role?.length === 1 ? query.role[0] : undefined;
+  const roleChips = [
+    {
+      value: ALL_ROLES,
+      label: "All",
+      count: data
+        ? Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0)
+        : undefined,
+    },
+    ...ROLE_CHIPS.filter((r) => (counts[r] ?? 0) > 0 || r === pickedRole).map(
+      (r) => ({ value: r, label: MEMBER_ROLE_LABEL[r], count: counts[r] ?? 0 }),
+    ),
+  ];
+  const isFiltered = Boolean(
+    query.q || query.role || list.filters.status !== null,
+  );
+  const clearFilters = () =>
+    list.setParams({ q: "", filters: { role: null, status: null } });
 
   // Destructive removals are gated through a confirm dialog rather than
   // the raw browser confirm() because (a) it matches the rest of the
@@ -272,9 +312,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
-      key: "member",
+      key: "name",
       header: "Member",
       primary: true,
+      sortable: true,
       cell: (m) => (
         <div className="flex flex-col">
           <span className="font-medium text-foreground">
@@ -287,20 +328,27 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     {
       key: "role",
       header: "Role",
-      cell: (m) => (
-        <Badge variant="secondary">
-          {MEMBER_ROLE_LABEL[m.role as MemberRole] ?? m.role}
-        </Badge>
-      ),
+      sortable: true,
+      cell: (m) => <StatusBadge label={MEMBER_ROLE_LABEL[m.role]} />,
     },
     {
       key: "status",
       header: "Status",
       cell: (m) => (
         <StatusBadge
-          label={MEMBER_STATUS_LABEL[m.status as MemberStatus] ?? m.status}
-          tone={m.status === "ACTIVE" ? "success" : "neutral"}
+          label={MEMBER_STATUS_LABEL[m.status]}
+          tone={MEMBER_STATUS_TONE[m.status]}
         />
+      ),
+    },
+    {
+      key: "joined",
+      header: "Joined",
+      sortable: true,
+      cell: (m) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(m.createdAt).toLocaleDateString()}
+        </span>
       ),
     },
   ];
@@ -372,72 +420,70 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           )
         }
       />
-      <div className="space-y-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-            <CardTitle className="text-base">
-              {isLoading ? "Loading…" : `${total} members`}
-            </CardTitle>
-            <div className="relative w-full max-w-xs">
-              <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground/70" />
-              <Input
-                placeholder="Search name or email…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-                aria-label="Search members"
-              />
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : (
-              <ResponsiveTable<MemberRow>
-                columns={columns}
-                rows={data?.members ?? []}
-                getRowId={(m) => m.id}
-                rowActions={canManage ? renderRowActions : undefined}
-                empty={
-                  <p className="text-center text-sm text-muted-foreground py-6">
-                    {debouncedSearch
-                      ? "No members match your search."
-                      : "No members yet."}
-                  </p>
-                }
-              />
-            )}
-
-            {/* Server pagination — meta.total drives the page count. Hidden
-                when everything fits on one page. */}
-            {!isLoading && pageCount > 1 && (
-              <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
-                <span>
-                  Page {page} of {pageCount}
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page >= pageCount}
-                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <ResponsiveTable<MemberRow>
+        columns={columns}
+        rows={data?.members ?? []}
+        getRowId={(m) => m.id}
+        rowActions={canManage ? renderRowActions : undefined}
+        isLoading={isLoading && !data}
+        error={isError ? "Couldn't load members." : undefined}
+        onRetry={() => void refetch()}
+        sort={{ key: query.sort, dir: query.dir }}
+        onSortChange={list.setSort}
+        toolbar={
+          <FilterBar
+            search={{
+              label: "Search members by name or email",
+              placeholder: "Search name or email",
+              value: query.q ?? "",
+              onChange: list.setQ,
+            }}
+            chips={{
+              label: "Role",
+              options: roleChips,
+              value: pickedRole ?? (query.role ? null : ALL_ROLES),
+              onChange: (value) =>
+                list.setFilter("role", value === ALL_ROLES ? null : value),
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: query.status?.[0] ?? "ACTIVE",
+                options: STATUS_OPTIONS,
+                // Active is the default, so it stays out of the URL.
+                onChange: (value) =>
+                  list.setFilter("status", value === "ACTIVE" ? null : value),
+              },
+            ]}
+            onClear={clearFilters}
+            canClear={isFiltered}
+          />
+        }
+        empty={
+          isFiltered ? (
+            <EmptyState
+              icon={Users}
+              title="No members match these filters"
+              action={
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState icon={Users} title="No members yet" />
+          )
+        }
+      />
+      {data && data.total > 0 && (
+        <TablePagination
+          page={query.page}
+          pageSize={query.perPage}
+          total={data.total}
+          onPageChange={list.setPage}
+        />
+      )}
 
       {/* Edit member dialog */}
       <ResponsiveModal
@@ -449,11 +495,6 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             <ResponsiveModalTitle>Edit member</ResponsiveModalTitle>
             <ResponsiveModalDescription>
               {editMember?.user.name ?? editMember?.user.email}
-              {editMember?.role === "LEARNER" && editRole !== "LEARNER" && (
-                <span className="block mt-1 text-amber-600 text-xs">
-                  Changing from Learner will release their seat.
-                </span>
-              )}
               {editMember?.role !== "LEARNER" && editRole === "LEARNER" && (
                 <span className="block mt-1 text-amber-600 text-xs">
                   Changing to Learner will consume a seat.

@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Members › All for members without the full roster grant (#1527 decision 3):
- * who is in the organization — name, avatar and role — and nothing else.
+ * The Members tab for members without the full roster grant (#1527 decision
+ * 3): who is in the organization — name, avatar and role — and nothing else.
  * Emails, status and usage stay on the operators' table (`members.read`).
+ * Search, role and page live in the URL like the operators' list.
  */
 
-import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { MemberRole } from "@prisma/client";
 import { Users } from "lucide-react";
@@ -16,10 +16,20 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { TablePagination } from "@/components/dashboard/TablePagination";
-import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { useListParams } from "@/hooks/useListParams";
+import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
 import { getInitials } from "@/utils/formatting";
 
 const PER_PAGE = 50;
+const ALL_ROLES = "ALL";
+const FILTER_KEYS = ["role"] as const;
+const ROLE_OPTIONS = [
+  { value: ALL_ROLES, label: "All roles" },
+  ...MemberRoleSchema.options.map((value) => ({
+    value,
+    label: MEMBER_ROLE_LABEL[value],
+  })),
+];
 
 interface DirectoryEntry {
   id: string;
@@ -36,6 +46,7 @@ interface DirectoryPage {
 async function fetchDirectory(
   orgId: string,
   q: string,
+  role: MemberRole | undefined,
   page: number,
 ): Promise<DirectoryPage> {
   const params = new URLSearchParams({
@@ -43,6 +54,7 @@ async function fetchDirectory(
     perPage: String(PER_PAGE),
   });
   if (q) params.set("q", q);
+  if (role) params.set("role", role);
   const res = await fetch(
     `/api/organizations/${orgId}/members/directory?${params.toString()}`,
   );
@@ -51,12 +63,16 @@ async function fetchDirectory(
 }
 
 export function MemberDirectoryPanel({ orgId }: Readonly<{ orgId: string }>) {
-  const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
+  const { q, page, filters, setQ, setPage, setFilter, clear } = useListParams({
+    filterKeys: FILTER_KEYS,
+  });
+  // A stale or hand-edited ?role= reads as "all roles", not a 400.
+  const parsedRole = MemberRoleSchema.safeParse(filters.role);
+  const role = parsedRole.success ? parsedRole.data : undefined;
 
   const directory = useQuery({
-    queryKey: ["org-member-directory", orgId, q, page],
-    queryFn: () => fetchDirectory(orgId, q, page),
+    queryKey: ["org-member-directory", orgId, q, role, page],
+    queryFn: () => fetchDirectory(orgId, q, role, page),
     placeholderData: keepPreviousData,
   });
 
@@ -74,7 +90,7 @@ export function MemberDirectoryPanel({ orgId }: Readonly<{ orgId: string }>) {
     body = (
       <EmptyState
         icon={Users}
-        title={q ? "No members match that name" : "No members yet"}
+        title={q || role ? "No members match these filters" : "No members yet"}
       />
     );
   } else {
@@ -118,12 +134,21 @@ export function MemberDirectoryPanel({ orgId }: Readonly<{ orgId: string }>) {
           label: "Search members by name",
           placeholder: "Search by name",
           value: q,
-          // FilterBar debounces; a new term starts from page 1.
-          onChange: (value) => {
-            setQ(value.trim());
-            setPage(1);
-          },
+          // FilterBar debounces; useListParams resets to page 1.
+          onChange: setQ,
         }}
+        selects={[
+          {
+            key: "role",
+            label: "Role",
+            value: role ?? ALL_ROLES,
+            options: ROLE_OPTIONS,
+            onChange: (value) =>
+              setFilter("role", value === ALL_ROLES ? null : value),
+          },
+        ]}
+        onClear={clear}
+        canClear={Boolean(q || role)}
       />
       {body}
     </div>
