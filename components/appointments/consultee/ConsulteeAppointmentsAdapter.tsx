@@ -3,6 +3,7 @@
 import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useParams, useRouter } from "next/navigation";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
@@ -40,11 +41,10 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 
-type DialogKind = "cancel" | "leave" | "report" | "documents";
+type DialogKind = "cancel" | "leave" | "documents";
 
 /**
  * Event id for leave / cancel-trial API paths.
@@ -315,12 +315,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "documents"),
       });
     }
-    if (vm.appointmentId) {
-      // #1527 — one verb for help everywhere ("Get help" on the detail page).
+    if (vm.appointmentId && consulteeId) {
+      // #1527 — one verb for help everywhere, and one place: the booking's
+      // support request page (the detail page's "Get help" goes there too).
+      const helpHref = `/dashboard/consultee/${consulteeId}/support/requests/${caseKeyOf({ kind: "booking", id: vm.appointmentId })}`;
       items.push({
         key: "report",
         label: "Get help",
-        onClick: () => openDialog(vm, "report"),
+        onClick: () => router.push(helpHref),
       });
     }
     // #1270 — additive by construction: a separately-labelled overflow entry
@@ -474,24 +476,6 @@ export function useConsulteeAppointmentsAdapter(options?: {
           // consultant adapter has always passed it.
           appointmentId={activeVm.appointmentId}
         />
-
-        {activeVm.appointmentId && dialog === "report" && (
-          // #support-hub — "Get help" opens the per-appointment
-          // flowchart thread (same surface as the detail page) instead of the
-          // legacy raw-ticket dialog. One system, one data path: intents are
-          // stage-gated server-side, escalations land in the ops queue with
-          // session context.
-          <SupportThreadSheet
-            appointmentId={activeVm.appointmentId}
-            open
-            onOpenChange={(open) => !open && closeDialog()}
-            appointmentHref={
-              activeVm.appointmentId && consulteeId
-                ? `/dashboard/consultee/${consulteeId}/appointments/${activeVm.appointmentId}`
-                : undefined
-            }
-          />
-        )}
 
         {activeVm.appointmentId && dialog === "documents" && (
           <DocumentUpload

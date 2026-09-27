@@ -68,6 +68,7 @@ export default function DetailPageClient({
       role="consultee"
       adapter={adapter}
       backHref={`/dashboard/organization/${orgId}/appointments`}
+      supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
       renderDocuments={(vm) => (
         <ConsulteeDocuments vm={vm} appointmentId={appointmentId} />

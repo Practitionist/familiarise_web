@@ -4,7 +4,7 @@
  * #support-hub — the Swiggy-style Support & Feedback hub: ONE role-agnostic
  * surface with two subtabs.
  *
- *  • Sessions — your recent sessions (tap → per-appointment flowchart thread)
+ *  • Sessions — your recent sessions (tap → the session's request page)
  *    and every support conversation you've opened, bucketed by status, newest
  *    activity first.
  *  • Platform — flowchart intake for platform issues (stateless; escalates
@@ -29,6 +29,7 @@ import {
   UserRound,
   Headset,
   Building2,
+  LifeBuoy,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,8 +37,8 @@ import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus } from "lucide-react";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { PlatformSupportSheet } from "@/components/support/PlatformSupportSheet";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { CreateTicketDialog } from "./CreateTicketDialog";
 import { throwSupportError } from "@/lib/support/error-copy";
 
@@ -157,11 +158,7 @@ function bucketize<T extends { status: string }>(
 // Subtab: Sessions
 // ---------------------------------------------------------------------------
 
-function SessionsTab({
-  appointmentsHrefBase,
-}: {
-  appointmentsHrefBase?: string;
-}) {
+function SessionsTab({ requestsBase }: Readonly<{ requestsBase: string }>) {
   const threads = useQuery({
     queryKey: ["user-support-threads"],
     queryFn: async (): Promise<ThreadRow[]> => {
@@ -261,12 +258,9 @@ function SessionsTab({
 
   const buckets = useMemo(() => bucketize(threads.data ?? []), [threads.data]);
 
-  // "Go to appointment" only for B2C rows — org-hosted sessions have no
-  // per-session detail page by design (ADR 20 addendum), so a link would 404.
-  const hrefFor = (appointmentId: string, orgScoped?: boolean) =>
-    appointmentsHrefBase && !orgScoped
-      ? `${appointmentsHrefBase}/${appointmentId}`
-      : undefined;
+  // #1527 — a session's request page, keyed by its booking (case-key.ts).
+  const requestHref = (appointmentId: string) =>
+    `${requestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
 
   return (
     <div className="space-y-8">
@@ -318,10 +312,12 @@ function SessionsTab({
                     {fmtDate(a.occurrences?.[0]?.startsAt)}
                   </p>
                 </div>
-                <SupportThreadSheet
-                  appointmentId={a.id}
-                  appointmentHref={hrefFor(a.id, !!a.organization)}
-                />
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={requestHref(a.id)}>
+                    <LifeBuoy className="mr-1.5 h-4 w-4" />
+                    Get help
+                  </Link>
+                </Button>
               </li>
             ))}
           </ul>
@@ -394,19 +390,12 @@ function SessionsTab({
                                 ? "With our team"
                                 : (STATUS_LABELS[t.status] ?? t.status)}
                             </Badge>
-                            <SupportThreadSheet
-                              appointmentId={t.appointmentId}
-                              appointmentHref={hrefFor(
-                                t.appointmentId,
-                                !!t.appointment.organizationName,
-                              )}
-                              trigger={
-                                <Button variant="ghost" size="sm">
-                                  View
-                                  <ChevronRight className="ml-1 h-4 w-4" />
-                                </Button>
-                              }
-                            />
+                            <Button variant="ghost" size="sm" asChild>
+                              <Link href={requestHref(t.appointmentId)}>
+                                View
+                                <ChevronRight className="ml-1 h-4 w-4" />
+                              </Link>
+                            </Button>
                           </div>
                         </div>
                       </li>
@@ -429,10 +418,14 @@ function SessionsTab({
 function PlatformTab({
   orgId,
   feedbackHref,
-}: {
+  requestsBase,
+}: Readonly<{
   orgId?: string;
   feedbackHref?: string;
-}) {
+  requestsBase: string;
+}>) {
+  const requestHref = (ticketId: string) =>
+    `${requestsBase}/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
   const tickets = useQuery({
     queryKey: ["user-support-tickets"],
     queryFn: async (): Promise<TicketRow[]> => {
@@ -477,7 +470,7 @@ function PlatformTab({
               route you to the right team with full context.
             </p>
           </div>
-          <PlatformSupportSheet orgId={orgId} />
+          <PlatformSupportSheet orgId={orgId} requestHref={requestHref} />
         </div>
         {feedbackHref && (
           <div className="mt-3 flex flex-wrap gap-2">
@@ -497,7 +490,7 @@ function PlatformTab({
       <section>
         <div className="mb-3 flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-foreground">My requests</h3>
-          <CreateTicketDialog />
+          <CreateTicketDialog requestHref={requestHref} />
         </div>
         {tickets.isError ? (
           // Distinguishing a failed load from a genuine empty list matters
@@ -525,6 +518,7 @@ function PlatformTab({
             </p>
             <div className="mt-3">
               <CreateTicketDialog
+                requestHref={requestHref}
                 trigger={
                   <Button variant="outline" size="sm">
                     <Plus className="mr-1.5 h-4 w-4" />
@@ -546,8 +540,11 @@ function PlatformTab({
                     {buckets[key].map((t) => {
                       const lastReply = [...(t.responses ?? [])].pop();
                       return (
-                        <li key={t.id} className="px-4 py-3">
-                          <div className="flex items-start justify-between gap-3">
+                        <li key={t.id}>
+                          <Link
+                            href={requestHref(t.id)}
+                            className="flex items-start justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/50"
+                          >
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-foreground">
                                 {t.title || "Support request"}
@@ -573,7 +570,7 @@ function PlatformTab({
                             <Badge variant={statusVariant(t.status)}>
                               {STATUS_LABELS[t.status] ?? t.status}
                             </Badge>
-                          </div>
+                          </Link>
                         </li>
                       );
                     })}
@@ -595,7 +592,7 @@ function PlatformTab({
 export function SupportHub({
   orgId,
   feedbackHref,
-  appointmentsHrefBase,
+  requestsBase,
   defaultView = "sessions",
 }: {
   /** Profile id of the mounting dashboard (consultee/consultant). Kept in the
@@ -605,10 +602,8 @@ export function SupportHub({
   /** Active org id in operator trees — attributes platform tickets. */
   orgId?: string;
   feedbackHref?: string;
-  /** Base path to a session's detail page (personal trees only). Enables the
-   *  "Go to appointment" link inside the thread sheet. Deliberately omitted on
-   *  org surfaces (ADR 20: no per-session drill-in for org roles). */
-  appointmentsHrefBase?: string;
+  /** `<tree>/support/requests` — each request's own page (#1527). */
+  requestsBase: string;
   /** Which subtab opens when the URL names none (#1527 — the workspace, with
    *  no sessions of its own, opens on Platform). */
   defaultView?: "sessions" | "platform";
@@ -619,12 +614,18 @@ export function SupportHub({
   const sessions = {
     value: "sessions",
     label: "Sessions",
-    content: <SessionsTab appointmentsHrefBase={appointmentsHrefBase} />,
+    content: <SessionsTab requestsBase={requestsBase} />,
   };
   const platform = {
     value: "platform",
     label: "Platform",
-    content: <PlatformTab orgId={orgId} feedbackHref={feedbackHref} />,
+    content: (
+      <PlatformTab
+        orgId={orgId}
+        feedbackHref={feedbackHref}
+        requestsBase={requestsBase}
+      />
+    ),
   };
   return (
     <UrlTabs

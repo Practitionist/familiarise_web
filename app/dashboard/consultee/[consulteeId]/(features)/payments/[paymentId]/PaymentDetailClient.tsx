@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { LifeBuoy } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
@@ -8,8 +7,8 @@ import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-overrid
 import { Section, KeyValueList } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { toneBadge } from "@/lib/dashboard/money-state";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, toneTextClass } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { ConsulteePaymentDetail } from "@/lib/data/consultee-payment-detail";
@@ -33,11 +32,15 @@ export function PaymentDetailClient({
   consulteeId,
   detail,
 }: Readonly<{ consulteeId: string; detail: ConsulteePaymentDetail }>) {
-  const [helpOpen, setHelpOpen] = useState(false);
   const { row, moneyState } = detail;
   useSetBreadcrumbLabel(row.planTitle);
   const basePath = `/dashboard/consultee/${consulteeId}`;
   const money = (paise: number) => formatCurrencyAmount(paise, row.currency);
+  // #1527 — the booking's request page, opened on the payment intent; a
+  // charge with no booking goes to the Platform tab's request form.
+  const helpHref = row.appointmentId
+    ? `${basePath}/support/requests/${caseKeyOf({ kind: "booking", id: row.appointmentId })}?intent=PAYMENT_STATUS`
+    : `${basePath}/support?view=platform`;
 
   const facts = [
     ...(detail.showAmount && moneyState.state !== "SPONSORED"
@@ -109,9 +112,11 @@ export function PaymentDetailClient({
           />
         }
         actions={
-          <Button variant="outline" size="sm" onClick={() => setHelpOpen(true)}>
-            <LifeBuoy className="mr-1.5 h-4 w-4" />
-            Problem with this charge
+          <Button variant="outline" size="sm" asChild>
+            <Link href={helpHref}>
+              <LifeBuoy className="mr-1.5 h-4 w-4" />
+              Problem with this charge
+            </Link>
           </Button>
         }
       />
@@ -181,29 +186,6 @@ export function PaymentDetailClient({
             Open the booking
           </Link>
         </Section>
-      )}
-
-      {row.appointmentId ? (
-        <SupportThreadSheet
-          appointmentId={row.appointmentId}
-          open={helpOpen}
-          onOpenChange={setHelpOpen}
-          seedCategory="PAYMENT_STATUS"
-          appointmentHref={`${basePath}/appointments/${row.appointmentId}`}
-        />
-      ) : (
-        helpOpen && (
-          <p className="text-sm text-muted-foreground">
-            This charge has no booking to attach a request to.{" "}
-            <Link
-              href={`${basePath}/support?tab=requests`}
-              className="font-medium text-foreground underline underline-offset-4"
-            >
-              Open a support request
-            </Link>
-            .
-          </p>
-        )
       )}
     </div>
   );

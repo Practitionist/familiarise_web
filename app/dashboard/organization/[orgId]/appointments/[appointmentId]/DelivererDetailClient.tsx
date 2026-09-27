@@ -43,6 +43,7 @@ export function DelivererDetailClient({
       role="consultant"
       adapter={adapter}
       backHref={`/dashboard/organization/${orgId}/appointments`}
+      supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
       consultantId={consultantId}
       renderDocuments={() => (

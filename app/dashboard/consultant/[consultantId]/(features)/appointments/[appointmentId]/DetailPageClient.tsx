@@ -32,6 +32,7 @@ export default function DetailPageClient({
         role="consultant"
         adapter={adapter}
         backHref={`/dashboard/consultant/${consultantId}/appointments`}
+        supportRequestsBase={`/dashboard/consultant/${consultantId}/support/requests`}
         joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
         consultantId={consultantId}
         renderDocuments={(vm) => {

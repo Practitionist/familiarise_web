@@ -42,7 +42,7 @@ export function SupportRequestsPage({
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
                 <SupportHub
                   profileId={profileId}
-                  appointmentsHrefBase={`${basePath}/appointments`}
+                  requestsBase={`${basePath}/support/requests`}
                   feedbackHref={`${basePath}/support?tab=feedback`}
                 />
                 <aside>{suggested}</aside>

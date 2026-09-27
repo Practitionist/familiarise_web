@@ -21,7 +21,11 @@ export function SupportSurface({ profileId }: { profileId: string }) {
         title="Support requests"
         description="Your conversations with the Familiarise team — about a session or the platform."
       />
-      <SupportHub profileId={profileId} defaultView="platform" />
+      <SupportHub
+        profileId={profileId}
+        requestsBase={`/dashboard/org-workspace/${profileId}/support/requests`}
+        defaultView="platform"
+      />
     </DashboardErrorBoundary>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -80,7 +80,7 @@ import { SessionTimeline } from "../SessionTimeline";
 import { ClassSessionControls } from "./ClassSessionControls";
 import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
@@ -247,6 +247,8 @@ interface AppointmentDetailClientProps {
   consultantId?: string;
   /** Extra buttons for the header action bar, e.g. the consultee's Book again / Add to calendar (#1527). */
   renderExtraActions?: (vm: AppointmentVM) => ReactNode;
+  /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
+  supportRequestsBase: string;
 }
 
 export function AppointmentDetailClient({
@@ -259,6 +261,7 @@ export function AppointmentDetailClient({
   joinWindowMs,
   consultantId,
   renderExtraActions,
+  supportRequestsBase,
 }: AppointmentDetailClientProps) {
   const format = useZonedFormat();
   const { data: session } = useSession();
@@ -307,11 +310,11 @@ export function AppointmentDetailClient({
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   const payments = detail?.appointment.payment ?? [];
-  // One support sheet, two doors: "Get help" opens on the intent chips,
-  // "Problem with this charge" opens already on PAYMENT_STATUS.
-  const [help, setHelp] = useState<{ open: boolean; seed?: string }>({
-    open: false,
-  });
+  // #1527 — one request page, two doors: "Get help" opens on the intent
+  // options, "Problem with this charge" already on PAYMENT_STATUS.
+  const supportHref = `${supportRequestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
+  const openHelp = (intent?: string) =>
+    router.push(intent ? `${supportHref}?intent=${intent}` : supportHref);
 
   if (isLoading && !detail) {
     return (
@@ -638,11 +641,7 @@ export function AppointmentDetailClient({
               </Button>
             ))}
             {renderExtraActions?.(vm)}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setHelp({ open: true })}
-            >
+            <Button variant="outline" size="sm" onClick={() => openHelp()}>
               <LifeBuoy className="mr-1.5 h-4 w-4" />
               Get help
             </Button>
@@ -671,7 +670,7 @@ export function AppointmentDetailClient({
               exists. */}
           <AppointmentSupportStatusCard
             appointmentId={appointmentId}
-            isOrgContext={!!orgName}
+            href={supportHref}
           />
 
           {/* #1766 — a subscription's header already carries "h of T"; a
@@ -739,7 +738,7 @@ export function AppointmentDetailClient({
                 }
               : undefined
           }
-          onHelp={() => setHelp({ open: true })}
+          onHelp={() => openHelp()}
         >
           {nextAction.kind === "JOIN" && action.kind === "join" ? (
             <RowPrimaryAction action={action} size="default" />
@@ -1055,9 +1054,7 @@ export function AppointmentDetailClient({
                       <button
                         type="button"
                         className="text-xs font-medium text-foreground underline underline-offset-4"
-                        onClick={() =>
-                          setHelp({ open: true, seed: "PAYMENT_STATUS" })
-                        }
+                        onClick={() => openHelp("PAYMENT_STATUS")}
                       >
                         {hasOwnCharge
                           ? "Problem with this charge"
@@ -1162,13 +1159,6 @@ export function AppointmentDetailClient({
           and was: the consultee's detail page never did, leaving Reschedule,
           Cancel and Report issue setting state nothing was listening for. */}
       {adapter.renderDialogs()}
-      <SupportThreadSheet
-        appointmentId={appointmentId}
-        isOrgContext={!!orgName}
-        open={help.open}
-        onOpenChange={(open) => setHelp(open ? { ...help, open } : { open })}
-        seedCategory={help.seed}
-      />
     </DashboardErrorBoundary>
   );
 }

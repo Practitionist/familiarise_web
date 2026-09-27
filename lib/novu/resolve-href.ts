@@ -84,3 +84,18 @@ export function scopedHref(args: {
   }
   return notificationHref(null, args.surface);
 }
+
+/**
+ * #1527 — a support request's own page, for the requester's notifications. An
+ * org-attributed case opens in that org's dashboard (the requester is a
+ * member); B2C goes through the go resolver, which picks the viewer's side.
+ */
+export function supportRequestHref(
+  caseKey: string,
+  organizationId?: string | null,
+): string {
+  const path = `support/requests/${caseKey}`;
+  return organizationId
+    ? `${getAppUrl()}/dashboard/organization/${organizationId}/${path}`
+    : `${getAppUrl()}/dashboard/go/auto/${path}`;
+}

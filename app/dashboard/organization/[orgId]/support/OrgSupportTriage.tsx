@@ -15,6 +15,7 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Star, MessageSquareText, ShieldAlert } from "lucide-react";
 
@@ -22,7 +23,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRequireOrgAccess } from "../useOrgRole";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
 interface TriageRow {
@@ -94,7 +95,10 @@ const STATUS_FILTERS = [
  * enforces the same line with a select allowlist, pinned by
  * `__tests__/security/org-scope-payload-allowlist.test.ts`.
  */
-function OrgThreadRow({ thread: t }: { thread: TriageRow }) {
+function OrgThreadRow({
+  thread: t,
+  orgId,
+}: Readonly<{ thread: TriageRow; orgId: string }>) {
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
@@ -119,15 +123,15 @@ function OrgThreadRow({ thread: t }: { thread: TriageRow }) {
           label={STATUS[t.status]?.label ?? humanizeEnum(t.status)}
           tone={STATUS[t.status]?.tone ?? "neutral"}
         />
-        <SupportThreadSheet
-          appointmentId={t.appointmentId}
-          trigger={
-            <Button variant="outline" size="sm">
-              <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
-              Raise concern
-            </Button>
-          }
-        />
+        {/* #1527 — the operator's OWN conversation on this session, as a page. */}
+        <Button variant="outline" size="sm" asChild>
+          <Link
+            href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "booking", id: t.appointmentId })}`}
+          >
+            <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
+            Raise concern
+          </Link>
+        </Button>
       </div>
     </li>
   );
@@ -339,7 +343,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
         ) : (
           <ul className="divide-y divide-border rounded-lg border border-border">
             {threads.data!.map((t) => (
-              <OrgThreadRow key={t.id} thread={t} />
+              <OrgThreadRow key={t.id} thread={t} orgId={orgId} />
             ))}
           </ul>
         )}

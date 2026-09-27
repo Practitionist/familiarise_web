@@ -14,6 +14,7 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { CreateTicketDialog } from "@/components/dashboard/shared/support/CreateTicketDialog";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { BillingBlockBanner } from "@/components/billing/BillingBlockBanner";
 import { Button } from "@/components/ui/button";
 import type { OrgReceivablesPayload } from "@/lib/data/org-receivables";
@@ -61,6 +62,9 @@ export function BillingPageClient({
   receivables?: OrgReceivablesPayload | null;
 }) {
   const { can } = useOrgRole(orgId);
+  // #1527 — a new request opens on its own page, inside this dashboard.
+  const requestHref = (ticketId: string) =>
+    `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: ticketId })}`;
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "billing.read",
     canSponsor: true,
@@ -122,6 +126,7 @@ export function BillingPageClient({
             </Button>
             {can("billing.manage") && (
               <CreateTicketDialog
+                requestHref={requestHref}
                 defaults={{
                   issueType: "BILLING_QUESTION",
                   organizationId: orgId,
@@ -224,6 +229,7 @@ export function BillingPageClient({
         <p className="text-sm text-muted-foreground">
           Questions about a charge or an invoice?{" "}
           <CreateTicketDialog
+            requestHref={requestHref}
             defaults={{
               issueType: "BILLING_QUESTION",
               title: `Billing question from ${orgName}`,

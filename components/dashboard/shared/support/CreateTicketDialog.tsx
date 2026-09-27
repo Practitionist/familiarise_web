@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 
@@ -64,12 +65,16 @@ const ABOUT_ME = "me";
 export function CreateTicketDialog({
   trigger,
   defaults,
+  requestHref,
 }: {
   /** Custom trigger node; defaults to a "New request" button. */
   trigger?: React.ReactNode;
   /** Pre-fill, e.g. org Billing's "Request an invoice" (#1527 Q8). */
   defaults?: CreateTicketDefaults;
+  /** #1527 — the new request's page; the dialog navigates there on create. */
+  requestHref?: (ticketId: string) => string;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [issueType, setIssueType] = useState<string>(defaults?.issueType ?? "");
   const [title, setTitle] = useState(defaults?.title ?? "");
@@ -108,9 +113,9 @@ export function CreateTicketDialog({
         }),
       });
       if (!res.ok) await throwSupportError(res, "request create");
-      return res.json();
+      return (await res.json()) as { id: string };
     },
-    onSuccess: () => {
+    onSuccess: (ticket) => {
       toast({
         title: "Request created",
         description: "Our team will reply here and by email.",
@@ -123,6 +128,7 @@ export function CreateTicketDialog({
       setDescription(defaults?.description ?? "");
       setPriority("MEDIUM");
       setAbout(defaults?.organizationId ?? ABOUT_ME);
+      if (requestHref && ticket?.id) router.push(requestHref(ticket.id));
     },
     onError: (e: unknown) =>
       toast({
