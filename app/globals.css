@@ -1513,7 +1513,13 @@ body:not(:has(.h-screen-maintenance)) {
   }
 
   /* Entrance animations must settle VISIBLE — `animation: none` on a rule whose
-     keyframes start at opacity 0 would leave the content permanently hidden. */
+     keyframes start at opacity 0 would leave the content permanently hidden.
+     Trap to watch for when adding a STAGGER: `animation: none` handles the
+     duration, but a staggered group also needs the delay gone. A stagger uses
+     `animation-delay` with `animation-fill-mode: both`, and `both` holds the
+     invisible first frame for the whole delay — so shortening the duration
+     alone leaves the later groups stuck at opacity 0. Framer Motion is
+     immune (MotionConfig drops the whole animation); this only bites CSS. */
   .reveal-up,
   .scale-in {
     animation: none !important;

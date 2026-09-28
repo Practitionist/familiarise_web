@@ -1,0 +1,106 @@
+/**
+ * Shared motion vocabulary.
+ *
+ * Until now every motion variant in this app was re-declared inline at each
+ * call site — `app/use-cases/UseCaseSections.tsx` has a `fadeUp` const, and
+ * ~43 components hand-roll the same `whileInView` + `viewport={{ once: true }}`
+ * pair. That made the durations a per-file decision, so the surface reads as
+ * slightly different motion on every page.
+ *
+ * These are the house values, matching the range already in use across
+ * `components/home/*` and `app/dashboard/*` (0.3–0.6s, 10–30px offsets,
+ * `easeOut`-ish). Import from here instead of inventing new numbers.
+ *
+ * ── reduced motion ──────────────────────────────────────────────────────────
+ * Motion is only disabled when the OS asks. That is enforced by wrapping a
+ * surface in <MotionConfig reducedMotion="user"> — see
+ * `components/onboarding/OnboardingShell.tsx` and the two marketing layouts,
+ * which set it once at the layout so a newly added animated block cannot miss
+ * it. Under that boundary framer-motion drops transform animations and keeps
+ * opacity, so content still cross-fades rather than jumping.
+ *
+ * It does NOT cover CSS keyframes. Those have to be neutralised explicitly in
+ * the `prefers-reduced-motion` block at the bottom of `app/globals.css`, and
+ * an entrance animation that starts at `opacity: 0` must be settled to its
+ * VISIBLE end state there, not merely stopped — otherwise `animation-fill-mode:
+ * both` holds the invisible first frame forever. `.onb-enter` is registered
+ * alongside `.reveal-up` and `.scale-in` for exactly that reason.
+ */
+
+import type { TargetAndTransition, Transition, Variants } from "framer-motion";
+
+/** One shared easing curve. The house motion is decelerating, not linear or
+ *  springy — it reads as "settling into place" rather than "bouncing". */
+export const EASE = [0.32, 0.72, 0, 1] as const;
+
+/** Durations, in seconds. Kept short: this is a form, not a showcase. */
+export const DURATION = {
+  /** Micro-feedback — selection, checkbox, focus. */
+  fast: 0.18,
+  /** The step-to-step transition. Long enough to read as directional. */
+  step: 0.28,
+  /** Entrance of a group of fields. */
+  enter: 0.45,
+} as const;
+
+export const SPRING_SOFT: Transition = {
+  type: "spring",
+  stiffness: 260,
+  damping: 30,
+  mass: 0.9,
+};
+
+/**
+ * Entrance for a single block: rises 8px and fades in. Deliberately small —
+ * the 20–30px offsets used on the marketing pages are right for a hero
+ * scrolling into view, and wrong for a form the user is already looking at.
+ */
+export const fadeUp: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0 },
+};
+
+/** Parent that staggers its children's `fadeUp`. */
+export const staggerContainer = (
+  stagger = 0.05,
+  delayChildren = 0.02,
+): Variants => ({
+  hidden: {},
+  visible: { transition: { staggerChildren: stagger, delayChildren } },
+});
+
+/**
+ * A wizard step entering. Paired with `stepExit` via <AnimatePresence
+ * mode="wait">, and keyed on the step key so the direction of travel is
+ * visible: forward slides up from below, back slides down from above.
+ *
+ * These return a single animation TARGET, not a `Variants` record — they are
+ * spread into the `hidden` / `exit` slots of the caller's variant map, so a
+ * `Variants` here would be a record nested inside a record and would not
+ * typecheck against `Variant`.
+ */
+export const stepEnter = (direction: 1 | -1): TargetAndTransition => ({
+  opacity: 0,
+  y: direction * 16,
+});
+
+export const stepExit = (direction: 1 | -1): TargetAndTransition => ({
+  opacity: 0,
+  y: direction * -16,
+});
+
+/** The settled state a step animates to. */
+export const stepVisible: TargetAndTransition = { opacity: 1, y: 0 };
+
+export const stepTransition: Transition = {
+  duration: DURATION.step,
+  ease: EASE,
+};
+
+/**
+ * The stepper's active indicator. `layoutId` lets a single element travel
+ * between steps instead of cross-fading two of them, so the eye can follow
+ * where "you are" moved to. Must be used inside a `LayoutGroup` (or at a
+ * common ancestor) for the shared-layout measurement to be meaningful.
+ */
+export const indicatorTransition: Transition = { ...SPRING_SOFT };

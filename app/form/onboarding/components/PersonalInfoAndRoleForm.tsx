@@ -19,7 +19,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
+import { cn } from "@/utils/tailwind";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
 import { useSession } from "@/lib/auth-client";
@@ -151,7 +152,14 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
     formState: { errors },
   } = useForm<FormInput, unknown, FormData>({
     resolver: zodResolver(PersonalInfoAndRoleFormSchema),
-    mode: "onChange",
+    // Was `onChange`, which re-validated on every keystroke and so showed
+    // "required" and a malformed-email error while the user was still typing
+    // the field — most visibly on DOB, which is empty-but-valid for most of
+    // its own length. `onBlur` for first validation, then `onChange` once a
+    // field has been touched, which is the standard split: nothing scolds you
+    // mid-word, but a correction is confirmed as you retype.
+    mode: "onBlur",
+    reValidateMode: "onChange",
     defaultValues: {
       name: "",
       email: session?.user?.email || "",
@@ -227,7 +235,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   if (!inviteCheckDone) {
     return (
       <div className="mx-auto max-w-md py-8 text-center">
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-muted-foreground">
           Checking for pending invitations…
         </p>
       </div>
@@ -238,7 +246,10 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   if (inviteCheckError && !pendingInvite && !continuedWithoutInvite) {
     return (
       <div className="mx-auto max-w-md space-y-3 py-8 text-center">
-        <p className="text-sm text-red-600">
+        {/* `text-destructive`, not `text-red-600`: the raw Tailwind red was
+            invisible against the shell's dark surface and had to carry its own
+            dark: override. The token resolves in both scopes. */}
+        <p className="text-sm text-destructive">
           We couldn&apos;t check for pending invitations.
         </p>
         <div className="flex items-center justify-center gap-3">
@@ -256,7 +267,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             Continue without checking
           </Button>
         </div>
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-muted-foreground">
           If an organisation invited you, its emailed link still works
           afterwards.
         </p>
@@ -266,18 +277,23 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   if (pendingInvite && !continuedWithoutInvite) {
     return (
       <div className="mx-auto max-w-md space-y-4 py-8 text-center">
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-6">
-          <p className="text-lg font-semibold text-blue-900">
+        {/* `info` token rather than a hand-rolled `border-blue-200
+            bg-blue-50 text-blue-900`. That palette has no dark value, so
+            inside the shell's dark scope it rendered as pale blue on near
+            black; and a raw blue is a new status colour, which the design
+            system explicitly forbids. */}
+        <div className="rounded-lg border border-info/40 bg-info/10 p-6">
+          <p className="text-lg font-semibold">
             You&apos;ve been invited to join{" "}
             <span className="underline">{pendingInvite.organizationName}</span>
           </p>
           {pendingInviteCount > 1 ? (
-            <p className="mt-1 text-sm text-blue-800">
+            <p className="mt-1 text-sm">
               You have {pendingInviteCount} pending invitations — check your
               email for all of them.
             </p>
           ) : null}
-          <p className="mt-2 text-sm text-zinc-600">
+          <p className="mt-2 text-sm text-muted-foreground">
             Check your email for the invitation link to accept and join the
             organisation. Your profile will be set up as part of that flow.
           </p>
@@ -294,7 +310,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
         >
           Continue without this invite
         </Button>
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-muted-foreground">
           You can still accept the invitation from your email afterwards.
         </p>
       </div>
@@ -327,7 +343,13 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
               id="email"
               type="email"
               value={session?.user?.email || ""}
-              disabled
+              // `readOnly`, not `disabled`. A disabled input is removed from
+              // the tab order, skipped by screen readers in browse mode, and
+              // not submitted — and it is only well-behaved as a controlled
+              // input with no onChange *because* it is disabled. readOnly
+              // keeps the value visible, focusable, announced and submitted.
+              readOnly
+              aria-readonly="true"
               className="bg-muted"
             />
             <p className="text-xs text-muted-foreground">
@@ -513,38 +535,85 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
         </div>
       ) : null}
       <div className={lockedRole ? "hidden" : "space-y-4"}>
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+        <h3
+          id="role-picker-label"
+          className="text-sm font-medium uppercase tracking-wide text-muted-foreground"
+        >
           I want to join as a... <span className="text-destructive">*</span>
         </h3>
 
+        {/*
+          A real `radiogroup` of `radio`s.
+
+          These were three bare <button>s calling field.onChange directly. That
+          looks right and is invisible to assistive tech: nothing announced
+          which option was selected, there was no group label association, and
+          the arrow keys — the expected interaction for a single-choice
+          control — did nothing. A native <input type="radio"> inside a
+          <fieldset> gets all of that for free, including roving focus and
+          the "1 of 3" position announcement, and it still participates in
+          react-hook-form's Controller because the visual tile is a <label>
+          wrapping the real input.
+        */}
         <Controller
           name="role"
           control={control}
           render={({ field }) => (
-            <div
-              className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+            <fieldset
+              className="border-0 p-0"
+              aria-describedby={errors.role ? "role-picker-error" : undefined}
             >
-              {Object.entries(ROLE_INFO).map(([role, info]) => (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => field.onChange(role as UserRole)}
-                  className={`p-4 rounded-lg border-2 text-left transition-all ${
-                    field.value === role
-                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                      : "border-border hover:border-primary/50 hover:bg-muted/50"
-                  }`}
-                >
-                  <div className="font-medium">{info.title}</div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    {info.description}
-                  </div>
-                </button>
-              ))}
-            </div>
+              <legend className="sr-only">I want to join as a…</legend>
+              <div
+                role="radiogroup"
+                aria-labelledby="role-picker-label"
+                className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+              >
+                {Object.entries(ROLE_INFO).map(([role, info]) => {
+                  const selected = field.value === role;
+                  return (
+                    <label
+                      key={role}
+                      className={cn(
+                        "relative cursor-pointer rounded-lg border-2 p-4 text-left transition-colors",
+                        "focus-within:ring-4 focus-within:ring-ring/40",
+                        selected
+                          ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                          : "border-border hover:border-primary/50 hover:bg-muted/50",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name={field.name}
+                        value={role}
+                        checked={selected}
+                        onChange={() => field.onChange(role as UserRole)}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
+                        className="sr-only"
+                      />
+                      <div className="pr-6 font-medium">{info.title}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {info.description}
+                      </div>
+                      {selected && (
+                        <span
+                          aria-hidden="true"
+                          className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                        >
+                          <Check className="h-3 w-3" strokeWidth={3} />
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
           )}
         />
-        <FieldError message={errors.role?.message} />
+        <div id="role-picker-error">
+          <FieldError message={errors.role?.message} />
+        </div>
       </div>
 
       {/* Role-specific info */}

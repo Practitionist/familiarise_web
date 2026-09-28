@@ -24,8 +24,13 @@ import {
   OnboardingFormDataSchema,
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
-import { AlertTriangle, Check, History, LogOut, RotateCcw } from "lucide-react";
-import { cn } from "@/utils/tailwind";
+import { History, LogOut, RotateCcw } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import * as Sentry from "@sentry/nextjs";
+import { stepEnter, stepExit, stepTransition, stepVisible } from "@/lib/motion";
+import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
+import { OnboardingStepper } from "@/components/onboarding/onboarding-stepper";
+import { OnboardingNotice } from "@/components/onboarding/OnboardingNotice";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
@@ -444,6 +449,11 @@ const MultiStepForm: React.FC = () => {
   const addIdentityRef = useRef(addIdentity);
   addIdentityRef.current = addIdentity;
   const [step, setStep] = useState(0);
+  // Which way the user last travelled, so the step transition can slide in the
+  // matching direction. `1` = forward (new step rises from below), `-1` = back.
+  // Without this, Back looks identical to Next, which reads as the wizard
+  // moving the wrong way.
+  const [direction, setDirection] = useState<1 | -1>(1);
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const [draftRestored, setDraftRestored] = useState(false);
   // The step a saved draft points at when the user had already started
@@ -739,6 +749,7 @@ const MultiStepForm: React.FC = () => {
       }
     }
     setFormData(merged);
+    setDirection(1);
     trackOnboardingEvent("step_advance", {
       fromStep: step,
       role: merged.role ?? null,
@@ -784,10 +795,14 @@ const MultiStepForm: React.FC = () => {
 
   const handleBack = () => {
     trackOnboardingEvent("step_back", { fromStep: step });
+    setDirection(-1);
     setStep((prevStep) => prevStep - 1);
   };
 
   const handleGoToStep = (targetStep: number) => {
+    // A stepper jump can be in either direction; derive it rather than
+    // defaulting to forward, or "Review → step 2" slides the wrong way.
+    setDirection(targetStep >= step ? 1 : -1);
     setStep(targetStep);
   };
 
@@ -843,7 +858,13 @@ const MultiStepForm: React.FC = () => {
           variant: "destructive",
         });
         if (targetStep >= 0 && targetStep !== step) setStep(targetStep);
-        console.warn("Form validation errors:", errors);
+        // No console.warn: the Sentry breadcrumb below is the durable record,
+        // and a stray log in the client console is how PII-shaped field paths
+        // end up pasted into a bug report.
+        trackOnboardingEvent("submit_validation_failed", {
+          groups: groups.length,
+          role: finalData.role ?? null,
+        });
         return;
       }
 
@@ -1016,8 +1037,13 @@ const MultiStepForm: React.FC = () => {
         router.replace("/dashboard");
       }
     } catch (error: unknown) {
+      // Sentry only. `console.error` here would print the raw error — which on
+      // this path can carry submitted field values — into a console that ends
+      // up in support screenshots.
       trackOnboardingEvent("submit_error", { error: "unhandled_exception" });
-      console.error("Error during onboarding:", error);
+      Sentry.captureException(error, {
+        tags: { surface: "onboarding", stage: "submit" },
+      });
       toast({
         title: "Something Went Wrong",
         description:
@@ -1056,14 +1082,14 @@ const MultiStepForm: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-muted to-background dark:from-gray-900 dark:to-gray-950">
-      {/* Header */}
-      <header className="border-b bg-card/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+    <OnboardingShell
+      wide={activeStep?.wide}
+      header={
+        <div className="container mx-auto flex items-center justify-between gap-4 px-4 py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
               <svg
-                className="w-5 h-5 text-primary-foreground"
+                className="h-5 w-5 text-primary-foreground"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1076,27 +1102,40 @@ const MultiStepForm: React.FC = () => {
                 />
               </svg>
             </div>
-            <span className="text-xl font-semibold truncate">Familiarise</span>
+            <span className="truncate text-xl font-semibold">Familiarise</span>
           </div>
-          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-            <span className="text-sm text-muted-foreground">
-              Step {step + 1} of {totalSteps}
+          <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+            <span className="text-sm text-muted-foreground sm:hidden">
+              {step + 1}/{totalSteps}
             </span>
             <button
               onClick={() => void signOutEverywhere("/")}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
               title="Sign out"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">Sign out</span>
             </button>
           </div>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main
-        className={`container mx-auto px-4 py-8 ${activeStep?.wide ? "max-w-[80%]" : "max-w-3xl"}`}
+      }
+      stepper={
+        <OnboardingStepper
+          steps={steps.map((s) => ({ key: s.key, label: s.label }))}
+          current={step}
+          onGoToStep={handleGoToStep}
+        />
+      }
+      footer={
+        <>
+          Need help?{" "}
+          <Link href="/support" className="text-primary hover:underline">
+            Contact support
+          </Link>
+        </>
+      }
+    >
+      <div
         onPointerDownCapture={markInteracted}
         onKeyDownCapture={markInteracted}
       >
@@ -1111,7 +1150,7 @@ const MultiStepForm: React.FC = () => {
                   : "Welcome back — we saved your progress."}
               </span>
             </div>
-            <div className="flex items-center gap-4 shrink-0">
+            <div className="flex shrink-0 items-center gap-4">
               {resumeStep !== null && resumeStep !== step && (
                 <button
                   type="button"
@@ -1126,7 +1165,7 @@ const MultiStepForm: React.FC = () => {
               )}
               <button
                 onClick={() => void startOver()}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
                 title="Discard saved progress and start from the beginning"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -1137,16 +1176,15 @@ const MultiStepForm: React.FC = () => {
         )}
 
         {/* Draft could not be restored — the stored answers are gone, and
-            saying nothing would read as the wizard losing them silently. */}
+            saying nothing would read as the wizard losing them silently.
+            Tone classes come from the `warning` token rather than raw amber,
+            so the banner follows the theme instead of being hard-coded. */}
         {draftQuarantined && (
-          <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
-            <span className="text-foreground">
-              This form has changed since you last saved, so we couldn&apos;t
-              restore your earlier answers. You may need to enter some of them
-              again — everything from here on is being saved as normal.
-            </span>
-          </div>
+          <OnboardingNotice tone="warning">
+            This form has changed since you last saved, so we couldn&apos;t
+            restore your earlier answers. You may need to enter some of them
+            again — everything from here on is being saved as normal.
+          </OnboardingNotice>
         )}
 
         {/* Autosave has stopped because the draft outgrew its storage budget.
@@ -1154,102 +1192,54 @@ const MultiStepForm: React.FC = () => {
             limits, so the run can still be finished — only RESUMING it later
             is at risk. */}
         {draftOverBudget && (
-          <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
-            <span className="text-foreground">
-              Your answers are too long for us to save your progress, so this
-              run won&apos;t be here if you come back later. Shortening your{" "}
-              <strong className="font-medium">
-                {describeDraftField(draftOverBudgetField)}
-              </strong>{" "}
-              will start it saving again. You can still finish and submit
-              without changing anything.
-            </span>
-          </div>
+          <OnboardingNotice tone="warning">
+            Your answers are too long for us to save your progress, so this run
+            won&apos;t be here if you come back later. Shortening your{" "}
+            <strong className="font-medium">
+              {describeDraftField(draftOverBudgetField)}
+            </strong>{" "}
+            will start it saving again. You can still finish and submit without
+            changing anything.
+          </OnboardingNotice>
         )}
 
-        {/* Progress Stepper — completed steps are buttons, so a keyboard
-            user can go back without hunting for the Back button at the
-            bottom of a long step; upcoming steps stay inert because moving
-            forward requires the current step to validate. */}
-        <nav aria-label="Onboarding steps" className="mb-8">
-          <ol className="flex items-start justify-between">
-            {steps.map(({ label }, index) => (
-              <React.Fragment key={label}>
-                <li className="flex flex-col items-center">
-                  <button
-                    type="button"
-                    onClick={() => handleGoToStep(index)}
-                    disabled={index >= step}
-                    aria-current={index === step ? "step" : undefined}
-                    aria-label={`Step ${index + 1} of ${totalSteps}: ${label}${
-                      index < step ? " (completed, go back)" : ""
-                    }`}
-                    className={cn(
-                      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40",
-                      index < step &&
-                        "bg-primary border-primary text-primary-foreground cursor-pointer hover:ring-4 hover:ring-primary/20",
-                      index === step &&
-                        "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20 cursor-default",
-                      index > step &&
-                        "border-muted-foreground/30 text-muted-foreground cursor-default",
-                    )}
-                  >
-                    {index < step ? <Check className="w-4 h-4" /> : index + 1}
-                  </button>
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "text-xs mt-1.5 text-center max-w-[80px] truncate",
-                      index <= step
-                        ? "text-primary font-medium"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {label}
-                  </span>
-                </li>
-                {/* Connector line */}
-                {index < steps.length - 1 && (
-                  <li
-                    aria-hidden="true"
-                    className={cn(
-                      "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
-                      index < step ? "bg-primary" : "bg-muted-foreground/20",
-                    )}
-                  />
-                )}
-              </React.Fragment>
-            ))}
-          </ol>
-        </nav>
-
         {/* Form Card */}
-        <Card className="shadow-lg">
-          <CardHeader className="text-center pb-2">
+        <Card className="shadow-elevation-2">
+          <CardHeader className="pb-2 text-center">
             <CardTitle className="text-fluid-2xl tracking-tight">
               {step === 0 ? "Welcome! Let's get started" : activeStep?.label}
             </CardTitle>
-            <p className="text-muted-foreground text-sm mt-1">
+            <p className="mt-1 text-sm text-muted-foreground">
               {step === 0
                 ? "Tell us a bit about yourself. You can always update this later."
                 : "Complete the information below to continue."}
             </p>
           </CardHeader>
           <CardContent className="pt-6">
-            {activeStep?.render(stepContext)}
+            {/* `mode="wait"` so the outgoing step finishes before the next
+                mounts — without it the two overlap mid-fade and the card
+                appears to double. The direction comes from which way the user
+                travelled, so Back reads as backwards. */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activeStep?.key ?? step}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={{
+                  hidden: stepEnter(direction),
+                  visible: stepVisible,
+                  exit: stepExit(direction),
+                }}
+                transition={stepTransition}
+              >
+                {activeStep?.render(stepContext)}
+              </motion.div>
+            </AnimatePresence>
           </CardContent>
         </Card>
-
-        {/* Help Text */}
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          Need help?{" "}
-          <Link href="/support" className="text-primary hover:underline">
-            Contact support
-          </Link>
-        </p>
-      </main>
-    </div>
+      </div>
+    </OnboardingShell>
   );
 };
 
