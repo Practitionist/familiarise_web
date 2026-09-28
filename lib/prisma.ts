@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 import { moneyResultExtensions } from "./prisma-extensions";
+import { ssoSecretDecryptExtension } from "./prisma-sso-secret-extension";
 
 // A saturated Supavisor (txn pooler :6543) made pg hang 5–9.6s on connect
 // (EAUTHTIMEOUT), surfacing to users as "the edge function timed out". The two
@@ -126,7 +127,30 @@ function makeClient() {
     }
   });
 
-  return base.$extends({ result: moneyResultExtensions });
+  // Two result extensions, both applying on read:
+  //   - moneyResultExtensions: BigInt money columns -> number (#780).
+  //   - ssoSecretDecryptExtension: `SsoProvider.oidcConfig` / `samlConfig`
+  //     envelope -> the JSON object BetterAuth's SSO plugin expects. The
+  //     plugin has no read hook (`SSOOptions` exposes no decrypt), and
+  //     @better-auth/prisma-adapter has no transform option, so the database
+  //     layer is the only seam that covers *every* reader at once — the
+  //     plugin, the admin settings GET, the pre-auth domain-check, the cert
+  //     expiry cron. Decrypting per call site is how a tenant's IdP client
+  //     secret ends up in a log line. Plaintext rows pass through untouched,
+  //     so this is safe to land before the encryption migration.
+  //     See lib/prisma-sso-secret-extension.ts for the full rationale.
+  //
+  // Merged per-model, not with a top-level spread: `$extends` infers each
+  // model's result shape from its own object literal, and a spread widens
+  // `ssoProvider`'s inferred type to a union that Prisma can no longer resolve
+  // per field. `ssoProvider` appears in neither the money map nor anywhere
+  // else, so the key sets are disjoint and this is not a lossy merge.
+  return base.$extends({
+    result: {
+      ...moneyResultExtensions,
+      ssoProvider: ssoSecretDecryptExtension.ssoProvider,
+    },
+  });
 }
 
 // Helper signatures must accept the extended client — a bare PrismaClient
