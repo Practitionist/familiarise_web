@@ -92,10 +92,15 @@ describe("collaborator self-withdraw", () => {
     expect(notifyCollaboratorRemoved).not.toHaveBeenCalled();
     expect(prisma.appointmentParticipant.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          userId: "u-collab",
-          role: "COLLABORATOR",
-        }),
+        // #1846 SM-B9 — the caller's scope is the first AND arm.
+        where: {
+          AND: expect.arrayContaining([
+            expect.objectContaining({
+              userId: "u-collab",
+              role: "COLLABORATOR",
+            }),
+          ]),
+        },
         data: { status: "CANCELLED" },
       }),
     );

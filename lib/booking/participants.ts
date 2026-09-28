@@ -15,8 +15,9 @@ import type {
  * pre-MVP reset starts from clean data, so the table is never backfilled.
  *
  * All writes are idempotent by construction (createMany skipDuplicates on the
- * (appointmentId, userId) unique, then a revive of terminal rows; updateMany
- * for status), so a checkout retry or a webhook redelivery cannot 409 here.
+ * (appointmentId, userId) unique, then a revive of terminal rows; guarded
+ * updateMany for status through `transitionParticipant`), so a checkout retry
+ * or a webhook redelivery cannot 409 here.
  */
 
 export interface ParticipantEntry {
@@ -51,20 +52,23 @@ export async function recordParticipants(
   await tx.appointmentParticipant.createMany({ data, skipDuplicates: true });
   // A seat released earlier (CANCELLED/REFUNDED) and bought again is the same
   // (appointmentId, userId) row, so skipDuplicates alone would leave it dead.
+  // The revive is the one edge out of a released status, so it widens the
+  // from-set explicitly rather than living in the map (#1846 SM-B9). #1852 —
+  // the revived seat takes the new purchase's payer org.
   for (const row of data) {
-    await tx.appointmentParticipant.updateMany({
-      where: {
-        appointmentId,
-        userId: row.userId,
-        status: { in: RELEASED_PARTICIPANT_STATUSES },
+    await transitionParticipant(
+      tx,
+      { appointmentId, userId: row.userId },
+      row.status,
+      {
+        fromIn: RELEASED_PARTICIPANT_STATUSES,
+        data: {
+          role: row.role,
+          paymentId: row.paymentId,
+          organizationId: row.organizationId,
+        },
       },
-      data: {
-        status: row.status,
-        role: row.role,
-        paymentId: row.paymentId,
-        organizationId: row.organizationId,
-      },
-    });
+    );
   }
 }
 
@@ -96,25 +100,62 @@ export async function releaseParticipant(
   tx: ParticipantTx,
   where: Prisma.AppointmentParticipantWhereInput,
 ): Promise<number> {
-  return setParticipantStatus(
-    tx,
-    { ...where, status: { in: LIVE_PARTICIPANT_STATUSES } },
-    "CANCELLED",
-  );
+  return transitionParticipant(tx, where, "CANCELLED");
 }
 
-export async function setParticipantStatus(
+/**
+ * #1846 SM-B9 — the participant lifecycle, keyed by TARGET like every map in
+ * `lib/booking/transitions.ts`: `PARTICIPANT_ALLOWED_FROM[to]` lists the only
+ * statuses a row may be in when it moves to `to`. Before this the status was a
+ * bare updateMany over a caller-supplied WHERE, so a cancel sweep rewrote a
+ * seat already REFUNDED back to CANCELLED and the seat's money trail read
+ * wrong.
+ *
+ * HELD is entry-only: a released seat bought again is `recordParticipants`'
+ * revive, which widens the from-set explicitly. REFUNDED is terminal. A
+ * refund may land after a cancel released the seat, so CANCELLED → REFUNDED
+ * is legal and the reverse is not.
+ */
+export const PARTICIPANT_ALLOWED_FROM: Record<
+  ParticipantStatus,
+  ParticipantStatus[]
+> = {
+  HELD: [],
+  CONFIRMED: ["HELD"],
+  ATTENDED: ["CONFIRMED"],
+  CANCELLED: LIVE_PARTICIPANT_STATUSES,
+  REFUNDED: [...LIVE_PARTICIPANT_STATUSES, "CANCELLED"],
+};
+
+/**
+ * Move every participant row `where` selects to `to`, but only rows whose
+ * status is in the allowed-from set. The set is ANDed with the caller's WHERE,
+ * never merged into it, so a caller that already narrows (a capture confirms
+ * `status: "HELD"` only) keeps its narrower set, and a caller that forgot to
+ * narrow still cannot make an illegal move.
+ *
+ * Sweep semantics: matching zero rows is a normal answer (nothing live left,
+ * or the row already moved), so this returns the count and never throws.
+ * Participant moves write no BookingStatusHistory row; that enum has no
+ * participant entity.
+ */
+export async function transitionParticipant(
   tx: ParticipantTx,
   where: Prisma.AppointmentParticipantWhereInput,
   to: ParticipantStatus,
-  data: Omit<
-    Prisma.AppointmentParticipantUpdateManyMutationInput,
-    "status"
-  > = {},
+  opts: {
+    /** Narrow or widen the from-set for a flow-specific edge. */
+    fromIn?: ParticipantStatus[];
+    data?: Omit<
+      Prisma.AppointmentParticipantUncheckedUpdateManyInput,
+      "status"
+    >;
+  } = {},
 ): Promise<number> {
+  const fromIn = opts.fromIn ?? PARTICIPANT_ALLOWED_FROM[to];
   const res = await tx.appointmentParticipant.updateMany({
-    where,
-    data: { status: to, ...data },
+    where: { AND: [where, { status: { in: fromIn } }] },
+    data: { status: to, ...opts.data },
   });
   return res.count;
 }

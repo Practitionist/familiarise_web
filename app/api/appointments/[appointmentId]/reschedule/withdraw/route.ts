@@ -70,9 +70,14 @@ export async function POST(
       // in flight — a 409, not a failure of the caller's input. NOT_INITIATOR
       // cannot reach here (the guard above already 404s), but the service is
       // callable from elsewhere, so it keeps its own answer.
+      // ORIGINAL_TIME_TAKEN (#1846 SM-B15) is also a 409: the proposal stays
+      // open, and agreeing a new time is the way forward.
       return NextResponse.json(
         {
-          error: "This reschedule can no longer be withdrawn.",
+          error:
+            result.reason === "ORIGINAL_TIME_TAKEN"
+              ? "The original time has since been booked, so this reschedule can't be withdrawn. Agree a new time instead."
+              : "This reschedule can no longer be withdrawn.",
           code: result.reason,
         },
         { status: result.reason === "NOT_INITIATOR" ? 404 : 409 },

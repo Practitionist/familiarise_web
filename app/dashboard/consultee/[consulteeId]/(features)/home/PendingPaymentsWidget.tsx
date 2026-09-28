@@ -49,9 +49,9 @@ interface PendingPayment {
   isExpiringSoon: boolean;
   source?: "approval_pending" | "gateway_pending";
   /**
-   * Appointment record id for approval-pending items — the cancel route
-   * (`POST /api/appointments/[appointmentId]/cancel`) keys on Appointment,
-   * not the consultation/subscription row that `id` refers to.
+   * Appointment record id for approval-pending items — the abandon door
+   * (`POST /api/bookings/[bookingId]/abandon`) keys on Appointment, not the
+   * consultation/subscription/trial row that `id` refers to.
    */
   appointmentId?: string | null;
 }
@@ -258,20 +258,19 @@ export function PendingPaymentsWidget({
     [queryClient, consulteeId],
   );
 
-  // Cancel an APPROVED_PENDING_PAYMENT booking outright. The cancel route
-  // allows this transition (CANCELLABLE_FROM) and skips refunds for unpaid
-  // bookings, so this is the user-driven exit from the "pay or wait for
-  // expiry" dead end. 409 = the booking already transitioned (e.g. payment
-  // landed in another tab) — refresh rather than error.
+  // Walk away from an approved-but-unpaid booking through the abandon door
+  // (#1527 decision 11). It has a trial arm, which the cancel route lacks, so a
+  // trial's Cancel no longer answers 403 (CE-01). 409 = the booking already
+  // transitioned (e.g. payment landed in another tab) — refresh rather than error.
   const cancelApprovalPending = useCallback(
     async (appointmentId: string) => {
       setCancellingId(appointmentId);
       setCancelNotice(null);
       try {
-        const response = await fetch(
-          `/api/appointments/${appointmentId}/cancel`,
-          { method: "POST", headers: { "Content-Type": "application/json" } },
-        );
+        const response = await fetch(`/api/bookings/${appointmentId}/abandon`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
         if (response.status === 409) {
           setCancelNotice("This booking already changed state — refreshing.");
         } else if (!response.ok) {

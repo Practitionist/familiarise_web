@@ -15,7 +15,7 @@ import {
   linkParticipantsToPayment,
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
@@ -4026,7 +4026,7 @@ export async function handleCheckout(
                 );
               }
               if (skipPayment) {
-                await setParticipantStatus(tx, participantWhere, "CONFIRMED");
+                await transitionParticipant(tx, participantWhere, "CONFIRMED");
               }
             }
 

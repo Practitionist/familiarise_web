@@ -2,7 +2,7 @@ import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
@@ -14,8 +14,12 @@ import {
   remintTrialPayLink,
 } from "@/lib/trials/pay-link";
 import {
+  assertTrialQuoteConfirmed,
+  quoteTrialRefund,
   refundCancelledTrial,
   softCancelTrialAppointment,
+  softCancelTrialAppointmentInTx,
+  TrialRefundQuoteError,
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
 import { TrialStatus, AppointmentsType, Prisma } from "@prisma/client";
@@ -32,6 +36,8 @@ import {
   unlockConsulteeBooking,
   BookingLockUnavailableError,
   ApprovalLock,
+  AppointmentBusyError,
+  withAppointmentLock,
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
@@ -341,6 +347,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       appointmentId: string | null;
       paymentId: string | null;
       isConsultantInitiated: boolean;
+      /** #1846 — a CANCELLED here was quoted unpaid, so it refunds nothing. */
+      quote?: null;
     } | null = null;
 
     if (notes !== undefined) {
@@ -408,6 +416,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           { error: "Only the consultant can convert a trial" },
           { status: 403 },
         );
+      }
+
+      // #1846 — a paid trial's cancel shows its refund quote first, and only
+      // the quoted DELETE refunds, so this PATCH refuses to cancel one.
+      if (status === TrialStatus.CANCELLED) {
+        const quote = await quoteTrialRefund({
+          appointmentId: existingTrial.appointmentId,
+          paymentId: existingTrial.paymentId,
+          isConsultantInitiated: !isTrialConsultee,
+        });
+        if (quote) {
+          return NextResponse.json(
+            {
+              error:
+                "This trial was paid for. Cancel it from the cancel dialog, which shows the refund first.",
+              code: "REFUND_QUOTE_REQUIRED",
+              quote,
+            },
+            { status: 409 },
+          );
+        }
       }
 
       updateData.status = status;
@@ -794,6 +823,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // through, so anyone else is cancelling on the consultant's side.
           isConsultantInitiated:
             status === TrialStatus.REJECTED || !isTrialConsultee,
+          ...(status === TrialStatus.CANCELLED ? { quote: null } : {}),
         };
       }
 
@@ -880,6 +910,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         await transitionTrial(tx, {
           where: { id: trialId },
           to: nextStatus as TrialStatus,
+          // #1846 — this PATCH cancels only an unpaid trial (a paid one needs
+          // the quoted DELETE). The status it read and "still unpaid" ride the
+          // CAS, so a capture that commits first makes this a 409, and one
+          // that lands after is the webhook's capture-after-release refund.
+          ...(nextStatus === TrialStatus.CANCELLED
+            ? {
+                fromIn: [existingTrial.status],
+                whereAnd: { paymentId: null },
+              }
+            : {}),
         });
       }
       // #1775 C-9 — delivery starts the paid trial's earnings hold.
@@ -956,6 +996,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         paymentId: deferredCancellation.paymentId,
         initiatedByUserId: session.user.id,
         isConsultantInitiated: deferredCancellation.isConsultantInitiated,
+        quote: deferredCancellation.quote,
       });
       // #1775 C-12 — a declined paid trial's learner hears "refunded" only
       // once the money actually moved.
@@ -1073,28 +1114,63 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // #1009 — same soft-cancel as the PATCH path. CANCELLED drops the trial out
     // of the occupancy filter, which is what frees the slot; the appointment is
     // tombstoned rather than deleted so the payment it carries survives.
-    await transitionTrial(prisma, {
-      where: { id: trialId },
-      to: TrialStatus.CANCELLED,
-      fromIn: cancellableStatuses,
-    });
-    const updatedTrial = await prisma.trial.findUniqueOrThrow({
-      where: { id: trialId },
-    });
-
-    if (existingTrial.appointmentId) {
-      await softCancelTrialAppointment(existingTrial.appointmentId);
-    }
-
+    //
+    // #1846 SM-D2 / SM-D5 — the status move and the tombstone commit in ONE
+    // transaction on its own client (they were a global-client CAS and a
+    // second transaction, so a crash between them left a CANCELLED trial with
+    // a live session), under the appointment lock every other lifecycle
+    // writer takes. A trial with no appointment yet has no atom to lock; its
+    // CAS alone decides.
+    //
+    // The CAS narrows to the status the caller saw, so a trial accepted or
+    // paid since the read 409s instead of being cancelled on a stale view,
+    // and the tombstone and refund read the committed row, not the pre-read.
+    const lockId = existingTrial.appointmentId;
     // Only the consultee reaches DELETE without privilege, so a privileged
     // caller is acting on the consultant's behalf.
+    const isConsultantInitiated =
+      session.user.consulteeProfileId !== existingTrial.consulteeProfileId;
+    const confirmedRefundPaise = await readConfirmedRefund(request);
+    const cancelTrial = () =>
+      prisma.$transaction(async (tx) => {
+        await transitionTrial(tx, {
+          actorUserId: session.user.id,
+          where: { id: trialId },
+          to: TrialStatus.CANCELLED,
+          fromIn: [existingTrial.status],
+        });
+        const cancelled = await tx.trial.findUniqueOrThrow({
+          where: { id: trialId },
+        });
+        if (cancelled.appointmentId) {
+          await softCancelTrialAppointmentInTx(tx, cancelled.appointmentId);
+        }
+        return cancelled;
+      });
+    // #1846 — a paid trial refunds only the amount the caller confirmed from
+    // the preview. The quote is taken under the lock, so nothing can move the
+    // booking between the check and the cancel, and the refund below pays
+    // exactly that quote.
+    const quoteThenCancel = async () => {
+      const quote = await quoteTrialRefund({
+        appointmentId: existingTrial.appointmentId,
+        paymentId: existingTrial.paymentId,
+        isConsultantInitiated,
+      });
+      assertTrialQuoteConfirmed(quote, confirmedRefundPaise);
+      return { quote, cancelled: await cancelTrial() };
+    };
+    const { quote, cancelled: updatedTrial } = lockId
+      ? await withAppointmentLock(lockId, quoteThenCancel)
+      : await quoteThenCancel();
+
     const refund = await refundCancelledTrial({
       trialId,
-      appointmentId: existingTrial.appointmentId,
-      paymentId: existingTrial.paymentId,
+      appointmentId: updatedTrial.appointmentId,
+      paymentId: updatedTrial.paymentId,
       initiatedByUserId: session.user.id,
-      isConsultantInitiated:
-        session.user.consulteeProfileId !== existingTrial.consulteeProfileId,
+      isConsultantInitiated,
+      quote,
     });
 
     // FIX #554: Send cancellation notification (DELETE path was missing this)
@@ -1120,7 +1196,21 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     // #1319 — the DB CAS refused the move (stale tab, raced webhook/sweep).
-    if (error instanceof IllegalTransitionError) {
+    // #1846 — the quote was not confirmed, or it changed since it was shown;
+    // the current quote rides the answer so the dialog can ask again.
+    if (error instanceof TrialRefundQuoteError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, quote: error.quote },
+        { status: error.httpStatus },
+      );
+    }
+    // #1846 — a held appointment atom (423) or a Redis outage (503) is an
+    // answer too, never a 500.
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },
@@ -1162,7 +1252,7 @@ async function acceptPaidTrial(
   await tx.appointmentOccurrence.create({
     data: { appointmentId, ...session },
   });
-  await setParticipantStatus(
+  await transitionParticipant(
     tx,
     { appointmentId, status: "HELD" },
     "CONFIRMED",
@@ -1200,4 +1290,20 @@ async function createFreeTrialAppointment(
     { organizationId: trial.organizationId ?? null, status: "CONFIRMED" },
   );
   return appointment;
+}
+
+/**
+ * #1846 — the refund amount the caller confirmed from the cancel preview, in
+ * paise, from an optional JSON body. Absent or malformed means unconfirmed.
+ */
+async function readConfirmedRefund(
+  request: NextRequest,
+): Promise<number | undefined> {
+  const body: unknown = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { confirmedRefundPaise?: unknown })
+    .confirmedRefundPaise;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }

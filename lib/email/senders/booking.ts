@@ -252,6 +252,7 @@ export function sendAppointmentRescheduledEmail(
     RELEASED: `Your ${type} time was released`,
     DECLINED: `Proposed time declined for your ${type}`,
     WITHDRAWN: `Reschedule request withdrawn for your ${type}`,
+    EXPIRED: `Your ${type} keeps its original time`,
   };
   return guarded(
     {

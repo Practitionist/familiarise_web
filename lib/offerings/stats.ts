@@ -17,7 +17,10 @@ export interface OfferingStat {
   bookings: number;
   /** The owner's share, net of refunds, in paise. */
   earningsPaise: number;
-  /** Zero bookings and zero payments (#1527-6); the server still decides. */
+  /**
+   * #1527-6 / #1846 — nothing has ever touched it: the DELETE route's own
+   * guard (lib/offerings/delete-guard.ts), read as a query, so the two agree.
+   */
   canDelete: boolean;
   /** #1509 — the org catalog governs archive for these. */
   orgGoverned: boolean;
@@ -32,24 +35,6 @@ export interface OfferingStats {
 
 export const offeringStatKey = (type: OfferingPlanType, planId: string) =>
   `${type}:${planId}`;
-
-export interface OfferingHistory {
-  /** Any 1:1/subscription request row, whatever its status — the DELETE route refuses on these. */
-  requestRows: number;
-  payments: number;
-  seats: number;
-  earningsPaise: number;
-}
-
-/** #1527-6 — Delete is offered only on a plan nothing has ever touched. */
-export function canDeleteOffering(history: Readonly<OfferingHistory>): boolean {
-  return (
-    history.requestRows === 0 &&
-    history.payments === 0 &&
-    history.seats === 0 &&
-    history.earningsPaise === 0
-  );
-}
 
 /** The owner-only route both the Offerings list and Earnings read. */
 export const OFFERING_STATS_URL = "/api/consultant/offering-stats";
