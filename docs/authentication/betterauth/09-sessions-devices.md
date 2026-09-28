@@ -102,7 +102,7 @@ consumer 1x/min, and still reads the cookie cache.
 The current session survives; the toast says whether other devices
 were signed out.
 
-Password *reset* (email-link flow) is stricter: BetterAuth's
+Password _reset_ (email-link flow) is stricter: BetterAuth's
 `revokeSessionsOnPasswordReset` ends every session server-side — the
 resetting browser holds no session, so nothing is preserved — and
 `onPasswordReset` bumps the counter so other tabs learn promptly.
