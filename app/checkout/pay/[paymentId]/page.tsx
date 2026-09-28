@@ -86,7 +86,10 @@ export default async function PayExistingOrderPage({
                 </div>
               </div>
               <PayExistingOrder
-                order={state.order}
+                order={{
+                  ...state.order,
+                  holdExpiresAt: state.summary.expiresAt?.toISOString() ?? null,
+                }}
                 doneHref={state.doneHref}
                 description={state.summary.description ?? "Booking payment"}
               />
