@@ -155,11 +155,14 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
     // Was `onChange`, which re-validated on every keystroke and so showed
     // "required" and a malformed-email error while the user was still typing
     // the field — most visibly on DOB, which is empty-but-valid for most of
-    // its own length. `onBlur` for first validation, then `onChange` once a
-    // field has been touched, which is the standard split: nothing scolds you
-    // mid-word, but a correction is confirmed as you retype.
-    mode: "onBlur",
-    reValidateMode: "onChange",
+    // its own length. `onTouched` is the right split: nothing is validated
+    // until the field has been left once, and from then on every keystroke
+    // revalidates, so a correction is confirmed as the user types.
+    //
+    // `onBlur` + `reValidateMode: "onChange"` looks equivalent and is not —
+    // reValidateMode only engages AFTER a submit, so between first blur and
+    // submit a corrected field keeps showing its stale error.
+    mode: "onTouched",
     defaultValues: {
       name: "",
       email: session?.user?.email || "",

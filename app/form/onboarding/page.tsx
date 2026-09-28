@@ -490,6 +490,11 @@ const MultiStepForm: React.FC = () => {
   // earlier in-flight upsert, and the row must never be deleted while a save
   // is still unsettled — otherwise the upsert recreates it after the clear.
   const draftSaveQueueRef = useRef<DraftSaveQueue | null>(null);
+  // True while a step transition is in flight. Guards `handleNext` against a
+  // second click on the still-mounted outgoing form; released by
+  // AnimatePresence's onExitComplete, or explicitly on an error path that does
+  // not change the step.
+  const transitioningRef = useRef(false);
   if (!draftSaveQueueRef.current) {
     draftSaveQueueRef.current = createDraftSaveQueue();
   }
@@ -735,6 +740,14 @@ const MultiStepForm: React.FC = () => {
   };
 
   const handleNext = async (stepData: Partial<OnboardingFormData>) => {
+    // A step transition holds the outgoing form on screen (AnimatePresence
+    // mode="wait") with its Continue button still live. A second click in
+    // that window would run this again against the ALREADY-incremented `step`
+    // and skip the next step's validation — so a consultant could jump past
+    // Professional Profile without it ever validating. The ref is released by
+    // AnimatePresence's onExitComplete.
+    if (transitioningRef.current) return;
+    transitioningRef.current = true;
     // Merge new data first so the async role-flip below reads the
     // freshest values (React setState batching would otherwise give us
     // stale formData).
@@ -786,6 +799,10 @@ const MultiStepForm: React.FC = () => {
           description: result.error ?? "Please try again.",
           variant: "destructive",
         });
+        // Release the advance guard: no step change happened, so
+        // onExitComplete will not fire, and the user must be able to retry
+        // from the form they are still looking at.
+        transitioningRef.current = false;
         return;
       }
     }
@@ -793,13 +810,24 @@ const MultiStepForm: React.FC = () => {
     setStep((prevStep) => prevStep + 1);
   };
 
+  // Back and the stepper share `handleNext`'s guard: the outgoing step's own
+  // Back button is live during the exit too, and an unguarded decrement would
+  // walk the user back past the step they just left.
   const handleBack = () => {
+    if (transitioningRef.current) return;
+    // A no-op move changes no key, so onExitComplete would never fire and the
+    // guard would stay set — freezing the wizard. Bail before arming it.
+    if (step <= 0) return;
+    transitioningRef.current = true;
     trackOnboardingEvent("step_back", { fromStep: step });
     setDirection(-1);
     setStep((prevStep) => prevStep - 1);
   };
 
   const handleGoToStep = (targetStep: number) => {
+    if (transitioningRef.current) return;
+    if (targetStep === step) return;
+    transitioningRef.current = true;
     // A stepper jump can be in either direction; derive it rather than
     // defaulting to forward, or "Review → step 2" slides the wrong way.
     setDirection(targetStep >= step ? 1 : -1);
@@ -1037,13 +1065,22 @@ const MultiStepForm: React.FC = () => {
         router.replace("/dashboard");
       }
     } catch (error: unknown) {
-      // Sentry only. `console.error` here would print the raw error — which on
-      // this path can carry submitted field values — into a console that ends
-      // up in support screenshots.
+      // Sentry only — no `console.error`. But NOT the raw exception: this
+      // path can carry submitted field values, and `captureException` ships
+      // the message, stack and any attached context to the telemetry SDK,
+      // which is a path for onboarding data to leave the browser. Capture a
+      // synthetic error carrying only the error NAME, so the event still
+      // groups by failure type while the payload carries no user data. The
+      // breadcrumb below is the fuller record.
       trackOnboardingEvent("submit_error", { error: "unhandled_exception" });
-      Sentry.captureException(error, {
-        tags: { surface: "onboarding", stage: "submit" },
-      });
+      Sentry.captureException(
+        new Error(
+          `onboarding_submit_failed: ${
+            error instanceof Error ? error.name : "unknown"
+          }`,
+        ),
+        { tags: { surface: "onboarding", stage: "submit" } },
+      );
       toast({
         title: "Something Went Wrong",
         description:
@@ -1218,18 +1255,39 @@ const MultiStepForm: React.FC = () => {
           <CardContent className="pt-6">
             {/* `mode="wait"` so the outgoing step finishes before the next
                 mounts — without it the two overlap mid-fade and the card
-                appears to double. The direction comes from which way the user
-                travelled, so Back reads as backwards. */}
-            <AnimatePresence mode="wait" initial={false}>
+                appears to double.
+
+                `custom={direction}` is load-bearing. The EXITING element has
+                already rendered with the previous direction, so reading
+                `direction` from the closure would animate Back with the
+                direction from the last forward move. Passing it through
+                `custom` hands the exiting step the NEW direction, and the
+                variant functions below receive it as their argument.
+
+                `onExitComplete` releases the advance guard. The guard — not a
+                CSS pointer-events trick — is what stops the outgoing form being
+                driven, because it is still on screen and still live for the
+                whole exit. A nested `pointer-events-auto` to re-enable the
+                current step would re-enable the exiting one too, since in
+                `mode="wait"` only the outgoing step is mounted at that point.
+            */}
+            <AnimatePresence
+              mode="wait"
+              custom={direction}
+              onExitComplete={() => {
+                transitioningRef.current = false;
+              }}
+            >
               <motion.div
                 key={activeStep?.key ?? step}
+                custom={direction}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
                 variants={{
-                  hidden: stepEnter(direction),
+                  hidden: (d: 1 | -1) => stepEnter(d),
                   visible: stepVisible,
-                  exit: stepExit(direction),
+                  exit: (d: 1 | -1) => stepExit(d),
                 }}
                 transition={stepTransition}
               >

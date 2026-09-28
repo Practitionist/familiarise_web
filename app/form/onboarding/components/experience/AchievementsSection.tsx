@@ -37,9 +37,7 @@ export default function AchievementsSection({
   const [editingAchievement, setEditingAchievement] =
     useState<Achievement | null>(null);
 
-  const handleSave = (
-    achievement: Achievement | Omit<Achievement, "id">,
-  ) => {
+  const handleSave = (achievement: Achievement | Omit<Achievement, "id">) => {
     if ("id" in achievement && achievement.id) {
       // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
