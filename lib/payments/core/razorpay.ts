@@ -400,40 +400,80 @@ export async function eraseRazorpayCustomerPii(
 }
 
 /**
- * Cancel a Razorpay order (best effort - cannot actually cancel after payment)
+ * #1861 L2 — what the gateway holds against an order. Razorpay has no order
+ * cancel, so the abandoned sweep asks instead and expires only on
+ * `no_live_payment`.
  */
-export async function cancelRazorpayOrder(orderId: string): Promise<void> {
+export type RazorpayOrderCancelResult =
+  | "no_live_payment"
+  | "has_live_payment"
+  | "unknown";
+
+/** Payment states that mean the buyer's money is with the gateway. */
+const LIVE_ORDER_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
+  "authorized",
+  "captured",
+]);
+
+/**
+ * An order id Razorpay has no record of (a 400 naming the id, or a 404) — the
+ * same reading reconcile-payment-status uses for `unknown_id` (#1708).
+ */
+function isUnknownOrderId(error: unknown): boolean {
+  const err = error as
+    | { statusCode?: unknown; error?: { description?: unknown } }
+    | null
+    | undefined;
+  const status = err?.statusCode;
+  const description = err?.error?.description;
+  if (status === 404) return true;
+  return (
+    status === 400 &&
+    typeof description === "string" &&
+    /does not exist|not found|invalid id/i.test(description)
+  );
+}
+
+/**
+ * "Cancel" a Razorpay order: report whether it carries a live payment.
+ *
+ * Failed and refunded attempts do not count, so a declined card retry cannot
+ * pin the row. An order Razorpay does not know holds nothing. A missing client
+ * or a failed fetch is `unknown`: unproven is not the same as safe.
+ */
+export async function cancelRazorpayOrder(
+  orderId: string,
+): Promise<RazorpayOrderCancelResult> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
-    console.warn("Razorpay client not initialized - cannot cancel order");
-    return;
+    console.warn("Razorpay client not initialized - cannot check the order");
+    return "unknown";
   }
 
   try {
-    // Check if there are any payments for this order
     const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
       razorpayClient.orders.fetchPayments(orderId),
     );
-    if (payments.count === 0) {
-      console.log(
-        `✅ Razorpay order had no payments, safe to ignore: ${orderId}`,
-      );
-      return;
+    const live = payments.items.some((p) =>
+      LIVE_ORDER_PAYMENT_STATUSES.has(p.status),
+    );
+    if (!live) {
+      console.log(`✅ Razorpay order has no live payment: ${orderId}`);
+      return "no_live_payment";
     }
-    console.warn(
-      `⚠️ Cannot cancel Razorpay order with existing payments: ${orderId}`,
-    );
+    console.warn(`⚠️ Razorpay order has a live payment: ${orderId}`);
+    return "has_live_payment";
   } catch (error) {
-    // If we can't fetch payments, assume it's safe to ignore — best-effort
-    // cancel, and a stray order with no payment costs nothing.
-    console.log(
-      `✅ Razorpay order fetch failed (likely safe to ignore): ${orderId}`,
-    );
+    if (isUnknownOrderId(error)) {
+      console.log(`✅ Razorpay has no record of order ${orderId}`);
+      return "no_live_payment";
+    }
     reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       expected: true,
     });
+    return "unknown";
   }
 }
 

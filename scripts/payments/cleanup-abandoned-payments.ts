@@ -25,7 +25,11 @@ import {
 } from "@prisma/client";
 import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import type Stripe from "stripe";
-import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
+import {
+  cancelRazorpayOrder,
+  type RazorpayOrderCancelResult,
+} from "../../lib/payments/core/razorpay";
+import { reportSentryMessage } from "@/lib/observability/report";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import {
   transitionConsultationRequest,
@@ -169,12 +173,15 @@ async function cancelStripeIntent(
 }
 
 /**
- * Cancel payment intent with the appropriate payment gateway
+ * Cancel payment intent with the appropriate payment gateway.
+ *
+ * #1861 L2 — resolves to what the gateway still holds; a Stripe cancel that
+ * the gateway refused still throws, as before.
  */
 export async function cancelPaymentIntent(
   paymentIntent: string,
   gateway: PaymentGateway,
-): Promise<void> {
+): Promise<RazorpayOrderCancelResult> {
   try {
     switch (gateway) {
       case PaymentGateway.STRIPE: {
@@ -184,7 +191,7 @@ export async function cancelPaymentIntent(
         // the call can only fail, which then blocked the expiry below.
         if (!isStripeEnabled()) {
           logStripeFenceOnce();
-          break;
+          return "no_live_payment";
         }
         // #1376 — gateway cores load at call time, and this module is reached
         // from the cleanup route's graph.
@@ -192,18 +199,18 @@ export async function cancelPaymentIntent(
         const stripe = getStripeClient();
         if (!stripe) {
           console.warn("⚠️ STRIPE_SECRET_KEY not configured");
-          break;
+          return "no_live_payment";
         }
         await cancelStripeIntent(stripe, paymentIntent);
-        break;
+        return "no_live_payment";
       }
 
       case PaymentGateway.RAZORPAY:
-        await cancelRazorpayOrder(paymentIntent);
-        break;
+        return await cancelRazorpayOrder(paymentIntent);
 
       default:
         console.warn(`⚠️ Unknown payment gateway: ${gateway}`);
+        return "unknown";
     }
   } catch (error) {
     console.error(
@@ -463,42 +470,19 @@ interface FailureSink {
 }
 
 /**
- * Cancel the gateway intent and mark the row EXPIRED (timed out, not a gateway
- * rejection).
+ * Mark the rows EXPIRED (timed out, not a gateway rejection).
  *
- * #1464 — the expiry does not depend on the cancel succeeding. Skipping the CAS
- * on a failed cancel desynchronised the unit: the credits were handed back and
- * the slot released around a payment left PENDING, which no later sweep could
- * see, because nothing about it still looked abandoned. Expiring anyway is also
- * what the Razorpay arm has always done — an order cannot be cancelled, so that
- * cancel is a no-op — and a capture landing after the row is EXPIRED is the
- * terminal race #1439 owns. The failure is recorded AND counted, so the run
- * reports `success: false` and the HTTP twin answers non-2xx.
+ * #1861 L2 — the gateway was already asked, outside the transaction, and every
+ * payment here came back `no_live_payment`; a unit with a live or unproven
+ * payment never reaches this. A capture that still lands after the row is
+ * EXPIRED is the terminal race #1439 owns.
  */
 async function expirePendingPayments(
   tx: Pick<Tx, "payment">,
   payments: AbandonedPayment[],
-  failures: FailureSink,
 ): Promise<void> {
-  // #1459 — the gateway round trips run first and in parallel; the status
-  // writes below stay one-at-a-time and in cohort order, because they are the
-  // part that has to be a deterministic sequence inside the caller's
-  // transaction.
-  const cancelFailures = await cancelGatewayIntents(payments);
-
+  // One-at-a-time and in cohort order: a deterministic write sequence.
   for (const payment of payments) {
-    const failure = cancelFailures.get(payment.id);
-    if (failure !== undefined) {
-      console.warn(
-        `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
-        failure,
-      );
-      failures.messages.push(
-        `Payment cancellation failed for ${payment.paymentIntent}: ${failure}`,
-      );
-      failures.count++;
-    }
-
     // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
     await tx.payment.updateMany({
       where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
@@ -518,20 +502,19 @@ const GATEWAY_CANCEL_CONCURRENCY = 5;
 
 /**
  * #1459 — ceiling on a single cancel. Neither gateway client sets one, so a
- * hung connection would hold the whole batch past the ticker's timeout and the
- * payment would never be marked EXPIRED. A timed-out cancel is recorded like
- * any other gateway failure and retried on the next run.
+ * hung connection would hold the whole batch past the ticker's timeout. A
+ * timed-out cancel is `unknown`: the unit is skipped and retried next run.
  */
 const GATEWAY_CANCEL_TIMEOUT_MS = 4_000;
 
 async function cancelWithTimeout(
   paymentIntent: string,
   gateway: PaymentGateway,
-): Promise<void> {
+): Promise<RazorpayOrderCancelResult> {
   // AbortSignal.timeout's timer does not hold the event loop open, so a cancel
   // that wins the race leaves nothing behind to keep the function alive.
   const signal = AbortSignal.timeout(GATEWAY_CANCEL_TIMEOUT_MS);
-  await Promise.race([
+  return Promise.race([
     cancelPaymentIntent(paymentIntent, gateway),
     new Promise<never>((_resolve, reject) => {
       signal.addEventListener("abort", () =>
@@ -545,22 +528,28 @@ async function cancelWithTimeout(
   ]);
 }
 
+/** #1861 L2 — one payment's gateway answer; `detail` explains an `unknown`. */
+export interface GatewayIntentCheck {
+  outcome: RazorpayOrderCancelResult;
+  detail?: string;
+}
+
 /**
  * Cancel every payment's gateway intent with bounded concurrency.
  *
  * Exported for the concurrency pin: the ceiling is the whole point of the
  * function, and it is invisible from the outside of the sweep.
  *
- * @returns The failures only, keyed by payment id — a payment absent from the
- *   map was cancelled and is safe to mark EXPIRED.
+ * @returns Every payment's answer, keyed by payment id. A cancel that threw or
+ *   timed out is `unknown` (#1861 L2).
  */
 export async function cancelGatewayIntents(
   payments: readonly Pick<
     AbandonedPayment,
     "id" | "paymentIntent" | "paymentGateway"
   >[],
-): Promise<Map<string, string>> {
-  const failures = new Map<string, string>();
+): Promise<Map<string, GatewayIntentCheck>> {
+  const checks = new Map<string, GatewayIntentCheck>();
 
   for (let i = 0; i < payments.length; i += GATEWAY_CANCEL_CONCURRENCY) {
     const chunk = payments.slice(i, i + GATEWAY_CANCEL_CONCURRENCY);
@@ -570,13 +559,69 @@ export async function cancelGatewayIntents(
       ),
     );
     settled.forEach((outcome, j) => {
-      if (outcome.status === "rejected") {
-        failures.set(chunk[j].id, describeError(outcome.reason));
-      }
+      checks.set(
+        chunk[j].id,
+        outcome.status === "fulfilled"
+          ? { outcome: outcome.value }
+          : { outcome: "unknown", detail: describeError(outcome.reason) },
+      );
     });
   }
 
-  return failures;
+  return checks;
+}
+
+/**
+ * #1861 L2 — true when every payment's order is proven empty. An `unknown` is
+ * recorded AND counted, so the run reports `success: false` and retries next
+ * tick; a live payment is a skip, left PENDING for reconcile-payment-status,
+ * whose captures reach the #1861 L1 confirm-time tie-break. A consultation or
+ * subscription slot is already free on the clock (buildDeadHoldFilter); an
+ * event seat stays held until the gateway answers.
+ */
+function gatewayClearsExpiry(
+  appointment: AbandonedAppointment,
+  checks: Map<string, GatewayIntentCheck>,
+  failures: FailureSink,
+): boolean {
+  let clear = true;
+  for (const payment of appointment.payment) {
+    const check: GatewayIntentCheck = checks.get(payment.id) ?? {
+      outcome: "unknown",
+    };
+    if (check.outcome === "no_live_payment") continue;
+    clear = false;
+    if (check.outcome === "unknown") {
+      const reason = check.detail ?? "gateway state could not be read";
+      console.warn(
+        `⚠️ Could not read gateway state for ${payment.paymentIntent}:`,
+        reason,
+      );
+      failures.messages.push(
+        `Payment cancellation failed for ${payment.paymentIntent}: ${reason}`,
+      );
+      failures.count++;
+    } else {
+      console.warn(
+        JSON.stringify({
+          event: "cleanup_skipped_gateway_has_live_payment",
+          paymentId: payment.id,
+          appointmentId: appointment.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      reportSentryMessage(
+        "Abandoned sweep skipped an order with a live payment",
+        {
+          subsystem: "payments",
+          expected: true,
+          level: "warning",
+          extra: { paymentId: payment.id, appointmentId: appointment.id },
+        },
+      );
+    }
+  }
+  return clear;
 }
 
 /**
@@ -760,13 +805,21 @@ async function cleanupAbandonedAppointment(
   /** Set only when the lapsed-link CAS won inside the committed unit. */
   notice: RequestExpiredNotice | null;
 }> {
+  // #1861 L2 — the gateway round trips run BEFORE the transaction: under
+  // PG_POOL_MAX=1 they held the only connection, and a paid order must keep
+  // its row PENDING rather than be expired into a refund.
+  const checks = await cancelGatewayIntents(appointment.payment);
+  if (!gatewayClearsExpiry(appointment, checks, failures)) {
+    return { outcome: "skipped", notice: null };
+  }
+
   try {
     return await prisma.$transaction(async (tx) => {
       if (await anyPaymentSucceeded(tx, appointment)) {
         return { outcome: "skipped" as const, notice: null };
       }
 
-      await expirePendingPayments(tx, appointment.payment, failures);
+      await expirePendingPayments(tx, appointment.payment);
       await restoreReferralCredits(tx, appointment.payment);
 
       if (appointment.webinar || appointment.class) {
@@ -909,9 +962,8 @@ async function cleanupAbandonedPaymentsUnlocked(
           failures,
         );
 
-        // A gateway cancel that failed fails the run even though the row was
-        // still expired and its hold released: the intent may still be live at
-        // the gateway, which is something an operator has to see.
+        // #1861 L2 — a gateway state that could not be read skipped the unit
+        // and fails the run, so an operator sees it and the next tick retries.
         result.errorCount += failures.count;
 
         if (outcome === "skipped") {
