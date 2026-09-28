@@ -27,6 +27,12 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  // #1861 P4b — reconcile-payment-status wraps each row in Sentry.withScope
+  // to tag it; the mock just runs the callback against a stub scope.
+  withScope: jest.fn((callback: (scope: unknown) => unknown) =>
+    callback({ setTag: jest.fn(), setTags: jest.fn() }),
+  ),
+  getCurrentScope: jest.fn(() => ({ setTag: jest.fn(), setTags: jest.fn() })),
 }));
 
 jest.mock("../../lib/prisma", () => ({

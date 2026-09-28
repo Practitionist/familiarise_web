@@ -277,6 +277,82 @@ async function alertMissingSecret(error: string): Promise<void> {
   }
 }
 
+/**
+ * #1861 P4a — one Sentry cron monitor for the whole ticker (not per target:
+ * a dedicated monitor per /api/cleanup/* target is billed at $0.78/month
+ * each and out of scope). Dependency-free, unlike alertMissingSecret above —
+ * Sentry's HTTP check-in (https://docs.sentry.io/product/crons/getting-started/http/)
+ * is a plain POST, so no `@sentry/node` import is needed on the happy path.
+ *
+ * The endpoint is built by parsing SENTRY_DSN as Sentry's own DSN shape
+ * (`https://<publicKey>@<host>/<projectId>`) into
+ * `https://<host>/api/<projectId>/cron/<monitorSlug>/<publicKey>/`, which is
+ * exactly the template that doc page gives. A POST body carrying
+ * `monitor_config` upserts the monitor's schedule/margins on every check-in,
+ * so no separate Sentry UI/API step is needed to create `cron-tick` first —
+ * verified against the doc's own POST example, which upserts the same way.
+ */
+const CRON_MONITOR_SLUG = "cron-tick";
+const CRON_CHECKIN_TIMEOUT_MS = 2_000;
+
+function cronCheckInUrl(): string | null {
+  const dsn = process.env.SENTRY_DSN;
+  if (!dsn) return null;
+  try {
+    const parsed = new URL(dsn);
+    const publicKey = parsed.username;
+    const projectId = parsed.pathname.replace(/^\//, "");
+    if (!publicKey || !projectId || !parsed.host) return null;
+    return `${parsed.protocol}//${parsed.host}/api/${projectId}/cron/${CRON_MONITOR_SLUG}/${publicKey}/`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One check-in call. Never throws and bounded to CRON_CHECKIN_TIMEOUT_MS —
+ * a Sentry outage or a malformed DSN must add no latency and never fail the
+ * tick; a missed check-in shows up as a Sentry-side miss alert, which is the
+ * whole point of the monitor.
+ */
+async function sendCheckIn(
+  checkInId: string,
+  status: "in_progress" | "ok" | "error",
+  durationMs?: number,
+): Promise<void> {
+  const url = cronCheckInUrl();
+  if (!url) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CRON_CHECKIN_TIMEOUT_MS);
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        check_in_id: checkInId,
+        status,
+        ...(durationMs !== undefined && { duration: durationMs / 1000 }),
+        // Matches `config.schedule` above — this is the single source for
+        // both Netlify's own trigger and Sentry's missed-check-in alerting.
+        monitor_config: {
+          schedule: { type: "crontab", value: config.schedule },
+          // #1686 — the tick always answers well inside its own budget; three
+          // minutes of silence past the five-minute cadence is a real miss,
+          // not a slow-but-alive tick.
+          checkin_margin: 3,
+          max_runtime: 3,
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch {
+    // Belt and suspenders: fetch failures are swallowed here too, even
+    // though every call site also treats this as fire-and-forget.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function cronTick(_req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -299,6 +375,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const started = Date.now();
   const targets = dueTargets(new Date(started));
 
+  // #1861 P4a — one check-in per tick, not per target; see sendCheckIn above.
+  const checkInId = crypto.randomUUID();
+  await sendCheckIn(checkInId, "in_progress");
+
   const settled = await Promise.allSettled(
     targets.map((name) => hitTarget(baseUrl, secret, name)),
   );
@@ -320,14 +400,23 @@ export default async function cronTick(_req: Request): Promise<Response> {
     else failed.push({ name, status });
   });
 
+  const durationMs = Date.now() - started;
   const body: TickBody = {
     event: "cron-tick",
     ok,
     lockHeld,
     failed,
-    durationMs: Date.now() - started,
+    durationMs,
   };
   console.log(JSON.stringify(body));
+
+  // #1861 P4a — the monitor's health follows `failed`, not the (always-200)
+  // HTTP status; see statusFor's #1686 rationale for why the two diverge.
+  await sendCheckIn(
+    checkInId,
+    failed.length > 0 ? "error" : "ok",
+    durationMs,
+  );
 
   // #1686 — 200 even with a non-empty `failed`; see statusFor.
   return jsonResponse(body, statusFor(failed));

@@ -111,6 +111,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #1861 P4b — IDs only, so a support/triage view can correlate a Sentry
+    // event with the money row without any PII on the event itself.
+    Sentry.getCurrentScope().setTags({
+      paymentId: payment.id,
+      gatewayOrderId: razorpay_order_id,
+      ...(payment.appointmentId && { appointmentId: payment.appointmentId }),
+    });
+
     if (payment.userId !== session.user.id) {
       return NextResponse.json(
         { verified: false, error: "Unauthorized" },

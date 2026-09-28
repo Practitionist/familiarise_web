@@ -413,201 +413,217 @@ async function reconcilePaymentStatusUnlocked(
   );
 
   for (const payment of cohort) {
-    console.log(`\nReconciling payment ${payment.id}`);
-    console.log(`   Gateway: ${payment.paymentGateway}`);
-    console.log(`   Payment Intent: ${payment.paymentIntent}`);
-    console.log(`   User: ${payment.user?.name || "Unknown"}`);
-    console.log(`   Created: ${payment.createdAt.toISOString()}`);
-
-    // Skip if no payment intent
-    if (!payment.paymentIntent) {
-      console.log(`   Skipping - no payment intent`);
-      skippedCount++;
-      continue;
-    }
-
-    // Query gateway for actual status. Razorpay's `notes`/`amountPaise` ride
-    // along so a SUCCEEDED reconcile can drive the confirmation pipeline
-    // instead of writing the status (ADR 21).
-    let lookup: GatewayLookup;
-
-    if (payment.paymentGateway === PaymentGateway.STRIPE) {
-      lookup = await getStripePaymentStatus(payment.paymentIntent);
-    } else if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
-      if (!razorpayConfigured) {
-        console.log(`   Skipping - Razorpay credentials not configured`);
-        skippedCount++;
-        continue;
-      }
-      // For Razorpay, paymentIntent might be orderId
-      lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
-    } else {
-      console.log(
-        `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
-      );
-      skippedCount++;
-      continue;
-    }
-
-    // #1708 — an id the gateway does not know is terminal for this row, not a
-    // run failure. #1757 — past the orphan age it is retired through the
-    // abandoned-payments unit (expire, credits, hold); younger rows are only
-    // reported, since the gateway may still be lagging.
-    if (lookup.kind === "unknown_id") {
-      if (payment.createdAt < orphanCutoff) {
-        try {
-          const { outcome, errors: retireErrors } =
-            await retireOrphanPendingPayment(payment.id);
-          errors.push(...retireErrors);
-          if (outcome === "retired") {
-            console.warn(
-              `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - retired PENDING → EXPIRED`,
-            );
-            retiredCount++;
-            retired.push(payment.id);
-            await recordSystemEvent({
-              category: "PAYMENT",
-              severity: "WARN",
-              message: `PAYMENT_ORPHAN_RETIRED: ${payment.id} (${payment.paymentGateway} ${payment.paymentIntent}): ${lookup.detail}`,
-              context: {
-                paymentId: payment.id,
-                paymentGateway: payment.paymentGateway,
-                paymentIntent: payment.paymentIntent,
-                createdAt: payment.createdAt.toISOString(),
-              },
-            });
-          } else {
-            console.log(
-              `   Skipped: payment ${payment.id} already transitioned by another writer`,
-            );
-            skippedCount++;
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`   Retire failed for ${payment.id}: ${msg}`);
-          errors.push(`Payment ${payment.id}: ${msg}`);
-        }
-        continue;
-      }
-      console.warn(
-        `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - reported, not retried as a failure`,
-      );
-      unresolvableCount++;
-      unresolvable.push(payment.id);
-      continue;
-    }
-
-    if (lookup.kind === "gateway_error") {
-      console.log(`   Could not get status from gateway - skipping`);
-      errors.push(
-        `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
-      );
-      skippedCount++;
-      continue;
-    }
-
-    const gatewayStatus = lookup;
-
-    // An orphan candidate the gateway does know is outside the reconcile
-    // window above; it is left for that window's rules, not acted on here.
-    if (
-      orphanCandidateIds.has(payment.id) &&
-      !stalePendingPayments.some((s) => s.id === payment.id)
-    ) {
-      console.log(
-        `   Gateway knows the id (${gatewayStatus.status}) - outside the reconcile window, skipping`,
-      );
-      skippedCount++;
-      continue;
-    }
-
-    console.log(`   Gateway status: ${gatewayStatus.status}`);
-
-    // Map gateway status to our status
-    const mappedStatus = mapGatewayStatus(
-      payment.paymentGateway,
-      gatewayStatus.status,
-    );
-
-    if (!mappedStatus) {
-      console.log(`   Unknown gateway status - skipping`);
-      skippedCount++;
-      continue;
-    }
-
-    // Update if status changed
-    if (mappedStatus !== payment.paymentStatus) {
-      // ADR 21 — a payment that reconciles to SUCCEEDED must go through the
-      // confirmation pipeline, not a status write.
-      //
-      // This job exists precisely because a `payment.captured` was missed, so
-      // it is the LEAST safe place to write the status directly: setting
-      // SUCCEEDED here poisons handlePaymentSuccess's already-SUCCEEDED guard,
-      // and Razorpay's redelivery (it retries for 24h) then no-ops. The legacy
-      // appointment-creation path and all three auto-refund guards
-      // (amount-mismatch, captured-after-terminal, double-booking-loser) are
-      // skipped permanently — and none of those are covered by another cron.
-      // The old code even logged "may need manual appointment creation!"
-      // instead of just creating it.
-      // Razorpay only: routeCapturedPayment is the Razorpay dispatch's router,
-      // and Stripe successes are confirmed by their own webhook handler. A
-      // Stripe row still takes the CAS below, which is the pre-existing
-      // behaviour for that gateway.
-      if (
-        mappedStatus === PaymentStatus.SUCCEEDED &&
-        payment.paymentGateway === PaymentGateway.RAZORPAY
-      ) {
-        try {
-          await routeCapturedPayment({
-            orderId: payment.paymentIntent,
-            notes: gatewayStatus.notes ?? {},
-            amountPaise: gatewayStatus.amountPaise,
-            gatewayPaymentId: gatewayStatus.paymentId,
-          });
-          console.log(`   Confirmed via pipeline: ${payment.id}`);
-          reconciledCount++;
-          succeededCount++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`   Pipeline failed for ${payment.id}: ${msg}`);
-          errors.push(`Payment ${payment.id}: ${msg}`);
-        }
-        continue;
-      }
-
-      // #776 — guard on the status we read. A webhook can transition this
-      // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
-      // the predicate the reconcile would clobber that real transition back to
-      // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
-      // writer already moved it — skip rather than overwrite.
-      const claimed = await prisma.payment.updateMany({
-        where: { id: payment.id, paymentStatus: payment.paymentStatus },
-        data: {
-          paymentStatus: mappedStatus,
-        },
+    // #1861 P4b — one Sentry scope per row so a captured exception carries
+    // this row's IDs, not whichever row a prior iteration set tags for.
+    // `continue` becomes `return` inside the callback; same per-iteration
+    // exit, now scoped.
+    await Sentry.withScope(async (scope) => {
+      scope.setTags({
+        paymentId: payment.id,
+        ...(payment.appointment?.id && {
+          appointmentId: payment.appointment.id,
+        }),
+        ...(payment.paymentIntent && {
+          gatewayOrderId: payment.paymentIntent,
+        }),
       });
 
-      if (claimed.count === 0) {
+      console.log(`\nReconciling payment ${payment.id}`);
+      console.log(`   Gateway: ${payment.paymentGateway}`);
+      console.log(`   Payment Intent: ${payment.paymentIntent}`);
+      console.log(`   User: ${payment.user?.name || "Unknown"}`);
+      console.log(`   Created: ${payment.createdAt.toISOString()}`);
+
+      // Skip if no payment intent
+      if (!payment.paymentIntent) {
+        console.log(`   Skipping - no payment intent`);
+        skippedCount++;
+        return;
+      }
+
+      // Query gateway for actual status. Razorpay's `notes`/`amountPaise` ride
+      // along so a SUCCEEDED reconcile can drive the confirmation pipeline
+      // instead of writing the status (ADR 21).
+      let lookup: GatewayLookup;
+
+      if (payment.paymentGateway === PaymentGateway.STRIPE) {
+        lookup = await getStripePaymentStatus(payment.paymentIntent);
+      } else if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
+        if (!razorpayConfigured) {
+          console.log(`   Skipping - Razorpay credentials not configured`);
+          skippedCount++;
+          return;
+        }
+        // For Razorpay, paymentIntent might be orderId
+        lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
+      } else {
         console.log(
-          `   Skipped: payment ${payment.id} already transitioned by another writer`,
+          `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
         );
         skippedCount++;
-        continue;
+        return;
       }
 
-      console.log(
-        `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,
+      // #1708 — an id the gateway does not know is terminal for this row, not a
+      // run failure. #1757 — past the orphan age it is retired through the
+      // abandoned-payments unit (expire, credits, hold); younger rows are only
+      // reported, since the gateway may still be lagging.
+      if (lookup.kind === "unknown_id") {
+        if (payment.createdAt < orphanCutoff) {
+          try {
+            const { outcome, errors: retireErrors } =
+              await retireOrphanPendingPayment(payment.id);
+            errors.push(...retireErrors);
+            if (outcome === "retired") {
+              console.warn(
+                `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - retired PENDING → EXPIRED`,
+              );
+              retiredCount++;
+              retired.push(payment.id);
+              await recordSystemEvent({
+                category: "PAYMENT",
+                severity: "WARN",
+                message: `PAYMENT_ORPHAN_RETIRED: ${payment.id} (${payment.paymentGateway} ${payment.paymentIntent}): ${lookup.detail}`,
+                context: {
+                  paymentId: payment.id,
+                  paymentGateway: payment.paymentGateway,
+                  paymentIntent: payment.paymentIntent,
+                  createdAt: payment.createdAt.toISOString(),
+                },
+              });
+            } else {
+              console.log(
+                `   Skipped: payment ${payment.id} already transitioned by another writer`,
+              );
+              skippedCount++;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`   Retire failed for ${payment.id}: ${msg}`);
+            errors.push(`Payment ${payment.id}: ${msg}`);
+          }
+          return;
+        }
+        console.warn(
+          `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - reported, not retried as a failure`,
+        );
+        unresolvableCount++;
+        unresolvable.push(payment.id);
+        return;
+      }
+
+      if (lookup.kind === "gateway_error") {
+        console.log(`   Could not get status from gateway - skipping`);
+        errors.push(
+          `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
+        );
+        skippedCount++;
+        return;
+      }
+
+      const gatewayStatus = lookup;
+
+      // An orphan candidate the gateway does know is outside the reconcile
+      // window above; it is left for that window's rules, not acted on here.
+      if (
+        orphanCandidateIds.has(payment.id) &&
+        !stalePendingPayments.some((s) => s.id === payment.id)
+      ) {
+        console.log(
+          `   Gateway knows the id (${gatewayStatus.status}) - outside the reconcile window, skipping`,
+        );
+        skippedCount++;
+        return;
+      }
+
+      console.log(`   Gateway status: ${gatewayStatus.status}`);
+
+      // Map gateway status to our status
+      const mappedStatus = mapGatewayStatus(
+        payment.paymentGateway,
+        gatewayStatus.status,
       );
-      reconciledCount++;
 
-      if (mappedStatus === PaymentStatus.EXPIRED) {
-        expiredCount++;
-      } else if (mappedStatus === PaymentStatus.FAILED) {
-        failedCount++;
+      if (!mappedStatus) {
+        console.log(`   Unknown gateway status - skipping`);
+        skippedCount++;
+        return;
       }
-    } else {
-      console.log(`   Status unchanged (${mappedStatus})`);
-    }
+
+      // Update if status changed
+      if (mappedStatus !== payment.paymentStatus) {
+        // ADR 21 — a payment that reconciles to SUCCEEDED must go through the
+        // confirmation pipeline, not a status write.
+        //
+        // This job exists precisely because a `payment.captured` was missed, so
+        // it is the LEAST safe place to write the status directly: setting
+        // SUCCEEDED here poisons handlePaymentSuccess's already-SUCCEEDED guard,
+        // and Razorpay's redelivery (it retries for 24h) then no-ops. The legacy
+        // appointment-creation path and all three auto-refund guards
+        // (amount-mismatch, captured-after-terminal, double-booking-loser) are
+        // skipped permanently — and none of those are covered by another cron.
+        // The old code even logged "may need manual appointment creation!"
+        // instead of just creating it.
+        // Razorpay only: routeCapturedPayment is the Razorpay dispatch's router,
+        // and Stripe successes are confirmed by their own webhook handler. A
+        // Stripe row still takes the CAS below, which is the pre-existing
+        // behaviour for that gateway.
+        if (
+          mappedStatus === PaymentStatus.SUCCEEDED &&
+          payment.paymentGateway === PaymentGateway.RAZORPAY
+        ) {
+          try {
+            await routeCapturedPayment({
+              orderId: payment.paymentIntent,
+              notes: gatewayStatus.notes ?? {},
+              amountPaise: gatewayStatus.amountPaise,
+              gatewayPaymentId: gatewayStatus.paymentId,
+            });
+            console.log(`   Confirmed via pipeline: ${payment.id}`);
+            reconciledCount++;
+            succeededCount++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`   Pipeline failed for ${payment.id}: ${msg}`);
+            errors.push(`Payment ${payment.id}: ${msg}`);
+          }
+          return;
+        }
+
+        // #776 — guard on the status we read. A webhook can transition this
+        // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
+        // the predicate the reconcile would clobber that real transition back to
+        // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
+        // writer already moved it — skip rather than overwrite.
+        const claimed = await prisma.payment.updateMany({
+          where: { id: payment.id, paymentStatus: payment.paymentStatus },
+          data: {
+            paymentStatus: mappedStatus,
+          },
+        });
+
+        if (claimed.count === 0) {
+          console.log(
+            `   Skipped: payment ${payment.id} already transitioned by another writer`,
+          );
+          skippedCount++;
+          return;
+        }
+
+        console.log(
+          `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,
+        );
+        reconciledCount++;
+
+        if (mappedStatus === PaymentStatus.EXPIRED) {
+          expiredCount++;
+        } else if (mappedStatus === PaymentStatus.FAILED) {
+          failedCount++;
+        }
+      } else {
+        console.log(`   Status unchanged (${mappedStatus})`);
+      }
+    });
   }
 
   // Summary

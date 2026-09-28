@@ -112,6 +112,12 @@ export async function routeCapturedPayment(params: {
 }): Promise<void> {
   const { orderId, notes, amountPaise, gatewayPaymentId } = params;
 
+  // #1861 P4b — IDs only. `orderId` is what Payment.paymentIntent stores;
+  // an internal Payment.id or appointmentId is not yet resolved at this
+  // point in the pipeline (the handlers below look it up), so gatewayOrderId
+  // is what's known here.
+  Sentry.getCurrentScope().setTag("gatewayOrderId", orderId);
+
   if (notes.type === "credit_purchase" || notes.type === "invoice_payment") {
     // The org path only trusts an amount that came off a PAYMENT entity. On
     // `order.paid` the figure available is the order total, not what was
