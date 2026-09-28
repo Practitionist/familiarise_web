@@ -98,6 +98,15 @@ export function scrubSentryEvent(event: ErrorEvent): ErrorEvent {
     if (event.request.data !== undefined) {
       event.request.data = redactByKey(event.request.data, 0);
     }
+    // Invite, reset and waitlist links carry their token in the query string.
+    if (typeof event.request.url === "string") {
+      event.request.url = stripSensitiveQueryParams(event.request.url);
+    }
+    if (event.request.query_string !== undefined) {
+      event.request.query_string = redactQueryString(
+        event.request.query_string,
+      );
+    }
   }
   if (event.extra) {
     event.extra = redactByKey(event.extra, 0) as typeof event.extra;
@@ -108,7 +117,38 @@ export function scrubSentryEvent(event: ErrorEvent): ErrorEvent {
   return event;
 }
 
-const SENSITIVE_QUERY_PARAM_RX = /token|secret|signature/i;
+// `code` is the OAuth authorization code on the Better Auth callback URL.
+const SENSITIVE_QUERY_PARAM_RX = /token|secret|signature|^code$/i;
+
+type QueryString = NonNullable<
+  NonNullable<ErrorEvent["request"]>["query_string"]
+>;
+
+/** Redacts sensitive params in any of Sentry's three query_string shapes. */
+function redactQueryString(qs: QueryString): QueryString {
+  if (typeof qs === "string") {
+    const params = new URLSearchParams(qs);
+    let changed = false;
+    for (const key of Array.from(params.keys())) {
+      if (SENSITIVE_QUERY_PARAM_RX.test(key)) {
+        params.set(key, REDACTED);
+        changed = true;
+      }
+    }
+    return changed ? params.toString() : qs;
+  }
+  if (Array.isArray(qs)) {
+    return qs.map(([key, value]) => [
+      key,
+      SENSITIVE_QUERY_PARAM_RX.test(key) ? REDACTED : value,
+    ]) as QueryString;
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(qs)) {
+    out[key] = SENSITIVE_QUERY_PARAM_RX.test(key) ? REDACTED : value;
+  }
+  return out;
+}
 
 /** Strips sensitive query params from a URL string; returns it unchanged on parse failure. */
 function stripSensitiveQueryParams(url: string): string {

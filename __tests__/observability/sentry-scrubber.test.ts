@@ -82,3 +82,16 @@ describe("scrubSentryBreadcrumb", () => {
     );
   });
 });
+
+test("strips tokens from the request URL and query string", () => {
+  const scrubbed = scrubSentryEvent({
+    request: {
+      url: "https://familiarisenow.com/invite/accept?token=abc&org=o1",
+      query_string: "token=abc&org=o1",
+    },
+  } as ErrorEvent);
+  expect(scrubbed.request?.url).toBe(
+    "https://familiarisenow.com/invite/accept?token=%5Bredacted%5D&org=o1",
+  );
+  expect(scrubbed.request?.query_string).toBe("token=%5Bredacted%5D&org=o1");
+});
