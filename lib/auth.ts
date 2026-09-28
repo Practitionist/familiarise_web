@@ -414,6 +414,12 @@ export const auth = betterAuth({
           // the insert made the stamp load-bearing for auth — a missing
           // column bricked ALL sign-ins pre-push. This hook stays a pure
           // veto: reject, or fall through to the insert untouched.
+          //
+          // Push-before-traffic is still mandatory and no hook placement
+          // avoids it: the regenerated Prisma client selects all model
+          // fields by default, so the session INSERT needs the pushed
+          // columns before ANY build of this code serves sign-in traffic.
+          // `npm run db:push` runs once, at merge, by the orchestrator.
         },
         after: async (session) => {
           // Device metadata (#1856) — awaited (one PK update on a rare

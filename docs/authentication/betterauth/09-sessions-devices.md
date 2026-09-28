@@ -109,7 +109,11 @@ act through the moderation ban path, which shares the helper.
 
 - `npm run db:push` runs once, at merge, by the orchestrator — the two
   columns are additive, but a push is still a production operation on
-  the shared Postgres.
+  the shared Postgres. Push-before-traffic is mandatory: the
+  regenerated client selects all model fields by default, so ANY build
+  of this code 500s sign-ins against a database without the columns.
+  Never route sign-in traffic to an unpushed build (this bit us on the
+  #1857 preview).
 - `NEXT_PUBLIC_*` is baked at build time: changing the poll interval
   needs a rebuild, same as `NEXT_PUBLIC_APP_URL`.
 - The device list is `take: 25` and the cap holds ~10; if either ever

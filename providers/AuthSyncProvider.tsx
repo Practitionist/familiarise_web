@@ -193,7 +193,17 @@ export default function AuthSyncProvider() {
           const res = await fetch("/api/user/sessions/revocation-signal", {
             credentials: "same-origin",
           });
-          if (!res.ok) return;
+          if (!res.ok) {
+            // A 401/403 here means OUR session is gone (requireApiAuth
+            // answers before the route reads the counter) — classify now
+            // instead of sitting stale until the next focus event. Any
+            // other status (503, 500, network) is "could not ask", never
+            // a revocation (#1716): stay put.
+            if (res.status === 401 || res.status === 403) {
+              await classifyUnexpectedSignOut();
+            }
+            return;
+          }
           const { signal } = (await res.json()) as { signal: unknown };
           if (typeof signal !== "number") return;
           const cursor = readRevsigCursor();
