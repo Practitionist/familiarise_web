@@ -92,7 +92,7 @@ export async function revokeSessionById(
  * check covers revocation within one tab-switch, and the poll is
  * opt-in traffic until scale says otherwise.
  */
-const REVOCATION_SIGNAL_TTL_SECONDS = 24 * 60 * 60;
+const REVOCATION_SIGNAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function revocationSignalKey(userId: string): string {
   return `sess:revsig:${userId}`;
@@ -101,10 +101,13 @@ export function revocationSignalKey(userId: string): string {
 export async function signalRevocation(userId: string): Promise<void> {
   try {
     const key = revocationSignalKey(userId);
+    // Create-with-TTL first, then bump: INCR preserves an existing TTL,
+    // so a key created here always carries one. The naive INCR-then-PEXPIRE
+    // leaves a TTL-less permanent counter if the process dies between the
+    // two round-trips. SET NX is the atomic create (px, not ex: the
+    // MockRedis half of the RedisClient union only implements ms).
+    await redis.set(key, "0", { nx: true, px: REVOCATION_SIGNAL_TTL_MS });
     await redis.incr(key);
-    // pexpire, not expire: the MockRedis half of the RedisClient union
-    // only implements the ms variant.
-    await redis.pexpire(key, REVOCATION_SIGNAL_TTL_SECONDS * 1000);
   } catch (error) {
     captureThrottled("session:signalRevocation", error, {
       subsystem: "auth",

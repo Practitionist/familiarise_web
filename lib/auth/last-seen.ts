@@ -35,7 +35,18 @@ export function touchSessionLastSeen(sessionId: string): void {
   if (!sessionId) return;
   const now = Date.now();
   const last = lastTouchBySession.get(sessionId) ?? 0;
-  if (now - last < LAST_SEEN_TOUCH_INTERVAL_MS) return;
+  if (now - last < LAST_SEEN_TOUCH_INTERVAL_MS) {
+    // Refresh recency even on a throttled hit: Map.set on an existing
+    // key does NOT move it, so without this the eviction below eats the
+    // hottest sessions first under churn — the exact PG_POOL_MAX=1
+    // pressure this cache exists to avoid. Re-insert with the OLD
+    // timestamp (not now): moving the throttle window forward on every
+    // throttled hit would defer the next write indefinitely under
+    // constant traffic and freeze lastSeenAt.
+    lastTouchBySession.delete(sessionId);
+    lastTouchBySession.set(sessionId, last);
+    return;
+  }
   lastTouchBySession.set(sessionId, now);
   if (lastTouchBySession.size > LAST_SEEN_CACHE_LIMIT) {
     // Map preserves insertion order — deleting the first key evicts

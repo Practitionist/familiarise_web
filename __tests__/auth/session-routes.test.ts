@@ -197,3 +197,31 @@ describe("POST /api/user/sessions/revoke-others (#1856)", () => {
     expect(mockSignalRevocation).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /api/user/sessions failure paths (#1856)", () => {
+  it("a DB failure is a 500 with the generic message, never a 401", async () => {
+    authedAs("u1", "s-current");
+    sessionFindMany.mockRejectedValue(new Error("connect ETIMEDOUT"));
+
+    const res = await listSessions();
+
+    // Mapping DB-down to 401 here would make the UI say "session ended"
+    // instead of "retry" — the distinction the allowlist of messages
+    // depends on.
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "We couldn't load your sessions. Please try again.",
+    });
+  });
+
+  it("a session-lookup failure (503) passes through untouched", async () => {
+    const err = Response.json(
+      { error: "unavailable", code: "SESSION_LOOKUP_FAILED" },
+      { status: 503, headers: { "Retry-After": "2" } },
+    );
+    mockRequireApiAuth.mockResolvedValue({ error: err });
+
+    expect(await listSessions()).toBe(err);
+    expect(sessionFindMany).not.toHaveBeenCalled();
+  });
+});

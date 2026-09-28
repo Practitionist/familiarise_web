@@ -121,7 +121,10 @@ jest.mock("../../components/dashboard/SettingsLayout", () => ({
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as Sentry from "@sentry/nextjs";
-import { SessionsSection } from "../../components/dashboard/account/SignInSecuritySection";
+import {
+  PasswordSection,
+  SessionsSection,
+} from "../../components/dashboard/account/SignInSecuritySection";
 
 const captureException = Sentry.captureException as jest.Mock;
 
@@ -376,6 +379,75 @@ describe("SessionsSection load states (#1856)", () => {
 
     const alert = container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Too many requests");
+  });
+
+  it("password change toasts swept / none / failed distinctly", async () => {
+    const { authClient } = jest.requireMock("../../lib/auth-client") as unknown as {
+      authClient: { changePassword: jest.Mock };
+    };
+    authClient.changePassword.mockResolvedValue({});
+
+    async function submitPasswordForm(): Promise<void> {
+      const setInput = (id: string, value: string) => {
+        const el = document.getElementById(id) as HTMLInputElement;
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        setter?.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      setInput("password-current", "old-password-1");
+      setInput("password-next", "new-password-1");
+      setInput("password-confirm", "new-password-1");
+      const form = container.querySelector("form");
+      expect(form).not.toBeNull();
+      await act(async () => {
+        form?.dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        );
+      });
+      await flush();
+    }
+
+    async function mountPassword(): Promise<void> {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<PasswordSection />);
+      });
+      await flush();
+    }
+
+    // Swept: other devices were ended.
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ revoked: 3 }),
+    });
+    await mountPassword();
+    await submitPasswordForm();
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Password changed",
+        description: "Your other devices were signed out.",
+      }),
+    );
+
+    // Failed: the warning names the fallback action.
+    jest.clearAllMocks();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    });
+    await submitPasswordForm();
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Password changed",
+        description: expect.stringContaining("Sign out other devices"),
+        variant: "destructive",
+      }),
+    );
   });
 
   it("a failed revoke reports to Sentry unless it is 401/429", async () => {

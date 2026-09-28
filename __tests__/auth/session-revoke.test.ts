@@ -16,13 +16,13 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 const redisIncr = jest.fn();
-const redisPexpire = jest.fn();
+const redisSet = jest.fn();
 const redisGet = jest.fn();
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
   default: {
     incr: (...a: unknown[]) => redisIncr(...a),
-    pexpire: (...a: unknown[]) => redisPexpire(...a),
+    set: (...a: unknown[]) => redisSet(...a),
     get: (...a: unknown[]) => redisGet(...a),
   },
 }));
@@ -96,17 +96,21 @@ describe("revokeAllUserSessions (#1856)", () => {
 });
 
 describe("revocation signal (#1856)", () => {
-  it("bumps the per-user counter with a 24h TTL", async () => {
+  it("creates the counter with a TTL, then bumps it (no TTL-less leak)", async () => {
+    redisSet.mockResolvedValue("OK");
     redisIncr.mockResolvedValue(4);
-    redisPexpire.mockResolvedValue(true);
 
     await signalRevocation("u1");
 
-    expect(redisIncr).toHaveBeenCalledWith(revocationSignalKey("u1"));
-    expect(redisPexpire).toHaveBeenCalledWith(
+    // SET NX PX first: INCR preserves an existing TTL, so a key created
+    // here always carries one — a crash between the calls can never
+    // leave a permanent counter.
+    expect(redisSet).toHaveBeenCalledWith(
       revocationSignalKey("u1"),
-      24 * 60 * 60 * 1000,
+      "0",
+      expect.objectContaining({ nx: true }),
     );
+    expect(redisIncr).toHaveBeenCalledWith(revocationSignalKey("u1"));
   });
 
   it("never throws — a Redis blip is throttled-reported and swallowed", async () => {

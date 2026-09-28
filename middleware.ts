@@ -276,12 +276,21 @@ const RATE_LIMIT_RULES: RateRule[] = [
   },
   {
     // #1856 — session/device management. Own limiter, not authLimiter:
-    // the device list reloads after every revoke and the opt-in signal
-    // poll ticks every few seconds, and none of that traffic may eat
-    // the 10/15m sign-in budget. IP-keyed (middleware is cookie-presence
-    // only and cannot resolve a user id — see the meeting-join rule).
+    // the device list reloads after every revoke and none of that
+    // traffic may eat the 10/15m sign-in budget. IP-keyed (middleware is
+    // cookie-presence only and cannot resolve a user id — see the
+    // meeting-join rule).
+    //
+    // The revocation-signal poll is EXEMPT: it is an authed Redis GET
+    // with negligible abuse potential, and limiting it would break the
+    // feature it serves — a 30s poll is exactly 30 requests per 15-min
+    // window (the whole budget), and two tabs behind one NAT permanently
+    // 429 the device list. Abuse of the poll buys an attacker nothing
+    // (it returns one counter for their own account).
     label: "auth: session/device management",
-    match: (p) => p.startsWith("/api/user/sessions"),
+    match: (p) =>
+      p.startsWith("/api/user/sessions") &&
+      !p.startsWith("/api/user/sessions/revocation-signal"),
     limiter: sessionMgmtLimiter,
     skipLocalhost: true,
   },

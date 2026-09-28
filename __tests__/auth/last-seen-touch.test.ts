@@ -115,4 +115,40 @@ describe("touchSessionLastSeen (#1856)", () => {
 
     expect(updateMany).not.toHaveBeenCalled();
   });
+
+  it("evicts least-recently-touched first, not most-active (LRU)", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    // Fill to just under the 2000-entry bound with distinct sessions.
+    for (let i = 0; i < 1999; i += 1) {
+      touchSessionLastSeen(`warm-${i}`);
+    }
+    await flushMicrotasks();
+    expect(updateMany).toHaveBeenCalledTimes(1999);
+
+    // Re-touch warm-0 inside its throttle window: no write, but it must
+    // move to the back of the recency order.
+    touchSessionLastSeen("warm-0");
+    await flushMicrotasks();
+    expect(updateMany).toHaveBeenCalledTimes(1999);
+
+    // Two fresh sessions push past the bound; exactly one eviction fires.
+    touchSessionLastSeen("new-a");
+    touchSessionLastSeen("new-b");
+    await flushMicrotasks();
+    expect(updateMany).toHaveBeenCalledTimes(2001);
+
+    updateMany.mockClear();
+    // warm-0 survived (still throttled → no write); warm-1 was evicted
+    // (throttle entry lost → writes again).
+    touchSessionLastSeen("warm-0");
+    touchSessionLastSeen("warm-1");
+    await flushMicrotasks();
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "warm-1" }),
+      }),
+    );
+  });
 });

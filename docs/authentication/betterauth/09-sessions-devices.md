@@ -131,9 +131,12 @@ act through the moderation ban path, which shares the helper.
 2. **Never read a failed lookup as a revocation**, server or client:
    503/`SESSION_LOOKUP_FAILED` (server) and `getSession` error (client)
    both mean "could not ask". Only a confirmed null signs out.
-3. **`session.create.after` cannot fail sign-in.** It is `void` +
-   catch by contract; awaiting it would serialize sign-ins on the
-   single production connection.
+3. **`session.create.after` cannot fail sign-in.** The device stamp is
+   awaited but infallible by construction (one PK update, catches
+   internally — awaiting it only costs milliseconds on a rare path and
+   keeps a serverless freeze from dropping it). Only the cap is `void` +
+   catch; awaiting _that_ (findMany + Serializable deleteMany) would
+   serialize sign-ins on the single production connection.
 4. **The Redis poll default is off for a reason.** Turning it on is
    always-on Upstash traffic per visible tab; the focus check already
    covers revocation within one tab-switch.

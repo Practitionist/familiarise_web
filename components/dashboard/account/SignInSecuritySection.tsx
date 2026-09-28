@@ -79,19 +79,31 @@ export function PasswordSection() {
       // stolen device survives the reset. Best-effort: the password
       // itself already changed, so a sweep failure only affects the
       // toast copy, never the outcome.
-      let swept = false;
+      let sweep: "swept" | "none" | "failed" = "failed";
       try {
         const res = await fetch("/api/user/sessions/revoke-others", {
           method: "POST",
         });
-        swept =
-          res.ok && ((await res.json()) as { revoked: number }).revoked > 0;
-      } catch {
-        swept = false;
+        if (!res.ok) {
+          reportRevokeFailure("revoke-others", res.status, null);
+        } else {
+          sweep =
+            ((await res.json()) as { revoked: number }).revoked > 0
+              ? "swept"
+              : "none";
+        }
+      } catch (error) {
+        reportRevokeFailure("revoke-others", null, error);
       }
       toast({
         title: "Password changed",
-        description: swept ? "Your other devices were signed out." : undefined,
+        description:
+          sweep === "swept"
+            ? "Your other devices were signed out."
+            : sweep === "failed"
+              ? "We couldn't sign out your other devices — use 'Sign out other devices' below to finish."
+              : undefined,
+        variant: sweep === "failed" ? "destructive" : undefined,
       });
     } catch {
       toast({
@@ -166,6 +178,29 @@ interface DeviceSession {
   expiresAt: string;
   isCurrent: boolean;
   isImpersonated: boolean;
+}
+
+/**
+ * Observability for revoke failures (#1856): 401 is handled by signing
+ * out and 429 is the limiter working as designed — neither is a
+ * defect. 5xx/network are, each from one deliberate user click (no
+ * throttle needed), and the Sentry user scope set at sign-in says which
+ * user. Module scope: it uses no hooks state, so every section shares
+ * one stable reference.
+ */
+function reportRevokeFailure(
+  op: "revoke-one" | "revoke-others",
+  status: number | null,
+  error: unknown,
+): void {
+  if (status === 401 || status === 429) return;
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(`sessions-${op} failed`),
+    {
+      tags: { subsystem: "auth", op: `sessions-${op}` },
+      extra: { status },
+    },
+  );
 }
 
 /**
@@ -271,28 +306,6 @@ export function SessionsSection() {
     void load();
   }, [load]);
 
-  // Observability for revoke failures: 401 is handled by signing out
-  // and 429 is the limiter working as designed — neither is a defect.
-  // 5xx/network are, each from one deliberate user click (no throttle
-  // needed), and the Sentry user scope set at sign-in says which user.
-  const reportRevokeFailure = useCallback(
-    (
-      op: "revoke-one" | "revoke-others",
-      status: number | null,
-      error: unknown,
-    ) => {
-      if (status === 401 || status === 429) return;
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(`sessions-${op} failed`),
-        {
-          tags: { subsystem: "auth", op: `sessions-${op}` },
-          extra: { status },
-        },
-      );
-    },
-    [],
-  );
-
   const revokeOne = useCallback(
     async (target: DeviceSession) => {
       // ConfirmDialog keeps the dialog open with the thrown message shown
@@ -329,11 +342,18 @@ export function SessionsSection() {
         await signOutEverywhere("/auth/signin");
         return;
       }
-      postAuthSync({ type: "session-revoked", sessionId: target.id });
+      // Ping peers only when something actually ended — and not when the
+      // ended session was this tab's own (we're navigating away; peers'
+      // sessions are untouched by a single-row delete, so nobody needs
+      // waking). Receivers re-check authoritatively regardless, so a
+      // skipped ping only costs them nothing.
+      if (body.revoked > 0 && !body.currentSessionEnded) {
+        postAuthSync({ type: "session-revoked", sessionId: target.id });
+      }
       toast({ title: `Signed out ${target.label}` });
       await load();
     },
-    [load, reportRevokeFailure, toast],
+    [load, toast],
   );
 
   const revokeOthers = useCallback(
@@ -384,7 +404,7 @@ export function SessionsSection() {
       });
       await load();
     },
-    [load, reportRevokeFailure, toast],
+    [load, toast],
   );
 
   return (

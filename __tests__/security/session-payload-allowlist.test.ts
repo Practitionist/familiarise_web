@@ -93,6 +93,40 @@ describe("session payload allowlist (#1856)", () => {
     expect(out.lastSeenAt).toEqual(row.lastSeenAt);
   });
 
+  it("falls back to derivation for an empty-string label (direct writes)", () => {
+    const row = {
+      id: "sess_4",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-02T00:00:00Z"),
+      expiresAt: new Date("2026-02-01T00:00:00Z"),
+      ipAddress: null,
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+      deviceLabel: "",
+      lastSeenAt: null,
+      impersonatedBy: null,
+    } satisfies SessionPublicRow;
+
+    // An empty label is not a label — never render a blank device row.
+    expect(toPublicSession(row, "sess_4").label).toBe("Safari on macOS");
+  });
+
+  it("does not flag impersonation for a missing field (mocks, select drift)", () => {
+    const row = {
+      id: "sess_5",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-02T00:00:00Z"),
+      expiresAt: new Date("2026-02-01T00:00:00Z"),
+      ipAddress: null,
+      userAgent: null,
+      deviceLabel: null,
+      lastSeenAt: null,
+      impersonatedBy: undefined,
+    } as unknown as SessionPublicRow;
+
+    expect(toPublicSession(row).isImpersonated).toBe(false);
+  });
+
   it("omits isCurrent for operator views (no caller session to compare)", () => {
     const row = {
       id: "sess_3",

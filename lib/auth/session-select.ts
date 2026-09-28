@@ -58,12 +58,17 @@ export function toPublicSession(
 ): PublicSession {
   return {
     id: row.id,
-    label: row.deviceLabel ?? deriveDeviceLabel(row.userAgent),
+    // Empty string is not a label (possible via direct Prisma writes
+    // that skip the creation hook) — fall back to derivation rather
+    // than rendering a blank device row.
+    label: row.deviceLabel || deriveDeviceLabel(row.userAgent),
     ipAddress: row.ipAddress,
     createdAt: row.createdAt,
     lastSeenAt: row.lastSeenAt ?? row.updatedAt,
     expiresAt: row.expiresAt,
     isCurrent: currentSessionId !== undefined && row.id === currentSessionId,
-    isImpersonated: row.impersonatedBy !== null,
+    // Loose check: `undefined` (mocks, future select drift) must not
+    // read as an impersonation the way `!== null` would.
+    isImpersonated: row.impersonatedBy != null,
   };
 }

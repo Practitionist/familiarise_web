@@ -1,11 +1,11 @@
 # Sessions and Hooks
 
-| Field | Value |
-|---|---|
-| Status | Stable |
-| Audience | All engineers |
-| Last reviewed | 2026-09-27 |
-| Source files | `lib/auth.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx`, `lib/auth/device-label.ts`, `lib/auth/session-cap.ts`, `lib/auth/last-seen.ts`, `lib/auth/session-revoke.ts`, `lib/auth/session-select.ts` |
+| Field         | Value                                                                                                                                                                                                                                                                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status        | Stable                                                                                                                                                                                                                                                                                                                           |
+| Audience      | All engineers                                                                                                                                                                                                                                                                                                                    |
+| Last reviewed | 2026-09-27                                                                                                                                                                                                                                                                                                                       |
+| Source files  | `lib/auth.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx`, `lib/auth/device-label.ts`, `lib/auth/session-cap.ts`, `lib/auth/last-seen.ts`, `lib/auth/session-revoke.ts`, `lib/auth/session-select.ts` |
 
 ## 1. Background
 
@@ -41,12 +41,14 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 ### 2.2 Database Hooks
 
 **`user.create.after`** — Fires after every signup:
+
 - Creates `CookiePreference` and `NotificationPreference` rows
 - Sends welcome email (fire-and-forget — errors logged, not thrown)
 - Syncs user to Novu subscriber (fire-and-forget)
 - Does **not** create `ConsulteeProfile` (lazy via `ensureConsulteeProfile`)
 
 **`session.create.before`** — Fires before issuing a session cookie on any auth path (credential, OAuth, SSO, signup):
+
 - Calls `shouldRejectSession()` from `lib/sso/enforce-session.ts`
 - Looks up the user's email domain in `OrgDomainClaim`
 - If domain is enforced (`enforceSSO=true`, verified claim, active org), checks whether user has an `account` row matching one of the org's registered `ssoProvider.providerId` values
@@ -55,9 +57,11 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 - The allow path falls through untouched: device metadata is stamped in `session.create.after`, never merged into the insert (a missing column must never brick sign-in, #1856)
 
 **`session.create.after`** — Fires after the session row commits (#1856):
+
 - Fire-and-forget `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry). Eventually consistent by design and must never fail sign-in — failures are Sentry-reported and swallowed.
 
 **`account.create.after`** — Fires after linking a non-credential account:
+
 - Sends "account linked" notification email (fire-and-forget)
 
 ### 2.3 customSession Enrichment
@@ -94,8 +98,16 @@ Loads all ACTIVE memberships with org metadata. This powers the `OrgSwitcher` an
 
 ```typescript
 {
-  organizationId, organizationName, organizationSlug, organizationLogo,
-  role, departmentLabel, canSponsor, canHost, fundingSource, walletBalance
+  (organizationId,
+    organizationName,
+    organizationSlug,
+    organizationLogo,
+    role,
+    departmentLabel,
+    canSponsor,
+    canHost,
+    fundingSource,
+    walletBalance);
 }
 ```
 
@@ -105,12 +117,12 @@ This used to mirror the `session.create.before` logic to set `ssoEnforcementFail
 
 ### 2.4 Auth Guard vs Auth Helper
 
-| | `lib/auth-guard.ts` | `lib/auth-helpers.ts` |
-|---|---|---|
-| **Used in** | Server components (pages) | API route handlers |
-| **Error style** | `redirect()` — never returns | `NextResponse.json({ error }, { status })` |
-| **Functions** | `requireAuth`, `requireOnboarded`, `requireUserRole`, `requireNotOnboarded` | `requireApiAuth`, `requireAdminAuth`, `requireOrgAccess`, etc. |
-| **Session read** | `getSession()` or `getSession(true)` | `getSession(true)` always |
+|                  | `lib/auth-guard.ts`                                                         | `lib/auth-helpers.ts`                                          |
+| ---------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Used in**      | Server components (pages)                                                   | API route handlers                                             |
+| **Error style**  | `redirect()` — never returns                                                | `NextResponse.json({ error }, { status })`                     |
+| **Functions**    | `requireAuth`, `requireOnboarded`, `requireUserRole`, `requireNotOnboarded` | `requireApiAuth`, `requireAdminAuth`, `requireOrgAccess`, etc. |
+| **Session read** | `getSession()` or `getSession(true)`                                        | `getSession(true)` always                                      |
 
 ### 2.5 Client Rendering and Cross-Tab Sync
 
@@ -122,7 +134,7 @@ Two pieces work together to make the rendered auth state correct and consistent 
 
 2. **Cross-tab propagation.** BetterAuth's client only broadcasts a session change to other tabs on sign-out and user-update, never on sign-in, and OAuth or SSO logins complete through a full-page redirect with no client fetch hook at all. As a result an already-open tab would not reflect a login elsewhere until it next regained focus (BetterAuth's built-in `visibilitychange` refetch). `AuthSyncProvider` (mounted once in the root layout) closes that gap: it detects this tab's logged-out to logged-in transition and pings peer tabs over a `BroadcastChannel`, and on receiving a ping it calls the `useSession` `refetch` so every consumer re-renders. The helper in `lib/auth-broadcast.ts` falls back to a `storage` event for browsers without `BroadcastChannel`. The provider renders nothing and shares the existing session atom, so it adds no extra `/get-session` request.
 
-3. **Revocation classification (#1856).** When a tab goes from authed to null without initiating it, one authoritative re-check (`disableCookieCache`) classifies: error → refetch and stay put (a failed lookup is never a revocation, #1716 client-side); user present → cookie-cache race, refetch to recover; confirmed null → clean sign-out to `/auth/signin?reason=session-revoked`. Three triggers feed it: the `session-revoked` BroadcastChannel ping from the revoking tab (same-browser), a throttled `visibilitychange` re-check (cross-device, one tab-switch), and the opt-in Redis counter poll (`NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`, default off). See `09-sessions-devices.md`.
+3. **Revocation classification (#1856).** When a tab goes from authed to null without initiating it, one authoritative re-check (`disableCookieCache`) classifies: error → refetch and stay put (a failed lookup is never a revocation, #1716 client-side); user present → cookie-cache race, refetch to recover; confirmed null → clean sign-out to `/auth/signin?reason=session-revoked`. Four triggers feed it: BetterAuth's 60s interval refetch (cross-device with no focus needed, bounded by cookie-cache expiry), the `session-revoked` BroadcastChannel ping from the revoking tab (same-browser), a throttled `visibilitychange` re-check (cross-device, one tab-switch), and the opt-in Redis counter poll (`NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`, default off). See `09-sessions-devices.md`.
 
 ## 3. Operational Concerns
 
@@ -132,10 +144,10 @@ Pass `true` to `getSession()` when reading fields that were just mutated (e.g., 
 
 ### Two Membership Tables
 
-| Table | Owned by | Role type | Purpose |
-|---|---|---|---|
-| `Member` | BetterAuth | Free-form string | Invitation tokens, BetterAuth org plugin internals |
-| `Membership` | Our code | `MemberRole` enum | Source of truth for role, status, profile links, department |
+| Table        | Owned by   | Role type         | Purpose                                                     |
+| ------------ | ---------- | ----------------- | ----------------------------------------------------------- |
+| `Member`     | BetterAuth | Free-form string  | Invitation tokens, BetterAuth org plugin internals          |
+| `Membership` | Our code   | `MemberRole` enum | Source of truth for role, status, profile links, department |
 
 **Bridge field:** `Membership.betterAuthMemberId` links to `Member.id`. Always keep both in sync.
 

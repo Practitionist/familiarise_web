@@ -1,11 +1,11 @@
 # Architecture
 
-| Field | Value |
-|---|---|
-| Status | Stable |
-| Audience | All engineers |
-| Last reviewed | 2026-04-26 |
-| Source files | `lib/auth.ts`, `lib/auth-client.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts` |
+| Field         | Value                                                                          |
+| ------------- | ------------------------------------------------------------------------------ |
+| Status        | Stable                                                                         |
+| Audience      | All engineers                                                                  |
+| Last reviewed | 2026-04-26                                                                     |
+| Source files  | `lib/auth.ts`, `lib/auth-client.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts` |
 
 ## 1. Background
 
@@ -17,12 +17,12 @@ BetterAuth is the authentication library powering sign-in, sign-up, session mana
 
 ## 2. Scope
 
-| In scope | Out of scope |
-|---|---|
-| BetterAuth config and plugin chain | Authorization helpers — see `docs/authorization/` |
-| Session lifecycle and cookie strategy | Rate limiting — see `04-rate-limiting.md` |
-| Database hooks (user create, session create, account create) | SSO-specific enforcement — see `sso/` |
-| Server/client auth entry points | OAuth provider-specific config — see `oauth/` |
+| In scope                                                     | Out of scope                                      |
+| ------------------------------------------------------------ | ------------------------------------------------- |
+| BetterAuth config and plugin chain                           | Authorization helpers — see `docs/authorization/` |
+| Session lifecycle and cookie strategy                        | Rate limiting — see `04-rate-limiting.md`         |
+| Database hooks (user create, session create, account create) | SSO-specific enforcement — see `sso/`             |
+| Server/client auth entry points                              | OAuth provider-specific config — see `oauth/`     |
 
 ## 3. Design
 
@@ -37,12 +37,12 @@ organization() → sso() → customSession() → nextCookies()
 > [!WARNING]
 > `nextCookies()` **must be the last plugin**. Moving it breaks cookie handling in Next.js App Router.
 
-| Plugin | What it does |
-|---|---|
-| `organization()` | BetterAuth's org plugin. Creates `Member` rows. `creatorRole: "OWNER"`, `organizationLimit: 5`. |
-| `sso()` | `@better-auth/sso` — mounts SAML + OIDC endpoints under `/api/auth/sso/*`. Auto-provisions the `ssoProvider` table. |
+| Plugin            | What it does                                                                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `organization()`  | BetterAuth's org plugin. Creates `Member` rows. `creatorRole: "OWNER"`, `organizationLimit: 5`.                                                            |
+| `sso()`           | `@better-auth/sso` — mounts SAML + OIDC endpoints under `/api/auth/sso/*`. Auto-provisions the `ssoProvider` table.                                        |
 | `customSession()` | Enriches every session read with user fields, org memberships, and SSO enforcement status. This is the **hot path** — every authenticated request runs it. |
-| `nextCookies()` | Wires BetterAuth's cookie lifecycle into Next.js `headers()` / `cookies()`. |
+| `nextCookies()`   | Wires BetterAuth's cookie lifecycle into Next.js `headers()` / `cookies()`.                                                                                |
 
 ### 3.2 Session Model
 
@@ -88,12 +88,12 @@ Three OAuth providers are registered in `socialProviders`: **Google**, **GitHub*
 
 The `user.additionalFields` config extends BetterAuth's `User` model with platform-specific columns:
 
-| Field | Type | Purpose |
-|---|---|---|
-| `role` | `string` | Platform role (`ADMIN`, `STAFF`, `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE`) |
-| `onboardingCompleted` | `boolean` | Gate for post-signup onboarding flow |
-| `phone`, `timezone`, `address` | `string` | Profile data |
-| `consultantProfileId`, `consulteeProfileId`, `staffProfileId`, `adminProfileId`, `orgWorkspaceProfileId` | `string` | FK links to role-specific profile tables |
+| Field                                                                                                    | Type      | Purpose                                                                      |
+| -------------------------------------------------------------------------------------------------------- | --------- | ---------------------------------------------------------------------------- |
+| `role`                                                                                                   | `string`  | Platform role (`ADMIN`, `STAFF`, `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE`) |
+| `onboardingCompleted`                                                                                    | `boolean` | Gate for post-signup onboarding flow                                         |
+| `phone`, `timezone`, `address`                                                                           | `string`  | Profile data                                                                 |
+| `consultantProfileId`, `consulteeProfileId`, `staffProfileId`, `adminProfileId`, `orgWorkspaceProfileId` | `string`  | FK links to role-specific profile tables                                     |
 
 Fields marked `input: false` cannot be set by the client during sign-up — they're written server-side by hooks or onboarding flows.
 
@@ -101,24 +101,24 @@ Fields marked `input: false` cannot be set by the client during sign-up — they
 
 ### 4.1 Entry Points
 
-| File | Role | Runtime |
-|---|---|---|
-| [`lib/auth.ts`](../../../lib/auth.ts) | BetterAuth config + export `auth` | Node |
-| [`lib/auth-server.ts`](../../../lib/auth-server.ts) | `getSession()` wrapper — used by server components and API routes | Node |
-| [`lib/auth-client.ts`](../../../lib/auth-client.ts) | `authClient` + `useSession`, `signIn`, `signOut` — used by React components | Browser |
-| [`lib/auth-guard.ts`](../../../lib/auth-guard.ts) | Page-level guards: `requireAuth`, `requireOnboarded`, `requireUserRole`, `requireNotOnboarded` | Node (server components) |
-| [`lib/auth-providers.ts`](../../../lib/auth-providers.ts) | Centralized OAuth provider UI config (labels, button classes) | Shared |
+| File                                                      | Role                                                                                           | Runtime                  |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------ |
+| [`lib/auth.ts`](../../../lib/auth.ts)                     | BetterAuth config + export `auth`                                                              | Node                     |
+| [`lib/auth-server.ts`](../../../lib/auth-server.ts)       | `getSession()` wrapper — used by server components and API routes                              | Node                     |
+| [`lib/auth-client.ts`](../../../lib/auth-client.ts)       | `authClient` + `useSession`, `signIn`, `signOut` — used by React components                    | Browser                  |
+| [`lib/auth-guard.ts`](../../../lib/auth-guard.ts)         | Page-level guards: `requireAuth`, `requireOnboarded`, `requireUserRole`, `requireNotOnboarded` | Node (server components) |
+| [`lib/auth-providers.ts`](../../../lib/auth-providers.ts) | Centralized OAuth provider UI config (labels, button classes)                                  | Shared                   |
 
 ### 4.2 Database Hooks
 
 Four hooks fire at key lifecycle events:
 
-| Hook | When | What it does |
-|---|---|---|
-| `user.create.after` | After a new user signs up | Creates `CookiePreference` + `NotificationPreference`. Sends welcome email (fire-and-forget). Syncs Novu subscriber. |
-| `session.create.before` | Before issuing a session cookie | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). Pure veto: device metadata is stamped in `create.after`, never merged into the insert (#1856). |
-| `session.create.after` | After the session row commits | Concurrent-session cap: fire-and-forget `enforceSessionCapForUser()` (cap 10, #1856). |
-| `account.create.after` | After linking a non-credential account | Sends "account linked" notification email (fire-and-forget). |
+| Hook                    | When                                   | What it does                                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user.create.after`     | After a new user signs up              | Creates `CookiePreference` + `NotificationPreference`. Sends welcome email (fire-and-forget). Syncs Novu subscriber.                                                                                                                            |
+| `session.create.before` | Before issuing a session cookie        | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). Pure veto: device metadata is stamped in `create.after`, never merged into the insert (#1856). |
+| `session.create.after`  | After the session row commits          | Device stamp: awaited but infallible `stampSessionDeviceMetadata()` (one PK update, catches internally). Concurrent-session cap: fire-and-forget `enforceSessionCapForUser()` (cap 10, #1856).                                                  |
+| `account.create.after`  | After linking a non-credential account | Sends "account linked" notification email (fire-and-forget).                                                                                                                                                                                    |
 
 > [!NOTE]
 > `ConsulteeProfile` is **not** auto-created in the user hook. It is lazy-created on first consumer action via `ensureConsulteeProfile` in `lib/profiles/ensure-consultee-profile.ts`. This prevents org-operators and consultants from carrying a dangling consumer profile.
@@ -137,12 +137,12 @@ Every authenticated request reads `customSession()`. It does three things:
 
 These are server-component guards — they `redirect()` (never return an error response):
 
-| Guard | Used where | Behavior |
-|---|---|---|
-| `requireAuth()` | Any page needing a logged-in user | Redirects to `/api/auth/clear-stale-session` → `/auth/signin` if no session |
-| `requireOnboarded()` | Dashboard, settings, profile pages | Redirects to onboarding if `!onboardingCompleted` or missing profile |
-| `requireUserRole(roles)` | Role-restricted pages (e.g., org creation for `ORG_WORKSPACE`) | Redirects to `/dashboard` if role doesn't match |
-| `requireNotOnboarded()` | Onboarding page itself | Redirects to `/dashboard` if already onboarded |
+| Guard                    | Used where                                                     | Behavior                                                                    |
+| ------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `requireAuth()`          | Any page needing a logged-in user                              | Redirects to `/api/auth/clear-stale-session` → `/auth/signin` if no session |
+| `requireOnboarded()`     | Dashboard, settings, profile pages                             | Redirects to onboarding if `!onboardingCompleted` or missing profile        |
+| `requireUserRole(roles)` | Role-restricted pages (e.g., org creation for `ORG_WORKSPACE`) | Redirects to `/dashboard` if role doesn't match                             |
+| `requireNotOnboarded()`  | Onboarding page itself                                         | Redirects to `/dashboard` if already onboarded                              |
 
 ## 5. Operational Concerns
 

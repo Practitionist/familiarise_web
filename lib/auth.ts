@@ -27,6 +27,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { enforceSessionCapForUser } from "@/lib/auth/session-cap";
 import { stampSessionDeviceMetadata } from "@/lib/auth/session-stamp";
+import { signalRevocation } from "@/lib/auth/session-revoke";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
@@ -427,12 +428,18 @@ export const auth = betterAuth({
           // MUST never fail sign-in, so fire-and-forget with a Sentry
           // report. The just-created session is the newest and is always
           // kept; see `lib/auth/session-cap.ts` for the ordering proof.
-          void enforceSessionCapForUser(session.userId).catch((err) => {
-            Sentry.captureException(
-              err instanceof Error ? err : new Error(String(err)),
-              { tags: { subsystem: "auth" }, level: "warning" },
-            );
-          });
+          // An eviction bumps the cross-device counter so opted-in tabs
+          // learn promptly (the ban path does the same post-commit).
+          void enforceSessionCapForUser(session.userId)
+            .then(({ evicted }) => {
+              if (evicted > 0) return signalRevocation(session.userId);
+            })
+            .catch((err) => {
+              Sentry.captureException(
+                err instanceof Error ? err : new Error(String(err)),
+                { tags: { subsystem: "auth" }, level: "warning" },
+              );
+            });
         },
       },
     },

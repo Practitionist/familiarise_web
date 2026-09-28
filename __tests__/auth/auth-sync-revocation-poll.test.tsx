@@ -125,4 +125,49 @@ describe("revocation poll failure classification (#1856)", () => {
     expect(mockSignOutEverywhere).not.toHaveBeenCalled();
     expect(mockRefetch).not.toHaveBeenCalled();
   });
+
+  it("a moved counter classifies and signs out", async () => {
+    // First tick adopts the cursor; the move on the second tick fires.
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ signal: 3 }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ signal: 5 }),
+      });
+    mockGetSession.mockResolvedValue({ data: null, error: null });
+
+    await mountAndTick();
+
+    expect(mockGetSession).toHaveBeenCalledWith({
+      query: { disableCookieCache: true },
+    });
+    expect(mockSignOutEverywhere).toHaveBeenCalledWith(
+      "/auth/signin?reason=session-revoked",
+    );
+    // Cursor advanced past the observed value.
+    expect(window.sessionStorage.getItem("familiarise.auth_revsig")).toBe("5");
+  });
+
+  it("a reset counter (Redis restart) never signs out", async () => {
+    window.sessionStorage.setItem("familiarise.auth_revsig", "5");
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ signal: 2 }),
+    });
+
+    await mountAndTick();
+
+    // Strictly-greater comparison: a dropped counter is adopted
+    // silently... here it is simply ignored (cursor stays), and no
+    // classifier runs.
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("familiarise.auth_revsig")).toBe("5");
+  });
 });
