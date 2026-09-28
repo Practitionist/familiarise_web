@@ -54,12 +54,30 @@ describe("onboarding step transition cannot be double-driven", () => {
   it("releases the guard when the exit completes, and on a no-step-change error", () => {
     const src = readCode(PAGE);
     expect(src).toContain("onExitComplete");
-    // Two distinct releases: onExitComplete, and the role-handoff failure
-    // path. The latter leaves the user on the same step, so no exit runs and
-    // onExitComplete never fires — without it the wizard stays frozen.
-    expect(
-      src.match(/transitioningRef\.current = false;/g)?.length,
-    ).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(
+      /onExitComplete=\{[^}]*transitioningRef\.current = false/,
+    );
+    // handleNext covers every path where the step does not advance — expired
+    // session, the org role handoff failing, the action rejecting — with a
+    // single `finally` keyed on whether the step actually changed, so a new
+    // failure branch cannot forget to clear the ref.
+    expect(src).toMatch(
+      /let advanced = false;[\s\S]*?} finally \{\s*if \(!advanced\) transitioningRef\.current = false;/,
+    );
+  });
+
+  it("releases the guard when backing out of the full-bleed org step", () => {
+    // The org step unmounts OnboardingShell (the `fullBleed` early return), so
+    // the AnimatePresence that would call onExitComplete is gone. If the guard
+    // survived, the shell remounts at step 0 with it armed and every click is
+    // ignored — onboarding becomes impossible without a reload.
+    const src = readCode(PAGE);
+    const at = src.indexOf("const handleExitOrgWizard");
+    expect(at).toBeGreaterThan(-1);
+    const fn = src.slice(at, at + 600);
+    expect(fn).toMatch(
+      /transitioningRef\.current = false;[\s\S]{0,120}setStep\(0\)/,
+    );
   });
 
   it("bails on a no-op move before arming the guard", () => {

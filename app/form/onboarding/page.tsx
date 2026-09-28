@@ -744,70 +744,81 @@ const MultiStepForm: React.FC = () => {
     // mode="wait") with its Continue button still live. A second click in
     // that window would run this again against the ALREADY-incremented `step`
     // and skip the next step's validation — so a consultant could jump past
-    // Professional Profile without it ever validating. The ref is released by
-    // AnimatePresence's onExitComplete.
+    // Professional Profile without it ever validating.
     if (transitioningRef.current) return;
     transitioningRef.current = true;
-    // Merge new data first so the async role-flip below reads the
-    // freshest values (React setState batching would otherwise give us
-    // stale formData).
-    const merged: Partial<OnboardingFormData> = { ...formData, ...stepData };
-    if (stepData.scheduleType) {
-      merged.scheduleType = stepData.scheduleType;
-      if (stepData.weeklySlots) {
-        merged.weeklySlots = [...stepData.weeklySlots];
+    // The guard is released by AnimatePresence's onExitComplete, which only
+    // runs if the step ACTUALLY changes. Every other exit from this function —
+    // expired session, the org role handoff failing, the action rejecting
+    // outright — leaves the user on the step they are looking at, so nothing
+    // would ever release it and every later click would be ignored. Tracking
+    // the advance in one place covers all of them, including ones not yet
+    // written, rather than remembering to clear the ref on each branch.
+    let advanced = false;
+    try {
+      // Merge new data first so the async role-flip below reads the
+      // freshest values (React setState batching would otherwise give us
+      // stale formData).
+      const merged: Partial<OnboardingFormData> = {
+        ...formData,
+        ...stepData,
+      };
+      if (stepData.scheduleType) {
+        merged.scheduleType = stepData.scheduleType;
+        if (stepData.weeklySlots) {
+          merged.weeklySlots = [...stepData.weeklySlots];
+        }
+        if (stepData.customSlots) {
+          merged.customSlots = [...stepData.customSlots];
+        }
       }
-      if (stepData.customSlots) {
-        merged.customSlots = [...stepData.customSlots];
-      }
-    }
-    setFormData(merged);
-    setDirection(1);
-    trackOnboardingEvent("step_advance", {
-      fromStep: step,
-      role: merged.role ?? null,
-    });
-
-    // ORG_WORKSPACE handoff: when the user completes Personal Info we commit
-    // their role on the User row so the wizard step's
-    // `POST /api/organizations` authorizes — the API gate requires
-    // `UserRole === "ORG_WORKSPACE"` and the signup default is CONSULTEE.
-    // Backing out of the wizard reverts it (see `handleExitOrgWizard`).
-    if (step === 0 && merged.role === "ORG_WORKSPACE") {
-      const userId = session?.user?.id;
-      if (!userId) {
-        toast({
-          title: "Session Expired",
-          description: "Please sign in again to continue.",
-          variant: "destructive",
-        });
-        signOutToSignin();
-        return;
-      }
-      // Controlled inputs surface blanks as "" — coerce to undefined so the
-      // action's Zod validator (which rejects "" to avoid colliding on the
-      // `User.phone @unique` index) sees the field as truly omitted.
-      const trimmedPhone = merged.phone?.trim();
-      const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
-        name: merged.name?.trim() || undefined,
-        phone: trimmedPhone || undefined,
-        timezone: merged.timezone?.trim() || undefined,
+      setFormData(merged);
+      setDirection(1);
+      trackOnboardingEvent("step_advance", {
+        fromStep: step,
+        role: merged.role ?? null,
       });
-      if (!result.success) {
-        toast({
-          title: "Unable to continue",
-          description: result.error ?? "Please try again.",
-          variant: "destructive",
-        });
-        // Release the advance guard: no step change happened, so
-        // onExitComplete will not fire, and the user must be able to retry
-        // from the form they are still looking at.
-        transitioningRef.current = false;
-        return;
-      }
-    }
 
-    setStep((prevStep) => prevStep + 1);
+      // ORG_WORKSPACE handoff: when the user completes Personal Info we commit
+      // their role on the User row so the wizard step's
+      // `POST /api/organizations` authorizes — the API gate requires
+      // `UserRole === "ORG_WORKSPACE"` and the signup default is CONSULTEE.
+      // Backing out of the wizard reverts it (see `handleExitOrgWizard`).
+      if (step === 0 && merged.role === "ORG_WORKSPACE") {
+        const userId = session?.user?.id;
+        if (!userId) {
+          toast({
+            title: "Session Expired",
+            description: "Please sign in again to continue.",
+            variant: "destructive",
+          });
+          signOutToSignin();
+          return;
+        }
+        // Controlled inputs surface blanks as "" — coerce to undefined so the
+        // action's Zod validator (which rejects "" to avoid colliding on the
+        // `User.phone @unique` index) sees the field as truly omitted.
+        const trimmedPhone = merged.phone?.trim();
+        const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
+          name: merged.name?.trim() || undefined,
+          phone: trimmedPhone || undefined,
+          timezone: merged.timezone?.trim() || undefined,
+        });
+        if (!result.success) {
+          toast({
+            title: "Unable to continue",
+            description: result.error ?? "Please try again.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      setStep((prevStep) => prevStep + 1);
+      advanced = true;
+    } finally {
+      if (!advanced) transitioningRef.current = false;
+    }
   };
 
   // Back and the stepper share `handleNext`'s guard: the outgoing step's own
@@ -842,6 +853,13 @@ const MultiStepForm: React.FC = () => {
   // unless the handoff is still provisional. Re-picking ORG_WORKSPACE
   // re-commits the role through `handleNext`.
   const handleExitOrgWizard = () => {
+    // Release the transition guard explicitly. The org step is `fullBleed`, so
+    // rendering it returns early and unmounts OnboardingShell — along with the
+    // AnimatePresence that would otherwise call onExitComplete. Without this
+    // the guard is still armed when the shell remounts at step 0, and every
+    // subsequent Next, Back and stepper click is silently ignored: the user
+    // cannot finish onboarding and has to reload.
+    transitioningRef.current = false;
     setStep(0);
     const userId = session?.user?.id;
     if (!userId) return;
