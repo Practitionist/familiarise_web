@@ -102,6 +102,25 @@ A void is remedied by shape. A class, webinar or consultation void rides the hos
 
 `WindowBackupInterest.status` has four states. A row starts `WAITING` when a learner asks to hear about a held window. It moves to `NOTIFIED` when a release path frees an overlapping window (the CAS carries `status: WAITING`), to `BOOKED` when the same learner's capture confirms an overlapping booking (from `WAITING` or `NOTIFIED`), and to `EXPIRED` when the learner withdraws it or the stale-request sweep finds its window has passed. `BOOKED` and `EXPIRED` are terminal; re-registering the same window revives the row to `WAITING`.
 
+## Participants (#1846)
+
+`ParticipantStatus` on `AppointmentParticipant`, guarded by `PARTICIPANT_ALLOWED_FROM` through `transitionParticipant` in `lib/booking/participants.ts`, which replaced `setParticipantStatus`. The map is keyed by target, like every map in `lib/booking/transitions.ts`, and it reads as follows in the code.
+
+```typescript
+export const PARTICIPANT_ALLOWED_FROM: Record<
+  ParticipantStatus,
+  ParticipantStatus[]
+> = {
+  HELD: [],
+  CONFIRMED: ["HELD"],
+  ATTENDED: ["CONFIRMED"],
+  CANCELLED: LIVE_PARTICIPANT_STATUSES,
+  REFUNDED: [...LIVE_PARTICIPANT_STATUSES, "CANCELLED"],
+};
+```
+
+`LIVE_PARTICIPANT_STATUSES` is `HELD`, `CONFIRMED` and `ATTENDED`. The from-set is ANDed with the caller's WHERE and never merged into it, so a caller that already narrows keeps its narrower set, and a caller that forgot to narrow still cannot make an illegal move. `REFUNDED` is terminal, and because a refund may land after a cancel released the seat, `CANCELLED → REFUNDED` is legal while the reverse is not. `HELD` is entry-only: a released seat bought again is revived by `recordParticipants`, which widens the from-set explicitly to the released statuses and stamps the new purchase's payer org on the seat (#1852). A zero-row match is a normal answer, so the helper returns the count and never throws. Participant moves write no `BookingStatusHistory` row, because that enum has no participant entity. `ATTENDED` is read but not yet written anywhere, because writing it needs the attendance pipeline.
+
 ## Reschedule requests
 
 `RescheduleRequestStatus` via `transitionRescheduleRequest`:
@@ -119,8 +138,17 @@ A void is remedied by shape. A class, webinar or consultation void rides the hos
   state (initiator only); `EXPIRED ← [PENDING_REVIEW]` (hourly sweep).
   `openForAppointmentId @unique` enforces at most one live reschedule per
   appointment.
-- Decline/withdraw deliberately LEAVE slots released (the booking belongs in
-  the consultant's allocate queue); only withdrawal restores them.
+- Decline deliberately LEAVES the slots released, because someone decided:
+  the consultee still wants to move, and the booking belongs in the
+  consultant's allocate queue. Withdrawal and expiry both restore the slots
+  and the parent's origin status through the shared
+  `restoreRescheduledBooking` in `lib/booking/reschedule-restore.ts`. Since
+  #1846 (#1527 decision 9) the hourly expiry sweep moves each lapsed proposal
+  to `EXPIRED` and restores the booking in the same transaction under the
+  appointment lock. If the original time was booked while the proposal was
+  open, the restore meets the overlap constraint, the proposal expires without
+  it, the slots stay released, and the sweep counts the row as
+  `proposalsExpiredUnrestored`.
 - A confirmation is two ordered steps: the allocator commits the new times,
   and only then does the caller compare-and-swap the proposal to
   `AUTO_ACCEPTED` or `ACCEPTED`. Because the allocator's supersede sweep
@@ -138,7 +166,6 @@ documented exceptions. Adding one requires an entry here + doctrine review.
 
 | Writer                                                           | Entity                                                | Guard shape                                               | Note                                                                                                                                                                                    |
 | ---------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/payments/webhooks/handlers.ts` `confirmExistingAppointment` | Webinar/Class → SCHEDULED                             | CAS via `EVENT_ALLOWED_FROM.SCHEDULED` updateMany (B2)    | terminal capture returns `capturedAfterTerminal` → Phase-2 refund                                                                                                                       |
 | `handlers.ts` legacy subscription creator                        | Subscription slot birth                               | n/a (tentative birth, HOIf)                               | writes `appendCreationHistory` since 2026-09-19 (#1583 A-P1-06); its confirm flip (`confirmApprovalStatus`) now goes through `transitionSubscriptionRequest`, not a raw writer any more |
 | `app/api/appointments/[appointmentId]/cancel/route.ts`           | Consultation/Subscription/Webinar/Class → CANCELLED   | `updateMany` with `CANCELLABLE_FROM` / event allowed-from | hoisted maps (#838)                                                                                                                                                                     |
 | `.../reschedule/route.ts`                                        | Consultation PENDING restore; Webinar/Class SCHEDULED | explicit fromIn arrays                                    | policy-gated edges                                                                                                                                                                      |
@@ -149,14 +176,16 @@ Converted on 2026-09-19 (#1583 A-P0-05, A-P1-03, B-P1-16): `scripts/appointments
 
 Also converted on 2026-09-19, in the money PR (#1583 A-P0-01, A-P1-04): `lib/payments/webhooks/handlers.ts`'s `confirmApprovalStatus` subscription arm replaced its raw `updateMany` (APPROVED_PENDING_PAYMENT → APPROVED) with `transitionSubscriptionRequest`, catching `IllegalTransitionError` to decide benign-race from capture-after-terminal by re-reading the fresh status; `cleanupFailedPaymentAppointment`'s raw `updateMany` (→ EXPIRED) on both the consultation and subscription arms now goes through `transitionConsultationRequest` / `transitionSubscriptionRequest` with the same from-set the old WHERE carried, catching the zero-row case rather than swallowing it. Neither is a raw writer any more; see the "legacy subscription creator" row above for the note on the confirm flip.
 
-### Withdraw restores the ORIGIN status, not always APPROVED
+Converted on 2026-09-28 (#1846 SM-B13): the capture webhook's group-event re-stamp in `lib/payments/webhooks/handlers.ts` (`restampLiveEvent`) now goes through `transitionWebinarEvent` and `transitionClassEvent` with `fromIn: ["SCHEDULED"]`, so it writes a history row and a seat bought during a live session no longer pulls an `IN_PROGRESS` event back to `SCHEDULED`. A miss still lets the caller's fresh read tell a benign replay from a capture after a terminal state, which returns `capturedAfterTerminal` for the Phase-2 refund. The capture webhook's trial and consultation writes and the maintenance freeze's trial, slot and proposal writes go through their CAS helpers too, so none of them is a raw writer any more.
 
-`lib/booking/reschedule-withdraw.ts` (#1583 A-P0-03/A-P0-04, #1589 R-P1-01/R-P1-04) runs the whole withdraw inside `withAppointmentLock`. Before restoring the parent, it reads the `BookingStatusHistory` row the reschedule route wrote when it flipped the request to `PENDING` — the row whose `toStatus` is `"PENDING"` and whose `createdAt` sits within five seconds of the reschedule request's own `createdAt` — and takes that row's `fromStatus` as the origin. The restore then follows the origin, not a hard-coded target:
+### Withdraw and expiry restore the ORIGIN status, not always APPROVED
+
+`lib/booking/reschedule-withdraw.ts` (#1583 A-P0-03/A-P0-04, #1589 R-P1-01/R-P1-04) runs the whole withdraw inside `withAppointmentLock`, and since #1846 the expiry sweep runs each expiry the same way. Both call `restoreRescheduledBooking` in `lib/booking/reschedule-restore.ts`. Before restoring the parent, the restore reads the `BookingStatusHistory` row the reschedule route wrote when it flipped the request to `PENDING` — the row whose `toStatus` is `"PENDING"` and whose `createdAt` sits within five seconds of the reschedule request's own `createdAt` — and takes that row's `fromStatus` as the origin. The restore then follows the origin, not a hard-coded target:
 
 - Origin `PENDING` — the parent never left PENDING, so withdraw writes nothing.
 - Origin `APPROVED_PENDING_PAYMENT` — restores to `APPROVED_PENDING_PAYMENT`, so the pay-link expiry cohort keeps the row rather than seeing an unpaid booking that looks paid-for.
 - Origin `APPROVED` (or the unreachable `SCHEDULED`, per the note above) — restores to `APPROVED`.
-- Origin missing (a pre-#1333 row, or `readRescheduleOrigin`'s own `"UNKNOWN"` fallback) — keeps the historical `APPROVED` restore and reports once via `reportSentryMessage`, `expected: true`.
+- Origin missing (a pre-#1333 row, or `readRescheduleOrigin`'s own `"UNKNOWN"` fallback) — keeps the historical `APPROVED` restore for a consultation and reports once via `reportSentryMessage`, `expected: true`. A subscription with no origin row is left as it is, because the request row cannot tell a whole-booking flip from a partial proposal on a never-approved plan.
 
 All restores keep `fromIn: ["PENDING"]`, so a parent that moved out of PENDING under the withdraw (a concurrent answer) throws `IllegalTransitionError` rather than being re-stamped.
 

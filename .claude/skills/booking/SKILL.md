@@ -70,6 +70,31 @@ subscription checkout handlers, and, as of 2026-09-19 (#1583 A-P1-06), the
 capture webhook's legacy consultation and subscription creators in
 `lib/payments/webhooks/handlers.ts` — every request birth now writes it.
 
+Participant seats follow the same shape outside `transitions.ts`. As of #1846
+(SM-B9) every `AppointmentParticipant.status` write goes through
+`transitionParticipant` in `lib/booking/participants.ts`, which replaced
+`setParticipantStatus`. Its map, `PARTICIPANT_ALLOWED_FROM`, is keyed by target
+like the others, and the from-set is ANDed with the caller's WHERE rather than
+merged into it, so a caller that narrows keeps its narrower set and a caller
+that forgot cannot make an illegal move. REFUNDED is terminal, HELD is
+entry-only, and the one edge out of a released seat is `recordParticipants`'
+revive, which widens `fromIn` explicitly. Unlike the seven helpers it returns
+the count, never throws on zero rows, and writes no history row.
+
+Two ending shapes are shared rather than copied, and a new ending must call
+them. `declineOpenReschedules` (`lib/booking/reschedule-decline.ts`) closes
+every open proposal on a booking that is ending, so the cancel route, the
+abandon door, moderation and the maintenance freeze all decline the same way
+and free `openForAppointmentId`. `restoreRescheduledBooking`
+(`lib/booking/reschedule-restore.ts`) puts a booking back exactly as it was
+before a reschedule released it — the `RESCHEDULED` slots back to `SCHEDULED`
+and the parent back to its origin status — and both the initiator's withdrawal
+and the expiry sweep use it (#1527 decision 9). A decline is the one ending
+that keeps the slots released. The restore can meet the overlap constraint
+when the original time was taken; withdraw answers 409 `ORIGINAL_TIME_TAKEN`,
+and the sweep expires without the restore and counts
+`proposalsExpiredUnrestored`.
+
 ### 2. Nothing that a Payment points at is ever deleted
 
 `Payment.appointment` cascades on delete, so deleting an Appointment destroys
@@ -95,6 +120,17 @@ with `deletedAt` set in the same call, so the row's history survives the
 release. If you think you need a delete on an Appointment or a confirmed slot,
 you are almost certainly wrong: reconcile in place, as `replaceContiguousSlotRun`
 does precisely so Stream `Meeting` and `Recording` rows survive.
+
+Offerings obey the same rule (#1846 CT-02). The consultation-plan,
+subscription-plan, webinar and class DELETE routes run one Serializable
+transaction under the offering's `event-checkout:` lock through
+`deleteUntouchedOffering` (`lib/booking/offering-delete.ts`), with the no-history
+guard from `lib/offerings/delete-guard.ts` inside the `deleteMany` WHERE. History
+is a payment of any status, any consultee seat ever held, and for a subscription
+plan any trial; a zero-row delete answers 409 `OFFERING_IN_USE`, and the offering
+is archived instead. The Offerings card's `canDelete` runs the same fragments as
+a query, so it never offers a Delete the server refuses. The unguarded
+`crud-with-plan/[id]` DELETE routes are gone.
 
 ### 3. Refunds have exactly two front doors
 
@@ -185,6 +221,17 @@ the same `APPROVED`/`APPROVED_PENDING_PAYMENT` unpaid-after-seven-days cohort
 `expire-stale-requests` EXPIREs, which was two sweeps and two terminal words
 for one event — the exact violation this rule exists to prevent. There is now
 one sweep pair and one outcome.
+
+A buyer who walks away is the other half of this rule, and it has one door:
+`POST /api/bookings/[bookingId]/abandon` (`lib/booking/abandon.ts`, #1527
+decision 11). The buyer decided, so the outcome there is CANCELLED, and the
+`paymentDueAt` sweep stays the EXPIRED backstop for when nobody acted. The door
+takes the appointment lock, cancels a consultation, subscription or trial or
+releases only the caller's HELD webinar or class seat, expires the caller's
+PENDING payment by CAS, gives back credits and org engagement, and cancels the
+gateway order after commit. The money predicate rides every CAS WHERE, so a
+capture that commits first answers 409 `ALREADY_PAID` and the policy-quoted
+cancel owns it.
 
 ### 6. There are no backfill migrations
 

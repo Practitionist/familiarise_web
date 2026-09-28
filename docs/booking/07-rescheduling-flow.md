@@ -1015,6 +1015,8 @@ if (slotsToReschedule.length !== slotIds.length) {
 
 **Ideal future mitigation:** Instead of deleting, the cron should either (a) revert the tentative flags and restore the original status, or (b) notify both parties before taking action.
 
+**Update (2026-09-28, #1846):** For a reschedule that opened a proposal, the first half of this mitigation now exists. The hourly `expire-reschedule-proposals` sweep restores the released slots and the request's origin status when a proposal lapses unanswered, and it notifies both parties, as described in the section on expiry at the end of this document.
+
 ### Scenario 4: Concurrent Reschedule Attempts
 
 **What happens:** Two tabs or two users (if somehow both have access) try to reschedule the same appointment simultaneously.
@@ -1171,3 +1173,11 @@ The allocator's final act inside that transaction is `resolveConsumedPreferenceR
 Both callers therefore pass `excludeRescheduleRequestId` on the allocation request, and the sweep adds `id: { not: … }` to its supersede query. The exclusion is opt-in and deliberately narrow: an allocation that is not confirming a specific proposal — a consultant placing different times by hand, or any ordinary re-plan — still supersedes every open proposal on those slots exactly as before.
 
 Accept now also runs inside `withAppointmentLock`, the same per-appointment atom the cancel and reschedule routes take. Accept is a lifecycle mutation that moves this appointment's slots, and the allocator's own locks are keyed by consultant and by consultee rather than by appointment, so an accept and a concurrent cancellation of the same booking never contended for anything. The lock order is unchanged, because the appointment atom is the coarsest key and is taken before the allocator acquires its own. A caller that arrives while another mutation holds the appointment receives `423 APPOINTMENT_BUSY`, and a caller that arrives while the locking service is unreachable receives `503 BOOKING_LOCK_UNAVAILABLE`, both matching the reschedule route's answers.
+
+## Expiry restores the booking, and withdraw can meet a taken time (2026-09-28, #1846)
+
+A proposal that nobody answers now leaves the booking exactly as it was before the reschedule (#1527 decision 9). The restore moved into `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep both call its `restoreRescheduledBooking`. The sweep expires each lapsed proposal under the appointment lock and restores the booking in the same transaction, so an answer or a cancel cannot interleave with the restore. Decline is still the one ending that leaves the slots released for the consultant's allocate queue.
+
+A restore flips the released rows back to confirmed, and that can meet the `occurrence_no_confirmed_overlap` constraint (SQLSTATE 23P01) when the consultant's original time was booked while the proposal was open. The two callers answer that differently. Withdraw rolls back whole and answers 409 `ORIGINAL_TIME_TAKEN` instead of a raw 500, and the proposal stays open so that the parties can agree a new time. The sweep reports the miss, expires the proposal without the restore, leaves the slots released, and counts the row in its result as `proposalsExpiredUnrestored`.
+
+When a restore brings at least one slot back, both parties hear that the original time stands through the `EXPIRED` outcome of the existing `appointment-rescheduled` Novu family and its email, sent by `notifyRescheduleRestored` in `lib/booking/reschedule-outcome-notice.ts`. The withdraw notice uses the same helper. The lifecycle view of this change is in [06-booking-lifecycle.md](./06-booking-lifecycle.md), and the job itself is documented in [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md).

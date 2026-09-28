@@ -474,7 +474,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For WEBINAR: setParticipantStatus<br/>WHERE appointmentId AND userId<br/>role stays, status flips HELD -> CONFIRMED
+        Note over WH,DB: For WEBINAR: transitionParticipant<br/>WHERE appointmentId AND userId AND status=HELD<br/>role stays, status flips HELD -> CONFIRMED
         Note over WH,DB: Only THIS user's participant row is confirmed, not others'
         WH->>DB: UPDATE Webinar status = SCHEDULED
     end
@@ -586,7 +586,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For CLASS: setParticipantStatus<br/>WHERE classId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
+        Note over WH,DB: For CLASS: transitionParticipant<br/>WHERE classId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
         WH->>DB: UPDATE Class status = SCHEDULED
     end
 
@@ -621,7 +621,7 @@ Because AppointmentParticipant is the only participant list and it is scoped to 
 
 ```typescript
 // confirmExistingAppointment for CLASS:
-await setParticipantStatus(
+await transitionParticipant(
   tx,
   { appointment: { classId }, userId, status: "HELD" },
   "CONFIRMED",
@@ -629,6 +629,8 @@ await setParticipantStatus(
 ```
 
 This scopes by `classId` (not a single `appointmentId`) because the class's wrapper is looked up by its class relation, and it flips exactly one participant row rather than any occurrence. This matters because the Payment record links to the wrapper Appointment, and that one Appointment already carries every session as an occurrence.
+
+Every participant status write goes through `transitionParticipant` in `lib/booking/participants.ts`, which replaced the old `setParticipantStatus` in #1846. The helper looks up the allowed from-statuses for the target in `PARTICIPANT_ALLOWED_FROM` and ANDs that set with the caller's WHERE rather than merging it in, so a caller that already narrows (as the capture does with `status: "HELD"`) keeps its narrower set, and a caller that forgot to narrow still cannot make an illegal move. REFUNDED is terminal under that map, so a later cancel sweep can no longer rewrite a refunded seat back to CANCELLED. A zero-row match is a normal answer, so the helper returns the count and never throws, and participant moves write no BookingStatusHistory row because that enum has no participant entity. The map itself is quoted in [18-state-machines.md](./18-state-machines.md).
 
 #### Source References
 
@@ -1342,7 +1344,8 @@ t=1m       webhook payment.captured -> handlePaymentSuccess (one transaction): P
                             sweep-stuck-webhook-events (`4-59/10 * * * *`, ~10 min) re-drives a stored-but-unprocessed WebhookEvent
 t=1d       Reschedule proposed -> the old occurrence is released in place: isTentative=true, completionStatus=RESCHEDULED
              (kept on the row, not deleted; re-confirmed if the proposal is accepted)
-             proposal ignored -> expire-reschedule-proposals (`45 * * * *`, hourly)
+             proposal ignored -> expire-reschedule-proposals (`45 * * * *`, hourly) expires it and restores
+                            the original slots and request status under the appointment lock (#1846)
 t=call     Meeting on Stream -> reconcile-orphaned-sessions (`25,55 * * * *`, twice hourly) closes the Meeting record
                             against the Stream call state
              consultant never joined -> detect-consultant-no-shows (`57 * * * *`, hourly): cancels and fully refunds
@@ -1366,3 +1369,29 @@ A sweep breaks in exactly one way in this codebase: it treats a row that is perm
 ## Times are rendered in the viewer's zone (2026-09-15)
 
 Every absolute instant on the Appointments list (`components/appointments/AppointmentsShell.tsx`, its rows and the next-up hero) is formatted through `formatInViewerZone` from `lib/time/viewer-zone.ts` in one IANA zone that is resolved once per page: the signed-in user's saved `User.timezone`, else the appointment's scheduling zone where the caller has one, else UTC. The RSC page reads that zone from the session with `getViewerZone()` and passes it down as a prop, so the server render and the hydrating client format each time from the same value; date-fns's bare `format()` reads the runtime's local zone, and with Netlify in UTC and the browser in Asia/Kolkata the same instant produced two wall clocks and React hydration error #418 on both dashboards. A short zone label such as `IST` or `UTC` is appended only when the displayed zone is not the viewer's own, so a time shown in a fallback zone is never mistaken for theirs. Client-only surfaces that never server-render their times, such as the earnings table, take the same zone from the `useViewerZone()` hook. The pin is `__tests__/time/viewer-zone.test.ts`, and the remaining bare `format()` sites are listed in `engineering-log-2026-09-15-viewer-timezone.md`.
+
+## Walking away before paying: the abandon door (2026-09-28, #1846)
+
+A buyer who has not paid for a booking leaves it through one door, `POST /api/bookings/[bookingId]/abandon`, where `bookingId` is the Appointment id that every booking surface already carries (#1527 decision 11). Before this door existed there were three exits with three different meanings: the cancel route handled only consultations and subscriptions, so a trial's Cancel on Home answered 403 (CE-01), the checkout-hold DELETE was keyed by payment rather than by booking, and the trial DELETE also refunded. The route only authenticates, applies the same rate limit as cancel, and answers; the dispatch lives in `lib/booking/abandon.ts`, and the Home widget's approval-pending Cancel (`PendingPaymentsWidget.tsx`) now calls it.
+
+The door resolves the booking first and proves the caller is its buyer, and it answers `NOT_FOUND` for both a missing booking and someone else's, so it cannot be used to probe other people's bookings. It then takes the appointment lock before opening one Serializable transaction, which is the same lock order the cancel route and every other lifecycle writer use. The outcome depends on the kind of booking, as the following table shows.
+
+| Kind | What the door does |
+| --- | --- |
+| Consultation or subscription | The request moves from `PENDING` or `APPROVED_PENDING_PAYMENT` to `CANCELLED` through its CAS helper, anyone waiting on the held times is told they are free, the live slots are cancelled and tombstoned, the participants are released, and any open reschedule proposal is declined through `declineOpenReschedules`. |
+| Trial | The trial moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED`, its pay link and due date are cleared, and its held session is tombstoned through `softCancelTrialAppointmentInTx`. |
+| Webinar or class | Only the caller's own `HELD` consultee seat is released, and the event itself stays live for everyone else. |
+
+In every arm the caller's `PENDING` payment on that appointment moves to `EXPIRED` by compare-and-swap, so a capture that is racing the door keeps its `SUCCEEDED`. Each payment the door expires gives back the referral credits spent at checkout and the organisation engagement that checkout debited, and both give-backs are idempotent. The gateway order is cancelled only after the transaction commits and on a best-effort basis, so a gateway that refuses the cancel never un-abandons the booking, and a capture that still lands is refunded by the webhook's capture-after-release path.
+
+The buyer decided, so the outcome is `CANCELLED`; the `paymentDueAt` sweep remains the backstop and ends in `EXPIRED` because nobody acted (doctrine rule 5). A booking whose payment has already been captured is refused with `ALREADY_PAID` (409), because money has moved and the policy-quoted cancel owns it. That refusal is not only a pre-check: the money predicate rides every CAS WHERE in the door, so a capture that commits between the read and the write makes the CAS match zero rows, and the answer becomes `ALREADY_PAID` instead of a cancelled paid booking. A booking that has already moved on, such as one that is confirmed, cancelled or expired, is refused with `NOT_ABANDONABLE` (409). Home's gateway-pending rows still use the payment-keyed `DELETE /api/checkout/pending/[paymentId]`; only approval-pending rows go through the door.
+
+## An expired reschedule proposal restores the booking (2026-09-28, #1846)
+
+When nobody answers a reschedule proposal, the booking now goes back to exactly what it was (#1527 decision 9). Before #1846 the expiry sweep left the released slots released, so a confirmed session disappeared because a consultant did not click. The restore now lives in `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep share it. A decline is the one ending that keeps the slots released, because someone did decide: the consultee still wants to move, and the booking belongs in the consultant's allocate queue.
+
+The sweep in `scripts/appointments/expire-reschedule-proposals.ts` expires each lapsed proposal under the appointment lock, and it moves the proposal to `EXPIRED` and restores the booking in the same transaction. The restore flips the released `RESCHEDULED` slots back to `SCHEDULED` with `isTentative: false`, and it returns a parent request that the reschedule flipped to `PENDING` to the status it held before, which it reads from the history row the reschedule route wrote when it opened the proposal. Restoring is cheap because a reschedule never rewrites `startsAt`, so the released rows still carry their original times.
+
+If the consultant's original time was booked while the proposal was open, flipping the slots back meets the `occurrence_no_confirmed_overlap` constraint, and the whole transaction rolls back. The sweep reports the miss to Sentry, expires the proposal on its own, and leaves the slots released for the consultant to re-place, which is the pre-#1846 behaviour. It counts each such row in the job result as `proposalsExpiredUnrestored`, and `proposalsExpired` includes those rows too. A withdrawal that meets the same constraint answers 409 `ORIGINAL_TIME_TAKEN` instead of a raw 500, and the proposal stays open.
+
+When a restore brings at least one slot back, the sweep tells both parties that their original time stands. It sends the `EXPIRED` outcome on the existing `appointment-rescheduled` Novu family and the matching email through `notifyRescheduleRestored` in `lib/booking/reschedule-outcome-notice.ts`, which the withdraw notice also uses. The notice runs after the transaction commits, it awaits both triggers, and it never throws, so a notification failure cannot undo the expiry or abort the sweep.
