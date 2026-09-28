@@ -297,6 +297,8 @@ export async function createApprovalPaymentIntent(
       metadata,
       paymentGateway: params.paymentGateway,
       isMockPayment: false,
+      // #1861 L1 — the pay-link window the row below is stamped with.
+      holdExpiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
     });
 
     if (remintIntoPaymentId && existingPayment) {

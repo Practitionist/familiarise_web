@@ -81,6 +81,8 @@ export interface ExistingRazorpayOrder {
   paymentId: string;
   amount: number;
   currency: string;
+  /** #1861 L1 — the pay window's end (ISO); the sheet times out before it. */
+  holdExpiresAt?: string | null;
 }
 
 type RazorpayCheckoutSource =
@@ -112,6 +114,7 @@ interface GatewayOrder {
   amount: number;
   currency: string;
   customerId?: string;
+  holdExpiresAt?: string | null;
 }
 
 export default function RazorpayCheckout({
@@ -147,6 +150,7 @@ export default function RazorpayCheckout({
             id: existingOrder.orderId,
             amount: existingOrder.amount,
             currency: existingOrder.currency,
+            holdExpiresAt: existingOrder.holdExpiresAt,
           }
         : await createOrder();
       if (!order) return;
@@ -220,6 +224,7 @@ export default function RazorpayCheckout({
       currency: data.paymentIntent.currency,
       // #1771 row 1 — the server echoes a Customer only while saved cards are on.
       customerId: data.paymentIntent.customerId,
+      holdExpiresAt: data.holdExpiresAt,
     };
   };
 
@@ -270,6 +275,8 @@ export default function RazorpayCheckout({
       customerId: order.customerId,
       // #1780 row 1 — ENABLE_CHECKOUT_EMI off hides Razorpay's EMI block.
       hideEmi: !emiEnabled,
+      // #1861 L1 — the sheet closes before the slot hold lapses.
+      holdExpiresAt: order.holdExpiresAt,
       handler: async function (response: RazorpayPaymentResponse) {
         // H2 FIX: Verify Razorpay signature server-side before signaling success
         try {

@@ -154,6 +154,37 @@ export function withRazorpaySdkTimeout<T>(
 // Checkout/Order Operations
 // ============================================================================
 
+/** Razorpay's floor for `automatic_expiry_period`, in minutes. */
+const MIN_CAPTURE_WINDOW_MINUTES = 12;
+/** Razorpay's ceiling for `manual_expiry_period` (five days), in minutes. */
+const MAX_CAPTURE_WINDOW_MINUTES = 7200;
+
+/**
+ * #1861 L1 — a per-order capture window sized to the slot hold. Razorpay counts
+ * it from authorization and refunds (without capture or fee) a payment still
+ * `authorized` when it closes, so a slow authorization cannot land a capture
+ * long after the hold freed the slot. Checkout's `timeout` bounds a late start.
+ * Auto-capture stays on: nothing in this codebase captures manually.
+ * https://razorpay.com/docs/payments/payments/capture-settings/api/
+ */
+function holdCaptureSettings(holdExpiresAt: Date) {
+  const minutes = Math.min(
+    MAX_CAPTURE_WINDOW_MINUTES,
+    Math.max(
+      MIN_CAPTURE_WINDOW_MINUTES,
+      Math.ceil((holdExpiresAt.getTime() - Date.now()) / 60_000),
+    ),
+  );
+  return {
+    capture: "automatic" as const,
+    capture_options: {
+      automatic_expiry_period: minutes,
+      manual_expiry_period: minutes,
+      refund_speed: "normal" as const,
+    },
+  };
+}
+
 /**
  * Create a Razorpay Order
  */
@@ -162,6 +193,7 @@ export async function createRazorpayOrder({
   currency,
   metadata,
   customerId,
+  holdExpiresAt,
 }: PaymentIntentParams): Promise<PaymentIntent> {
   // #1396 — first statement in the function, ahead of the client lookup, so a
   // non-INR currency cannot reach the SDK even on a misconfigured instance.
@@ -208,6 +240,9 @@ export async function createRazorpayOrder({
             receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
             // #1771 row 1 — only personal checkouts with saved cards on pass one.
             ...(customerId ? { customer_id: customerId } : {}),
+            ...(holdExpiresAt
+              ? { payment: holdCaptureSettings(holdExpiresAt) }
+              : {}),
           }),
         ),
     );
