@@ -83,15 +83,17 @@ re-check; error → refetch and stay put (a failed lookup is never a
 revocation, #1716 client-side); user present → cookie-cache race,
 refetch to recover; confirmed null → `forgetAuthState()` +
 `signOutEverywhere("/auth/signin?reason=session-revoked")`, which the
-sign-in page renders as a notice. Four triggers: BetterAuth's 60s
-interval refetch (`sessionOptions.refetchInterval` in
-`lib/auth-client.ts` — cross-device with no focus needed, bounded by
-cookie-cache expiry so an already-visible tab learns within ~6 min),
-the `session-revoked` BroadcastChannel ping from the revoking tab
-(same-browser; the channel never crosses devices), a throttled (30s)
-`visibilitychange` re-check (cross-device, one tab-switch), and the
-opt-in Redis counter poll (`sess:revsig:{userId}`,
-`NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`, default 0 = off).
+sign-in page renders as a notice. Four triggers: the provider's own
+60s visible-tab tick (authoritative, so an already-visible tab learns
+within ~60s; hidden tabs skip at zero cost and nothing re-renders on
+the happy path), the `session-revoked` BroadcastChannel ping from the
+revoking tab (same-browser; the channel never crosses devices), a
+throttled (30s) `visibilitychange` re-check (cross-device, one
+tab-switch), and the opt-in Redis counter poll
+(`sess:revsig:{userId}`, `NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`,
+default 0 = off). Deliberately not BetterAuth's built-in
+`refetchInterval`: it cannot skip hidden tabs, re-renders every
+consumer 1x/min, and still reads the cookie cache.
 
 ### 2.6 Password change
 
@@ -122,6 +124,13 @@ act through the moderation ban path, which shares the helper.
 - The device list is `take: 25` and the cap holds ~10; if either ever
   needs raising, the allowlist test does not care, but the UI list
   rendering does — keep them in step.
+- Deferred deliberately, revisit on evidence: (a) a composite
+  `@@index([userId, createdAt])` for the list/cap newest-first scans —
+  add it when the slow-query log (not before) shows the per-user scan
+  hurting, via the normal merge-time push; (b) a shared
+  `lib/auth/session-api.ts` fetch client for the three UI call sites
+  (list/revoke-one/revoke-others) — worth it at the next endpoint
+  rename, not before.
 
 ## 4. Edge Cases & Foot-Guns
 

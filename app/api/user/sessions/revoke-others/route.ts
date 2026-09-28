@@ -1,7 +1,8 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { applyRateLimit, sessionMgmtUserLimiter } from "@/lib/rate-limit";
+import { sessionRouteError } from "@/lib/auth/session-response";
 import {
   revokeUserSessionsExcept,
   signalRevocation,
@@ -20,22 +21,25 @@ export async function POST() {
     if (auth.error) return auth.error;
 
     const userId = auth.session.user.id;
+
+    const limited = await applyRateLimit(
+      sessionMgmtUserLimiter,
+      `session-mgmt-user:${userId}`,
+    );
+    if (limited) return limited;
+
     const { revoked } = await revokeUserSessionsExcept(
       prisma,
       userId,
       auth.session.session.id,
     );
-    if (revoked > 0) await signalRevocation(userId);
+    if (revoked > 0) void signalRevocation(userId);
 
     return NextResponse.json({ revoked }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return NextResponse.json(
-      { error: "We couldn't end your other sessions. Please try again." },
-      { status: 500 },
+    return sessionRouteError(
+      "We couldn't end your other sessions. Please try again.",
+      error,
     );
   }
 }

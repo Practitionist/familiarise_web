@@ -77,9 +77,9 @@ session-payload-allowlist.test.ts` pins both the select keys and the
    retry. Generous on purpose (phone + laptop + tablet is normal);
    the cap is hygiene, not the security gate — `authLimiter` owns
    brute force. Raising it is a product decision.
-8. **Revocation propagates in four tiers.** A 60s interval refetch
-   finds revocation on already-visible tabs with no focus needed
-   (bounded by cookie-cache expiry: ~6 min worst case); same-browser
+8. **Revocation propagates in four tiers.** A provider-owned 60s
+   visible-tab tick finds revocation with no focus needed (authoritative,
+   so ~60s worst case; hidden tabs skip free); same-browser
    tabs via the instant `session-revoked` BroadcastChannel ping;
    cross-device within one tab-switch via a throttled focus re-check;
    cross-device within the poll interval via the opt-in Redis counter

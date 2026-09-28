@@ -382,7 +382,9 @@ describe("SessionsSection load states (#1856)", () => {
   });
 
   it("password change toasts swept / none / failed distinctly", async () => {
-    const { authClient } = jest.requireMock("../../lib/auth-client") as unknown as {
+    const { authClient } = jest.requireMock(
+      "../../lib/auth-client",
+    ) as unknown as {
       authClient: { changePassword: jest.Mock };
     };
     authClient.changePassword.mockResolvedValue({});

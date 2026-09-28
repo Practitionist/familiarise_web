@@ -22,7 +22,8 @@
  * - onboardingSubmitLimiter: 10/min per user  — updateOnboardingInformationAction + PATCH /api/form/onboarding/[id] (heavy multi-table tx)
  * - onboardingDraftLimiter:  30/min per user  — saveOnboardingDraftAction (800ms-debounced autosave + pagehide flush)
  * - verificationSubmitLimiter: 10/hr per user — POST /api/verification/submit + /resubmit (review-queue writes + admin notify)
- * - sessionMgmtLimiter:     30/15min per IP   — /api/user/sessions* (device list + revokes; separate from authLimiter so session traffic can't exhaust the sign-in budget)
+ * - sessionMgmtLimiter:     120/15min per IP  — /api/user/sessions* except the signal poll (see below)
+ * - sessionMgmtUserLimiter: 60/15min per user — same three routes, keyed past requireApiAuth (the precise gate)
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -297,17 +298,31 @@ export const ssoDomainCheckLimiter = makeLimiter(
 );
 
 /**
- * 30 per 15 minutes per IP — /api/user/sessions* (#1856: device list,
- * per-device revoke, revoke-others, revocation-signal poll).
+ * 120 per 15 minutes per IP — /api/user/sessions* except the signal
+ * poll (#1856, exempt there).
  *
  * Deliberately NOT authLimiter: session traffic (a device list that
- * reloads after every revoke, the opt-in 30s signal poll) must never
- * exhaust the 10/15m sign-in budget and lock a legitimate user out of
- * signing in. Generous for humans; the DELETEs still need the victim's
- * own session cookie, so this is abuse friction, not the security gate
- * (the ownership predicate in `lib/auth/session-revoke.ts` is).
+ * reloads after every revoke) must never exhaust the 10/15m sign-in
+ * budget and lock a legitimate user out of signing in. IP-keyed
+ * because middleware is cookie-presence-only — so one office NAT
+ * shares this bucket, which is why it is generous AND paired with the
+ * per-user limiter below (a single NAT office revoking devices must
+ * not lock itself out; the per-user bucket is the precise gate).
  */
-export const sessionMgmtLimiter = makeLimiter(30, "15 m", "rl:session-mgmt");
+export const sessionMgmtLimiter = makeLimiter(120, "15 m", "rl:session-mgmt");
+
+/**
+ * 60 per 15 minutes per user — the same three session routes, keyed by
+ * user id inside the handlers (past `requireApiAuth`, where the caller
+ * is known). This is the precise gate; the IP rule above is coarse
+ * abuse friction only. Applied in the route, not the middleware,
+ * because only the route can resolve who is calling.
+ */
+export const sessionMgmtUserLimiter = makeLimiter(
+  60,
+  "15 m",
+  "rl:session-mgmt-user",
+);
 
 /** 20 per hour per org — POST /api/organizations/[orgId]/billing-account/wallet/top-ups (orgId-keyed; blocks a single org from minting hundreds of Razorpay orders) */
 export const orgWalletTopUpLimiter = makeLimiter(

@@ -28,6 +28,13 @@ import {
 beforeEach(() => {
   jest.clearAllMocks();
   __resetLastSeenCacheForTests();
+  // Sampling is probabilistic; pin the draw so every other case exercises
+  // the write path deterministically.
+  jest.spyOn(Math, "random").mockReturnValue(0);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 function flushMicrotasks(): Promise<void> {
@@ -111,6 +118,15 @@ describe("touchSessionLastSeen (#1856)", () => {
 
   it("ignores empty session ids", async () => {
     touchSessionLastSeen("");
+    await flushMicrotasks();
+
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("samples touches: most draws skip the write entirely", async () => {
+    jest.spyOn(Math, "random").mockReturnValue(0.99);
+
+    touchSessionLastSeen("s1");
     await flushMicrotasks();
 
     expect(updateMany).not.toHaveBeenCalled();

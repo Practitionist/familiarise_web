@@ -39,7 +39,7 @@ export const POST = withOpsAction(
       const { revoked } = body.sessionId
         ? await revokeSessionById(prisma, userId, body.sessionId)
         : await revokeAllUserSessions(prisma, userId);
-      if (revoked > 0) await signalRevocation(userId);
+      if (revoked > 0) void signalRevocation(userId);
       return {
         target: { kind: "User", id: userId },
         correlationId: `user:${userId}`,

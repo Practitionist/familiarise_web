@@ -26,6 +26,19 @@ import prisma from "@/lib/prisma";
  */
 export const LAST_SEEN_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
+/**
+ * Probabilistic sampling: only this fraction of touches proceeds past
+ * the gate below. The in-process map bounds each lambda, but Netlify
+ * sprays requests across N instances with no stickiness, so per-lambda
+ * throttling is not a global write bound — at 10k DAU the SQL no-ops
+ * alone would cost ~500 PK UPDATEs/sec of pure RTT on PG_POOL_MAX=1
+ * connections. Sampling cuts write volume proportionally; the
+ * timestamps stay honest (every recorded touch is a true observation,
+ * only sparser — expected one touch per ~4 requests), so the UI's
+ * "last seen" copy needs no qualifier change.
+ */
+export const LAST_SEEN_SAMPLE_RATE = 0.25;
+
 /** Bound: one entry per live session; FIFO-evicted, never unbounded. */
 const LAST_SEEN_CACHE_LIMIT = 2000;
 
@@ -33,6 +46,7 @@ const lastTouchBySession = new Map<string, number>();
 
 export function touchSessionLastSeen(sessionId: string): void {
   if (!sessionId) return;
+  if (Math.random() >= LAST_SEEN_SAMPLE_RATE) return;
   const now = Date.now();
   const last = lastTouchBySession.get(sessionId) ?? 0;
   if (now - last < LAST_SEEN_TOUCH_INTERVAL_MS) {

@@ -42,10 +42,15 @@ export async function enforceSessionCapForUser(
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+        // Bounded pass: a credential-stuffing victim could hold 100k
+        // rows, and materializing all of them (plus a 100k-entry IN)
+        // would OOM the lambda. One bounded pass per sign-in converges
+        // because the cap is documented eventually-consistent.
         const overflow = await tx.session.findMany({
           where: { userId },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           skip: maxSessions,
+          take: 200,
           select: { id: true },
         });
         if (overflow.length === 0) return { evicted: 0 };

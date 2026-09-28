@@ -1,7 +1,8 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { applyRateLimit, sessionMgmtUserLimiter } from "@/lib/rate-limit";
+import { sessionRouteError } from "@/lib/auth/session-response";
 import {
   SESSION_PUBLIC_SELECT,
   toPublicSession,
@@ -22,6 +23,15 @@ export async function GET() {
     const auth = await requireApiAuth();
     if (auth.error) return auth.error;
 
+    // Per-user bucket (the precise gate; the edge IP rule is coarse
+    // friction for NAT-shared offices). Skipped for the signal poll,
+    // which is exempt at the edge too.
+    const limited = await applyRateLimit(
+      sessionMgmtUserLimiter,
+      `session-mgmt-user:${auth.session.user.id}`,
+    );
+    if (limited) return limited;
+
     const rows = await prisma.session.findMany({
       where: {
         userId: auth.session.user.id,
@@ -40,13 +50,9 @@ export async function GET() {
       { status: 200 },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return NextResponse.json(
-      { error: "We couldn't load your sessions. Please try again." },
-      { status: 500 },
+    return sessionRouteError(
+      "We couldn't load your sessions. Please try again.",
+      error,
     );
   }
 }

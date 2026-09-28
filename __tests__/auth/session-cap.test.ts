@@ -81,4 +81,16 @@ describe("enforceSessionCapForUser (#1856)", () => {
 
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 5 }));
   });
+
+  it("bounds the overflow fetch so abuse cannot OOM the pass", async () => {
+    findMany.mockResolvedValue([]);
+
+    await enforceSessionCapForUser("u1");
+
+    // One bounded pass per sign-in converges (eventual consistency);
+    // an unbounded skip would materialize a stuffing victim's rows.
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 200 }),
+    );
+  });
 });

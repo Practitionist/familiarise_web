@@ -19,10 +19,17 @@ process.env.NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS = "40";
 
 const mockRefetch = jest.fn();
 const mockGetSession = jest.fn();
+// Mutable session payload: most cases mount authed; the cold-tab and
+// account-switch cases re-point it mid-test. Read lazily (closure) so
+// the hoisted mock factory never touches the binding before init.
+let mockSessionData: unknown = {
+  user: { id: "u1" },
+  session: { id: "s-current" },
+};
 jest.mock("../../lib/auth-client", () => ({
   __esModule: true,
   useSession: () => ({
-    data: { user: { id: "u1" }, session: { id: "s-current" } },
+    data: mockSessionData,
     isPending: false,
     refetch: (...a: unknown[]) => mockRefetch(...a),
   }),
@@ -66,6 +73,10 @@ describe("revocation poll failure classification (#1856)", () => {
     setVisible(true);
     window.localStorage.clear();
     window.sessionStorage.clear();
+    mockSessionData = {
+      user: { id: "u1" },
+      session: { id: "s-current" },
+    };
     container = document.createElement("div");
     document.body.appendChild(container);
     global.fetch = jest.fn();
@@ -169,5 +180,99 @@ describe("revocation poll failure classification (#1856)", () => {
     expect(mockGetSession).not.toHaveBeenCalled();
     expect(mockSignOutEverywhere).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem("familiarise.auth_revsig")).toBe("5");
+  });
+
+  it("visible-tab tick re-checks authoritatively without signing out a live session", async () => {
+    // Quiet signal poll so only the 60s tick under test fires meaningfully.
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ signal: 7 }),
+    });
+    mockGetSession.mockResolvedValue({
+      data: { user: { id: "u1" } },
+      error: null,
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<AuthSyncProvider />);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(65_000);
+    });
+
+    // The tick ran the authoritative check...
+    expect(mockGetSession).toHaveBeenCalledWith({
+      query: { disableCookieCache: true },
+    });
+    // ...found the user alive, refetched to recover, stayed put.
+    expect(mockRefetch).toHaveBeenCalled();
+    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
+  });
+
+  it("visible-tab tick signs out a revoked session with no focus event", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ signal: 7 }),
+    });
+    mockGetSession.mockResolvedValue({ data: null, error: null });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<AuthSyncProvider />);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(65_000);
+    });
+
+    expect(mockSignOutEverywhere).toHaveBeenCalledWith(
+      "/auth/signin?reason=session-revoked",
+    );
+  });
+
+  it("cold tab whose session died while away classifies on first resolution", async () => {
+    // Laptop lid closed for days: remembered flag still true, session gone.
+    window.localStorage.setItem("familiarise.auth_authed", "true");
+    mockSessionData = null;
+    mockGetSession.mockResolvedValue({ data: null, error: null });
+
+    await mountAndTick();
+
+    // Without the ref-seeding fix this stays at zero: the classifier
+    // reads the still-undefined ref as "never authed" and aborts.
+    expect(mockGetSession).toHaveBeenCalledWith({
+      query: { disableCookieCache: true },
+    });
+    expect(mockSignOutEverywhere).toHaveBeenCalledWith(
+      "/auth/signin?reason=session-revoked",
+    );
+  });
+
+  it("same-profile sign-in as another account pings peers and resets the cursor", async () => {
+    window.sessionStorage.setItem("familiarise.auth_revsig", "9");
+    await mountAndTick();
+    window.localStorage.removeItem("familiarise.auth");
+
+    // Same browser, second sign-in — the shared jar now belongs to u2.
+    mockSessionData = {
+      user: { id: "u2" },
+      session: { id: "s-other" },
+    };
+    await act(async () => {
+      root?.render(<AuthSyncProvider />);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(100);
+    });
+
+    // Peers told to refetch to the new account...
+    const ping = window.localStorage.getItem("familiarise.auth");
+    expect(ping).not.toBeNull();
+    expect(JSON.parse(ping as string).type).toBe("login");
+    // ...and the old account's cursor dropped (its counter values would
+    // wedge this tab's poll silent forever).
+    expect(window.sessionStorage.getItem("familiarise.auth_revsig")).toBeNull();
   });
 });

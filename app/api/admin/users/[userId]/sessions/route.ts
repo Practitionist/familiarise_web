@@ -1,7 +1,7 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { sessionRouteError } from "@/lib/auth/session-response";
 import {
   SESSION_PUBLIC_SELECT,
   toPublicSession,
@@ -45,13 +45,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
       { status: 200 },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return NextResponse.json(
-      { error: "We couldn't load those sessions. Please try again." },
-      { status: 500 },
+    return sessionRouteError(
+      "We couldn't load those sessions. Please try again.",
+      error,
     );
   }
 }

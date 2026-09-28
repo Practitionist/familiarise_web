@@ -308,7 +308,7 @@ export async function applyBestEffortEffects(
     (actionType === "USER_SUSPENDED" || actionType === "USER_BANNED") &&
     (transactional.sessionsRevoked ?? 0) > 0
   ) {
-    await signalRevocation(input.report.targetUserId);
+    void signalRevocation(input.report.targetUserId);
   }
   if (hasStreamEnforcement(actionType, input.report)) {
     await runStreamStep(input, summary, errors);

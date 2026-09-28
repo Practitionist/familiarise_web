@@ -20,7 +20,10 @@ import { signOutEverywhere } from "@/lib/auth/sign-out";
  *      session so every `useSession()` consumer re-renders without a reload.
  *   2. Detects this tab's own logged-out⇄logged-in transition (covers email
  *      sign-in AND the OAuth/SSO redirect, which has no client fetch hook) and
- *      pings peers so they refetch too.
+ *      pings peers so they refetch too — including a same-profile sign-in
+ *      as a DIFFERENT account (boolean true→true is no transition, so the
+ *      user-id change is detected explicitly and peers are told to
+ *      refetch to the new account).
  *   3. Classifies unexpected sign-outs (#1856): when this tab goes from
  *      authed to null WITHOUT initiating it — a revoked session, an expired
  *      one, or a transient failure — one authoritative re-check tells those
@@ -28,20 +31,22 @@ import { signOutEverywhere } from "@/lib/auth/sign-out";
  *      `?reason=session-revoked` so the sign-in page can say why); a failed
  *      lookup refetches instead of signing out (#1716, client-side).
  *
- * Revocation triggers feeding the classifier: BetterAuth's 60s interval
- * refetch (`sessionOptions.refetchInterval` in `lib/auth-client.ts` —
- * cross-device, no focus needed, bounded by cookie-cache expiry so up
- * to ~6 min stale), the `session-revoked` BroadcastChannel ping from
- * the tab that performed the revoke (same-browser, instant), a
- * throttled `visibilitychange` re-check (cross-device, within one
+ * Revocation triggers feeding the classifier: the provider's own 60s
+ * visible-tab tick (cross-device, no focus needed, authoritative so
+ * detection lands within ~60s), the `session-revoked` BroadcastChannel
+ * ping from the tab that performed the revoke (same-browser, instant),
+ * a throttled `visibilitychange` re-check (cross-device, within one
  * tab-switch), and the opt-in Redis poll below (cross-device, within
  * the poll interval).
  *
  * Renders nothing. See `lib/auth-broadcast.ts` for why this is needed.
  */
 
-/** Minimum gap between focus-driven authoritative re-checks. */
-const FOCUS_CHECK_THROTTLE_MS = 30_000;
+/** Minimum gap between authoritative re-checks (focus path and tick share it). */
+const CHECK_THROTTLE_MS = 30_000;
+
+/** Steady cadence for the visible-tab revalidation tick. */
+const VISIBLE_CHECK_INTERVAL_MS = 60_000;
 
 /** Per-tab cursor for the opt-in Redis revocation poll. */
 const REVSIG_CURSOR_KEY = "familiarise.auth_revsig";
@@ -80,7 +85,8 @@ export default function AuthSyncProvider() {
   // localStorage flag is unavailable (private mode / blocked storage) so
   // BroadcastChannel sync still works there. Resets per page load.
   const previousAuthedRef = useRef<boolean | undefined>(undefined);
-  const lastFocusCheckRef = useRef<number>(0);
+  const previousUserIdRef = useRef<string | undefined>(undefined);
+  const lastCheckRef = useRef<number>(0);
 
   /**
    * One authoritative re-check that answers "was I revoked?".
@@ -134,22 +140,55 @@ export default function AuthSyncProvider() {
     if (isPending) return;
 
     const authed = !!session?.user;
+    const nextUserId = session?.user?.id ?? null;
+    // Snapshot first: the ping decision below must compare against the
+    // LAST run's value, not the one recorded this run.
+    const prevAuthed = previousAuthedRef.current;
     // Prefer THIS tab's last observed state: the wrapped `signOut` clears the
     // localStorage flag BEFORE the network call (shared-device fail-safe), so
     // by the time the session resolves null the flag already reads `false` and
-    // flag-first comparison would swallow the logout ping. The in-memory ref
-    // is immune to that pre-clear; it is undefined only on first resolution,
+    // flag-first comparison would swallow the logout ping. The snapshot is
+    // immune to that pre-clear; it is undefined only on first resolution,
     // where we fall back to the flag so an OAuth/SSO full-page redirect (new
     // load, no client fetch hook) still pings peers.
-    const previous = previousAuthedRef.current ?? readAuthedFlag();
+    const previous = prevAuthed ?? readAuthedFlag();
     // typeof check: with storage blocked, readAuthedFlag() returns null —
     // `null !== undefined` would treat "no known before-state" as a transition
     // and fire a spurious login/logout ping on first resolution.
     if (typeof previous === "boolean" && previous !== authed) {
       postAuthSync({ type: authed ? "login" : "logout" });
-      if (previous && !authed) void classifyUnexpectedSignOut();
+      if (previous && !authed) {
+        // Seed the ref BEFORE classifying: it reads the ref
+        // synchronously, and on first resolution the ref is still
+        // undefined (which reads as "never authed" and aborts the
+        // check) — a cold tab whose session died while away would then
+        // never classify. Later runs already carry the prior value.
+        if (prevAuthed === undefined) previousAuthedRef.current = true;
+        void classifyUnexpectedSignOut();
+      }
     }
     previousAuthedRef.current = authed;
+    // Same-profile second sign-in as a DIFFERENT account: the shared
+    // cookie jar now belongs to them, but peer tabs still paint the old
+    // account (boolean true→true is no transition). Ping login so peers
+    // refetch to the truth, and drop this tab's revocation cursor — it
+    // belonged to the old account's counter, and a lower counter there
+    // would wedge this tab's poll silent forever.
+    const prevUserId = previousUserIdRef.current;
+    if (
+      authed &&
+      nextUserId !== null &&
+      prevUserId !== undefined &&
+      prevUserId !== nextUserId
+    ) {
+      postAuthSync({ type: "login" });
+      try {
+        sessionStorage.removeItem(REVSIG_CURSOR_KEY);
+      } catch {
+        // Best-effort — a stale cursor only delays one poll cycle.
+      }
+    }
+    previousUserIdRef.current = nextUserId ?? undefined;
     // Also the reconciliation point for the navbar's optimistic first paint:
     // a resolved session rewrites the remembered shape in BOTH directions, and
     // `writeAuthedFlag(false)` drops the cached identity outright.
@@ -172,12 +211,32 @@ export default function AuthSyncProvider() {
       if (document.visibilityState !== "visible") return;
       if (previousAuthedRef.current !== true) return;
       const now = Date.now();
-      if (now - lastFocusCheckRef.current < FOCUS_CHECK_THROTTLE_MS) return;
-      lastFocusCheckRef.current = now;
+      if (now - lastCheckRef.current < CHECK_THROTTLE_MS) return;
+      lastCheckRef.current = now;
       void classifyUnexpectedSignOut();
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [classifyUnexpectedSignOut]);
+
+  // Visible-tab revalidation, no focus or opt-in needed: while this tab
+  // believes it is signed in, re-run the authoritative check on a steady
+  // cadence. Hidden tabs skip (zero cost asleep); logged-out tabs return
+  // inside the classifier immediately. The check is authoritative
+  // (disableCookieCache), so unlike a cookie-cached refetch it detects
+  // revocation the same tick — bounded by the cadence below, with no
+  // re-render on the happy path (only a confirmed null navigates).
+  // Shares lastCheckRef with the focus path so the two never double-fire.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (previousAuthedRef.current !== true) return;
+      const now = Date.now();
+      if (now - lastCheckRef.current < VISIBLE_CHECK_INTERVAL_MS) return;
+      lastCheckRef.current = now;
+      void classifyUnexpectedSignOut();
+    }, VISIBLE_CHECK_INTERVAL_MS);
+    return () => window.clearInterval(id);
   }, [classifyUnexpectedSignOut]);
 
   // Cross-device, within the poll interval: compare the per-user

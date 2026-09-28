@@ -36,6 +36,13 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: (...a: unknown[]) => mockRequireApiAuth(...a),
 }));
 
+const mockApplyRateLimit = jest.fn();
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: (...a: unknown[]) => mockApplyRateLimit(...a),
+  sessionMgmtUserLimiter: {},
+}));
+
 const mockSignalRevocation = jest.fn();
 jest.mock("../../lib/auth/session-revoke", () => ({
   __esModule: true,
@@ -69,6 +76,7 @@ const authedAs = (userId: string, sessionId: string) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockApplyRateLimit.mockResolvedValue(null);
 });
 
 describe("GET /api/user/sessions (#1856)", () => {
@@ -116,6 +124,25 @@ describe("GET /api/user/sessions (#1856)", () => {
     mockRequireApiAuth.mockResolvedValue({ error: err });
 
     expect(await listSessions()).toBe(err);
+    expect(sessionFindMany).not.toHaveBeenCalled();
+  });
+
+  it("keys the per-user limiter and passes 429s through untouched", async () => {
+    authedAs("u1", "s-current");
+    const limited = Response.json(
+      {
+        error: "Too many requests. Please try again later.",
+        code: "RATE_LIMITED",
+      },
+      { status: 429 },
+    );
+    mockApplyRateLimit.mockResolvedValueOnce(limited);
+
+    expect(await listSessions()).toBe(limited);
+    // The IP rule is coarse friction for NAT offices; this per-user
+    // bucket is the precise gate — assert it is consulted with the
+    // caller's id before any database read.
+    expect(mockApplyRateLimit).toHaveBeenCalledWith({}, "session-mgmt-user:u1");
     expect(sessionFindMany).not.toHaveBeenCalled();
   });
 });
