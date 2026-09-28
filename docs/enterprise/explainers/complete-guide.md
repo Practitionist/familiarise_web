@@ -756,13 +756,13 @@ Actions are the rows and the six primary roles are the columns; a checkmark mean
 
 **Two non-obvious rules baked into the rows above (2026-06 MAINTAINER role audit):**
 
-- **Removing an OWNER ≡ revoking the OWNER role.** Both transitions move someone from "has OWNER power" to "no longer has OWNER power", so they share the same gate. A MAINTAINER cannot remove **any** OWNER (not just the last one). Both the PATCH role-change route and the DELETE route enforce this via `isAtLeastRole(actor, "OWNER")`. Previously, DELETE only protected against orphaning the org (last-OWNER 409) — that left a privilege-escalation path where a MAINTAINER could remove all OWNERs except one. Closed in members/[memberId]/route.ts DELETE handler.
+- **Removing an OWNER ≡ revoking the OWNER role.** Both transitions move someone from "has OWNER power" to "no longer has OWNER power", so they share the same gate. A MAINTAINER cannot remove **any** OWNER (not just the last one). Both the PATCH role-change route and the DELETE route enforce this through `assertActorMayManage` in `lib/enterprise/membership-guards.ts`, which today requires the OWNER-only `members.role.grant.governance` matrix key before anyone touches an OWNER, MAINTAINER or BILLING_ADMIN row (#1851 decision 6 widened the original OWNER-only rule to those three roles). Previously, DELETE only protected against orphaning the org (last-OWNER 409) — that left a privilege-escalation path where a MAINTAINER could remove all OWNERs except one. Closed in members/[memberId]/route.ts DELETE handler.
 - **No one can change their own role.** Caller cannot grade their own membership — including OWNER. Role changes belong to a peer-or-superior review path. Self-status changes (e.g., suspending yourself) remain allowed. Without this, a MAINTAINER could self-PATCH to LEARNER (losing admin access by accident) or to EXPERT (lazy-creating a ConsultantProfile, bypassing the #729 strict identity gate that POST /members enforces). Closed in members/[memberId]/route.ts PATCH handler.
 - **No one can remove themselves via the member list.** The trash icon on your own row is refused (403). "Leave organization" is a real use case but belongs to a dedicated confirmation flow ("you will lose access immediately") with stronger copy than the eviction trash. Until that flow exists, self-DELETE is blocked. Closed in members/[memberId]/route.ts DELETE handler.
 
 ### 9.2.1 Field-level RBAC — the billing side-gate (#779 §A)
 
-Billing surfaces aren't gated by the linear `minimumRole` ladder. They use a dedicated helper, **`requireOrgBillingAdminOrOwner`** (`lib/auth/billing-admin-gate.ts`), which admits exactly **OWNER ∨ BILLING_ADMIN**. MAINTAINER is *deliberately excluded* — a MAINTAINER runs people and programs, not money. The gate fronts the rate-card, purchase-order, wallet-top-up, invoice (incl. `…/pay`), and billing-account routes.
+Billing surfaces were never gated by the linear rank ladder, and since #1860 no org route is. They name the finance keys of the permission matrix in `lib/auth/org-permissions.ts` (`billing.manage`, `purchaseOrders.manage` and `payouts.manage`), each of which admits exactly **OWNER ∨ BILLING_ADMIN**. MAINTAINER is *deliberately excluded* — a MAINTAINER runs people and programs, not money. These keys front the rate-card, purchase-order, wallet-top-up, invoice (incl. `…/pay`), and billing-account routes.
 
 The same field-level discipline governs `PATCH /api/organizations/[orgId]`: the route carries a **field allowlist per role**, so the same endpoint accepts a different set of columns depending on who's calling. A MAINTAINER patching the org can change branding but not `fundingSource`; a BILLING_ADMIN can't flip `canHost`. The allowlist — not just the role rank — is what's checked, which is how one PATCH route serves several roles safely.
 
@@ -1190,7 +1190,7 @@ Every sidebar destination is a row, and the columns show which roles can see it,
 | SSO (in Settings) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Consent (DPDP) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-Two notes on the table: (1) the wallet/credit pool is **not a separate `/credits` route** — it's the **Wallet tab inside `/billing`** (no `/credits` page exists). (2) The columns are the six classic roles; **BILLING_ADMIN** (omitted for width) has **write** access to the Billing, Purchase Orders, Payouts, and rate-card surfaces — the union of what's gated by `requireOrgBillingAdminOrOwner` (§ 9.2.1).
+Two notes on the table: (1) the wallet/credit pool is **not a separate `/credits` route** — it's the **Wallet tab inside `/billing`** (no `/credits` page exists). (2) The columns are the six classic roles; **BILLING_ADMIN** (omitted for width) has **write** access to the Billing, Purchase Orders, Payouts, and rate-card surfaces — the union of what's gated by the `billing.manage`, `purchaseOrders.manage` and `payouts.manage` matrix keys (§ 9.2.1).
 
 ### 13.2 Key UI components
 
@@ -1543,7 +1543,7 @@ Each row maps a statutory DPDP obligation to the specific model, route, or cron 
 |---|---|
 | Consent recording | `ConsentArtifact` model, SHA-256 hash of full policy text at consent time |
 | Per-user consent log | `/api/organizations/[orgId]/consent` routes + `DataRegion` on Organization |
-| Right to access (§11) | Org-wide export via `OrgDataExportJob` (`PENDING → PROCESSING → READY → FAILED → EXPIRED`); gated by `requireOrgBillingAdminOrOwner`, drained by the `process-data-exports` cron. See [data-export](../40-compliance-and-data/03-data-export.md). |
+| Right to access (§11) | Org-wide export via `OrgDataExportJob` (`PENDING → PROCESSING → READY → FAILED → EXPIRED`); gated per bundle kind by the `dataExports.people` (OWNER, MAINTAINER) and `dataExports.finance` (OWNER, BILLING_ADMIN) matrix keys, drained by the `process-data-exports` cron. See [data-export](../40-compliance-and-data/03-data-export.md). |
 | Right to erasure (§12) | Manual process in v1 (admin runs deletion script). Future: automated endpoint. See [deletion-policy](../40-compliance-and-data/02-deletion-policy.md). |
 | Data breach log | `DataBreach` model (schema-final, admin UI pending); `databreach-deadline-alerts` cron watches the 72-hour clock. |
 
@@ -1939,13 +1939,16 @@ This reference covers every HTTP status code the enterprise API surface returns 
 
 ```typescript
 requireOrgAccess(orgId: string, options?: {
-  minimumRole?: MemberRole;
-  canSponsor?: boolean;
-  canHost?: boolean;
+  permission?: OrgSurface | readonly OrgSurface[]; // a key of the org permission matrix
+  canSponsor?: true;
+  canHost?: true;
+  fundingSource?: FundingSource;
+  requireActive?: true;
+  allowSuspended?: true;
 })
 ```
 
-Returns either `{ error: NextResponse }` (reject) or `{ member, org, session }` (allow).
+Returns either `{ error: NextResponse }` (reject) or `{ member, org, session }` (allow). A route names its matrix key, as in `requireOrgAccess(orgId, { permission: "billing.manage" })`, and a caller whose role lacks the key gets 403 `Forbidden — your role does not grant billing.manage`.
 
 ### 26.2 Role check order
 
@@ -1956,22 +1959,23 @@ flowchart TD
     Auth -->|Yes| OrgLookup[Lookup org by orgId]
     OrgLookup --> OrgExists{Org exists?}
     OrgExists -->|No| R404a[Return 404]
-    OrgExists -->|Yes| Member[Lookup user's Membership in this org]
-    Member --> MemberExists{Has active membership?}
-    MemberExists -->|No, but user is platform ADMIN| Allow[Allow as admin]
-    MemberExists -->|No| R403a[Return 403]
-    MemberExists -->|Yes| RoleCheck{Role >= minimumRole?}
-    RoleCheck -->|No| R403b[Return 403]
-    RoleCheck -->|Yes| CapCheck{Org has required capability?}
+    OrgExists -->|Yes| Verify{requireActive set and org not ACTIVE?}
+    Verify -->|Yes| R409[Return 409 ORG_NOT_VERIFIED]
+    Verify -->|No| CapCheck{Org has required capability?}
     CapCheck -->|No| R404b[Return 404 feature off]
-    CapCheck -->|Yes| Verify{Org status ACTIVE?}
-    Verify -->|No| R409[Return 409 ORG_NOT_VERIFIED]
-    Verify -->|Yes| Allow
+    CapCheck -->|Yes| Admin{User is platform ADMIN?}
+    Admin -->|Yes| Allow[Allow]
+    Admin -->|No| Member[Lookup user's Membership in this org]
+    Member --> MemberExists{Has active membership?}
+    MemberExists -->|No| R403a[Return 403]
+    MemberExists -->|Yes| PermCheck{Role holds the permission key?}
+    PermCheck -->|No| R403b[Return 403 role does not grant key]
+    PermCheck -->|Yes| Allow
 ```
 
 ### 26.3 The billing side-gate (#779 §A)
 
-Money surfaces don't ride the `minimumRole` ladder. `requireOrgBillingAdminOrOwner` (`lib/auth/billing-admin-gate.ts`) admits **OWNER ∨ BILLING_ADMIN** and nobody else — MAINTAINER is deliberately shut out. It fronts rate-cards, purchase-orders, wallet top-ups, invoices (incl. `…/pay`), and the billing-account PATCH. Separately, `PATCH /api/organizations/[orgId]` enforces a **per-role field allowlist**, so the same route accepts different columns by caller (a MAINTAINER may set branding but not `fundingSource`). See § 9.2.1.
+Money surfaces name the finance keys of the permission matrix (`billing.manage`, `purchaseOrders.manage` and `payouts.manage` in `lib/auth/org-permissions.ts`), which admit **OWNER ∨ BILLING_ADMIN** and nobody else — MAINTAINER is deliberately shut out. They front rate-cards, purchase-orders, wallet top-ups, invoices (incl. `…/pay`), and the billing-account PATCH. Separately, `PATCH /api/organizations/[orgId]` enforces a **per-role field allowlist**, so the same route accepts different columns by caller (a MAINTAINER may set branding but not `fundingSource`). See § 9.2.1.
 
 ### 26.4 SSO enforcement & break-glass (#779 §E)
 
@@ -2936,8 +2940,8 @@ A: `BookingUtilization WHERE programAssignment.organizationId = X AND bookedAt >
 **Q39: How do I add a new audit action string?**
 A: Add a constant to `lib/enterprise/audit-actions.ts` under the right category. No migration needed.
 
-**Q40: What's the difference between requireOrgAccess and requireOrgOwner?**
-A: `requireOrgAccess(orgId, 'OWNER')` does the same thing as `requireOrgOwner(orgId)`. The former is more flexible (any minimum role); the latter is a convenience alias.
+**Q40: How is an OWNER-only route gated now?**
+A: The route calls `requireOrgAccess(orgId, { permission: "<key>" })` with a matrix key whose role set is OWNER alone, such as `identity.manage`, `org.delete` or `payouts.account.manage`. #1860 deleted the old OWNER-only helper and the rank floor, so the key in `lib/auth/org-permissions.ts` is the only place that decides who passes.
 
 ---
 

@@ -32,10 +32,11 @@ role-specific profile FKs, `payoutRecipient`, the rate-card override, and
 `externalScimId`, and it holds an optional `betterAuthMemberId` that
 bridges to BetterAuth's row when one exists. `MemberRole` is the
 seven-value enum (`OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`,
-`EXPERT`, `LEARNER`, `SUPPORT`) ranked by `ORG_ROLE_RANK` in
-`lib/auth/role-ranks.ts`, and gates resolve through `isAtLeastRole` or the
-dedicated `requireOrgBillingAdminOrOwner` disjunction. `requireOrgAccess`
-rejects any membership whose status is not `ACTIVE`. When BetterAuth's SSO
+`EXPERT`, `LEARNER`, `SUPPORT`), which `ORG_ROLE_RANK` in
+`lib/auth/role-ranks.ts` orders for display only. Gates resolve through
+`requireOrgAccess(orgId, { permission: "<key>" })` against the permission
+matrix in `lib/auth/org-permissions.ts`, and `requireOrgAccess` rejects
+any membership whose status is not `ACTIVE`. When BetterAuth's SSO
 plugin auto-provisions a user it writes only a bare `member` row; the
 `customSession` hook in `lib/auth.ts` detects the missing typed sibling
 (`findMany members WHERE membership IS null`) and mints the typed

@@ -275,10 +275,12 @@ readable projection of it.
 > `docs/decisions/2026-09-27-org-role-matrix.md`.
 > `/reimbursements` uses `reimbursements.read` plus the
 > `fundingSource=PERSONAL` structural gate; `/audit` uses `audit.read`
-> (OWNER, MAINTAINER, SUPPORT) with the CSV export kept at a MAINTAINER
-> rank floor because bulk export is a governance action; and the
+> (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT, because it is the
+> union of `audit.read.ops` and `audit.read.money`) with the CSV export gated on
+> `dataExports.people` (OWNER, MAINTAINER) because bulk export is a
+> governance action; and the
 > the `/settings` integration tabs (`webhooks`, `scim`, `data-exports`)
-> use `integrations.manage` (OWNER and BILLING_ADMIN; PR #1842, part of #1527, matched this key to the existing server guards — webhook create is `requireOrgBillingAdminOrOwner`, and rotate, branding and domains stay OWNER — replacing the earlier `integrations.read` grant).
+> use `integrations.manage` (OWNER and BILLING_ADMIN; PR #1842, part of #1527, matched this key to the existing server guards — webhook create was the OWNER-or-BILLING_ADMIN gate (today the `integrations.manage` key itself), and rotate, branding and domains stayed OWNER — replacing the earlier `integrations.read` grant).
 
 ### Billing surface
 
@@ -368,9 +370,9 @@ The sidebar is built in
 `app/dashboard/organization/[orgId]/layout.tsx` (`sidebarItems`
 memo) from three inputs: the org's `canSponsor` / `canHost` /
 `fundingSource` booleans, and the current user's `MemberRole`
-ranked via the local `isAtLeast()` helper (duplicated narrowly from
-`lib/auth-helpers.ts` because the layout runs before the org query
-cache is warm). The sidebar is cosmetic — it does not re-derive
+checked against the permission matrix through `useOrgRole().can`,
+which reads the same `lib/auth/org-permissions.ts` keys as the API
+routes (the local rank helper `isAtLeast()` was removed in #1860). The sidebar is cosmetic — it does not re-derive
 from `deriveCapabilityKind()` and it does not enforce authorization.
 Every page and API route still calls `requireOrgAccess` / `useRequireOrgAccess`
 independently. Items that would 404/403/501 are simply hidden to

@@ -74,7 +74,7 @@ What the surveys identified is **incidental complexity** layered on top:
 - **Three docs** explaining the three-ledger discipline (`07-payout-pipeline.md`, `09-wallet-and-ledger.md`, `18-three-ledger-discipline.md`) — they overlap by ~80%
 - **Two payout service files** (`payout-service.ts`, `org-payout-service.ts`) — one of them has zero production callers
 - **Full SCIM 2.0 implementation** (~534 LoC) — zero customers using it yet
-- **Three role-check helpers** (`requireOrgAccess`, `requireOrgOwner`, `requireOrgBillingAdminOrOwner`) — they all answer "can this person do X?" but with different argument shapes
+- **Three role-check helpers** (`requireOrgAccess` with a rank floor, an OWNER-only wrapper, and an OWNER-or-BILLING_ADMIN disjunction helper) — they all answered "can this person do X?" but with different argument shapes, and #1860 has since folded them into the permission matrix
 
 These are the kinds of weight a system accumulates during rapid pre-launch development. Now is the moment to shed it.
 
@@ -223,11 +223,16 @@ The enterprise code surface spans ~13,500 LoC. Three categories of preventable b
 
 ### B1. Three role-check predicates
 
-Currently three helpers answer "can this person do X?":
+> **Status (2026-09-28):** PR #1860 implemented this consolidation as the
+> org permission matrix in `lib/auth/org-permissions.ts`. Every org route
+> now calls `requireOrgAccess(orgId, { permission: "<key>" })`, and the
+> three helpers below no longer exist.
 
-- `requireOrgAccess(orgId, { minimumRole })` — rank-based check
-- `requireOrgOwner(orgId)` — owner-only convenience
-- `requireOrgBillingAdminOrOwner(orgId)` — disjunction (added because rank ladder couldn't express "OWNER or specialized admin")
+When this proposal was written, three helpers answered "can this person do X?":
+
+- `requireOrgAccess` with a rank-floor option — rank-based check (today the `permission` option)
+- an owner-only convenience wrapper (today OWNER-only keys such as `identity.manage` and `org.delete`)
+- an OWNER-or-BILLING_ADMIN disjunction helper, added because the rank ladder couldn't express "OWNER or specialized admin" (today the `billing.manage`, `purchaseOrders.manage`, `payouts.manage` and `integrations.manage` keys)
 
 **Action — UNIFY into capability matrix:**
 
@@ -246,9 +251,9 @@ export async function requireCapability(orgId: string, capability: Capability) {
 }
 ```
 
-Then `requireOrgOwner = requireCapability(..., "admin")` and `requireOrgBillingAdminOrOwner = requireCapability(..., "finance")`.
+Then the owner-only wrapper would become `requireCapability(..., "admin")` and the disjunction helper would become `requireCapability(..., "finance")`. As shipped in #1860, the single predicate is `requireOrgAccess(orgId, { permission })` and the matrix is keyed by surface and action rather than by capability.
 
-**Files affected:** `lib/auth-helpers.ts`, `lib/auth/billing-admin-gate.ts`, ~70 route handlers (no logic change, just import swap).
+**Files affected:** `lib/auth-helpers.ts`, the disjunction helper's own file (deleted in #1860), ~70 route handlers (no logic change, just import swap).
 
 **Impact:** -200 LoC, much easier to add new roles (e.g., FINANCE_VIEWER) without helper explosion.
 
@@ -375,7 +380,7 @@ Actions:
 Actions:
 
 1. Introduce `lib/auth/capabilities.ts` with `requireCapability()` + role→capability matrix
-2. Refactor `requireOrgAccess`, `requireOrgOwner`, `requireOrgBillingAdminOrOwner` to thin wrappers
+2. Refactor `requireOrgAccess`, the owner-only wrapper and the disjunction helper to thin wrappers (#1860 went further, deleting the two wrappers and giving `requireOrgAccess` a `permission` option)
 3. Migrate ~70 route handlers (mechanical, no behavior change)
 4. Extract roles gate matrix from `04-roles-and-permissions.md` into `reference/roles-api-matrix.md`
 

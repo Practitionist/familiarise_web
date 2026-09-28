@@ -41,28 +41,31 @@ flowchart LR
 ```
 
 > **How to read this table.** Each row is one `path × verb`.
-> **Min role** is the _floor_ — `requireOrgAccess(orgId, minRole)` (or
-> `requireOrgOwner`) from `lib/auth-helpers.ts`; higher ranks and
-> platform admins always pass. 🔒 rows gate on
-> `requireOrgBillingAdminOrOwner` (`lib/auth/billing-admin-gate.ts`,
-> OWNER ∨ BILLING_ADMIN) instead; 🔓 marks the one **field-level RBAC**
-> route. **Audit actions** are the exact string literals the handler
+> **Min role** summarises who holds the route's matrix key. Every route
+> calls `requireOrgAccess(orgId, { permission: "<key>" })` from
+> `lib/auth-helpers.ts`, and the key's role set lives in
+> `lib/auth/org-permissions.ts`; platform admins always pass. 🔒 rows
+> name a finance key such as `billing.manage` (OWNER ∨ BILLING_ADMIN);
+> 🔓 marks the one **field-level RBAC** route. **Audit actions** are the exact string literals the handler
 > emits to `OrgAuditLog` on success (`—` = no audit row); the `(CATEGORY)`
 > is the `OrgAuditCategory`. To verify a row against code: open the route
 > file under `app/api/organizations/**`, confirm the gate call at the top
 > and the `AUDIT_ACTIONS.<CAT>.<NAME>` constant at the write site
 > (`lib/enterprise/audit-actions.ts`).
 
-Every enterprise-layer HTTP endpoint, exhaustively. Roles are the
-_minimum_ required role — higher-rank roles and platform admins
-always pass. Audit actions are the string literals emitted by the
+Every enterprise-layer HTTP endpoint, exhaustively. The role column
+names the roles that hold the route's matrix key, which is not a rank
+floor: since #1860 no org gate compares ranks, so a higher-ranked role
+passes only if the key lists it, and platform admins always pass. Audit actions are the string literals emitted by the
 route on success; rows land in `OrgAuditLog` with the category shown
 in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 
-> **Billing surfaces are governed by `requireOrgBillingAdminOrOwner`**
-> (`lib/auth/billing-admin-gate.ts`) — an **OWNER ∨ BILLING_ADMIN**
-> disjunction. MAINTAINER is _deliberately excluded_ from money
-> surfaces even though it outranks BILLING_ADMIN on the org ladder.
+> **Billing surfaces are governed by the finance matrix keys**
+> (`billing.manage`, `purchaseOrders.manage`, `payouts.manage` and
+> `integrations.manage` in `lib/auth/org-permissions.ts`), which hold
+> **OWNER ∨ BILLING_ADMIN** only. MAINTAINER is _deliberately excluded_
+> from money surfaces even though it sits above BILLING_ADMIN in the
+> display order.
 > Rows gated this way are marked 🔒 **OWNER / BILLING_ADMIN** below.
 
 _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
@@ -143,7 +146,7 @@ These routes manage programs and their per-member assignments, including the mon
 
 ## Billing account
 
-These routes expose the billing account, wallet balance, and top-up flow; the money-mutating ones gate on `requireOrgBillingAdminOrOwner` and are marked 🔒.
+These routes expose the billing account, wallet balance, and top-up flow; the money-mutating ones gate on the `billing.manage` matrix key and are marked 🔒.
 
 | Path                                                                  | Verb    | Min role                 | Purpose                                                                                                                                                                                                | Audit actions                                                                |
 | --------------------------------------------------------------------- | ------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
@@ -175,7 +178,7 @@ These routes cover manual invoices, invoice-payment initiation, PDF rendering, a
 
 ## Rate cards, earnings, payouts (host side)
 
-These are the host-side money routes for organizations that earn — rate cards, the payout account, and the earnings-to-payout rollup; most mutations gate on `requireOrgBillingAdminOrOwner`.
+These are the host-side money routes for organizations that earn — rate cards, the payout account, and the earnings-to-payout rollup; most mutations gate on the `payouts.manage` matrix key, and the payout account gates on the OWNER-only `payouts.account.manage` key.
 
 | Path                                             | Verb    | Min role                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                 | Audit actions                                    |
 | ------------------------------------------------ | ------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
@@ -250,19 +253,22 @@ OWNER-only — provisioning tokens and group mappings are IdP-trust roots.
 
 ## Outbound webhooks
 
-`requireOrgBillingAdminOrOwner` governs **create/configure/redeliver**;
-**secret rotation and endpoint deletion are OWNER-only** (highest-trust
-operations from the integrator's POV). Read surfaces are MANAGER.
+The `integrations.manage` matrix key (OWNER ∨ BILLING_ADMIN) governs
+**create/configure/redeliver**; **secret rotation and endpoint deletion
+are OWNER-only** through the `webhooks.rotateSecret` and `webhooks.delete`
+keys (highest-trust operations from the integrator's POV). The read
+surfaces (endpoint list, endpoint detail and delivery log) also gate on
+`integrations.manage`, so a MANAGER cannot read them.
 
 | Path                                                                                 | Verb     | Min role                 | Purpose                                                                                                                                                                                                                                   | Audit actions                                                                                 |
 | ------------------------------------------------------------------------------------ | -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `/api/organizations/[orgId]/webhooks`                                                | `GET`    | MANAGER                  | List endpoints                                                                                                                                                                                                                            | —                                                                                             |
+| `/api/organizations/[orgId]/webhooks`                                                | `GET`    | 🔒 OWNER / BILLING_ADMIN | List endpoints                                                                                                                                                                                                                            | —                                                                                             |
 | `/api/organizations/[orgId]/webhooks`                                                | `POST`   | 🔒 OWNER / BILLING_ADMIN | Create endpoint (returns secret once)                                                                                                                                                                                                     | `WEBHOOK_ENDPOINT_CREATED` (WEBHOOK)                                                          |
-| `/api/organizations/[orgId]/webhooks/[endpointId]`                                   | `GET`    | MANAGER                  | Endpoint detail                                                                                                                                                                                                                           | —                                                                                             |
+| `/api/organizations/[orgId]/webhooks/[endpointId]`                                   | `GET`    | 🔒 OWNER / BILLING_ADMIN | Endpoint detail                                                                                                                                                                                                                           | —                                                                                             |
 | `/api/organizations/[orgId]/webhooks/[endpointId]`                                   | `PATCH`  | 🔒 OWNER / BILLING_ADMIN | Update / pause / resume                                                                                                                                                                                                                   | `WEBHOOK_ENDPOINT_PAUSED` / `WEBHOOK_ENDPOINT_RESUMED` / `WEBHOOK_ENDPOINT_UPDATED` (WEBHOOK) |
 | `/api/organizations/[orgId]/webhooks/[endpointId]`                                   | `DELETE` | OWNER                    | Remove endpoint                                                                                                                                                                                                                           | `WEBHOOK_ENDPOINT_DELETED` (WEBHOOK)                                                          |
 | `/api/organizations/[orgId]/webhooks/[endpointId]/rotate-secret`                     | `POST`   | OWNER                    | Mint a fresh 32-byte secret (returned once); stashes the prior secret + stamps `secretRotatedAt` so the worker dual-signs for a 24h grace window. Rate-limited (`orgWebhookLimiter`). BILLING_ADMIN can pause/disable but **not** rotate. | `WEBHOOK_SECRET_ROTATED` (WEBHOOK)                                                            |
-| `/api/organizations/[orgId]/webhooks/[endpointId]/deliveries`                        | `GET`    | MANAGER                  | Delivery attempt history                                                                                                                                                                                                                  | —                                                                                             |
+| `/api/organizations/[orgId]/webhooks/[endpointId]/deliveries`                        | `GET`    | 🔒 OWNER / BILLING_ADMIN | Delivery attempt history                                                                                                                                                                                                                  | —                                                                                             |
 | `/api/organizations/[orgId]/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | `POST`   | 🔒 OWNER / BILLING_ADMIN | Re-enqueue a single delivery                                                                                                                                                                                                              | `WEBHOOK_DELIVERY_REDELIVERED` (WEBHOOK)                                                      |
 
 ## Compliance: verification, consent, data exports
@@ -324,11 +330,13 @@ dropped in the same cycle — any doc referencing those is stale.
   is always one of the `OrgAuditCategory` values. (The lone exception
   is `DELETE /api/organizations/[orgId]`, which hard-deletes the org
   and its audit rows together — there's no surviving row to write.)
-- Most routes gate on `requireOrgAccess(orgId, minRole)` or
-  `requireOrgOwner(orgId)` from `lib/auth-helpers.ts`. **Billing
-  surfaces** gate on `requireOrgBillingAdminOrOwner` from
-  `lib/auth/billing-admin-gate.ts` (OWNER ∨ BILLING_ADMIN). Platform
-  admins bypass the gate and get a synthesised OWNER stub Membership.
+- Every route gates on `requireOrgAccess(orgId, { permission: "<key>" })`
+  from `lib/auth-helpers.ts`, where the key comes from the permission
+  matrix in `lib/auth/org-permissions.ts`; a caller without the key gets
+  403 `Forbidden — your role does not grant <key>`. **Billing surfaces**
+  name a finance key such as `billing.manage` (OWNER ∨ BILLING_ADMIN).
+  Platform admins bypass the gate and get a synthesised OWNER stub
+  Membership.
 - `PATCH /api/organizations/[orgId]` is the one **field-level RBAC**
   route: the role gate is the lowest active membership, then each
   touched field is checked against `MAINTAINER_FIELDS` /

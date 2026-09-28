@@ -109,7 +109,7 @@ retry-loop on us (verified in `app/scim/v2/Users/[id]/route.ts`).
 ## Authentication
 
 Every SCIM call carries `Authorization: Bearer <raw token>`.
-`/api/organizations/[orgId]/scim/tokens` (OWNER-only — `requireOrgOwner`;
+`/api/organizations/[orgId]/scim/tokens` (OWNER-only — the `identity.manage` matrix key;
 BILLING_ADMIN deliberately excluded, since a leaked token provisions
 arbitrary users) mints tokens. The token is 48 random bytes
 (base64url), and the **raw value is returned exactly once** on POST. We
