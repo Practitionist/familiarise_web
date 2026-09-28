@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { Check, Loader2, LogOut, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -184,29 +190,56 @@ function formatLastSeen(iso: string): string {
  * peer tabs re-check immediately; the server bumps the cross-device
  * counter for phones left open on a screen.
  */
+/** Why the device list failed to load — the UI says different things. */
+type SessionsLoadError = "signed-out" | "retryable";
+
 export function SessionsSection() {
   const { toast } = useToast();
   const [sessions, setSessions] = useState<DeviceSession[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState<SessionsLoadError | null>(null);
   const [pendingRevoke, setPendingRevoke] = useState<DeviceSession | null>(
     null,
   );
 
+  // Whether any load has ever succeeded. A ref, not state: reading
+  // `sessions` here would re-create `load` on every setSessions and
+  // re-trigger the mount effect into a refetch loop.
+  const hasLoadedRef = useRef(false);
+
   const load = useCallback(async () => {
     setIsLoading(true);
-    setLoadFailed(false);
+    setLoadError(null);
     try {
       const res = await fetch("/api/user/sessions");
+      // 401 means THIS session is gone (revoked elsewhere, expired) —
+      // retrying the same dead cookie is futile, so say so instead of
+      // offering a Retry that can never succeed. Anything else (500,
+      // 503, 429, network) is transient: keep the button.
+      if (res.status === 401) {
+        setLoadError("signed-out");
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { sessions: DeviceSession[] };
       setSessions(body.sessions);
+      hasLoadedRef.current = true;
     } catch {
-      setLoadFailed(true);
+      // Stale list beats no list: a refresh failure keeps the last known
+      // rows (flagged by toast) instead of blanking the section — but a
+      // first load with nothing to show gets the Retry block below.
+      if (hasLoadedRef.current) {
+        toast({
+          title: "Couldn't refresh your sessions",
+          description: "Showing the last loaded list.",
+        });
+      } else {
+        setLoadError("retryable");
+      }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     void load();
@@ -279,9 +312,24 @@ export function SessionsSection() {
       description="Every device signed in to your account. Signed in somewhere you don't recognize? End that session."
       variant="card"
     >
-      {isLoading ? (
+      {isLoading && sessions === null && loadError === null ? (
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      ) : loadFailed || sessions === null ? (
+      ) : loadError === "signed-out" ? (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            Your session ended — sign in again to manage your devices.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              window.location.href = "/auth/signin";
+            }}
+          >
+            Sign in again
+          </Button>
+        </div>
+      ) : loadError === "retryable" || sessions === null ? (
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
             We couldn&apos;t load your sessions.
@@ -327,7 +375,17 @@ export function SessionsSection() {
           variant="outline"
           size="sm"
           disabled={isLoading || (sessions?.length ?? 0) < 2}
-          onClick={() => void revokeOthers({ andSignOut: false })}
+          onClick={() => {
+            // Unlike the ConfirmDialog paths, nothing here catches a
+            // rejection — surface it as a toast instead of an unhandled
+            // rejection with no user feedback.
+            revokeOthers({ andSignOut: false }).catch(() => {
+              toast({
+                title: "We couldn't end your other sessions. Please try again.",
+                variant: "destructive",
+              });
+            });
+          }}
         >
           <LogOut className="mr-1.5 h-4 w-4" />
           Sign out other devices
