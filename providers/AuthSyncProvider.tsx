@@ -28,11 +28,14 @@ import { signOutEverywhere } from "@/lib/auth/sign-out";
  *      `?reason=session-revoked` so the sign-in page can say why); a failed
  *      lookup refetches instead of signing out (#1716, client-side).
  *
- * Revocation triggers feeding the classifier: the `session-revoked`
- * BroadcastChannel ping from the tab that performed the revoke
- * (same-browser), a throttled `visibilitychange` re-check (cross-device,
- * within one tab-switch), and the opt-in Redis poll below (cross-device,
- * within the poll interval).
+ * Revocation triggers feeding the classifier: BetterAuth's 60s interval
+ * refetch (`sessionOptions.refetchInterval` in `lib/auth-client.ts` —
+ * cross-device, no focus needed, bounded by cookie-cache expiry so up
+ * to ~6 min stale), the `session-revoked` BroadcastChannel ping from
+ * the tab that performed the revoke (same-browser, instant), a
+ * throttled `visibilitychange` re-check (cross-device, within one
+ * tab-switch), and the opt-in Redis poll below (cross-device, within
+ * the poll interval).
  *
  * Renders nothing. See `lib/auth-broadcast.ts` for why this is needed.
  */

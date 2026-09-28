@@ -13,6 +13,20 @@ export const authClient = createAuthClient({
   // callback can validate it. A raw POST to /api/auth/sign-in/sso would
   // skip PKCE entirely and break Auth0 / Okta OIDC / Azure AD OIDC flows.
   plugins: [customSessionClient<typeof auth>(), ssoClient()],
+  sessionOptions: {
+    // #1856 — revalidate the session every 60s while signed in (the
+    // interval only ticks when a session exists, and logged-out tabs
+    // never poll). Without this, a tab that is already visible when its
+    // session is revoked elsewhere stays stale indefinitely: no focus
+    // event fires, and the BroadcastChannel ping never crosses devices.
+    // When the refetch resolves null, the existing authed→null
+    // transition in AuthSyncProvider classifies and signs out with the
+    // reason. Honest bound: the poll reads the cookie-cached session,
+    // so detection lags up to cookieCache.maxAge (5 min) + this
+    // interval; tab-switch stays instant via the focus path, and the
+    // opt-in Redis counter poll covers seconds-level needs.
+    refetchInterval: 60,
+  },
 });
 
 export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =

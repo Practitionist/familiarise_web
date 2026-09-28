@@ -77,13 +77,15 @@ session-payload-allowlist.test.ts` pins both the select keys and the
    retry. Generous on purpose (phone + laptop + tablet is normal);
    the cap is hygiene, not the security gate — `authLimiter` owns
    brute force. Raising it is a product decision.
-8. **Revocation propagates in three tiers.** Same-browser tabs via the
-   `session-revoked` BroadcastChannel ping; cross-device within one
-   tab-switch via a throttled focus re-check; cross-device within the
-   poll interval via the opt-in Redis counter (`sess:revsig:{userId}`,
-   ships DISABLED). Every tier funnels into one classifier, and the
-   classifier never reads a failed lookup as a revocation (#1716,
-   client-side): error → refetch and stay put.
+8. **Revocation propagates in four tiers.** A 60s interval refetch
+   finds revocation on already-visible tabs with no focus needed
+   (bounded by cookie-cache expiry: ~6 min worst case); same-browser
+   tabs via the instant `session-revoked` BroadcastChannel ping;
+   cross-device within one tab-switch via a throttled focus re-check;
+   cross-device within the poll interval via the opt-in Redis counter
+   (`sess:revsig:{userId}`, ships DISABLED). Every tier funnels into
+   one classifier, and the classifier never reads a failed lookup as
+   a revocation (#1716, client-side): error → refetch and stay put.
 9. **`lastSeenAt` is honest.** Last server-validated activity, ±5 min
    (throttled touch; the cookie cache means most requests never reach
    the DB). The UI says "last seen", never "active now".

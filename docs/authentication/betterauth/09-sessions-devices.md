@@ -83,8 +83,11 @@ re-check; error → refetch and stay put (a failed lookup is never a
 revocation, #1716 client-side); user present → cookie-cache race,
 refetch to recover; confirmed null → `forgetAuthState()` +
 `signOutEverywhere("/auth/signin?reason=session-revoked")`, which the
-sign-in page renders as a notice. Three triggers: the
-`session-revoked` BroadcastChannel ping from the revoking tab
+sign-in page renders as a notice. Four triggers: BetterAuth's 60s
+interval refetch (`sessionOptions.refetchInterval` in
+`lib/auth-client.ts` — cross-device with no focus needed, bounded by
+cookie-cache expiry so an already-visible tab learns within ~6 min),
+the `session-revoked` BroadcastChannel ping from the revoking tab
 (same-browser; the channel never crosses devices), a throttled (30s)
 `visibilitychange` re-check (cross-device, one tab-switch), and the
 opt-in Redis counter poll (`sess:revsig:{userId}`,
