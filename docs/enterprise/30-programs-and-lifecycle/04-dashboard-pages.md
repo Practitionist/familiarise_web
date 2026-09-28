@@ -226,7 +226,7 @@ flowchart TD
   subgraph MGR["MANAGER sees"]
     direction LR
     M1["/members<br/>(tabs: all · learners · experts · invitations)"]
-    M2["/billing · /payouts · /analytics"]
+    M2["/billing · /analytics<br/>(/payouts needs payouts.read: OWNER, MAINTAINER, BILLING_ADMIN)"]
     M3["/consent · /appointments · /audit"]
   end
   subgraph MNT["+ MAINTAINER adds"]

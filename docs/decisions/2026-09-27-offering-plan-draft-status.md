@@ -42,7 +42,7 @@ Unpublishing a plan does not touch anything that already happened against it. Pa
 
 - "Save draft" now does what its label says, closing a defect where a consultant's unfinished pricing or content changes went live the moment they clicked what they believed was a safe, non-publishing action.
 - The plan-detail API no longer leaks booking rows to an arbitrary signed-in caller, and a non-owner can no longer distinguish a real draft plan from a nonexistent one beyond a generic 404.
-- Because the column is additive with a default, the rollout needed no backfill. It did not by itself guarantee that old code ignored drafts: while an old deployment and new draft writes overlap, old readers such as `generateMetadata` and `api/topics` can still show or count a draft plan. The protection is that the readers and purchase gates changed in the same PR that introduced drafts, so the overlap lasts only as long as a deploy is rolling out.
+- Because the column is additive with a default, the rollout needed no backfill. It did not by itself guarantee that old code ignored drafts: while an old deployment and new draft writes overlap, old readers such as `generateMetadata` and `api/topics` can still show or count a draft plan. For the readers and purchase gates this PR migrated, the overlap lasts only as long as a deploy is rolling out. `api/topics` is not one of them: it can keep counting `DRAFT` plans until the #1845 follow-up lands.
 
 ### Negative
 
