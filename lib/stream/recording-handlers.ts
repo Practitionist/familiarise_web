@@ -347,7 +347,6 @@ export async function handleRecordingReady(
       let consultantName = "Unknown Consultant";
 
       if (appointment?.consultation) {
-        appointmentType = "consultation";
         consultantName =
           appointment.consultation.consultationPlan?.consultantProfile?.user
             ?.name ?? "Unknown Consultant";

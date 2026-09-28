@@ -158,7 +158,7 @@ function stripSensitiveQueryParams(url: string): string {
     const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(url);
     const parsed = new URL(
       url,
-      isAbsolute ? undefined : "http://placeholder.invalid",
+      isAbsolute ? undefined : "https://placeholder.invalid",
     );
     let changed = false;
     for (const key of Array.from(parsed.searchParams.keys())) {
