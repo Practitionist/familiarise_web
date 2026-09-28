@@ -12,6 +12,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import type { MemberRole } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -90,6 +91,39 @@ export async function GET(
   });
 }
 
+/**
+ * #1851 decision 11 — an endpoint carrying member events is the OWNER's:
+ * repointing its URL would route member data to whoever edits it.
+ */
+function assertMayEditMemberEndpoint(
+  role: MemberRole,
+  current: readonly string[],
+  next: readonly string[] | undefined,
+): void {
+  if (
+    (carriesMemberData(current) || carriesMemberData(next ?? [])) &&
+    !hasOrgPermission(role, "webhooks.subscribe.memberEvents")
+  ) {
+    throw Object.assign(
+      new Error(
+        "Only an Owner can change a webhook that carries member events.",
+      ),
+      { httpStatus: 403, code: "WEBHOOK_MEMBER_EVENTS_OWNER_ONLY" },
+    );
+  }
+}
+
+/** A typed refusal thrown inside the transaction, as a response. */
+function refusalResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof Error) || !("httpStatus" in err)) return null;
+  const code =
+    "code" in err && typeof err.code === "string" ? err.code : undefined;
+  return NextResponse.json(
+    { error: err.message, ...(code && { code }) },
+    { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
+  );
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -143,20 +177,11 @@ export async function PATCH(
           httpStatus: 404,
         });
       }
-      // #1851 decision 11 — an endpoint carrying member events is the OWNER's:
-      // repointing its URL would route member data to whoever edits it.
-      if (
-        (carriesMemberData(current.eventSubscriptions) ||
-          carriesMemberData(parsed.data.eventSubscriptions ?? [])) &&
-        !hasOrgPermission(access.member.role, "webhooks.subscribe.memberEvents")
-      ) {
-        throw Object.assign(
-          new Error(
-            "Only an Owner can change a webhook that carries member events.",
-          ),
-          { httpStatus: 403, code: "WEBHOOK_MEMBER_EVENTS_OWNER_ONLY" },
-        );
-      }
+      assertMayEditMemberEndpoint(
+        access.member.role,
+        current.eventSubscriptions,
+        parsed.data.eventSubscriptions,
+      );
       const next = await tx.webhookEndpoint.update({
         where: { id: endpointId },
         data: {
@@ -194,14 +219,8 @@ export async function PATCH(
   } catch (err) {
     // The 404 and the member-events 403 are thrown inside the transaction so
     // the check reads the same row the update writes.
-    if (err instanceof Error && "httpStatus" in err) {
-      const code =
-        "code" in err && typeof err.code === "string" ? err.code : undefined;
-      return NextResponse.json(
-        { error: err.message, ...(code && { code }) },
-        { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
-      );
-    }
+    const refused = refusalResponse(err);
+    if (refused) return refused;
     throw err;
   }
 

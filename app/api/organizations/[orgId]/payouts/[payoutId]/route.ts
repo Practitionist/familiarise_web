@@ -25,6 +25,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
+import type { MemberRole } from "@prisma/client";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
   hasOrgPermission,
@@ -81,6 +82,66 @@ async function classifySelfApproval(
     },
   });
   return approvers >= 2 ? "second-approver-required" : "self-allowed";
+}
+
+function refusal(message: string, httpStatus: number, code: string): Error {
+  return Object.assign(new Error(message), { httpStatus, code });
+}
+
+/** The typed refusal thrown inside the transaction, as a response. */
+function refusalResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof Error) || !("httpStatus" in err)) return null;
+  const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
+  const code =
+    "code" in err && typeof err.code === "string" ? err.code : undefined;
+  return NextResponse.json(
+    { error: err.message, ...(code && { code }) },
+    { status },
+  );
+}
+
+/**
+ * Throws unless `actor` may approve this batch; returns whether it is a
+ * typed self-approval, which the audit row records.
+ */
+async function assertMayApprove(
+  tx: Pick<Tx, "orgAuditLog" | "membership">,
+  input: {
+    orgId: string;
+    payoutId: string;
+    actor: { id: string; role: MemberRole };
+    orgSlug: string;
+    confirmSelfApproval: string | undefined;
+  },
+): Promise<boolean> {
+  if (!hasOrgPermission(input.actor.role, "payouts.approve")) {
+    throw refusal(
+      "Your role cannot approve payouts.",
+      403,
+      "PAYOUT_APPROVE_FORBIDDEN",
+    );
+  }
+  const selfApproval = await classifySelfApproval(tx, {
+    orgId: input.orgId,
+    payoutId: input.payoutId,
+    actorMembershipId: input.actor.id,
+  });
+  if (selfApproval === "not-self") return false;
+  if (selfApproval === "second-approver-required") {
+    throw refusal(
+      "You created this payout batch, so another Owner or Billing admin has to approve it.",
+      403,
+      "PAYOUT_SECOND_APPROVER_REQUIRED",
+    );
+  }
+  if (input.confirmSelfApproval !== input.orgSlug) {
+    throw refusal(
+      "You are the only person who can approve payouts here. Type the organization's slug to approve your own batch.",
+      409,
+      "PAYOUT_SELF_APPROVAL_CONFIRM_REQUIRED",
+    );
+  }
+  return true;
 }
 
 export async function GET(
@@ -169,42 +230,15 @@ export async function PATCH(
       }
 
       // #1851 decision 4 — the second pair of eyes.
-      let selfApproved = false;
-      if (body.status === "APPROVED") {
-        if (!hasOrgPermission(access.member.role, "payouts.approve")) {
-          throw Object.assign(new Error("Your role cannot approve payouts."), {
-            httpStatus: 403,
-            code: "PAYOUT_APPROVE_FORBIDDEN",
-          });
-        }
-        const selfApproval = await classifySelfApproval(tx, {
+      const selfApproved =
+        body.status === "APPROVED" &&
+        (await assertMayApprove(tx, {
           orgId,
           payoutId,
-          actorMembershipId: access.member.id,
-        });
-        if (selfApproval === "second-approver-required") {
-          throw Object.assign(
-            new Error(
-              "You created this payout batch, so another Owner or Billing admin has to approve it.",
-            ),
-            { httpStatus: 403, code: "PAYOUT_SECOND_APPROVER_REQUIRED" },
-          );
-        }
-        if (selfApproval === "self-allowed") {
-          if (body.confirmSelfApproval !== access.org.slug) {
-            throw Object.assign(
-              new Error(
-                "You are the only person who can approve payouts here. Type the organization's slug to approve your own batch.",
-              ),
-              {
-                httpStatus: 409,
-                code: "PAYOUT_SELF_APPROVAL_CONFIRM_REQUIRED",
-              },
-            );
-          }
-          selfApproved = true;
-        }
-      }
+          actor: access.member,
+          orgSlug: access.org.slug,
+          confirmSelfApproval: body.confirmSelfApproval,
+        }));
 
       if (body.status) {
         await transitionOrgPayout(tx, {
@@ -250,15 +284,8 @@ export async function PATCH(
 
     return NextResponse.json({ payout: updated });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      const code =
-        "code" in err && typeof err.code === "string" ? err.code : undefined;
-      return NextResponse.json(
-        { error: err.message, ...(code && { code }) },
-        { status },
-      );
-    }
+    const refused = refusalResponse(err);
+    if (refused) return refused;
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
       { tags: { subsystem: "organizations" } },

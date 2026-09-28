@@ -41,9 +41,15 @@ function auditValues(
   return Object.fromEntries(
     keys.map((key) => {
       const value = source[key];
-      if (value === null || value === undefined) return [key, null];
       if (value instanceof Date) return [key, value.toISOString()];
-      return [key, String(value)];
+      if (
+        typeof value === "bigint" ||
+        typeof value === "number" ||
+        typeof value === "string"
+      ) {
+        return [key, String(value)];
+      }
+      return [key, null];
     }),
   );
 }

@@ -60,8 +60,7 @@ export async function POST(
       // #1851 decision 11 — a member-event delivery is invisible without
       // webhooks.subscribe.memberEvents, so it answers as not found.
       if (
-        !delivery ||
-        delivery.endpoint.organizationId !== orgId ||
+        delivery?.endpoint.organizationId !== orgId ||
         (carriesMemberData([delivery.eventType]) &&
           !hasOrgPermission(
             access.member.role,

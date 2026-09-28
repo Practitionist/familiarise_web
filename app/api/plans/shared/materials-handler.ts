@@ -188,14 +188,16 @@ async function resolveMaterialRowAccess(
   });
   if (!material) return { status: "not_found" };
 
-  const [planType, plan]: [PlanType, MaterialPlan | null] =
-    material.consultationPlan
-      ? ["consultation", material.consultationPlan]
-      : material.subscriptionPlan
-        ? ["subscription", material.subscriptionPlan]
-        : material.webinarPlan
-          ? ["webinar", material.webinarPlan]
-          : ["class", material.classPlan];
+  const candidates: Array<[PlanType, MaterialPlan | null]> = [
+    ["consultation", material.consultationPlan],
+    ["subscription", material.subscriptionPlan],
+    ["webinar", material.webinarPlan],
+    ["class", material.classPlan],
+  ];
+  const [planType, plan] = candidates.find(([, p]) => p !== null) ?? [
+    "class",
+    null,
+  ];
   if (!plan) return { status: "not_found" };
 
   const access = await resolvePlanAccess(userId, plan, planType);
@@ -510,10 +512,9 @@ export async function handleDeleteMaterial(
       );
     }
 
-    // Delete from Supabase storage
-    await deletePlanMaterial(access.storagePath);
-
-    // Delete from database, with the org's audit row when an org acted.
+    // Row and audit first, storage after: a failed storage delete leaves an
+    // orphaned object rather than a row pointing at a file that is gone, or a
+    // removal the org's audit trail never recorded (#1851 decision 8).
     const { orgActor, fileName } = access;
     await prisma.$transaction(async (tx) => {
       await tx.planMaterial.delete({ where: { id: materialId } });
@@ -525,6 +526,16 @@ export async function handleDeleteMaterial(
         });
       }
     });
+
+    const storageDeleted = await deletePlanMaterial(access.storagePath).catch(
+      () => false,
+    );
+    if (!storageDeleted) {
+      console.warn("Plan material storage delete failed", {
+        materialId,
+        storagePath: access.storagePath,
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

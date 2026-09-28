@@ -74,12 +74,16 @@ function main(): void {
     "",
   ];
   for (const [surface, list] of groups) {
-    out.push(`### \`${surface}\``, "");
-    out.push(leadIn(surface, list.length), "");
-    out.push(`| Key | ${ROLES.map((r) => HEADER[r]).join(" | ")} |`);
-    out.push(`|---|${ROLES.map(() => ":-:").join("|")}|`);
-    for (const key of list) out.push(row(key));
-    out.push("");
+    out.push(
+      `### \`${surface}\``,
+      "",
+      leadIn(surface, list.length),
+      "",
+      `| Key | ${ROLES.map((r) => HEADER[r]).join(" | ")} |`,
+      `|---|${ROLES.map(() => ":-:").join("|")}|`,
+      ...list.map(row),
+      "",
+    );
   }
   process.stdout.write(out.join("\n"));
 }

@@ -17,6 +17,7 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({
     member: { id: "mem_1", role: "OWNER" },
+    org: { slug: "acme" },
   })),
 }));
 
