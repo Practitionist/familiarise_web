@@ -1,6 +1,6 @@
 # Sentry setup and configuration
 
-This page records how Sentry is wired into the application and the operational facts that were learned the hard way, so that nobody has to rediscover them from the git history. Everything here was true on 2026-09-20; when a fact changes, change it here first.
+This page records how Sentry is wired into the application and the operational facts that were learned the hard way, so that nobody has to rediscover them from the git history. Everything here was true on 2026-09-20, with the API configuration, the ingest canary and the identity work added on 2026-09-28; when a fact changes, change it here first. The page set is 01 this page, [02 conventions](02-conventions.md), [03 the Actions failure sink](03-actions-failure-sink.md), [04 the triage runbook](04-triage-runbook.md), [05 identity and triage](05-identity-and-triage.md), [06 the ingest canary](06-ingest-canary.md) and [07 proving an event arrives](07-verifying-end-to-end.md).
 
 ## The project and its DSNs
 
@@ -10,7 +10,7 @@ Two environment variables carry the DSN. `NEXT_PUBLIC_SENTRY_DSN` is what the ap
 
 ## Where the code lives
 
-The SDK is `@sentry/nextjs` (major version 10), installed through the official wizard in PR #901. The single initialiser is `sentry.shared.config.ts`, exporting `initSentry()`, which `sentry.server.config.ts`, `sentry.edge.config.ts` and `instrumentation-client.ts` each call for their runtime; `instrumentation.ts` registers the server hooks and `onRequestError`; `app/global-error.tsx` catches render errors; `next.config.mjs` is wrapped with `withSentryConfig`. The shared config sets `environment` from `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, `tracesSampleRate` to 0.1 in production and 1 elsewhere, `enableLogs: true`, `sendDefaultPii: false`, an `ignoreErrors` list and a `denyUrls` list for third-party noise (browser wallet extensions, the React Server Components flight-stream abort), and a `beforeSend` that re-levels an error carrying the expected marker to a warning and tags it `expected:true`. Session Replay and the ad-blocker tunnel are deliberately not enabled: replay is a DPDP and bundle-size cost, and the tunnel would bill a Netlify function invocation per event.
+The SDK is `@sentry/nextjs` (major version 10), installed through the official wizard in PR #901. The single initialiser is `sentry.shared.config.ts`, exporting `initSentry()`, which `sentry.server.config.ts`, `sentry.edge.config.ts` and `instrumentation-client.ts` each call for their runtime; `instrumentation.ts` registers the server hooks and `onRequestError`; `app/global-error.tsx` catches render errors; `next.config.mjs` is wrapped with `withSentryConfig`. The shared config sets `environment` from `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, `tracesSampleRate` to 0.1 in production and 1 elsewhere, `enableLogs: true`, an explicit `dataCollection` allowlist (the SDK 10.54 replacement for the deprecated `sendDefaultPii`), an `ignoreErrors` list and a `denyUrls` list for third-party noise (browser wallet extensions, the React Server Components flight-stream abort), and a `beforeSend` that re-levels an error carrying the expected marker to a warning and tags it `expected:true`. Session Replay and the ad-blocker tunnel are deliberately not enabled: replay is a DPDP and bundle-size cost, and the tunnel would bill a Netlify function invocation per event.
 
 Reporting goes through `lib/observability/report.ts`: `reportSentryError(error, { subsystem, op, expected, extra })` and `reportSentryMessage(message, { subsystem, expected, level, extra })`. Nothing in application code should call `Sentry.captureException` directly except the few places that predate the helper; the helper is what applies the `subsystem` and `expected` tags consistently. `lib/observability/expected.ts` provides `markExpected(error)` and `isExpectedError(error)` for the modelled-refusal path, and `lib/observability/betterstack-telemetry.ts` mirrors uptime signals to BetterStack, which is a separate sink with its own truth.
 
@@ -19,6 +19,22 @@ Bare-Node jobs (everything under `jobs/**` that GitHub Actions runs with `tsx`) 
 ## Source maps and the auth token
 
 Source-map upload runs inside `next build` through the Sentry bundler plugin and needs `SENTRY_AUTH_TOKEN`, `SENTRY_ORG=practitionist` and `SENTRY_PROJECT=familiarise_web`. On 2026-06-26 every Netlify deploy went red because the token on Netlify was scoped to a differently spelled organisation (`practionist`, an old token) while the config named `practitionist`; the upload failed, the plugin propagated the exit code, and `next build` exited 2. Two fixes followed and both still stand: the bad token was unset on Netlify so the upload is skipped, and PR #918 added an `errorHandler` to `withSentryConfig` so that a bad or expired token can never fail a build again. GitHub CI has no `SENTRY_AUTH_TOKEN`, which is why CI stayed green through that outage. The `sntrys_` organisation token in the local `.env` is also dead (`401 Invalid org token`); the Sentry CLI's OAuth login is what has access. Source-map upload therefore does not run anywhere today; restoring it means minting a token for the organisation where the project actually lives and setting it on Netlify, tracked on #900.
+
+## Where Sentry's own coordinates live
+
+Until 2026-09-28 the Sentry organisation, project and both URLs were hardcoded in TypeScript — four literals in `sentry.shared.config.ts` and two more in `lib/observability/sentry-issues.ts`. Every one of them is now read from the environment with a `||` default to the live project, so the same code runs against a real project and a fixture in a test:
+
+| Variable                    | Read by                               | Default                      | Purpose                                                    |
+| --------------------------- | ------------------------------------- | ---------------------------- | ---------------------------------------------------------- |
+| `SENTRY_API_URL`            | `sentry-issues.ts`                    | `https://us.sentry.io/api/0` | REST base, for the back-office issue lookup                |
+| `SENTRY_WEB_URL`            | `sentry-issues.ts`                    | `https://us.sentry.io`       | Base for the issue links shown to support                  |
+| `SENTRY_ORG`                | `next.config.mjs`, `sentry-issues.ts` | `practitionist`              | Slug, not id — what the CLI and the UI paths want          |
+| `SENTRY_PROJECT`            | `next.config.mjs`, `sentry-issues.ts` | `familiarise_web`            | Slug, not id                                               |
+| `SENTRY_API_TOKEN`          | `sentry-issues.ts`                    | _unset_                      | REST read token, needs `event:read`                        |
+| `SENTRY_AUTH_TOKEN`         | the build plugin                      | _unset_                      | Source-map upload, needs `project:releases` and `org:read` |
+| `OBSERVABILITY_ALERT_EMAIL` | `ingest-alert.ts`                     | the support mailbox          | Who the canary emails                                      |
+
+The org and project are **slugs, not ids**, which is the thing that goes wrong: the two project ids in circulation (`4511593990914048`, live, and `4509348818124800`, dead) both appear in `next build` output and neither is usable as a slug. The two tokens are separate credentials for separate jobs and neither is set today. `SENTRY_API_TOKEN` is deliberately left unset rather than set to an empty string, because an empty string enables the token path and then fails every call with an unauthenticated request; unset is the off switch.
 
 ## What reaches Sentry today
 
