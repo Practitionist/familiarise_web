@@ -473,6 +473,8 @@ For the full sequence (including the `sessionGeneration` marker that
 keeps active sessions fresh after role changes) see
 [`jit-and-session-refresh`](02-jit-and-session-refresh.md).
 
+An SSO-created account no longer gets the sign-up consent stamp, because the person never saw the sign-up terms (#1854). The org dashboard shows a first sign-in consent step (`JoinConsentGate`) to a member who has no core-processing consent record at all, and accepting an invitation from such an account shows the sign-up consent inline and records it in the same transaction as the acceptance. SSO sign-in itself still records nothing.
+
 ### JIT default role
 
 `OrganizationSSOSettings.defaultRoleForAutoJoin` is locked at
