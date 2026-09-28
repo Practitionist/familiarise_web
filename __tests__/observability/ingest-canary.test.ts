@@ -20,8 +20,10 @@ import {
   type IngestProbeResult,
 } from "../../lib/observability/ingest-canary";
 
+// Synthetic DSN. Shape only: a fixture must never carry the real DSN public
+// key or the live org/project ids, because a test file is a committed file.
 const DSN =
-  "https://7156608333e48f40193093a452b61e88@o4509348815372289.ingest.us.sentry.io/4511593990914048";
+  "https://0123456789abcdef0123456789abcdef@o0123456789abcdef.ingest.us.sentry.io/0123456789abcdef";
 
 function fakeResponse(init: {
   status: number;
@@ -44,16 +46,16 @@ const run = (res: Response) =>
 describe("envelopeEndpointFromDsn", () => {
   it("derives the endpoint and public key from the DSN", () => {
     const out = envelopeEndpointFromDsn(DSN);
-    expect(out?.publicKey).toBe("7156608333e48f40193093a452b61e88");
-    expect(out?.url).toContain("o4509348815372289.ingest.us.sentry.io");
-    expect(out?.url).toContain("/api/4511593990914048/envelope/");
+    expect(out?.publicKey).toBe("0123456789abcdef0123456789abcdef");
+    expect(out?.url).toContain("o0123456789abcdef.ingest.us.sentry.io");
+    expect(out?.url).toContain("/api/0123456789abcdef/envelope/");
   });
 
   // Without sentry_key the ingest endpoint rejects with 401, so a canary that
   // omitted it would report "auth broken" forever.
   it("includes the public key, which ingest requires", () => {
     expect(envelopeEndpointFromDsn(DSN)?.url).toContain(
-      "sentry_key=7156608333e48f40193093a452b61e88",
+      "sentry_key=0123456789abcdef0123456789abcdef",
     );
   });
 
@@ -64,7 +66,7 @@ describe("envelopeEndpointFromDsn", () => {
   // live testing catches it.
   it("uses the DSN host verbatim, without re-adding the ingest label", () => {
     const url = envelopeEndpointFromDsn(DSN)?.url ?? "";
-    expect(url).toContain("o4509348815372289.ingest.us.sentry.io");
+    expect(url).toContain("o0123456789abcdef.ingest.us.sentry.io");
     expect(url).not.toContain("ingest.o");
   });
 

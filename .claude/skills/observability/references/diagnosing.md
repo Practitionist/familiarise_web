@@ -34,7 +34,7 @@ npx tsx -r dotenv/config jobs/observability/sentry-ingest-canary.ts
 | `rejected-auth`       | DSN or public key is wrong; nothing can ever arrive     | A1.1  |
 | `unavailable`         | 5xx or unreachable; Sentry is unwell                    | A5    |
 
-**A1.1** — `rejected-auth` means the client is aimed at a project that does not exist or will not accept. Two dead values are in circulation: the `4509348818124800` project id (answers `403 event submission rejected with_reason: ProjectId`) and the `NEXT_PUBLIC_SENTRY_DSN` in an unset context. Check that `NEXT_PUBLIC_SENTRY_DSN` is set on the Netlify context you are testing, and that it is not carrying the dead project.
+**A1.1** — `rejected-auth` means the client is aimed at a project that does not exist or will not accept. Two dead values are in circulation: a numeric project id from a mis-rotation (answers `403 event submission rejected with_reason: ProjectId`) and `NEXT_PUBLIC_SENTRY_DSN` unset in the context being tested. Check that `NEXT_PUBLIC_SENTRY_DSN` is set on the Netlify context you are testing, and that it is not carrying the dead project.
 
 **A2 — Does the code path report at all?** Read it. If it has no `reportSentryError`/`reportSentryMessage` call, or swallows the error in a `catch` that only logs, the event was never intended. The canonical shape of this bug is on the `maintenance` skill's list: a post-commit `scheduleAfter` failure or a `recordSystemError` whose rejection was unhandled. Both are fixed; grep for `.catch(() => {})` near any error you expected to be reported.
 

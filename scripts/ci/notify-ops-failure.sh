@@ -26,26 +26,38 @@
 # A sink that fails is itself a red step: a dead sink must be visible.
 #
 # The DSN must name a project that exists. On 2026-09-20 the local `.env`
-# SENTRY_DSN pointed at project 4509348818124800, which exists in no
-# organisation: Relay answers 200 on the first envelope (accepted, then
-# dropped) and `403 … with_reason: ProjectId` once its cache is warm, which is
-# exactly the 403 the Actions runs saw. Rotate the secret to the live
-# familiarise_web DSN (project 4511593990914048); see 07-required-secrets.md.
+# SENTRY_DSN named a project that exists in no organisation: Relay answers
+# 200 on the first envelope (accepted, then dropped) and
+# `403 … with_reason: ProjectId` once its cache is warm, which is exactly the
+# 403 the Actions runs saw. Rotate the secret to the live familiarise_web
+# DSN; see 07-required-secrets.md.
 set -euo pipefail
 
-# Positive DSN check, not a blocklist: on 2026-09-20 SENTRY_DSN pointed at
-# project 4509348818124800, which exists in no organisation. Relay answers
-# 200 on the first envelope (accepted, then dropped) and `403 … ProjectId`
-# once warm — so a well-formed but dead DSN looks delivered (delivered=1,
-# exit 0) and every failure goes unpaged. A blocklist of that one id would
-# rot: the next mis-rotation (a different wrong project, a typo) sails
-# through the same trap. This repo has exactly one live project (previews
-# share it per sentry.shared.config.ts #1086), so the check is inverted: a
-# SET SENTRY_DSN must name the live project or the step fails fast, for
-# every job, money-critical or not. Unset keeps the old lenient path below
+# Positive DSN check, not a blocklist: on 2026-09-20 SENTRY_DSN named a
+# project that exists in no organisation. Relay answers 200 on the first
+# envelope (accepted, then dropped) and `403 … ProjectId` once warm — so a
+# well-formed but dead DSN looks delivered (delivered=1, exit 0) and every
+# failure goes unpaged. A blocklist of that one id would rot: the next
+# mis-rotation (a different wrong project, a typo) sails through the same
+# trap. This repo has exactly one live project (previews share it per
+# sentry.shared.config.ts #1086), so the check is inverted: a SET SENTRY_DSN
+# must name the live project or the step fails fast, for every job,
+# money-critical or not. Unset SENTRY_DSN keeps the old lenient path below
 # (forks without secrets).
-LIVE_SENTRY_PROJECT="4511593990914048"
+#
+# The expected project id is deliberately NOT hardcoded here. It is a
+# deployment identifier rather than application configuration, and a copy
+# kept in the repository is exactly how it silently rots against a future
+# project change — it would keep "validating" a project nobody sends to. It
+# comes from LIVE_SENTRY_PROJECT, which must be set wherever SENTRY_DSN is
+# set. Unset fails closed rather than skipping, because a skipped check is
+# the silent no-op this guard exists to prevent.
+LIVE_SENTRY_PROJECT="${LIVE_SENTRY_PROJECT:-}"
 if [ -n "${SENTRY_DSN:-}" ]; then
+  if [ -z "$LIVE_SENTRY_PROJECT" ]; then
+    echo "::error::LIVE_SENTRY_PROJECT is not set, so SENTRY_DSN cannot be verified. Set it to the live familiarise_web project id (Sentry → Settings → Projects) in this workflow's env. Refusing to skip the check: a well-formed but dead DSN looks delivered, and every cron failure then goes unpaged." >&2
+    exit 1
+  fi
   dsn_project_check="$(echo "$SENTRY_DSN" | sed -E 's#.*/([0-9]+)(\?.*)?$#\1#')"
   if [ "$dsn_project_check" != "$LIVE_SENTRY_PROJECT" ]; then
     echo "::error::SENTRY_DSN names project ${dsn_project_check:-unparseable} — expected live familiarise_web project ${LIVE_SENTRY_PROJECT}; rotate the secret (see 07-required-secrets.md)" >&2

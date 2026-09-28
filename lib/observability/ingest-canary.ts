@@ -51,11 +51,11 @@
  * The host is used VERBATIM. Sentry Cloud DSNs already carry the collector
  * subdomain — `o<orgId>.ingest.<region>.sentry.io` — and a self-hosted DSN
  * points straight at the collector. Rewriting it (an earlier draft prepended
- * `ingest.` when the host did not *start* with it) produced
- * `ingest.o4509348815372289.ingest.us.sentry.io`, which resolves to nothing:
- * the `ingest.` label sits mid-host, not at the front. Only live testing finds
- * that, because the DNS failure is a clean `fetch failed` rather than an HTTP
- * status.
+ * `ingest.` when the host did not *start* with it) produced a host with the
+ * label in the middle, `ingest.o<orgId>.ingest.<region>.sentry.io`, which
+ * resolves to nothing: the `ingest.` label sits mid-host, not at the front.
+ * Only live testing finds that, because the DNS failure is a clean
+ * `fetch failed` rather than an HTTP status.
  */
 export function envelopeEndpointFromDsn(dsn: string): {
   url: string;

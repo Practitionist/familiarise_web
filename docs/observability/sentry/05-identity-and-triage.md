@@ -280,8 +280,16 @@ in CI could tell.
 
 ### Confirming it yourself, in one request
 
+Every value below comes from the environment — never paste a real DSN into a
+terminal, a ticket or a commit.
+
 ```bash
-curl -sS -X POST "https://o4509348815372289.ingest.us.sentry.io/api/4511593990914048/envelope/?sentry_version=7&sentry_key=$NEXT_PUBLIC_SENTRY_DSN_KEY" \
+# $NEXT_PUBLIC_SENTRY_DSN looks like https://<publicKey>@<host>/<projectId>
+dsn="${NEXT_PUBLIC_SENTRY_DSN:?set NEXT_PUBLIC_SENTRY_DSN first}"
+read -r key host path <<<"$(printf '%s' "$dsn" | sed -E 's#^https://([^@]+)@([^/]+)/(.+)$#\1 \2 \3#')"
+
+curl -sS -D - -o /dev/null -X POST \
+  "https://${host}/api/${path}/envelope/?sentry_version=7&sentry_key=${key}" \
   -H 'content-type: application/x-sentry-envelope' \
   --data-binary $'{"event_id":"'"$(head -c 16 /dev/urandom | xxd -p)"'"}\n{"type":"event"}\n{"event_id":"…","level":"error","platform":"javascript","logger":"manual-check"}\n'
 ```
