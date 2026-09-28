@@ -318,6 +318,23 @@ export function isWriteBlockedInDegraded(
   );
 }
 
+// #1861 S3a — this module runs on the edge runtime, where node:crypto's
+// timingSafeEqual is unavailable, so the bypass secret compare needs its own
+// constant-time routine. Length inequality is folded into the accumulator
+// rather than returned early, and every byte up to max(len) is visited, so
+// neither a length mismatch nor an early differing byte shortens the loop.
+function constantTimeEqual(a: string | null | undefined, b: string): boolean {
+  if (a === null || a === undefined) return false;
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  const maxLen = Math.max(aBytes.length, bBytes.length);
+  let diff = aBytes.length === bBytes.length ? 0 : 1;
+  for (let i = 0; i < maxLen; i++) {
+    diff |= (i < aBytes.length ? aBytes[i] : 0) ^ (i < bBytes.length ? bBytes[i] : 0);
+  }
+  return diff === 0;
+}
+
 /**
  * Validate maintenance bypass via header or cookie.
  */
@@ -325,16 +342,21 @@ export function validateBypass(
   request: NextRequest,
   storedSecret: string | null,
 ): boolean {
+  const headerVal = request.headers.get("x-maintenance-bypass");
+  const cookieVal = request.cookies.get("maintenance_bypass")?.value;
+
   if (!storedSecret) {
     const envSecret = process.env.MAINTENANCE_BYPASS_SECRET;
     if (!envSecret) return false;
 
-    const headerVal = request.headers.get("x-maintenance-bypass");
-    const cookieVal = request.cookies.get("maintenance_bypass")?.value;
-    return headerVal === envSecret || cookieVal === envSecret;
+    return (
+      constantTimeEqual(headerVal, envSecret) ||
+      constantTimeEqual(cookieVal, envSecret)
+    );
   }
 
-  const headerVal = request.headers.get("x-maintenance-bypass");
-  const cookieVal = request.cookies.get("maintenance_bypass")?.value;
-  return headerVal === storedSecret || cookieVal === storedSecret;
+  return (
+    constantTimeEqual(headerVal, storedSecret) ||
+    constantTimeEqual(cookieVal, storedSecret)
+  );
 }

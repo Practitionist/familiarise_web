@@ -161,6 +161,12 @@ export const auth = betterAuth({
       // sign-up, not via OAuth auto-link.
       trustedProviders: ["google", "github", "facebook"],
     },
+    // #1861 S1 / #1529 — Account.accessToken/refreshToken are encrypted with
+    // the Better Auth secret; nothing in the app reads them directly. Legacy
+    // plaintext rows keep reading via Better Auth's own fallback
+    // (node_modules/better-auth/dist/oauth2/utils.mjs isLikelyEncrypted) and
+    // vanish at the pre-MVP reset.
+    encryptOAuthTokens: true,
   },
 
   session: {
