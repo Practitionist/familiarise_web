@@ -45,6 +45,8 @@ export interface DashboardContextBarProps {
    * escape to.
    */
   leftLink?: { href: string; label: string } | null;
+  /** Leftmost control — the shell's sidebar toggle (#1527). */
+  leadingSlot?: React.ReactNode;
   /** Right-aligned actions. Defaults to the notification inbox bell. */
   rightSlot?: React.ReactNode;
 }
@@ -66,12 +68,14 @@ export function DashboardContextBar({
   badges = [],
   breadcrumbs = [],
   leftLink,
+  leadingSlot,
   rightSlot,
 }: DashboardContextBarProps) {
   const FallbackIcon = identity.FallbackIcon ?? Building2;
 
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 h-14 px-4 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 text-sm min-w-0">
+      {leadingSlot}
       {leftLink && (
         <Link
           href={leftLink.href}

@@ -11,7 +11,9 @@ import {
   articlesForCategory,
   getArticle,
   getCategory,
+  helpCenterFor,
   relatedArticles,
+  suggestedArticlesFor,
   supportArticles,
   supportCategories,
 } from "@/app/support/_data/support-content";
@@ -80,6 +82,37 @@ describe("support content model", () => {
     );
     for (const article of supportArticles) {
       expect(valid.has(article.contactCategory)).toBe(true);
+    }
+  });
+
+  it("gives learners and experts their own help-centre topics (#1527)", () => {
+    const slugs = (audience: "learner" | "expert") =>
+      helpCenterFor(audience).map((c) => c.category.slug);
+    // The consultee Help page used to serve the consultant FAQ.
+    expect(slugs("learner")).not.toContain("experts");
+    expect(slugs("learner")).not.toContain("organizations");
+    expect(slugs("expert")).toContain("experts");
+    for (const audience of ["learner", "expert"] as const) {
+      for (const { articles } of helpCenterFor(audience)) {
+        expect(articles.length).toBeGreaterThan(0);
+      }
+      // #1527 — Support requests suggests 3–5 of the audience's own articles.
+      const suggested = suggestedArticlesFor(audience);
+      expect(suggested.length).toBeGreaterThanOrEqual(3);
+      expect(suggested.length).toBeLessThanOrEqual(5);
+      for (const article of suggested) {
+        expect(slugs(audience)).toContain(article.category);
+      }
+    }
+    // The retired dashboard expert FAQ's still-true answers moved here.
+    for (const slug of [
+      "expert-profile",
+      "create-offerings",
+      "trial-sessions",
+      "collaborations",
+      "document-reviews",
+    ]) {
+      expect(getArticle("experts", slug)).toBeDefined();
     }
   });
 });

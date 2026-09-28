@@ -6,7 +6,10 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
-import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import {
+  buildCheckoutOptions,
+  holdTimeoutSeconds,
+} from "@/lib/payments/client/checkout-options";
 import { useCheckoutFlags } from "./CheckoutFlags";
 import {
   busyRetryToast,
@@ -81,6 +84,8 @@ export interface ExistingRazorpayOrder {
   paymentId: string;
   amount: number;
   currency: string;
+  /** #1861 L1 — the pay window's end (ISO); the sheet times out before it. */
+  holdExpiresAt?: string | null;
 }
 
 type RazorpayCheckoutSource =
@@ -112,6 +117,7 @@ interface GatewayOrder {
   amount: number;
   currency: string;
   customerId?: string;
+  holdExpiresAt?: string | null;
 }
 
 export default function RazorpayCheckout({
@@ -147,6 +153,7 @@ export default function RazorpayCheckout({
             id: existingOrder.orderId,
             amount: existingOrder.amount,
             currency: existingOrder.currency,
+            holdExpiresAt: existingOrder.holdExpiresAt,
           }
         : await createOrder();
       if (!order) return;
@@ -220,6 +227,7 @@ export default function RazorpayCheckout({
       currency: data.paymentIntent.currency,
       // #1771 row 1 — the server echoes a Customer only while saved cards are on.
       customerId: data.paymentIntent.customerId,
+      holdExpiresAt: data.holdExpiresAt,
     };
   };
 
@@ -230,6 +238,18 @@ export default function RazorpayCheckout({
         title: "Payment System Configuration Error",
         description:
           "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    // #1861 L1 — a hold with under two minutes left cannot be paid in time;
+    // opening Checkout would only take a payment the hold no longer covers.
+    if (holdTimeoutSeconds(order.holdExpiresAt) === 0) {
+      toast({
+        title: "Your reserved time has run out",
+        description:
+          "This time is no longer held for you. Please choose the time again to continue.",
         variant: "destructive",
       });
       return false;
@@ -270,6 +290,8 @@ export default function RazorpayCheckout({
       customerId: order.customerId,
       // #1780 row 1 — ENABLE_CHECKOUT_EMI off hides Razorpay's EMI block.
       hideEmi: !emiEnabled,
+      // #1861 L1 — the sheet closes before the slot hold lapses.
+      holdExpiresAt: order.holdExpiresAt,
       handler: async function (response: RazorpayPaymentResponse) {
         // H2 FIX: Verify Razorpay signature server-side before signaling success
         try {

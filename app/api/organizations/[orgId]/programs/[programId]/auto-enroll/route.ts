@@ -7,7 +7,7 @@
  * instead of POSTing /assignments once per member.
  *
  * Composition contract (mirrors the single-assign POST exactly):
- * - MAINTAINER + canSponsor gate; SUSPENDED org → 409 ORG_NOT_ACTIVE
+ * - programs.assign + canSponsor gate; SUSPENDED org → 409 ORG_NOT_ACTIVE
  *   (DEACTIVATED never reaches the route — requireOrgAccess 403s first,
  *   so the arm deliberately does not exist here).
  * - Per-entry Serializable tx with retry (withSerializableRetry), so
@@ -136,8 +136,10 @@ export async function POST(
   },
 ) {
   const { orgId, programId } = await params;
+  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
+  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.assign",
     canSponsor: true,
   });
   if (access.error) return access.error;

@@ -117,7 +117,7 @@ A soft (RSC) navigation must not block on a Redis round-trip, or it sits blank b
 - **`event.waitUntil`** — an unawaited promise is not guaranteed to run after the middleware response is sent, so `middleware()` passes `event.waitUntil` into `getMaintenanceStateCachedOnly()` to keep the background refresh alive. Without it the cache would never repopulate and a session that only soft-navigates would serve stale state indefinitely.
 - **`isRefreshing` guard** — a single module-level flag collapses concurrent stale sub-navigations into one Upstash read instead of a thundering herd.
 
-When the cache is stale the cached-only reader returns the **last-known** state (not OFF), so an active window is still enforced while the refresh is in flight. A full document load always does the live read, so any window is enforced within one document navigation or the 180-second cache window (#1822).
+When the cache is stale the cached-only reader returns the **last-known** state, so an active window that was already cached stays enforced while the refresh is in flight. If the last-known state is OFF and a window has just been switched on, a soft navigation can still proceed until the background refresh updates the cache. A full document load calls `getMaintenanceState()`, which may return the cached state and reads Redis only after the 180-second edge cache expires, so any window is enforced within one document navigation once that cache window has passed (#1822).
 
 ## Bypass Mechanism
 

@@ -8,14 +8,15 @@
  * invitations still aggregate personally either way — this page only
  * covers the host-perspective "my plans with collaborators" section.
  *
- * Access: ANY active member (requireOrgAccess floors at that); the sidebar
- * additionally gates visibility on canHost + myArrangement.read (see
- * layout.tsx) since only host-capable orgs have collaborator-bearing plans.
+ * Access: members who deliver for the org (`deliversForOrg`, the nav's own
+ * predicate — #1527). Operators read the org's hosted plans as Catalog ›
+ * Collaborators (#1527-4c).
  */
 
 import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { deliversForOrg } from "@/lib/dashboard/nav/organization";
 import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
 import {
   DashboardHeader,
@@ -30,15 +31,17 @@ export default async function OrgCollaborationsPage({
   const { orgId } = await params;
 
   const access = await requireOrgAccess(orgId);
-  if (access.error) {
+  // Same predicate as the nav item (#1527); operators use Catalog ›
+  // Collaborators.
+  if (access.error || !deliversForOrg(access.member)) {
     notFound();
   }
 
   return (
     <>
       <DashboardHeader
-        title="Collaborations"
-        subtitle={`Manage invitations and active collaborations on ${access.org.name}'s webinar and class plans.`}
+        title="Plan collaborators"
+        description={`Invitations and active collaborations on ${access.org.name}'s webinar and class plans.`}
       />
       <DashboardContent>
         <InvitationsPanel orgScope={orgId} />

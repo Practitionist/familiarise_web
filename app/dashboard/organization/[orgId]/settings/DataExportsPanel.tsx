@@ -3,8 +3,10 @@
 /**
  * /dashboard/organization/[orgId]/integrations/data-exports
  *
- * DPDP §11 right-to-access surface. OWNER + BILLING_ADMIN can request
- * a bundle (rate-limited 1/24h via `orgDataExportLimiter`); the worker
+ * DPDP §11 right-to-access surface. Bundles come in two kinds (#1527
+ * decision 4): people (`dataExports.people`, OWNER + MAINTAINER) and finance
+ * (`dataExports.finance`, OWNER + BILLING_ADMIN); the panel offers only the
+ * kinds the viewer holds (rate-limited 1/24h per kind); the worker
  * picks it up within ~10 minutes, uploads to Supabase Storage, and
  * the dashboard exposes a download link with a 7-day signed-URL TTL.
  *
@@ -15,7 +17,14 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRequireOrgAccess } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import type { OrgDataExportKind } from "@prisma/client";
+import {
+  dataExportKindsFor,
+  type DataExportKind,
+} from "@/lib/enterprise/data-export-kinds";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import type { Tone } from "@/lib/ui/tone";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import {
   Card,
@@ -25,7 +34,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -33,6 +41,7 @@ import {
 
 type ExportJob = {
   id: string;
+  kind: OrgDataExportKind;
   status: "PENDING" | "PROCESSING" | "READY" | "FAILED" | "EXPIRED";
   requestedByMembershipId: string;
   fileSizeBytes: number | string | null;
@@ -43,19 +52,34 @@ type ExportJob = {
   completedAt: string | null;
 };
 
-const STATUS_TONE: Record<ExportJob["status"], string> = {
-  PENDING: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  // In-flight is a neutral/transient state — monochrome instead of an
-  // off-brand blue accent. Terminal states keep their semantic colors.
-  PROCESSING: "bg-muted text-muted-foreground",
-  READY: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  FAILED: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-  EXPIRED: "bg-muted text-muted-foreground",
+// #1762-4 — labels + tones instead of the raw enum. FULL = pre-split job.
+const KIND_COPY: Record<OrgDataExportKind, { label: string; covers: string }> =
+  {
+    FULL: { label: "Everything", covers: "every people and finance record" },
+    PEOPLE: { label: "People", covers: "members and the audit log" },
+    FINANCE: {
+      label: "Finance",
+      covers: "contracts, programs, invoices, earnings and payouts",
+    },
+  };
+
+const EXPORT_STATUS: Record<
+  ExportJob["status"],
+  { label: string; tone: Tone }
+> = {
+  PENDING: { label: "Queued", tone: "info" },
+  PROCESSING: { label: "Preparing", tone: "info" },
+  READY: { label: "Ready", tone: "success" },
+  FAILED: { label: "Failed", tone: "critical" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
 };
 
-
 export function DataExportsPanel({ orgId }: { orgId: string }) {
-  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, { permission: "integrations.read" });
+  const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
+    permission: ["dataExports.people", "dataExports.finance"],
+  });
+  const { role } = useOrgRole(orgId);
+  const kinds = dataExportKindsFor(role);
   const qc = useQueryClient();
   const [requestError, setRequestError] = useState<string | null>(null);
 
@@ -81,9 +105,11 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
   });
 
   const request = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (kind: DataExportKind) => {
       const res = await fetch(`/api/organizations/${orgId}/data-exports`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -109,11 +135,17 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
       cell: (row) => new Date(row.createdAt).toLocaleString(),
     },
     {
+      key: "kind",
+      header: "Bundle",
+      className: "text-xs text-muted-foreground",
+      cell: (row) => KIND_COPY[row.kind].label,
+    },
+    {
       key: "status",
       header: "Status",
       cell: (row) => (
         <>
-          <Badge className={STATUS_TONE[row.status]}>{row.status}</Badge>
+          <StatusBadge {...EXPORT_STATUS[row.status]} />
           {row.error && (
             <p className="mt-1 text-xs text-red-600">{row.error}</p>
           )}
@@ -158,14 +190,14 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
 
   return (
     <>
-      <PanelHeader description="Download a JSON bundle of every entity scoped to this org — members, contracts, programs, invoices, earnings, payouts, audit log. Honours DPDP §11." />
+      <PanelHeader description="Download a JSON bundle of this organization's data. Honours DPDP §11." />
       <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Request a bundle</CardTitle>
             <CardDescription>
-              One request per organization per 24 hours. Bundles are emailed
-              when ready and expire 7 days after generation. See{" "}
+              One request per bundle per 24 hours. Bundles are emailed when
+              ready and expire 7 days after generation. See{" "}
               <a
                 href="/docs/enterprise/40-compliance-and-data/03-data-export"
                 className="underline"
@@ -181,12 +213,23 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
             {requestError && (
               <p className="mb-3 text-sm text-red-600">{requestError}</p>
             )}
-            <Button
-              disabled={request.isPending}
-              onClick={() => request.mutate()}
-            >
-              {request.isPending ? "Requesting..." : "Request export"}
-            </Button>
+            <div className="flex flex-wrap gap-3">
+              {kinds.map((kind) => (
+                <div key={kind} className="space-y-1">
+                  <Button
+                    disabled={request.isPending}
+                    onClick={() => request.mutate(kind)}
+                  >
+                    {request.isPending && request.variables === kind
+                      ? "Requesting..."
+                      : `Request ${KIND_COPY[kind].label.toLowerCase()} export`}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Includes {KIND_COPY[kind].covers}.
+                  </p>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
 
@@ -194,8 +237,7 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
           <CardHeader>
             <CardTitle>Past exports</CardTitle>
             <CardDescription>
-              Last 30 days. Polls every 15 seconds while anything is in
-              flight.
+              Last 30 days. Polls every 15 seconds while anything is in flight.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -219,7 +261,7 @@ export function DataExportsPanel({ orgId }: { orgId: string }) {
                 }
                 empty={
                   <p className="text-sm text-muted-foreground">
-                    No exports yet. Click &quot;Request export&quot; above.
+                    No exports yet. Request one above.
                   </p>
                 }
               />

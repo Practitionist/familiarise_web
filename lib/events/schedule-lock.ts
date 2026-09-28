@@ -19,3 +19,7 @@ export const WEBINAR_TIME_LOCKED_MESSAGE =
 
 export const CLASS_SCHEDULE_LOCKED_MESSAGE =
   "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.";
+
+/** #1846 SM-B8 — a held, parked or voided session keeps the time it had. */
+export const SESSION_ALREADY_HELD_MESSAGE =
+  "This session has already taken place, so its time can't be changed.";

@@ -37,6 +37,7 @@ import {
   OccurrenceCompletionStatus,
   SupportIssueType,
   type OccurrenceOutcome,
+  type Prisma,
 } from "@prisma/client";
 import {
   notifyAppointmentCancelled,
@@ -110,6 +111,16 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
 // paid, whose slots have all ended past the grace window and where a
 // Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
+// #1834 — a session the outcome sweep decided or parked for ops (D2) is no
+// longer this job's to cancel and refund; cohort and CAS both exclude it.
+const DECIDED_OR_PARKED = {
+  deletedAt: null,
+  OR: [
+    { outcome: { not: null } },
+    { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 function findNoShowCandidates(graceCutoff: Date) {
   return prisma.consultation.findMany({
     where: {
@@ -132,6 +143,7 @@ function findNoShowCandidates(graceCutoff: Date) {
             endsAt: { lt: graceCutoff },
             meeting: { isNot: null },
           },
+          none: DECIDED_OR_PARKED,
         },
       },
     },
@@ -448,7 +460,7 @@ export async function detectBothAbsent(
 // auto-complete cron) cannot re-process it. A concurrent cancel landing here wins
 // and this returns false → skip. On a successful claim we also reflect the
 // no-show on the slots (no NO_SHOW slot status exists — schema frozen, #471 —
-// CANCELLED is the closest; only move slots left SCHEDULED/UNVERIFIED).
+// CANCELLED is the closest; only undecided SCHEDULED slots move, #1834).
 async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
@@ -459,7 +471,10 @@ async function claimConsultantNoShow(
       // BookingStatusHistory row like every other status change; the bare
       // updateMany left no timeline entry for the no-show path.
       await transitionConsultationRequest(tx, {
-        where: { id: consultationId },
+        where: {
+          id: consultationId,
+          appointment: { occurrences: { none: DECIDED_OR_PARKED } },
+        },
         to: AppointmentStatus.CANCELLED,
         fromIn: CANCELLABLE_FROM,
         actorUserId: null,
@@ -475,12 +490,9 @@ async function claimConsultantNoShow(
       // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
       // the from-set is the one the raw updateMany carried.
       await transitionOccurrenceCompletion(tx, {
-        where: { appointmentId, deletedAt: null },
+        where: { appointmentId, deletedAt: null, outcome: null },
         to: OccurrenceCompletionStatus.CANCELLED,
-        fromIn: [
-          OccurrenceCompletionStatus.SCHEDULED,
-          OccurrenceCompletionStatus.UNVERIFIED,
-        ],
+        fromIn: [OccurrenceCompletionStatus.SCHEDULED],
         data: { deletedAt: new Date() },
         // Zero live occurrences means a concurrent writer took the booking's
         // sessions first; the parent cancel above rolls back with this throw

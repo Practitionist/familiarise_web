@@ -8,6 +8,7 @@ import {
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
@@ -321,10 +322,9 @@ export async function POST(req: NextRequest) {
         rating: newReview.rating,
         comment: newReview.reviewDescription || undefined,
         planTitle: reviewable.title,
-        // `/dashboard/consultant/reviews` never existed — the link 404'd for
-        // every review ever notified. The capability router picks the viewer's
-        // tree from a bare /dashboard.
-        dashboardUrl: "/dashboard",
+        // #1527 — was `/dashboard` (a bare role bounce) after
+        // `/dashboard/consultant/reviews` 404'd for every review ever notified.
+        dashboardUrl: goHref("expert", "reviews"),
       });
       // #1653 — the email twin of the bell; the sender never throws.
       await sendNewReviewEmail(
@@ -334,7 +334,8 @@ export async function POST(req: NextRequest) {
           reviewerName,
           rating: newReview.rating,
           comment: newReview.reviewDescription,
-          reviewUrl: "/dashboard",
+          // #1527 — same fix as the bell above.
+          reviewUrl: goHref("expert", "reviews"),
         },
         EMAIL_BUDGET_MS.REQUEST,
       );

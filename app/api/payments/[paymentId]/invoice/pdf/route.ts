@@ -19,6 +19,7 @@ import {
   type ConsumerInvoicePdfData,
 } from "@/lib/pdf/invoice-renderer";
 import { serveConsumerPdf } from "@/lib/pdf/serve-consumer-pdf";
+import { sessionsBoughtLabel } from "@/lib/booking/class-enrolment";
 
 export async function GET(
   _req: NextRequest,
@@ -59,6 +60,27 @@ export async function GET(
           buyerStateCode: true,
           pdfStoragePath: true,
           pdfGeneratedAt: true,
+          // #1819 — a class seat's line names the sessions it bought.
+          payment: {
+            select: {
+              appointment: {
+                select: {
+                  class: {
+                    select: {
+                      classPlan: {
+                        select: { title: true, totalSessions: true },
+                      },
+                    },
+                  },
+                },
+              },
+              appointmentParticipants: {
+                where: { sessionsPurchased: { not: null } },
+                select: { sessionsPurchased: true },
+                take: 1,
+              },
+            },
+          },
         },
       });
       return invoice ? { ...invoice, ownerUserId: invoice.userId } : null;
@@ -81,6 +103,7 @@ export async function GET(
         totalPaise: invoice.totalPaise,
         placeOfSupply: invoice.placeOfSupply,
         placeOfSupplySource: invoice.placeOfSupplySource,
+        description: classLineDescription(invoice.payment),
         supplier: {
           name: invoice.supplierName,
           gstin: invoice.supplierGstin,
@@ -103,4 +126,19 @@ export async function GET(
       });
     },
   });
+}
+
+type InvoicePaymentLine = {
+  appointment: {
+    class: { classPlan: { title: string; totalSessions: number } } | null;
+  } | null;
+  appointmentParticipants: { sessionsPurchased: number | null }[];
+};
+
+/** "Yoga basics — Sessions 3–8 of 8"; null keeps the generic supply line. */
+function classLineDescription(payment: InvoicePaymentLine): string | null {
+  const plan = payment.appointment?.class?.classPlan;
+  const bought = payment.appointmentParticipants[0]?.sessionsPurchased;
+  if (!plan || !bought) return null;
+  return `${plan.title} — ${sessionsBoughtLabel(bought, plan.totalSessions)}`;
 }

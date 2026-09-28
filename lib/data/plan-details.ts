@@ -139,10 +139,12 @@ export async function fetchClassPlanDetail(classPlanId: string) {
         },
       },
       classes: {
+        // #1819 — a stable pre-order; the first-session sort below is final.
+        orderBy: [{ schedulingPeriodStartsAt: "asc" }, { createdAt: "asc" }],
         include: {
           appointment: {
             include: {
-              occurrences: true,
+              occurrences: { orderBy: { startsAt: "asc" } },
               participants: {
                 where: liveParticipant(),
                 select: { userId: true },
@@ -174,8 +176,19 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       },
     },
   });
+  if (plan) plan.classes.sort((a, b) => firstStart(a) - firstStart(b));
   // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
   return toPlain(plan);
+}
+
+/** #1819 — a batch's first live session, so batches order by when they run. */
+function firstStart(cls: {
+  appointment: {
+    occurrences: { startsAt: Date; deletedAt: Date | null }[];
+  } | null;
+}): number {
+  const live = cls.appointment?.occurrences.find((o) => !o.deletedAt);
+  return live ? live.startsAt.getTime() : Number.MAX_SAFE_INTEGER;
 }
 
 /** Cached wrapper for Server Components. */

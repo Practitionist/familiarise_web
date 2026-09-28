@@ -8,21 +8,21 @@
  * session can't exfiltrate signing material. Rotate via the dedicated
  * `/rotate-secret` route (OWNER-only) if it's lost.
  *
- * GET is MANAGER+ (read-only view shows up on the billing dashboard's
- * Integrations card). POST is OWNER + BILLING_ADMIN per the gate
- * matrix in `docs/enterprise/00-foundations/04-roles-and-permissions.md`.
+ * GET and POST are `integrations.manage` (OWNER + BILLING_ADMIN) — the
+ * same grant as the Settings › Webhooks tab (#1527).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   OUTBOUND_WEBHOOK_EVENTS,
+  carriesMemberData,
   isOutboundWebhookEvent,
 } from "@/lib/enterprise/outbound-webhooks/event-types";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { generateEndpointSecret } from "@/lib/enterprise/outbound-webhooks/signing";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
 import { rejectIfNotPublicUrl } from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
@@ -71,7 +71,11 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER" });
+  // #1527 P0-4 — the same grant as the Webhooks tab and the writes (OWNER +
+  // BILLING_ADMIN); was a MANAGER rank floor.
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const endpoints = await prisma.webhookEndpoint.findMany({
@@ -102,7 +106,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);
@@ -114,6 +120,21 @@ export async function POST(
     return NextResponse.json(
       { error: "Invalid body", detail: parsed.error.flatten() },
       { status: 400 },
+    );
+  }
+  // #1851 decision 11 — member data leaves the platform only on the OWNER's
+  // say-so.
+  if (
+    carriesMemberData(parsed.data.eventSubscriptions) &&
+    !hasOrgPermission(access.member.role, "webhooks.subscribe.memberEvents")
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Only an Owner can subscribe a webhook to member events (member.added, member.removed, program.assigned).",
+        code: "WEBHOOK_MEMBER_EVENTS_OWNER_ONLY",
+      },
+      { status: 403 },
     );
   }
 

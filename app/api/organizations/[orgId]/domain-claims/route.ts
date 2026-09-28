@@ -25,7 +25,8 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
 
@@ -48,7 +49,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
+  // floor that admitted BILLING_ADMIN.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const claims = await prisma.orgDomainClaim.findMany({
@@ -56,7 +59,14 @@ export async function GET(
     orderBy: { claimedAt: "desc" },
   });
 
-  return NextResponse.json({ data: claims });
+  // The DNS proof token belongs with identity.manage (OWNER), who alone may
+  // verify (#1527).
+  const isOwner = hasOrgPermission(access.member.role, "identity.manage");
+  return NextResponse.json({
+    data: isOwner
+      ? claims
+      : claims.map((claim) => ({ ...claim, verificationToken: null })),
+  });
 }
 
 export async function POST(
@@ -64,7 +74,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

@@ -13,6 +13,7 @@ import {
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { applyReversal, readRefundableBalances } from "./reversal-engine";
 import { refundPayment, RefundValidationError } from "./refund";
@@ -398,17 +399,22 @@ export async function classSeriesLedgers(
       appointment: { classId },
       userId: { in: payments.map((p) => p.userId) },
     },
-    select: { userId: true, createdAt: true },
+    select: { userId: true, createdAt: true, sessionsPurchased: true },
   });
   const ledgers = new Map<string, SeriesSeat>();
   for (const p of payments) {
     if (!p.appointmentId) continue;
-    const seatAt = seats.find((s) => s.userId === p.userId)?.createdAt;
+    const seat = seats.find((s) => s.userId === p.userId);
+    const seatAt = seat?.createdAt;
     const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
     ledgers.set(p.id, {
       ...(await seatLedger(
         prisma,
-        { appointmentId: p.appointmentId, createdAt: joinedAt },
+        {
+          appointmentId: p.appointmentId,
+          createdAt: joinedAt,
+          sessionsPurchased: seat?.sessionsPurchased,
+        },
         p.amount,
       )),
       occRefundedPaise: await occurrenceRefundsPaise(prisma, p.id),
@@ -577,7 +583,8 @@ export async function refundRemovedAttendeeSeat(args: {
         reason: isOrganiserInitiated
           ? `You were removed from this ${args.kind}.`
           : `You left this ${args.kind}.`,
-        dashboardUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the attendee who paid.
+        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       }).catch(() => {});
       // #1653 — the email twin; the sender never throws, the catch is belt
       // and braces so a settled refund can never fail on its receipt.

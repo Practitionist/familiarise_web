@@ -19,7 +19,12 @@ function BrandIcon({
   className?: string;
 }>) {
   return (
-    <svg viewBox={viewBox} className={className} fill="currentColor" aria-hidden="true">
+    <svg
+      viewBox={viewBox}
+      className={className}
+      fill="currentColor"
+      aria-hidden="true"
+    >
       <path d={d} />
     </svg>
   );
@@ -119,7 +124,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     heading: "Company",
     links: [
       { label: "About", href: "/about" },
-      { label: "Support", href: "/support" },
+      { label: "Help Center", href: "/support" },
       { label: "Contact", href: "/contactus" },
       { label: "Blog", href: "/blog" },
       { label: "Pricing", href: "/pricing" },

@@ -9,9 +9,10 @@
  *
  * A funding-source change is a serious lifecycle event — it switches
  * which downstream flow runs at checkout (WALLET→wallet debit,
- * INVOICE→accrual, LICENSE→no charge). Only OWNERs can change it, and
- * we only allow the change when there are no outstanding invoices or
- * non-zero wallet balance that would be orphaned.
+ * INVOICE→accrual, LICENSE→no charge). `billing.fundingSource.switch`
+ * (OWNER, BILLING_ADMIN — #1851 decision 7) changes it, each switch writes
+ * its own audit row, and we only allow the change when there are no
+ * outstanding invoices or non-zero wallet balance that would be orphaned.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -19,12 +20,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: PATCH on the billing account (funding-source / credit-limit edits)
-// is a finance-team action, not an org-admin one. The shared
-// `requireOrgBillingAdminOrOwner` helper allows OWNER and BILLING_ADMIN
-// only — explicitly NOT MAINTAINER — so the gate matches the role
-// description in `lib/labels/org-labels.ts`.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { assertVerifiedDomainOrThrow } from "@/lib/enterprise/governance";
 
@@ -108,7 +104,10 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.manage",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -120,6 +119,15 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+  if (
+    body.fundingSource !== undefined &&
+    !hasOrgPermission(access.member.role, "billing.fundingSource.switch")
+  ) {
+    return NextResponse.json(
+      { error: "Your role cannot switch the funding source." },
+      { status: 403 },
+    );
+  }
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
@@ -161,7 +169,7 @@ export async function PATCH(
           body.autoTopUpAmountPaise !== undefined
             ? body.autoTopUpAmountPaise
             : ba.autoTopUpAmountPaise;
-        if (nextEnabled && (nextMin == null || nextAmount == null)) {
+        if (nextEnabled && (nextMin === null || nextAmount === null)) {
           throw Object.assign(
             new Error(
               "Enabling auto-top-up requires both a minimum balance and a top-up amount.",
@@ -248,12 +256,26 @@ export async function PATCH(
         },
       });
 
+      // #1851 decision 7 — a money category, so the finance audit readers
+      // see it and the operations-only readers never see a credit limit.
+      if (next.fundingSource !== ba.fundingSource) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.FUNDING_SOURCE_CHANGED,
+            description: `Funding source: ${ba.fundingSource} → ${next.fundingSource}`,
+            details: { from: ba.fundingSource, to: next.fundingSource },
+          },
+        });
+      }
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
           actorMembershipId: access.member.id,
-          category: "SETTINGS",
-          action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
+          category: "INVOICE",
+          action: AUDIT_ACTIONS.INVOICE.BILLING_ACCOUNT_UPDATED,
           description: "BillingAccount updated",
           details: {
             from: {

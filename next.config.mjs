@@ -240,6 +240,14 @@ const nextConfig = {
       "node_modules/terser-webpack-plugin/**",
       "node_modules/schema-utils/**",
       "node_modules/jest-worker/**",
+      // #1527 — server maps kept the handler at the 250MB Lambda cap. Sentry
+      // turns them on and never deletes them; nothing reads them at runtime
+      // (no --enable-source-maps). They stay in .next/server for the upload.
+      ".next/server/**/*.map",
+      // #1527 — /_next/image goes to the Netlify Image CDN, so sharp (only
+      // Next's optimizer imports it) never runs in the function.
+      "node_modules/sharp/**",
+      "node_modules/@img/**",
     ],
   },
 

@@ -8,10 +8,10 @@
  * The gateway order is created at checkout for exactly Payment.amount and the
  * webhook is HMAC-verified, so a captured amount that differs is a gateway
  * anomaly or our-own bug. handlePaymentSuccess must NOT confirm the booking.
- * #990 changed the remediation: Phase 1 pages (Sentry, fatal) and stamps
- * REQUIRES_MANUAL_RECOVERY as a FALLBACK marker, then Phase 2 AUTO-REFUNDS the
- * wrong-amount capture via refundPayment and clears the marker. The manual
- * marker only survives if the refund call itself throws. Either way the booking
+ * #990 changed the remediation: Phase 1 pages (Sentry, fatal) and stamps the
+ * auto-refund marker, then Phase 2 AUTO-REFUNDS the wrong-amount capture via
+ * refundPayment and settles the marker. The pending marker only survives if
+ * the refund call itself throws, and #1846 N2's retry sweep then re-drives it. Either way the booking
  * is never confirmed (no appointment lookup, no earnings, no Phase-2 confirm
  * work). The matching-amount happy path is inert on the guard.
  */
@@ -161,12 +161,12 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
       "Capture amount mismatch",
     );
 
-    // Phase 1 stamped the REQUIRES_MANUAL_RECOVERY fallback marker (in-tx),
+    // Phase 1 stamped the pending auto-refund marker (in-tx, #1846 N2),
     // and #1439 puts the PENDING predicate in the WHERE.
     expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
     const update = paymentUpdateMany.mock.calls[0][0];
     expect(update.where.paymentStatus).toBe("PENDING");
-    expect(update.data.description).toContain("REQUIRES_MANUAL_RECOVERY");
+    expect(update.data.description).toMatch(/^Auto-refund pending:/);
 
     // #990 — Phase 2 auto-refunded the wrong-amount capture for this payment.
     expect(refundPayment).toHaveBeenCalledTimes(1);
@@ -186,9 +186,9 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
   });
 
-  it("keeps REQUIRES_MANUAL_RECOVERY + pages twice when the auto-refund itself fails", async () => {
-    // #990 fallback: if refundPayment throws, the manual-recovery marker is NOT
-    // cleared (no clear-marker write) and the refund failure is paged too.
+  it("keeps the pending marker + pages twice when the auto-refund itself fails", async () => {
+    // #990 fallback: if refundPayment throws, the pending marker is NOT
+    // settled (no settle write) and the refund failure is paged too.
     refundPayment.mockRejectedValue(new Error("gateway 500"));
 
     await handlePaymentSuccess(
@@ -203,7 +203,7 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
       "Capture amount mismatch",
     );
 
-    // The REQUIRES_MANUAL_RECOVERY marker survives (clear-marker write skipped).
+    // The pending marker survives (settle write skipped) for the retry sweep.
     expect(refundPayment).toHaveBeenCalledTimes(1);
     expect(prismaPaymentUpdate).not.toHaveBeenCalled();
 
@@ -225,7 +225,7 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
 
     expect(captureException).not.toHaveBeenCalled();
     const recoveryWrite = paymentUpdateMany.mock.calls.find((c) =>
-      String(c[0].data.description ?? "").includes("REQUIRES_MANUAL_RECOVERY"),
+      String(c[0].data.description ?? "").startsWith("Auto-refund pending:"),
     );
     expect(recoveryWrite).toBeUndefined();
     // The guard let the flow proceed to the tentative-appointment lookup.
@@ -280,8 +280,9 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
       trialId: "trial1",
     });
 
+    // #1846 SM-B13 — the CAS now rides transitionTrial's from-set.
     expect(trialUpdateMany.mock.calls[0][0]).toMatchObject({
-      where: { id: "trial1", status: "AWAITING_PAYMENT" },
+      where: { id: "trial1", status: { in: ["AWAITING_PAYMENT"] } },
     });
     expect(occurrenceFindMany).not.toHaveBeenCalled();
     expect(refundBookingPayment).toHaveBeenCalledWith(

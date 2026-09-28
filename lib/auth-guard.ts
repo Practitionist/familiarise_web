@@ -10,10 +10,13 @@ import prisma from "@/lib/prisma";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
+import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
 import {
-  hasBackofficePermission,
-  type BackofficeSurface,
-} from "@/lib/auth/backoffice-permissions";
+  backofficeLandingHref,
+  can,
+  isBackofficeTree,
+  resolveBackofficeCapability,
+} from "@/lib/backoffice/capability";
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSession>>>["user"];
 
@@ -195,23 +198,28 @@ export async function requireUserRole(allowed: UserRole | UserRole[]) {
 }
 
 /**
- * Require back-office access to a specific surface. The page-level twin of
- * `requireBackofficeSurface` (which returns a 403 for API routes) — this
- * redirects instead, so a STAFF member who types `/dashboard/admin/payouts`
- * lands back on the back-office home rather than seeing a broken page.
+ * Require back-office access to a specific surface in one tree (#1527 Q3).
+ * The page-level twin of `requireBackofficeSurface` (which returns a 403 for
+ * API routes) — this redirects instead: a tree the viewer can't open goes to
+ * `/dashboard` (role routing), a surface the tree's audience or the viewer
+ * lacks goes to that tree's own landing, never across trees.
  *
- * Every page under `/dashboard/admin` that isn't visible to both roles must
- * call this. The sidebar hiding the link is not access control; it only keeps
- * the nav tidy.
+ * Every `[tree]` page must call this: the layout doesn't re-run on client
+ * navigation, and the sidebar hiding a link is not access control.
  *
- * @see lib/auth/backoffice-permissions.ts
+ * @see lib/backoffice/capability.ts
  */
-export async function requireBackofficePage(surface: BackofficeSurface) {
+export async function requireBackofficePage(
+  surface: BackofficeSurface,
+  tree: string,
+) {
   const session = await requireUserRole(["ADMIN", "STAFF"]);
-  if (!hasBackofficePermission(session.user.role as UserRole, surface)) {
-    redirect("/dashboard/admin/home");
-  }
-  return session;
+  const cap = isBackofficeTree(tree)
+    ? resolveBackofficeCapability(session.user.role, tree)
+    : null;
+  if (!cap) redirect("/dashboard");
+  if (!can(cap, surface)) redirect(backofficeLandingHref(cap));
+  return { session, cap };
 }
 
 /**

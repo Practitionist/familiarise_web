@@ -54,6 +54,8 @@ type Seat = {
   appointmentId: string;
   createdAt: Date;
   refundWindowHours: number | null;
+  /** #1819 — the sessions this seat paid for; null on a legacy seat. */
+  sessionsPurchased: number | null;
 };
 
 const HOUR_MS = 3_600_000;
@@ -183,7 +185,11 @@ export async function planSelfLeave(
   );
   const ledger = await seatLedger(
     tx,
-    { appointmentId: seat.appointmentId, createdAt: joinedAt },
+    {
+      appointmentId: seat.appointmentId,
+      createdAt: joinedAt,
+      sessionsPurchased: seat.sessionsPurchased,
+    },
     payment.amount,
     now,
   );
@@ -224,7 +230,11 @@ async function planSeriesExit(
   );
   const ledger = await seatLedger(
     tx,
-    { appointmentId: seat.appointmentId, createdAt: joinedAt },
+    {
+      appointmentId: seat.appointmentId,
+      createdAt: joinedAt,
+      sessionsPurchased: seat.sessionsPurchased,
+    },
     payment.amount,
     now,
   );
@@ -277,6 +287,7 @@ export async function quoteSeatLeave(
         appointmentId: true,
         createdAt: true,
         refundWindowHours: true,
+        sessionsPurchased: true,
       },
     });
     if (!seat) return { seated: false } as const;
@@ -335,6 +346,7 @@ export async function leaveEventSeat(args: {
             appointmentId: true,
             createdAt: true,
             refundWindowHours: true,
+            sessionsPurchased: true,
           },
         });
         if (!seat) return null;

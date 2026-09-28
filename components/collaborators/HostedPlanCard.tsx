@@ -25,9 +25,12 @@ import {
 export function HostedPlanCard({
   plan,
   hostUser,
+  hostLabel = "You",
 }: {
   plan: HostedPlanEntry;
   hostUser?: { name: string | null; image: string | null };
+  /** Whose share the host segment is — the viewer's unless an org reads it. */
+  hostLabel?: string;
 }) {
   const [eventsExpanded, setEventsExpanded] = useState(false);
 
@@ -107,7 +110,7 @@ export function HostedPlanCard({
             label={
               <>
                 <span className="font-semibold text-zinc-800">
-                  You {hostShare}%
+                  {hostLabel} {hostShare}%
                 </span>
                 <span className="text-zinc-400"> · </span>
                 <span>Collaborators {totalCollabShare}%</span>

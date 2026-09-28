@@ -25,6 +25,52 @@ interface UseConsultantEventActionsOptions {
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
 }
 
+/** Shape of `/api/appointments/[id]/cancel`'s `refund` field (1:1 bookings). */
+interface CancelRefundResult {
+  status:
+    | "REFUNDED"
+    | "PENDING"
+    | "FAILED"
+    | "NOTHING_REFUNDABLE"
+    | "POLICY_ZERO";
+}
+
+/** Shape of the same route's `eventRefund` field (class/webinar). */
+interface CancelEventRefundSummary {
+  failures: { paymentId: string; error: string }[];
+}
+
+/**
+ * #1527 review — the old copy always promised "everyone who paid gets a
+ * full refund", even though the route's own `refund`/`eventRefund` fields
+ * (added for exactly this) can say PENDING, FAILED or that nothing was
+ * refundable. Read the response instead of assuming the happy path.
+ */
+function cancelRefundSentence(body: unknown): string {
+  const { refund, eventRefund } = (body ?? {}) as {
+    refund?: CancelRefundResult | null;
+    eventRefund?: CancelEventRefundSummary | null;
+  };
+  if (eventRefund) {
+    return eventRefund.failures.length > 0
+      ? "Most refunds have gone out; a few need a manual look, and support has been notified."
+      : "Because you cancelled, everyone who paid has been refunded.";
+  }
+  switch (refund?.status) {
+    case "REFUNDED":
+      return "Because you cancelled, whoever paid has been refunded in full.";
+    case "PENDING":
+      return "Because you cancelled, the refund is being processed.";
+    case "FAILED":
+      return "Because you cancelled, a refund is owed but couldn't be completed automatically — support has been notified.";
+    case "NOTHING_REFUNDABLE":
+    case "POLICY_ZERO":
+      return "No further refund was owed on this booking.";
+    default:
+      return "";
+  }
+}
+
 /**
  * Cancel / reschedule mutations for the consultant appointments surface.
  * Mirrors consultee `useEventActions` against the same APIs, with consultant
@@ -115,8 +161,7 @@ export function useConsultantEventActions({
         proposedSlots?.length
           ? {
               title: "Times proposed",
-              description:
-                "The consultee has been asked to accept the new time.",
+              description: "The learner has been asked to accept the new time.",
             }
           : {
               title: "Ready to reschedule",
@@ -221,8 +266,12 @@ export function useConsultantEventActions({
         { method: "POST", headers: { "Content-Type": "application/json" } },
       );
       // Typed read: an edge 504 page must not surface as a JSON SyntaxError.
+      let body: unknown;
       try {
-        await requireJsonResponse(response, "Failed to cancel appointment");
+        body = await requireJsonResponse(
+          response,
+          "Failed to cancel appointment",
+        );
       } catch (error) {
         if (error instanceof ApiResponseError && error.status === 409) {
           toast({
@@ -236,14 +285,16 @@ export function useConsultantEventActions({
         throw error;
       }
 
-      const refundNote =
-        type === "Consultation" || type === "Subscription"
-          ? " Any eligible refund follows your cancellation policy."
-          : "";
-
+      // A cancellation the expert makes is quoted at the 100% tier, whatever
+      // the policy's notice tiers say (consultantInitiatedPct is 100, #1527) —
+      // but the actual refund can still be pending/failed, so the toast reads
+      // the route's own refund result instead of assuming success.
+      const refundSentence = cancelRefundSentence(body);
       toast({
         title: "Appointment cancelled",
-        description: `${type} "${title}" has been cancelled.${refundNote}`,
+        description:
+          `${type} "${title}" has been cancelled.` +
+          (refundSentence ? ` ${refundSentence}` : ""),
       });
       invalidateBookingData();
     } catch (error) {

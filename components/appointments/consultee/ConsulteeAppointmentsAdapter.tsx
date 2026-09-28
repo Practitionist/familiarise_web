@@ -3,6 +3,7 @@
 import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useParams, useRouter } from "next/navigation";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
@@ -29,6 +30,7 @@ import {
 } from "@/lib/appointments/consultee-affordances";
 import {
   isApprovedStatus,
+  isCompletedLikeStatus,
   isConfirmedStatus,
   isInactiveStatus,
   isPendingPaymentStatus,
@@ -39,11 +41,10 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 
-type DialogKind = "cancel" | "leave" | "report" | "documents";
+type DialogKind = "cancel" | "leave" | "documents";
 
 /**
  * Event id for leave / cancel-trial API paths.
@@ -299,9 +300,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "leave"),
       });
     }
+    // #1527 — a finished booking keeps its files (DOC-1 only closes
+    // cancelled/rejected/expired ones), so COMPLETED lists them too.
     if (
       vm.appointmentId &&
-      isConfirmedStatus(vm.status) &&
+      (isConfirmedStatus(vm.status) || isCompletedLikeStatus(vm.status)) &&
       (vm.kind === "CONSULTATION" ||
         vm.kind === "TRIAL" ||
         vm.kind === "SUBSCRIPTION")
@@ -312,11 +315,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "documents"),
       });
     }
-    if (vm.appointmentId) {
+    if (vm.appointmentId && consulteeId) {
+      // #1527 — one verb for help everywhere, and one place: the booking's
+      // support request page (the detail page's "Get help" goes there too).
+      const helpHref = `/dashboard/consultee/${consulteeId}/support/requests/${caseKeyOf({ kind: "booking", id: vm.appointmentId })}`;
       items.push({
         key: "report",
-        label: "Report issue",
-        onClick: () => openDialog(vm, "report"),
+        label: "Get help",
+        onClick: () => router.push(helpHref),
       });
     }
     // #1270 — additive by construction: a separately-labelled overflow entry
@@ -358,14 +364,28 @@ export function useConsulteeAppointmentsAdapter(options?: {
 
   // Extracted so Sonar cognitive-complexity on confirmDestructive stays under
   // the gate; each helper owns its fetch + toast, the dispatcher owns loading.
-  const cancelTrial = async (id: string, title: string) => {
+  // #1846 — the quoted cancel: DELETE carries the refund the dialog showed,
+  // and the server refunds only that amount. A changed quote answers 409; the
+  // preview refetches so the dialog shows the new number before a retry.
+  const cancelTrial = async (
+    id: string,
+    title: string,
+    quote?: { estimatedRefundPaise: number },
+  ) => {
     const response = await fetch(`/api/trials/${id}`, {
-      method: "PATCH",
+      method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "CANCELLED" }),
+      body: JSON.stringify(
+        quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
+      ),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (response.status === 409) {
+        void queryClient.invalidateQueries({
+          queryKey: ["cancel-refund-preview"],
+        });
+      }
       throw new Error(
         (data as { error?: string }).error || "Failed to cancel trial",
       );
@@ -408,7 +428,9 @@ export function useConsulteeAppointmentsAdapter(options?: {
     });
   };
 
-  const confirmDestructive = async () => {
+  const confirmDestructive = async (quote?: {
+    estimatedRefundPaise: number;
+  }) => {
     if (!activeVm) return;
     const id = sourceId(activeVm);
     const destructive = consulteeDestructiveAction(activeVm.kind);
@@ -423,7 +445,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
     try {
       if (destructive === "cancel-trial") {
         if (!id) throw new Error("Trial id is missing");
-        await cancelTrial(id, activeVm.title);
+        await cancelTrial(id, activeVm.title, quote);
       } else if (destructive === "leave-event") {
         if (!id) throw new Error("Event id is missing");
         const userId = session?.user?.id;
@@ -457,7 +479,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
       <>
         <CancelConfirmationDialog
           isOpen={dialog === "cancel" || dialog === "leave"}
-          onConfirm={() => void confirmDestructive()}
+          onConfirm={(quote) => void confirmDestructive(quote)}
           onCancel={closeDialog}
           title={activeVm.title}
           consultant={activeVm.counterpart.name}
@@ -469,25 +491,15 @@ export function useConsulteeAppointmentsAdapter(options?: {
           // is the one side of the booking whose money the quote is about. The
           // consultant adapter has always passed it.
           appointmentId={activeVm.appointmentId}
+          // #1846 — a trial quotes through its own preview, which prices the
+          // trial's payment; the appointment preview has no trial arm.
+          previewUrl={
+            consulteeDestructiveAction(activeVm.kind) === "cancel-trial" &&
+            sourceId(activeVm)
+              ? `/api/trials/${sourceId(activeVm)}/cancel/preview`
+              : null
+          }
         />
-
-        {activeVm.appointmentId && dialog === "report" && (
-          // #support-hub — "Report issue" now opens the per-appointment
-          // flowchart thread (same surface as the detail page) instead of the
-          // legacy raw-ticket dialog. One system, one data path: intents are
-          // stage-gated server-side, escalations land in the ops queue with
-          // session context.
-          <SupportThreadSheet
-            appointmentId={activeVm.appointmentId}
-            open
-            onOpenChange={(open) => !open && closeDialog()}
-            appointmentHref={
-              activeVm.appointmentId && consulteeId
-                ? `/dashboard/consultee/${consulteeId}/appointments/${activeVm.appointmentId}`
-                : undefined
-            }
-          />
-        )}
 
         {activeVm.appointmentId && dialog === "documents" && (
           <DocumentUpload

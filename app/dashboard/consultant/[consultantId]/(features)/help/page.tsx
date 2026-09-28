@@ -1,6 +1,6 @@
-import { SupportHelpPage } from "@/components/dashboard/shared/support/SupportPages";
+import { permanentRedirect } from "next/navigation";
 
-/** FAQ content is global — no profile id needed. */
-export default function HelpPage() {
-  return <SupportHelpPage />;
+/** Articles live only in the public Help Center (#1527); old links 308 there. */
+export default function RetiredHelpPage() {
+  permanentRedirect("/support");
 }

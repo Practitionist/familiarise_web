@@ -16,8 +16,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requireOrgAccess: jest.fn(),
-  requireOrgOwner: jest.fn(async () => ({
+  requireOrgAccess: jest.fn(async () => ({
     error: null,
     member: { id: "mem_1", role: "OWNER" },
   })),

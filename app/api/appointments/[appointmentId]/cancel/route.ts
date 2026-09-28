@@ -8,9 +8,9 @@ import {
 } from "@/utils/appointmentlock";
 import {
   liveParticipant,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
@@ -42,7 +42,11 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
-import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
+import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedResponse,
+} from "@/lib/enterprise/suspended-member-sessions";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
@@ -56,16 +60,15 @@ import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
-  RESCHEDULE_OPEN_STATUSES,
   SLOT_RESCHEDULABLE_FROM,
   transitionClassEvent,
   transitionConsultationRequest,
-  transitionRescheduleRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -103,41 +106,6 @@ function reportRefundFailure(err: unknown, subsystem: string): void {
  */
 function cancelSweepScope(appointment: { id: string }) {
   return { appointmentId: appointment.id };
-}
-
-/**
- * Close any live reschedule proposal on a booking being cancelled. Leaving one
- * open would keep `openForAppointmentId` reserved forever and let the expiry
- * cron act on a cancelled booking. The helper CASes one row by id — hence the
- * read — and releases the reservation itself on every terminal target, so
- * `data` carries nothing here (#1383).
- */
-async function declineOpenReschedules(
-  tx: Pick<Tx, "rescheduleRequest" | "bookingStatusHistory">,
-  appointmentId: string,
-  auditMeta: CancelAuditMeta,
-): Promise<void> {
-  const openProposals = await tx.rescheduleRequest.findMany({
-    where: { appointmentId, status: { in: RESCHEDULE_OPEN_STATUSES } },
-    select: { id: true },
-  });
-  for (const proposal of openProposals) {
-    try {
-      await transitionRescheduleRequest(tx, {
-        ...auditMeta,
-        appointmentId,
-        where: { id: proposal.id },
-        to: "DECLINED",
-        fromIn: RESCHEDULE_OPEN_STATUSES,
-      });
-    } catch (err) {
-      // The expiry cron holds no appointment lock, so it can answer a
-      // proposal between the read above and this CAS. Either way the
-      // booking ends with no open proposal, which is the whole point;
-      // failing the cancel over it would be the wrong outcome.
-      if (!(err instanceof IllegalTransitionError)) throw err;
-    }
-  }
 }
 
 /**
@@ -403,20 +371,35 @@ export async function POST(
 
     // #1166 — an admin of the org that FUNDS this booking may cancel it. They
     // act on the payer side: the tier logic below must never read them as
-    // consultant-initiated.
-    const isOrgAdminActor =
-      !isParticipant &&
-      !isPrivilegedUser &&
-      (await isOrgAdminOfAppointment(
-        session.user.id,
-        appointment.organizationId,
-      ));
+    // consultant-initiated. #1851 decision 1 — 1:1 and subscription only.
+    const orgActor =
+      !isParticipant && !isPrivilegedUser
+        ? await resolveOrgActor(session.user.id, appointment, "cancel")
+        : null;
+    const isOrgAdminActor = orgActor !== null;
 
     if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
       );
+    }
+
+    // #1527 decision 6 — a suspended learner keeps join, not cancel, on an
+    // org-funded booking; refused before any refund logic.
+    const isLearner =
+      !!consulteeProfileId &&
+      (consulteeProfileId === appointment.consultation?.requestedById ||
+        consulteeProfileId === appointment.subscription?.requestedById);
+    if (
+      isLearner &&
+      !isPrivilegedUser &&
+      (await isSuspendedInFundingOrg(
+        session.user.id,
+        appointment.organizationId,
+      ))
+    ) {
+      return membershipSuspendedResponse();
     }
 
     // Extract notification data BEFORE transaction (appointment will be deleted)
@@ -605,6 +588,15 @@ export async function POST(
               { httpStatus: 409, code: "NOT_CANCELLABLE" },
             );
           }
+          // #1851 decision 2 — the org's own trail, beside the booking's.
+          if (orgActor) {
+            await recordActForOrg(tx, {
+              actor: orgActor,
+              action: "cancel",
+              appointmentId,
+              reason: validatedData.reason,
+            });
+          }
 
           // Soft-cancel: mark slots as CANCELLED instead of deleting.
           // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
@@ -642,7 +634,7 @@ export async function POST(
             allowZero: true,
           });
           // #1319 A9 — every participant of the cancelled engagement.
-          await setParticipantStatus(tx, sweepScope, "CANCELLED");
+          await transitionParticipant(tx, sweepScope, "CANCELLED");
 
           await declineOpenReschedules(tx, appointmentId, auditMeta);
 

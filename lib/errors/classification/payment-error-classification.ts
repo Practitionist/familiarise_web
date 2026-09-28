@@ -475,6 +475,9 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
       "MAKEUP_NOT_SKIPPABLE",
       "EXIT_NOT_AVAILABLE",
       "BACKUP_INTEREST_CAP",
+      // #1819 — class batch enrolment closed, or re-priced mid-checkout.
+      "ENROLMENT_CLOSED",
+      "CLASS_PRICE_CHANGED",
     ] as const
   ).map((code) => ({
     code,
@@ -485,6 +488,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     code: "BACKUP_WINDOW_PAST",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
+  },
+  // #1527 Q4 — a new sale against a DRAFT 1:1 or subscription plan.
+  {
+    code: "PLAN_NOT_PUBLISHED",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage: "This plan isn't available to book right now.",
   },
   {
     code: "PAYMENT_LINK_FAILED",

@@ -39,11 +39,11 @@ import {
   PaymentStatus,
   RefundStatus,
 } from "@prisma/client";
-import { setParticipantStatus } from "@/lib/booking/participants";
+import { transitionParticipant } from "@/lib/booking/participants";
 
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
   try {
-    await setParticipantStatus(prisma, { paymentId }, "REFUNDED");
+    await transitionParticipant(prisma, { paymentId }, "REFUNDED");
   } catch (error) {
     // Shadow table: never let it fail a refund that already went through.
     console.warn(
@@ -75,6 +75,7 @@ import {
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
@@ -121,7 +122,8 @@ async function stageRefundNotice(
       ...notificationScope(payment.organizationId),
       amount: amountPaise,
       currency: payment.currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always the payer.
+      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     },
     { tx, entityRef: `payment:${payment.id}` },
   );
@@ -374,7 +376,7 @@ async function refundFreeCreditPayment(input: {
           initiatedByUserId: input.initiatedByUserId ?? null,
         });
 
-        await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+        await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
         // The Refund row is ₹0; the value that came back is the restored credit.
         notice = await stageRefundNotice(tx, payment, restoredPaise);
         return {
@@ -474,7 +476,7 @@ export async function restoreClassSeatCredits(input: {
           }
           const seat = await tx.appointmentParticipant.findFirst({
             where: { paymentId: payment.id },
-            select: { createdAt: true, status: true },
+            select: { createdAt: true, status: true, sessionsPurchased: true },
           });
           const joinedAt =
             seat && seat.createdAt > payment.createdAt
@@ -482,7 +484,11 @@ export async function restoreClassSeatCredits(input: {
               : payment.createdAt;
           const ledger = await seatLedger(
             tx,
-            { appointmentId, createdAt: joinedAt },
+            {
+              appointmentId,
+              createdAt: joinedAt,
+              sessionsPurchased: seat?.sessionsPurchased,
+            },
             creditValue,
           );
           const seatLive =
@@ -1080,7 +1086,7 @@ async function refundInternalFundedPayment(input: {
         );
 
         if (!input.keepSeat) {
-          await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+          await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
         }
         notice = await stageRefundNotice(tx, payment, requested);
         return {

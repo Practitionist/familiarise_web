@@ -276,7 +276,7 @@ export function CancellationPolicyCard({ orgId }: { orgId: string }) {
             htmlFor="consultant-initiated-pct"
             className="text-xs text-zinc-500"
           >
-            When the consultant or our team cancels (%)
+            When the expert or our team cancels (%)
           </Label>
           <Input
             id="consultant-initiated-pct"

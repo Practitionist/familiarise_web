@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import UseCasePageLayout from "../UseCasePageLayout";
 import type { UseCasePageData } from "../UseCasePageLayout";
+import { SUBSCRIPTION_HOST_NO_SHOW_ANSWER } from "@/lib/support/session-outcome-copy";
 
 export const metadata: Metadata = {
   title: "Long-Term 1:1 Mentorship in India | Familiarise",
@@ -129,7 +130,8 @@ const data: UseCasePageData = {
           "The senior people you want are precisely the ones with no spare time, and an unpaid request from a stranger sits at the bottom of every inbox. Paying for the time is not a lesser version of a real mentorship; it is the thing that makes the calendar entry exist at all.",
       },
       {
-        title: "Informal mentorships expire without anyone deciding to end them",
+        title:
+          "Informal mentorships expire without anyone deciding to end them",
         description:
           "No cadence, no written goal, and a slow drift into we-should-catch-up-sometime. Both sides feel vaguely guilty, and neither of them is the one who reschedules.",
       },
@@ -226,7 +228,10 @@ const data: UseCasePageData = {
         href: "/explore/experts?search=Personal+Development",
       },
       { label: "System design", href: "/explore/experts?search=System+Design" },
-      { label: "Interview prep", href: "/explore/experts?search=Interview+Prep" },
+      {
+        label: "Interview prep",
+        href: "/explore/experts?search=Interview+Prep",
+      },
     ],
   },
 
@@ -248,8 +253,14 @@ const data: UseCasePageData = {
       },
       {
         question: "What if my mentor stops showing up?",
-        answer:
-          "Report it from the booking. Our team reviews the attendance record for that session and can arrange a full refund or a reschedule. If the expert cancels a session outright, that session is refunded in full regardless of when they cancel.",
+        // #1569 B3: a mentor no-show on a subscription session is voided
+        // automatically and returned to the plan's allowance (D4), not
+        // routed through the class/webinar 14-day make-up — CodeRabbit
+        // flagged the earlier wording for conflating the two remedies. Copy
+        // now lives in lib/support/session-outcome-copy.ts, shared with the
+        // college-students FAQ, to avoid a Sonar CPD match against the
+        // identically shaped FAQ item on the other use-cases pages (#1833).
+        answer: SUBSCRIPTION_HOST_NO_SHOW_ANSWER,
       },
       {
         question: "Can I change mentors?",

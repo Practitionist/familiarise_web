@@ -14,7 +14,8 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
@@ -28,7 +29,9 @@ export async function GET(
   },
 ) {
   const { orgId, providerId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
+  // floor that admitted BILLING_ADMIN; secrets stay OWNER-only below.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const provider = await prisma.ssoProvider.findFirst({
@@ -41,10 +44,10 @@ export async function GET(
     );
   }
 
-  // Only OWNER roles get the full config JSON in the payload. Lower
-  // roles see redacted markers — cert/client-secret values would leak
-  // sensitive IdP credentials otherwise.
-  const isOwner = access.member.role === "OWNER";
+  // Only identity.manage (OWNER) gets the full config JSON in the payload.
+  // Everyone else sees redacted markers — cert/client-secret values would
+  // leak sensitive IdP credentials otherwise.
+  const isOwner = hasOrgPermission(access.member.role, "identity.manage");
   const type: "saml" | "oidc" | null = provider.samlConfig
     ? "saml"
     : provider.oidcConfig
@@ -90,7 +93,9 @@ export async function DELETE(
   },
 ) {
   const { orgId, providerId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   try {
@@ -153,7 +158,7 @@ export async function DELETE(
       providerId,
       deletedByName:
         access.session.user.name ?? access.session.user.email,
-      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings?tab=sso`,
+      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
     }).catch((err) => {
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
       console.error("[notifyOrgSsoProviderDeleted] failed:", err);

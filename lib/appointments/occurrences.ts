@@ -18,6 +18,11 @@
 import type { PrismaLike } from "@/lib/prisma";
 import type { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
+import {
+  ScheduleLockedError,
+  SESSION_ALREADY_HELD_MESSAGE,
+} from "@/lib/events/schedule-lock";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   sortOccurrences,
@@ -261,6 +266,29 @@ export async function replaceOccurrence(
     return { occurrenceId: created.id };
   }
 
+  const [kept, ...surplus] = live;
+  // #1780 decision 9 — a real move of the kept row is stamped; the seat-leave
+  // rule waives the refund window for a session moved after the purchase.
+  const moved =
+    kept.startsAt.getTime() !== target.startsAt.getTime() ||
+    kept.endsAt.getTime() !== target.endsAt.getTime();
+
+  // #1846 SM-B8 — a session that took place (COMPLETED), is held for review
+  // (UNVERIFIED) or was voided is history, not the live call: restamping its
+  // times or retiring it would rewrite the record earnings and attendance hang
+  // off. The planner re-sends the same time on every save, so an edit that
+  // changes nothing still succeeds; anything else is refused before a write.
+  if (
+    live.some((row) => SETTLED_COMPLETION_STATUSES.has(row.completionStatus))
+  ) {
+    const unchanged =
+      surplus.length === 0 &&
+      !moved &&
+      kept.consultantProfileId === target.consultantProfileId;
+    if (!unchanged) throw new ScheduleLockedError(SESSION_ALREADY_HELD_MESSAGE);
+    return { occurrenceId: kept.id };
+  }
+
   // `occurrence_no_confirmed_overlap` is NOT DEFERRABLE and checks each UPDATE
   // against sibling rows still holding their old times, so a legacy multi-row
   // booking is flipped tentative first; the kept row is restored below.
@@ -270,12 +298,6 @@ export async function replaceOccurrence(
       data: { isTentative: true },
     });
   }
-  const [kept, ...surplus] = live;
-  // #1780 decision 9 — a real move of the kept row is stamped; the seat-leave
-  // rule waives the refund window for a session moved after the purchase.
-  const moved =
-    kept.startsAt.getTime() !== target.startsAt.getTime() ||
-    kept.endsAt.getTime() !== target.endsAt.getTime();
   await tx.appointmentOccurrence.update({
     where: { id: kept.id },
     data: {
@@ -287,10 +309,14 @@ export async function replaceOccurrence(
     },
   });
   // Soft-retire, never delete: history and Stream children stay queryable.
-  for (const row of surplus) {
-    await tx.appointmentOccurrence.update({
-      where: { id: row.id },
-      data: { isTentative: true, completionStatus: "RESCHEDULED" },
+  // #1846 SM-B8 / SM-B13 — through the CAS helper, so the retirement is
+  // guarded by the RESCHEDULED from-set and writes its history row.
+  if (surplus.length > 0) {
+    await transitionOccurrenceCompletion(tx, {
+      reason: "planner time edit",
+      where: { id: { in: surplus.map((row) => row.id) } },
+      to: "RESCHEDULED",
+      data: { isTentative: true },
     });
   }
   await recomputeEarningsHold(tx, args.appointmentId);
@@ -307,6 +333,13 @@ const DEAD_COMPLETION_STATUS_LIST: OccurrenceCompletionStatus[] = [
   "RESCHEDULED",
 ];
 const DEAD_COMPLETION_STATUSES = new Set<string>(DEAD_COMPLETION_STATUS_LIST);
+
+/** A session with an outcome: delivered, held for review, or voided (#1846). */
+const SETTLED_COMPLETION_STATUSES = new Set<string>([
+  "COMPLETED",
+  "UNVERIFIED",
+  "VOIDED",
+] satisfies OccurrenceCompletionStatus[]);
 
 /**
  * Prisma `where` twin of `isDeadOccurrence` — a live row on the appointment.

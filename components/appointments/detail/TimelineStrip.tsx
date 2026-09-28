@@ -1,4 +1,4 @@
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import type { TimelineEvent } from "@/lib/dashboard/money-state";
 import { cn } from "@/utils/tailwind";
 
@@ -10,6 +10,7 @@ import { cn } from "@/utils/tailwind";
  * failed one is drawn in the destructive colour so it cannot read as done.
  */
 export function TimelineStrip({ events }: { events: TimelineEvent[] }) {
+  const format = useZonedFormat();
   if (events.length === 0) return null;
   return (
     <div className="rounded-2xl border border-border bg-card px-5 py-3 shadow-sm">

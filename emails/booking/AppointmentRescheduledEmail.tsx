@@ -13,6 +13,7 @@ export type RescheduleEmailOutcome =
   | "MOVED"
   | "DECLINED"
   | "WITHDRAWN"
+  | "EXPIRED"
   | "RELEASED";
 
 export interface AppointmentRescheduledEmailProps {
@@ -29,7 +30,7 @@ export interface AppointmentRescheduledEmailProps {
   unsubscribeUrl?: string | null;
 }
 
-// #1653 — PROPOSED is the time-boxed P0; the other four share one short
+// #1653 — PROPOSED is the time-boxed P0; the other five share one short
 // informational body, mirroring the in-app branching in lib/novu/templates/b2c.ts.
 function informationalBody(props: AppointmentRescheduledEmailProps): string {
   const { outcome, appointmentType, oldStartsAtText, newStartsAtText } = props;
@@ -41,6 +42,9 @@ function informationalBody(props: AppointmentRescheduledEmailProps): string {
       return `The ${appointmentType}${oldStartsAtText ? ` on ${oldStartsAtText}` : ""} was released. You will be told once a new time is set.`;
     case "DECLINED":
       return `The proposed new time for your ${appointmentType} was declined${stays}.`;
+    // #1846 — nobody answered, so the original booking was restored.
+    case "EXPIRED":
+      return `The proposed new time for your ${appointmentType} expired, so your original time stands${oldStartsAtText ? `: ${oldStartsAtText}` : ""}.`;
     default:
       return `The reschedule request for your ${appointmentType} was withdrawn${stays}.`;
   }
@@ -52,6 +56,7 @@ const TITLES: Record<RescheduleEmailOutcome, (t: string) => string> = {
   RELEASED: (t) => `Your ${t} time was released`,
   DECLINED: (t) => `Proposed time declined for your ${t}`,
   WITHDRAWN: (t) => `Reschedule request withdrawn for your ${t}`,
+  EXPIRED: (t) => `Your ${t} keeps its original time`,
 };
 
 export default function AppointmentRescheduledEmail(

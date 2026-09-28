@@ -3,6 +3,10 @@ import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
+import {
+  oneOnOnePlanDiscoverableWhere,
+  planSaleRefusal,
+} from "@/lib/api/plans/visibility";
 
 /**
  * GET /api/trials/check-eligibility
@@ -61,6 +65,8 @@ export async function GET(request: NextRequest) {
     let planTrialEnabled = true;
     let planTrialDuration = 30;
     let planTrialPriceInPaise = 0;
+    // #1527 Q4 — a DRAFT plan takes no new trial requests.
+    let planNotPublished = false;
 
     if (subscriptionPlanId) {
       const plan = await prisma.subscriptionPlan.findUnique({
@@ -70,6 +76,7 @@ export async function GET(request: NextRequest) {
           trialDurationMinutes: true,
           trialPriceInPaise: true,
           title: true,
+          status: true,
         },
       });
 
@@ -83,6 +90,7 @@ export async function GET(request: NextRequest) {
       planTrialEnabled = plan.trialEnabled;
       planTrialDuration = plan.trialDurationMinutes;
       planTrialPriceInPaise = plan.trialPriceInPaise;
+      planNotPublished = planSaleRefusal(plan) !== null;
     }
 
     // Get all plans with trial enabled for this consultant
@@ -90,6 +98,7 @@ export async function GET(request: NextRequest) {
       where: {
         consultantProfileId,
         trialEnabled: true,
+        ...oneOnOnePlanDiscoverableWhere(),
       },
       select: {
         id: true,
@@ -106,7 +115,16 @@ export async function GET(request: NextRequest) {
       existingTrial && blocksNewTrialRequest(existingTrial.status)
         ? existingTrial
         : null;
-    const isEligible = !blockingTrial && planTrialEnabled;
+    const isEligible = !blockingTrial && planTrialEnabled && !planNotPublished;
+    let reason: string | null = null;
+    if (blockingTrial) {
+      reason =
+        "You have already requested or completed a trial with this consultant";
+    } else if (planNotPublished) {
+      reason = "This plan isn't available to book right now.";
+    } else if (!planTrialEnabled) {
+      reason = "This plan does not offer trials";
+    }
 
     return NextResponse.json({
       data: {
@@ -124,15 +142,14 @@ export async function GET(request: NextRequest) {
         planTrialDuration,
         planTrialPriceInPaise,
         plansWithTrialEnabled,
-        reason: !isEligible
-          ? blockingTrial
-            ? "You have already requested or completed a trial with this consultant"
-            : "This plan does not offer trials"
-          : null,
+        reason,
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "trials" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "trials" } },
+    );
     console.error("Error checking trial eligibility:", error);
     return NextResponse.json(
       { error: "An error occurred while checking trial eligibility" },

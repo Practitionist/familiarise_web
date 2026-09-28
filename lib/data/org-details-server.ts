@@ -23,7 +23,9 @@ import { orgDetailsInclude } from "@/lib/data/org-details-include";
 export async function getOrgDetailsForSeed(
   orgId: string,
 ): Promise<OrgDetailsResponse | null> {
-  const access = await requireOrgAccess(orgId, "LEARNER");
+  // Same gate as the API route, incl. SUSPENDED (#1527 decision 6); the
+  // flatten below keeps only the shell's fields either way.
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
   if (access.error) return null;
 
   const org = await prisma.organization.findUnique({

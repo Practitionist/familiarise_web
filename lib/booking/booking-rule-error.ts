@@ -16,7 +16,10 @@ export type BookingRuleCode =
   | "MAKEUP_NOT_SKIPPABLE"
   | "EXIT_NOT_AVAILABLE"
   | "BACKUP_INTEREST_CAP"
-  | "BACKUP_WINDOW_PAST";
+  | "BACKUP_WINDOW_PAST"
+  | "ENROLMENT_CLOSED"
+  | "CLASS_PRICE_CHANGED"
+  | "PLAN_NOT_PUBLISHED";
 
 export class BookingRuleError extends Error {
   constructor(

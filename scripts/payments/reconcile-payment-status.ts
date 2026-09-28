@@ -413,6 +413,13 @@ async function reconcilePaymentStatusUnlocked(
   );
 
   for (const payment of cohort) {
+    // #1861 P4b — every key is written each row ("none" when unknown), so a
+    // captured error never carries a previous row's ids.
+    Sentry.getCurrentScope().setTags({
+      paymentId: payment.id,
+      appointmentId: payment.appointment?.id ?? "none",
+      gatewayOrderId: payment.paymentIntent ?? "none",
+    });
     console.log(`\nReconciling payment ${payment.id}`);
     console.log(`   Gateway: ${payment.paymentGateway}`);
     console.log(`   Payment Intent: ${payment.paymentIntent}`);

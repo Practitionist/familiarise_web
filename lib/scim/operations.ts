@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { PrismaLike } from "@/lib/prisma";
+import type { PrismaLike, Tx } from "@/lib/prisma";
 /**
  * SCIM 2.0 User operations — `createUser`, `patchUser`, `deprovisionUser`,
  * `listUsers`. Pure functions that read + write through Prisma; the
@@ -25,6 +25,8 @@ import type { PrismaLike } from "@/lib/prisma";
 import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
+  recomputeConsultantIsIndependent,
+  recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
@@ -34,8 +36,98 @@ import {
 } from "@/lib/enterprise/governance";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import {
+  MembershipGuardError,
+  assertRoleChangeAllowed,
+  assertStatusChangeAllowed,
+  type GuardedMembership,
+  type MembershipActor,
+} from "@/lib/enterprise/membership-guards";
+import {
+  IllegalTransitionError,
+  transitionMembership,
+} from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveRoleFromGroupNames } from "./resource-user";
+
+/**
+ * #1846 bucket C — SCIM acts on the group mappings an OWNER configured, so it
+ * passes the shared membership guard with OWNER authority. It still obeys the
+ * LEARNER↔EXPERT block, the no-history rule, the last-OWNER rule and the
+ * status CAS, and it never revives a REMOVED or ERASED row (N3).
+ */
+const IDP_ACTOR: MembershipActor = { kind: "idp" };
+
+const TOMBSTONES = new Set(["REMOVED", "ERASED"]);
+
+function tombstoneConflict(status: string): ScimOperationError {
+  return {
+    kind: "CONFLICT",
+    detail: `membership is ${status.toLowerCase()} — re-invite via the dashboard instead of re-provisioning`,
+  };
+}
+
+/** Runs a SCIM write Serializable and turns a guard refusal into a CONFLICT. */
+async function guardedScimWrite<T>(
+  prisma: PrismaLike,
+  fn: (tx: Tx) => Promise<T | ScimOperationError>,
+): Promise<T | ScimOperationError> {
+  try {
+    return await withSerializableRetry(() =>
+      prisma.$transaction(fn, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      }),
+    );
+  } catch (err) {
+    // #1854 — a lost status CAS (a concurrent removal or erasure) is a
+    // conflict for the IdP, not a 500.
+    if (
+      err instanceof MembershipGuardError ||
+      err instanceof IllegalTransitionError
+    ) {
+      return { kind: "CONFLICT", detail: err.message };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Moves a membership between ACTIVE and SUSPENDED for the IdP: the guard, the
+ * status CAS, the session bump and the isIndependent recompute. A suspension
+ * also closes the member's live seats and releases them, as a SCIM
+ * deprovision does. Returns whether anything changed.
+ */
+async function applyScimStatus(
+  tx: Tx,
+  m: GuardedMembership,
+  to: "ACTIVE" | "SUSPENDED",
+): Promise<boolean> {
+  if (m.status === to) return false;
+  await assertStatusChangeAllowed(tx, { membership: m, to, actor: IDP_ACTOR });
+  await transitionMembership(tx, {
+    where: { id: m.id, organizationId: m.organizationId },
+    to,
+  });
+  if (to === "SUSPENDED") {
+    const now = new Date();
+    await tx.programAssignment.updateMany({
+      where: {
+        membershipId: m.id,
+        periodEnd: { gte: now },
+        status: { in: ["ACTIVE", "PAUSED"] },
+      },
+      data: { periodEnd: now, status: "CANCELLED" },
+    });
+    await releaseSeatsForTerminatedAssignments(tx, [m.id], now);
+  }
+  if (m.role === "EXPERT" && m.consultantProfileId) {
+    await recomputeConsultantIsIndependent(tx, m.consultantProfileId);
+  }
+  // A SCIM-suspended user must not keep an active membership in their cached
+  // session (#789).
+  await bumpUserSessionGeneration(tx, m.userId);
+  return true;
+}
 
 export type ScimOperationError =
   | { kind: "USER_ERASED"; userId: string }
@@ -119,13 +211,9 @@ export async function createOrReprovisionScimUser(
   // Serializable, matching the invite path (organizations/[orgId]/
   // invitations): the seat-cap gate below is a count-then-create TOCTOU
   // that a parallel IdP provisioning burst could slip past at READ
-  // COMMITTED. Serializable makes concurrent transactions that both read
-  // the seat counts and insert fail one side at commit (P2034) instead of
-  // both overshooting UNVERIFIED_ORG_SEAT_CAP.
-  // #1132 follow-up — P2034 is transient and now retried instead of
-  // surfacing as a SCIM 500 to the IdP.
-  return withSerializableRetry(() =>
-    prisma.$transaction(async (tx) => {
+  // COMMITTED, and the last-OWNER guard needs it too (N4). P2034 is
+  // transient and retried instead of surfacing as a SCIM 500 to the IdP.
+  return guardedScimWrite(prisma, async (tx) => {
     const user = existingUser
       ? await tx.user.update({
           where: { id: existingUser.id },
@@ -140,84 +228,26 @@ export async function createOrReprovisionScimUser(
             email: emailLower,
             name: displayName,
             emailVerified: true,
-            // SCIM users authenticate via the IdP, not via password.
-            // No password column to populate — BetterAuth handles SSO
-            // session minting elsewhere.
+            // SCIM users authenticate via the IdP, not via password. No
+            // consent artifact is stamped here: the member's first sign-in
+            // shows the DPDP consent step instead (#1846 C3).
           },
         });
 
     const existingMembership = await tx.membership.findFirst({
       where: { organizationId, userId: user.id },
-      select: { id: true, role: true, status: true, externalScimId: true },
-    });
-
-    const roleEffects = await applyMembershipRoleEffects(tx, {
-      userId: user.id,
-      role: targetRole,
     });
 
     if (existingMembership) {
-      // Terminal tombstones are admin/compliance-owned — an IdP reprovision
-      // heartbeat must not resurrect a REMOVED/ERASED membership. Surfacing
-      // the conflict (instead of silently flipping back to ACTIVE) makes the
-      // IdP-side error visible to the org's IT admin.
-      if (
-        existingMembership.status === "REMOVED" ||
-        existingMembership.status === "ERASED"
-      ) {
-        return {
-          kind: "CONFLICT",
-          detail: `membership is ${existingMembership.status.toLowerCase()} — re-invite via the dashboard instead of re-provisioning`,
-        };
-      }
-      const nextStatus = active ? "ACTIVE" : "SUSPENDED";
-      // #789 review — only invalidate the session when the role or status
-      // actually moves, so an idempotent reprovision (the common IdP heartbeat)
-      // doesn't pay a sessionGeneration write + forced client refetch each time.
-      const membershipChanged =
-        existingMembership.role !== targetRole ||
-        existingMembership.status !== nextStatus;
-      const updated = await tx.membership.update({
-        where: { id: existingMembership.id },
-        data: {
-          role: targetRole,
-          status: nextStatus,
-          externalScimId:
-            externalId ?? existingMembership.externalScimId ?? null,
-          consulteeProfileId: roleEffects.consulteeProfileId,
-          consultantProfileId: roleEffects.consultantProfileId,
-          payoutRecipient: roleEffects.payoutRecipient,
-        },
-      });
-      // An IdP-driven role change or deactivation must invalidate the user's
-      // cached session memberships, same as the in-app member routes; otherwise
-      // a SCIM-suspended user keeps a stale active membership in their session
-      // payload until the cookie cache lapses.
-      if (membershipChanged) {
-        await bumpUserSessionGeneration(tx, user.id);
-      }
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId,
-          targetMembershipId: updated.id,
-          category: "SYSTEM",
-          action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_UPDATED,
-          description: `SCIM: updated ${emailLower} (role=${targetRole}, active=${active})`,
-          details: {
-            userName: emailLower,
-            role: targetRole,
-            active,
-            groupNames,
-          },
-        },
-      });
-      return {
-        membershipId: updated.id,
+      return reprovisionScimMembership(tx, {
+        membership: existingMembership,
         userId: user.id,
-        externalScimId: updated.externalScimId,
-        role: updated.role,
-        status: updated.status,
-      } satisfies ScimUserOpResult;
+        emailLower,
+        targetRole,
+        active,
+        externalId,
+        groupNames,
+      });
     }
 
     // #675 parity with the invite path — an unverified org is hard-capped at
@@ -239,6 +269,12 @@ export async function createOrReprovisionScimUser(
       }
     }
 
+    // A new SCIM membership stays automatic (the IdP vouches for the person),
+    // so its profile may be created here, as SSO JIT does.
+    const roleEffects = await applyMembershipRoleEffects(tx, {
+      userId: user.id,
+      role: targetRole,
+    });
     const created = await tx.membership.create({
       data: {
         organizationId,
@@ -288,7 +324,154 @@ export async function createOrReprovisionScimUser(
       role: created.role,
       status: created.status,
     } satisfies ScimUserOpResult;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+  });
+}
+
+/**
+ * A SCIM create for someone already in the org is a reprovision: the guard
+ * decides whether the mapped role and the active flag may apply, and a
+ * REMOVED or ERASED row is never revived (N3).
+ */
+async function reprovisionScimMembership(
+  tx: Tx,
+  args: {
+    membership: GuardedMembership & { externalScimId: string | null };
+    userId: string;
+    emailLower: string;
+    targetRole: GuardedMembership["role"];
+    active: boolean;
+    externalId?: string;
+    groupNames: string[];
+  },
+): Promise<ScimUserOpResult | ScimOperationError> {
+  const { membership, userId, emailLower, targetRole, active, externalId } =
+    args;
+  const { organizationId } = membership;
+  // Terminal tombstones are admin/compliance-owned — an IdP reprovision
+  // heartbeat must not resurrect a REMOVED/ERASED membership (N3).
+  if (TOMBSTONES.has(membership.status)) {
+    return tombstoneConflict(membership.status);
+  }
+  const org = await tx.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { canHost: true, canSponsor: true },
+  });
+  const roleChanged = membership.role !== targetRole;
+  if (roleChanged) {
+    await assertRoleChangeAllowed(tx, {
+      membership,
+      to: targetRole,
+      actor: IDP_ACTOR,
+      org,
+    });
+  }
+  const statusChanged = await applyScimStatus(
+    tx,
+    membership,
+    active ? "ACTIVE" : "SUSPENDED",
+  );
+  // The guard already required an expert profile for a move into EXPERT,
+  // so the role effects never create one on a reprovision.
+  const roleEffects = roleChanged
+    ? await applyMembershipRoleEffects(tx, {
+        userId,
+        role: targetRole,
+      })
+    : null;
+  const updated = await tx.membership.update({
+    where: { id: membership.id },
+    data: {
+      role: targetRole,
+      externalScimId: externalId ?? membership.externalScimId ?? null,
+      ...(roleEffects && {
+        consulteeProfileId: roleEffects.consulteeProfileId,
+        consultantProfileId: roleEffects.consultantProfileId,
+        payoutRecipient: roleEffects.payoutRecipient,
+      }),
+    },
+  });
+  // #789 review — only a real move invalidates the session, so the
+  // common idempotent heartbeat pays no sessionGeneration write.
+  if (roleChanged) {
+    // Both sides: the profile the old EXPERT row held, and the one a move
+    // into EXPERT now holds.
+    await recomputeIndependenceAcross(tx, [membership, updated]);
+    if (!statusChanged) await bumpUserSessionGeneration(tx, userId);
+  }
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      targetMembershipId: updated.id,
+      category: "SYSTEM",
+      action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_UPDATED,
+      description: `SCIM: updated ${emailLower} (role=${targetRole}, active=${active})`,
+      details: {
+        userName: emailLower,
+        from: {
+          role: membership.role,
+          status: membership.status,
+        },
+        role: targetRole,
+        active,
+        groupNames: args.groupNames,
+      },
+    },
+  });
+  return {
+    membershipId: updated.id,
+    userId,
+    externalScimId: updated.externalScimId,
+    role: updated.role,
+    status: updated.status,
+  } satisfies ScimUserOpResult;
+}
+
+/**
+ * SCIM PATCH `active` flip (Okta's deactivate, Azure's whole-object replace).
+ * It used to be a plain `membership.update`, which revived REMOVED and ERASED
+ * rows and skipped the audit row, the session bump, the seat release and the
+ * last-OWNER rule (N3). It now goes through the same guard as the dashboard.
+ */
+export async function setScimUserActive(
+  prisma: PrismaLike,
+  params: { organizationId: string; resourceId: string; active: boolean },
+): Promise<ScimUserOpResult | ScimOperationError> {
+  const { organizationId, resourceId, active } = params;
+  return guardedScimWrite(prisma, async (tx) => {
+    const m = await tx.membership.findFirst({
+      where: {
+        organizationId,
+        OR: [{ externalScimId: resourceId }, { id: resourceId }],
+      },
+    });
+    if (!m) return { kind: "NOT_FOUND" } as const;
+    if (TOMBSTONES.has(m.status)) return tombstoneConflict(m.status);
+
+    const changed = await applyScimStatus(
+      tx,
+      m,
+      active ? "ACTIVE" : "SUSPENDED",
+    );
+    if (changed) {
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId,
+          targetMembershipId: m.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_UPDATED,
+          description: `SCIM: set membership ${m.id} active=${active}`,
+          details: { from: m.status, active },
+        },
+      });
+    }
+    return {
+      membershipId: m.id,
+      userId: m.userId,
+      externalScimId: m.externalScimId,
+      role: m.role,
+      status: active ? "ACTIVE" : "SUSPENDED",
+    } satisfies ScimUserOpResult;
+  });
 }
 
 /**
@@ -303,76 +486,51 @@ export async function deprovisionScimUser(
   params: { organizationId: string; resourceId: string },
 ): Promise<ScimUserOpResult | ScimOperationError> {
   const { organizationId, resourceId } = params;
-  const membership = await prisma.membership.findFirst({
-    where: {
-      organizationId,
-      OR: [{ externalScimId: resourceId }, { id: resourceId }],
-    },
-    select: { id: true, userId: true, status: true, role: true },
-  });
-  if (!membership) return { kind: "NOT_FOUND" };
-
-  // #1132 follow-up — retried on transient aborts like createUser above.
-  // Deliberately left at the default isolation level: this path is a single
-  // guarded CAS update, so no multi-row invariant needs Serializable.
-  return withSerializableRetry(() =>
-    prisma.$transaction(async (tx) => {
-    // Guarded + idempotent: a deprovision retry on an already-SUSPENDED row is
-    // a no-op, and a REMOVED/ERASED tombstone is never resurrected — the IdP
-    // reads those as inactive either way.
-    await tx.membership.updateMany({
-      where: { id: membership.id, status: { in: ["PENDING", "ACTIVE"] } },
-      data: { status: "SUSPENDED" },
-    });
-    // E2E-audit P1 fix — a deprovisioned member's live ProgramAssignments
-    // used to keep counting against program caps AND against the contract's
-    // billed activeSeatCount. Terminate the live assignments (same cascade
-    // as member removal) and release the seats.
-    const now = new Date();
-    await tx.programAssignment.updateMany({
+  // #1846 — the same guarded suspension as SCIM PATCH, so a deprovision can
+  // no longer suspend the org's last OWNER. Idempotent: a retry on an
+  // already-SUSPENDED row changes nothing, and a REMOVED/ERASED tombstone is
+  // never touched (the IdP reads those as inactive either way).
+  return guardedScimWrite(prisma, async (tx) => {
+    const membership = await tx.membership.findFirst({
       where: {
-        membershipId: membership.id,
-        periodEnd: { gte: now },
-        status: { in: ["ACTIVE", "PAUSED"] },
-      },
-      data: { periodEnd: now, status: "CANCELLED" },
-    });
-    await releaseSeatsForTerminatedAssignments(tx, [membership.id], now);
-    const updated = await tx.membership.findUniqueOrThrow({
-      where: { id: membership.id },
-    });
-    // #789 — invalidate the deprovisioned user's cached session memberships so
-    // the suspension takes effect immediately instead of lingering for the
-    // cookie-cache window.
-    await bumpUserSessionGeneration(tx, membership.userId);
-    await tx.orgAuditLog.create({
-      data: {
         organizationId,
-        targetMembershipId: updated.id,
-        category: "SYSTEM",
-        action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_DEPROVISIONED,
-        description: `SCIM: deprovisioned membership ${membership.id}`,
-        details: { previousStatus: membership.status },
+        OR: [{ externalScimId: resourceId }, { id: resourceId }],
       },
     });
-    await dispatchWebhookEvent({
-      prisma: tx,
-      organizationId,
-      eventType: "member.removed",
-      payload: {
-        membershipId: updated.id,
-        userId: membership.userId,
-        role: membership.role,
-        previousStatus: membership.status,
-        source: "scim",
-      },
-    });
+    if (!membership) return { kind: "NOT_FOUND" } as const;
+    const changed =
+      !TOMBSTONES.has(membership.status) &&
+      (await applyScimStatus(tx, membership, "SUSPENDED"));
+    if (changed) {
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId,
+          targetMembershipId: membership.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_DEPROVISIONED,
+          description: `SCIM: deprovisioned membership ${membership.id}`,
+          details: { previousStatus: membership.status },
+        },
+      });
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId,
+        eventType: "member.removed",
+        payload: {
+          membershipId: membership.id,
+          userId: membership.userId,
+          role: membership.role,
+          previousStatus: membership.status,
+          source: "scim",
+        },
+      });
+    }
     return {
-      membershipId: updated.id,
+      membershipId: membership.id,
       userId: membership.userId,
       externalScimId: null,
-      role: updated.role,
-      status: updated.status,
-    };
-  }));
+      role: membership.role,
+      status: changed ? "SUSPENDED" : membership.status,
+    } satisfies ScimUserOpResult;
+  });
 }

@@ -38,6 +38,7 @@ import { getAppUrl } from "@/lib/url";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
 import {
@@ -178,7 +179,8 @@ async function notifyRejectedRequestPayer(
       amount: amountPaise,
       currency: payment.currency,
       reason: "Your booking request was declined by the consultant.",
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always the payer.
+      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     });
     // #1653 — the email twin; the sender never throws.
     await sendRefundProcessedEmail(

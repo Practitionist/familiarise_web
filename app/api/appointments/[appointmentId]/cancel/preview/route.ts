@@ -7,6 +7,10 @@ import {
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedResponse,
+} from "@/lib/enterprise/suspended-member-sessions";
 import { quoteSeatLeave } from "@/lib/booking/seat-leave";
 import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
 import { classSeriesLedgers } from "@/lib/payments/operations/event-refunds";
@@ -406,16 +410,26 @@ export async function GET(
     const isOrgAdminActor =
       !roles.isParticipant &&
       !isPrivilegedUser &&
-      (await isOrgAdminOfAppointment(
-        session.user.id,
-        appointment.organizationId,
-      ));
+      (await isOrgAdminOfAppointment(session.user.id, appointment, "cancel"));
 
     if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
       );
+    }
+
+    // #1527 decision 6 — same refusal as the POST: no quote for a cancel a
+    // suspended learner can't make.
+    if (
+      roles.consulteeUserId === session.user.id &&
+      !isPrivilegedUser &&
+      (await isSuspendedInFundingOrg(
+        session.user.id,
+        appointment.organizationId,
+      ))
+    ) {
+      return membershipSuspendedResponse();
     }
 
     // Group events never reach the notice tiers or the viewer's own payment:

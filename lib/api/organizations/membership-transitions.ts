@@ -3,7 +3,7 @@
  * place: which profile FKs to hydrate, which to clear, and what the
  * default `payoutRecipient` should be.
  *
- * Before this helper, four call sites (POST /members, PATCH
+ * Before this helper, four call sites (the since-retired POST /members, PATCH
  * /members/[memberId], invitations/accept, SSO auto-join in
  * `lib/auth.ts`) each had their own inline branching for profile FK
  * hydration. PATCH only touched role/status/departmentLabel — so a
@@ -26,14 +26,17 @@
  * Callers pass the enclosing Prisma transaction. The helper does its
  * profile-side work in the same tx so a failure rolls everything back.
  *
- * The LEARNER↔EXPERT block lives in `lib/enterprise/role-transitions.ts`
- * (`isBlockedRoleTransition`) and is enforced at the route layer — this
- * helper does not re-implement it. By the time the helper runs, the
- * transition is already known to be allowed.
+ * Role-change legality (the LEARNER↔EXPERT block, the no-history rule, an
+ * existing expert profile for a move into EXPERT) lives in the shared guard
+ * `lib/enterprise/membership-guards.ts` (#1846). By the time this helper
+ * runs, the transition is already known to be allowed, so its EXPERT
+ * lazy-create is reachable only from SSO JIT and SCIM provisioning.
  */
 
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import type { PrismaLike } from "@/lib/prisma";
+import type { PayoutRecipient } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 export type RoleEffectInput = {
   userId: string;
@@ -225,7 +228,7 @@ async function ensureConsultantProfile(
  * Recompute `ConsultantProfile.isIndependent` from current membership
  * state. Call this AFTER any membership mutation that touches the
  * consultant's EXPERT memberships:
- *   - POST /api/organizations/[orgId]/members (create EXPERT)
+ *   - SCIM provisioning (create or reprovision EXPERT)
  *   - PATCH /api/organizations/[orgId]/members/[memberId] (role / status change)
  *   - DELETE /api/organizations/[orgId]/members/[memberId] (soft-delete)
  *   - invitation accept (create EXPERT via accept flow)
@@ -256,5 +259,57 @@ export async function recomputeConsultantIsIndependent(
   await tx.consultantProfile.update({
     where: { id: consultantProfileId },
     data: { isIndependent: activeExpertCount === 0 },
+  });
+}
+
+/**
+ * Recomputes `isIndependent` for every distinct consultant profile an EXPERT
+ * membership held before or holds after a change, so a move INTO Expert
+ * counts as well as a move out of it (#1846 review).
+ */
+export async function recomputeIndependenceAcross(
+  tx: PrismaLike,
+  rows: Array<{ role: string; consultantProfileId: string | null }>,
+): Promise<void> {
+  const ids = new Set(
+    rows
+      .filter((r) => r.role === "EXPERT" && r.consultantProfileId)
+      .map((r) => r.consultantProfileId as string),
+  );
+  for (const id of ids) await recomputeConsultantIsIndependent(tx, id);
+}
+
+/**
+ * Writes the PAYOUT-category audit row for an EXPERT's payout-recipient
+ * change. A recipient change is a money event (#1851 decision 5), so it gets
+ * its own row that the finance readers can see. Both the member PATCH and
+ * the Org › Payouts routing endpoint (#1846) write it through here, so the
+ * row has one shape wherever the change comes from.
+ */
+export async function auditPayoutRecipientChange(
+  tx: PrismaLike,
+  args: {
+    organizationId: string;
+    actorMembershipId: string;
+    targetMembershipId: string;
+    from: PayoutRecipient;
+    to: PayoutRecipient;
+    viaRoleChange: boolean;
+  },
+): Promise<void> {
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: args.organizationId,
+      actorMembershipId: args.actorMembershipId,
+      targetMembershipId: args.targetMembershipId,
+      category: "PAYOUT",
+      action: AUDIT_ACTIONS.PAYOUT.PAYOUT_RECIPIENT_CHANGED,
+      description: `Payout recipient: ${args.from} → ${args.to}`,
+      details: {
+        from: args.from,
+        to: args.to,
+        viaRoleChange: args.viaRoleChange,
+      },
+    },
   });
 }

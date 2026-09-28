@@ -7,6 +7,7 @@ import {
   sanitisePublicReviews,
 } from "@/lib/data/review-public";
 import { deriveDirectoryRating } from "@/lib/data/public-stats";
+import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import {
   displayedScore,
   displayedScoreCount,
@@ -56,9 +57,11 @@ export const consultantListInclude = {
     take: 10,
   },
   // 1:1 consultation plans — cheapest-first headline for the drawer only.
-  // Mirrors subscriptionPlans (take 5, no visibility filter) so the listing
+  // Mirrors subscriptionPlans (take 5, same discovery filter) so the listing
   // treats both rails identically; the drawer renders one summary line.
+  // #1527 Q4 — drafts, archived and ORG_ONLY plans are not on the card.
   consultationPlans: {
+    where: oneOnOnePlanDiscoverableWhere(),
     select: {
       id: true,
       title: true,
@@ -72,6 +75,7 @@ export const consultantListInclude = {
     take: 5,
   },
   subscriptionPlans: {
+    where: oneOnOnePlanDiscoverableWhere(),
     select: {
       id: true,
       title: true,
@@ -209,8 +213,12 @@ export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
           name: firstOrg.name,
           slug: firstOrg.slug,
           logo: firstOrg.brandingProfile?.logo ?? null,
-          kind: (firstOrg as { kind?: "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null })
-            .kind ?? null,
+          kind:
+            (
+              firstOrg as {
+                kind?: "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null;
+              }
+            ).kind ?? null,
         }
       : null,
     isIndependent: c.isIndependent,
@@ -552,8 +560,10 @@ export function affiliationWhere(
   orgSlug?: string | null,
 ): Prisma.ConsultantProfileWhereInput {
   const conditions: Prisma.ConsultantProfileWhereInput[] = [];
-  if (affiliationType === "independent") conditions.push({ isIndependent: true });
-  else if (affiliationType === "agency") conditions.push({ isIndependent: false });
+  if (affiliationType === "independent")
+    conditions.push({ isIndependent: true });
+  else if (affiliationType === "agency")
+    conditions.push({ isIndependent: false });
   // Single shared memberships.some so orgKind + orgSlug must hold on the SAME
   // membership (see the API route for why two existentials are wrong), with
   // the same public-org constraints as orgMembershipInclude.

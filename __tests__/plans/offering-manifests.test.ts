@@ -150,7 +150,13 @@ describe("offering manifests", () => {
  * offering unsaveable, since ClassPlanSchema requires at least one item.
  */
 describe("declared slots are all supplied", () => {
-  const SUPPLIED = new Set(["faq", "curriculum", "roadmap", "collaborators"]);
+  const SUPPLIED = new Set([
+    "faq",
+    "curriculum",
+    "roadmap",
+    "collaborators",
+    "materials",
+  ]);
 
   it("declares no slot the container cannot fill", () => {
     const declared = ALL.flatMap((m) =>

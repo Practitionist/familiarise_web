@@ -18,7 +18,10 @@ import {
   INBOX_SORTS,
   INBOX_TYPES,
 } from "@/lib/dashboard/requests-inbox-state";
-import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import {
+  readRequestsInbox,
+  readRequestsInboxCounts,
+} from "@/lib/data/requests-inbox";
 
 /**
  * GET /api/bookings/inbox — the Requests inbox's HTTP twin (#1775). The RSC
@@ -26,6 +29,9 @@ import { readRequestsInbox } from "@/lib/data/requests-inbox";
  * comes here with the same arguments and gets the same payload. Auth and
  * org-scope resolution mirror `/api/bookings/consultations`: a consultant
  * reads only their own profile, ADMIN/STAFF may read any.
+ *
+ * `?countsOnly=1` (#1527) answers the nav badge with the tab counts alone —
+ * same predicates, no row scan.
  */
 
 /** The inbox's own keys; page/limit ride the shared list-query contract. */
@@ -132,6 +138,17 @@ export async function GET(request: NextRequest) {
     );
     if (scoped.response) return scoped.response;
     const orgScope = scoped.scope;
+
+    if (searchParams.get("countsOnly") === "1") {
+      const counts = await readRequestsInboxCounts({
+        consultantProfileId,
+        orgScope,
+      });
+      return NextResponse.json(
+        { counts },
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
 
     const payload = await readRequestsInbox({
       consultantProfileId,

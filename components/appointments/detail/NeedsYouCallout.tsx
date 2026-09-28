@@ -3,7 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import * as Sentry from "@sentry/nextjs";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { BellRing, CreditCard, LifeBuoy, Loader2, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -166,6 +166,7 @@ function ApproveOrDecline({
   deadline: Date | undefined;
   onHelp: () => void;
 }) {
+  const format = useZonedFormat();
   const [approving, setApproving] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
@@ -367,6 +368,7 @@ function RemindOrWithdraw({
   deadline: Date | undefined;
   onHelp: () => void;
 }>) {
+  const format = useZonedFormat();
   const [reminding, setReminding] = useState(false);
   const [nextAllowedAt, setNextAllowedAt] = useState<string | null>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -564,6 +566,7 @@ function ExitSeriesButton({
  * `presentation.nextAction`. Renders nothing when there is nothing to do.
  */
 export function NeedsYouCallout(props: NeedsYouCalloutProps) {
+  const format = useZonedFormat();
   const {
     presentation,
     names,

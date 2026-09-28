@@ -35,6 +35,12 @@ export const AUDIT_ACTIONS = {
     // so MAINTAINERs can see "this invite lapsed" without needing to tail
     // worker logs.
     INVITE_EXPIRED: "INVITE_EXPIRED",
+    // #1851 decision 2 — an operator acted on a member's org-funded booking
+    // ("Acting for <Org>"). MEMBER, not a new category: the booking is the
+    // member's record, and a category is an enum change.
+    APPOINTMENT_CANCELLED_FOR_ORG: "APPOINTMENT_CANCELLED_FOR_ORG",
+    APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG:
+      "APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG",
   },
   CONTRACT: {
     CONTRACT_CREATED: "CONTRACT_CREATED",
@@ -66,6 +72,8 @@ export const AUDIT_ACTIONS = {
     PROGRAM_ASSIGNED: "PROGRAM_ASSIGNED",
     PROGRAM_ASSIGNMENT_UPDATED: "PROGRAM_ASSIGNMENT_UPDATED",
     PROGRAM_UNASSIGNED: "PROGRAM_UNASSIGNED",
+    // #1846 SM-C14 — one row per seat a terminated or expired contract closed.
+    ASSIGNMENT_CLOSED_BY_CONTRACT: "ASSIGNMENT_CLOSED_BY_CONTRACT",
     RATE_CARD_BUMPED: "RATE_CARD_BUMPED",
   },
   WALLET: {
@@ -79,6 +87,16 @@ export const AUDIT_ACTIONS = {
     // PO lifecycle — the PATCH route previously wrote no audit row at all.
     PURCHASE_ORDER_CLOSED: "PURCHASE_ORDER_CLOSED",
     PURCHASE_ORDER_CANCELLED: "PURCHASE_ORDER_CANCELLED",
+    // #1851 decision 7 — BILLING_ADMIN keeps full billing control, audited:
+    // PO amounts and dates, PO hard delete, the funding-source switch, other
+    // billing-account money settings, and invoice due date / PDF edits.
+    PURCHASE_ORDER_UPDATED: "PURCHASE_ORDER_UPDATED",
+    PURCHASE_ORDER_DELETED: "PURCHASE_ORDER_DELETED",
+    FUNDING_SOURCE_CHANGED: "FUNDING_SOURCE_CHANGED",
+    BILLING_ACCOUNT_UPDATED: "BILLING_ACCOUNT_UPDATED",
+    INVOICE_UPDATED: "INVOICE_UPDATED",
+    // #1851 — the reimbursements CSV self-audits like the invoice register.
+    REIMBURSEMENTS_EXPORTED: "REIMBURSEMENTS_EXPORTED",
     INVOICE_GENERATED: "INVOICE_GENERATED",
     INVOICE_ISSUED: "INVOICE_ISSUED",
     // #1230 wave-4 — the CSV export self-audits like the audit-log exporter.
@@ -129,6 +147,8 @@ export const AUDIT_ACTIONS = {
     PAYOUT_ACCOUNT_CREATED: "PAYOUT_ACCOUNT_CREATED",
     PAYOUT_ACCOUNT_UPDATED: "PAYOUT_ACCOUNT_UPDATED",
     PAYOUT_STATUS_OVERRIDDEN: "PAYOUT_STATUS_OVERRIDDEN",
+    // #1851 decision 5 — where an EXPERT's org share is paid changed.
+    PAYOUT_RECIPIENT_CHANGED: "PAYOUT_RECIPIENT_CHANGED",
   },
   SETTINGS: {
     SETTINGS_CHANGED: "SETTINGS_CHANGED",
@@ -162,6 +182,9 @@ export const AUDIT_ACTIONS = {
   CONSENT: {
     CONSENT_GRANTED: "CONSENT_GRANTED",
     CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN",
+    // An operator's record that a member asked to withdraw; only the member
+    // withdraws (#1527 decision 5). Their Account › Data consent reads it.
+    CONSENT_WITHDRAWAL_REQUESTED: "CONSENT_WITHDRAWAL_REQUESTED",
     DATA_BREACH_REPORTED: "DATA_BREACH_REPORTED",
   },
   CATALOG: {
@@ -176,6 +199,11 @@ export const AUDIT_ACTIONS = {
     CATALOG_PLAN_DEACTIVATED: "CATALOG_PLAN_DEACTIVATED",
     // The inverse: an archived plan put back on sale.
     CATALOG_PLAN_RESTORED: "CATALOG_PLAN_RESTORED",
+    // #1851 decision 8 — an org operator changed a material on an ORG-owned
+    // plan. The row targets the delivering expert's membership.
+    PLAN_MATERIAL_ADDED: "PLAN_MATERIAL_ADDED",
+    PLAN_MATERIAL_UPDATED: "PLAN_MATERIAL_UPDATED",
+    PLAN_MATERIAL_REMOVED: "PLAN_MATERIAL_REMOVED",
   },
   SYSTEM: {
     VERIFIED: "VERIFIED",

@@ -40,15 +40,23 @@ const noShowFlowAttendee: FlowDefinition = {
     expert: {
       id: "expert",
       kind: "TERMINAL",
-      body: "That qualifies for a full refund or a free reschedule — our team is reviewing and will confirm here shortly.",
+      // #1569 B1: a host no-show is handled automatically, not by a manual
+      // reschedule promise — see the owner-decided void/remedy rules (D1, D4).
+      // The absence has to clear the threshold with no collaborator or
+      // co-presenter covering the session; a brief drop doesn't void it, and
+      // CodeRabbit caught an earlier draft implying any absence did.
+      body: "If the host is absent for enough of the session, with no collaborator or co-presenter covering for them, it's voided automatically. For a one-to-one consultation that means an automatic full refund. For classes and webinars, we first offer a free make-up session within 14 days and automatically refund the session if the make-up goes unused. For a subscription, the session is returned to your plan's allowance and refunded automatically if it's still unused when your plan or billing cycle ends. You don't need to request anything, but if this doesn't match what happened, let us know and our team will take another look.",
       escalate: true,
       reason: "provider_no_show",
     },
     tech: {
       id: "tech",
       kind: "TERMINAL",
-      body: "Let's get you set up to try again, or pick a new time.",
-      action: { kind: "OFFER_RESCHEDULE" },
+      // #1569 B1: this session has already happened, so there is no new time
+      // to offer — route the unresolved case to support instead.
+      body: "Since the session has already happened, we can't offer a new time for it. Tell us what went wrong and our team will take a look.",
+      escalate: true,
+      reason: "attendee_join_issue",
     },
   },
 };
@@ -76,15 +84,22 @@ const noShowFlowProvider: FlowDefinition = {
     client: {
       id: "client",
       kind: "TERMINAL",
-      body: "Noted — this session is recorded as a no-show and your fee for it stays with you. The participant can rebook or request support separately.",
+      // #1569 B1: the participant's absence is recorded automatically
+      // (LEARNER_ABSENT) and your fee stays with you; the report is
+      // ops-overturnable through the existing support/ticket path, not a new
+      // write from this flow.
+      body: "Noted — the participant's absence is recorded automatically and your fee for this session stays with you. If you think this was recorded incorrectly, contact support and our team can review and correct it.",
       resolved: true,
       reason: "attendee_no_show",
     },
     tech: {
       id: "tech",
       kind: "TERMINAL",
-      body: "Let's get you set up to try again, or free the slot for a rebook.",
-      action: { kind: "OFFER_RESCHEDULE" },
+      // #1569 B1: this session has already happened, so there is no new time
+      // to offer — route the unresolved case to support instead.
+      body: "Since the session has already happened, we can't offer a new time for it. Tell us what went wrong and our team will take a look.",
+      escalate: true,
+      reason: "provider_join_issue",
     },
   },
 };

@@ -19,8 +19,8 @@
  *       unique constraint.
  *
  *   - processOrgPayout(payoutId)
- *       State machine progression: PENDING → PROCESSING → COMPLETED |
- *       FAILED. Today only progresses PENDING → PROCESSING and writes
+ *       State machine progression: APPROVED → PROCESSING →
+ *       COMPLETED | FAILED; a PENDING batch waits for approval (#1851). Today only progresses to PROCESSING and writes
  *       the audit log + the ORG_PAYOUT journal posting; live RazorpayX /
  *       Stripe Connect submission is gated on `ENABLE_LIVE_PAYOUTS` and
  *       lands in PR-3.
@@ -74,6 +74,7 @@ import {
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { PAYOUT_ALLOWED_FROM } from "@/lib/enterprise/transitions";
 import {
   notifyOrgPayoutCompleted,
   notifyOrgPayoutFailed,
@@ -646,16 +647,16 @@ export async function createOrgPayoutBatch(
 
 /**
  * Move a payout through its state machine. Today only progresses
- * `PENDING → PROCESSING` and writes the audit trail; live gateway
+ * `APPROVED → PROCESSING` (#1851) and writes the audit trail; live gateway
  * submission lands in PR-3 behind the `ENABLE_LIVE_PAYOUTS` flag.
  *
- * Idempotent: if the payout is not in PENDING the function logs and
- * returns the current status without throwing.
+ * Idempotent: if the payout is not payable the function logs and returns the
+ * current status without throwing.
  */
 export async function processOrgPayout(payoutId: string): Promise<{
   status: PayoutStatus;
   submittedToGateway: boolean;
-  /** True only when THIS invocation won the PENDING→PROCESSING claim —
+  /** True only when THIS invocation won the APPROVED→PROCESSING claim —
    * lets batch callers count real advancement instead of another worker's
    * no-op echo of the current status. */
   claimed: boolean;
@@ -688,8 +689,8 @@ export async function processOrgPayout(payoutId: string): Promise<{
       // leave the building. Checked inside the claim tx (READ COMMITTED —
       // race-safety comes from the CAS claim below per ADR 13, and the
       // residual window to gateway submit is backstopped by the LOST
-      // clawback); returning unclaimed keeps
-      // the row PENDING so a later cron run advances it once the dispute
+      // clawback); returning unclaimed leaves
+      // the row payable so a later cron run advances it once the dispute
       // resolves. Residual window to gateway submit is backstopped by the
       // LOST-handler clawback (#1020-2).
       const disputedOrgEarning = await tx.organizationEarnings.findFirst({
@@ -707,15 +708,25 @@ export async function processOrgPayout(payoutId: string): Promise<{
         console.warn(
           `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
         );
+        // #1846 SM-B12 — echo the stored status: a blocked row may be APPROVED.
+        const blocked = await tx.organizationPayout.findUnique({
+          where: { id: payoutId },
+          select: { status: true },
+        });
+        if (!blocked) {
+          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+        }
         return {
-          status: "PENDING" as PayoutStatus,
+          status: blocked.status,
           submittedToGateway: false,
           claimed: false,
         };
       }
 
+      // The shared map's PROCESSING sources: APPROVED only, so an unapproved
+      // batch is never paid (#1851 owner decision, tightening #1846 SM-B12).
       const claim = await tx.organizationPayout.updateMany({
-        where: { id: payoutId, status: "PENDING" },
+        where: { id: payoutId, status: { in: PAYOUT_ALLOWED_FROM.PROCESSING } },
         data: { status: "PROCESSING" },
       });
       if (claim.count === 0) {
@@ -755,7 +766,7 @@ export async function processOrgPayout(payoutId: string): Promise<{
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED,
-          description: `Payout ${payoutId} moved PENDING → PROCESSING`,
+          description: `Payout ${payoutId} moved to PROCESSING`,
           details: {
             payoutId,
             amountPaise: payout.amountPaise,
@@ -998,7 +1009,8 @@ async function markPayoutFailedFromSubmission(
 }
 
 /**
- * #850 — batch driver over `processOrgPayout` for every PENDING org payout
+ * #850 — batch driver over `processOrgPayout` for every payable org payout,
+ * which since #1851 means APPROVED only (a PENDING batch awaits approval)
  * (ported from the deleted scripts/payouts/process-payouts.ts CLI loop so
  * the weekly GH job keeps advancing org payouts). Errors against a single
  * payout never abort the rest of the run.
@@ -1012,9 +1024,8 @@ export interface OrgProcessingResult {
 export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
 
-  // String literals — PayoutStatus is an `import type` in this module.
   const pending = await prisma.organizationPayout.findMany({
-    where: { status: "PENDING" },
+    where: { status: { in: PAYOUT_ALLOWED_FROM.PROCESSING } },
     select: { id: true },
   });
   result.scanned = pending.length;

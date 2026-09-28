@@ -15,7 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   getRazorpayPayoutsService,
@@ -38,7 +38,8 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 decision 1 — the Payouts › Payout account tab's grant.
+  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {
@@ -177,7 +178,9 @@ export async function PUT(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.account.manage",
+  });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {

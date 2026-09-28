@@ -1,5 +1,6 @@
 "use client";
 
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -121,23 +122,20 @@ async function submitEvidence(data: {
 export interface DisputeDetailPageProps {
   /** Dispute ID from URL params */
   disputeId: string;
-  /** Base URL for back navigation (e.g. "/dashboard/admin", "/dashboard/staff/abc") */
-  basePath: string;
   /** API endpoint for fetching this dispute (without trailing /id). Defaults to /api/admin/disputes */
   apiEndpoint?: string;
-  /** Whether to show the evidence submission form (admin-only) */
-  allowEvidenceSubmission?: boolean;
   /** React Query key prefix */
   queryKeyPrefix?: string;
 }
 
 export function DisputeDetailPage({
   disputeId,
-  basePath,
   apiEndpoint = "/api/admin/disputes",
-  allowEvidenceSubmission = false,
   queryKeyPrefix = "dispute",
 }: DisputeDetailPageProps) {
+  // #1527 — links stay in the viewer's tree; evidence is `disputes.manage`.
+  const { basePath, can } = useBackofficeCapability();
+  const allowEvidenceSubmission = can("disputes.manage");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

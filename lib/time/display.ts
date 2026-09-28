@@ -1,13 +1,19 @@
 /**
  * Locale-derived clock and date labels for the scheduling surfaces (#1703 F3).
  *
- * Everything here goes through `Intl.DateTimeFormat` with the viewer's own
- * locale, so an en-IN viewer reads "7:30 pm" and an en-GB viewer "19:30" with
- * no 12/24-hour toggle. Pure: nothing reads `new Date()`, and `zone` decides
- * the wall clock so the server and the browser print the same string.
+ * Everything here goes through `Intl.DateTimeFormat` ("7:30 pm", "Thu 24 Sep")
+ * with no 12/24-hour toggle. Pure: nothing reads `new Date()`, `zone` decides
+ * the wall clock and `DISPLAY_LOCALE` the wording, so the server and the
+ * browser print the same string.
  */
 
-/** `undefined` lets Intl pick the runtime locale; tests pass one explicitly. */
+/**
+ * #1527 QA — the runtime locale differs between Netlify (en-US: "Thu, Sep 24")
+ * and the browser (en-IN: "Thu, 24 Sept"), a hydration mismatch (#418) on
+ * every server-rendered label, so the default is fixed. Tests pass their own.
+ */
+export const DISPLAY_LOCALE = "en-IN";
+
 export interface DisplayOpts {
   locale?: string;
   zone?: string;
@@ -17,7 +23,7 @@ function formatter(
   options: Intl.DateTimeFormatOptions,
   opts: DisplayOpts = {},
 ): Intl.DateTimeFormat {
-  return new Intl.DateTimeFormat(opts.locale, {
+  return new Intl.DateTimeFormat(opts.locale ?? DISPLAY_LOCALE, {
     ...options,
     ...(opts.zone ? { timeZone: opts.zone } : {}),
   });

@@ -14,7 +14,6 @@ import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { CONSULTANT_APPOINTMENTS_WINDOW_MONTHS } from "@/lib/appointments/window";
-import Link from "next/link";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
 
 /** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
@@ -265,29 +264,7 @@ export default function AppointmentsPageClient({
                 )}
               </div>
             }
-            // #1775 — trial requests are a type tab of the Requests inbox now;
-            // the VALUE stays "trials" so ?tab=trials deep-links still land.
-            extraTabs={[
-              {
-                value: "trials",
-                label: "Trial requests",
-                content: (
-                  <EmptyState
-                    title="Trial requests moved to Requests"
-                    description="Pending and paid-but-unconfirmed trials sit beside your other requests; scheduled trials stay in this list."
-                    action={
-                      <Button asChild>
-                        <Link
-                          href={`/dashboard/consultant/${consultantId}/requests?type=trial`}
-                        >
-                          Open trial requests
-                        </Link>
-                      </Button>
-                    }
-                  />
-                ),
-              },
-            ]}
+            requestsHref={`/dashboard/consultant/${consultantId}/requests`}
           />
         )}
       </div>

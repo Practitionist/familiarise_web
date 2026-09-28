@@ -343,7 +343,7 @@ function consultationRow(
       appointmentId: c.appointment?.id ?? null,
       planTitle: c.consultationPlan.title,
       requester: {
-        name: c.requestedBy.user.name ?? "Consultee",
+        name: c.requestedBy.user.name ?? "Learner",
         image: c.requestedBy.user.image ?? null,
       },
       requestedAt: c.requestedAt,
@@ -476,7 +476,7 @@ function subscriptionRow(
       appointmentId: s.appointment?.id ?? null,
       planTitle: s.subscriptionPlan.title,
       requester: {
-        name: s.requestedBy.user.name ?? "Consultee",
+        name: s.requestedBy.user.name ?? "Learner",
         image: s.requestedBy.user.image ?? null,
       },
       requestedAt: s.requestedAt,
@@ -537,7 +537,7 @@ function trialRow(
       appointmentId: t.appointment?.id ?? null,
       planTitle: t.subscriptionPlan.title,
       requester: {
-        name: t.consulteeProfile.user.name ?? "Consultee",
+        name: t.consulteeProfile.user.name ?? "Learner",
         image: t.consulteeProfile.user.image ?? null,
       },
       requestedAt: t.requestedAt,
@@ -865,6 +865,24 @@ async function readCounts(
     trial: known?.type === "trial" ? known.total : trial,
   };
   return counts;
+}
+
+/**
+ * #1527 — the consultant nav badge: the inbox's own tab counts, so badge and
+ * tabs cannot disagree. Personal scope by default (#1345: org-funded requests
+ * belong to that org's dashboard).
+ */
+export async function readRequestsInboxCounts(args: {
+  consultantProfileId: string;
+  orgScope?: Scope;
+  now?: Date;
+}): Promise<Record<InboxType, number>> {
+  return readCounts(
+    args.consultantProfileId,
+    args.orgScope ?? PERSONAL,
+    args.now ?? new Date(),
+    null,
+  );
 }
 
 export async function readRequestsInbox(

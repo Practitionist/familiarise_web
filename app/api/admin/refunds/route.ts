@@ -21,6 +21,7 @@ import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 
 /**
@@ -69,7 +70,8 @@ async function notifyInternalSeatRefunds(childRefundIds: string[]) {
           ...notificationScope(payment.organizationId),
           amount: refund.amountPaise,
           currency: payment.currency,
-          dashboardUrl: `${getAppUrl()}/dashboard`,
+          // #1527 — the buyer's own receipt list, not a role bounce.
+          dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
         }).catch(() => {}),
         sendRefundProcessedEmail(
           {

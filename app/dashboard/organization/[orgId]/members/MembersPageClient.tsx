@@ -1,22 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { UserPlus, Trash2, Pencil, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { Trash2, Pencil, Users } from "lucide-react";
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
+  MEMBER_STATUS_TONE,
   getInvitableRoles,
 } from "@/lib/labels/org-labels";
 import {
-  AddMemberPayloadSchema,
+  MEMBER_LIST_STATUSES,
   MembersListResponseSchema,
   UpdateMemberPayloadSchema,
-  ORG_MEMBERS_PER_PAGE,
+  membersListKey,
+  membersListQueryFromUrl,
   type MemberRow,
+  type MembersListQuery,
+  type MembersListResult,
 } from "@/schemas/organizations";
 import {
   parseJsonResponse,
@@ -26,17 +36,15 @@ import {
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { useSession } from "@/lib/auth-client";
+import { useListParams } from "@/hooks/useListParams";
+import { displayedScore } from "@/lib/reviews-display";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -56,6 +64,8 @@ import {
   ResponsiveModalHeader,
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
+import { AddPeopleDialog } from "./AddPeopleDialog";
+import { RemoveMemberDialog } from "./RemoveMemberDialog";
 
 // `MemberRow` (and the response shape) live in `@/schemas/organizations`
 // so the dashboard and any other consumer (e.g. operator tools) share the
@@ -65,72 +75,95 @@ import {
 // only on canSponsor orgs. Server enforces the symmetric gates
 // (EXPERT_REQUIRES_CANHOST + LEARNER_REQUIRES_CANSPONSOR).
 function selectableRoles(
+  viewerRole: MemberRole,
   canSponsor: boolean,
   canHost: boolean,
 ): Array<{ value: MemberRole; label: string }> {
-  return getInvitableRoles(canSponsor, canHost).map((value) => ({
+  return getInvitableRoles(viewerRole, canSponsor, canHost).map((value) => ({
     value,
     label: MEMBER_ROLE_LABEL[value],
   }));
 }
 
-// #777 §B — q + pagination are passed through to the existing members
-// API (it already supports `q` contains-search on name/email and returns
-// meta {total,page,perPage}).
+// #1527 — chip order; a role only gets a chip while it has members.
+/** #1851 decision 6 — roles only an OWNER grants or takes away. */
+const OWNER_ONLY_ROLES: ReadonlySet<MemberRole> = new Set([
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+]);
+
+const ROLE_CHIPS: MemberRole[] = [
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "SUPPORT",
+  "BILLING_ADMIN",
+  "EXPERT",
+  "LEARNER",
+];
+const ALL_ROLES = "ALL";
+const FILTER_KEYS = ["role", "status"] as const;
+const DEFAULT_SORT = { key: "name", dir: "asc" } as const;
+const STATUS_OPTIONS = MEMBER_LIST_STATUSES.map((value) => ({
+  value,
+  label: MEMBER_STATUS_LABEL[value],
+}));
+
+const PAYOUT_LABEL = { SELF: "Paid to self", ORGANIZATION: "Paid to org" };
+
+/** #1527 — what the retired Experts tab showed, under an EXPERT's name. */
+function ExpertLine({ member }: Readonly<{ member: MemberRow }>) {
+  const profile = member.consultantProfile;
+  // The published 1:1 score or nothing; null means not enough rated sessions.
+  const score = profile ? displayedScore(profile).score : null;
+  const parts = [
+    profile?.headline,
+    score === null
+      ? null
+      : `★ ${score.toFixed(1)} (${profile?.ratedClientsOneToOne ?? 0})`,
+    member.payoutRecipient && PAYOUT_LABEL[member.payoutRecipient],
+  ].filter(Boolean);
+  return (
+    <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+      {parts.length > 0 && (
+        <span className="max-w-xs truncate">{parts.join(" · ")}</span>
+      )}
+      <StatusBadge
+        size="sm"
+        label={profile?.isVerified ? "Verified" : "Unverified"}
+        tone={profile?.isVerified ? "success" : "neutral"}
+      />
+    </span>
+  );
+}
+
 async function fetchMembers(
   orgId: string,
-  opts: { q?: string; page: number; perPage: number },
-): Promise<{ members: MemberRow[]; total: number }> {
-  const sp = new URLSearchParams();
-  if (opts.q) sp.set("q", opts.q);
-  sp.set("page", String(opts.page));
-  sp.set("perPage", String(opts.perPage));
-  const res = await fetch(`/api/organizations/${orgId}/members?${sp.toString()}`);
+  query: MembersListQuery,
+): Promise<MembersListResult> {
+  const sp = new URLSearchParams({
+    sort: query.sort,
+    dir: query.dir,
+    page: String(query.page),
+    perPage: String(query.perPage),
+  });
+  if (query.q) sp.set("q", query.q);
+  if (query.role) sp.set("role", query.role.join(","));
+  if (query.status) sp.set("status", query.status.join(","));
+  const res = await fetch(
+    `/api/organizations/${orgId}/members?${sp.toString()}`,
+  );
   const parsed = await parseJsonResponse(
     res,
     MembersListResponseSchema,
     "Failed to load members",
   );
-  return { members: parsed.data, total: parsed.meta?.total ?? parsed.data.length };
-}
-
-async function addMember(
-  orgId: string,
-  payload: { email: string; role: MemberRole },
-) {
-  // The server's `POST /members` only accepts the self-service subset
-  // (OWNER/MAINTAINER/MANAGER/LEARNER) — the schema enforces that union
-  // before we even open the connection.
-  const validated = validateOutboundPayload(AddMemberPayloadSchema, payload);
-  const res = await fetch(`/api/organizations/${orgId}/members`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(validated),
-  });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    // Same field-level Zod surfacing as updateMember below — see comment
-    // there for rationale. Both POST and PATCH share the "Invalid body"
-    // string on schema parse failure, so both share the friendlier
-    // fallback.
-    const fieldErrors = body?.detail?.fieldErrors as
-      | Record<string, string[] | undefined>
-      | undefined;
-    if (fieldErrors) {
-      const offending = Object.keys(fieldErrors).filter(
-        (k) => fieldErrors[k]?.length,
-      );
-      if (offending.length > 0) {
-        throw new Error(
-          `Couldn't add member — invalid ${offending.join(", ")}. ` +
-            `Refresh the page and try again, or contact support if this persists.`,
-        );
-      }
-    }
-    const raw = errorMessageFromBody(body, "Failed to add member");
-    throw new Error(humanizeOrgError(raw));
-  }
-  return body;
+  return {
+    members: parsed.data,
+    total: parsed.meta?.total ?? parsed.data.length,
+    counts: parsed.counts ?? {},
+  };
 }
 
 async function updateMember(
@@ -144,18 +177,12 @@ async function updateMember(
 ) {
   // Schema enforces "at least one of role or status" so an empty PATCH
   // never leaves the client (would 400 on the server anyway).
-  const validated = validateOutboundPayload(
-    UpdateMemberPayloadSchema,
-    payload,
-  );
-  const res = await fetch(
-    `/api/organizations/${orgId}/members/${memberId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validated),
-    },
-  );
+  const validated = validateOutboundPayload(UpdateMemberPayloadSchema, payload);
+  const res = await fetch(`/api/organizations/${orgId}/members/${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(validated),
+  });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     // Zod field-level surfacing. The server returns `error: "Invalid body"`
@@ -185,22 +212,10 @@ async function updateMember(
   return body;
 }
 
-async function removeMember(orgId: string, memberId: string) {
-  const res = await fetch(
-    `/api/organizations/${orgId}/members/${memberId}`,
-    { method: "DELETE" },
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const raw = errorMessageFromBody(body, "Failed to remove member");
-    throw new Error(humanizeOrgError(raw));
-  }
-}
-
 export function MembersPageClient({ orgId }: { orgId: string }) {
   // canSponsor/canHost drive the capability-aware role options (LEARNER
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
-  const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
+  const { role: viewerRole, can, canSponsor, canHost } = useOrgRole(orgId);
   const { data: session } = useSession();
   // Compare by email — BetterAuth's session.user.id can be the BetterAuth
   // internal id rather than the Familiarise `User.id` mirrored on
@@ -213,84 +228,56 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // #777 FDE Group B P1 — operator read floor (OWNER/MAINTAINER/MANAGER/
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
-  // below stay MAINTAINER-gated (isAtLeast("MAINTAINER")).
-  const { allowed } = useRequireOrgAccess(orgId, { permission: "members.read" });
+  // below are members.manage (OWNER/MAINTAINER), the routes' own grant.
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "members.read",
+  });
   const queryClient = useQueryClient();
-  const roleOptions = selectableRoles(canSponsor, canHost);
-  // Default to the most common consumer role for the org's capability:
-  // LEARNER on sponsor-capable orgs, EXPERT on host-only orgs, MANAGER as
-  // a last resort. Hard-coding "LEARNER" left the Select trigger blank on
-  // host-only orgs because LEARNER was filtered out of roleOptions.
-  const defaultRole: MemberRole = canSponsor
-    ? "LEARNER"
-    : canHost
-      ? "EXPERT"
-      : "MANAGER";
+  const roleOptions = selectableRoles(viewerRole, canSponsor, canHost);
+  // #1527 — role, status, search, sort and page all live in the URL.
+  const list = useListParams({
+    filterKeys: FILTER_KEYS,
+    defaultSort: DEFAULT_SORT,
+  });
+  const searchParams = useSearchParams();
+  const query = useMemo(
+    () => membersListQueryFromUrl((key) => searchParams.get(key)),
+    [searchParams],
+  );
 
-  // #777 §B — roster search + server pagination. `search` is the live
-  // input; `debouncedSearch` is what actually hits the API (250ms) so a
-  // fast typist doesn't fire a request per keystroke. Page resets to 1
-  // whenever the search term changes.
-  const PER_PAGE = ORG_MEMBERS_PER_PAGE;
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedSearch(search.trim());
-      setPage(1);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["org-members", orgId, debouncedSearch, page],
-    queryFn: () =>
-      fetchMembers(orgId, {
-        q: debouncedSearch || undefined,
-        page,
-        perPage: PER_PAGE,
-      }),
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: membersListKey(orgId, query),
+    queryFn: () => fetchMembers(orgId, query),
+    placeholderData: keepPreviousData,
     enabled: allowed,
   });
 
-  const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
-
-  const [showInvite, setShowInvite] = useState(false);
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<MemberRole>(defaultRole);
-  const [error, setError] = useState<string | null>(null);
-
-  const addMutation = useMutation({
-    mutationFn: () => addMember(orgId, { email: email.trim(), role }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
-      setShowInvite(false);
-      setEmail("");
-      setRole(defaultRole);
-      setError(null);
+  const counts = data?.counts ?? {};
+  const pickedRole = query.role?.length === 1 ? query.role[0] : undefined;
+  const roleChips = [
+    {
+      value: ALL_ROLES,
+      label: "All",
+      count: data
+        ? Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0)
+        : undefined,
     },
-    onError: (err: Error) => setError(err.message),
-  });
+    ...ROLE_CHIPS.filter((r) => (counts[r] ?? 0) > 0 || r === pickedRole).map(
+      (r) => ({ value: r, label: MEMBER_ROLE_LABEL[r], count: counts[r] ?? 0 }),
+    ),
+  ];
+  const isFiltered = Boolean(
+    query.q || query.role || list.filters.status !== null,
+  );
+  const clearFilters = () =>
+    list.setParams({ q: "", filters: { role: null, status: null } });
 
   // Destructive removals are gated through a confirm dialog rather than
   // the raw browser confirm() because (a) it matches the rest of the
   // dashboard styling, and (b) it gives us room to show the target
   // member's name + email so the user can't mis-click on the wrong row.
+  // #1854 — the dialog reads the member's open obligations before confirming.
   const [memberToRemove, setMemberToRemove] = useState<MemberRow | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-
-  const removeMutation = useMutation({
-    mutationFn: (memberId: string) => removeMember(orgId, memberId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
-      setMemberToRemove(null);
-      setRemoveError(null);
-    },
-    onError: (err: Error) => setRemoveError(err.message),
-  });
 
   // Edit member state. We narrow to the MemberRole / MemberStatus unions
   // so the Select onValueChange handlers can't push a typo into the
@@ -308,7 +295,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     setEditMember(m);
     setEditRole(m.role);
     setEditStatus(m.status as MemberStatus);
-    setEditPayoutRecipient(m.payoutRecipient);
+    setEditPayoutRecipient(m.payoutRecipient ?? "SELF");
     setEditError(null);
   };
 
@@ -318,10 +305,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         role: editRole,
         status: editStatus,
         // #729 — only an EXPERT's payout routing is meaningful; the server
-        // ignores it for other roles anyway.
-        ...(editRole === "EXPERT" && {
-          payoutRecipient: editPayoutRecipient,
-        }),
+        // ignores it for other roles anyway. Never sent unless it was read.
+        ...(editRole === "EXPERT" &&
+          canSetPayout && {
+            payoutRecipient: editPayoutRecipient,
+          }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
@@ -331,38 +319,63 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     onError: (err: Error) => setEditError(err.message),
   });
 
-  const canManage = isAtLeast("MAINTAINER");
+  const canManage = can("members.manage");
+  // #1851 decision 5 — payout routing is finance-only (OWNER, BILLING_ADMIN);
+  // MAINTAINER still sees it. The server omits it without `payouts.read`.
+  const canSetPayout =
+    can("members.payoutRecipient.change") &&
+    editMember?.payoutRecipient !== undefined;
+  // #1851 decision 6 — only an OWNER grants or removes these roles.
+  const ownerOnly = (r: MemberRole) =>
+    OWNER_ONLY_ROLES.has(r) && !can("members.role.grant.governance");
+  const removeBlockedReason = (m: MemberRow): string | undefined => {
+    if (isOwnRow(m)) return "You cannot remove yourself";
+    if (ownerOnly(m.role)) {
+      return "Only an Owner can remove an Owner, Maintainer or Billing admin";
+    }
+    return undefined;
+  };
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
-      key: "member",
+      key: "name",
       header: "Member",
       primary: true,
+      sortable: true,
       cell: (m) => (
         <div className="flex flex-col">
           <span className="font-medium text-foreground">
             {m.user.name ?? "—"}
           </span>
           <span className="text-xs text-muted-foreground">{m.user.email}</span>
+          {m.role === "EXPERT" && <ExpertLine member={m} />}
         </div>
       ),
     },
     {
       key: "role",
       header: "Role",
-      cell: (m) => (
-        <Badge variant="secondary">
-          {MEMBER_ROLE_LABEL[m.role as MemberRole] ?? m.role}
-        </Badge>
-      ),
+      sortable: true,
+      cell: (m) => <StatusBadge label={MEMBER_ROLE_LABEL[m.role]} />,
     },
     {
       key: "status",
       header: "Status",
       cell: (m) => (
-        <Badge variant={m.status === "ACTIVE" ? "default" : "outline"}>
-          {MEMBER_STATUS_LABEL[m.status as MemberStatus] ?? m.status}
-        </Badge>
+        <StatusBadge
+          label={MEMBER_STATUS_LABEL[m.status]}
+          tone={MEMBER_STATUS_TONE[m.status]}
+        />
+      ),
+    },
+    {
+      key: "joined",
+      header: "Joined",
+      sortable: true,
+      cell: (m) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(m.createdAt).toLocaleDateString()}
+        </span>
       ),
     },
   ];
@@ -393,26 +406,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
            <button> elements, so a title on the button
            itself is silently dropped. The span owns
            the title and receives hover regardless. */}
-      <span
-        title={
-          isOwnRow(m)
-            ? "You cannot remove yourself"
-            : m.role === "OWNER" && !isAtLeast("OWNER")
-              ? "Only an OWNER can remove an OWNER"
-              : undefined
-        }
-        className="inline-flex"
-      >
+      <span title={removeBlockedReason(m)} className="inline-flex">
         <Button
           variant="ghost"
           size="icon"
           aria-label="Remove member"
           onClick={() => setMemberToRemove(m)}
-          disabled={
-            removeMutation.isPending ||
-            isOwnRow(m) ||
-            (m.role === "OWNER" && !isAtLeast("OWNER"))
-          }
+          disabled={isOwnRow(m) || ownerOnly(m.role)}
         >
           <Trash2 className="h-4 w-4 text-red-500" />
         </Button>
@@ -425,151 +425,90 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       <PanelHeader
         description="Everyone with a seat in this organization"
         actions={
-          isAtLeast("MAINTAINER") && (
-            <Button size="sm" onClick={() => setShowInvite(true)}>
-              <UserPlus className="h-4 w-4 mr-1" /> Add member
-            </Button>
+          canManage && (
+            <AddPeopleDialog
+              orgId={orgId}
+              canSponsor={canSponsor}
+              canHost={canHost}
+            />
           )
         }
       />
-      <div className="space-y-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-            <CardTitle className="text-base">
-              {isLoading ? "Loading…" : `${total} members`}
-            </CardTitle>
-            <div className="relative w-full max-w-xs">
-              <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground/70" />
-              <Input
-                placeholder="Search name or email…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-                aria-label="Search members"
-              />
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : (
-              <ResponsiveTable<MemberRow>
-                columns={columns}
-                rows={data?.members ?? []}
-                getRowId={(m) => m.id}
-                rowActions={canManage ? renderRowActions : undefined}
-                empty={
-                  <p className="text-center text-sm text-muted-foreground py-6">
-                    {debouncedSearch
-                      ? "No members match your search."
-                      : "No members yet."}
-                  </p>
-                }
-              />
-            )}
-
-            {/* Server pagination — meta.total drives the page count. Hidden
-                when everything fits on one page. */}
-            {!isLoading && pageCount > 1 && (
-              <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
-                <span>
-                  Page {page} of {pageCount}
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page >= pageCount}
-                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <ResponsiveModal open={showInvite} onOpenChange={setShowInvite}>
-        <ResponsiveModalContent>
-          <ResponsiveModalHeader>
-            <ResponsiveModalTitle>Add member</ResponsiveModalTitle>
-            <ResponsiveModalDescription>
-              The user must already have a Familiarise account. To invite a
-              brand-new email, use the Invitations page.
-            </ResponsiveModalDescription>
-          </ResponsiveModalHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="add-email">Email</Label>
-              <Input
-                id="add-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="alice@acme.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="add-role">Role</Label>
-              <Select
-                value={role}
-                onValueChange={(v) => setRole(v as MemberRole)}
-              >
-                <SelectTrigger id="add-role">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {roleOptions.map((r) => (
-                    <SelectItem key={r.value} value={r.value}>
-                      {r.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-          </div>
-
-          <ResponsiveModalFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowInvite(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => addMutation.mutate()}
-              disabled={addMutation.isPending || !email.includes("@")}
-            >
-              {addMutation.isPending ? "Adding…" : "Add"}
-            </Button>
-          </ResponsiveModalFooter>
-        </ResponsiveModalContent>
-      </ResponsiveModal>
+      <ResponsiveTable<MemberRow>
+        columns={columns}
+        rows={data?.members ?? []}
+        getRowId={(m) => m.id}
+        rowActions={canManage ? renderRowActions : undefined}
+        isLoading={isLoading && !data}
+        error={isError ? "Couldn't load members." : undefined}
+        onRetry={() => void refetch()}
+        sort={{ key: query.sort, dir: query.dir }}
+        onSortChange={list.setSort}
+        toolbar={
+          <FilterBar
+            search={{
+              label: "Search members by name or email",
+              placeholder: "Search name or email",
+              value: query.q ?? "",
+              onChange: list.setQ,
+            }}
+            chips={{
+              label: "Role",
+              options: roleChips,
+              value: pickedRole ?? (query.role ? null : ALL_ROLES),
+              onChange: (value) =>
+                list.setFilter("role", value === ALL_ROLES ? null : value),
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: query.status?.[0] ?? "ACTIVE",
+                options: STATUS_OPTIONS,
+                // Active is the default, so it stays out of the URL.
+                onChange: (value) =>
+                  list.setFilter("status", value === "ACTIVE" ? null : value),
+              },
+            ]}
+            onClear={clearFilters}
+            canClear={isFiltered}
+          />
+        }
+        empty={
+          isFiltered ? (
+            <EmptyState
+              icon={Users}
+              title="No members match these filters"
+              action={
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState icon={Users} title="No members yet" />
+          )
+        }
+      />
+      {data && data.total > 0 && (
+        <TablePagination
+          page={query.page}
+          pageSize={query.perPage}
+          total={data.total}
+          onPageChange={list.setPage}
+        />
+      )}
 
       {/* Edit member dialog */}
-      <ResponsiveModal open={!!editMember} onOpenChange={(open) => !open && setEditMember(null)}>
+      <ResponsiveModal
+        open={!!editMember}
+        onOpenChange={(open) => !open && setEditMember(null)}
+      >
         <ResponsiveModalContent>
           <ResponsiveModalHeader>
             <ResponsiveModalTitle>Edit member</ResponsiveModalTitle>
             <ResponsiveModalDescription>
               {editMember?.user.name ?? editMember?.user.email}
-              {editMember?.role === "LEARNER" && editRole !== "LEARNER" && (
-                <span className="block mt-1 text-amber-600 text-xs">
-                  Changing from Learner will release their seat.
-                </span>
-              )}
               {editMember?.role !== "LEARNER" && editRole === "LEARNER" && (
                 <span className="block mt-1 text-amber-600 text-xs">
                   Changing to Learner will consume a seat.
@@ -608,16 +547,19 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               </Select>
               {editMember !== null && isOwnRow(editMember) && (
                 <p className="text-xs text-muted-foreground">
-                  You cannot change your own role. Ask another operator
-                  to do it for you.
+                  You cannot change your own role. Ask another operator to do it
+                  for you.
                 </p>
               )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-status">Status</Label>
+              {/* #1846 — nobody changes their own status either; the last
+                  OWNER suspending themselves locked the org out. */}
               <Select
                 value={editStatus}
                 onValueChange={(v) => setEditStatus(v as MemberStatus)}
+                disabled={editMember !== null && isOwnRow(editMember)}
               >
                 <SelectTrigger id="edit-status">
                   <SelectValue />
@@ -629,7 +571,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               </Select>
             </div>
             {/* #729 — payout routing, only meaningful for an EXPERT. */}
-            {editRole === "EXPERT" && (
+            {editRole === "EXPERT" && canSetPayout && (
               <div className="space-y-2">
                 <Label htmlFor="edit-payout">Payout recipient</Label>
                 <Select
@@ -651,23 +593,23 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Where this expert&apos;s share of org-hosted sessions is routed.
+                  Where this expert&apos;s share of org-hosted sessions is
+                  routed.
                 </p>
               </div>
             )}
             {editMember &&
               isBlockedRoleTransition(editMember.role, editRole) && (
                 <p className="text-sm text-red-600">
-                  Members cannot switch between Learner and Expert roles.
-                  Remove the member and re-invite them with the new role
-                  instead.
+                  Members cannot switch between Learner and Expert roles. Remove
+                  the member and re-invite them with the new role instead.
                 </p>
               )}
             {editMember &&
-              !isAtLeast("OWNER") &&
-              (editMember.role === "OWNER" || editRole === "OWNER") && (
+              (ownerOnly(editMember.role) || ownerOnly(editRole)) && (
                 <p className="text-sm text-red-600">
-                  Only an OWNER can assign or revoke the OWNER role.
+                  Only an Owner can grant or remove the Owner, Maintainer or
+                  Billing admin role.
                 </p>
               )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
@@ -682,8 +624,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 editMutation.isPending ||
                 (editMember !== null &&
                   (isBlockedRoleTransition(editMember.role, editRole) ||
-                    (!isAtLeast("OWNER") &&
-                      (editMember.role === "OWNER" || editRole === "OWNER"))))
+                    ownerOnly(editMember.role) ||
+                    ownerOnly(editRole)))
               }
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
@@ -695,48 +637,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       {/* Remove-member confirm dialog. Styled to match the rest of the
           dashboard instead of using window.confirm() so the user sees
           which row they're about to destroy. */}
-      <ResponsiveModal
-        open={!!memberToRemove}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMemberToRemove(null);
-            setRemoveError(null);
-          }
-        }}
-      >
-        <ResponsiveModalContent>
-          <ResponsiveModalHeader>
-            <ResponsiveModalTitle>Remove member?</ResponsiveModalTitle>
-            <ResponsiveModalDescription>
-              {memberToRemove?.user.name ?? memberToRemove?.user.email}
-              {" "}
-              will lose access to this organization immediately. You can
-              re-invite them later.
-            </ResponsiveModalDescription>
-          </ResponsiveModalHeader>
-          {removeError && (
-            <p className="text-sm text-red-600">{removeError}</p>
-          )}
-          <ResponsiveModalFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMemberToRemove(null)}
-              disabled={removeMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() =>
-                memberToRemove && removeMutation.mutate(memberToRemove.id)
-              }
-              disabled={removeMutation.isPending}
-            >
-              {removeMutation.isPending ? "Removing…" : "Remove member"}
-            </Button>
-          </ResponsiveModalFooter>
-        </ResponsiveModalContent>
-      </ResponsiveModal>
+      <RemoveMemberDialog
+        key={memberToRemove?.id ?? "none"}
+        orgId={orgId}
+        member={memberToRemove}
+        canForce={can("members.remove.force")}
+        onClose={() => setMemberToRemove(null)}
+      />
     </>
   );
 }

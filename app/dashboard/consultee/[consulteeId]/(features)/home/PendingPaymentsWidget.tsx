@@ -30,6 +30,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import type { ConsulteeFailedRefund } from "@/lib/data/consultee-payments";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
@@ -48,9 +49,9 @@ interface PendingPayment {
   isExpiringSoon: boolean;
   source?: "approval_pending" | "gateway_pending";
   /**
-   * Appointment record id for approval-pending items — the cancel route
-   * (`POST /api/appointments/[appointmentId]/cancel`) keys on Appointment,
-   * not the consultation/subscription row that `id` refers to.
+   * Appointment record id for approval-pending items — the abandon door
+   * (`POST /api/bookings/[bookingId]/abandon`) keys on Appointment, not the
+   * consultation/subscription/trial row that `id` refers to.
    */
   appointmentId?: string | null;
 }
@@ -62,6 +63,8 @@ interface PendingPayment {
 export interface PendingPaymentsPayload {
   pendingPayments: PendingPayment[];
   lapsedPayLinks: LapsedPayLink[];
+  /** #1527 — recent refunds the gateway rejected, for Home's Needs you. */
+  failedRefunds: ConsulteeFailedRefund[];
 }
 
 export async function fetchPendingPayments(
@@ -77,6 +80,7 @@ export async function fetchPendingPayments(
   return {
     pendingPayments: data.pendingPayments || [],
     lapsedPayLinks: data.lapsedPayLinks || [],
+    failedRefunds: data.failedRefunds || [],
   };
 }
 
@@ -254,20 +258,19 @@ export function PendingPaymentsWidget({
     [queryClient, consulteeId],
   );
 
-  // Cancel an APPROVED_PENDING_PAYMENT booking outright. The cancel route
-  // allows this transition (CANCELLABLE_FROM) and skips refunds for unpaid
-  // bookings, so this is the user-driven exit from the "pay or wait for
-  // expiry" dead end. 409 = the booking already transitioned (e.g. payment
-  // landed in another tab) — refresh rather than error.
+  // Walk away from an approved-but-unpaid booking through the abandon door
+  // (#1527 decision 11). It has a trial arm, which the cancel route lacks, so a
+  // trial's Cancel no longer answers 403 (CE-01). 409 = the booking already
+  // transitioned (e.g. payment landed in another tab) — refresh rather than error.
   const cancelApprovalPending = useCallback(
     async (appointmentId: string) => {
       setCancellingId(appointmentId);
       setCancelNotice(null);
       try {
-        const response = await fetch(
-          `/api/appointments/${appointmentId}/cancel`,
-          { method: "POST", headers: { "Content-Type": "application/json" } },
-        );
+        const response = await fetch(`/api/bookings/${appointmentId}/abandon`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
         if (response.status === 409) {
           setCancelNotice("This booking already changed state — refreshing.");
         } else if (!response.ok) {
@@ -576,7 +579,7 @@ export function PendingPaymentsWidget({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {cancelTarget?.kind === "approval"
-                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the consultant's approval and any held slots are released.`
+                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`
                 : `"${cancelTarget?.title ?? ""}" will be cancelled and your held slot released. If the payment already went through, it will be reconciled automatically.`}
             </AlertDialogDescription>
           </AlertDialogHeader>

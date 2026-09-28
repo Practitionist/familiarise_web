@@ -20,6 +20,7 @@ import {
   notifySupportTicketCreated,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
 
@@ -66,24 +67,25 @@ export interface CreateSupportTicketInput {
 }
 
 /**
- * Ops recipients, each with the queue URL THEY can open: `/dashboard/admin/*`
- * is ADMIN-only and bounces a STAFF user to their home, while the staff tree
+ * Ops recipients, each with the case URL THEY can open: `/dashboard/admin/*`
+ * is ADMIN-only (STAFF are sent to the staff twin), while the staff tree
  * admits both roles. One trigger per recipient, since the href differs.
  */
 async function opsRecipients(
+  ticketId: string,
   assigneeId?: string | null,
 ): Promise<Array<{ id: string; dashboardUrl: string }>> {
   const users = await prisma.user.findMany({
     where: assigneeId
       ? { id: assigneeId }
       : { role: { in: ["STAFF", "ADMIN"] } },
-    select: { id: true, staffProfileId: true },
+    select: { id: true, role: true },
   });
+  // #1527 — the case in the Support inbox, in the recipient's own tree.
+  const caseKey = caseKeyOf({ kind: "ticket", id: ticketId });
   return users.map((u) => ({
     id: u.id,
-    dashboardUrl: u.staffProfileId
-      ? `/dashboard/staff/${u.staffProfileId}/tickets`
-      : "/dashboard/admin/tickets",
+    dashboardUrl: `/dashboard/${u.role === "ADMIN" ? "admin" : "staff"}/support/${caseKey}`,
   }));
 }
 
@@ -113,7 +115,7 @@ export async function notifySupportStaff(
     orgName = org?.name ?? null;
   }
   const [recipients, customer] = await Promise.all([
-    opsRecipients(),
+    opsRecipients(ticket.id),
     prisma.user.findUnique({
       where: { id: ticket.userId },
       select: { name: true },
@@ -166,7 +168,7 @@ export async function notifyStaffOfTicketActivity(
     },
   });
   if (!ticket) return;
-  const recipients = await opsRecipients(ticket.assignedToId);
+  const recipients = await opsRecipients(ticketId, ticket.assignedToId);
   if (recipients.length === 0) return;
   const dedupeKey = eventId ?? `${ticketId}:${Date.now()}`;
   await Promise.all(

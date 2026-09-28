@@ -10,6 +10,8 @@ import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
 import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
 
@@ -301,6 +303,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
               email: true,
             },
           },
+          // #1527 — an org session's request opens in that org's dashboard.
+          appointmentSupportThread: { select: { organizationId: true } },
         },
       });
 
@@ -343,13 +347,17 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const reference = updatedTicket.referenceNumber ?? undefined;
     const ticketTitle = updatedTicket.title || "Support Ticket";
     const statusLabel = supportTicketStatusLabel(updatedTicket.status);
+    const requestUrl = supportRequestHref(
+      caseKeyOf({ kind: "ticket", id: updatedTicket.id }),
+      updatedTicket.appointmentSupportThread?.organizationId,
+    );
     await notifySupportTicketUpdate(updatedTicket.user.id, {
       ticketId: updatedTicket.id,
       reference,
       ticketTitle,
       status: statusLabel,
       statusCode: updatedTicket.status,
-      dashboardUrl: "/dashboard",
+      dashboardUrl: requestUrl,
       // ADR 23 — inherit the ticket's org-ness (attribution only).
       ...notificationScope(updatedTicket.organizationId),
     });
@@ -364,7 +372,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         title: ticketTitle,
         statusCode: updatedTicket.status,
         statusLabel,
-        ticketUrl: "/dashboard",
+        ticketUrl: requestUrl,
       },
       EMAIL_BUDGET_MS.REQUEST,
     );

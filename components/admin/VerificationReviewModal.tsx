@@ -124,7 +124,7 @@ export function VerificationReviewModal({
   open,
   onOpenChange,
   onVerificationComplete,
-  apiBasePath = "/api/staff/moderation/profiles",
+  apiBasePath = "/api/admin/verification",
 }: VerificationReviewModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");

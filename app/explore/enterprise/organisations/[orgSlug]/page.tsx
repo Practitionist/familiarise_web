@@ -15,7 +15,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
 import { displayedScore } from "@/lib/reviews-display";
-import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import {
+  eventPlanDiscoverableWhere,
+  oneOnOnePlanDiscoverableWhere,
+} from "@/lib/api/plans/visibility";
 
 import {
   ORG_DIRECTORY_TYPE_LABEL,
@@ -90,13 +93,14 @@ const fetchOrgBySlug = cache(async (slug: string) => {
       // `archivedAt`, so a withdrawn plan still rendered here and linked
       // straight into checkout. It was the one public surface bypassing
       // eventPlanDiscoverableWhere(); all four now carry the archive gate.
+      // #1527 Q4 — 1:1 and subscription plans also hide drafts.
       consultationPlans: {
-        where: eventPlanDiscoverableWhere(),
+        where: oneOnOnePlanDiscoverableWhere(),
         select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },
       subscriptionPlans: {
-        where: eventPlanDiscoverableWhere(),
+        where: oneOnOnePlanDiscoverableWhere(),
         select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },

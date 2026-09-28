@@ -24,6 +24,8 @@ export const CreateSupportTicketSchema = z.object({
   subscriptionId: z.string().optional(),
   paymentId: z.string().optional(),
   appointmentId: z.string().optional(),
+  // #1527 "About": an org the caller may raise requests for; checked server-side.
+  organizationId: z.string().min(1).max(64).optional(),
 });
 
 export const UpdateSupportTicketSchema = z.object({

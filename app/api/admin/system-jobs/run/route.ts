@@ -44,6 +44,7 @@ import { reconcileOccurrenceAvailability } from "@/scripts/appointments/reconcil
 import {
   createPayoutBatch as createPayoutBatchService,
   processApprovedPayouts as processApprovedPayoutsService,
+  REQUEST_PAYOUT_RUN_BOUNDS,
 } from "@/lib/payments/payouts";
 import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
@@ -70,7 +71,15 @@ import { expireEventChannels } from "@/jobs/stream/expire-event-channels";
 import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import {
+  opsReasonSchema,
+  recordOpsAction,
+} from "@/lib/backoffice/ops-action-log";
+import { reportSentryError } from "@/lib/observability/report";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { getMaintenanceState } from "@/lib/maintenance-edge";
 // #1599 F-P1-03 — one money list: the gate below derives from
 // FINANCIAL_JOB_NAMES instead of a second, drifting copy (11 vs 24 names).
@@ -181,7 +190,9 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     };
   },
   "process-payouts": async () => {
-    const results = await processApprovedPayoutsService();
+    const results = await processApprovedPayoutsService(
+      REQUEST_PAYOUT_RUN_BOUNDS,
+    );
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     return {
@@ -423,26 +434,42 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
 };
 
 /**
+ * #1846 N6 — the payout jobs hold Redis resource locks and, for
+ * process-payouts, make a gateway call per payout with a 30 s timeout. Run
+ * inside the request they met the ~26 s edge cut: the operator saw a 504, and
+ * a function killed at the Lambda limit never released its lock. These are
+ * answered 202 at once and run after the response (process-payouts under
+ * REQUEST_PAYOUT_RUN_BOUNDS); the outcome lands in the ops log.
+ */
+const BACKGROUND_JOBS = new Set(["process-payouts", "create-payout-batch"]);
+
+/**
  * POST /api/admin/system-jobs/run
  * Run a system job by ID (requires ADMIN role)
  */
+const runJobSchema = z.object({
+  jobId: z.string().min(1, "Missing or invalid jobId"),
+  // #1527 Q10 — every manual run carries a reason into the audit log.
+  reason: opsReasonSchema,
+});
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // 1. Verify admin auth
-    const auth = await requireAdminAuth();
+    const auth = await requireBackofficeSurface("systemJobs.manage");
     if (auth.error) return auth.error;
     const session = auth.session;
     const user = session.user;
 
-    // 2. Get job ID from body
-    const { jobId } = await req.json();
-
-    if (!jobId || typeof jobId !== "string") {
+    // 2. Get job ID + reason from body
+    const parsed = runJobSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Missing or invalid jobId" },
+        { error: parsed.error.issues[0]?.message ?? "Invalid request" },
         { status: 400 },
       );
     }
+    const { jobId, reason } = parsed.data;
 
     // 4. Find and execute the job
     const jobFunction = JOB_FUNCTIONS[jobId];
@@ -479,8 +506,54 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
 
-    // 6. Execute the job
-    const result = await jobFunction();
+    // 6. Execute the job; one ops-log row per run, whatever the outcome
+    // (#1527 Q10 — the gateway-door shape of lib/backoffice/ops-action-log.ts).
+    const logRun = (status: "SUCCEEDED" | "FAILED") =>
+      recordOpsAction(prisma, {
+        actorUserId: user.id,
+        actorRole: String(user.role ?? "UNKNOWN"),
+        surface: "systemJobs.manage",
+        action: "system-job.run",
+        targetKind: "SystemJob",
+        targetId: jobId,
+        reason,
+        after: { status },
+      }).catch((logErr: unknown) =>
+        reportSentryError(logErr, { subsystem: "admin", op: "ops-log" }),
+      );
+    if (BACKGROUND_JOBS.has(jobId)) {
+      scheduleAfter(async () => {
+        try {
+          const outcome = await jobFunction();
+          await logRun(outcome.success ? "SUCCEEDED" : "FAILED");
+        } catch (err) {
+          await logRun("FAILED");
+          reportSentryError(err, {
+            subsystem: "admin",
+            op: "system-job",
+            extra: { jobId },
+          });
+        }
+      });
+      return NextResponse.json(
+        {
+          success: true,
+          dispatched: true,
+          message:
+            "Started in the background. The outcome is recorded in the ops log.",
+        },
+        { status: 202 },
+      );
+    }
+
+    let result: JobResult;
+    try {
+      result = await jobFunction();
+    } catch (err) {
+      await logRun("FAILED");
+      throw err;
+    }
+    await logRun(result.success ? "SUCCEEDED" : "FAILED");
 
     console.log(`[System Jobs] Job ${jobId} completed:`, {
       success: result.success,

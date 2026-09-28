@@ -2,19 +2,24 @@ import type { MemberRole } from "@prisma/client";
 
 /**
  * Org-dashboard permission matrix — the single source of truth for which
- * MemberRole can access which surface. The sidebar (visibility), the page
- * guards (useRequireOrgAccess), and the API routes (requireOrgAccess) all
- * consume THIS map, so a surface can no longer drift into "tab shown, page
+ * MemberRole may do what. The sidebar (visibility), the page guards
+ * (useRequireOrgAccess), and the API routes (requireOrgAccess) all consume
+ * THIS map, so a surface can no longer drift into "tab shown, page
  * redirects, API 403s" states (the 2026-07 role audit found nine of those).
+ *
+ * Keys are `surface.read` / `surface.manage` plus action-level keys for
+ * verbs whose roles differ from their surface's (#1851), for example
+ * `payouts.approve` or `webhooks.subscribe.memberEvents`. Every handler
+ * under app/api/organizations/** reads a key here; a jest pin walks the
+ * tree and fails on a handler with no key or a raw rank check.
  *
  * Why a matrix instead of the rank ladder: privilege here is not
  * one-dimensional. The org has an operations track (MANAGER, SUPPORT), a
  * finance track (BILLING_ADMIN), and member roles (EXPERT, LEARNER) —
  * BILLING_ADMIN outranks MANAGER numerically (70 > 60) yet must see LESS
  * operationally ("operator-blind"), and SUPPORT (30) sees MORE than EXPERT
- * (40) on operations surfaces. Rank comparisons (isAtLeastRole) remain
- * correct only for genuine hierarchy (OWNER > MAINTAINER > MANAGER
- * management chains) — surface access lives here.
+ * (40) on operations surfaces. A rank comparison cannot express that, so
+ * no org authorization reads the rank ladder any more (#1851).
  *
  * Capability gates (canSponsor / canHost / requiresPO / fundingSource) are
  * deliberately NOT part of the matrix — they describe the org's shape, not
@@ -24,15 +29,44 @@ import type { MemberRole } from "@prisma/client";
 
 export type OrgSurface =
   // People & governance
+  // Names-only people list (name, avatar, role label) — every member (#1527).
+  | "members.directory"
   | "members.read"
   | "members.manage"
+  // #1851 decision 6 — MAINTAINER grants and removes the operational roles
+  // (MANAGER, SUPPORT, EXPERT, LEARNER); only an OWNER touches OWNER,
+  // MAINTAINER or BILLING_ADMIN.
+  | "members.role.grant.operational"
+  | "members.role.grant.governance"
+  // #1851 decision 5 — where an EXPERT's org share is paid is finance.
+  | "members.payoutRecipient.change"
+  // #779 §C — removing a member past their open obligations.
+  | "members.remove.force"
   | "invitations.manage"
-  | "learners.read"
-  | "experts.read"
+  // Floor for the Audit page/API = holds either category grant below; rows
+  // are then filtered per grant (#1527 audit split).
   | "audit.read"
+  | "audit.read.ops"
+  | "audit.read.money"
+  // Home activity feed — audit rows, row-filtered like the Audit page.
+  | "activity.read"
   | "consent.read"
-  | "consent.manage"
+  // Record a member's withdrawal request. Granting and withdrawing are the
+  // member's own acts, never an operator's (#1527 decision 5).
+  | "consent.requestWithdrawal"
   | "settings.manage"
+  // #1851 — the org-record fields outside the MAINTAINER and finance remits
+  // (slug, capabilities, tax identity, policies, public listing).
+  | "settings.ownerFields"
+  | "settings.cancellationPolicy.publish"
+  | "settings.verification.resubmit"
+  | "org.delete"
+  // Domains & SSO / directory-sync reads — never secrets (#1527).
+  | "identity.read"
+  // Domain claims, SSO, SCIM and break-glass writes plus their secrets.
+  | "identity.manage"
+  // Org chat roster + call metadata compliance reads (Stream).
+  | "messaging.read"
   // Commerce (sponsor-side; combine with canSponsor at the consumer)
   | "contracts.read"
   | "contracts.manage"
@@ -40,28 +74,74 @@ export type OrgSurface =
   // programs.manage, which is the sponsor's entitlement CRUD — combine with
   // canHost at the consumer.
   | "catalog.manage"
+  // #1851 decision 8 — materials on ORG-owned plans only; an expert's
+  // personal plan is never reachable through any org key.
+  | "materials.manage.orgPlan"
+  | "programs.read"
+  | "programs.assign"
   | "programs.manage"
+  // #1851 decision 3 — extending a seat re-arms sponsored spend.
+  | "programs.seat.period"
   | "purchaseOrders.read"
   | "purchaseOrders.manage"
   // Finance
   | "billing.read"
   | "billing.manage"
+  // #1851 decision 7 — switches which rail checkout charges; audited.
+  | "billing.fundingSource.switch"
   | "payouts.read"
   | "payouts.manage"
+  // #1851 decision 4 — the second pair of eyes on a batch (see
+  // payouts/[payoutId] for the two-person rule).
+  | "payouts.approve"
+  // The org's own bank account for host payouts.
+  | "payouts.account.manage"
   | "reimbursements.read"
   | "disputes.read"
-  | "integrations.read"
+  | "integrations.manage"
+  // #1851 decision 11 — endpoints carrying member.* or program.assigned,
+  // including their delivery logs and redeliveries.
+  | "webhooks.subscribe.memberEvents"
+  | "webhooks.rotateSecret"
+  | "webhooks.delete"
+  // DPDP §11 bundles split by kind (#1527 decision 4).
+  | "dataExports.people"
+  | "dataExports.finance"
   // Operations (org-scoped appointments, trials, documents,
   // recordings, analytics — one read grant for the whole group, incl. the
   // L1/L2 SUPPORT carve-out)
   | "operations.read"
+  // Platform requests a member tagged "About: <org>" (#1527).
+  | "supportRequests.org"
   | "quality.read"
+  // Acting for the org on an org-funded booking (#1527 decision 8). Cancel is
+  // narrower: it refunds.
+  | "appointments.actForOrg.reschedule"
+  | "appointments.actForOrg.cancel"
+  // #1851 decision 10 — an expert member's busy/free grid, for allocating on
+  // their behalf. The allocate write itself is #1843.
+  | "appointments.allocate.calendarRead"
+  // #1851 decision 9 — no org role deletes a learner's upload or a
+  // recording. Takedowns go to platform staff in the back office.
+  | "memberContent.delete"
+  // Appointments › Unscheduled — credits bought but not yet booked.
+  | "appointments.unscheduled.read"
   // Member-facing home surfaces (exact-role, capability-gated in the layout)
   | "myProgram.read"
   | "myArrangement.read";
 
 const roles = (...list: MemberRole[]): ReadonlySet<MemberRole> =>
   new Set<MemberRole>(list);
+
+const ALL_MEMBERS = roles(
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+  "MANAGER",
+  "SUPPORT",
+  "EXPERT",
+  "LEARNER",
+);
 
 // Named tiers so the matrix reads as policy, not repetition.
 const GOVERNANCE = roles("OWNER", "MAINTAINER");
@@ -74,22 +154,49 @@ const FINANCE_READERS = roles(
   "MANAGER",
 );
 const FINANCE_MUTATORS = roles("OWNER", "BILLING_ADMIN");
+const AUDIT_OPS_READERS = OPERATIONS_READERS;
+const AUDIT_MONEY_READERS = roles("OWNER", "MAINTAINER", "BILLING_ADMIN");
+const OWNER_ONLY = roles("OWNER");
+const NOBODY = roles();
 
 export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // People & governance — BILLING_ADMIN is operator-blind by design.
+  "members.directory": ALL_MEMBERS,
   "members.read": OPERATIONS_READERS,
   "members.manage": GOVERNANCE,
+  "members.role.grant.operational": GOVERNANCE,
+  "members.role.grant.governance": OWNER_ONLY,
+  "members.payoutRecipient.change": FINANCE_MUTATORS,
+  "members.remove.force": OWNER_ONLY,
   "invitations.manage": GOVERNANCE,
-  "learners.read": OPERATORS,
-  "experts.read": OPERATORS,
-  "audit.read": roles("OWNER", "MAINTAINER", "SUPPORT"),
+  // #1527 — split by category so SUPPORT reads people/ops history without a
+  // single money figure, and BILLING_ADMIN reads the money trail it owns.
+  "audit.read": new Set([...AUDIT_OPS_READERS, ...AUDIT_MONEY_READERS]),
+  "audit.read.ops": AUDIT_OPS_READERS,
+  "audit.read.money": AUDIT_MONEY_READERS,
+  // #1527 — was a MANAGER rank floor, which admitted BILLING_ADMIN (rank 70).
+  "activity.read": OPERATORS,
   "consent.read": OPERATORS,
-  "consent.manage": OPERATORS,
+  "consent.requestWithdrawal": OPERATORS,
   "settings.manage": GOVERNANCE,
+  // #1851 — were OWNER / MAINTAINER rank floors; same roles. MAINTAINER holds
+  // settings.manage yet not the cancellation policy, which prices every
+  // future cancel (issue #1851 lists the gap; no decision changed it).
+  "settings.ownerFields": OWNER_ONLY,
+  "settings.cancellationPolicy.publish": OWNER_ONLY,
+  "settings.verification.resubmit": GOVERNANCE,
+  "org.delete": OWNER_ONLY,
+  // #1527 — was a MANAGER rank floor; MAINTAINER reads status, OWNER keeps
+  // every write and secret.
+  "identity.read": GOVERNANCE,
+  "identity.manage": OWNER_ONLY,
+  // #1527 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
+  "messaging.read": OPERATORS,
 
   // Commerce — contract terms and program design are org-structural
   // decisions (spec: MAINTAINER floor); POs are day-to-day.
-  "contracts.read": GOVERNANCE,
+  // BILLING_ADMIN reconciles invoices and POs against contract terms.
+  "contracts.read": roles("OWNER", "MAINTAINER", "BILLING_ADMIN"),
   "contracts.manage": roles("OWNER"),
   // OPERATORS rather than GOVERNANCE: publishing an offering is day-to-day
   // delivery work, not an org-structural decision like a contract or a
@@ -97,22 +204,47 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // an org-owned plan commits the ORG's revenue and payout obligation, so it
   // needs an operator in the loop. An EXPERT is named as the deliverer instead.
   "catalog.manage": OPERATORS,
+  "materials.manage.orgPlan": OPERATORS,
+  // #1527 — the org-wide seat roster + utilisation. Everyone else reads only
+  // their own assignment, without spend.
+  "programs.read": roles("OWNER", "MAINTAINER", "BILLING_ADMIN", "MANAGER"),
+  // Seat assign/unassign is delivery work (#1527 decision 8); program design
+  // (programs.manage) stays GOVERNANCE.
+  "programs.assign": OPERATORS,
   "programs.manage": GOVERNANCE,
+  "programs.seat.period": GOVERNANCE,
   "purchaseOrders.read": FINANCE_READERS,
   "purchaseOrders.manage": FINANCE_MUTATORS,
 
-  // Finance — MANAGER reads, mutations stay with OWNER/BILLING_ADMIN
-  // (preserves the requireOrgBillingAdminOrOwner disjunction).
+  // Finance — MANAGER reads, mutations stay with OWNER/BILLING_ADMIN. The
+  // finance track is not the rank ladder: MAINTAINER outranks BILLING_ADMIN
+  // and still holds no money write.
   "billing.read": FINANCE_READERS,
   "billing.manage": FINANCE_MUTATORS,
-  "payouts.read": FINANCE_READERS,
+  "billing.fundingSource.switch": FINANCE_MUTATORS,
+  // #1527 decision 1 — MANAGER keeps read-only Billing but no Payouts.
+  "payouts.read": roles("OWNER", "MAINTAINER", "BILLING_ADMIN"),
   "payouts.manage": FINANCE_MUTATORS,
+  "payouts.approve": FINANCE_MUTATORS,
+  // Was an OWNER rank floor; BILLING_ADMIN still can't repoint the bank
+  // account (issue #1851 lists the gap; no decision changed it).
+  "payouts.account.manage": OWNER_ONLY,
   "reimbursements.read": FINANCE_READERS,
   "disputes.read": FINANCE_READERS,
-  "integrations.read": FINANCE_READERS,
+  // #1527 §17b — webhook create/edit/redeliver; rotate and delete are
+  // OWNER, as is anything carrying member data (#1851 decision 11).
+  "integrations.manage": FINANCE_MUTATORS,
+  "webhooks.subscribe.memberEvents": OWNER_ONLY,
+  "webhooks.rotateSecret": OWNER_ONLY,
+  "webhooks.delete": OWNER_ONLY,
+  "dataExports.people": GOVERNANCE,
+  "dataExports.finance": FINANCE_MUTATORS,
 
   // Operations — includes the SUPPORT carve-out (L1/L2 triage reads).
   "operations.read": OPERATIONS_READERS,
+  // #1527 — operations.read OR billing.read: an ops lead or the finance team
+  // raises requests about the org and reads the ones raised.
+  "supportRequests.org": new Set([...OPERATIONS_READERS, ...FINANCE_READERS]),
 
   // #1300 — the quality signal over the organisation's own sessions. Its own key
   // rather than riding `operations.read`, which is the grant that opens the
@@ -126,6 +258,15 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   // Same roles today. The point is that they can now diverge without a rename.
   "quality.read": OPERATIONS_READERS,
 
+  "appointments.actForOrg.reschedule": OPERATORS,
+  "appointments.actForOrg.cancel": GOVERNANCE,
+  // Today's roles. Decision 10 adds MANAGER together with the allocate write
+  // in #1843, so the read never outruns the write.
+  "appointments.allocate.calendarRead": GOVERNANCE,
+  // Deliberately empty (#1851 decision 9); a pin keeps it that way.
+  "memberContent.delete": NOBODY,
+  "appointments.unscheduled.read": OPERATORS,
+
   // Member-facing surfaces.
   "myProgram.read": roles("LEARNER"),
   "myArrangement.read": roles("EXPERT"),
@@ -136,4 +277,22 @@ export function hasOrgPermission(
   surface: OrgSurface,
 ): boolean {
   return ORG_PERMISSIONS[surface].has(role);
+}
+
+/** Any-of form for surfaces two grants open (e.g. Settings GET, #1527). */
+export function hasAnyOrgPermission(
+  role: MemberRole,
+  surfaces: OrgSurface | readonly OrgSurface[],
+): boolean {
+  const list: readonly OrgSurface[] =
+    typeof surfaces === "string" ? [surfaces] : surfaces;
+  return list.some((surface) => ORG_PERMISSIONS[surface].has(role));
+}
+
+/**
+ * The roles holding `surface`, for queries that filter memberships by role
+ * (for example "who else may approve this payout", #1851 decision 4).
+ */
+export function rolesWithOrgPermission(surface: OrgSurface): MemberRole[] {
+  return [...ORG_PERMISSIONS[surface]];
 }

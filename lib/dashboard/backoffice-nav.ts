@@ -1,50 +1,53 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowLeftRight,
   BadgeCheck,
+  Banknote,
   BarChart3,
   Building2,
   CalendarCheck,
+  Coins,
   CreditCard,
-  FileText,
+  FileWarning,
   Home,
+  Inbox,
   Landmark,
   ListChecks,
   Megaphone,
-  MessagesSquare,
   Play,
   Receipt,
   RefreshCw,
+  RotateCcw,
+  Scale,
+  ScrollText,
   Shield,
   Star,
-  Ticket,
   Users,
   Wrench,
   Target,
 } from "lucide-react";
-import type { UserRole } from "@prisma/client";
-
-import type {
-  CollapsibleSidebarGroup,
-  CollapsibleSidebarItem,
-} from "@/components/dashboard/CollapsibleSidebar";
+import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
 import {
-  hasBackofficePermission,
-  type BackofficeSurface,
-} from "@/lib/auth/backoffice-permissions";
+  can,
+  type BackofficeCapability,
+  type BackofficeTree,
+} from "@/lib/backoffice/capability";
+import type { NavGroup, NavItem } from "@/lib/dashboard/nav/types";
+import {
+  AUDIT_TAB,
+  MONEY_TABS,
+  type MoneyTab,
+  type MoneyTabKey,
+} from "@/lib/backoffice/money-tabs";
 
 /**
- * The one nav definition behind both back-office trees.
+ * The one nav definition behind both back-office trees (#1527 §7.5).
  *
- * `/dashboard/admin` and `/dashboard/staff/[staffId]` stay separate URL trees
- * with their own chrome and landing pages, but they no longer maintain
- * separate nav arrays — that is how the two sidebars drifted into 18 and 16
- * flat items describing largely the same product.
- *
- * `buildBackofficeNav` filters this list through BACKOFFICE_PERMISSIONS for
- * the tree's audience. The admin tree builds for ADMIN and gets everything;
- * the staff tree builds for STAFF and gets the subset staff hold — even when
- * the viewer is an admin looking at the staff tree, because the point of that
- * view is to see what staff see.
+ * `/dashboard/admin` and `/dashboard/staff` are one route tree
+ * (`(backoffice)/[tree]`); the tree picks the audience and the viewer's role
+ * caps it (lib/backoffice/capability.ts). Every item is filtered through
+ * `can(cap, surface)`, so an admin opening the staff tree sees exactly the
+ * staff console.
  *
  * `metrics` is deliberately staff-only and `analytics` deliberately
  * admin-only: they are different pages against different endpoints (support
@@ -54,12 +57,23 @@ import {
  * matrix keys; hiding an item only keeps the nav honest.
  */
 
-type NavItemSpec = CollapsibleSidebarItem & {
+/** Queue counts from `/api/backoffice/nav-counts`, keyed into the shell's badges. */
+export type BackofficeBadgeKey =
+  | "support"
+  | "moderation"
+  | "verification"
+  | "refunds"
+  | "disputes"
+  | "payouts"
+  | "compliance";
+
+type NavItemSpec = NavItem & {
   surface: BackofficeSurface;
   /** Structural condition (feature flags), ANDed with the matrix. */
   show?: boolean;
   /** Restrict this item to one tree when both can't host it. */
-  only?: "admin" | "staff";
+  only?: BackofficeTree;
+  badgeKey?: BackofficeBadgeKey;
 };
 
 type NavGroupSpec = {
@@ -72,34 +86,59 @@ export interface BackofficeNavOptions {
   showTds?: boolean;
 }
 
+const MONEY_ICONS: Record<MoneyTabKey, LucideIcon> = {
+  payments: CreditCard,
+  refunds: RotateCcw,
+  disputes: Scale,
+  payouts: Banknote,
+  earnings: Coins,
+  reconcile: ArrowLeftRight,
+  audit: ScrollText,
+};
+
+const MONEY_BADGES: Partial<Record<MoneyTabKey, BackofficeBadgeKey>> = {
+  refunds: "refunds",
+  disputes: "disputes",
+  payouts: "payouts",
+};
+
+/** Each money section is its own item at its existing `/money/<key>` URL. */
+const moneyItem = (t: MoneyTab): NavItemSpec => ({
+  name: t.label,
+  icon: MONEY_ICONS[t.key],
+  path: `money/${t.key}`,
+  surface: t.surface,
+  badgeKey: MONEY_BADGES[t.key],
+});
+
 function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
   return [
     {
       items: [
-        // Home is the tree's landing page; every operator has it, and it has
-        // no matrix key of its own because reaching the tree at all is the
-        // grant. `users.read` is the cheapest always-true stand-in.
-        { name: "Overview", icon: Home, path: "home", surface: "users.read" },
+        // Q12 — admin's "Needs attention"; staff land on the Support inbox.
+        // Reaching the tree is the grant, so `users.read` stands in.
+        {
+          name: "Home",
+          icon: Home,
+          path: "home",
+          surface: "users.read",
+          only: "admin",
+        },
       ],
     },
     {
       label: "Support",
       items: [
         {
-          name: "Support Tickets",
-          icon: Ticket,
-          path: "tickets",
+          // #1527 — tickets and conversations are one inbox of cases.
+          name: "Support inbox",
+          icon: Inbox,
+          path: "support",
           surface: "tickets.manage",
+          badgeKey: "support",
         },
         {
-          // #support-hub — the per-appointment conversation inbox.
-          name: "Support Conversations",
-          icon: MessagesSquare,
-          path: "threads",
-          surface: "threads.manage",
-        },
-        {
-          name: "User Feedback",
+          name: "Feedback",
           icon: Star,
           path: "feedback",
           surface: "feedback.manage",
@@ -109,6 +148,7 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: Shield,
           path: "moderation",
           surface: "moderation.manage",
+          badgeKey: "moderation",
         },
       ],
     },
@@ -121,41 +161,22 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           path: "appointments",
           surface: "appointments.manage",
         },
-        {
-          name: "Waitlist",
-          icon: ListChecks,
-          path: "waitlist",
-          surface: "waitlist.manage",
-        },
-        {
-          name: "Leads",
-          icon: Target,
-          path: "leads",
-          surface: "leads.manage",
-          // Only /dashboard/admin/leads exists — the staff tree would 404.
-          only: "admin",
-        },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
-        // Support context for "why was my document rejected?" — read-only.
+        // #1527 — one queue for experts and organizations; the document
+        // review log is its Documents tab.
         {
-          name: "Documents",
-          icon: FileText,
-          path: "documents",
-          surface: "appointments.manage",
+          name: "Verification",
+          icon: BadgeCheck,
+          path: "verification",
+          surface: "users.verify",
+          badgeKey: "verification",
         },
       ],
     },
     {
       label: "Money",
       items: [
-        {
-          // #1771 K-2 — one hub: payments, refunds, payouts, disputes and the
-          // ops doors are tabs under /money, filtered per role by the hub.
-          name: "Money",
-          icon: CreditCard,
-          path: "money",
-          surface: "payments.read",
-        },
+        ...MONEY_TABS.map(moneyItem),
         {
           name: "Invoices",
           icon: Receipt,
@@ -169,12 +190,6 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           surface: "subscriptions.read",
         },
         {
-          name: "Approval Payments",
-          icon: BadgeCheck,
-          path: "approval-payments",
-          surface: "approvalPayments.manage",
-        },
-        {
           name: "TDS",
           icon: Landmark,
           path: "tds",
@@ -184,22 +199,26 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
       ],
     },
     {
-      label: "Insights",
+      label: "Growth & comms",
       items: [
-        // Two different pages, one per tree — see the file header.
         {
-          name: "Metrics",
-          icon: BarChart3,
-          path: "metrics",
-          surface: "analytics.read",
-          only: "staff",
+          name: "Leads",
+          icon: Target,
+          path: "leads",
+          surface: "leads.manage",
         },
         {
-          name: "Analytics",
-          icon: BarChart3,
-          path: "analytics",
-          surface: "analytics.read",
-          only: "admin",
+          name: "Announcements",
+          icon: Megaphone,
+          path: "announcements",
+          surface: "announcements.manage",
+        },
+        {
+          // #1527 — renamed from Waitlist; the URL stays `waitlist`.
+          name: "Newsletter",
+          icon: ListChecks,
+          path: "waitlist",
+          surface: "waitlist.manage",
         },
       ],
     },
@@ -213,13 +232,15 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           surface: "organizations.manage",
         },
         {
-          name: "Announcements",
-          icon: Megaphone,
-          path: "announcements",
-          surface: "announcements.manage",
+          // #1527 Q5 — erasure requests, data breaches, failed emails.
+          name: "Compliance",
+          icon: FileWarning,
+          path: "compliance",
+          surface: "compliance.manage",
+          badgeKey: "compliance",
         },
         {
-          name: "System Jobs",
+          name: "System jobs",
           icon: Play,
           path: "system-jobs",
           surface: "systemJobs.manage",
@@ -232,17 +253,36 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
         },
       ],
     },
+    {
+      label: "Insights",
+      items: [
+        // Two different pages, one per tree — see the file header.
+        {
+          name: "Analytics",
+          icon: BarChart3,
+          path: "analytics",
+          surface: "analytics.read",
+          only: "admin",
+        },
+        {
+          name: "Metrics",
+          icon: BarChart3,
+          path: "metrics",
+          surface: "analytics.read",
+          only: "staff",
+        },
+      ],
+    },
+    // The audit log covers every console door, not only money, so it closes
+    // the sidebar on its own. Admins read every row, staff their own.
+    { items: [moneyItem(AUDIT_TAB)] },
   ];
 }
 
 export function buildBackofficeNav(
-  tree: "admin" | "staff",
+  cap: Pick<BackofficeCapability, "tree" | "role" | "audience">,
   options: BackofficeNavOptions = {},
-): CollapsibleSidebarGroup[] {
-  // The staff tree always renders the STAFF nav, even for an admin viewing it
-  // — an admin who wants their own surfaces is one click away in their tree.
-  const audience: UserRole = tree === "admin" ? "ADMIN" : "STAFF";
-
+): NavGroup[] {
   return groupSpecs(options)
     .map((g) => ({
       label: g.label,
@@ -250,13 +290,10 @@ export function buildBackofficeNav(
         .filter(
           (it) =>
             it.show !== false &&
-            (!it.only || it.only === tree) &&
-            hasBackofficePermission(audience, it.surface),
+            (!it.only || it.only === cap.tree) &&
+            can(cap, it.surface),
         )
         .map(({ surface: _s, show: _show, only: _only, ...rest }) => rest),
     }))
     .filter((g) => g.items.length > 0);
 }
-
-/** Icon re-export so shells don't each import lucide for the chip. */
-export type { LucideIcon };

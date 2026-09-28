@@ -13,18 +13,14 @@
 
 import { FileText, Loader2, Pencil, Trash2 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 
-import {
-  STATUS_BADGE_CLASSNAME,
-  fmtDate,
-  fmtMoney,
-} from "../utils/formatting";
+import { PO_STATUS, fmtDate, fmtMoney } from "../utils/formatting";
 import type { PoStatus, PurchaseOrderRow } from "../utils/types";
 
 interface PurchaseOrdersTableProps {
@@ -76,8 +72,7 @@ export function PurchaseOrdersTable({
       </p>
       {canMutate && !searchTerm.trim() && statusFilter === "ALL" && (
         <p className="text-xs mt-2">
-          Click <strong>New PO</strong> to register one issued by your
-          AP team.
+          Click <strong>New PO</strong> to register one issued by your AP team.
         </p>
       )}
     </div>
@@ -107,14 +102,7 @@ export function PurchaseOrdersTable({
     {
       key: "status",
       header: "Status",
-      cell: (po) => (
-        <Badge
-          variant="outline"
-          className={STATUS_BADGE_CLASSNAME[po.status]}
-        >
-          {po.status}
-        </Badge>
-      ),
+      cell: (po) => <StatusBadge {...PO_STATUS[po.status]} />,
     },
     {
       key: "poDate",

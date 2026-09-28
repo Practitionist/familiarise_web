@@ -108,7 +108,7 @@ describe("Y2-0 payoutRequirements", () => {
     ]);
     for (const r of out.eventuallyDue) {
       expect(r.href).toMatch(
-        /^\/dashboard\/consultant\/cp-1\/settings\/payouts#/,
+        /^\/dashboard\/consultant\/cp-1\/settings\/get-paid#/,
       );
     }
   });

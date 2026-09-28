@@ -41,7 +41,9 @@ jest.mock("../../lib/prisma", () => ({
     },
     programAssignment: {
       count: jest.fn(),
-      // #779 — TERMINATED cascade (assignments → CLOSED).
+      // #779 / #1846 SM-C14 — TERMINATED cascade reads the live seats, then
+      // closes each through the assignment CAS.
+      findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     bookingUtilization: { findFirst: jest.fn() },
@@ -65,7 +67,6 @@ jest.mock("../../lib/auth-helpers", () => {
   };
   return {
     requireOrgAccess: jest.fn(),
-    requireOrgOwner: jest.fn(),
     orgRoleSatisfies: (caller: string, minimum: string) =>
       (RANK[caller] ?? 0) >= (RANK[minimum] ?? 0),
   };
@@ -170,13 +171,11 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     mockedPrisma.programAssignment.count.mockResolvedValueOnce(3);
 
     const res = (await contractPATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest(
         "http://localhost/api/organizations/org-1/contracts/c-1",
         { status: "TERMINATED" },
-      ) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as any,
+      ) as never,
+      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as never,
     )) as Response;
 
     expect(res.status).toBe(409);
@@ -199,13 +198,11 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     });
 
     const res = (await contractPATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest(
         "http://localhost/api/organizations/org-1/contracts/c-1",
         { status: "TERMINATED" },
-      ) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as any,
+      ) as never,
+      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as never,
     )) as Response;
 
     expect(res.status).toBe(200);
@@ -233,13 +230,11 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     });
 
     const res = (await contractPATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest(
         "http://localhost/api/organizations/org-1/contracts/c-1",
         { status: "ACTIVE" },
-      ) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as any,
+      ) as never,
+      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as never,
     )) as Response;
 
     expect(res.status).toBe(200);
@@ -260,12 +255,10 @@ describe("DELETE /api/organizations/[orgId]/programs/[programId] — utilization
     });
 
     const res = (await programDELETE(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Request("http://localhost/api/organizations/org-1/programs/p-1", {
         method: "DELETE",
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as any,
+      }) as never,
+      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as never,
     )) as Response;
 
     expect(res.status).toBe(409);
@@ -283,12 +276,10 @@ describe("DELETE /api/organizations/[orgId]/programs/[programId] — utilization
     });
 
     const res = (await programDELETE(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Request("http://localhost/api/organizations/org-1/programs/p-1", {
         method: "DELETE",
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as any,
+      }) as never,
+      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as never,
     )) as Response;
 
     expect(res.status).toBe(409);
@@ -307,12 +298,10 @@ describe("DELETE /api/organizations/[orgId]/programs/[programId] — utilization
     mockedPrisma.program.delete.mockResolvedValueOnce({ id: "p-1" });
 
     const res = (await programDELETE(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Request("http://localhost/api/organizations/org-1/programs/p-1", {
         method: "DELETE",
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as any,
+      }) as never,
+      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as never,
     )) as Response;
 
     expect(res.status).toBe(204);

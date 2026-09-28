@@ -1,12 +1,11 @@
 "use client";
 
-import { use, useState } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, Play, GraduationCap } from "lucide-react";
+import { use } from "react";
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
+import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { RecordingsList } from "./components/RecordingsList";
 
 interface RecordingsPageProps {
@@ -15,11 +14,11 @@ interface RecordingsPageProps {
   }>;
 }
 
-export default function RecordingsPage({ params }: RecordingsPageProps) {
+/** #1527 §13b — All · Webinars · Classes as URL tabs (`?tab=`), so a link keeps its tab. */
+export default function RecordingsPage({
+  params,
+}: Readonly<RecordingsPageProps>) {
   const { consultantId } = use(params);
-  const [activeTab, setActiveTab] = useState<"all" | "webinar" | "class">(
-    "all",
-  );
 
   return (
     <>
@@ -28,39 +27,29 @@ export default function RecordingsPage({ params }: RecordingsPageProps) {
         subtitle="Manage your webinar and class recordings"
       />
       <DashboardContent>
-
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => setActiveTab(v as "all" | "webinar" | "class")}
-        className="space-y-6"
-      >
-        <TabsList className="grid w-full max-w-full grid-cols-3 sm:max-w-[400px]">
-          <TabsTrigger value="all" className="flex items-center gap-2">
-            <Video className="w-4 h-4" />
-            <span>All</span>
-          </TabsTrigger>
-          <TabsTrigger value="webinar" className="flex items-center gap-2">
-            <Play className="w-4 h-4" />
-            <span>Webinars</span>
-          </TabsTrigger>
-          <TabsTrigger value="class" className="flex items-center gap-2">
-            <GraduationCap className="w-4 h-4" />
-            <span>Classes</span>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="all" className="mt-6">
-          <RecordingsList consultantId={consultantId} />
-        </TabsContent>
-
-        <TabsContent value="webinar" className="mt-6">
-          <RecordingsList consultantId={consultantId} type="webinar" />
-        </TabsContent>
-
-        <TabsContent value="class" className="mt-6">
-          <RecordingsList consultantId={consultantId} type="class" />
-        </TabsContent>
-        </Tabs>
+        <UrlTabs
+          tabs={[
+            {
+              value: "all",
+              label: "All",
+              content: <RecordingsList consultantId={consultantId} />,
+            },
+            {
+              value: "webinar",
+              label: "Webinars",
+              content: (
+                <RecordingsList consultantId={consultantId} type="webinar" />
+              ),
+            },
+            {
+              value: "class",
+              label: "Classes",
+              content: (
+                <RecordingsList consultantId={consultantId} type="class" />
+              ),
+            },
+          ]}
+        />
       </DashboardContent>
     </>
   );

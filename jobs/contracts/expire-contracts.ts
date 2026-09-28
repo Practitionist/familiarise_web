@@ -10,8 +10,9 @@
  * contract status — the only effect is:
  *   1. New `OrganizationInvoice` rolls only generate while the contract
  *      is `ACTIVE` (per `jobs/billing/generate-subscription-invoices.ts`).
- *   2. Active `ProgramAssignment` rows are soft-closed (periodEnd = now)
- *      so members stop drawing from program caps, but in-flight bookings
+ *   2. Live `ProgramAssignment` rows (ACTIVE or PAUSED) are closed, an
+ *      in-period one ending now, and their billed seats are released, so
+ *      members stop drawing from program caps; in-flight bookings
  *      complete normally.
  *   3. The org dashboard renders an "Expired" banner so operators
  *      renew the contract.
@@ -28,7 +29,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
+import { closeContractSeats } from "@/lib/api/organizations/seat-count";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
@@ -80,50 +81,18 @@ export async function runExpireContracts(): Promise<ExpireStats> {
           });
           if (claim.count === 0)
             return { expired: false, assignmentsClosed: 0 };
-          let assignmentsClosed = 0;
-
-          // Soft-close active ProgramAssignments scoped to the contract.
-          // `Program.contractId → Contract`, then ProgramAssignment.programId
-          // resolves up to the contract. We close the period at `now` rather
-          // than deleting so engagementsUsed history + UsageLedgerEntry rows
-          // stay queryable for reconciliation.
-          const programs = await tx.program.findMany({
-            where: { contractId: c.id },
-            select: { id: true },
+          // #1846 SM-C14 — the same seat close the manual TERMINATED/EXPIRED
+          // PATCH runs: programs → EXPIRED, ACTIVE and PAUSED seats → CLOSED
+          // through the assignment CAS, in-period seats end now, billed seats
+          // released, one audit row per seat. History (engagementsUsed,
+          // UsageLedgerEntry) stays queryable because nothing is deleted.
+          const assignmentsClosed = await closeContractSeats(tx, {
+            contractId: c.id,
+            organizationId: c.organizationId,
+            actorMembershipId: null,
+            contractStatus: "EXPIRED",
+            now,
           });
-          if (programs.length > 0) {
-            const programIds = programs.map((p) => p.id);
-            // #779 §A — a contract expiry takes its ACTIVE programs (→ EXPIRED)
-            // and their still-ACTIVE assignments (→ CLOSED) with it, so the
-            // lifecycle is explicit rather than inferred from periodEnd alone.
-            await tx.program.updateMany({
-              where: { contractId: c.id, status: "ACTIVE" },
-              data: { status: "EXPIRED" },
-            });
-            // #1132 review — `status: "ACTIVE"` was missing (pre-existing), so
-            // an already-CLOSED assignment whose periodEnd is still in the
-            // future had its end date rewritten and was counted again in
-            // `assignmentsClosed`. The comment above always said "still-ACTIVE
-            // assignments"; the query did not say it.
-            // #1744 W5 — closed per program so each programme's seats are
-            // released in the same transaction that closed its assignments.
-            for (const programId of programIds) {
-              const closed = await tx.programAssignment.updateMany({
-                where: {
-                  programId,
-                  status: "ACTIVE",
-                  periodEnd: { gte: now },
-                },
-                data: { periodEnd: now, status: "CLOSED" },
-              });
-              assignmentsClosed += closed.count;
-              await releaseSeatsForClosedAssignments(
-                tx,
-                programId,
-                closed.count,
-              );
-            }
-          }
 
           await tx.orgAuditLog.create({
             data: {

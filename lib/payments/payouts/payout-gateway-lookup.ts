@@ -8,7 +8,10 @@
  */
 
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
-import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
+import {
+  getRazorpayPayoutsService,
+  resolveRazorpayXCredentials,
+} from "@/lib/payments/payouts/razorpay-payouts";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 
 // #1757 — `unknown_id` (the gateway has no record of the id; terminal per row)
@@ -162,6 +165,51 @@ export async function getRazorpayPayoutStatus(
     };
   } catch (error) {
     console.error(`Failed to get RazorpayX payout status: ${error}`);
+    return {
+      kind: "gateway_error",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** What RazorpayX holds under one of our payout ids used as `reference_id`. */
+export type ReferenceLookup =
+  | { kind: "found"; providerPayoutId: string }
+  | { kind: "none" }
+  | { kind: "ambiguous"; detail: string }
+  | { kind: "gateway_error"; detail: string };
+
+/**
+ * #1846 N1 — find the RazorpayX payout created for one of our payout rows by
+ * its `reference_id`. A submit whose reply was lost leaves the row with no
+ * provider id, and this is how reconcile learns whether the transfer exists
+ * before it resubmits or fails the row. `none` is the only answer that makes
+ * a resubmission safe; more than one match is left to an operator.
+ */
+export async function findRazorpayPayoutByReference(
+  referenceId: string,
+): Promise<ReferenceLookup> {
+  try {
+    const page = await getRazorpayPayoutsService().listPayouts({
+      referenceId,
+      count: 10,
+    });
+    // The client does not re-case the body, so items keep RazorpayX's
+    // snake_case fields.
+    const items = (page.items ?? []) as unknown as Array<{
+      id: string;
+      reference_id?: string | null;
+    }>;
+    const matches = items.filter((item) => item.reference_id === referenceId);
+    if (matches.length === 0) return { kind: "none" };
+    if (matches.length > 1) {
+      return {
+        kind: "ambiguous",
+        detail: `${matches.length} RazorpayX payouts carry reference ${referenceId}: ${matches.map((m) => m.id).join(", ")}`,
+      };
+    }
+    return { kind: "found", providerPayoutId: matches[0].id };
+  } catch (error) {
     return {
       kind: "gateway_error",
       detail: error instanceof Error ? error.message : String(error),

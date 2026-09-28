@@ -8,12 +8,17 @@
  */
 
 import { cleanupRoute } from "@/lib/cron/cleanup-route";
-import { processApprovedPayouts } from "@/lib/payments/payouts";
+import {
+  processApprovedPayouts,
+  REQUEST_PAYOUT_RUN_BOUNDS,
+} from "@/lib/payments/payouts";
 
 export const { GET, POST } = cleanupRoute({
   job: "process-payouts",
   run: async () => {
-    const results = await processApprovedPayouts();
+    // #1846 N6 — bounded like every request-path run; the GitHub Actions job
+    // (jobs/payouts/process-payouts.ts) is the unbounded scheduled run.
+    const results = await processApprovedPayouts(REQUEST_PAYOUT_RUN_BOUNDS);
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     return {

@@ -114,6 +114,14 @@ export interface TriggerOptions {
    * sends immediately. Defaults true (routine product notices defer).
    */
   deferrable?: boolean;
+  /**
+   * #1861 P2r — stage the outbox row and return without attempting delivery,
+   * same as passing `tx`, but for a caller with no open transaction to ride:
+   * the business write already committed, so this call only needs to exist
+   * (and be awaited) before the response returns. The caller runs
+   * `attemptTrigger(result.staged)` itself, typically inside `after()`.
+   */
+  deferAttempt?: boolean;
 }
 
 /**
@@ -218,7 +226,10 @@ async function stageAndAttempt(
     // also drop the bell.
     return sendUnstaged(args);
   }
-  if (opts?.tx) return { success: true, staged };
+  // #1861 P2r — deferAttempt is the no-tx sibling of tx: the row is staged
+  // (so it exists even if the process dies before the caller's after()
+  // runs), and the caller attempts delivery itself, typically in after().
+  if (opts?.tx || opts?.deferAttempt) return { success: true, staged };
   // attemptTrigger holds future-notBefore rows for the drain (single
   // enforcement point — covers inline and post-commit attempts alike).
   return attemptTrigger(staged);
@@ -458,6 +469,7 @@ const RESCHEDULE_AWAITING_TIME: Record<
   RELEASED: "a new time your consultant will confirm",
   DECLINED: "the time it was already booked for",
   WITHDRAWN: "the time it was already booked for",
+  EXPIRED: "the time it was already booked for",
 };
 
 function rescheduledWire(
@@ -1077,23 +1089,33 @@ export async function notifyDisputeResolved(
 export async function notifyRecordingAvailable(
   userIds: string[],
   payload: Omit<RecordingPayload, "appointmentTypeCode">,
+  opts?: TriggerOptions,
 ) {
   const wire: RecordingPayload = {
     ...payload,
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
   };
-  return triggerForMultiple(NOVU_WORKFLOWS.RECORDING_AVAILABLE, userIds, wire);
+  return triggerForMultiple(
+    NOVU_WORKFLOWS.RECORDING_AVAILABLE,
+    userIds,
+    wire,
+    undefined,
+    opts,
+  );
 }
 
 export async function notifyRecordingFailed(
   subscriberId: string,
   payload: RecordingFailedPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
     subscriberId,
     payload,
+    undefined,
+    opts,
   );
 }
 
@@ -1125,11 +1147,14 @@ export async function notifyRecordingExpiring(
 export async function notifyDocumentUploaded(
   subscriberId: string,
   payload: DocumentUploadedPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.DOCUMENT_UPLOADED,
     subscriberId,
     payload,
+    undefined,
+    opts,
   );
 }
 
@@ -1137,11 +1162,14 @@ export async function notifyDocumentUploaded(
 export async function notifyDocumentReviewed(
   subscriberId: string,
   payload: DocumentReviewedPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.DOCUMENT_REVIEWED,
     subscriberId,
     payload,
+    undefined,
+    opts,
   );
 }
 
