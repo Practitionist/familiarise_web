@@ -120,7 +120,10 @@ jest.mock("../../components/dashboard/SettingsLayout", () => ({
 
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import * as Sentry from "@sentry/nextjs";
 import { SessionsSection } from "../../components/dashboard/account/SignInSecuritySection";
+
+const captureException = Sentry.captureException as jest.Mock;
 
 // The stable toast fn from the mock (no hook call — rules-of-hooks).
 const { toast } = (
@@ -206,6 +209,62 @@ describe("SessionsSection load states (#1856)", () => {
     expect(text()).toContain("Sign in again");
     expect(text()).not.toContain("Retry");
     expect(text()).not.toContain("Device s1");
+  });
+
+  it("a 500 reports once to Sentry; Retry clicks do not re-report", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    });
+
+    await mount();
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: { subsystem: "auth", op: "sessions-list" },
+        extra: expect.objectContaining({ status: 500 }),
+      }),
+    );
+
+    const retry = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Retry",
+    );
+    await act(async () => {
+      retry?.click();
+    });
+    await flush();
+
+    // One event per mount: a broken backend must not turn every Retry
+    // click into a Sentry event.
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 never reports — a dead session is an expected flow", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({}),
+    });
+
+    await mount();
+
+    expect(text()).toContain("Sign in again");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("a 429 never reports — the limiter working is not a defect", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+    });
+
+    await mount();
+
+    expect(text()).toContain("We couldn't load your sessions.");
+    expect(captureException).not.toHaveBeenCalled();
   });
 
   it("a 500 offers Retry, and Retry loads the list", async () => {
@@ -317,6 +376,35 @@ describe("SessionsSection load states (#1856)", () => {
 
     const alert = container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Too many requests");
+  });
+
+  it("a failed revoke reports to Sentry unless it is 401/429", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(
+        okList([session("s-old", false), session("s-cur", true)]),
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      });
+
+    await mount();
+
+    const others = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Sign out other devices",
+    );
+    await act(async () => {
+      others?.click();
+    });
+    await flush();
+
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: { subsystem: "auth", op: "sessions-revoke-others" },
+      }),
+    );
   });
 
   it("a failed sign-out-others toasts and keeps the stale list", async () => {

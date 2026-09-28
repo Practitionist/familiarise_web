@@ -20,6 +20,7 @@ import {
   invalidProps,
 } from "@/components/dashboard/SettingsLayout";
 import { useToast } from "@/hooks/use-toast";
+import * as Sentry from "@sentry/nextjs";
 import { authClient, useSession } from "@/lib/auth-client";
 import { postAuthSync } from "@/lib/auth-broadcast";
 import { AUTH_PROVIDERS, type AuthProviderId } from "@/lib/auth-providers";
@@ -206,10 +207,33 @@ export function SessionsSection() {
   // `sessions` here would re-create `load` on every setSessions and
   // re-trigger the mount effect into a refetch loop.
   const hasLoadedRef = useRef(false);
+  // One error event per mount: a broken backend 500ing for every visitor
+  // must not turn every Retry click into a Sentry event (quota), and
+  // 401 (dead session — an expected flow) and 429 (the limiter working
+  // as designed) are never defects. The Sentry user scope set at
+  // sign-in carries which user this was.
+  const loadErrorReportedRef = useRef(false);
+
+  const reportLoadFailure = useCallback(
+    (status: number | null, error: unknown) => {
+      if (status === 401 || status === 429) return;
+      if (loadErrorReportedRef.current) return;
+      loadErrorReportedRef.current = true;
+      Sentry.captureException(
+        error instanceof Error ? error : new Error("sessions-list failed"),
+        {
+          tags: { subsystem: "auth", op: "sessions-list" },
+          extra: { status },
+        },
+      );
+    },
+    [],
+  );
 
   const load = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
+    let status: number | null = null;
     try {
       const res = await fetch("/api/user/sessions");
       // 401 means THIS session is gone (revoked elsewhere, expired) —
@@ -220,11 +244,13 @@ export function SessionsSection() {
         setLoadError("signed-out");
         return;
       }
+      status = res.status;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { sessions: DeviceSession[] };
       setSessions(body.sessions);
       hasLoadedRef.current = true;
-    } catch {
+    } catch (error) {
+      reportLoadFailure(status, error);
       // Stale list beats no list: a refresh failure keeps the last known
       // rows (flagged by toast) instead of blanking the section — but a
       // first load with nothing to show gets the Retry block below.
@@ -239,11 +265,33 @@ export function SessionsSection() {
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [reportLoadFailure, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Observability for revoke failures: 401 is handled by signing out
+  // and 429 is the limiter working as designed — neither is a defect.
+  // 5xx/network are, each from one deliberate user click (no throttle
+  // needed), and the Sentry user scope set at sign-in says which user.
+  const reportRevokeFailure = useCallback(
+    (
+      op: "revoke-one" | "revoke-others",
+      status: number | null,
+      error: unknown,
+    ) => {
+      if (status === 401 || status === 429) return;
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(`sessions-${op} failed`),
+        {
+          tags: { subsystem: "auth", op: `sessions-${op}` },
+          extra: { status },
+        },
+      );
+    },
+    [],
+  );
 
   const revokeOne = useCallback(
     async (target: DeviceSession) => {
@@ -254,7 +302,8 @@ export function SessionsSection() {
         res = await fetch(`/api/user/sessions/${target.id}`, {
           method: "DELETE",
         });
-      } catch {
+      } catch (error) {
+        reportRevokeFailure("revoke-one", null, error);
         throw new Error("We couldn't end that session. Please try again.");
       }
       // Our own session died mid-dialog (revoked elsewhere, expired):
@@ -271,7 +320,8 @@ export function SessionsSection() {
       try {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         body = (await res.json()) as typeof body;
-      } catch {
+      } catch (error) {
+        reportRevokeFailure("revoke-one", res.status, error);
         throw new Error("We couldn't end that session. Please try again.");
       }
       if (body.currentSessionEnded) {
@@ -283,7 +333,7 @@ export function SessionsSection() {
       toast({ title: `Signed out ${target.label}` });
       await load();
     },
-    [load, toast],
+    [load, reportRevokeFailure, toast],
   );
 
   const revokeOthers = useCallback(
@@ -293,7 +343,8 @@ export function SessionsSection() {
         res = await fetch("/api/user/sessions/revoke-others", {
           method: "POST",
         });
-      } catch {
+      } catch (error) {
+        reportRevokeFailure("revoke-others", null, error);
         throw new Error(
           "We couldn't end your other sessions. Please try again.",
         );
@@ -311,7 +362,8 @@ export function SessionsSection() {
       try {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         revoked = ((await res.json()) as { revoked: number }).revoked;
-      } catch {
+      } catch (error) {
+        reportRevokeFailure("revoke-others", res.status, error);
         throw new Error(
           "We couldn't end your other sessions. Please try again.",
         );
@@ -332,7 +384,7 @@ export function SessionsSection() {
       });
       await load();
     },
-    [load, toast],
+    [load, reportRevokeFailure, toast],
   );
 
   return (

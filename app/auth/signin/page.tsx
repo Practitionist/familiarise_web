@@ -382,14 +382,17 @@ function SignInContent() {
         // callback must go through onboarding first, not straight to callbackUrl.
       }
     } catch (error) {
+      // Thrown fetch only (BetterAuth resolves API failures as `{ error }`
+      // handled above): the request never completed, so this is a
+      // connection problem, not an account problem — safe to say so.
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         { tags: { subsystem: "auth" } },
       );
       console.error("Sign in error:", error);
       settle({
-        title: "Sign In Error",
-        description: "An unexpected error occurred. Please try again.",
+        title: "Couldn't reach the sign-in service",
+        description: "Check your connection and try again.",
         variant: "destructive",
       });
     } finally {
