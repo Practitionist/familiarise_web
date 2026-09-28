@@ -12,15 +12,31 @@ with opposite timing needs:
 
 - **Short, structural fields** (name, phone, URL) — `onChange`. The user is
   typing, and immediate feedback is what they want.
-- **Long free text** (address lines, notes) — `onTouched`. Validating a
-  half-typed address on every keystroke is hostile, and the errors are not
-  actionable until they have finished the thought.
+- **Long free text** (address lines, notes) — `onBlur`. Validating a half-typed
+  address on every keystroke is hostile, and the errors are not actionable until
+  they have finished the thought.
 
-`PersonalInfoAndRoleForm` sets `mode: "onTouched"` for exactly this reason. If
-you add a long field to a form that is on `onChange`, either move the field or
-give it its own sub-form — do not make the whole form noisier.
+`PersonalInfoAndRoleForm` uses `mode: "onTouched"` for exactly this reason.
 
-Validate on **blur and on submit**, never on `onSubmit` alone. A user who never
+**Know what `onTouched` actually does, because it is not the same as
+`onBlur`.** In v7 the sequence is:
+
+1. While the field is untouched, validation waits for the **first blur**.
+2. Once the field is touched, it falls through to `reValidateMode`, which
+   **defaults to `onChange`** — so every subsequent keystroke validates again.
+
+So `onTouched` only buys you the run-up to the first blur. After that it behaves
+like `onChange` for that field. If you genuinely want "validate when the user
+leaves the field, and stay quiet while they go back and fix it", that is
+`mode: "onBlur"` — or give the long field its own sub-form so the modes can
+differ. Do not reach for `onTouched` expecting `onBlur` behaviour.
+
+`ConsultantProfileForm` is the counter-example to watch for: it is `onChange`
+and holds long free-text fields, so it revalidates an unfinished bio on every
+keystroke. If that ever gets reported as noise, the fix is a sub-form, not a
+softer message.
+
+Validate on **blur and on submit**, never on `submit` alone. A user who never
 blurs a field should still get errors when they try to advance.
 
 ---
