@@ -32,7 +32,7 @@ export function PayoutsPageClient({
   livePayoutsEnabled: boolean;
 }) {
   const { orgId } = use(params);
-  const { can, role } = useOrgRole(orgId);
+  const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "payouts.read",
     canHost: true,
@@ -74,9 +74,12 @@ export function PayoutsPageClient({
             {
               value: "payout-account",
               label: "Payout account",
-              // PUT is requireOrgOwner; everyone else reads.
+              // PUT is payouts.account.manage (OWNER); everyone else reads.
               content: (
-                <PayoutAccountPanel orgId={orgId} canEdit={role === "OWNER"} />
+                <PayoutAccountPanel
+                  orgId={orgId}
+                  canEdit={can("payouts.account.manage")}
+                />
               ),
             },
             {
@@ -97,7 +100,7 @@ export function PayoutsPageClient({
               content: (
                 <ExpertPayoutRoutingPanel
                   orgId={orgId}
-                  canManage={can("payouts.manage")}
+                  canManage={can("members.payoutRecipient.change")}
                 />
               ),
             },

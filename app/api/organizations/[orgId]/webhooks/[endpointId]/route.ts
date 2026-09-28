@@ -14,8 +14,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   OUTBOUND_WEBHOOK_EVENTS,
@@ -98,7 +97,9 @@ export async function PATCH(
   },
 ) {
   const { orgId, endpointId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);
@@ -197,7 +198,9 @@ export async function DELETE(
   // org that's actively integrating with a third-party would lose all
   // in-flight events on a single misclick. Restrict to OWNER so the
   // action requires deliberate elevation.
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "webhooks.delete",
+  });
   if (access.error) return access.error;
 
   try {

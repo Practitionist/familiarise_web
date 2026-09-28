@@ -8,7 +8,6 @@ import {
   fetchOrgDetails,
   orgDetailsQueryKey,
 } from "@/lib/api/organizations/org-details";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import {
   hasAnyOrgPermission,
   hasOrgPermission,
@@ -16,8 +15,9 @@ import {
 } from "@/lib/auth/org-permissions";
 
 /**
- * Hook that returns the current user's role in the org and an `isAtLeast`
- * helper for role-based UI guards. Cached via react-query for 60 seconds
+ * Hook that returns the current user's role in the org and a `can` helper
+ * that reads the org permission matrix, the same keys the API routes gate
+ * on (#1851). Cached via react-query for 60 seconds
  * so sidebar / header re-renders don't thrash the API. The capability
  * booleans are exposed as side-information for pages that want to branch
  * on them without a second fetch.
@@ -52,18 +52,11 @@ export function useOrgRole(orgId: string) {
   const canHost = data?.organization.canHost ?? false;
   const fundingSource = data?.organization.fundingSource ?? null;
 
-  const isAtLeast = useCallback(
-    (min: MemberRole) => !suspended && isAtLeastRole(role, min),
-    [role, suspended],
-  );
-
   /**
-   * #1132 — prefer this over `isAtLeast` for anything the server gates on the
-   * matrix. The rank ladder cannot express the operations/finance track split:
-   * BILLING_ADMIN sits at rank 70, below MAINTAINER, so `isAtLeast("OWNER")`
-   * on a money control hides it from the one role that exists to use it, even
-   * though the route authorises it. Reach for `isAtLeast` only for genuine
-   * hierarchy checks.
+   * #1132 / #1851 — the only role check. The rank ladder cannot express the
+   * operations/finance track split: BILLING_ADMIN sits at rank 70, below
+   * MAINTAINER, so a rank floor on a money control hides it from the one role
+   * that exists to use it, even though the route authorises it.
    */
   const can = useCallback(
     (surface: OrgSurface) => !suspended && hasOrgPermission(role, surface),
@@ -76,7 +69,6 @@ export function useOrgRole(orgId: string) {
     canSponsor,
     canHost,
     fundingSource,
-    isAtLeast,
     can,
     isLoading,
   };
@@ -88,9 +80,7 @@ export function useOrgRole(orgId: string) {
  * API refuses to serve, and vice-versa.
  */
 export interface OrgAccessGate {
-  /** Rank floor — for genuine hierarchy checks only. Prefer `permission`. */
-  minRole?: MemberRole;
-  /** Surface grant from the org permission matrix — expresses the
+  /** Key from the org permission matrix — expresses the
    *  operations/finance track split the rank ladder cannot. A list is
    *  any-of, matching `requireOrgAccess` (#1527). */
   permission?: OrgSurface | readonly OrgSurface[];
@@ -110,21 +100,13 @@ export function useRequireOrgAccess(
   orgId: string,
   gate: OrgAccessGate,
 ): { allowed: boolean; isLoading: boolean } {
-  const {
-    role,
-    suspended,
-    canSponsor,
-    canHost,
-    fundingSource,
-    isLoading,
-    isAtLeast,
-  } = useOrgRole(orgId);
+  const { role, suspended, canSponsor, canHost, fundingSource, isLoading } =
+    useOrgRole(orgId);
   const router = useRouter();
 
   // Every gated page is closed to a SUSPENDED member (#1527 decision 6).
   const passes =
     !suspended &&
-    (!gate.minRole || isAtLeast(gate.minRole)) &&
     (!gate.permission || hasAnyOrgPermission(role, gate.permission)) &&
     (gate.canSponsor !== true || canSponsor) &&
     (gate.canHost !== true || canHost) &&
@@ -144,15 +126,3 @@ export function useRequireOrgAccess(
 
   return { allowed, isLoading };
 }
-
-/**
- * Thin wrapper around {@link useRequireOrgAccess} for the common
- * "role-only" page guard. Existing callers keep compiling; new pages
- * should prefer `useRequireOrgAccess` so capability gates stay
- * first-class instead of an afterthought.
- */
-export function useRequireOrgRole(orgId: string, minRole: MemberRole) {
-  return useRequireOrgAccess(orgId, { minRole });
-}
-
-

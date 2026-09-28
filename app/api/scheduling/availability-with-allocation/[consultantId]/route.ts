@@ -24,6 +24,7 @@ import {
   type AppointmentForOverlapMeta,
 } from "@/lib/booking/overlap-meta";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { rolesWithOrgPermission } from "@/lib/auth/org-permissions";
 import { apiError } from "@/lib/errors/api-error";
 import { Refusal } from "@/lib/errors/refusal";
 import {
@@ -61,15 +62,13 @@ const MAX_AVAILABILITY_WINDOW_DAYS = 32;
 const MAX_AVAILABILITY_WINDOW_MS =
   MAX_AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
-// An org OWNER/MAINTAINER acting for a member consultant (RequestSchedulingTab
+// An org operator acting for a member consultant (RequestSchedulingTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
 // is authorized the same as the owning consultant. isPrivileged only covers
 // PLATFORM staff, so without this an org admin 403s and loses the whole
-// calendar rather than just the tooltip detail. EXPERT/other org roles are
-// deliberately excluded — same Membership shape requireOrgAccess/catalog
-// route use elsewhere (consultantProfileId + role: "EXPERT" identifies the
-// org the consultant belongs to; isAtLeastRole's MAINTAINER floor is the
-// "admin" rank used throughout app/api/organizations/**).
+// calendar rather than just the tooltip detail. The roles come from the org
+// matrix (#1851); consultantProfileId + role: "EXPERT" identifies the org the
+// consultant belongs to.
 async function isOrgAdminOfConsultant(
   userId: string,
   consultantId: string,
@@ -78,7 +77,9 @@ async function isOrgAdminOfConsultant(
     where: {
       userId,
       status: "ACTIVE",
-      role: { in: ["OWNER", "MAINTAINER"] },
+      role: {
+        in: rolesWithOrgPermission("appointments.allocate.calendarRead"),
+      },
       organization: {
         memberships: {
           some: {

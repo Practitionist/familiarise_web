@@ -18,9 +18,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: invoice PATCH covers status transitions (DRAFT → ISSUED, ISSUED → VOID)
-// which are finance-team mutations; allow BILLING_ADMIN alongside OWNER.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 
@@ -46,7 +43,7 @@ export async function GET(
 ) {
   const { orgId, invoiceId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
+    permission: "billing.read",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -100,7 +97,8 @@ export async function PATCH(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, {
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;

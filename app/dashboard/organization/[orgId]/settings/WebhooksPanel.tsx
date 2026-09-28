@@ -260,8 +260,7 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
     permission: "integrations.manage",
   });
-  const { role } = useOrgRole(orgId);
-  const isOwner = role === "OWNER";
+  const { can } = useOrgRole(orgId);
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -326,7 +325,7 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
       <Button size="sm" variant="ghost" onClick={() => setDeliveriesFor(row)}>
         Deliveries
       </Button>
-      {isOwner && (
+      {can("webhooks.rotateSecret") && (
         <ConfirmDialog
           title="Rotate the signing secret?"
           description="A new secret is issued and shown once. The old one keeps verifying for 24 hours so your receiver can switch over."
@@ -339,7 +338,7 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
           }
         />
       )}
-      {isOwner && (
+      {can("webhooks.delete") && (
         <ConfirmDialog
           title="Delete this endpoint?"
           description={`${row.url} stops receiving events immediately. This can't be undone.`}

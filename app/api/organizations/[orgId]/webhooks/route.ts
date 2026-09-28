@@ -16,7 +16,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   OUTBOUND_WEBHOOK_EVENTS,
@@ -105,7 +104,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);

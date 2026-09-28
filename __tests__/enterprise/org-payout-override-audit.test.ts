@@ -15,12 +15,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requireOrgAccess: jest.fn(),
-  requireOrgOwner: jest.fn(),
-}));
-
-jest.mock("../../lib/auth/billing-admin-gate", () => ({
-  requireOrgBillingAdminOrOwner: jest.fn(async () => ({
+  requireOrgAccess: jest.fn(async () => ({
     member: { id: "mem_1", role: "OWNER" },
   })),
 }));

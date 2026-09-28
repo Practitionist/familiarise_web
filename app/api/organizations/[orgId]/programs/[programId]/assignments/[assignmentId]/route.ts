@@ -279,7 +279,7 @@ export async function PATCH(
   // (programs.assign), which includes ending a seat early with `cancel`.
   if (
     (body.periodStart !== undefined || body.periodEnd !== undefined) &&
-    !hasOrgPermission(access.member.role, "programs.manage")
+    !hasOrgPermission(access.member.role, "programs.seat.period")
   ) {
     return NextResponse.json(
       {

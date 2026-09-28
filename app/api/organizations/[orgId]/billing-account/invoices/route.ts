@@ -16,10 +16,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: invoice creation is the canonical finance-team mutation; downgrade
-// from OWNER-only so BILLING_ADMIN can issue invoices without escalation.
-// MAINTAINER is intentionally excluded — see `lib/auth/billing-admin-gate.ts`.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
@@ -112,7 +108,8 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, {
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.manage",
     canSponsor: true,
   });
   if (access.error) return access.error;

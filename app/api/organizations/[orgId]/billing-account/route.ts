@@ -19,12 +19,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: PATCH on the billing account (funding-source / credit-limit edits)
-// is a finance-team action, not an org-admin one. The shared
-// `requireOrgBillingAdminOrOwner` helper allows OWNER and BILLING_ADMIN
-// only — explicitly NOT MAINTAINER — so the gate matches the role
-// description in `lib/labels/org-labels.ts`.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { assertVerifiedDomainOrThrow } from "@/lib/enterprise/governance";
 
@@ -108,7 +102,10 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.manage",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -161,7 +158,7 @@ export async function PATCH(
           body.autoTopUpAmountPaise !== undefined
             ? body.autoTopUpAmountPaise
             : ba.autoTopUpAmountPaise;
-        if (nextEnabled && (nextMin == null || nextAmount == null)) {
+        if (nextEnabled && (nextMin === null || nextAmount === null)) {
           throw Object.assign(
             new Error(
               "Enabling auto-top-up requires both a minimum balance and a top-up amount.",

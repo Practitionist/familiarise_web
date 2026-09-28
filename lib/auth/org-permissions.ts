@@ -40,6 +40,8 @@ export type OrgSurface =
   | "members.role.grant.governance"
   // #1851 decision 5 — where an EXPERT's org share is paid is finance.
   | "members.payoutRecipient.change"
+  // #779 §C — removing a member past their open obligations.
+  | "members.remove.force"
   | "invitations.manage"
   // Floor for the Audit page/API = holds either category grant below; rows
   // are then filtered per grant (#1527 audit split).
@@ -165,6 +167,7 @@ export const ORG_PERMISSIONS: Record<OrgSurface, ReadonlySet<MemberRole>> = {
   "members.role.grant.operational": GOVERNANCE,
   "members.role.grant.governance": OWNER_ONLY,
   "members.payoutRecipient.change": FINANCE_MUTATORS,
+  "members.remove.force": OWNER_ONLY,
   "invitations.manage": GOVERNANCE,
   // #1527 — split by category so SUPPORT reads people/ops history without a
   // single money figure, and BILLING_ADMIN reads the money trail it owns.

@@ -298,7 +298,7 @@ export async function PATCH(
   }
   if (
     patch.payoutRecipient !== undefined &&
-    !hasOrgPermission(access.member.role, "payouts.manage")
+    !hasOrgPermission(access.member.role, "members.payoutRecipient.change")
   ) {
     return NextResponse.json(
       {
@@ -501,7 +501,9 @@ export async function DELETE(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "members.manage",
+  });
   if (access.error) return access.error;
 
   try {

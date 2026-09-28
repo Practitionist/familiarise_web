@@ -21,9 +21,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: payout PATCH covers state mutations (mark sent, cancel) which are
-// finance-team actions; allow BILLING_ADMIN alongside OWNER.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   PAYOUT_ALLOWED_FROM,
@@ -88,7 +85,9 @@ export async function PATCH(
   },
 ) {
   const { orgId, payoutId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.manage",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

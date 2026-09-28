@@ -22,7 +22,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
 
@@ -39,7 +39,9 @@ export async function POST(
   },
 ) {
   const { orgId, endpointId, deliveryId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);

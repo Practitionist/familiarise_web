@@ -29,9 +29,6 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: rate card creation/edit is a finance-team mutation; downgrade
-// from OWNER-only so BILLING_ADMIN can configure splits without escalation.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { bumpRateCard } from "@/lib/api/organizations/rate-card";
 
@@ -132,7 +129,10 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canHost: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.manage",
+    canHost: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
