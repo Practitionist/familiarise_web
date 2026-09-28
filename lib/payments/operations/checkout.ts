@@ -3961,8 +3961,12 @@ export async function handleCheckout(
                 paymentIntent: paymentResponse!.id,
                 // #828 — unique; a concurrent duplicate attempt dies on P2002
                 // and the route replays this payment's original response.
+                // Never persist null: a null key bypasses the unique guard
+                // (PG NULLs are distinct), so mint a fallback for direct
+                // callers that bypass the route's mint (M-P0-10 double-click).
                 clientIdempotencyKey:
-                  validatedData.clientIdempotencyKey ?? null,
+                  validatedData.clientIdempotencyKey ??
+                  globalThis.crypto.randomUUID(),
                 paymentGateway: validatedData.paymentGateway,
                 // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
                 paymentStatus: skipPayment
