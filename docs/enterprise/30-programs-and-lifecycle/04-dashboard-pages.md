@@ -135,6 +135,30 @@ offer a control that would 403. A non-operator who hand-edits the URL to
 The `mine` scope mounts a video-only `StreamProvider` around its subtree so
 Join works without connecting video on every org route.
 
+Since #1854 (#1852 decision 3) the `everyone` scope of a sponsoring
+organization also lists the webinar and class seats its own members hold, on
+its money, in sessions hosted by someone else. Each such row shows the member,
+the session title, the date and whether they attended, and nothing about the
+other attendees or the host beyond the session title.
+
+### Follow-up surfaces from #1854 and #1860
+
+Three later pages and tabs belong to the same overhaul, and each reads a
+matrix key. Org › Payouts carries an "Experts' payout routing" section, where
+a holder of `payouts.read` sees each EXPERT member's name and current payout
+recipient, and a holder of `payouts.manage` (OWNER or BILLING_ADMIN) changes
+it through a confirm dialog backed by
+`/api/organizations/[orgId]/expert-payout-routing`; this is where a
+BILLING_ADMIN, who cannot open the member list, decides where experts are
+paid. Org › Payouts › Runs labels a PENDING batch "Awaiting approval", offers
+an "Awaiting approval (n)" filter, and shows Approve to holders of
+`payouts.approve`, because an org batch is paid only after approval. An
+EXPERT's `/compensation` page shows only the split that applies to that
+expert, resolved as their membership override, else the org default, else the
+platform default, and the offering editor's Materials tab shows the expert a
+"Changed by <Org>" line for every file the organization changed on an
+org-owned plan.
+
 There is **no `/credits` route** — the wallet view is a tab inside `/billing`
 (see "Billing surface" below). The old `/plans` org-catalog page was removed in
 the legacy-stub cleanup; discovery now reads the per-type plans' visibility (see
