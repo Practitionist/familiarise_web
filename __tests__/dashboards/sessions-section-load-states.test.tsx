@@ -70,12 +70,41 @@ jest.mock("../../components/dashboard/Section", () => ({
   ),
 }));
 
-jest.mock("../../components/dashboard/ConfirmDialog", () => ({
-  __esModule: true,
-  ConfirmDialog: ({ trigger }: { trigger: React.ReactNode }) => (
-    <div>{trigger}</div>
-  ),
-}));
+jest.mock("../../components/dashboard/ConfirmDialog", () => {
+  return {
+    __esModule: true,
+    // Test double: renders the trigger plus a confirm button carrying
+    // the real confirmLabel, and surfaces a rejected onConfirm inline
+    // the way the real dialog does.
+    ConfirmDialog: ({
+      trigger,
+      onConfirm,
+      confirmLabel,
+    }: {
+      trigger?: React.ReactNode;
+      onConfirm: (ctx: unknown) => unknown;
+      confirmLabel?: string;
+    }) => {
+      const [error, setError] = useState<string | null>(null);
+      return (
+        <div>
+          {trigger}
+          <button
+            onClick={() => {
+              setError(null);
+              Promise.resolve()
+                .then(() => onConfirm({}))
+                .catch((e: Error) => setError(e.message));
+            }}
+          >
+            {confirmLabel ?? "confirm"}
+          </button>
+          {error && <p role="alert">{error}</p>}
+        </div>
+      );
+    },
+  };
+});
 
 jest.mock("../../components/dashboard/StatusBadge", () => ({
   __esModule: true,
@@ -89,7 +118,7 @@ jest.mock("../../components/dashboard/SettingsLayout", () => ({
   invalidProps: () => ({}),
 }));
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { SessionsSection } from "../../components/dashboard/account/SignInSecuritySection";
 
@@ -220,6 +249,74 @@ describe("SessionsSection load states (#1856)", () => {
       (b) => b.textContent === "Sign out",
     );
     expect(signOuts).toHaveLength(1);
+  });
+
+  it("per-row revoke on a dead session signs out instead of erroring", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(
+        okList([session("s-old", false), session("s-cur", true)]),
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({}),
+      });
+
+    await mount();
+
+    const rowSignOut = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Sign out",
+    );
+    expect(rowSignOut).toBeDefined();
+    await act(async () => {
+      rowSignOut?.click();
+    });
+    await flush();
+    const confirm = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Sign out device",
+    );
+    expect(confirm).toBeDefined();
+    await act(async () => {
+      confirm?.click();
+    });
+    await flush();
+
+    const { signOutEverywhere } = jest.requireMock(
+      "../../lib/auth/sign-out",
+    ) as unknown as { signOutEverywhere: jest.Mock };
+    expect(signOutEverywhere).toHaveBeenCalledWith("/auth/signin");
+  });
+
+  it("per-row revoke on 429 shows the rate-limit message inline", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(
+        okList([session("s-old", false), session("s-cur", true)]),
+      )
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({}),
+      });
+
+    await mount();
+
+    const rowSignOut = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Sign out",
+    );
+    await act(async () => {
+      rowSignOut?.click();
+    });
+    await flush();
+    const confirm = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Sign out device",
+    );
+    await act(async () => {
+      confirm?.click();
+    });
+    await flush();
+
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Too many requests");
   });
 
   it("a failed sign-out-others toasts and keeps the stale list", async () => {

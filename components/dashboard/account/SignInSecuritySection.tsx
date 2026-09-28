@@ -249,14 +249,27 @@ export function SessionsSection() {
     async (target: DeviceSession) => {
       // ConfirmDialog keeps the dialog open with the thrown message shown
       // inline — hence throw, never toast, on failure.
-      let body: { revoked: number; currentSessionEnded: boolean };
+      let res: Response;
       try {
-        const res = await fetch(`/api/user/sessions/${target.id}`, {
+        res = await fetch(`/api/user/sessions/${target.id}`, {
           method: "DELETE",
         });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+      } catch {
+        throw new Error("We couldn't end that session. Please try again.");
+      }
+      // Our own session died mid-dialog (revoked elsewhere, expired):
+      // failing the dialog would strand the user — sign out cleanly.
+      if (res.status === 401) {
+        toast({ title: "Your session ended. Signing you out." });
+        await signOutEverywhere("/auth/signin");
+        return;
+      }
+      if (res.status === 429) {
+        throw new Error("Too many requests. Wait a moment and try again.");
+      }
+      let body: { revoked: number; currentSessionEnded: boolean };
+      try {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         body = (await res.json()) as typeof body;
       } catch {
         throw new Error("We couldn't end that session. Please try again.");
@@ -275,11 +288,27 @@ export function SessionsSection() {
 
   const revokeOthers = useCallback(
     async ({ andSignOut }: { andSignOut: boolean }) => {
-      let revoked = 0;
+      let res: Response;
       try {
-        const res = await fetch("/api/user/sessions/revoke-others", {
+        res = await fetch("/api/user/sessions/revoke-others", {
           method: "POST",
         });
+      } catch {
+        throw new Error(
+          "We couldn't end your other sessions. Please try again.",
+        );
+      }
+      // Dead session: nothing else to end that matters — sign out here.
+      if (res.status === 401) {
+        toast({ title: "Your session ended. Signing you out." });
+        await signOutEverywhere("/auth/signin");
+        return;
+      }
+      if (res.status === 429) {
+        throw new Error("Too many requests. Wait a moment and try again.");
+      }
+      let revoked = 0;
+      try {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         revoked = ((await res.json()) as { revoked: number }).revoked;
       } catch {
