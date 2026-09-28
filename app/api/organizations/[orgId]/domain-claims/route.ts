@@ -25,7 +25,8 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
 
@@ -58,8 +59,9 @@ export async function GET(
     orderBy: { claimedAt: "desc" },
   });
 
-  // The DNS proof token belongs with the OWNER, who alone may verify (#1527).
-  const isOwner = access.member.role === "OWNER";
+  // The DNS proof token belongs with identity.manage (OWNER), who alone may
+  // verify (#1527).
+  const isOwner = hasOrgPermission(access.member.role, "identity.manage");
   return NextResponse.json({
     data: isOwner
       ? claims
@@ -72,7 +74,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

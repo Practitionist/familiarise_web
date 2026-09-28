@@ -53,7 +53,7 @@ jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn(),
 }));
 jest.mock("../../lib/payments/core/razorpay", () => ({
-  cancelRazorpayOrder: jest.fn().mockResolvedValue(undefined),
+  cancelRazorpayOrder: jest.fn().mockResolvedValue("no_live_payment"),
 }));
 // #1464 — the sweep reaches Stripe only through the fenced core client, so
 // mocking the core is what proves the fence: a call to `getStripeClient` is a
@@ -338,6 +338,7 @@ describe("cleanupAbandonedPayments gateway cancel concurrency (#1459)", () => {
       peak = Math.max(peak, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 1));
       inFlight--;
+      return "no_live_payment";
     });
 
     const payments = Array.from({ length: 12 }, (_, i) => ({
@@ -346,38 +347,44 @@ describe("cleanupAbandonedPayments gateway cancel concurrency (#1459)", () => {
       paymentGateway: "RAZORPAY" as const,
     }));
 
-    const failures = await cancelGatewayIntents(payments);
+    const checks = await cancelGatewayIntents(payments);
 
     expect(cancelRazorpayOrder).toHaveBeenCalledTimes(12);
     expect(peak).toBeLessThanOrEqual(5);
     // Twelve over a ceiling of five is three chunks, so the fan-out is real
     // rather than an accidental sequence of one.
     expect(peak).toBeGreaterThan(1);
-    expect(failures.size).toBe(0);
+    expect(
+      [...checks.values()].every((c) => c.outcome === "no_live_payment"),
+    ).toBe(true);
   });
 
   it("reports a failed cancel against its own payment and lets the rest through", async () => {
     (cancelRazorpayOrder as jest.Mock).mockImplementation(
       async (intent: string) => {
         if (intent === "order_1") throw new Error("gateway refused");
+        return "no_live_payment";
       },
     );
 
-    const failures = await cancelGatewayIntents([
+    const checks = await cancelGatewayIntents([
       { id: "pay_0", paymentIntent: "order_0", paymentGateway: "RAZORPAY" },
       { id: "pay_1", paymentIntent: "order_1", paymentGateway: "RAZORPAY" },
     ]);
 
-    expect([...failures.keys()]).toEqual(["pay_1"]);
-    expect(failures.get("pay_1")).toBe("gateway refused");
+    expect(checks.get("pay_0")).toEqual({ outcome: "no_live_payment" });
+    // #1861 L2 — a cancel that threw is an unread gateway, not a clear one.
+    expect(checks.get("pay_1")).toEqual({
+      outcome: "unknown",
+      detail: "gateway refused",
+    });
   });
 });
 
 /**
- * #1464 — a gateway cancel that failed used to skip the PENDING→EXPIRED CAS
- * while the credits were still restored and the slot still released, and the
- * run reported `success: true`. The payment was then invisible to every later
- * sweep, because nothing about it still looked abandoned.
+ * #1464 — a failed gateway cancel must fail the run. #1861 L2 — and it now
+ * skips the whole unit: the row stays PENDING (still in the cohort, retried
+ * next tick) rather than being expired over money the gateway may hold.
  */
 describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
   const originalStripeEnabled = process.env.STRIPE_ENABLED;
@@ -387,19 +394,23 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
     else process.env.STRIPE_ENABLED = originalStripeEnabled;
   });
 
-  it("still expires the payment and returns its credits, and fails the run", async () => {
-    (cancelRazorpayOrder as jest.Mock).mockRejectedValue(
+  it("skips the unit on a live or unreadable order; only the unreadable one fails the run", async () => {
+    (cancelRazorpayOrder as jest.Mock).mockResolvedValueOnce(
+      "has_live_payment",
+    );
+    const live = await cleanupAbandonedPayments();
+    expect(live.skippedCount).toBe(1);
+    expect(live.errorCount).toBe(0);
+
+    (cancelRazorpayOrder as jest.Mock).mockRejectedValueOnce(
       new Error("gateway refused"),
     );
-
     const result = await cleanupAbandonedPayments();
 
-    expect(tx.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: "pay_1", paymentStatus: "PENDING" },
-      data: { paymentStatus: "EXPIRED" },
-    });
-    expect(mockReverse).toHaveBeenCalledWith("pay_1", tx);
-    expect(result.cleanedCount).toBe(1);
+    // Neither run touched the database: no expiry, no credits, no release.
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(mockReverse).not.toHaveBeenCalled();
+    expect(result.skippedCount).toBe(1);
     // Counted, not just listed: `success` is what the HTTP twin turns into a
     // non-2xx, and the listing alone left the run looking healthy.
     expect(result.errorCount).toBe(1);
@@ -448,11 +459,8 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
 
     const result = await cleanupAbandonedPayments();
 
-    // #1464 still holds: the row expires regardless of the cancel's outcome.
-    expect(tx.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: "pay_1", paymentStatus: "PENDING" },
-      data: { paymentStatus: "EXPIRED" },
-    });
+    // #1861 L2 — a live intent keeps its row PENDING; the run still fails.
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
     expect(result.errorCount).toBe(1);
     expect(result.success).toBe(false);
   });
