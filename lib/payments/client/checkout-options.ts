@@ -81,7 +81,15 @@ const HIDE_EMI_CONFIG: RazorpayDisplayConfig = {
   },
 };
 
-/** Checkout's `timeout` for a hold ending at `holdExpiresAt`; undefined when unknown. */
+/** Below this many seconds of hold left, nobody can finish paying in time. */
+const MIN_PAYABLE_HOLD_SECONDS = 120;
+
+/**
+ * Checkout's `timeout` for a hold ending at `holdExpiresAt`: a minute short of
+ * the hold, so the sheet closes before the slot is offered to someone else.
+ * `undefined` when the expiry is unknown; `0` when too little of the hold is
+ * left to pay in, which callers treat as "do not open Checkout".
+ */
 export function holdTimeoutSeconds(
   holdExpiresAt: string | Date | null | undefined,
 ): number | undefined {
@@ -89,7 +97,8 @@ export function holdTimeoutSeconds(
   const endsAt = new Date(holdExpiresAt).getTime();
   if (Number.isNaN(endsAt)) return undefined;
   const secondsLeft = Math.floor((endsAt - Date.now()) / 1000);
-  return Math.max(60, secondsLeft - 60);
+  if (secondsLeft <= MIN_PAYABLE_HOLD_SECONDS) return 0;
+  return secondsLeft - 60;
 }
 
 export function buildCheckoutOptions(
@@ -114,6 +123,6 @@ export function buildCheckoutOptions(
         }
       : {}),
     ...(input.hideEmi ? { config: HIDE_EMI_CONFIG } : {}),
-    ...(timeout === undefined ? {} : { timeout }),
+    ...(timeout ? { timeout } : {}),
   };
 }

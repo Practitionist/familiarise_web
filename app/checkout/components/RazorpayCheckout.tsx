@@ -6,7 +6,10 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
-import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import {
+  buildCheckoutOptions,
+  holdTimeoutSeconds,
+} from "@/lib/payments/client/checkout-options";
 import { useCheckoutFlags } from "./CheckoutFlags";
 import {
   busyRetryToast,
@@ -235,6 +238,18 @@ export default function RazorpayCheckout({
         title: "Payment System Configuration Error",
         description:
           "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    // #1861 L1 — a hold with under two minutes left cannot be paid in time;
+    // opening Checkout would only take a payment the hold no longer covers.
+    if (holdTimeoutSeconds(order.holdExpiresAt) === 0) {
+      toast({
+        title: "Your reserved time has run out",
+        description:
+          "This time is no longer held for you. Please choose the time again to continue.",
         variant: "destructive",
       });
       return false;

@@ -291,14 +291,15 @@ export async function createApprovalPaymentIntent(
     // Create payment intent with gateway. Imported here, not at module load:
     // the barrel evaluates the Razorpay core and its #1219 test-key guard.
     const { createPaymentIntent } = await import("../index");
+    // #1861 L1 — one deadline for the gateway's capture window and the row.
+    const holdExpiresAt = new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS);
     const paymentResponse = await createPaymentIntent({
       amount,
       currency,
       metadata,
       paymentGateway: params.paymentGateway,
       isMockPayment: false,
-      // #1861 L1 — the pay-link window the row below is stamped with.
-      holdExpiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
+      holdExpiresAt,
     });
 
     if (remintIntoPaymentId && existingPayment) {
@@ -328,7 +329,7 @@ export async function createApprovalPaymentIntent(
           data: {
             paymentIntent: paymentResponse.id,
             paymentStatus: PaymentStatus.PENDING,
-            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
+            expiresAt: holdExpiresAt,
             amount,
             originalAmount,
             taxAmount,
@@ -418,7 +419,7 @@ export async function createApprovalPaymentIntent(
           paymentStatus: PaymentStatus.PENDING,
           organizationId: params.organizationId ?? null,
           userId: params.userId,
-          expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
+          expiresAt: holdExpiresAt,
           isMockPayment: false,
           // #1181 — the request-time appointment anchors capture to the NEW
           // flow (confirm the existing row, never create a twin). Null only
