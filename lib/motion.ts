@@ -28,14 +28,14 @@
  * `opacity: 0`.
  */
 
-import type { TargetAndTransition, Transition, Variants } from "framer-motion";
+import type { TargetAndTransition, Transition } from "framer-motion";
 
 /** One shared easing curve. The house motion is decelerating, not linear or
  *  springy — it reads as "settling into place" rather than "bouncing". */
-export const EASE = [0.32, 0.72, 0, 1] as const;
+const EASE = [0.32, 0.72, 0, 1] as const;
 
 /** Durations, in seconds. Kept short: this is a form, not a showcase. */
-export const DURATION = {
+const DURATION = {
   /** Micro-feedback — selection, checkbox, focus. */
   fast: 0.18,
   /** The step-to-step transition. Long enough to read as directional. */
@@ -44,31 +44,12 @@ export const DURATION = {
   enter: 0.45,
 } as const;
 
-export const SPRING_SOFT: Transition = {
+const SPRING_SOFT: Transition = {
   type: "spring",
   stiffness: 260,
   damping: 30,
   mass: 0.9,
 };
-
-/**
- * Entrance for a single block: rises 8px and fades in. Deliberately small —
- * the 20–30px offsets used on the marketing pages are right for a hero
- * scrolling into view, and wrong for a form the user is already looking at.
- */
-export const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 8 },
-  visible: { opacity: 1, y: 0 },
-};
-
-/** Parent that staggers its children's `fadeUp`. */
-export const staggerContainer = (
-  stagger = 0.05,
-  delayChildren = 0.02,
-): Variants => ({
-  hidden: {},
-  visible: { transition: { staggerChildren: stagger, delayChildren } },
-});
 
 /**
  * A wizard step entering. Paired with `stepExit` via <AnimatePresence

@@ -33,7 +33,10 @@ import { cn } from "@/utils/tailwind";
 import { Check } from "lucide-react";
 import { motion } from "framer-motion";
 
-export interface OnboardingStepperStep {
+/** One step in the flow. Not exported: the props type below is the only
+ *  public surface, and an exported shape here would be a second one to keep
+ *  in sync. */
+interface OnboardingStepperStep {
   /** Stable key from the wizard's step registry. */
   key: string;
   label: string;
