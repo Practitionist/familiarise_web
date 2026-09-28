@@ -88,16 +88,27 @@ revocation, #1716 client-side); user present → cookie-cache race,
 refetch to recover; confirmed null → `forgetAuthState()` +
 `signOutEverywhere("/auth/signin?reason=session-revoked")`, which the
 sign-in page renders as a notice. Four triggers: the provider's own
-60s visible-tab tick (authoritative, so an already-visible tab learns
-within ~60s; hidden tabs skip at zero cost and nothing re-renders on
-the happy path), the `session-revoked` BroadcastChannel ping from the
-revoking tab (same-browser; the channel never crosses devices), a
-throttled (30s) `visibilitychange` re-check (cross-device, one
-tab-switch), and the opt-in Redis counter poll
+visible-tab tick (authoritative, so an already-visible tab learns
+within ~5 min; hidden tabs skip at zero cost, nothing re-renders on
+the happy path, and the cadence is jittered per tab so open tabs do not
+stampede `/get-session` in the same second), the `session-revoked`
+BroadcastChannel ping from the revoking tab (same-browser; the channel
+never crosses devices), a throttled (30s) `visibilitychange` re-check
+(cross-device, one tab-switch), and the opt-in Redis counter poll
 (`sess:revsig:{userId}`, `NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`,
 default 0 = off). Deliberately not BetterAuth's built-in
 `refetchInterval`: it cannot skip hidden tabs, re-renders every
 consumer 1x/min, and still reads the cookie cache.
+
+The tick is five minutes rather than sixty seconds on purpose. It is
+the one trigger that pays full price: `disableCookieCache` plus
+`customSession` is ~4 uncached Prisma round trips, and because the call
+travels over HTTP to `/api/auth/get-session`, the `React.cache` memo in
+`lib/auth-server.ts` does not apply, so there is no deduplication on
+that path at all. An active user is already covered within one
+tab-switch by the focus check and instantly by the BroadcastChannel
+ping; the tick only exists for a tab left visible and untouched, where
+five minutes is a fine bound. Turn the poll on for anything faster.
 
 ### 2.6 Password change
 
@@ -110,6 +121,27 @@ Password _reset_ (email-link flow) is stricter: BetterAuth's
 `revokeSessionsOnPasswordReset` ends every session server-side — the
 resetting browser holds no session, so nothing is preserved — and
 `onPasswordReset` bumps the counter so other tabs learn promptly.
+
+> **The "other" in the option name is not real.** In 1.6.5 the option is
+> documented as revoking "all _other_ sessions"
+> (`@better-auth/core` `init-options.ts:707`), but
+> `api/routes/password.mjs:164` calls `internalAdapter.deleteSessions(userId)`
+> with a bare user id, and `db/internal-adapter.mjs:373-389` has no
+> exclusion of any session. **Every** row for that user is deleted,
+> unconditionally. That is the behaviour we want here, and it is also
+> what a signed-in user who runs a reset will experience — they will be
+> signed out of the device they reset from too. Do not read the option
+> name as a promise, and re-check this on the 1.7 upgrade (#1855): if
+> upstream ever makes the implementation match its JSDoc, sessions will
+> be preserved where they are deleted today, which is a behaviour change
+> this flag silently inherits.
+
+Ordering note, verified in `api/routes/password.mjs:160-164`:
+`onPasswordReset` runs **before** `deleteSessions`, so our counter bump
+leads the revocation rather than following it. Harmless as written (the
+poll path re-checks authoritatively, so a counter that moved early just
+costs one extra poll), but do not move force-logout logic into that
+callback — it would race the very sessions it means to kill.
 Unit tests cannot drive the reset flow (it needs a live token); the
 flag is pinned by types plus this paragraph — do not remove one
 without the other.

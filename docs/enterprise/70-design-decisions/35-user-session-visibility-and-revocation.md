@@ -77,13 +77,18 @@ session-payload-allowlist.test.ts` pins both the select keys and the
    retry. Generous on purpose (phone + laptop + tablet is normal);
    the cap is hygiene, not the security gate — `authLimiter` owns
    brute force. Raising it is a product decision.
-8. **Revocation propagates in four tiers.** A provider-owned 60s
-   visible-tab tick finds revocation with no focus needed (authoritative,
-   so ~60s worst case; hidden tabs skip free); same-browser
-   tabs via the instant `session-revoked` BroadcastChannel ping;
-   cross-device within one tab-switch via a throttled focus re-check;
-   cross-device within the poll interval via the opt-in Redis counter
-   (`sess:revsig:{userId}`, ships DISABLED). Every tier funnels into
+8. **Revocation propagates in four tiers.** A provider-owned visible-tab
+   tick finds revocation with no focus needed (authoritative, so ~5 min
+   worst case, jittered per tab so open tabs do not stampede the session
+   read; hidden tabs skip free); same-browser tabs via the instant
+   `session-revoked` BroadcastChannel ping; cross-device within one
+   tab-switch via a throttled focus re-check; cross-device within the
+   poll interval via the opt-in Redis counter (`sess:revsig:{userId}`,
+   ships DISABLED). The tick is the only trigger that pays full price —
+   `disableCookieCache` plus `customSession` is ~4 uncached Prisma
+   round trips, and the call goes over HTTP so `React.cache` does not
+   apply — which is why it is minutes, not seconds, and why the seconds
+   answer is the opt-in poll. Every tier funnels into
    one classifier, and the classifier never reads a failed lookup as
    a revocation (#1716, client-side): error → refetch and stay put.
 9. **`lastSeenAt` is honest.** Last server-validated activity, ±5 min

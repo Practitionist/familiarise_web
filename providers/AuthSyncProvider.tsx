@@ -31,22 +31,59 @@ import { signOutEverywhere } from "@/lib/auth/sign-out";
  *      `?reason=session-revoked` so the sign-in page can say why); a failed
  *      lookup refetches instead of signing out (#1716, client-side).
  *
- * Revocation triggers feeding the classifier: the provider's own 60s
+ * Revocation triggers feeding the classifier: the provider's own
  * visible-tab tick (cross-device, no focus needed, authoritative so
- * detection lands within ~60s), the `session-revoked` BroadcastChannel
- * ping from the tab that performed the revoke (same-browser, instant),
- * a throttled `visibilitychange` re-check (cross-device, within one
- * tab-switch), and the opt-in Redis poll below (cross-device, within
- * the poll interval).
+ * detection lands within ~5 min, jittered so tabs do not stampede the
+ * session read), the `session-revoked` BroadcastChannel ping from the
+ * tab that performed the revoke (same-browser, instant), a throttled
+ * `visibilitychange` re-check (cross-device, within one tab-switch),
+ * and the opt-in Redis poll below (cross-device, within the poll
+ * interval).
  *
  * Renders nothing. See `lib/auth-broadcast.ts` for why this is needed.
  */
 
-/** Minimum gap between authoritative re-checks (focus path and tick share it). */
+/**
+ * Minimum gap between authoritative re-checks (focus path and tick share it).
+ */
 const CHECK_THROTTLE_MS = 30_000;
 
-/** Steady cadence for the visible-tab revalidation tick. */
-const VISIBLE_CHECK_INTERVAL_MS = 60_000;
+/**
+ * Cadence for the visible-tab revalidation tick.
+ *
+ * Five minutes, not sixty seconds. This check is authoritative
+ * (`disableCookieCache`) and it is NOT cheap: it bypasses the cookie
+ * cache and re-runs `customSession`, which is ~4 uncached Prisma round
+ * trips (session, user, the nested `user.findUnique`, the nested
+ * `membership.findMany`). It also travels over HTTP to
+ * `/api/auth/get-session`, so the `React.cache` memo in
+ * `lib/auth-server.ts` does not apply to it — there is no
+ * deduplication at all on this path.
+ *
+ * At 60s that was thousands of extra full session resolutions per
+ * minute across the fleet, on a production pool running
+ * `PG_POOL_MAX=1`. The detection bound it bought over the alternatives
+ * was small: an active user is already covered within one tab-switch by
+ * the throttled focus check below, and a revoke from the same browser
+ * lands instantly via the BroadcastChannel ping. The tick exists for
+ * the one case neither covers — a tab left visible and untouched on
+ * another device — and five minutes is a fine bound for that.
+ *
+ * The poll is the seconds-level escape hatch, and it stays opt-in.
+ */
+const VISIBLE_CHECK_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * Extra spread on top of the interval, per tab, per cycle.
+ *
+ * Without it, every tab opened in the same minute fires on the same
+ * second and the fleet stampedes `/get-session` in lockstep — the
+ * thundering-herd shape a fixed interval always has. Jitter is drawn
+ * per cycle (not once at mount) so two tabs do not stay permanently
+ * in phase, and the first tick is staggered too so N tabs opened at
+ * once do not all wake together.
+ */
+const VISIBLE_CHECK_JITTER_MS = 60_000;
 
 /** Per-tab cursor for the opt-in Redis revocation poll. */
 const REVSIG_CURSOR_KEY = "familiarise.auth_revsig";
@@ -243,16 +280,38 @@ export default function AuthSyncProvider() {
   // revocation the same tick — bounded by the cadence below, with no
   // re-render on the happy path (only a confirmed null navigates).
   // Shares lastCheckRef with the focus path so the two never double-fire.
+  //
+  // Self-rescheduling setTimeout rather than setInterval, so the jitter
+  // is re-drawn each cycle: a fixed interval would keep every tab in
+  // phase and re-create the same-second stampede the jitter removes.
   useEffect(() => {
-    const id = window.setInterval(() => {
+    let timer: number | undefined;
+
+    const runVisibleCheck = () => {
       if (document.visibilityState !== "visible") return;
       if (previousAuthedRef.current !== true) return;
       const now = Date.now();
       if (now - lastCheckRef.current < VISIBLE_CHECK_INTERVAL_MS) return;
       lastCheckRef.current = now;
       void classifyUnexpectedSignOut();
-    }, VISIBLE_CHECK_INTERVAL_MS);
-    return () => window.clearInterval(id);
+    };
+
+    const schedule = (delayMs: number) => {
+      timer = window.setTimeout(() => {
+        runVisibleCheck();
+        schedule(
+          VISIBLE_CHECK_INTERVAL_MS + Math.random() * VISIBLE_CHECK_JITTER_MS,
+        );
+      }, delayMs);
+    };
+
+    // Stagger the first one so tabs opened together do not all wake at
+    // the same instant; subsequent cycles carry the base + fresh jitter.
+    schedule(Math.random() * VISIBLE_CHECK_JITTER_MS);
+
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [classifyUnexpectedSignOut]);
 
   // Cross-device, within the poll interval: compare the per-user

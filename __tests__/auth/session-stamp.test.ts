@@ -59,7 +59,17 @@ describe("stampSessionDeviceMetadata (#1856)", () => {
     expect(throttledCapture).toHaveBeenCalledWith(
       "session:stampDevice",
       expect.any(Error),
-      expect.objectContaining({ subsystem: "auth" }),
+      // `expected: true` and `level: "warning"` are load-bearing, not
+      // decoration: pre-push EVERY sign-in fails this update, and the
+      // production comment says an unthrottled capture at error level
+      // "would page per sign-in". `objectContaining({ subsystem })`
+      // alone would not notice either flag being dropped.
+      expect.objectContaining({
+        subsystem: "auth",
+        op: "stampSessionDeviceMetadata",
+        expected: true,
+        level: "warning",
+      }),
     );
   });
 });

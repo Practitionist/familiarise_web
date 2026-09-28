@@ -46,6 +46,7 @@ jest.mock("../../lib/observability/report", () => ({
 
 import { NextRequest } from "next/server";
 import { getMockRedis, resetMockRedis } from "../../lib/redis-mock";
+import { SESSION_PUBLIC_SELECT } from "../../lib/auth/session-select";
 import { GET as listUserSessions } from "../../app/api/admin/users/[userId]/sessions/route";
 import { POST as revokeUserSessions } from "../../app/api/admin/users/[userId]/sessions/revoke/route";
 
@@ -86,8 +87,15 @@ describe("GET /api/admin/users/[userId]/sessions (#1856)", () => {
         where: { userId: "u9", expiresAt: { gt: expect.any(Date) } },
       }),
     );
-    const select = sessionFindMany.mock.calls[0][0].select;
-    expect(select).not.toHaveProperty("token");
+    // Pin the select to the SHARED allowlist, not merely "token is
+    // absent". A negative check passes for any hand-rolled select that
+    // happens to omit `token` — including one that quietly drops
+    // `userAgent` and breaks the device-label derivation, or adds a
+    // future column nobody reviewed. Equality against the real constant
+    // is what binds the route to the tripwire.
+    expect(sessionFindMany.mock.calls[0][0].select).toEqual(
+      SESSION_PUBLIC_SELECT,
+    );
     await expect(res.json()).resolves.toEqual({ sessions: [] });
   });
 
@@ -161,7 +169,11 @@ describe("POST /api/admin/users/[userId]/sessions/revoke (#1856)", () => {
     expect(sessionDeleteMany).not.toHaveBeenCalled();
   });
 
-  it("a staff caller is refused by the ADMIN_ONLY door", async () => {
+  it("a surface refusal is passed through without touching any session", async () => {
+    // What the door does with a refusal. The ROLE behind the refusal is
+    // asserted separately below against the real permission table —
+    // stubbing `requireBackofficeSurface` to refuse and asserting the
+    // refusal propagates only tests the test's own mock.
     const err = Response.json(
       { error: "Forbidden — insufficient back-office permissions" },
       { status: 403 },

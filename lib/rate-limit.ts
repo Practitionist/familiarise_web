@@ -324,6 +324,57 @@ export const sessionMgmtUserLimiter = makeLimiter(
   "rl:session-mgmt-user",
 );
 
+/**
+ * 120 per 15 minutes per STAFF USER — `/api/admin/users/[userId]/sessions*`
+ * (#1856, review follow-up).
+ *
+ * The back-office session surface had no limiter at ANY layer before this:
+ * no `RATE_LIMIT_RULES` entry matches `/api/admin/*` (they stop at the
+ * `/api/auth/` and `/api/organizations/` prefixes), and neither handler
+ * called `applyRateLimit`. That left an unauthenticated-rate-limit-free
+ * read of up to 25 rows of `ipAddress` + device label + last-seen for ANY
+ * user id, to any `users.read` operator.
+ *
+ * Keyed per STAFF USER, not per IP and not per TARGET: the threat is one
+ * operator (or one hijacked operator session) walking the user directory
+ * to harvest device/IP history, so the budget belongs to the operator.
+ * An IP key would let a shared office pool cover for the abuse, and a
+ * per-target key would be trivially reset by varying the user id.
+ *
+ * Budget is generous because the legitimate shape is a support agent
+ * resolving ONE ticket, which is a handful of calls.
+ */
+export const adminSessionAccessLimiter = makeLimiter(
+  120,
+  "15 m",
+  "rl:admin-session-access",
+);
+
+/**
+ * 30 per 15 minutes per USER — `GET /api/user/sessions/revocation-signal`.
+ *
+ * #1856 exempted this endpoint from the EDGE `sessionMgmtLimiter` with a
+ * sound reason (a 30s poll is exactly 30 requests per 15-minute window,
+ * so two tabs behind one NAT would 429 the device list). That exemption
+ * is correct but it left the endpoint's ONLY rate limit living in a
+ * `startsWith` negation in `middleware.ts` — a single point of failure
+ * that is invisible from the handler and disappears the moment the
+ * predicate is edited.
+ *
+ * This per-user budget makes the guarantee structural instead of
+ * incidental, and it does not fight the poll: the counter is 30 per
+ * 15 minutes, so the documented 30s poll (30 per 15 min) still fits
+ * exactly once over. A 15s poll is 60 per 15 min and would now be
+ * refused, which is the intended pressure to use a sane interval.
+ *
+ * The route stays off the edge limiter; this is the backstop.
+ */
+export const revocationSignalUserLimiter = makeLimiter(
+  30,
+  "15 m",
+  "rl:revocation-signal-user",
+);
+
 /** 20 per hour per org — POST /api/organizations/[orgId]/billing-account/wallet/top-ups (orgId-keyed; blocks a single org from minting hundreds of Razorpay orders) */
 export const orgWalletTopUpLimiter = makeLimiter(
   20,

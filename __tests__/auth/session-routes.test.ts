@@ -43,27 +43,26 @@ jest.mock("../../lib/rate-limit", () => ({
   sessionMgmtUserLimiter: {},
 }));
 
+// `lib/auth/session-revoke` is deliberately NOT mocked here. It used to
+// be, with a hand-written re-implementation of the delete inside the
+// factory — so assertions like
+//   expect(sessionDeleteMany).toHaveBeenCalledWith({ where: { userId,
+//   id: { not: keep } } })
+// were asserting the TEST's own body. The route never calls
+// `prisma.session.deleteMany` at all; it calls the helper. The real
+// predicate was always pinned in `session-revoke.test.ts`, so this
+// removes an assertion that looked like coverage without providing it.
+// Only the Redis round trip stays stubbed, so the tests assert the
+// effect through the real helper.
 const mockSignalRevocation = jest.fn();
-jest.mock("../../lib/auth/session-revoke", () => ({
-  __esModule: true,
-  revokeSessionById: jest.fn(
-    async (_db: unknown, userId: string, sessionId: string) => {
-      const { count } = await sessionDeleteMany({
-        where: { id: sessionId, userId },
-      });
-      return { revoked: count };
-    },
-  ),
-  revokeUserSessionsExcept: jest.fn(
-    async (_db: unknown, userId: string, keep: string) => {
-      const { count } = await sessionDeleteMany({
-        where: { userId, id: { not: keep } },
-      });
-      return { revoked: count };
-    },
-  ),
-  signalRevocation: (...a: unknown[]) => mockSignalRevocation(...a),
-}));
+jest.mock("../../lib/auth/session-revoke", () => {
+  const actual = jest.requireActual("../../lib/auth/session-revoke");
+  return {
+    __esModule: true,
+    ...actual,
+    signalRevocation: (...a: unknown[]) => mockSignalRevocation(...a),
+  };
+});
 
 import { GET as listSessions } from "../../app/api/user/sessions/route";
 import { DELETE as revokeSession } from "../../app/api/user/sessions/[sessionId]/route";
