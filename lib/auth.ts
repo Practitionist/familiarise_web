@@ -3,7 +3,13 @@ import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import { admin, customSession, organization } from "better-auth/plugins";
+import {
+  admin,
+  captcha,
+  customSession,
+  organization,
+  twoFactor,
+} from "better-auth/plugins";
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
@@ -32,6 +38,10 @@ import {
 import { stampSessionDeviceMetadata } from "@/lib/auth/session-stamp";
 import { signalRevocation } from "@/lib/auth/session-revoke";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
+import {
+  signInAttemptAfterHook,
+  signInAttemptBeforeHook,
+} from "@/lib/auth/sign-in-attempt-hooks";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
 // AC). Shares defaultAc so statements line up.
@@ -77,17 +87,29 @@ export const auth = betterAuth({
   // can race past any per-process gate. A globally-coherent limit has
   // to live in shared state (Upstash Redis).
   //
-  // Coverage is provided by the Upstash-backed `authLimiter` in
-  // `middleware.ts:192-197` at 10 requests / 15min / IP across:
-  //   - POST /api/auth/sign-up/email
-  //   - POST /api/auth/sign-in/email
-  //   - POST /api/auth/forget-password
-  //   - POST /api/auth/reset-password
+  // Coverage is provided by the Upstash-backed policies in
+  // `lib/rate-limit/policies.ts`, enforced at the edge in `middleware.ts`.
+  //
+  // The previous coverage note above claimed `/api/auth/forget-password` was
+  // limited. It never was: BetterAuth's endpoint is
+  // `/api/auth/request-password-reset` (`dist/api/routes/password.mjs:20`), so
+  // the prefix never matched and the entire forgot-password flow was
+  // unthrottled. The policy table is now keyed on a `RATE_SCOPE` constant that
+  // generates both the matcher and the limiter, so a typo in an endpoint name
+  // can no longer silently disable a gate the way that one did.
+  //
+  // IP is only the first line. `lib/auth/attempts.ts` adds a per-account
+  // counter and lockout, keyed on the email address, because a per-IP limit is
+  // defeated by IP rotation and shared by everyone behind one office NAT.
+  //
+  // Bot traffic is a third line: the `captcha` plugin below gates the three
+  // endpoints an attacker scripts, and it is wired to *escalate* when the
+  // limiter's Redis is unreachable (see `lib/rate-limit/policies.ts`).
   //
   // The unauth `/api/auth/sso/domain-check` endpoint has its own
-  // 60/hr/IP gate at `middleware.ts:240-246` (prevents domain
-  // enumeration of registered orgs). Wallet top-ups have a per-org
-  // limiter keyed on `org:${orgId}`.
+  // 120/hr/IP gate (prevents domain enumeration of registered orgs),
+  // deliberately generous for shared-office NAT. Wallet top-ups have a
+  // per-org limiter keyed on `org:${orgId}`.
   //
   // Localhost (`::1` / `127.0.0.1` / `unknown_ip`) bypasses these
   // limits via `isBypassableIp` so booking-algorithm-tests + agent
@@ -99,6 +121,18 @@ export const auth = betterAuth({
   // See audit Phase B.8 + docs/enterprise/20-iam-and-security/04-rate-limiting.md.
   rateLimit: {
     enabled: false,
+  },
+
+  // Per-account lockout + the server-side disclosure verdict for sign-in.
+  // `before` refuses a locked account before the password is compared;
+  // `after` counts the failure, publishes the disclosure header once the
+  // threshold is crossed, and refuses the attempt that trips the lockout so a
+  // credential staller gets no free authenticated session.
+  // See lib/auth/sign-in-attempt-hooks.ts for the hook mechanics, verified
+  // against better-call's short-circuit and after-hook merge behaviour.
+  hooks: {
+    before: signInAttemptBeforeHook,
+    after: signInAttemptAfterHook,
   },
 
   emailAndPassword: {
@@ -196,6 +230,44 @@ export const auth = betterAuth({
     // (node_modules/better-auth/dist/oauth2/utils.mjs isLikelyEncrypted) and
     // vanish at the pre-MVP reset.
     encryptOAuthTokens: true,
+  },
+
+  // Previously unset, so every cookie and IP attribute was BetterAuth's
+  // implicit default. Each key below is now stated so it is reviewable and a
+  // default change upstream cannot move it silently.
+  advanced: {
+    // Netlify serves over https, so this is already what BetterAuth derives —
+    // but "already correct by coincidence" is not the same as asserted, and the
+    // session cookie carries the whole session. Stated, not relied upon.
+    useSecureCookies: true,
+    // `__Secure-` is the default prefix with useSecureCookies on. Stated
+    // because `lib/auth-session-lookup.ts` hardcodes both names when it has to
+    // clear a stale cookie, and a prefix change would silently desync the two.
+    cookiePrefix: "better-auth",
+    defaultCookieAttributes: {
+      // `lax` still sends the cookie on a top-level GET navigation, which is
+      // what the OAuth and SSO callbacks are. `strict` would drop the session
+      // on every one of them.
+      sameSite: "lax",
+      httpOnly: true,
+    },
+    ipAddress: {
+      // Order matters and is most-trusted-first. `x-nf-client-connection-ip`
+      // is Netlify's canonical client IP and cannot be forged by a client;
+      // `x-forwarded-for` is client-supplied and is only consulted when
+      // Netlify's header is absent (e.g. a direct container run in tests).
+      // This is the same order `lib/rate-limit.ts:getClientIp` uses — the two
+      // must agree, or a session's recorded IP and its rate-limit key differ.
+      ipAddressHeaders: [
+        "x-nf-client-connection-ip",
+        "x-vercel-forwarded-for",
+        "x-forwarded-for",
+      ],
+      // Aggregate IPv6 into /64s. Without this every IPv6 customer behind one
+      // ISP prefix shares a single rate-limit bucket, which is a self-inflicted
+      // denial of service on exactly the population least able to rotate IPs.
+      ipv6Subnet: 64,
+    },
   },
 
   session: {
@@ -515,6 +587,86 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // Bot gate. Cloudflare Turnstile, `interaction-only` — invisible for a human,
+    // which is the point: a puzzle on a sign-in form is a support ticket.
+    //
+    // Three endpoints are listed rather than the plugin's default trio,
+    // deliberately:
+    //   - `/request-password-reset` is in the default set, and it is the
+    //     endpoint the app was NOT limiting at all (see the rateLimit note
+    //     above) — an unmetered mail trigger is exactly what this closes.
+    //   - `/sign-in/social` is added because social sign-in is the cheapest
+    //     way to burn an org's OAuth quota, and it is not password-guessable
+    //     so the per-account lockout does not apply.
+    //   - `/sign-in/sso` is added because it is *unauthenticated tenant
+    //     discovery*: a loop over `signIn.sso` is how someone enumerates which
+    //     domains have SSO configured.
+    //
+    // `/sign-up/email` is the plugin default and is kept.
+    //
+    // The plugin's `endpoints` matcher requires exact paths or an explicit
+    // wildcard — a bare `/sign-in` prefix does NOT match, which is a different
+    // footgun from the `/forget-password` one and worth writing down.
+    //
+    // Registered only when the secret is present, so dev, CI and any deployment
+    // without a Turnstile widget are byte-identical to before. The client
+    // (`components/auth/CaptchaWidget.tsx`) renders nothing without
+    // NEXT_PUBLIC_TURNSTILE_SITE_KEY, so the two halves cannot disagree about
+    // whether the gate exists.
+    ...(process.env.TURNSTILE_SECRET_KEY
+      ? [
+          captcha({
+            provider: "cloudflare-turnstile",
+            secretKey: process.env.TURNSTILE_SECRET_KEY,
+            endpoints: [
+              "/sign-up/email",
+              "/sign-in/email",
+              "/sign-in/social",
+              "/sign-in/sso",
+              "/request-password-reset",
+            ],
+          }),
+        ]
+      : []),
+
+    // Two-factor. TOTP (authenticator app) + emailed OTP + single-use backup
+    // codes.
+    //
+    // `allowPasswordless: true` is required and was not obvious: the plugin
+    // refuses to enable 2FA for a user with no credential account, and this app
+    // has real users who sign in only through Google/GitHub/SSO. Without it
+    // those accounts could not secure themselves at all.
+    //
+    // It does NOT change which sign-in methods are challenged — that is still
+    // the credential endpoints only, and the "must 2FA" rule for staff is
+    // enforced server-side in `lib/auth-helpers.ts` (an admin without 2FA gets
+    // TWO_FACTOR_REQUIRED and is routed to settings) rather than by making
+    // BetterAuth hard-fail the session, which would also lock them out of the
+    // very page they need to enrol on.
+    twoFactor({
+      issuer: "Familiarise",
+      // The pending-2FA cookie is the window in which a correct password has
+      // been given but the second factor has not. 10 minutes is the plugin
+      // default and is right: long enough to fetch an authenticator, short
+      // enough that a shoulder-surfed six-digit code is not worth waiting for.
+      twoFactorCookieMaxAge: 600,
+      trustDeviceMaxAge: 30 * 24 * 60 * 60,
+      otpOptions: {
+        // The emailed fallback exists for the staff who join without a phone.
+        // "hashed" is the only acceptable storage for a code that is valid for
+        // minutes and readable by anyone with Redis access.
+        storeOTP: "hashed",
+        period: 5,
+        digits: 6,
+        allowedAttempts: 5,
+      },
+      backupCodeOptions: {
+        amount: 10,
+        length: 10,
+        storeBackupCodes: "encrypted",
+      },
+    }),
+
     // Moderation (#693, starts #725 Tier-1): provides User.banned/banReason/
     // banExpires, blocks sign-in for banned users, and auto-unbans at sign-in
     // once banExpires passes (lazy suspension expiry — no cron). Ban writes

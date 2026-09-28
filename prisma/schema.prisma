@@ -141,10 +141,18 @@ model User {
   banReason  String?
   banExpires DateTime? @db.Timestamptz
 
+  // BetterAuth two-factor plugin. `false` is the safe default and is also what
+  // every existing row gets, so enabling the plugin cannot lock anyone out.
+  // Enforced for staff in lib/auth-helpers.ts (TWO_FACTOR_REQUIRED), not by
+  // hard-failing session creation — a hard failure would also block the admin
+  // from reaching the page they must enrol on.
+  twoFactorEnabled Boolean? @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   invitations                   Invitation[]
+  twoFactors                    TwoFactor[]
   ssoproviders                  SsoProvider[]
   erasureRequests               ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
@@ -7234,6 +7242,32 @@ enum EmailSuppressionReason {
 /// sha256 → lookup in this table → load organizationId. Status flips to
 /// REVOKED on explicit DELETE; a token also stops authenticating once past
 /// its optional expiresAt (enforced in lib/scim/auth.ts).
+// BetterAuth two-factor plugin table. Holds the TOTP shared secret, the
+// emailed-OTP payload and the hashed backup codes for one user.
+//
+// The plugin's schema declares `secret` and `backupCodes` as
+// `returned: false`, so Prisma must mark them the same way — BetterAuth never
+// reads them back through a normal select, and a server component that did
+// would put a live TOTP seed in a Next.js payload.
+//
+// Physical table name is lowercase to match the rest of the auth cluster
+// (`sessions`, `accounts`, `verifications`, `ssoProvider`).
+model TwoFactor {
+  id     String @id @default(cuid())
+  userId String
+
+  // AES-encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
+  secret      String
+  // Comma-separated, hashed (or encrypted) by the plugin per
+  // `backupCodeOptions.storeBackupCodes`. Never selected.
+  backupCodes String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("twoFactor")
+}
+
 model ScimToken {
   id                    String          @id @default(cuid())
   organizationId        String
