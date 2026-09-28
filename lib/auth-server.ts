@@ -2,6 +2,10 @@ import { cache } from "react";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { touchSessionLastSeen } from "@/lib/auth/last-seen";
+import {
+  assertSessionReadMemoized,
+  isSessionReadMemoized,
+} from "@/lib/auth/session-read-guard";
 
 /**
  * Render-memoized session read. Nested layouts that call requireOnboarded /
@@ -19,15 +23,23 @@ import { touchSessionLastSeen } from "@/lib/auth/last-seen";
  * rejects every later guard in that render re-throws the same rejection rather
  * than retrying independently (documented: react.dev/reference/react/cache).
  *
- * Undeclared dependency, deliberately recorded: package.json pins react
- * ^18.3.1, and react@18.3.1 does NOT export `cache` — `Object.keys(require(
- * "react")).includes("cache")` is false. This resolves only because Next
- * aliases `react` to its own vendored React 19 inside the RSC layer. It works
- * (the build is green and 5 pages plus lib/data already rely on it), but it
- * rests on a bundler alias rather than on the declared dep. If that alias ever
- * stops applying, this silently degrades to no memoization — correct results,
- * N times the queries, and no test would catch it. Revisit when React 19
- * lands properly; Next 15's App Router targets it.
+ * Undeclared dependency: `react`'s version, and whether that matters
+ * ------------------------------------------------------------------
+ * package.json pins react ^18.3.1 and that build exports no `cache` —
+ * verified in this checkout, not read off a changelog:
+ *
+ *   $ node -e "const r=require('react');
+ *     console.log(r.version, typeof r.cache, Object.keys(r).includes('cache'))"
+ *   18.3.1 undefined false
+ *
+ * It resolves anyway because Next aliases `react` to its own vendored React
+ * 19 inside the RSC layer, and that build does export `cache`. So the memo
+ * is real where it matters. The rest of the picture, including what happens
+ * when it is NOT, is in lib/auth/session-read-guard.ts — that module is the
+ * single source of truth for "is this read memoized", it reports the
+ * unmemoized case to Sentry once per process, and `isSessionReadMemoized()`
+ * below is what selects the reader. Do not re-derive the check here; the
+ * tested value and the operational one must not be able to drift.
  */
 type SessionReader = (
   disableCookieCache: boolean,
@@ -46,8 +58,21 @@ const readSession: SessionReader = async (disableCookieCache) => {
 };
 
 /**
- * #1275 — built on FIRST CALL, not at module scope, and only when `cache` is
- * actually a function.
+ * Report the memoization state at IMPORT time, not at first call.
+ *
+ * `sessionReader()` below would surface an unmemoized read on the first
+ * getSession() — but a cron job that imports this file and exits without
+ * ever reading a session (there are eight that do) would report nothing,
+ * and that is exactly the case invisible from rendered output. Module scope
+ * also means once per process rather than once per call. The call cannot
+ * throw; see the guard's docblock for why that is a hard requirement given
+ * this file sits in the import graph of every authenticated route and of
+ * the payments/payouts reconciliation jobs.
+ */
+assertSessionReadMemoized();
+
+/**
+ * #1275 — built on FIRST CALL, not at module scope.
  *
  * The docblock above warned that losing Next's React alias would silently
  * degrade this to no memoization. The reality was worse: `cache(...)` at module
@@ -62,17 +87,17 @@ const readSession: SessionReader = async (disableCookieCache) => {
  * `sweep-stuck-webhook-events` — which is the durability backstop the Stream
  * webhook route explicitly delegates to. None had ever completed a run.
  *
- * Deferring the call fixes the import; tolerating an absent `cache` fixes the
- * job. Memoization is meaningless in a one-shot cron process anyway — there is
- * one request — so the unmemoized reader is the correct behaviour there, not a
- * degraded one. Inside a render nothing changes: the memo is built on the first
- * guard's call and every later guard in that render shares it.
+ * Deferring the call fixes the import; delegating the availability check to
+ * `isSessionReadMemoized()` keeps the job. The unmemoized branch is the
+ * correct behaviour in a one-shot cron process, not a degraded one —
+ * memoization is meaningless there, because there is one request and nothing
+ * to dedupe against. Inside a render nothing changes: the memo is built on
+ * the first guard's call and every later guard in that render shares it.
  */
 let memoizedReader: SessionReader | undefined;
 
 function sessionReader(): SessionReader {
-  memoizedReader ??=
-    typeof cache === "function" ? cache(readSession) : readSession;
+  memoizedReader ??= isSessionReadMemoized() ? cache(readSession) : readSession;
   return memoizedReader;
 }
 

@@ -9,7 +9,9 @@ import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
+  type AuthErrorAction,
   type AuthErrorField,
+  type SignInDisclosure,
 } from "@/lib/labels/auth-errors";
 import {
   signIn,
@@ -21,10 +23,56 @@ import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
+import {
+  AuthErrorAffordance,
+  type AuthActionTarget,
+} from "@/components/auth/AuthErrorAffordance";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
+
+/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
+
+/**
+ * Read a server-issued disclosure off a failed sign-in and hand it to
+ * `humanizeAuthError` — **only** when the server says `unlocked`.
+ *
+ * The tiered-disclosure design (`lib/labels/auth-errors.catalog.ts`,
+ * `INVALID_EMAIL_OR_PASSWORD.unlocked`) has one hard rule: the specific
+ * sentence is not allowed to appear until the server has recorded
+ * `DISCLOSURE_UNLOCK_AFTER` failures for that address. An unread copy entry on
+ * the client is not a disclosure — a determined caller reads the bundle — so
+ * the *server* has to be the thing that says "you may now be told". Which is
+ * why this function refuses anything that is not `unlocked === true`, and
+ * never counts, infers or predicts the answer itself. Until `lib/auth.ts`
+ * starts attaching the object, `disclosureFrom` returns `undefined` and
+ * `humanizeAuthError` falls back to the collapsed sentence, which is the
+ * correct behaviour for an un-instructed client.
+ */
+function disclosureFrom(error: unknown): SignInDisclosure | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const carrier = (error as { disclosure?: unknown }).disclosure;
+  const source =
+    carrier && typeof carrier === "object"
+      ? (carrier as Record<string, unknown>)
+      : (error as Record<string, unknown>);
+  if (source.unlocked !== true) return undefined;
+  const attempts =
+    typeof source.attempts === "number" ? source.attempts : undefined;
+  return {
+    unlocked: true,
+    attempts: attempts ?? 0,
+    ...(typeof source.accountState === "string"
+      ? {
+          accountState: source.accountState as SignInDisclosure["accountState"],
+        }
+      : {}),
+  };
+}
 
 /**
  * Resolve the redirect target for an already-authenticated visitor.
@@ -118,6 +166,10 @@ function SignInContent() {
     Partial<Record<AuthErrorField, string>>
   >({});
   const [resending, setResending] = useState(false);
+  // The catalog's "what to do next" for the last failure, so the page can
+  // render the affordance instead of hardcoding one per failure.
+  const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
+  const retryAfter = useRetryAfterCapture();
 
   // Validate callbackUrl synchronously from the URL. safeSameOriginPath
   // resolves against a probe origin to reject backslash/scheme-relative
@@ -219,6 +271,39 @@ function SignInContent() {
     }
   };
 
+  /**
+   * The guard's result is a *code*, not a sentence to print.
+   *
+   * `lib/sso/signin-with-toast.ts` resolves failures to
+   * `{ ok, errorMessage, errorCode, action }` where `errorMessage` is
+   * `"<title>. <description>"` assembled from `AUTH_ERROR_COPY` — catalog
+   * text, not a library string, but still a pre-baked string. When an
+   * `errorCode` is present we re-enter the catalog through
+   * `humanizeAuthError` instead, so the copy on screen comes from the same
+   * resolver every other failure on this page uses and the guard's
+   * formatting convention cannot drift away from it. `errorCode` is null
+   * for the guard's own generic sentences (which have no catalog code), and
+   * then `errorMessage` is the only copy there is — still ours, so it is
+   * safe to show.
+   */
+  const reportSsoFailure = (result: {
+    ok: boolean;
+    errorMessage: string | null;
+    errorCode: string | null;
+    action: AuthErrorAction | null;
+  }) => {
+    if (result.ok || !result.errorMessage) return;
+    const copy = result.errorCode
+      ? humanizeAuthError("signin", { code: result.errorCode })
+      : null;
+    toast({
+      title: copy?.title ?? "SSO sign-in failed",
+      description: copy?.description ?? result.errorMessage,
+      variant: "destructive",
+    });
+    setErrorAction(result.action);
+  };
+
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
     // Use the guarded wrapper around signIn.sso() so the call goes
@@ -233,13 +318,7 @@ function SignInContent() {
       domain: ssoCheck.ssoBody.domain,
       callbackURL: ssoCheck.ssoBody.callbackURL,
     });
-    if (!result.ok && result.errorMessage) {
-      toast({
-        title: "SSO sign-in failed",
-        description: result.errorMessage,
-        variant: "destructive",
-      });
-    }
+    reportSsoFailure(result);
   };
 
   // Manual SSO trigger for IT admins testing their setup before enforcement
@@ -277,18 +356,13 @@ function SignInContent() {
           organizationName: data.organizationName,
           ssoBody: data.ssoBody,
         });
-        const result = await ssoSigninWithGuard({
-          providerId: data.ssoBody.providerId,
-          domain: data.ssoBody.domain,
-          callbackURL: data.ssoBody.callbackURL,
-        });
-        if (!result.ok && result.errorMessage) {
-          toast({
-            title: "SSO sign-in failed",
-            description: result.errorMessage,
-            variant: "destructive",
-          });
-        }
+        reportSsoFailure(
+          await ssoSigninWithGuard({
+            providerId: data.ssoBody.providerId,
+            domain: data.ssoBody.domain,
+            callbackURL: data.ssoBody.callbackURL,
+          }),
+        );
       } else {
         toast({
           title: "No SSO provider found",
@@ -347,6 +421,8 @@ function SignInContent() {
     // Clear any stale "verify your email" banner from a previous attempt.
     setNeedsVerification(false);
     setFieldError({});
+    setErrorAction(null);
+    retryAfter.clear();
     setIsLoading(true);
     const settle = pendingToast({ title: "Signing in..." });
 
@@ -354,10 +430,19 @@ function SignInContent() {
       const { data, error } = await signIn.email({
         email,
         password,
+        // Reads `Retry-After` off the response — see
+        // `components/auth/useRetryAfterCapture.ts` for why the error object
+        // alone cannot carry it. Falls back to the limiter's body field.
+        ...retryAfter.fetchOptions,
       });
 
       if (error) {
-        const copy = humanizeAuthError("signin", error);
+        // Disclosure is read, never computed: see `disclosureFrom`.
+        const copy = humanizeAuthError("signin", error, {
+          disclosure: disclosureFrom(error),
+          retryAfterSeconds: retryAfter.take(),
+        });
+        setErrorAction(copy.action ?? null);
         if (copy.needsVerification) {
           setNeedsVerification(true);
           settle({ title: copy.title, description: copy.description });
@@ -390,15 +475,56 @@ function SignInContent() {
         { tags: { subsystem: "auth" } },
       );
       console.error("Sign in error:", error);
+      // Still routed through the catalog rather than hand-written: a thrown
+      // `APIError` is the shape that carries a real `code` and `status`, and
+      // `status: 0` is the "never reached the service" half of
+      // `copyForStatus`. No raw `error.message` is shown.
+      const copy = humanizeAuthError("signin", { status: 0 });
+      setErrorAction(copy.action ?? null);
       settle({
-        title: "Couldn't reach the sign-in service",
-        description: "Check your connection and try again.",
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
+  /**
+   * Which catalog actions this page can service, and how.
+   *
+   * Every entry points at something the page *already* has — the sign-up link
+   * at the foot of the card, the manual SSO trigger, the forgot-password
+   * route. Nothing here invents a new affordance, which is the point: the
+   * catalog says what the customer should do, the page says how.
+   *
+   * Deliberately absent:
+   *   - `sign-in` — the visitor is already on this page.
+   *   - `resend-verification` — `needsVerification` lights the banner above,
+   *     which carries its own resend button.
+   *   - `enroll-2fa` / `upgrade-plan` — no 2FA settings or plan page is
+   *     reachable from an auth page; a button that goes nowhere is worse than
+   *     no button.
+   *   - `retry` — never renderable (see `AuthErrorAffordance`).
+   *
+   * Rebuilt per render rather than memoised: the callbacks close over this
+   * render's `email` / `ssoCheck`, and a memo would pin a stale closure. The
+   * child is not memoised, so a new object identity costs nothing.
+   */
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "forgot-password": { kind: "link", href: "/auth/forgot-password" },
+    "request-new-link": { kind: "link", href: "/auth/forgot-password" },
+    "sign-up": { kind: "link", href: signUpUrl },
+    "switch-to-sso": {
+      kind: "callback",
+      onClick: () => void handleManualSSOClick(),
+      disabled: ssoChecking,
+    },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
+
+  const errorTarget = errorAction ? actionTargets[errorAction] : undefined;
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -526,6 +652,13 @@ function SignInContent() {
                 {isLoading ? "Signing In..." : "Sign In with Email"}
               </Button>
             )}
+            {/* The catalog's next step for the last failure, if this page can
+                service it. One line, no repeated sentence — the toast above
+                already carried the title and description. */}
+            <AuthErrorAffordance
+              action={errorAction ?? undefined}
+              target={errorTarget}
+            />
           </form>
           {!ssoCheck?.enforceSSO && (
             <>

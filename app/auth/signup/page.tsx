@@ -18,15 +18,68 @@ import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
+  type AuthErrorAction,
   type AuthErrorField,
 } from "@/lib/labels/auth-errors";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
+import {
+  AuthErrorAffordance,
+  type AuthActionTarget,
+} from "@/components/auth/AuthErrorAffordance";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
+
+/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
+
+/**
+ * Pull a code, status and wait out of a *thrown* Better Auth error.
+ *
+ * A rejected `signUp.email(...)` is not the same object as the `error` field
+ * of a resolved call, and the difference matters: better-fetch's
+ * resolve-with-error path hands the page a parsed body, whereas a throw
+ * carries Better Auth's own `APIError`, whose `body` holds `{ code, message }`
+ * and whose `status` is the HTTP status. Reading only `error.message` there
+ * is what put a raw developer-facing sentence on the sign-up page; reading
+ * `body.code` instead is what makes the catalog able to answer.
+ *
+ * Everything here is structural (no property is trusted for its *content*
+ * except as an opaque code candidate, which `humanizeAuthError` narrows
+ * against `AUTH_ERROR_CODES`).
+ */
+function thrownAuthError(error: unknown): {
+  code?: string;
+  status?: number;
+  message?: string;
+} {
+  if (!error || typeof error !== "object") return {};
+  const e = error as {
+    code?: unknown;
+    status?: unknown;
+    message?: unknown;
+    body?: unknown;
+    response?: unknown;
+  };
+  const body =
+    e.body && typeof e.body === "object"
+      ? (e.body as { code?: unknown; message?: unknown })
+      : {};
+  // The `message` is read only so `humanizeAuthError` can pick a *field* out
+  // of a zod validation failure (see `fieldFromValidationMessage`); it is
+  // never returned to the page.
+  return {
+    ...(typeof e.code === "string" ? { code: e.code } : {}),
+    ...(typeof body.code === "string" ? { code: body.code } : {}),
+    ...(typeof e.status === "number" ? { status: e.status } : {}),
+    ...(typeof body.message === "string" ? { message: body.message } : {}),
+  };
+}
 
 export default function SignUp() {
   return (
@@ -61,6 +114,9 @@ function SignUpContent() {
   const [fieldError, setFieldError] = useState<
     Partial<Record<AuthErrorField, string>>
   >({});
+  // The catalog's "what to do next" for the last failure.
+  const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
+  const retryAfter = useRetryAfterCapture();
 
   // Validate the callbackUrl once and reuse the safe value across onboarding,
   // verification, and social login. safeSameOriginPath rejects backslash /
@@ -249,23 +305,46 @@ function SignUpContent() {
     // (resolve-with-error, 500-with-empty-body, no-redirect-after-2s)
     // surface as a destructive toast instead of a silent dead-end on
     // the signup form. See `lib/sso/signin-with-toast.ts` + audit B.1.
-    const result = await ssoSigninWithGuard({
-      providerId: ssoCheck.ssoBody.providerId,
-      domain: ssoCheck.ssoBody.domain,
-      callbackURL: ssoCheck.ssoBody.callbackURL,
+    reportSsoFailure(
+      await ssoSigninWithGuard({
+        providerId: ssoCheck.ssoBody.providerId,
+        domain: ssoCheck.ssoBody.domain,
+        callbackURL: ssoCheck.ssoBody.callbackURL,
+      }),
+    );
+  };
+
+  /**
+   * The guard answers with a *code*, not a sentence to print — see the twin
+   * function in `app/auth/signin/page.tsx` for the full reasoning. Short
+   * version: when an `errorCode` is present we re-enter the catalog through
+   * `humanizeAuthError` so this page has exactly one error vocabulary, and
+   * the guard's pre-baked `errorMessage` is only used for its own generic
+   * sentences (which have no catalog code and are still our own copy).
+   */
+  const reportSsoFailure = (result: {
+    ok: boolean;
+    errorMessage: string | null;
+    errorCode: string | null;
+    action: AuthErrorAction | null;
+  }) => {
+    if (result.ok || !result.errorMessage) return;
+    const copy = result.errorCode
+      ? humanizeAuthError("signup", { code: result.errorCode })
+      : null;
+    toast({
+      title: copy?.title ?? "SSO sign-in failed",
+      description: copy?.description ?? result.errorMessage,
+      variant: "destructive",
     });
-    if (!result.ok && result.errorMessage) {
-      toast({
-        title: "SSO sign-in failed",
-        description: result.errorMessage,
-        variant: "destructive",
-      });
-    }
+    setErrorAction(result.action);
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setFieldError({});
+    setErrorAction(null);
+    retryAfter.clear();
     if (password !== confirmPassword) {
       setFieldError({ password: "The two passwords don't match." });
       toast({ title: "Passwords do not match", variant: "destructive" });
@@ -280,10 +359,16 @@ function SignUpContent() {
         email,
         password,
         callbackURL: verificationCallbackUrl,
+        // Reads `Retry-After` off the response — see
+        // `components/auth/useRetryAfterCapture.ts`.
+        ...retryAfter.fetchOptions,
       });
 
       if (error) {
-        const copy = humanizeAuthError("signup", error);
+        const copy = humanizeAuthError("signup", error, {
+          retryAfterSeconds: retryAfter.take(),
+        });
+        setErrorAction(copy.action ?? null);
         if (copy.field) setFieldError({ [copy.field]: copy.description });
         settle({
           title: copy.title,
@@ -316,19 +401,62 @@ function SignUpContent() {
         { tags: { subsystem: "auth" } },
       );
       console.error("Sign up error:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
+      // BEFORE: `error.message` was rendered verbatim here — Better Auth's
+      // developer-facing text ("Invalid email or password", a zod
+      // "[body.email] …" dump) reaching a customer who had just typed that
+      // email. The thrown path is exactly where those messages live, because
+      // it is where the request *failed* rather than resolved. Now: extract
+      // `code` / `status` structurally and let the catalog write the sentence.
+      // A network failure (status 0 / absent) still answers `UNREACHABLE`,
+      // which says "nothing was changed" — the honest thing when the create
+      // may or may not have landed.
+      const thrown = thrownAuthError(error);
+      const copy = humanizeAuthError(
+        "signup",
+        // No `status` on a thrown error means the request never completed
+        // (fetch/CORS/timeout), which is status 0 — `copyForStatus`'s
+        // "we couldn't reach the service" branch, and the one honest answer
+        // when the create may or may not have landed.
+        { ...thrown, status: thrown.status ?? 0 },
+        { retryAfterSeconds: retryAfter.take() },
+      );
+      setErrorAction(copy.action ?? null);
+      if (copy.field) setFieldError({ [copy.field]: copy.description });
       settle({
-        title: "Sign Up Failed",
-        description: message,
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
+  /**
+   * Which catalog actions this page can service, and how — every entry points
+   * at something the page already has (the sign-in link threaded with the
+   * validated `callbackUrl`, the SSO panel, a mailto).
+   *
+   * Deliberately absent:
+   *   - `resend-verification` — only the post-signup "check your email" panel
+   *     has a resend, and no failure can reach it from the form.
+   *   - `forgot-password` — the address does not belong to this visitor yet.
+   *   - `enroll-2fa` / `upgrade-plan` — not reachable from an auth page.
+   *   - `retry` — never renderable (see `AuthErrorAffordance`).
+   *
+   * Rebuilt per render rather than memoised: the callback closes over this
+   * render's `ssoCheck`, and a memo would pin a stale one.
+   */
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "sign-in": { kind: "link", href: signInUrl },
+    "switch-to-sso": {
+      kind: "callback",
+      onClick: () => void handleSSOSignIn(),
+    },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
+
+  const errorTarget = errorAction ? actionTargets[errorAction] : undefined;
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -452,6 +580,13 @@ function SignUpContent() {
                 {isLoading ? "Creating Account..." : "Create Account"}
               </Button>
             )}
+            {/* The catalog's next step for the last failure, if this page can
+                service it. One line, no repeated sentence — the toast above
+                already carried the title and description. */}
+            <AuthErrorAffordance
+              action={errorAction ?? undefined}
+              target={errorTarget}
+            />
           </form>
 
           {ssoCheck?.enforceSSO && (

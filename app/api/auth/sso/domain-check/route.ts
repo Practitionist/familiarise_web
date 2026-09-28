@@ -26,6 +26,11 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { validateSamlCert } from "@/lib/sso/provider-schemas";
+import { SecretPayloadError } from "@/lib/sso/secret-crypto";
+import {
+  readStoredSamlConfig,
+  type StoredConfig,
+} from "@/lib/sso/stored-config";
 
 const QuerySchema = z.object({
   email: z.string().email(),
@@ -62,10 +67,46 @@ export async function GET(req: NextRequest) {
   // different org (misconfigured tenant, stale data) must not route
   // users to the wrong IdP. (B.4's composite unique now enforces
   // this at the DB level too.)
-  const provider = await prisma.ssoProvider.findFirst({
-    where: { domain, organizationId: enforced.organizationId },
-    select: { providerId: true, samlConfig: true, oidcConfig: true },
-  });
+  //
+  // This query is where the stored config is DECRYPTED. The
+  // `$extends({ result })` map in `lib/prisma-sso-secret-extension.ts`
+  // runs `decryptSecretPayload` on the two config columns, so
+  // `samlConfig` arrives already parsed and already an object. That is
+  // why nothing below parses it: the format is the adapter's problem,
+  // not this route's.
+  //
+  // It is also why the try/catch has to wrap the QUERY rather than the
+  // cert check. A rotated encryption key, a truncated column, or a
+  // key that is simply not mounted throws `SecretPayloadError` out of
+  // `findFirst` — before a single line of the check below has run. This
+  // endpoint is pre-auth and fires on every email blur, so letting that
+  // escape would produce the exact empty-body 500 the guard exists to
+  // prevent. Errors that are NOT `SecretPayloadError` (a dead database,
+  // a Prisma bug) are re-thrown rather than relabelled: telling a user
+  // "your provider is misconfigured" when the database is down sends
+  // the admin to fix the wrong thing.
+  let provider: { providerId: string; samlConfig: StoredConfig } | null;
+  try {
+    provider = await prisma.ssoProvider.findFirst({
+      where: { domain, organizationId: enforced.organizationId },
+      select: { providerId: true, samlConfig: true },
+    });
+  } catch (error) {
+    if (!(error instanceof SecretPayloadError)) throw error;
+    Sentry.captureException(error, {
+      tags: { subsystem: "auth", op: "sso-domain-check" },
+      extra: { failure: error.failure },
+    });
+    // From the user's side, an unreadable config and a bad certificate are
+    // the same situation: this org's SSO cannot be used, so the signin page
+    // stays on the credentials form and shows a typed error. The Sentry
+    // capture above is the only place the two remain distinguishable.
+    return NextResponse.json({
+      enforceSSO: true,
+      providerMisconfigured: true,
+      errorCode: "SSO_PROVIDER_MISCONFIGURED",
+    });
+  }
   if (!provider) {
     return NextResponse.json({ enforceSSO: false });
   }
@@ -79,27 +120,20 @@ export async function GET(req: NextRequest) {
   // `SSO_PROVIDER_MISCONFIGURED` response keeps the signin page on the
   // credentials form and shows a friendly toast.
   //
+  // `readStoredSamlConfig` narrows the parsed column field by field, so
+  // `cert` is a `string | undefined` rather than an `unknown` — a row whose
+  // `cert` is not a string is reported here as "no usable cert" instead of
+  // reaching `new X509Certificate(<not a string>)`.
+  //
   // OIDC providers don't have a cert; they fail differently (discoveryEndpoint
   // unreachable, etc.) and are out of scope for this guard.
-  if (provider.samlConfig) {
-    try {
-      const parsed = JSON.parse(provider.samlConfig) as { cert?: string };
-      if (!parsed.cert || !validateSamlCert(parsed.cert)) {
-        return NextResponse.json({
-          enforceSSO: true,
-          providerMisconfigured: true,
-          errorCode: "SSO_PROVIDER_MISCONFIGURED",
-        });
-      }
-    } catch (error) {
-      // Stored config is not parseable JSON — also a misconfiguration.
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
-      return NextResponse.json({
-        enforceSSO: true,
-        providerMisconfigured: true,
-        errorCode: "SSO_PROVIDER_MISCONFIGURED",
-      });
-    }
+  const saml = readStoredSamlConfig(provider.samlConfig);
+  if (!saml?.cert || !validateSamlCert(saml.cert)) {
+    return NextResponse.json({
+      enforceSSO: true,
+      providerMisconfigured: true,
+      errorCode: "SSO_PROVIDER_MISCONFIGURED",
+    });
   }
 
   // The org name is the only extra field this endpoint emits beyond

@@ -63,11 +63,21 @@ function severityFor(daysRemaining: number): Severity | null {
   return null; // outside alert window — nothing to do
 }
 
-function parseNotAfter(samlConfigJson: string): Date | null {
+/**
+ * Read the certificate expiry out of a provider's stored SAML config.
+ *
+ * Takes the **already-parsed** object, not the raw column. The Prisma read
+ * layer (`lib/prisma-sso-secret-extension.ts`) decrypts the
+ * `sso:v1:` envelope and parses legacy plaintext rows, so by the time a row
+ * reaches this function `samlConfig` is `Record<string, unknown> | null`.
+ * Parsing it again here would have been a second JSON parse per row and, worse,
+ * would have thrown on every encrypted row — turning an expiry alert into a
+ * silent "could not parse" for exactly the deployments most likely to have
+ * rotated their certs.
+ */
+function parseNotAfter(samlConfig: Record<string, unknown>): Date | null {
   try {
-    const parsed = JSON.parse(samlConfigJson);
-    if (!parsed || typeof parsed !== "object") return null;
-    const cert = (parsed as { cert?: unknown }).cert;
+    const cert = samlConfig?.cert;
     if (typeof cert !== "string" || cert.trim() === "") return null;
     const x509 = new X509Certificate(cert);
     return new Date(x509.validTo);

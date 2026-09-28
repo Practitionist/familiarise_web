@@ -27,13 +27,57 @@ import { postAuthSync } from "@/lib/auth-broadcast";
 import { AUTH_PROVIDERS, type AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { humanizeAuthError } from "@/lib/labels/auth-errors";
+import { normalizeAuthErrorCode } from "@/lib/labels/auth-error-codes";
 
 const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * Which of the three inputs a catalog sentence belongs under.
+ *
+ * `AuthErrorCopy.field` was written for the sign-in form, which has exactly
+ * one password box; this form has two, and the catalog's single `password`
+ * value is ambiguous between them. The two length codes are the case that
+ * matters — `PASSWORD_TOO_SHORT` says "Use at least 8 characters", which is
+ * about the password being *set*, not the one being offered, and parking it
+ * under "Current password" sends the customer to edit the wrong field. The
+ * code is the only thing that can tell them apart, so the code is what we
+ * read; `field` still decides the cases where the ambiguity does not arise.
+ *
+ * Returns `"form"` for a refusal that belongs to no input, so a 500 renders as
+ * a form-level sentence instead of borrowing a field's error slot.
+ */
+function passwordFieldFor(
+  copy: { field?: string },
+  error: { code?: string | null },
+): "current" | "next" | "form" {
+  const code = normalizeAuthErrorCode(error.code);
+  if (
+    code === "PASSWORD_TOO_SHORT" ||
+    code === "PASSWORD_TOO_LONG" ||
+    copy.field === "newPassword"
+  ) {
+    return "next";
+  }
+  if (copy.field === "password") return "current";
+  return "form";
+}
 
 interface PasswordErrors {
   current?: string;
   next?: string;
   confirm?: string;
+  /**
+   * Form-level sentence for a refusal that belongs to no single input.
+   *
+   * The catalog's `field` is sign-in-shaped ("password" is the password being
+   * *offered*, "newPassword" the one being *set*). Dumping every code under
+   * `current` — which is what the pre-catalog `error.message` did, since
+   * Better Auth returns one free-form string for all of them — points the
+   * customer at the wrong box for `PASSWORD_TOO_SHORT` and gives a 500 the
+   * visual grammar of a typo.
+   */
+  form?: string;
 }
 
 /** From the retired `/settings/change-password` page (#1527 §14). */
@@ -70,9 +114,38 @@ export function PasswordSection() {
         newPassword: next,
       });
       if (error) {
+        // BEFORE: `error.message` straight into the form. Better Auth's
+        // sentence for a wrong current password is "Invalid password", and
+        // for a fresh-session requirement it is an internal
+        // "SESSION_NOT_FRESH" prose string — developer-facing text under a
+        // customer's cursor. AFTER: the code decides the sentence, and the
+        // code's `action` decides what the section does next.
+        //
+        // Flow is `"signin"` because `AuthFlow` has no "account" member and
+        // none of the codes reachable here (`INVALID_PASSWORD`,
+        // `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`, `FAILED_TO_UPDATE_USER`,
+        // the session pair) has a per-flow override — the flow only chooses
+        // the last-resort generic, and "signin" is the closest of the five.
+        const copy = humanizeAuthError("signin", error);
         setErrors({
-          current: error.message || "That password didn't work.",
+          [passwordFieldFor(copy, error)]: copy.description,
         });
+
+        if (copy.action === "sign-in") {
+          // `SESSION_EXPIRED` / `SESSION_NOT_FRESH`: the session this form
+          // was opened with is dead or too old to authorise a password
+          // change. Retrying in place can never succeed, and the
+          // revoke-others sweep below would only 401 — so the catalog's
+          // `sign-in` action is carried out, using the same helper the
+          // session list already uses for the same situation.
+          toast({
+            title: copy.title,
+            description: copy.description,
+            variant: "destructive",
+          });
+          await signOutEverywhere("/auth/signin");
+          return;
+        }
         return;
       }
       reset();
@@ -161,6 +234,12 @@ export function PasswordSection() {
             <FieldError id={`password-${key}-error`} message={errors[key]} />
           </div>
         ))}
+        {/* A refusal that belongs to no single input — a save that failed, a
+            requirement this section cannot satisfy. Rendered through the same
+            `FieldError` (and the same `data-field-error` hook the
+            scroll-to-first-error helper looks for) so it is announced and
+            focusable in the same way as a field sentence. */}
+        <FieldError message={errors.form} />
         <SettingsSaveBar
           isSaving={isSaving}
           isDirty={isDirty}
@@ -581,7 +660,19 @@ export function ConnectedAccountsSection({
   const unlink = async (providerId: string) => {
     const { error } = await authClient.unlinkAccount({ providerId });
     if (error) {
-      throw new Error(error.message || "Could not disconnect this account.");
+      // BEFORE: `throw new Error(error.message || …)`, and ConfirmDialog
+      // renders a thrown message *verbatim* inside the dialog — so this was
+      // the one place a raw Better Auth sentence was guaranteed to reach the
+      // screen, on the code path where the customer has just been told the
+      // provider is about to be disconnected.
+      //
+      // AFTER: the catalog owns the sentence. `FAILED_TO_UNLINK_LAST_ACCOUNT`
+      // ("You need one way to sign in") is the refusal that actually happens
+      // here, and `ACCOUNT_NOT_FOUND` the other; both have copy written for
+      // exactly this moment. The dialog gets `"<title>. <description>"`,
+      // because a dialog has one slot and the catalog has two sentences.
+      const copy = humanizeAuthError("signin", error);
+      throw new Error(`${copy.title}. ${copy.description}`);
     }
     toast({ title: "Account disconnected" });
     void load();
