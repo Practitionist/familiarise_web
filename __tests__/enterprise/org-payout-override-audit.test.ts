@@ -15,13 +15,9 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requireOrgAccess: jest.fn(),
-  requireOrgOwner: jest.fn(),
-}));
-
-jest.mock("../../lib/auth/billing-admin-gate", () => ({
-  requireOrgBillingAdminOrOwner: jest.fn(async () => ({
+  requireOrgAccess: jest.fn(async () => ({
     member: { id: "mem_1", role: "OWNER" },
+    org: { slug: "acme" },
   })),
 }));
 
@@ -37,7 +33,9 @@ jest.mock("../../lib/prisma", () => ({
           findUniqueOrThrow: async () => ({ id: "po_1", status: "APPROVED" }),
         },
         organizationEarnings: { updateMany: async () => ({ count: 0 }) },
-        orgAuditLog: { create: auditCreate },
+        // No PAYOUT_INITIATED actor: a cron-built batch has no human creator,
+        // so the two-person rule (#1851 decision 4) does not apply.
+        orgAuditLog: { create: auditCreate, findFirst: async () => null },
       }),
   },
 }));

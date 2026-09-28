@@ -330,10 +330,11 @@ export async function transitionOrgPayoutAccount(
 export const PAYOUT_ALLOWED_FROM: Record<PayoutStatus, PayoutStatus[]> = {
   PENDING: [],
   APPROVED: ["PENDING"],
-  // #1846 SM-B12 — the disbursement claim reads this list: sign-off is
-  // optional, so an unapproved PENDING batch is payable, and an APPROVED one
-  // must be too or approving it strands it.
-  PROCESSING: ["PENDING", "APPROVED"],
+  // The disbursement claim reads this list. #1851 owner decision: an org
+  // payout is paid only after approval (two people when the org has two
+  // payout approvers), so PENDING is no longer payable. This tightens
+  // #1846 SM-B12, which admitted PENDING too.
+  PROCESSING: ["APPROVED"],
   COMPLETED: ["PROCESSING"],
   FAILED: ["PROCESSING"],
   // #1846 SM-B12 — cancel only before sign-off; afterwards the payout can

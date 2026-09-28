@@ -29,9 +29,6 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: rate card creation/edit is a finance-team mutation; downgrade
-// from OWNER-only so BILLING_ADMIN can configure splits without escalation.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { bumpRateCard } from "@/lib/api/organizations/rate-card";
 
@@ -71,12 +68,13 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  // Read access widened to any ACTIVE member of a canHost org. Rate
-  // cards encode the org's revenue-split policy (e.g. "consultants
-  // earn 80%"), which the consultant rightly needs to know — keeping
-  // the GET MANAGER-gated meant an EXPERT had no way to confirm their
-  // commission. Mutations (POST + bumpRateCard) stay OWNER-gated.
-  const access = await requireOrgAccess(orgId, { canHost: true });
+  // #1851 — the list reads the same key as the detail (payouts.read). It
+  // was open to every member of a host org, but its only screen is Payouts ›
+  // Rate cards, and the detail already refused those members.
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.read",
+    canHost: true,
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -132,7 +130,10 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canHost: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.manage",
+    canHost: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

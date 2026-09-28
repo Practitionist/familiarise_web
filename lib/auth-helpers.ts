@@ -8,7 +8,6 @@ import type {
   FundingSource,
   Organization,
   Membership,
-  MemberRole,
   UserRole,
 } from "@prisma/client";
 import {
@@ -332,7 +331,6 @@ export async function authorizeEventAccess(
 // ORGANIZATION ACCESS HELPERS — Arch 4-Modified (Issue #681)
 // ============================================================================
 
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import {
   hasAnyOrgPermission,
   type OrgSurface,
@@ -357,14 +355,13 @@ export type OrgAccessGrant = {
  *   /billing-account/wallet. 404 on mismatch.
  */
 export type OrgCapabilityGate = {
-  minimumRole?: MemberRole;
   /**
-   * Surface grant from the org permission matrix
-   * (lib/auth/org-permissions.ts) — the preferred gate for surface access.
-   * Unlike `minimumRole` it expresses the operations/finance track split
+   * Key from the org permission matrix (lib/auth/org-permissions.ts) — the
+   * only role gate. It expresses the operations/finance track split
    * (SUPPORT reads operations; BILLING_ADMIN is operator-blind) that the
-   * rank ladder cannot. Both may be set; both must pass. A list means any-of
-   * (a surface two grants open, e.g. Settings GET — #1527).
+   * rank ladder cannot, which is why the `minimumRole` rank floor is gone
+   * (#1851). A list means any-of (a surface two grants open, e.g. Settings
+   * GET — #1527). Omitted means any ACTIVE member.
    */
   permission?: OrgSurface | readonly OrgSurface[];
   canSponsor?: true;
@@ -383,18 +380,17 @@ export type OrgCapabilityGate = {
    * #1527 decision 6 — also admit a SUSPENDED membership, for the member's
    * already-booked sessions ONLY: the org shell's details read, Appointments ›
    * Mine, and their own appointment detail. A suspended member never passes a
-   * role or permission gate, so this refuses when combined with
-   * `minimumRole` / `permission`; callers branch on `member.status`.
+   * permission gate, so this refuses when combined with `permission`;
+   * callers branch on `member.status`.
    */
   allowSuspended?: true;
 };
 
 /**
  * Require that the session user is an active Membership of the specified
- * organization.
+ * organization, holding `opts.permission` when set, and enforce the
+ * capability + funding-source gates.
  *
- * Accepts either a bare `MemberRole` (legacy single-arg callers) or an
- * options object that also enforces capability + funding-source gates.
  * Platform admins (`UserRole.ADMIN`) bypass membership + role checks and
  * get a synthesized OWNER-rank stub; capability checks still apply so
  * an admin hitting a WALLET-only endpoint on an INVOICE org still gets
@@ -402,19 +398,16 @@ export type OrgCapabilityGate = {
  */
 export async function requireOrgAccess(
   organizationId: string,
-  opts?: MemberRole | OrgCapabilityGate,
+  opts: OrgCapabilityGate = {},
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  const options: OrgCapabilityGate =
-    typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
   const {
-    minimumRole,
     permission,
     canSponsor,
     canHost,
     fundingSource,
     requireActive,
     allowSuspended,
-  } = options;
+  } = opts;
 
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
@@ -571,20 +564,11 @@ export async function requireOrgAccess(
     allowSuspended === true && member.status === "SUSPENDED";
   if (
     (member.status !== "ACTIVE" && !suspendedAdmitted) ||
-    (suspendedAdmitted && (minimumRole || permission))
+    (suspendedAdmitted && permission)
   ) {
     return {
       error: NextResponse.json(
         { error: `Membership is ${member.status.toLowerCase()}` },
-        { status: 403 },
-      ),
-    };
-  }
-
-  if (minimumRole && !isAtLeastRole(member.role, minimumRole)) {
-    return {
-      error: NextResponse.json(
-        { error: `Forbidden — ${minimumRole} or higher required` },
         { status: 403 },
       ),
     };
@@ -602,21 +586,6 @@ export async function requireOrgAccess(
   }
 
   return { session: auth.session, member, org };
-}
-
-/**
- * Convenience wrapper around {@link requireOrgAccess} for owner-only operations.
- * Accepts the same capability gate as `requireOrgAccess` (sans `minimumRole`,
- * which is always OWNER here).
- */
-export async function requireOrgOwner(
-  organizationId: string,
-  opts?: Omit<OrgCapabilityGate, "minimumRole">,
-): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  return requireOrgAccess(organizationId, {
-    ...opts,
-    minimumRole: "OWNER",
-  });
 }
 
 /**

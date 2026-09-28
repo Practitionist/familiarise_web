@@ -109,7 +109,9 @@ export async function cancelPaymentIntent(
   }
 
   if (paymentIntentId.startsWith("order_")) {
-    return cancelRazorpayOrder(paymentIntentId);
+    // #1861 L2 — the order's payment state is the sweep's concern, not this caller's.
+    await cancelRazorpayOrder(paymentIntentId);
+    return;
   }
 
   console.warn(

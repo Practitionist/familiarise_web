@@ -65,7 +65,7 @@ function TxtInstructions({ claim }: Readonly<{ claim: DomainClaim }>) {
  * and the DNS token stay OWNER-only on the server and here.
  */
 export function DomainsPanel({ orgId }: Readonly<{ orgId: string }>) {
-  const canEdit = useOrgRole(orgId).role === "OWNER";
+  const canEdit = useOrgRole(orgId).can("identity.manage");
   const [domain, setDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();

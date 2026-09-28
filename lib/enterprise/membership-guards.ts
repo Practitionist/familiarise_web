@@ -1,6 +1,7 @@
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { isBlockedRoleTransition } from "./role-transitions";
 
 /**
@@ -74,8 +75,11 @@ const PARTICIPANT_ROLES: ReadonlySet<MemberRole> = new Set([
 
 const DEAD_OCCURRENCE = ["CANCELLED", "RESCHEDULED"] as const;
 
-function actsAsOwner(actor: MembershipActor): boolean {
-  return actor.kind === "idp" || actor.role === "OWNER";
+function actorHolds(
+  actor: MembershipActor,
+  key: "members.role.grant.governance" | "members.remove.force",
+): boolean {
+  return actor.kind === "idp" || hasOrgPermission(actor.role, key);
 }
 
 function isSelf(actor: MembershipActor, membershipId: string): boolean {
@@ -92,7 +96,7 @@ export function assertActorMayManage(
   targetRole: MemberRole,
   nextRole?: MemberRole,
 ): void {
-  if (actsAsOwner(actor)) return;
+  if (actorHolds(actor, "members.role.grant.governance")) return;
   if (
     OWNER_GATED_ROLES.has(targetRole) ||
     (nextRole !== undefined && OWNER_GATED_ROLES.has(nextRole))
@@ -463,7 +467,7 @@ export async function assertRemovable(
 
   const obligations = await countRemovalObligations(tx, m, now);
   const total = Object.values(obligations).reduce((sum, n) => sum + n, 0);
-  if (total > 0 && !(force && actsAsOwner(actor))) {
+  if (total > 0 && !(force && actorHolds(actor, "members.remove.force"))) {
     throw new MembershipGuardError(
       "MEMBER_HAS_OBLIGATIONS",
       "This member still has upcoming sessions, program seats or money in progress here. Settle those first, or ask an Owner to remove them anyway.",

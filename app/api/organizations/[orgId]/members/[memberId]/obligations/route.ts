@@ -24,7 +24,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string; memberId: string }> },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "members.manage",
+  });
   if (access.error) return access.error;
 
   const membership = await prisma.membership.findFirst({

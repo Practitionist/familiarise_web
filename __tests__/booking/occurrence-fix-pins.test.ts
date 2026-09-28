@@ -29,6 +29,7 @@ import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { reconcileOrphanedConfirmations } from "@/scripts/payments/reconcile-orphaned-confirmations";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import { buildDeadHoldFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -279,6 +280,45 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           appointment: { occurrences: { some: live } },
         }),
       }),
+    );
+  });
+
+  // #1861 L1 — a capture on a lapsed hold also yields to a live foreign hold
+  // (checkout step 1's predicate); only the widened query can see Bob's hold.
+  it("blocks an expired-hold capture against a live foreign hold, and confirms it when the slot is free (#1861)", async () => {
+    const now = new Date("2026-06-26T14:40:00Z");
+    const bobsHold = async (args: { where: { OR?: unknown } }) =>
+      args.where.OR ? { id: "slot-bob", appointmentId: "appt-bob" } : null;
+
+    const lost = mockTx({ conflict: false });
+    lost.conflictFindFirst.mockImplementation(bobsHold);
+    await expect(
+      confirmExistingAppointment(lost.tx, "appt-1", "booker", {
+        holdExpired: true,
+        now,
+      }),
+    ).resolves.toEqual({
+      capturedAfterTerminal: false,
+      doubleBookingBlocked: true,
+    });
+    expect(lost.slotUpdateMany).not.toHaveBeenCalled();
+    expect(lost.conflictFindFirst.mock.calls[0][0].where.OR).toEqual([
+      { isTentative: false },
+      {
+        isTentative: true,
+        ...liveOccurrenceWhere,
+        appointmentId: { not: "appt-1" },
+        appointment: { NOT: buildDeadHoldFilter(now) },
+      },
+    ]);
+
+    const free = mockTx({ conflict: false });
+    await confirmExistingAppointment(free.tx, "appt-1", "booker", {
+      holdExpired: true,
+      now,
+    });
+    expect(free.slotUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isTentative: false } }),
     );
   });
 });
