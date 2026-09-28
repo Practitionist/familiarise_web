@@ -70,6 +70,111 @@ export function isLinkedinProfileUrl(url: string): boolean {
   return LINKEDIN_PROFILE_URL_RE.test(url.trim());
 }
 
+/**
+ * A LinkedIn host, optionally a country locale subdomain. LinkedIn has always
+ * served `in.`, `uk.`, `nl.` and friends, and those are real profile links that
+ * a strict `www`-only check would lock people out of.
+ */
+const LINKEDIN_HOSTNAME_RE = /^(?:[a-z]{2,3}\.)?linkedin\.com$/i;
+
+/**
+ * The profile path shapes LinkedIn serves. `/in/` is the modern one; `/pub/` and
+ * `/public-profile/` are the legacy public-profile routes that still resolve for
+ * older accounts, so they are accepted and canonicalised rather than refused.
+ */
+const LINKEDIN_PROFILE_PATH_RE =
+  /^\/(?:in|pub|public-profile\/in|public-profile\/pub)\/([^/?#]+)/i;
+
+const LINKEDIN_URL_MESSAGE =
+  "Enter your public LinkedIn profile link, like https://linkedin.com/in/yourname";
+
+export type LinkedinNormaliseResult =
+  | { ok: true; url: string }
+  | { ok: false; reason: string };
+
+/**
+ * Validate a LinkedIn profile link and reduce it to one canonical form:
+ * `https://www.linkedin.com/in/<handle>`.
+ *
+ * Parses with `URL` rather than a regular expression on purpose. A pattern
+ * anchored on `^https://www\.linkedin\.com` is bypassed by
+ * `https://www.linkedin.com:secret@evil.test/in/x` — the authority belongs to
+ * `evil.test` while the string still *starts* with LinkedIn. Reading
+ * `hostname` off a parsed URL cannot be fooled that way, because the parser
+ * resolves the userinfo section for you. That is also why the check is
+ * `hostname` and never `host`: `host` carries the port, `hostname` does not.
+ *
+ * Normalising (rather than only validating) means the admin verification queue
+ * and its emails see one shape regardless of how the consultant pasted it, and
+ * tracking params and locale suffixes do not ride along into an admin's browser.
+ */
+export function normaliseLinkedinProfileUrl(
+  raw: string,
+): LinkedinNormaliseResult {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  }
+
+  // A profile link never carries credentials. Rejecting them also means a
+  // phishing-shaped `linkedin.com@evil.test` cannot reach the host check below
+  // looking legitimate.
+  if (parsed.username || parsed.password) {
+    return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  }
+
+  if (!LINKEDIN_HOSTNAME_RE.test(parsed.hostname)) {
+    return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  }
+
+  const profile = LINKEDIN_PROFILE_PATH_RE.exec(parsed.pathname);
+  if (!profile?.[1]) return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+
+  const handle = decodeURIComponent(profile[1]).trim();
+  if (!handle) return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+
+  return { ok: true, url: `https://www.linkedin.com/in/${handle}` };
+}
+
+/**
+ * The authoritative LinkedIn rule. Every surface that accepts a profile link —
+ * the onboarding base schema, the form schema, and the server write — extends
+ * this one, so the four rules that had drifted apart (#1869) cannot drift again.
+ */
+export const linkedinProfileUrlSchema = z.string().transform((value, ctx) => {
+  const result = normaliseLinkedinProfileUrl(value);
+  if (!result.ok) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.reason });
+    return z.NEVER;
+  }
+  return result.url;
+});
+
+/**
+ * Form-facing variant: an optional input arrives as `undefined` when absent and
+ * `""` when untouched, and neither may be reported as invalid. A value the user
+ * did type still has to be a real profile link, and is canonicalised on the way
+ * through.
+ *
+ * The trailing `.optional()` is load-bearing. The rule it replaces ended in
+ * `.optional().or(z.literal(""))`, and dropping it made every payload that simply
+ * omits the field — a consultee, a staff member, a consultant who has not
+ * reached that step — fail with "Required". Two absence representations, both
+ * legal.
+ */
+export const linkedinProfileUrlFormSchema = z
+  .union([linkedinProfileUrlSchema, z.literal("").transform(() => undefined)])
+  .optional();
+
 export const linkedinUrlSchema = z
   .string()
   .url("Please enter a valid URL")

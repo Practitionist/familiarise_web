@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ChevronLeft, Loader2, Shield, Info } from "lucide-react";
 import {
   VerificationDocumentUpload,
+  isPersistedDocument,
   type UploadedDocument,
 } from "@/components/verification/VerificationDocumentUpload";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -133,7 +134,7 @@ export default function ConsultantAgreementAndVerificationStep({
       privacyAccepted: true,
       verificationLinkedinUrl: linkedinUrl,
       verificationNotes: notes,
-      verificationDocuments: documents.filter((d) => d.status === "uploaded"),
+      verificationDocuments: documents.filter(isPersistedDocument),
     };
 
     onNext(finalData);

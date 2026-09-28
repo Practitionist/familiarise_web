@@ -29,6 +29,29 @@ export interface UploadedDocument {
   isOnboardingUpload?: boolean;
 }
 
+/** A document that carries the server-issued id every write boundary requires. */
+export type PersistedUploadedDocument = UploadedDocument & { id: string };
+
+/**
+ * Narrow a UI row to one the server will accept.
+ *
+ * `id` is optional on `UploadedDocument` because an in-flight row does not have
+ * one yet, but a `uploading` or `error` row is not submittable either — only the
+ * upload route can mint an id, and it does so on success. The onboarding schema
+ * requires `id` (see `VerificationDocumentRefSchema`), so the status and the
+ * presence of the id are asserted together here instead of being two independent
+ * conditions a caller has to remember.
+ *
+ * Generic over the minimal shape so the settings resubmit flow, whose local
+ * `VerificationDocument` is only `Pick<UploadedDocument, "status"> & { id? }`,
+ * can share this instead of re-declaring an equivalent predicate (#1869).
+ */
+export function isPersistedDocument<
+  T extends { id?: string; status: UploadedDocument["status"] },
+>(doc: T): doc is T & { id: string } {
+  return doc.status === "uploaded" && Boolean(doc.id);
+}
+
 interface VerificationDocumentUploadProps {
   documents: UploadedDocument[];
   onDocumentsChange: (documents: UploadedDocument[]) => void;
