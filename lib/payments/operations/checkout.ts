@@ -3721,6 +3721,10 @@ export async function handleCheckout(
     };
     await renewOrAbort(perAttemptTtl);
 
+    // #1861 L1 — one deadline for the gateway's capture window and the
+    // PENDING row, so a Serializable retry cannot push the row past the order.
+    const holdExpiresAt = new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS);
+
     // Enterprise org funding skips the gateway entirely.
     if (isOrgSponsoredPayment) {
       const prefix = isOrgWalletPayment
@@ -3754,8 +3758,7 @@ export async function handleCheckout(
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
           customerId: savedCardCustomer,
-          // #1861 L1 — the same window the PENDING row is stamped with below.
-          holdExpiresAt: new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS),
+          holdExpiresAt,
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
@@ -3970,9 +3973,7 @@ export async function handleCheckout(
                 userId: userId,
                 appointmentId: createdAppointment?.id || null,
                 discountCodeId,
-                expiresAt: skipPayment
-                  ? null
-                  : new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS),
+                expiresAt: skipPayment ? null : holdExpiresAt,
                 buyerCountry: detectedBuyerCountry,
                 isInternational,
                 displayCurrencyAtCheckout,
