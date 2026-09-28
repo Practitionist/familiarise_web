@@ -1697,7 +1697,7 @@ model Program {
 
   assignments ProgramAssignment[]
 
-  /// ADR 18 — unenforced curated-panel stub; empty = open network.
+  /// ADR 18 — optional curated panel, ENFORCED at checkout (#971); empty = open network.
   consultantAllowlist ProgramConsultantAllowlist[]
 
   createdAt DateTime @default(now())
@@ -3038,7 +3038,7 @@ model ConsultantProfile {
   trials       Trial[]
   activityLogs ActivityLog[]
 
-  // ADR 18 — program curated-panel stub (unenforced)
+  // ADR 18 — program curated panels this consultant is listed on (enforced at checkout, #971)
   programAllowlists ProgramConsultantAllowlist[]
 
   // Note: Professional background (workExperiences, certifications, education)
