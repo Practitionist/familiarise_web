@@ -130,7 +130,20 @@ export async function GET(
     );
   }
 
-  return NextResponse.json({ membership });
+  // #1851 — payout routing and the rate-card override are finance data; the
+  // member list already hides them without `payouts.read`, and the detail
+  // now matches it (MANAGER and SUPPORT read members, not their pay).
+  const canSeePay =
+    isSelf || hasOrgPermission(access.member.role, "payouts.read");
+  return NextResponse.json({
+    membership: canSeePay
+      ? membership
+      : {
+          ...membership,
+          payoutRecipient: undefined,
+          rateCardOverrideId: undefined,
+        },
+  });
 }
 
 type MemberPatch = z.infer<typeof PatchBodySchema>;
@@ -298,7 +311,7 @@ export async function PATCH(
   }
   if (
     patch.payoutRecipient !== undefined &&
-    !hasOrgPermission(access.member.role, "payouts.manage")
+    !hasOrgPermission(access.member.role, "members.payoutRecipient.change")
   ) {
     return NextResponse.json(
       {
@@ -501,7 +514,9 @@ export async function DELETE(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "members.manage",
+  });
   if (access.error) return access.error;
 
   try {

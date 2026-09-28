@@ -40,7 +40,7 @@ function makeEmptyLine(): LineItem {
  * #1527 Q8 — the manual invoice composer, moved from the org Billing page to
  * the back-office org detail (ops issue the invoice an org requested). Same
  * API as before, `POST /api/organizations/[orgId]/billing-account/invoices`,
- * which admits a platform admin (billing-admin-gate.ts). The old tax-rate and
+ * which admits a platform admin as a synthetic OWNER (requireOrgAccess). The old tax-rate and
  * GSTIN fields were never sent, so they are gone rather than moved.
  */
 export function InvoiceComposer({

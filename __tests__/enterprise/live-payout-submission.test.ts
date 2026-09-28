@@ -320,7 +320,7 @@ describe("processOrgPayout — live submission gating", () => {
     expect(mockedGetService).not.toHaveBeenCalled();
   });
 
-  it("#1846 SM-B12 — the payout run scans and claims APPROVED org payouts, not only PENDING", async () => {
+  it("#1851 — the payout run scans and claims APPROVED org payouts only, never PENDING", async () => {
     process.env.ENABLE_LIVE_PAYOUTS = "true";
     // First scan is the payable set; the second is the stale-PROCESSING redrive.
     mockedPrisma.organizationPayout.findMany
@@ -341,9 +341,8 @@ describe("processOrgPayout — live submission gating", () => {
 
     const run = await processPendingOrgPayouts();
 
-    const payable = expect.objectContaining({
-      in: expect.arrayContaining(["PENDING", "APPROVED"]),
-    });
+    // #1851 owner decision — tightens #1846 SM-B12: approval comes first.
+    const payable = { in: ["APPROVED"] };
     expect(
       mockedPrisma.organizationPayout.findMany.mock.calls[0][0].where,
     ).toEqual({

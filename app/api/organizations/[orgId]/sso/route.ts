@@ -16,7 +16,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
 import { JitDefaultRoleSchema } from "@/lib/labels/org-labels";
@@ -280,7 +280,9 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

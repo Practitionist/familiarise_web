@@ -14,7 +14,8 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
@@ -43,10 +44,10 @@ export async function GET(
     );
   }
 
-  // Only OWNER roles get the full config JSON in the payload. Lower
-  // roles see redacted markers — cert/client-secret values would leak
-  // sensitive IdP credentials otherwise.
-  const isOwner = access.member.role === "OWNER";
+  // Only identity.manage (OWNER) gets the full config JSON in the payload.
+  // Everyone else sees redacted markers — cert/client-secret values would
+  // leak sensitive IdP credentials otherwise.
+  const isOwner = hasOrgPermission(access.member.role, "identity.manage");
   const type: "saml" | "oidc" | null = provider.samlConfig
     ? "saml"
     : provider.oidcConfig
@@ -92,7 +93,9 @@ export async function DELETE(
   },
 ) {
   const { orgId, providerId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   try {

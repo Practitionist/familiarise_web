@@ -50,7 +50,7 @@ export const ORG_SETTINGS_SECTIONS: readonly OrgSettingsSection[] = [
     group: "Security",
     label: "Domains & SSO",
     description: "Verified email domains and single sign-on",
-    // Reads are identity.read; claim/verify/SSO writes stay requireOrgOwner.
+    // Reads are identity.read; claim/verify/SSO writes need identity.manage.
     show: (can) => can("identity.read"),
   },
   {

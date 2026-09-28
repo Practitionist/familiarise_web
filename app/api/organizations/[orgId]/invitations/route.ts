@@ -60,7 +60,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "invitations.manage",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -101,7 +103,7 @@ export async function POST(
   // orgs may now invite up to the seat cap; SUSPENDED / DEACTIVATED orgs
   // stay blocked by the explicit check here.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "invitations.manage",
     // requireActive deliberately omitted: it is a `true`-literal opt-in flag,
     // and pre-verification invites are exactly what we want here (the seat
     // cap below owns the PENDING_VERIFICATION policy; SUSPENDED/DEACTIVATED

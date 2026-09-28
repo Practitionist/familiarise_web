@@ -166,7 +166,7 @@ function Checklist({
  * on Analytics.
  */
 export function OperatorHome({ orgId }: Readonly<{ orgId: string }>) {
-  const { role, canSponsor, canHost, can, isAtLeast } = useOrgRole(orgId);
+  const { role, canSponsor, canHost, can } = useOrgRole(orgId);
   const analytics = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
@@ -194,8 +194,9 @@ export function OperatorHome({ orgId }: Readonly<{ orgId: string }>) {
   const checklist = snapshot
     ? deriveActivationChecklist(snapshot, orgId).filter((s) => opens(s.href))
     : [];
+  // The setup checklist is org configuration, so settings.manage (#1851).
   const showChecklist =
-    isAtLeast("MAINTAINER") && checklist.some((s) => !s.done);
+    can("settings.manage") && checklist.some((s) => !s.done);
 
   const currency = data?.capabilities.currency ?? "INR";
   const quickActions = [

@@ -33,7 +33,7 @@ const other = (r: Recipient): Recipient =>
  * session is paid to the expert or to this organization. A Billing admin can
  * reach it without the member list, and the server returns only each
  * expert's name and recipient. Changes are OWNER + BILLING_ADMIN on the
- * server (`payouts.manage` here).
+ * server (`members.payoutRecipient.change` here, #1851).
  */
 export function ExpertPayoutRoutingPanel({
   orgId,

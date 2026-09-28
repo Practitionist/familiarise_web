@@ -13,8 +13,8 @@
  * cached PDF older than the signed-URL TTL (24h) as stale and force
  * regeneration so the signed URL handed back is always fresh.
  *
- * Auth: MAINTAINER+ per the billing-account pattern used elsewhere in
- * the org routes — any member with billing visibility can download.
+ * Auth: billing.read (#1851; was a MANAGER rank floor that resolved to
+ * the same roles) — any member with billing visibility can download.
  * OWNER-only isn't required because the PDF doesn't expose new data —
  * the contents are the same invoice row already readable via the
  * existing /invoices list endpoint.
@@ -48,7 +48,7 @@ export async function GET(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { permission: "billing.read" });
   if (access.error) return access.error;
 
   // #677/PM-36 — PDF rendering is expensive (puppeteer/HTML pipeline).

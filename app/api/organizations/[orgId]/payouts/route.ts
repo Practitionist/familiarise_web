@@ -23,9 +23,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: payout initiation is a finance-team action; downgrade from
-// requireOrgOwner so BILLING_ADMIN can trigger payouts without escalation.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { createOrgPayoutBatch } from "@/lib/payments/payouts/org-payout-service";
 import type { PayoutStatus } from "@prisma/client";
@@ -172,7 +169,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "payouts.manage",
+  });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {
