@@ -6,19 +6,24 @@
  * Two things here are load-bearing, and both were previously implicit.
  *
  * ── 1. The dark scope ──────────────────────────────────────────────────────
- * The design direction is a dark canvas. This app already ships a COMPLETE
- * `.dark` token block in `globals.css` (`--background: 0 0% 4%`,
- * `--primary: 0 0% 98%`, `--muted-foreground: 0 0% 65%`, …) and roughly 370
- * `dark:` utility usages — but nothing ever set the `.dark` class, so the
- * whole system is dormant and every dark surface has to be hand-written.
+ * The design direction is a dark canvas, and this app already ships a
+ * COMPLETE `.dark` token block in `globals.css` plus roughly 370 `dark:`
+ * utility usages — all authored but dormant, because nothing ever set the
+ * class.
  *
- * Activating the real token system instead: the stepper, the progress bar,
- * `Card`, `Input` and every other shared primitive resolve to their dark values
- * with no `dark:` variant and no per-component override. The class is applied
- * by the ROUTE LAYOUT, not here — see the note there for why (Radix portals
- * escape a subtree scope) and for the pre-paint script that avoids a flash.
- * Promoting `.dark` to an app-wide theme is then a matter of deleting that
- * script, not untangling a special route.
+ * This route activates that system without any of the theme machinery,
+ * because onboarding is a DARK-ONLY route rather than a user-toggleable
+ * theme. The tokens are keyed off `body:has(.onboarding-shell)`, and the
+ * `onboarding-shell` class on the div below is only the marker for that
+ * selector. The long note on the token block in globals.css covers why the
+ * two rejected alternatives are wrong: a pre-paint inline script on <html>
+ * (wrong position, needs the `suppressHydrationWarning` this repo forbids,
+ * and loses the scope when the fullBleed org step unmounts the shell), and a
+ * class on the shell alone (Radix portals mount to document.body, so every
+ * dropdown and modal would resolve light tokens over a dark card).
+ *
+ * Promoting `.dark` to a real app-wide theme is then a matter of starting to
+ * set the class — no change to this component.
  *
  * ── 2. The sticky offset ───────────────────────────────────────────────────
  * The root layout renders `MaintenanceBanner` (fixed, `z-[10001]`) and
@@ -31,7 +36,7 @@
 
 import { MotionConfig } from "framer-motion";
 import { cn } from "@/utils/tailwind";
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface OnboardingShellProps {
   /** Sticky bar: brand mark, step counter, sign out. */
@@ -55,45 +60,25 @@ export function OnboardingShell({
   className,
   wide,
 }: OnboardingShellProps) {
-  // Keep the root `.dark` scope in step with this shell's lifetime.
-  //
-  // The class is first applied pre-paint by the route layout's inline script
-  // (app/form/onboarding/layout.tsx explains why it cannot be done from here).
-  // Re-asserting it on mount covers the case the script cannot: the
-  // ORG_WORKSPACE org step is `fullBleed`, so page.tsx returns before the
-  // shell renders, the cleanup below strips the class, and the script — which
-  // only ever runs during SSR HTML parsing — does not run again. Without this
-  // the wizard would come back from the org wizard in LIGHT mode for the rest
-  // of the session.
-  //
-  // The cleanup is still required: onboarding ends in a router.replace to the
-  // dashboard, and that client-side navigation must not inherit a dark <html>.
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-    return () => {
-      document.documentElement.classList.remove("dark");
-    };
-  }, []);
-
   return (
-    // `MotionConfig reducedMotion="user"` is set ONCE here rather than per
-    // variant, so a newly added animated block cannot forget it. Under it,
-    // framer-motion drops transform animations and keeps opacity.
+    // MotionConfig is set ONCE here rather than per variant, so a newly added
+    // animated block cannot forget it. Under it, framer-motion drops transform
+    // animations and keeps opacity.
     //
-    // No `dark` class on this div: the scope is on <html>. Radix portals
-    // (Select, Dialog, Popover, DropdownMenu, Tooltip) mount to document.body,
-    // outside this subtree, so a scope here left every dropdown and modal
-    // resolving light tokens over a dark card. The `.dark` token block in
-    // globals.css and its ~370 `dark:` utilities are what this activates —
-    // they are authored but dormant today, because nothing set the class.
+    // `onboarding-shell` is a MARKER, not a style. The dark tokens are applied
+    // by `body:has(.onboarding-shell)` in globals.css, which reaches Radix
+    // portals because they mount to document.body — a class here alone would
+    // not, and a class on <html> would need a pre-paint script that this
+    // repo's hydration contract forbids. See the note on that block.
+    //
+    // `relative` + `isolate` contain the decorative layer below, which is a
+    // grandchild at `-z-10`: without a stacking context here it would join the
+    // root's negative-z step and paint behind the shell's own background, i.e.
+    // be invisible.
     <MotionConfig reducedMotion="user">
       <div
         className={cn(
-          // `relative` + `isolate` contain the decorative layer below, which
-          // is a grandchild at `-z-10`: without a stacking context here it
-          // would join the root's negative-z step and paint behind the shell's
-          // own background, i.e. be invisible.
-          "relative isolate min-h-svh bg-background text-foreground",
+          "onboarding-shell relative isolate min-h-svh bg-background text-foreground",
           className,
         )}
       >

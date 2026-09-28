@@ -258,39 +258,35 @@ describe("onboarding step 0 form semantics", () => {
 });
 
 describe("onboarding shell is token-driven", () => {
-  it("scopes .dark on <html> in the route layout, not on the shell div", () => {
+  it("scopes the dark tokens off body:has(.onboarding-shell), with no JS", () => {
     // Radix portals (Select, Dialog, Popover, DropdownMenu, Tooltip) mount to
-    // document.body, which is OUTSIDE the shell subtree. With the class on the
-    // shell, every dropdown and modal resolved --popover / --background against
-    // :root and rendered as a white panel over a near-black card.
-    const layout = read(LAYOUT);
-    expect(layout).toContain("document.documentElement.classList.add('dark')");
-    expect(layout).toContain("dangerouslySetInnerHTML");
-    // The shell must not carry its own scope. Checked on the className string
-    // specifically, not the whole file — the unmount cleanup below legitimately
-    // names "dark" in code.
-    const shell = read(SHELL);
-    const classNames = shell
-      .split(/(?:className|rel)="/)
-      .slice(1)
-      .map((chunk) => chunk.split('"')[0])
-      .join(" ");
-    expect(classNames).not.toMatch(/(^|\s)dark(\s|$)/);
+    // document.body, which is OUTSIDE the shell subtree. A class on the shell
+    // left every dropdown and modal resolving --popover / --background against
+    // :root -- a white panel over a near-black card. Keying the tokens off
+    // `body` reaches those portals directly.
+    //
+    // Pure CSS, so there is no pre-paint window and no hydration to mismatch.
+    // That matters here specifically: the pre-paint inline script this
+    // replaced mutated <html> before hydration, which React reports as a
+    // mismatch, and the documented remedy -- suppressHydrationWarning on
+    // <html> -- is forbidden by
+    // __tests__/dashboards/shell-overflow-contract.test.ts:156.
+    const css = read(GLOBALS);
+    expect(css).toMatch(/\.dark,\s*body:has\(\.onboarding-shell\)\s*\{/);
+    // The shell carries the marker class...
+    expect(read(SHELL)).toMatch(/"onboarding-shell /);
+    // ...and no JavaScript mutates the document element anywhere in it.
+    expect(read(SHELL)).not.toContain("documentElement");
+    expect(read(SHELL)).not.toContain("classList");
+    // A pre-paint script needs <head>, which a nested layout cannot emit.
+    expect(read(LAYOUT)).not.toContain("dangerouslySetInnerHTML");
+    expect(read(LAYOUT)).not.toContain("<script");
   });
 
-  it("re-asserts the root .dark scope on mount, and removes it on unmount", () => {
-    // Onboarding ends in a router.replace to the dashboard; without the
-    // cleanup, that client-side navigation inherits a dark <html>.
-    //
-    // The re-assert matters as much as the cleanup. The ORG_WORKSPACE org step
-    // is `fullBleed`, so page.tsx returns before the shell renders and the
-    // cleanup strips the class; the layout's inline script only runs during
-    // SSR HTML parsing, so it does not put it back. Without re-asserting here
-    // the wizard would return from the org wizard in light mode.
-    const src = read(SHELL);
-    expect(src).toMatch(
-      /classList\.add\("dark"\)[\s\S]{0,200}classList\.remove\("dark"\)/,
-    );
+  it("the layout stays a bare auth guard, so it cannot force the route dynamic", () => {
+    const layout = read(LAYOUT);
+    expect(layout).toContain("requireNotOnboarded");
+    expect(layout).not.toContain("headers(");
   });
 
   it("the destructive token is legible on the dark card", () => {
