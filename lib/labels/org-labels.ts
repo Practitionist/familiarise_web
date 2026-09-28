@@ -28,6 +28,7 @@ import type {
   OrgSizeBucket,
 } from "@prisma/client";
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import type { Tone } from "@/lib/ui/tone";
 
 // ───────────────────────────── Capability ─────────────────────────────
@@ -274,8 +275,12 @@ export function getInvitableRoles(
   canSponsor: boolean,
   canHost: boolean,
 ): MemberRole[] {
-  const roles: MemberRole[] =
-    viewerRole === "OWNER" ? ["OWNER", "MAINTAINER", "BILLING_ADMIN"] : [];
+  const roles: MemberRole[] = hasOrgPermission(
+    viewerRole,
+    "members.role.grant.governance",
+  )
+    ? ["OWNER", "MAINTAINER", "BILLING_ADMIN"]
+    : [];
   roles.push("MANAGER", "SUPPORT");
   if (canSponsor) roles.push("LEARNER");
   if (canHost) roles.push("EXPERT");

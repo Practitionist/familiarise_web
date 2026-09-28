@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { carriesMemberData } from "@/lib/enterprise/outbound-webhooks/event-types";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -260,8 +261,7 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
     permission: "integrations.manage",
   });
-  const { role } = useOrgRole(orgId);
-  const isOwner = role === "OWNER";
+  const { can } = useOrgRole(orgId);
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -326,7 +326,7 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
       <Button size="sm" variant="ghost" onClick={() => setDeliveriesFor(row)}>
         Deliveries
       </Button>
-      {isOwner && (
+      {can("webhooks.rotateSecret") && (
         <ConfirmDialog
           title="Rotate the signing secret?"
           description="A new secret is issued and shown once. The old one keeps verifying for 24 hours so your receiver can switch over."
@@ -339,7 +339,7 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
           }
         />
       )}
-      {isOwner && (
+      {can("webhooks.delete") && (
         <ConfirmDialog
           title="Delete this endpoint?"
           description={`${row.url} stops receiving events immediately. This can't be undone.`}
@@ -400,7 +400,12 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Events</legend>
             <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-              {ALL_EVENTS.map((ev) => (
+              {ALL_EVENTS.filter(
+                // #1851 decision 11 — member events are the Owner's to send.
+                (ev) =>
+                  can("webhooks.subscribe.memberEvents") ||
+                  !carriesMemberData([ev]),
+              ).map((ev) => (
                 <label key={ev} className="flex items-center gap-2">
                   <input
                     type="checkbox"

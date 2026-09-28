@@ -70,7 +70,7 @@ export async function PATCH(
 
   // #1851 decision 5 — where an expert is paid is a finance decision, so the
   // refusal matches the member PATCH's, code included.
-  if (!hasOrgPermission(access.member.role, "payouts.manage")) {
+  if (!hasOrgPermission(access.member.role, "members.payoutRecipient.change")) {
     return NextResponse.json(
       {
         error:

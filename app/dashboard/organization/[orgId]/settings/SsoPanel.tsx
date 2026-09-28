@@ -222,7 +222,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "identity.read",
   });
-  const canEdit = useOrgRole(orgId).role === "OWNER";
+  const canEdit = useOrgRole(orgId).can("identity.manage");
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-sso", orgId],

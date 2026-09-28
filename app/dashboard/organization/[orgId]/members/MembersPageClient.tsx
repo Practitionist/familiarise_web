@@ -215,13 +215,7 @@ async function updateMember(
 export function MembersPageClient({ orgId }: { orgId: string }) {
   // canSponsor/canHost drive the capability-aware role options (LEARNER
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
-  const {
-    role: viewerRole,
-    isAtLeast,
-    can,
-    canSponsor,
-    canHost,
-  } = useOrgRole(orgId);
+  const { role: viewerRole, can, canSponsor, canHost } = useOrgRole(orgId);
   const { data: session } = useSession();
   // Compare by email — BetterAuth's session.user.id can be the BetterAuth
   // internal id rather than the Familiarise `User.id` mirrored on
@@ -329,10 +323,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // #1851 decision 5 — payout routing is finance-only (OWNER, BILLING_ADMIN);
   // MAINTAINER still sees it. The server omits it without `payouts.read`.
   const canSetPayout =
-    can("payouts.manage") && editMember?.payoutRecipient !== undefined;
+    can("members.payoutRecipient.change") &&
+    editMember?.payoutRecipient !== undefined;
   // #1851 decision 6 — only an OWNER grants or removes these roles.
   const ownerOnly = (r: MemberRole) =>
-    OWNER_ONLY_ROLES.has(r) && !isAtLeast("OWNER");
+    OWNER_ONLY_ROLES.has(r) && !can("members.role.grant.governance");
   const removeBlockedReason = (m: MemberRow): string | undefined => {
     if (isOwnRow(m)) return "You cannot remove yourself";
     if (ownerOnly(m.role)) {
@@ -646,7 +641,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         key={memberToRemove?.id ?? "none"}
         orgId={orgId}
         member={memberToRemove}
-        canForce={isAtLeast("OWNER")}
+        canForce={can("members.remove.force")}
         onClose={() => setMemberToRemove(null)}
       />
     </>

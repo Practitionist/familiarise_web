@@ -145,7 +145,7 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
 }
 
 export function GeneralPanel({ orgId }: { orgId: string }) {
-  const { isAtLeast } = useOrgRole(orgId);
+  const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "settings.manage",
   });
@@ -218,7 +218,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         website: website.trim() || null,
         // Optimistic lock — the server CASes on this and 409s a stale tab.
         ...(data && { expectedVersion: data.profile.version }),
-        ...(isAtLeast("OWNER") && {
+        ...(can("settings.ownerFields") && {
           slug: slug.trim() || undefined,
           isPublic,
         }),
@@ -433,7 +433,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
               </Badge>
             </div>
 
-            {isAtLeast("OWNER") && (
+            {can("settings.ownerFields") && (
               <div className="space-y-3 border-t border-zinc-200 pt-4">
                 <p className="text-xs font-medium uppercase text-zinc-500">
                   Capability
@@ -505,7 +505,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     id="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    disabled={!isAtLeast("MAINTAINER")}
+                    disabled={!can("settings.manage")}
                   />
                 </div>
               </div>
@@ -526,7 +526,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                           .replace(/[^a-z0-9-]/g, "-"),
                       )
                     }
-                    disabled={!isAtLeast("OWNER")}
+                    disabled={!can("settings.ownerFields")}
                     className="border-0 bg-transparent px-1 py-0 h-auto shadow-none focus-visible:ring-0"
                     placeholder="acme-school"
                   />
@@ -544,7 +544,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Short description of the organization"
-                  disabled={!isAtLeast("MAINTAINER")}
+                  disabled={!can("settings.manage")}
                 />
               </div>
 
@@ -556,7 +556,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     value={industry}
                     onChange={(e) => setIndustry(e.target.value)}
                     placeholder="e.g. Education, Software"
-                    disabled={!isAtLeast("MAINTAINER")}
+                    disabled={!can("settings.manage")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -567,7 +567,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     value={website}
                     onChange={(e) => setWebsite(e.target.value)}
                     placeholder="https://example.com"
-                    disabled={!isAtLeast("MAINTAINER")}
+                    disabled={!can("settings.manage")}
                   />
                 </div>
               </div>
@@ -577,7 +577,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                 <p className="text-sm text-emerald-600">Settings saved.</p>
               )}
 
-              {isAtLeast("MAINTAINER") && (
+              {can("settings.manage") && (
                 <div>
                   <Button type="submit" disabled={mutation.isPending}>
                     {mutation.isPending ? "Saving…" : "Save changes"}
@@ -594,7 +594,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             section is hidden for non-owners (read or edit) to avoid a
             silent 403. PAN capture is intentionally out of scope here
             (encrypted-at-rest; managed via the dedicated tax surface). */}
-        {isAtLeast("OWNER") && (
+        {can("settings.ownerFields") && (
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -767,13 +767,13 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   onCheckedChange={setIsPublic}
                   disabled={
                     data.profile.status !== "ACTIVE" ||
-                    !isAtLeast("OWNER") ||
+                    !can("settings.ownerFields") ||
                     mutation.isPending
                   }
                 />
               </div>
             </CardContent>
-            {isAtLeast("OWNER") && (
+            {can("settings.ownerFields") && (
               <CardFooter>
                 <Button
                   onClick={() => mutation.mutate(undefined)}
@@ -789,7 +789,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         {/* #1499 — the org's refund ladder. OWNER-only, matching the free-text
             defaultCancellationPolicy field in the org PATCH: MemberRole has no
             ADMIN, so OWNER is the narrowest role that can already write policy. */}
-        {isAtLeast("OWNER") && <CancellationPolicyCard orgId={orgId} />}
+        {can("settings.cancellationPolicy.publish") && (
+          <CancellationPolicyCard orgId={orgId} />
+        )}
 
         <AlertDialog
           open={pendingDisable !== null}

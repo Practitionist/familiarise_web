@@ -9,6 +9,7 @@
  */
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import { resolveEffectiveRateCard } from "@/lib/api/organizations/rate-card";
 import type { PayoutRecipient } from "@prisma/client";
 
 // #1270 — the shared HOST window (15 min), not the learner's 10. This surface
@@ -17,26 +18,49 @@ import type { PayoutRecipient } from "@prisma/client";
 // the page links them to.
 import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
+/** Where the expert's split comes from, for the Compensation copy. */
+function rateCardSource(
+  appliedId: string | null,
+  overrideId: string | null,
+): "platformDefault" | "yours" | "orgDefault" {
+  if (appliedId === null) return "platformDefault";
+  return appliedId === overrideId ? "yours" : "orgDefault";
+}
+
 export async function getMyArrangementData(params: {
   orgId: string;
   payoutRecipient: PayoutRecipient;
   consultantProfileId: string | null;
+  rateCardOverrideId: string | null;
 }) {
-  const { orgId, payoutRecipient, consultantProfileId } = params;
+  const { orgId, payoutRecipient, consultantProfileId, rateCardOverrideId } =
+    params;
   const now = new Date();
   const nowMs = now.getTime();
 
-  // Active org-default RateCard (catch-all: no contract / plan-type filter).
-  const orgDefaultCard = await prisma.rateCard.findFirst({
-    where: {
-      ownerOrgId: orgId,
-      planType: null,
-      planId: null,
-      effectiveFrom: { lte: now },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-    },
-    orderBy: { effectiveFrom: "desc" },
+  // #1851 owner decision — the expert sees only the split that applies to
+  // THEM: their membership override when the org set one, else the org's
+  // default card, else the platform default. Same resolver settlement uses,
+  // and only the three bps plus when it took effect leave this function; no
+  // other expert's card and no card list.
+  const resolved = await resolveEffectiveRateCard(prisma, {
+    orgId,
+    membershipOverrideId: rateCardOverrideId,
+    at: now,
   });
+  const appliedCard = resolved.rateCardId
+    ? await prisma.rateCard.findUnique({
+        where: { id: resolved.rateCardId },
+        select: { effectiveFrom: true },
+      })
+    : null;
+  const rateCard = {
+    platformBps: resolved.platformBps,
+    orgBps: resolved.orgBps,
+    consultantBps: resolved.consultantBps,
+    effectiveFrom: appliedCard?.effectiveFrom ?? null,
+    source: rateCardSource(resolved.rateCardId, rateCardOverrideId),
+  };
 
   const payoutAccount =
     payoutRecipient === "ORGANIZATION"
@@ -188,5 +212,5 @@ export async function getMyArrangementData(params: {
     );
 
   // toPlain — rateCard/earnings rows carry an inspect symbol (see serialize.ts)
-  return toPlain({ orgDefaultCard, payoutAccount, earnings, upcomingSessions });
+  return toPlain({ rateCard, payoutAccount, earnings, upcomingSessions });
 }

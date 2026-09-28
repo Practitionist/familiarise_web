@@ -60,6 +60,8 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+  // #1851 decision 2 — an act-for-org cancel writes the org's audit row.
+  orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
   appointmentOccurrence: {
@@ -690,6 +692,13 @@ describe("#1166 — an admin of the funding org acts on the payer side", () => {
     expect(res.status).toBe(200);
     expect(body.refund.refundPct).toBe(0);
     expect(body.refund.amountRefundedPaise).toBe(0);
+    expect(txStub.orgAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: "org-1",
+        category: "MEMBER",
+        action: "APPOINTMENT_CANCELLED_FOR_ORG",
+      }),
+    });
   });
 
   it("refuses an EXPERT of the same org", async () => {

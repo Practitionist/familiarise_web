@@ -6,7 +6,8 @@
  * renders fresh per request — volumes are refund-shaped (low), unlike
  * invoices where the Supabase cache earns its keep.
  *
- * Auth: MAINTAINER+ ("MANAGER") mirroring the invoice PDF route.
+ * Auth: billing.read, mirroring the invoice PDF route (#1851; was a
+ * MANAGER rank floor that resolved to the same four roles).
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -28,7 +29,7 @@ export async function GET(
   },
 ) {
   const { orgId, creditNoteId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { permission: "billing.read" });
   if (access.error) return access.error;
 
   // Fail-closed supplier identity — no fabricated GSTIN fallback (#1132).
