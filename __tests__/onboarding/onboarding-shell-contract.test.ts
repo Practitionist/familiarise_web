@@ -86,9 +86,12 @@ describe("onboarding step transition cannot be double-driven", () => {
     const src = read(PAGE);
     // All three entry points, because the exiting step's own Back button and
     // the stepper's completed-step dots are equally live during the exit.
-    expect(src.match(/if \(transitioningRef\.current\) return;/g)).toHaveLength(
-      3,
-    );
+    // handleGoToStep returns a boolean so the resume banner knows whether the
+    // jump was taken, hence `return;` for the two void handlers and
+    // `return false;` for that one.
+    expect(
+      src.match(/if \(transitioningRef\.current\) return( false)?;/g),
+    ).toHaveLength(3);
   });
 
   it("releases the guard when the exit completes, and on a no-step-change error", () => {
@@ -124,8 +127,8 @@ describe("onboarding step transition cannot be double-driven", () => {
     // A move to the same index changes no key, so no exit runs and the guard
     // would never be released.
     const src = read(PAGE);
-    expect(src).toContain("if (step <= 0) return;");
-    expect(src).toContain("if (targetStep === step) return;");
+    expect(src).toMatch(/if \(step <= 0\) return( false)?;/);
+    expect(src).toMatch(/if \(targetStep === step\) return( false)?;/);
   });
 
   it("the resume-banner jump goes through the guard, not a bare setStep", () => {
@@ -134,11 +137,17 @@ describe("onboarding step transition cannot be double-driven", () => {
     // click on the still-present Continue — and handleNext would advance from
     // the index the user just asked for, landing short and skipping a step's
     // validation.
+    //
+    // The stored step is cleared only when the jump was actually taken: a
+    // rejected jump (a transition already in flight) would otherwise destroy
+    // the shortcut without moving the user anywhere.
     const src = read(PAGE);
     const at = src.indexOf("Resume at step");
     expect(at).toBeGreaterThan(-1);
     expect(src).not.toMatch(/setStep\(resumeStep\)/);
-    expect(src).toContain("handleGoToStep(resumeStep)");
+    expect(src).toContain(
+      "if (handleGoToStep(resumeStep)) setResumeStep(null);",
+    );
   });
 
   it("every backward setStep also sets the animation direction", () => {
@@ -147,12 +156,15 @@ describe("onboarding step transition cannot be double-driven", () => {
     // forward slide while moving backwards. The draft-restore branch is exempt
     // because it can only ever move forward from step 0.
     const src = read(PAGE);
-    // startOver, handleExitOrgWizard, the validation-failure jump and the
-    // refused-step jump.
+    // startOver, handleExitOrgWizard, the validation-failure jump, the
+    // refused-step jump, and the stepper jump in handleGoToStep. That last one
+    // uses `>=` rather than `>`, so the pattern allows either.
     expect(src.match(/setDirection\(-1\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(
-      src.match(/setDirection\((refusedStep|targetStep) > step \? 1 : -1\)/g),
-    ).toHaveLength(2);
+      src.match(
+        /setDirection\((?:refusedStep|targetStep) >=? step \? 1 : -1\)/g,
+      ),
+    ).toHaveLength(3);
   });
 
   it("passes direction through custom so the EXITING step animates correctly", () => {
@@ -266,11 +278,19 @@ describe("onboarding shell is token-driven", () => {
     expect(classNames).not.toMatch(/(^|\s)dark(\s|$)/);
   });
 
-  it("removes the root .dark scope on unmount so it does not leak", () => {
+  it("re-asserts the root .dark scope on mount, and removes it on unmount", () => {
     // Onboarding ends in a router.replace to the dashboard; without the
     // cleanup, that client-side navigation inherits a dark <html>.
+    //
+    // The re-assert matters as much as the cleanup. The ORG_WORKSPACE org step
+    // is `fullBleed`, so page.tsx returns before the shell renders and the
+    // cleanup strips the class; the layout's inline script only runs during
+    // SSR HTML parsing, so it does not put it back. Without re-asserting here
+    // the wizard would return from the org wizard in light mode.
     const src = read(SHELL);
-    expect(src).toMatch(/classList\.remove\("dark"\)[\s\S]{0,80}\},?\s*\[\]/);
+    expect(src).toMatch(
+      /classList\.add\("dark"\)[\s\S]{0,200}classList\.remove\("dark"\)/,
+    );
   });
 
   it("the destructive token is legible on the dark card", () => {

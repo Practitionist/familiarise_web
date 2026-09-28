@@ -55,12 +55,21 @@ export function OnboardingShell({
   className,
   wide,
 }: OnboardingShellProps) {
-  // Remove the root `.dark` scope on unmount. The class is applied pre-paint by
-  // the route layout's inline script (see app/form/onboarding/layout.tsx for
-  // why it cannot live here), and onboarding ends in a `router.replace` to the
-  // dashboard — so without this cleanup the client-side navigation would carry
-  // a dark `<html>` onto a page that never asked for one.
+  // Keep the root `.dark` scope in step with this shell's lifetime.
+  //
+  // The class is first applied pre-paint by the route layout's inline script
+  // (app/form/onboarding/layout.tsx explains why it cannot be done from here).
+  // Re-asserting it on mount covers the case the script cannot: the
+  // ORG_WORKSPACE org step is `fullBleed`, so page.tsx returns before the
+  // shell renders, the cleanup below strips the class, and the script — which
+  // only ever runs during SSR HTML parsing — does not run again. Without this
+  // the wizard would come back from the org wizard in LIGHT mode for the rest
+  // of the session.
+  //
+  // The cleanup is still required: onboarding ends in a router.replace to the
+  // dashboard, and that client-side navigation must not inherit a dark <html>.
   useEffect(() => {
+    document.documentElement.classList.add("dark");
     return () => {
       document.documentElement.classList.remove("dark");
     };

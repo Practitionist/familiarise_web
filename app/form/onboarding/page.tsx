@@ -136,7 +136,9 @@ interface OnboardingStepContext {
   onNext: (data: Partial<OnboardingFormData>) => Promise<void>;
   onBack: () => void;
   onSubmit: (data: Partial<OnboardingFormData>) => Promise<void>;
-  onGoToStep: (targetStep: number) => void;
+  /** Returns whether the jump was taken, so a caller only clears its own
+   *  affordance when the wizard actually moved. */
+  onGoToStep: (targetStep: number) => boolean;
   onExitOrgWizard: () => void;
   /** Settle in-flight draft saves before anything deletes the row. */
   onQuiesceDraftSaves: () => Promise<void>;
@@ -842,14 +844,19 @@ const MultiStepForm: React.FC = () => {
     setStep((prevStep) => prevStep - 1);
   };
 
-  const handleGoToStep = (targetStep: number) => {
-    if (transitioningRef.current) return;
-    if (targetStep === step) return;
+  // Returns whether the jump was taken. The resume banner clears its stored
+  // step only on a true: if a transition is already in flight the guard
+  // rejects the jump, and clearing unconditionally would destroy the shortcut
+  // without moving the user anywhere.
+  const handleGoToStep = (targetStep: number): boolean => {
+    if (transitioningRef.current) return false;
+    if (targetStep === step) return false;
     transitioningRef.current = true;
     // A stepper jump can be in either direction; derive it rather than
     // defaulting to forward, or "Review → step 2" slides the wrong way.
     setDirection(targetStep >= step ? 1 : -1);
     setStep(targetStep);
+    return true;
   };
 
   // Backing out of the create-org wizard must also undo the role we committed
@@ -924,7 +931,7 @@ const MultiStepForm: React.FC = () => {
           // by owning step, and a step key is a label rather than anything a
           // user typed — so this stays inside the file's "never log field
           // values" rule while still answering WHICH step refused. The removed
-          // The removed client log carried the full issue list, and the toast surfaces
+          // The deleted client log carried the full issue list; the toast surfaces
           // only the first four, so without this the owning step was
           // unrecoverable from telemetry.
           steps: groups
@@ -1243,8 +1250,7 @@ const MultiStepForm: React.FC = () => {
                     // click on the still-present Continue — and handleNext
                     // would then advance from the index the user just asked
                     // for, landing them short and skipping a step's validation.
-                    handleGoToStep(resumeStep);
-                    setResumeStep(null);
+                    if (handleGoToStep(resumeStep)) setResumeStep(null);
                   }}
                   className="text-sm font-medium text-primary hover:underline"
                 >
