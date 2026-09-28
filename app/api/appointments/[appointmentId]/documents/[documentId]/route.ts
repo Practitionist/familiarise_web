@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, type AppointmentDocument } from "@prisma/client";
 
@@ -10,6 +10,7 @@ import {
   isReviewTransitionAllowed,
   type ReviewStatus,
 } from "@/lib/documents/document-review";
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notifyDocumentReviewed } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -398,27 +399,31 @@ export async function PATCH(
       "The consultant";
 
     if (recipientId && reviewStatus) {
-      after(() =>
-        notifyDocumentReviewed(recipientId, {
-          ...notificationScope(appointmentInfo?.organizationId),
-          appointmentId,
-          documentId,
-          reviewStatus: reviewStatus as ReviewStatus,
-          reviewNotes: reviewNotes || undefined,
-          originalName: document.originalName,
-          consultantName: reviewerName,
-          dashboardUrl: scopedHref({
-            organizationId: appointmentInfo?.organizationId,
-            surface: "appointments",
-            personal:
-              consulteeProfileId
-                ? { kind: "consultee", profileId: consulteeProfileId }
-                : undefined,
-          }),
-        }).catch((notifyError) => {
-          console.error("Failed to notify consultee of review", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
-        }),
+      // #1861 P2r — the review update already committed above with no open
+      // transaction to piggyback on; stage the outbox row now (awaited,
+      // before the response) and defer only the delivery attempt.
+      await stageNowAttemptAfter("consultee document-review notice", () =>
+        notifyDocumentReviewed(
+          recipientId,
+          {
+            ...notificationScope(appointmentInfo?.organizationId),
+            appointmentId,
+            documentId,
+            reviewStatus: reviewStatus as ReviewStatus,
+            reviewNotes: reviewNotes || undefined,
+            originalName: document.originalName,
+            consultantName: reviewerName,
+            dashboardUrl: scopedHref({
+              organizationId: appointmentInfo?.organizationId,
+              surface: "appointments",
+              personal:
+                consulteeProfileId
+                  ? { kind: "consultee", profileId: consulteeProfileId }
+                  : undefined,
+            }),
+          },
+          { deferAttempt: true },
+        ),
       );
     }
 

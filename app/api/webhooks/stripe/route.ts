@@ -96,6 +96,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #1861 P4b — IDs only. `event.data.object.id` is Stripe's own id for
+    // whatever this event is about (a PaymentIntent or a Checkout Session,
+    // both of which Payment.paymentIntent stores); the internal Payment.id/
+    // appointmentId are not known until dispatch resolves them.
+    const gatewayOrderId = event.data?.object?.id;
+    if (typeof gatewayOrderId === "string") {
+      Sentry.getCurrentScope().setTag("gatewayOrderId", gatewayOrderId);
+    }
+
     // Log webhook event for audit trail (idempotency check).
     // Stripe always sends a unique `evt_...` id, but if it's missing we
     // derive a deterministic fallback from the body hash so replays
