@@ -131,10 +131,15 @@ describe("onboarding step 0 form semantics", () => {
   it("the role picker is a real radiogroup", () => {
     // It was three bare <button>s calling onChange directly: no radiogroup, no
     // aria-checked, no group label, and the arrow keys did nothing.
+    //
+    // fieldset + legend IS the radiogroup. An explicit role="radiogroup" on the
+    // inner div would nest a second group boundary inside the first, so its
+    // absence is asserted as deliberately as its presence would be.
     const src = readCode(STEP0);
-    expect(src).toContain('role="radiogroup"');
+    expect(src).toContain("<fieldset");
+    expect(src).toContain("<legend");
     expect(src).toContain('type="radio"');
-    expect(src).toContain("aria-labelledby");
+    expect(src).not.toContain('role="radiogroup"');
   });
 
   it("the email field is readOnly, never disabled", () => {

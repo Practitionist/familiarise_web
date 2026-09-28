@@ -538,10 +538,10 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
         </div>
       ) : null}
       <div className={lockedRole ? "hidden" : "space-y-4"}>
-        <h3
-          id="role-picker-label"
-          className="text-sm font-medium uppercase tracking-wide text-muted-foreground"
-        >
+        {/* Visible heading for sighted users. It carries no `id`: the group is
+            named by the fieldset's sr-only legend, and pointing
+            aria-labelledby here as well would name the group twice. */}
+        <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
           I want to join as a... <span className="text-destructive">*</span>
         </h3>
 
@@ -568,8 +568,9 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             >
               <legend className="sr-only">I want to join as a…</legend>
               <div
-                role="radiogroup"
-                aria-labelledby="role-picker-label"
+                // No role="radiogroup" here. fieldset + legend IS the
+                // radiogroup; an explicit role nested inside announces two
+                // group boundaries for a single group.
                 className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
               >
                 {Object.entries(ROLE_INFO).map(([role, info]) => {
