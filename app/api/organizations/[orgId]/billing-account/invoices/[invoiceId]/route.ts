@@ -11,7 +11,8 @@
  *
  * The /pay sub-route handles the webhook → PAID transition. This
  * PATCH only covers manual admin actions that don't need payment
- * gateway integration.
+ * gateway integration. #1851 decision 7 — a due-date or PDF edit writes
+ * its own audit row in any status, PAID included.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -230,6 +231,31 @@ export async function PATCH(
             data: scalarData,
           });
         }
+      }
+
+      if (body.dueDate !== undefined || body.pdfUrl !== undefined) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.INVOICE_UPDATED,
+            description: `Invoice ${current.invoiceNumber} updated`,
+            details: {
+              invoiceId,
+              status: current.status,
+              ...(body.dueDate !== undefined && {
+                dueDate: {
+                  from: current.dueDate.toISOString(),
+                  to: body.dueDate.toISOString(),
+                },
+              }),
+              ...(body.pdfUrl !== undefined && {
+                pdfUrl: { from: current.pdfUrl, to: body.pdfUrl },
+              }),
+            },
+          },
+        });
       }
 
       // updateMany returns no row — re-read in-tx for the response body.

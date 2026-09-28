@@ -69,10 +69,24 @@ const MAX_AVAILABILITY_WINDOW_MS =
 // calendar rather than just the tooltip detail. The roles come from the org
 // matrix (#1851); consultantProfileId + role: "EXPERT" identifies the org the
 // consultant belongs to.
+//
+// #1851 decision 10 — only for the org's own members. With a consultee named,
+// that person must be an ACTIVE member of the SAME org: the busy/free oracle
+// used to answer for any user id on the platform.
 async function isOrgAdminOfConsultant(
   userId: string,
   consultantId: string,
+  consulteeUserId?: string,
 ): Promise<boolean> {
+  const expertMember = {
+    memberships: {
+      some: {
+        consultantProfileId: consultantId,
+        role: "EXPERT" as const,
+        status: "ACTIVE" as const,
+      },
+    },
+  };
   const membership = await prisma.membership.findFirst({
     where: {
       userId,
@@ -80,15 +94,18 @@ async function isOrgAdminOfConsultant(
       role: {
         in: rolesWithOrgPermission("appointments.allocate.calendarRead"),
       },
-      organization: {
-        memberships: {
-          some: {
-            consultantProfileId: consultantId,
-            role: "EXPERT",
-            status: "ACTIVE",
-          },
-        },
-      },
+      organization: consulteeUserId
+        ? {
+            AND: [
+              expertMember,
+              {
+                memberships: {
+                  some: { userId: consulteeUserId, status: "ACTIVE" },
+                },
+              },
+            ],
+          }
+        : expertMember,
     },
     select: { id: true },
   });
@@ -146,10 +163,9 @@ export async function GET(
           where: { id: consultantId, userId: session.user.id },
         })) > 0);
 
-    // Resolved lazily and once: BOTH gates below need it, and the second used
-    // not to know about it at all — an org admin cleared the details gate and
-    // was then refused by the consultee gate with "cannot read another user's
-    // calendar", which made Allocate Slots unusable for them.
+    // Resolved lazily, only when details were asked for. The consultee gate
+    // below runs its own narrower check, which also needs the consultee to be
+    // a member of the admin's org (#1851 decision 10).
     let orgAdminCheck: Promise<boolean> | null = null;
     const isOrgAdmin = () => {
       if (!session?.user?.id) return Promise.resolve(false);
@@ -206,7 +222,8 @@ export async function GET(
       // The org-admin arm belongs here too. This parameter only marks cells
       // BUSY — it carries no titles or names — so it is metadata, which ADR 20
       // does allow an org to see, and allocation is wrong without it: the grid
-      // would paint cells green that validation then rejects.
+      // would paint cells green that validation then rejects. It answers only
+      // for a consultee in the admin's own org (#1851 decision 10).
       const isSelf = session?.user?.id === requestedConsulteeUserId;
       // Role gates must read fresh even on the cached path: the cached
       // session can lag a demotion or ban by ~5 min (#1807), and this branch
@@ -221,7 +238,14 @@ export async function GET(
         !isSelf &&
         !isOwningConsultant &&
         !isPrivileged(gateRole) &&
-        !(await isOrgAdmin())
+        !(
+          !!session?.user?.id &&
+          (await isOrgAdminOfConsultant(
+            session.user.id,
+            consultantId,
+            requestedConsulteeUserId,
+          ))
+        )
       ) {
         return NextResponse.json(
           { error: "Forbidden: cannot read another user's calendar" },

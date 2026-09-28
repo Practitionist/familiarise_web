@@ -5,6 +5,9 @@
  *
  * DELETE is narrow: only POs with no contracts and no invoices can be
  * hard-deleted. Otherwise mark CANCELLED via PATCH.
+ *
+ * #1851 decision 7 — BILLING_ADMIN keeps PO edits and deletes, and every
+ * money or term field change and every delete writes an audit row.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -29,6 +32,21 @@ const PatchBodySchema = z
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
+
+/** JSON-safe snapshot of the named fields (BigInt and Date as strings). */
+function auditValues(
+  source: Partial<Record<string, unknown>>,
+  keys: readonly string[],
+): Record<string, string | null> {
+  return Object.fromEntries(
+    keys.map((key) => {
+      const value = source[key];
+      if (value === null || value === undefined) return [key, null];
+      if (value instanceof Date) return [key, value.toISOString()];
+      return [key, String(value)];
+    }),
+  );
+}
 
 export async function GET(
   _req: NextRequest,
@@ -151,6 +169,28 @@ export async function PATCH(
         }
       }
 
+      // #1851 decision 7 — one row naming each money/term field's old and
+      // new value, whichever branch wrote it.
+      const changed = Object.keys(moneyOrTermData) as Array<
+        keyof typeof moneyOrTermData
+      >;
+      if (changed.length > 0) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_UPDATED,
+            description: `PurchaseOrder ${current.poNumber} updated: ${changed.join(", ")}`,
+            details: {
+              poId,
+              from: auditValues(current, changed),
+              to: auditValues(moneyOrTermData, changed),
+            },
+          },
+        });
+      }
+
       // updateMany returns no row — re-read in-tx for the response body.
       return tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
     });
@@ -208,6 +248,23 @@ export async function DELETE(
         );
       }
       await tx.purchaseOrder.delete({ where: { id: poId } });
+      // #1851 decision 7 — the row outlives the PO, so it carries the money.
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "INVOICE",
+          action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_DELETED,
+          description: `PurchaseOrder ${current.poNumber} deleted`,
+          details: {
+            poId,
+            poNumber: current.poNumber,
+            status: current.status,
+            totalAmountPaise: String(current.totalAmountPaise),
+            remainingAmountPaise: String(current.remainingAmountPaise),
+          },
+        },
+      });
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {

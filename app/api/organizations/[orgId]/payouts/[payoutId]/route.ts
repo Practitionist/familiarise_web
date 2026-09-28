@@ -14,13 +14,22 @@
  * An APPROVED payout cannot be cancelled: after sign-off it can only fail or
  * be reversed. A FAILED payout is terminal: its earnings were released when
  * it failed.
+ *
+ * #1851 decision 4 — approval takes two people when the org has two: the
+ * member who created a batch cannot approve it while another ACTIVE
+ * `payouts.approve` holder exists. A one-person org self-approves by typing
+ * its slug (`confirmSelfApproval`), and the audit row says so.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import {
+  hasOrgPermission,
+  rolesWithOrgPermission,
+} from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   PAYOUT_ALLOWED_FROM,
@@ -33,10 +42,46 @@ const PatchBodySchema = z
   .object({
     status: PatchStatusSchema.optional(),
     notes: z.string().max(2000).optional(),
+    // #1851 decision 4 — the org slug, typed, when the only payout approver
+    // approves their own batch.
+    confirmSelfApproval: z.string().max(200).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
+
+type SelfApproval = "not-self" | "self-allowed" | "second-approver-required";
+
+/**
+ * #1851 decision 4. The creator is the actor on the batch's PAYOUT_INITIATED
+ * row (OrganizationPayout has no creator column); a batch the cron built has
+ * no human creator, so anyone holding the key may approve it.
+ */
+async function classifySelfApproval(
+  tx: Pick<Tx, "orgAuditLog" | "membership">,
+  input: { orgId: string; payoutId: string; actorMembershipId: string },
+): Promise<SelfApproval> {
+  const initiated = await tx.orgAuditLog.findFirst({
+    where: {
+      organizationId: input.orgId,
+      category: "PAYOUT",
+      action: AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
+      details: { path: ["payoutId"], equals: input.payoutId },
+    },
+    select: { actorMembershipId: true },
+  });
+  if (initiated?.actorMembershipId !== input.actorMembershipId) {
+    return "not-self";
+  }
+  const approvers = await tx.membership.count({
+    where: {
+      organizationId: input.orgId,
+      status: "ACTIVE",
+      role: { in: rolesWithOrgPermission("payouts.approve") },
+    },
+  });
+  return approvers >= 2 ? "second-approver-required" : "self-allowed";
+}
 
 export async function GET(
   _req: NextRequest,
@@ -123,6 +168,44 @@ export async function PATCH(
         );
       }
 
+      // #1851 decision 4 — the second pair of eyes.
+      let selfApproved = false;
+      if (body.status === "APPROVED") {
+        if (!hasOrgPermission(access.member.role, "payouts.approve")) {
+          throw Object.assign(new Error("Your role cannot approve payouts."), {
+            httpStatus: 403,
+            code: "PAYOUT_APPROVE_FORBIDDEN",
+          });
+        }
+        const selfApproval = await classifySelfApproval(tx, {
+          orgId,
+          payoutId,
+          actorMembershipId: access.member.id,
+        });
+        if (selfApproval === "second-approver-required") {
+          throw Object.assign(
+            new Error(
+              "You created this payout batch, so another Owner or Billing admin has to approve it.",
+            ),
+            { httpStatus: 403, code: "PAYOUT_SECOND_APPROVER_REQUIRED" },
+          );
+        }
+        if (selfApproval === "self-allowed") {
+          if (body.confirmSelfApproval !== access.org.slug) {
+            throw Object.assign(
+              new Error(
+                "You are the only person who can approve payouts here. Type the organization's slug to approve your own batch.",
+              ),
+              {
+                httpStatus: 409,
+                code: "PAYOUT_SELF_APPROVAL_CONFIRM_REQUIRED",
+              },
+            );
+          }
+          selfApproved = true;
+        }
+      }
+
       if (body.status) {
         await transitionOrgPayout(tx, {
           where: { id: payoutId, organizationId: orgId },
@@ -142,6 +225,7 @@ export async function PATCH(
               from: current.status,
               to: body.status,
               notes: body.notes ?? null,
+              ...(selfApproved && { selfApproved: true }),
             },
           },
         });
@@ -168,7 +252,12 @@ export async function PATCH(
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }) },
+        { status },
+      );
     }
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),

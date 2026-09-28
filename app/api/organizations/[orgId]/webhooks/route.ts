@@ -19,8 +19,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   OUTBOUND_WEBHOOK_EVENTS,
+  carriesMemberData,
   isOutboundWebhookEvent,
 } from "@/lib/enterprise/outbound-webhooks/event-types";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { generateEndpointSecret } from "@/lib/enterprise/outbound-webhooks/signing";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
 import { rejectIfNotPublicUrl } from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
@@ -118,6 +120,21 @@ export async function POST(
     return NextResponse.json(
       { error: "Invalid body", detail: parsed.error.flatten() },
       { status: 400 },
+    );
+  }
+  // #1851 decision 11 — member data leaves the platform only on the OWNER's
+  // say-so.
+  if (
+    carriesMemberData(parsed.data.eventSubscriptions) &&
+    !hasOrgPermission(access.member.role, "webhooks.subscribe.memberEvents")
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Only an Owner can subscribe a webhook to member events (member.added, member.removed, program.assigned).",
+        code: "WEBHOOK_MEMBER_EVENTS_OWNER_ONLY",
+      },
+      { status: 403 },
     );
   }
 

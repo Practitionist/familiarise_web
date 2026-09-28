@@ -9,6 +9,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { MEMBER_DATA_WEBHOOK_EVENTS } from "@/lib/enterprise/outbound-webhooks/event-types";
 
 export async function GET(
   req: NextRequest,
@@ -47,12 +49,22 @@ export async function GET(
     Math.max(1, Number(url.searchParams.get("perPage") ?? 25)),
   );
 
+  // #1851 decision 11 — member-event payloads are member data; without
+  // webhooks.subscribe.memberEvents (BILLING_ADMIN) those rows never show.
+  const where = hasOrgPermission(
+    access.member.role,
+    "webhooks.subscribe.memberEvents",
+  )
+    ? { webhookEndpointId: endpointId }
+    : {
+        webhookEndpointId: endpointId,
+        eventType: { notIn: [...MEMBER_DATA_WEBHOOK_EVENTS] },
+      };
+
   const [total, deliveries] = await prisma.$transaction([
-    prisma.outboundWebhookDelivery.count({
-      where: { webhookEndpointId: endpointId },
-    }),
+    prisma.outboundWebhookDelivery.count({ where }),
     prisma.outboundWebhookDelivery.findMany({
-      where: { webhookEndpointId: endpointId },
+      where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,

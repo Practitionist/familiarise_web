@@ -130,9 +130,10 @@ export async function POST(
       !!open &&
       !initiatedByConsultant &&
       !initiatedByConsultee &&
+      !!open.appointment &&
       (await isOrgAdminOfAppointment(
         open.initiatedById,
-        open.appointment?.organizationId,
+        open.appointment,
         "reschedule",
       ));
     const counterpartyUserId = initiatedByConsultant

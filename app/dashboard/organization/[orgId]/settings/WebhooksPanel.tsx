@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { carriesMemberData } from "@/lib/enterprise/outbound-webhooks/event-types";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -399,7 +400,12 @@ export function WebhooksPanel({ orgId }: { orgId: string }) {
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Events</legend>
             <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-              {ALL_EVENTS.map((ev) => (
+              {ALL_EVENTS.filter(
+                // #1851 decision 11 — member events are the Owner's to send.
+                (ev) =>
+                  can("webhooks.subscribe.memberEvents") ||
+                  !carriesMemberData([ev]),
+              ).map((ev) => (
                 <label key={ev} className="flex items-center gap-2">
                   <input
                     type="checkbox"

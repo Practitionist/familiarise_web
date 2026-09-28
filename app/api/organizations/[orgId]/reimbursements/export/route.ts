@@ -2,7 +2,8 @@
  * GET /api/organizations/[orgId]/reimbursements/export
  *
  * C4: streams a CSV of Payments tagged to the org with PERSONAL
- * fundingSource. MANAGER+ at the org.
+ * fundingSource. `reimbursements.read` at the org. The export names members
+ * and their spend, so it self-audits like the invoice register (#1851).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -10,6 +11,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const QuerySchema = z.object({
   from: z.string().datetime().optional(),
@@ -86,6 +88,22 @@ export async function GET(
     },
     orderBy: { createdAt: "desc" },
     take: 10_000, // hard ceiling; bigger exports should use the API + client-side paging
+  });
+
+  await prisma.orgAuditLog.create({
+    data: {
+      organizationId: orgId,
+      actorMembershipId: access.member.id,
+      category: "INVOICE",
+      action: AUDIT_ACTIONS.INVOICE.REIMBURSEMENTS_EXPORTED,
+      description: "Reimbursements exported to CSV",
+      details: {
+        from: filters.data.from ?? null,
+        to: filters.data.to ?? null,
+        userId: filters.data.userId ?? null,
+        rowCount: items.length,
+      },
+    },
   });
 
   // "Amount (paise)" keeps its meaning (gross) so an existing importer reading

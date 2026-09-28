@@ -70,3 +70,21 @@ export function isOutboundWebhookEvent(
     (OUTBOUND_WEBHOOK_EVENTS as readonly string[]).includes(value)
   );
 }
+
+/**
+ * #1851 decision 11 — events whose payloads carry member data. Only the
+ * `webhooks.subscribe.memberEvents` holder (OWNER) subscribes to them, edits
+ * an endpoint carrying them, or reads and replays their deliveries;
+ * BILLING_ADMIN keeps invoice, payout and contract events.
+ */
+export const MEMBER_DATA_WEBHOOK_EVENTS: readonly OutboundWebhookEvent[] = [
+  "member.added",
+  "member.removed",
+  "program.assigned",
+];
+
+export function carriesMemberData(events: readonly string[]): boolean {
+  return events.some((event) =>
+    (MEMBER_DATA_WEBHOOK_EVENTS as readonly string[]).includes(event),
+  );
+}

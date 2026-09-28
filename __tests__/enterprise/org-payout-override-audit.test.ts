@@ -32,7 +32,9 @@ jest.mock("../../lib/prisma", () => ({
           findUniqueOrThrow: async () => ({ id: "po_1", status: "APPROVED" }),
         },
         organizationEarnings: { updateMany: async () => ({ count: 0 }) },
-        orgAuditLog: { create: auditCreate },
+        // No PAYOUT_INITIATED actor: a cron-built batch has no human creator,
+        // so the two-person rule (#1851 decision 4) does not apply.
+        orgAuditLog: { create: auditCreate, findFirst: async () => null },
       }),
   },
 }));
