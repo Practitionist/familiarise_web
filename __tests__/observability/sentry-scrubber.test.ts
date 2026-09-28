@@ -11,6 +11,7 @@ import type { Breadcrumb, ErrorEvent } from "@sentry/nextjs";
 describe("scrubSentryEvent", () => {
   test("redacts sensitive headers, drops cookies, redacts nested keys by name", () => {
     const event: ErrorEvent = {
+      type: undefined,
       request: {
         headers: {
           Authorization: "Bearer secret-token",
@@ -48,13 +49,14 @@ describe("scrubSentryEvent", () => {
 
 test("redacts PAN only as a whole word", () => {
   const scrubbed = scrubSentryEvent({
+    type: undefined,
     extra: {
       panNumber: "ABCDE1234F",
       pan_last4: "234F",
       companyName: "Acme",
       participantId: "p1",
     },
-  } as ErrorEvent);
+  });
   expect(scrubbed.extra).toEqual({
     panNumber: "[redacted]",
     pan_last4: "[redacted]",
@@ -85,11 +87,12 @@ describe("scrubSentryBreadcrumb", () => {
 
 test("strips tokens from the request URL and query string", () => {
   const scrubbed = scrubSentryEvent({
+    type: undefined,
     request: {
       url: "https://familiarisenow.com/invite/accept?token=abc&org=o1",
       query_string: "token=abc&org=o1",
     },
-  } as ErrorEvent);
+  });
   expect(scrubbed.request?.url).toBe(
     "https://familiarisenow.com/invite/accept?token=%5Bredacted%5D&org=o1",
   );
