@@ -42,8 +42,9 @@ function detectOs(ua: string): string {
   if (/Android/i.test(ua)) return "Android";
   if (/Windows NT/i.test(ua)) return "Windows";
   if (/Mac OS X|Macintosh/i.test(ua)) return "macOS";
-  if (/Linux/i.test(ua)) return "Linux";
+  // CrOS before Linux: ChromeOS UAs can carry both tokens.
   if (/CrOS/i.test(ua)) return "ChromeOS";
+  if (/Linux/i.test(ua)) return "Linux";
   return "Unknown OS";
 }
 

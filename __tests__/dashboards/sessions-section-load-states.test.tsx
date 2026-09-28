@@ -435,6 +435,22 @@ describe("SessionsSection load states (#1856)", () => {
       }),
     );
 
+    // None: success with nothing to end — plain toast, no description.
+    jest.clearAllMocks();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ revoked: 0 }),
+    });
+    await submitPasswordForm();
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Password changed",
+        description: undefined,
+        variant: undefined,
+      }),
+    );
+
     // Failed: the warning names the fallback action.
     jest.clearAllMocks();
     (global.fetch as jest.Mock).mockResolvedValue({

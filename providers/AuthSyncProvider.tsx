@@ -100,6 +100,10 @@ export default function AuthSyncProvider() {
    */
   const classifyUnexpectedSignOut = useCallback(async () => {
     if (!previousAuthedRef.current) return;
+    // Capture the account this check is FOR: a same-profile sign-in as a
+    // different account mid-check must not let a stale null for the OLD
+    // account sign out the NEW one. Compared again before signing out.
+    const checkedUserId = previousUserIdRef.current;
     let result: Awaited<ReturnType<typeof getSession>>;
     try {
       result = await getSession({ query: { disableCookieCache: true } });
@@ -115,6 +119,7 @@ export default function AuthSyncProvider() {
       refetch?.();
       return;
     }
+    if (previousUserIdRef.current !== checkedUserId) return;
     forgetAuthState();
     await signOutEverywhere("/auth/signin?reason=session-revoked");
   }, [refetch]);

@@ -128,6 +128,16 @@ export const auth = betterAuth({
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
+    // #1856 — a reset must end EVERY session (a thief's included): the
+    // resetting browser holds no session, so nothing there needs
+    // preserving — unlike changePassword, which keeps the current one
+    // via the client sweep (tri-state toast + ping) in
+    // SignInSecuritySection. The counter ping wakes the victim's other
+    // tabs; they classify via the usual tick/visibility paths.
+    revokeSessionsOnPasswordReset: true,
+    onPasswordReset: async ({ user }) => {
+      void signalRevocation(user.id);
+    },
   },
 
   emailVerification: {

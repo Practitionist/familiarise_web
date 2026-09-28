@@ -13,6 +13,20 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
  */
 export const MAX_CONCURRENT_SESSIONS = 10;
 
+/**
+ * Rows evicted per enforcement pass. A credential-stuffing victim could
+ * hold 100k rows — one pass materializes at most this many ids, so the
+ * lambda cannot OOM on the IN list.
+ */
+const CAP_EVICTION_BATCH = 200;
+
+/**
+ * Passes per sign-in. 5 × 200 converges a 1,000-session overflow in the
+ * sign-in that triggered enforcement; anything larger keeps converging
+ * on later sign-ins (the cap is eventually consistent — see below).
+ */
+const MAX_CAP_EVICTION_PASSES = 5;
+
 export interface SessionCapResult {
   /** Sessions deleted to bring the user back under the cap. */
   evicted: number;
@@ -39,30 +53,38 @@ export async function enforceSessionCapForUser(
   userId: string,
   maxSessions: number = MAX_CONCURRENT_SESSIONS,
 ): Promise<SessionCapResult> {
-  return withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        // Bounded pass: a credential-stuffing victim could hold 100k
-        // rows, and materializing all of them (plus a 100k-entry IN)
-        // would OOM the lambda. One bounded pass per sign-in converges
-        // because the cap is documented eventually-consistent.
-        const overflow = await tx.session.findMany({
-          where: { userId },
-          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-          skip: maxSessions,
-          take: 200,
-          select: { id: true },
-        });
-        if (overflow.length === 0) return { evicted: 0 };
-        const { count } = await tx.session.deleteMany({
-          // Belt-and-suspenders: the `in` list already belongs to this
-          // user, but the userId predicate makes a cross-user delete
-          // structurally impossible even if the list were ever poisoned.
-          where: { id: { in: overflow.map((s) => s.id) }, userId },
-        });
-        return { evicted: count };
-      },
-      { isolationLevel: "Serializable" },
-    ),
-  );
+  // Bounded passes: one pass deletes at most CAP_EVICTION_BATCH rows, so
+  // a stuffing victim's 100k rows cannot OOM the lambda via a giant IN
+  // list — and repeating the pass (each its own Serializable transaction)
+  // converges a large overflow in the sign-in that triggered enforcement
+  // instead of leaving hundreds of sessions behind with no later cap
+  // check. Stops early on a short pass; the pass cap bounds total work.
+  let evicted = 0;
+  for (let pass = 0; pass < MAX_CAP_EVICTION_PASSES; pass++) {
+    const { count, full } = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const overflow = await tx.session.findMany({
+            where: { userId },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            skip: maxSessions,
+            take: CAP_EVICTION_BATCH,
+            select: { id: true },
+          });
+          if (overflow.length === 0) return { count: 0, full: false };
+          const { count } = await tx.session.deleteMany({
+            // Belt-and-suspenders: the `in` list already belongs to this
+            // user, but the userId predicate makes a cross-user delete
+            // structurally impossible even if the list were ever poisoned.
+            where: { id: { in: overflow.map((s) => s.id) }, userId },
+          });
+          return { count, full: overflow.length === CAP_EVICTION_BATCH };
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
+    evicted += count;
+    if (!full) break;
+  }
+  return { evicted };
 }

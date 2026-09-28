@@ -41,7 +41,7 @@ organization() → sso() → customSession() → nextCookies()
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `organization()`  | BetterAuth's org plugin. Creates `Member` rows. `creatorRole: "OWNER"`, `organizationLimit: 5`.                                                            |
 | `sso()`           | `@better-auth/sso` — mounts SAML + OIDC endpoints under `/api/auth/sso/*`. Auto-provisions the `ssoProvider` table.                                        |
-| `customSession()` | Enriches every session read with user fields, org memberships, and SSO enforcement status. This is the **hot path** — every authenticated request runs it. |
+| `customSession()` | Enriches every session read with user fields and org memberships. SSO enforcement lives in `session.create.before`, not here (the read-time flag was removed — see Sessions and Hooks §2.3). This is the **hot path** — every authenticated request runs it. |
 | `nextCookies()`   | Wires BetterAuth's cookie lifecycle into Next.js `headers()` / `cookies()`.                                                                                |
 
 ### 3.2 Session Model

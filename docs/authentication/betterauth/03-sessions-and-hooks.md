@@ -9,7 +9,7 @@
 
 ## 1. Background
 
-Sessions are server-side Postgres rows — no JWT. This doc covers the session lifecycle, the three database hooks, the `customSession` enrichment path, and the two membership tables.
+Sessions are server-side Postgres rows — no JWT. This doc covers the session lifecycle, the four database hooks, the `customSession` enrichment path, and the two membership tables.
 
 ## 2. Design
 
@@ -58,6 +58,7 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 
 **`session.create.after`** — Fires after the session row commits (#1856):
 
+- Awaited `stampSessionDeviceMetadata()`: writes `deviceLabel` + `lastSeenAt` via one PK update (catches failures internally, throttled-reported, so sign-in never fails — awaiting it only costs milliseconds on a rare path and keeps a serverless freeze from dropping it).
 - Fire-and-forget `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry). Eventually consistent by design and must never fail sign-in — failures are Sentry-reported and swallowed.
 
 **`account.create.after`** — Fires after linking a non-credential account:

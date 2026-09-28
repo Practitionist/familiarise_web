@@ -49,6 +49,14 @@ describe("deriveDeviceLabel (#1856)", () => {
     ).toBe("Firefox on Linux");
   });
 
+  it("prefers ChromeOS when the UA carries both CrOS and Linux", () => {
+    expect(
+      deriveDeviceLabel(
+        "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      ),
+    ).toBe("Chrome on ChromeOS");
+  });
+
   it("labels Firefox on iOS via the FxiOS token", () => {
     expect(
       deriveDeviceLabel(
