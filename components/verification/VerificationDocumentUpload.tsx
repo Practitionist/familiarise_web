@@ -237,7 +237,7 @@ export function VerificationDocumentUpload({
           canAddMore ? "cursor-pointer" : "cursor-not-allowed",
           dragActive
             ? "border-primary bg-primary/5"
-            : "border-zinc-200 hover:border-zinc-300",
+            : "border-border hover:border-muted-foreground/40",
           !canAddMore && "opacity-50",
         )}
       >
@@ -250,15 +250,15 @@ export function VerificationDocumentUpload({
           multiple
           disabled={!canAddMore}
         />
-        <Upload className="w-8 h-8 mx-auto mb-3 text-zinc-400" />
+        <Upload className="w-8 h-8 mx-auto mb-3 text-muted-foreground" />
         {dragActive ? (
           <p className="text-sm text-primary">Drop the files here...</p>
         ) : (
           <>
-            <p className="text-sm text-zinc-600">
+            <p className="text-sm text-muted-foreground">
               Drag & drop files here, or click to select
             </p>
-            <p className="text-xs text-zinc-400 mt-1">
+            <p className="text-xs text-muted-foreground/80 mt-1">
               PDF, PNG, JPG up to {formatFileSize(maxSize)} each (max {maxFiles}{" "}
               files)
             </p>
@@ -275,14 +275,16 @@ export function VerificationDocumentUpload({
               className={cn(
                 "flex items-center gap-3 p-3 rounded-lg border",
                 doc.status === "error"
-                  ? "border-red-200 bg-red-50"
-                  : "border-zinc-200 bg-zinc-50",
+                  ? "border-destructive/40 bg-destructive/10"
+                  : "border-border bg-muted/50",
               )}
             >
               <div
                 className={cn(
                   "flex-shrink-0",
-                  doc.status === "error" ? "text-red-500" : "text-zinc-500",
+                  doc.status === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground",
                 )}
               >
                 {doc.status === "uploading" ? (
@@ -298,16 +300,16 @@ export function VerificationDocumentUpload({
                 <p className="text-sm font-medium truncate">
                   {doc.originalName}
                 </p>
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-muted-foreground">
                   {formatFileSize(doc.fileSize)}
                   {doc.status === "uploaded" && (
-                    <span className="ml-2 text-green-600">
+                    <span className="ml-2 text-success">
                       <CheckCircle className="w-3 h-3 inline mr-0.5" />
                       Uploaded
                     </span>
                   )}
                   {doc.status === "error" && (
-                    <span className="ml-2 text-red-600">{doc.error}</span>
+                    <span className="ml-2 text-destructive">{doc.error}</span>
                   )}
                 </p>
                 {doc.status === "uploading" && doc.progress !== undefined && (
@@ -335,7 +337,7 @@ export function VerificationDocumentUpload({
 
       {/* File count indicator */}
       {documents.length > 0 && (
-        <p className="text-xs text-zinc-500 text-right">
+        <p className="text-xs text-muted-foreground text-right">
           {documents.filter((d) => d.status === "uploaded").length} of{" "}
           {maxFiles} files uploaded
         </p>
