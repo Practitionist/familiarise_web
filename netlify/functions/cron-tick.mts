@@ -316,9 +316,8 @@ function cronCheckInUrl(): string | null {
  * whole point of the monitor.
  */
 async function sendCheckIn(
-  checkInId: string,
-  status: "in_progress" | "ok" | "error",
-  durationMs?: number,
+  status: "ok" | "error",
+  durationMs: number,
 ): Promise<void> {
   const url = cronCheckInUrl();
   if (!url) return;
@@ -329,18 +328,18 @@ async function sendCheckIn(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        check_in_id: checkInId,
         status,
-        ...(durationMs !== undefined && { duration: durationMs / 1000 }),
+        duration: durationMs / 1000,
         // Matches `config.schedule` above — this is the single source for
         // both Netlify's own trigger and Sentry's missed-check-in alerting.
         monitor_config: {
           schedule: { type: "crontab", value: config.schedule },
-          // #1686 — the tick always answers well inside its own budget; three
-          // minutes of silence past the five-minute cadence is a real miss,
-          // not a slow-but-alive tick.
+          // Three minutes of silence past the cadence is a real miss.
           checkin_margin: 3,
-          max_runtime: 3,
+          // The first tick after every deploy aborts most targets (status 0),
+          // so one failed tick is noise; three in a row is an outage.
+          failure_issue_threshold: 3,
+          recovery_threshold: 1,
         },
       }),
       signal: controller.signal,
@@ -375,10 +374,6 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const started = Date.now();
   const targets = dueTargets(new Date(started));
 
-  // #1861 P4a — one check-in per tick, not per target; see sendCheckIn above.
-  const checkInId = crypto.randomUUID();
-  await sendCheckIn(checkInId, "in_progress");
-
   const settled = await Promise.allSettled(
     targets.map((name) => hitTarget(baseUrl, secret, name)),
   );
@@ -410,13 +405,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   };
   console.log(JSON.stringify(body));
 
-  // #1861 P4a — the monitor's health follows `failed`, not the (always-200)
-  // HTTP status; see statusFor's #1686 rationale for why the two diverge.
-  await sendCheckIn(
-    checkInId,
-    failed.length > 0 ? "error" : "ok",
-    durationMs,
-  );
+  // #1861 P4a — one heartbeat check-in per tick, sent after the targets so it
+  // never delays them. Health follows `failed`, not the (always-200) HTTP
+  // status; see statusFor's #1686 rationale for why the two diverge.
+  await sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs);
 
   // #1686 — 200 even with a non-empty `failed`; see statusFor.
   return jsonResponse(body, statusFor(failed));
