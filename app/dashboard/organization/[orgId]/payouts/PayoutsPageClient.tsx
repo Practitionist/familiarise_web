@@ -62,6 +62,7 @@ export function PayoutsPageClient({
                   orgId={orgId}
                   orgSlug={org.organization.slug}
                   canManage={can("payouts.manage")}
+                  canApprove={can("payouts.approve")}
                   livePayoutsEnabled={livePayoutsEnabled}
                 />
               ),

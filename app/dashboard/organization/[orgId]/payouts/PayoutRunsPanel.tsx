@@ -93,11 +93,13 @@ function defaultPayoutWindow(): { periodStart: Date; periodEnd: Date } {
   return { periodStart, periodEnd };
 }
 
-// #1762-9 — what each state means on the ORG rail, which never enters
-// APPROVED: a batch is created PENDING, the weekly payout run claims it
-// (PROCESSING) and the gateway settles it (COMPLETED / FAILED).
+// #1762-9 — what each state means on the ORG rail: a batch is created
+// PENDING, an Owner or Billing admin approves it (#1851: the run pays
+// APPROVED only), the weekly payout run claims it (PROCESSING) and the
+// gateway settles it (COMPLETED / FAILED).
 const STATUS: Record<string, { label: string; tone: Tone }> = {
-  PENDING: { label: "Queued for the next run", tone: "caution" },
+  PENDING: { label: "Awaiting approval", tone: "caution" },
+  APPROVED: { label: "Queued for the next run", tone: "info" },
   PROCESSING: { label: "Sending", tone: "info" },
   COMPLETED: { label: "Paid", tone: "success" },
   FAILED: { label: "Failed", tone: "critical" },
@@ -108,6 +110,7 @@ const STATUS: Record<string, { label: string; tone: Tone }> = {
 const STATUS_FILTERS = [
   "ALL",
   "PENDING",
+  "APPROVED",
   "PROCESSING",
   "COMPLETED",
   "FAILED",
@@ -118,25 +121,81 @@ type StatusFilter = (typeof STATUS_FILTERS)[number];
 const filterLabel = (s: StatusFilter) =>
   s === "ALL" ? "All statuses" : STATUS[s].label;
 
+/** A refusal from the approve PATCH, with its typed code when it has one. */
+class ApproveError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+  ) {
+    super(message);
+  }
+}
+
+async function approvePayout(
+  orgId: string,
+  payoutId: string,
+  confirmSelfApproval?: string,
+): Promise<void> {
+  const res = await fetch(`/api/organizations/${orgId}/payouts/${payoutId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "APPROVED", confirmSelfApproval }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApproveError(
+      err.error || "Couldn't approve the payout batch.",
+      err.code,
+    );
+  }
+}
+
 /**
  * Payouts › Runs: the org's settlement batches. Creating a batch is Q10's
  * typed confirm (the org slug) — it had no confirmation at all before #1527.
+ * #1851 — a batch is paid only once approved. The creator cannot approve
+ * their own batch while the org has a second approver; a one-person org
+ * approves its own by typing the slug, and the audit row flags it.
  */
 export function PayoutRunsPanel({
   orgId,
   orgSlug,
   canManage,
+  canApprove,
   livePayoutsEnabled,
 }: Readonly<{
   orgId: string;
   orgSlug: string;
   /** #1132 — payout batches are `payouts.manage` (OWNER + BILLING_ADMIN). */
   canManage: boolean;
+  /** #1851 — `payouts.approve`. */
+  canApprove: boolean;
   livePayoutsEnabled: boolean;
 }>) {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [page, setPage] = useState(1);
+  // The batch the server asked the sole approver to confirm by typing.
+  const [selfApproveId, setSelfApproveId] = useState<string | null>(null);
+
+  const refreshPayouts = () =>
+    void queryClient.invalidateQueries({ queryKey: ["org-payouts", orgId] });
+
+  const approve = async (payoutId: string) => {
+    try {
+      await approvePayout(orgId, payoutId);
+      refreshPayouts();
+    } catch (err) {
+      if (
+        err instanceof ApproveError &&
+        err.code === "PAYOUT_SELF_APPROVAL_CONFIRM_REQUIRED"
+      ) {
+        setSelfApproveId(payoutId);
+        return;
+      }
+      throw err;
+    }
+  };
 
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ["org-payouts", orgId, page, statusFilter],
@@ -184,6 +243,7 @@ export function PayoutRunsPanel({
   const completedCount = stats?.counts.COMPLETED ?? 0;
   const totalPayoutsCount = stats?.counts.total ?? 0;
   const hasProcessingPayouts = (stats?.counts.PROCESSING ?? 0) > 0;
+  const awaitingApproval = stats?.counts.PENDING ?? 0;
 
   // The list itself is now server-paginated + server-filtered (`status`
   // query param), so `payouts` is already the page to render — no more
@@ -226,6 +286,27 @@ export function PayoutRunsPanel({
         />
         <Stat label="Total payouts" value={totalPayoutsCount} />
       </StatRow>
+
+      {/* #1851 — nothing is paid until approved, so a waiting batch must not
+          sit unnoticed. */}
+      {awaitingApproval > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p>
+            Payout batches are paid only after an Owner or Billing admin
+            approves them.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setStatusFilter("PENDING");
+              setPage(1);
+            }}
+          >
+            Awaiting approval ({awaitingApproval})
+          </Button>
+        </div>
+      )}
 
       {/* #776 §B: disbursement is gated until live payouts go-live;
                 say so honestly rather than letting PROCESSING rows imply
@@ -420,7 +501,22 @@ export function PayoutRunsPanel({
                               </span>
                             </div>
                           ) : (
-                            <StatusBadge {...cfg} />
+                            <div className="flex flex-col items-center gap-1">
+                              <StatusBadge {...cfg} />
+                              {canApprove && payout.status === "PENDING" && (
+                                <ConfirmDialog
+                                  title="Approve this payout batch?"
+                                  description="Approved batches are paid in the next payout run. If you created this batch, another Owner or Billing admin has to approve it."
+                                  confirmLabel="Approve"
+                                  onConfirm={() => approve(payout.id)}
+                                  trigger={
+                                    <Button size="sm" variant="outline">
+                                      Approve
+                                    </Button>
+                                  }
+                                />
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="py-3 text-right text-zinc-500">
@@ -447,6 +543,21 @@ export function PayoutRunsPanel({
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={selfApproveId !== null}
+        onOpenChange={(open) => !open && setSelfApproveId(null)}
+        title="Approve your own payout batch?"
+        description="You are the only person here who can approve payouts, so you can approve a batch you created. Type the organization's slug to confirm. The audit log records this as a self-approval."
+        confirmLabel="Approve"
+        requireTyped={orgSlug}
+        onConfirm={async () => {
+          if (!selfApproveId) return;
+          await approvePayout(orgId, selfApproveId, orgSlug);
+          setSelfApproveId(null);
+          refreshPayouts();
+        }}
+      />
 
       {/* Pagination — the list is now server-paginated (#997 secondary
                 findings), so paging is a real fetch, not a client slice. */}
