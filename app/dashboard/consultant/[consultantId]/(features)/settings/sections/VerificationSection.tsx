@@ -22,7 +22,10 @@ import {
   XCircle,
 } from "lucide-react";
 import type { ConsultantVerificationStatus } from "@prisma/client";
-import type { UploadedDocument } from "@/components/verification/VerificationDocumentUpload";
+import {
+  isPersistedDocument,
+  type UploadedDocument,
+} from "@/components/verification/VerificationDocumentUpload";
 import type { TConsultantProfile } from "types/consultant";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
@@ -141,10 +144,7 @@ export function VerificationSection({
       // re-filed request carried no documents (wizard UI audit, 2026-09-18).
       const documentIds =
         data.verificationDocuments
-          ?.filter(
-            (doc): doc is Required<VerificationDocument> =>
-              doc.status === "uploaded" && !!doc.id,
-          )
+          ?.filter(isPersistedDocument)
           .map((doc) => doc.id) || [];
 
       const payload = {

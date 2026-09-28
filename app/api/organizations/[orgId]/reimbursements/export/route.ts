@@ -12,19 +12,14 @@ import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+// #1861 — formula-safe (= + - @) escaping; names and descriptions are user-typed.
+import { escapeCsvField } from "@/lib/csv/keyset-export";
 
 const QuerySchema = z.object({
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   userId: z.string().optional(),
 });
-
-function csvEscape(s: string): string {
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 export async function GET(
   req: NextRequest,
@@ -134,9 +129,9 @@ export async function GET(
     rows.push(
       [
         p.createdAt.toISOString(),
-        csvEscape(p.user.name ?? ""),
-        csvEscape(p.user.email),
-        csvEscape(p.description ?? ""),
+        escapeCsvField(p.user.name ?? ""),
+        escapeCsvField(p.user.email),
+        escapeCsvField(p.description ?? ""),
         String(grossPaise),
         String(refundedPaise),
         String(netPaise),
