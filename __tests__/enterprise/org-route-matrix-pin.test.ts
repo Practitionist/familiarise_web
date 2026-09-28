@@ -58,6 +58,14 @@ function routeFiles(dir: string): string[] {
   });
 }
 
+/**
+ * Source without comments, so a comment naming a key never counts as a gate
+ * (and a comment naming a retired helper never fails the rank check). The
+ * `[^:]` keeps a URL's `//` inside a string.
+ */
+const code = (src: string) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
 /** Each exported handler's source, up to the next top-level export. */
 function handlers(src: string): Array<[method: string, body: string]> {
   const starts = [...src.matchAll(HANDLER)];
@@ -69,7 +77,7 @@ function handlers(src: string): Array<[method: string, body: string]> {
 
 const routes = routeFiles(ROOT).map((path) => ({
   rel: relative(ROOT, path),
-  src: readFileSync(path, "utf8"),
+  src: code(readFileSync(path, "utf8")),
 }));
 
 describe("every org route reads the matrix (#1851)", () => {
