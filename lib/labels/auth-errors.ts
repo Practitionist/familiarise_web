@@ -1,226 +1,357 @@
 /**
- * One place that turns a Better Auth client error into the sentence the
- * customer reads, keyed on the server's `code` first and the HTTP status
- * second. The sign-in page used to guess from the message text, and the
- * wrong-password message ("Invalid email or password") matched its
- * "invalid" + "email" branch, so every wrong password read as a malformed
- * address. Codes come from `@better-auth/core` (error/codes), the admin
- * plugin (BANNED_USER), and our own hooks and limiter (SSO_REQUIRED,
- * RATE_LIMITED). Sign-in and password-reset deliberately never reveal
- * whether an address exists, and neither does this copy.
+ * The single place a Better Auth (or app-rail) failure becomes a sentence.
+ *
+ * Resolution order, and why:
+ *
+ *   1. **Code.** `lib/labels/auth-errors.catalog.ts` is exhaustive over
+ *      `AuthErrorCode`, so a matched code always has copy. Codes are matched
+ *      case-insensitively and trimmed, because a hand-written `Refusal` is not
+ *      obliged to match Better Auth's casing.
+ *   2. **Flow override.** The same code can read differently per page (see
+ *      `AUTH_ERROR_COPY_BY_FLOW`).
+ *   3. **Disclosure.** Only on sign-in, and only when the *server* said so —
+ *      see `SignInDisclosure` below. The client never decides on its own that
+ *      an address exists.
+ *   4. **Status.** A code-less 429 becomes a timed message; a code-less 401/403
+ *      becomes `REQUEST_REJECTED`, not the generic sentence. The previous
+ *      version fell through to `GENERIC[flow]`, which turned a `trustedOrigins`
+ *      misconfiguration on a deploy preview into "Something went wrong on our
+ *      side" — the single most confusing auth failure this app can produce.
+ *   5. **Generic**, per flow, as a true last resort.
+ *
+ * The raw `error.message` is *never* returned. Not for a known code, not for an
+ * unknown one, not in a fallback. Better Auth's messages are developer-facing
+ * ("Invalid email or password"); `lib/sso/signin-with-toast.ts` used to render
+ * one verbatim, and a SAML parse failure surfaced to a customer as
+ * `TypeError: Cannot read properties of undefined (reading 'metadata')`.
  */
 
-export type AuthFlow = "signin" | "signup" | "forgot" | "reset" | "verify";
+import {
+  AUTH_ERROR_COPY,
+  UNREACHABLE,
+  baseAuthErrorCopy,
+  flowAuthErrorCopy,
+  type AuthErrorAction,
+  type AuthErrorCopy,
+  type AuthErrorField,
+  type AuthFlow,
+} from "./auth-errors.catalog";
+import { normalizeAuthErrorCode } from "./auth-error-codes";
 
-/** The shape `authClient.*` returns: the JSON body plus `status`. */
+export type { AuthErrorAction, AuthErrorCopy, AuthErrorField, AuthFlow };
+export { AUTH_ERROR_COPY, UNREACHABLE };
+
+/* -------------------------------------------------------------------------- */
+/* Input                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The shape `authClient.*` returns — the JSON body plus `status` — widened with
+ * the fields our own rails add.
+ */
 export interface AuthClientError {
   code?: string;
   message?: string;
   /** Our limiter and route helpers answer `{ error, code }`. */
   error?: string;
   status?: number;
+  /**
+   * `Retry-After`, in seconds. Present on our 429s. Better Auth's own
+   * rate-limit error does not carry it, which is why the copy is rewritten at
+   * the call site rather than read from the error object.
+   */
+  retryAfterSeconds?: number;
+  /** Which limiter fired — lets the page name the window ("sign-in", "reset"). */
+  scope?: string;
 }
 
-export type AuthErrorField = "email" | "password" | "referral";
-
-export interface AuthErrorCopy {
-  title: string;
-  description: string;
-  /** The input the sentence belongs under, when there is one. */
-  field?: AuthErrorField;
-  /** True when the page should switch to its "verify your email" state. */
-  needsVerification?: boolean;
+/**
+ * What the server is willing to tell the client about the account behind an
+ * email address. Produced by `lib/auth/attempts.ts` and attached to the sign-in
+ * response by the `hooks.after` middleware — never computed in the browser.
+ */
+export interface SignInDisclosure {
+  /**
+   * False until the server has recorded `DISCLOSURE_UNLOCK_AFTER` failures for
+   * this address. While false, the `unlocked` copy is withheld regardless of
+   * what the client believes.
+   */
+  unlocked: boolean;
+  /** Failures recorded for this address in the current window. */
+  attempts: number;
+  /**
+   * Only meaningful once `unlocked`. Lets the page say the precise thing —
+   * "this account has no password yet" reads very differently from "this
+   * account is suspended", and both are more useful than either password error.
+   */
+  accountState?: AccountState;
 }
 
-const SUPPORT = "support@familiarisenow.com";
+export type AccountState =
+  | "unknown"
+  | "unverified"
+  | "active"
+  | "banned"
+  | "sso_only"
+  | "no_password";
 
-const UNREACHABLE: AuthErrorCopy = {
-  title: "We couldn't reach the sign-in service",
-  description: "Nothing was changed. Please try again in a moment.",
-};
+export interface HumanizeOptions {
+  /** Sign-in only. Gates the stronger, existence-revealing copy. */
+  disclosure?: SignInDisclosure;
+  /** Overrides `error.retryAfterSeconds` — useful when the page parsed a header. */
+  retryAfterSeconds?: number;
+}
 
-const RATE_LIMITED: AuthErrorCopy = {
-  title: "Too many attempts",
-  description: "Wait a minute, then try again.",
-};
+/* -------------------------------------------------------------------------- */
+/* Retry-After                                                               */
+/* -------------------------------------------------------------------------- */
 
-const BY_CODE: Record<string, AuthErrorCopy> = {
-  INVALID_EMAIL: {
-    title: "Check the email address",
-    description: "Enter a valid email address.",
-    field: "email",
-  },
-  // The server answers a wrong password, an unknown address and a
-  // Google/SSO-only account the same way; the provider buttons on the page
-  // already cover the last case, so the sentence stays a plain password error.
-  INVALID_EMAIL_OR_PASSWORD: {
-    title: "That email and password don't match",
-    description: "Check both and try again, or use Forgot password?",
-    field: "password",
-  },
-  EMAIL_NOT_VERIFIED: {
-    title: "Verify your email first",
-    description: "Your email isn't verified yet — resend the link below.",
-    needsVerification: true,
-  },
-  BANNED_USER: {
-    title: "This account is suspended",
-    description: `Contact ${SUPPORT} if you think this is a mistake.`,
-  },
-  SSO_REQUIRED: {
-    title: "Use your organisation's sign-in",
-    description:
-      "This email domain signs in through your organisation's SSO. Use the SSO button.",
-    field: "email",
-  },
-  USER_ALREADY_EXISTS: {
-    title: "This email already has an account",
-    description: "Sign in instead, or reset your password if you forgot it.",
-    field: "email",
-  },
-  USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL: {
-    title: "This email already has an account",
-    description: "Sign in instead, or reset your password if you forgot it.",
-    field: "email",
-  },
-  PASSWORD_TOO_SHORT: {
-    title: "Password too short",
-    description: "Use at least 8 characters.",
-    field: "password",
-  },
-  PASSWORD_TOO_LONG: {
-    title: "Password too long",
-    description: "Use at most 128 characters.",
-    field: "password",
-  },
-  INVALID_PASSWORD: {
-    title: "Check the password",
-    description: "Choose a different password and try again.",
-    field: "password",
-  },
-  INVALID_TOKEN: {
-    title: "This link no longer works",
-    description: "It is invalid or has expired. Request a new one.",
-  },
-  TOKEN_EXPIRED: {
-    title: "This link has expired",
-    description: "Request a new one and use it within 30 minutes.",
-  },
-  EMAIL_ALREADY_VERIFIED: {
-    title: "Already verified",
-    description: "This email is verified — you can sign in.",
-  },
-  EMAIL_MISMATCH: {
-    title: "Different address",
-    description: "That address doesn't match the account you're signed in to.",
-    field: "email",
-  },
-  USER_NOT_FOUND: {
-    title: "We couldn't find that account",
-    description: "The link may belong to a deleted account. Sign up again.",
-  },
-  SESSION_LOOKUP_FAILED: UNREACHABLE,
-  RATE_LIMITED,
-};
+/**
+ * "in 12 minutes", not "in 731 seconds" and not "in a moment".
+ *
+ * Rounding is deliberately coarse and *up*: a customer told to come back in
+ * "9 minutes" for a 9m30s lockout has been told to come back too early, and the
+ * natural reaction is to hammer the button — which is exactly the behaviour a
+ * lockout exists to interrupt.
+ */
+export function formatRetryAfter(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "a moment";
+  const total = Math.ceil(seconds);
+  if (total < 60) return `${total} second${total === 1 ? "" : "s"}`;
+  const minutes = Math.ceil(total / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${Math.ceil(hours / 24)} days`;
+}
 
-/** Only the flows where a code means something different per page. */
-const BY_FLOW_AND_CODE: Partial<
-  Record<AuthFlow, Record<string, AuthErrorCopy>>
-> = {
-  reset: {
-    INVALID_TOKEN: {
-      title: "This reset link no longer works",
+/** `RATE_LIMITED` / `ACCOUNT_TEMPORARILY_LOCKED` gain a real time to wait. */
+function withRetryAfter(
+  copy: AuthErrorCopy,
+  seconds: number | undefined,
+): AuthErrorCopy {
+  if (seconds === undefined) return copy;
+  return {
+    ...copy,
+    description: `Try again in ${formatRetryAfter(seconds)}.`,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Validation-message sniffing                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Better Auth validates the request body with zod *before* its own codes
+ * apply, so a blank field arrives as `VALIDATION_ERROR` / `MISSING_FIELD` with
+ * a message like `[body.email] Invalid email`. Only the field name is read from
+ * it — never the value, which is user input and may itself be sensitive.
+ */
+function fieldFromValidationMessage(
+  message: string | undefined,
+): AuthErrorField | null {
+  if (!message) return null;
+  if (/\[body\.email\]/i.test(message)) return "email";
+  if (/\[body\.newPassword\]/i.test(message)) return "newPassword";
+  if (/\[body\.(password|currentPassword)\]/i.test(message)) return "password";
+  if (/\[body\.(code|otp|token)\]/i.test(message)) return "code";
+  return null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Resolution                                                                */
+/* -------------------------------------------------------------------------- */
+
+function copyForCode(
+  flow: AuthFlow,
+  code: string,
+  message: string | undefined,
+): AuthErrorCopy | null {
+  const perFlow = flowAuthErrorCopy(flow, code);
+  const base = baseAuthErrorCopy(code);
+
+  // A flow override is an *amendment* to the base entry, so a base must exist.
+  // `AUTH_ERROR_COPY` is exhaustive over `AuthErrorCode` and every key of
+  // `AUTH_ERROR_COPY_BY_FLOW` is an `AuthErrorCode`, so this cannot be null for
+  // a code we recognise — but the check keeps a future bad override from
+  // rendering a `{ title: undefined }` toast instead of failing loudly.
+  if (perFlow) {
+    if (!base) {
+      throw new Error(
+        `auth-errors: flow override for "${flow}/${code}" has no base entry in AUTH_ERROR_COPY`,
+      );
+    }
+    return { ...base, ...perFlow };
+  }
+
+  if (base) return base;
+
+  // A zod validation failure only has generic copy, so the *field* is the whole
+  // message. This is the one place a server message is read, and it is read for
+  // a path token only.
+  if (code === "VALIDATION_ERROR" || code === "MISSING_FIELD") {
+    const field = fieldFromValidationMessage(message);
+    if (!field) return null;
+    return {
+      title:
+        field === "email"
+          ? "Check the email address"
+          : field === "newPassword"
+            ? "Enter a new password"
+            : "Check this field",
       description:
-        "Reset links last 30 minutes and work once. Request a new one.",
-    },
-  },
-  verify: {
-    INVALID_TOKEN: {
-      title: "This verification link no longer works",
-      description: "Request a fresh one below.",
-    },
-    TOKEN_EXPIRED: {
-      title: "This verification link has expired",
-      description: "Request a fresh one below.",
-    },
-  },
-};
+        field === "email"
+          ? "Enter a valid email address."
+          : field === "newPassword"
+            ? "This field can't be empty."
+            : field === "code"
+              ? "Enter the code from your app or email."
+              : "This field can't be empty.",
+      field,
+    };
+  }
+  return null;
+}
+
+/**
+ * The account-state sentence, which is strictly more useful than either
+ * password error — but is only ever reachable behind `disclosure.unlocked`.
+ */
+function copyForAccountState(state: AccountState): AuthErrorCopy | null {
+  switch (state) {
+    case "unverified":
+      return {
+        title: "Verify your email first",
+        description: "This account exists but the email isn't verified yet.",
+        needsVerification: true,
+        action: "resend-verification",
+      };
+    case "banned":
+      return {
+        title: "This account is suspended",
+        description: "The address matches a suspended account.",
+        action: "contact-support",
+      };
+    case "sso_only":
+      return {
+        title: "Use your organisation's sign-in",
+        description: "This account signs in through SSO, not a password.",
+        action: "switch-to-sso",
+      };
+    case "no_password":
+      return {
+        title: "This account has no password",
+        description: "It signs in with Google, GitHub, Facebook or SSO.",
+        action: "sign-in",
+      };
+    case "active":
+    case "unknown":
+      // `active` means the address exists *and* the password was the problem;
+      // that is the collapsed case, so the base copy already says it.
+      return null;
+  }
+}
 
 const GENERIC: Record<AuthFlow, AuthErrorCopy> = {
   signin: {
     title: "Sign-in failed",
     description: "Something went wrong on our side. Please try again.",
+    action: "retry",
   },
   signup: {
     title: "We couldn't create your account",
     description: "Something went wrong on our side. Please try again.",
+    action: "retry",
   },
   forgot: {
     title: "We couldn't send the reset link",
     description: "Please try again in a moment.",
+    action: "retry",
   },
   reset: {
     title: "We couldn't reset your password",
     description: "Please try again, or request a new link.",
+    action: "request-new-link",
   },
   verify: {
     title: "We couldn't verify that link",
     description: "Request a fresh one below.",
+    action: "request-new-link",
   },
 };
 
 /**
- * Better Auth validates the body with zod before its own codes apply, so a
- * blank field arrives as `VALIDATION_ERROR` / `MISSING_FIELD` with a message
- * like "[body.email] Invalid email". Only the field name is read from it.
+ * Status fallback, for a failure that carried no usable code.
+ *
+ * The 401/403 branch is the important one. Those statuses out of `/api/auth/*`
+ * mean the request never reached a handler — a `trustedOrigins` or CSRF
+ * rejection at the edge — which is a *deployment* problem, not a customer's
+ * password. Answering it with `GENERIC[flow]` told a correct password that
+ * "something went wrong on our side", and gave support nothing to look at.
  */
-function fieldFromValidationMessage(message: string): AuthErrorField | null {
-  if (/\[body\.email\]/i.test(message)) return "email";
-  if (/\[body\.(password|newPassword)\]/i.test(message)) return "password";
-  return null;
-}
-
-const PASSWORD_REQUIRED: AuthErrorCopy = {
-  title: "Enter your password",
-  description: "The password field is required.",
-  field: "password",
-};
-
-function copyForCode(
-  flow: AuthFlow,
-  code: string,
-  message: string,
-): AuthErrorCopy | null {
-  const perFlow = BY_FLOW_AND_CODE[flow]?.[code];
-  if (perFlow) return perFlow;
-  const known = BY_CODE[code];
-  if (known) return known;
-  if (code !== "VALIDATION_ERROR" && code !== "MISSING_FIELD") return null;
-  const field = fieldFromValidationMessage(message);
-  if (field === "email") return BY_CODE.INVALID_EMAIL;
-  if (field === "password") return PASSWORD_REQUIRED;
-  return null;
-}
-
-// Status 0 is the explicit "nothing answered" a page passes for a thrown
-// fetch; an error with no status at all (a URL code the page did not know)
-// is not a network failure.
 function copyForStatus(
   flow: AuthFlow,
   status: number | undefined,
+  retryAfterSeconds: number | undefined,
 ): AuthErrorCopy {
   if (status === undefined) return GENERIC[flow];
-  if (status === 429) return RATE_LIMITED;
+  if (status === 429) {
+    return withRetryAfter(AUTH_ERROR_COPY.RATE_LIMITED, retryAfterSeconds);
+  }
   if (status === 0 || status >= 500) return UNREACHABLE;
+  if (status === 401 || status === 403) return AUTH_ERROR_COPY.REQUEST_REJECTED;
+  if (status === 410) {
+    return {
+      title: "This link is no longer available",
+      description: "It was revoked or has already been used.",
+      action: "request-new-link",
+    };
+  }
+  if (status === 409) {
+    return {
+      title: "That conflicts with something already saved",
+      description: "Refresh the page and try again.",
+      action: "retry",
+    };
+  }
   return GENERIC[flow];
 }
+
+/* -------------------------------------------------------------------------- */
+/* Entry point                                                               */
+/* -------------------------------------------------------------------------- */
 
 export function humanizeAuthError(
   flow: AuthFlow,
   error: AuthClientError | null | undefined,
+  options: HumanizeOptions = {},
 ): AuthErrorCopy {
   if (!error) return GENERIC[flow];
-  const code = error.code?.toUpperCase();
-  const byCode = code ? copyForCode(flow, code, error.message ?? "") : null;
-  return byCode ?? copyForStatus(flow, error.status);
+
+  const retryAfter = options.retryAfterSeconds ?? error.retryAfterSeconds;
+  const code = normalizeAuthErrorCode(error.code);
+  const byCode = code ? copyForCode(flow, code, error.message) : null;
+  const base = byCode ?? copyForStatus(flow, error.status, retryAfter);
+
+  // Lockout and throttling always get the real wait, whichever branch produced
+  // the base copy.
+  if (base === AUTH_ERROR_COPY.ACCOUNT_TEMPORARILY_LOCKED) {
+    return withRetryAfter(base, retryAfter);
+  }
+
+  // Tiered disclosure. Sign-in only, and only when the server said so.
+  if (flow === "signin" && options.disclosure?.unlocked) {
+    const stateCopy = options.disclosure.accountState
+      ? copyForAccountState(options.disclosure.accountState)
+      : null;
+    if (stateCopy) return stateCopy;
+    // No more specific state — fall back to "we don't know this address", which
+    // is the only other thing disclosure unlocks.
+    if (code === "INVALID_EMAIL_OR_PASSWORD" || code === "INVALID_PASSWORD") {
+      const unlocked = AUTH_ERROR_COPY.INVALID_EMAIL_OR_PASSWORD.unlocked;
+      if (unlocked) return { ...base, ...unlocked };
+    }
+  }
+
+  return base;
 }
