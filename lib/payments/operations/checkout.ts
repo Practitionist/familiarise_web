@@ -214,6 +214,9 @@ const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.SCHEDULED,
 ];
 
+/** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
+const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
+
 /** Why a superseded open order's booking was cancelled (#1463). */
 const SUPERSEDED_HOLD_NOTE =
   "Superseded by a newer checkout attempt for the same booking";
@@ -324,6 +327,8 @@ interface ReusableOrder {
   amount: number;
   currency: string;
   isMockPayment: boolean;
+  /** #1861 L1 — the hold's end, echoed so Checkout can time out before it. */
+  expiresAt?: Date | null;
   /** The booked window's slot rows (consultation/class shape); empty for
    *  subscription placeholders whose period lives on the slot rows too. */
   appointment?: {
@@ -487,6 +492,7 @@ export async function findReusablePendingOrderPayment(
       amount: true,
       currency: true,
       isMockPayment: true,
+      expiresAt: true,
       appointment: {
         select: {
           occurrences: {
@@ -750,6 +756,7 @@ export class PaymentIntentManager {
     paymentGateway: PaymentGateway;
     isMockPayment?: boolean;
     customerId?: string;
+    holdExpiresAt?: Date;
   }) {
     try {
       // Imported at call time so the checkout bundle does not evaluate the
@@ -3678,6 +3685,7 @@ export async function handleCheckout(
         // org-sponsored payments never land in PENDING, see the comment
         // above findReusablePendingOrderPayment), so the page must open it.
         skipPayment: reusableOrder.isMockPayment,
+        holdExpiresAt: reusableOrder.expiresAt?.toISOString() ?? null,
         message: "Resuming your in-progress checkout.",
       };
     }
@@ -3713,6 +3721,10 @@ export async function handleCheckout(
     };
     await renewOrAbort(perAttemptTtl);
 
+    // #1861 L1 — one deadline for the gateway's capture window and the
+    // PENDING row, so a Serializable retry cannot push the row past the order.
+    const holdExpiresAt = new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS);
+
     // Enterprise org funding skips the gateway entirely.
     if (isOrgSponsoredPayment) {
       const prefix = isOrgWalletPayment
@@ -3746,6 +3758,7 @@ export async function handleCheckout(
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
           customerId: savedCardCustomer,
+          holdExpiresAt,
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
@@ -3960,9 +3973,7 @@ export async function handleCheckout(
                 userId: userId,
                 appointmentId: createdAppointment?.id || null,
                 discountCodeId,
-                expiresAt: skipPayment
-                  ? null
-                  : new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+                expiresAt: skipPayment ? null : holdExpiresAt,
                 buyerCountry: detectedBuyerCountry,
                 isInternational,
                 displayCurrencyAtCheckout,
@@ -4366,6 +4377,7 @@ export async function handleCheckout(
 
             return {
               appointmentId: createdAppointment?.id,
+              holdExpiresAt: payment.expiresAt,
               creditsApplied: actualCreditsApplied,
               creditsRemainingAfter,
               capNearBell,
@@ -4555,6 +4567,8 @@ export async function handleCheckout(
         // Matches checkout-replay.ts's SUCCEEDED-branch field name.
         skipPayment:
           isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
+        // #1861 L1 — Checkout's `timeout` is sized to this.
+        holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);

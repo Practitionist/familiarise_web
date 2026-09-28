@@ -149,7 +149,13 @@ async function reconcileOrphanedConfirmationsUnlocked(
         occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
       },
     },
-    select: { id: true, appointmentId: true, userId: true },
+    select: {
+      id: true,
+      appointmentId: true,
+      userId: true,
+      expiresAt: true,
+      capturedAt: true,
+    },
     take: limit,
   });
 
@@ -164,6 +170,15 @@ async function reconcileOrphanedConfirmationsUnlocked(
               tx,
               orphan.appointmentId!,
               orphan.userId,
+              // #1861 L1 — a capture that landed after its hold lapsed keeps
+              // yielding to a live foreign hold on re-drive (its auto-refund
+              // failed), not just on the first webhook pass.
+              {
+                holdExpired:
+                  orphan.expiresAt !== null &&
+                  orphan.capturedAt !== null &&
+                  orphan.capturedAt > orphan.expiresAt,
+              },
             );
           },
           {
