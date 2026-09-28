@@ -255,9 +255,37 @@ async function auditOrgMaterialChange(
   });
 }
 
-/** The org's recent changes to this plan's materials, for its consultant. */
-async function orgChangesForPlan(organizationId: string, planId: string) {
-  return prisma.orgAuditLog.findMany({
+/** One org change to a plan material, as the plan's consultant sees it. */
+export interface OrgMaterialChange {
+  action: "added" | "updated" | "removed";
+  materialId: string | null;
+  fileName: string | null;
+  orgName: string;
+  actorName: string | null;
+  at: Date;
+}
+
+const CHANGE_KIND: Record<string, OrgMaterialChange["action"]> = {
+  [AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_ADDED]: "added",
+  [AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_UPDATED]: "updated",
+  [AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_REMOVED]: "removed",
+};
+
+function detailString(details: unknown, key: string): string | null {
+  if (!details || typeof details !== "object") return null;
+  const value = (details as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * The org's recent changes to this plan's materials, for its consultant
+ * (#1851 decision 8): which file, which org, which operator, and when.
+ */
+async function orgChangesForPlan(
+  organizationId: string,
+  planId: string,
+): Promise<OrgMaterialChange[]> {
+  const rows = await prisma.orgAuditLog.findMany({
     where: {
       organizationId,
       category: "CATALOG",
@@ -266,8 +294,39 @@ async function orgChangesForPlan(organizationId: string, planId: string) {
     },
     orderBy: { createdAt: "desc" },
     take: 20,
-    select: { action: true, createdAt: true, details: true },
+    select: {
+      action: true,
+      createdAt: true,
+      details: true,
+      actorMembershipId: true,
+      organization: { select: { name: true } },
+    },
   });
+  if (rows.length === 0) return [];
+
+  const actorIds = [
+    ...new Set(
+      rows
+        .map((r) => r.actorMembershipId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const actors = await prisma.membership.findMany({
+    where: { id: { in: actorIds } },
+    select: { id: true, user: { select: { name: true } } },
+  });
+  const actorName = new Map(actors.map((a) => [a.id, a.user.name]));
+
+  return rows.map((r) => ({
+    action: CHANGE_KIND[r.action] ?? "updated",
+    materialId: detailString(r.details, "materialId"),
+    fileName: detailString(r.details, "fileName"),
+    orgName: r.organization.name,
+    actorName: r.actorMembershipId
+      ? (actorName.get(r.actorMembershipId) ?? null)
+      : null,
+    at: r.createdAt,
+  }));
 }
 
 /**
