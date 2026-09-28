@@ -24,7 +24,7 @@ An organisation that hosts sessions earns its share into the same kind of earnin
 
 1. **PENDING.** The organisation's READY earnings are gathered into one payout batch, either by the Monday 20:00 UTC job or by someone with the `payouts.manage` permission (an Owner or a Billing admin) on Org › Payouts. The batch appears on Org › Payouts › Runs as "Awaiting approval".
 2. **APPROVED (the two-person rule).** Someone with the `payouts.approve` permission (an Owner or a Billing admin) must approve the batch. The person who created a batch cannot approve it themselves while the organisation has a second person who can approve payouts. In an organisation with only one such person, that person approves their own batch by typing the organisation's slug, and the audit log records that it was a self-approval.
-3. **Paid by the weekly run.** The Monday 21:00 UTC run pays only APPROVED batches, and a PENDING batch keeps waiting until someone approves it.
+3. **Paid by the weekly run.** An approved batch shows as "Queued for the next run", the Monday 21:00 UTC run pays only APPROVED batches, and a PENDING batch keeps waiting until someone approves it.
 
 A batch can be cancelled only before it is approved, and cancelling it returns its earnings to READY for a later batch. After approval a batch can only be paid, fail, or be reversed by the bank. A FAILED organisation payout is final, which means that payout row is never retried or cancelled. Its earnings return to READY when it fails, so a new batch, with its own approval, pays them instead.
 
