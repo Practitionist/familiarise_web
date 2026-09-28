@@ -223,22 +223,22 @@ flowchart TD
   ENTRY -->|EXPERT| EXP["/compensation only<br/>(own payoutRecipient,<br/>RateCard split, earnings)"]
   ENTRY -->|MANAGER+ / SUPPORT / OWNER| HOME["/home — activation center"]
 
-  subgraph MGR["MANAGER sees (rank 40)"]
+  subgraph MGR["MANAGER sees"]
     direction LR
     M1["/members<br/>(tabs: all · learners · experts · invitations)"]
     M2["/billing · /payouts · /analytics"]
     M3["/consent · /appointments · /audit"]
   end
-  subgraph MNT["+ MAINTAINER adds (rank 60)"]
+  subgraph MNT["+ MAINTAINER adds"]
     direction LR
     T1["/programs"]
     T2["/contracts · /purchase-orders"]
     T3["/settings"]
   end
-  subgraph OWN["+ OWNER only (rank 70)"]
+  subgraph OWN["+ settings with split holders"]
     direction LR
-    O1["/settings/sso<br/>(policy + providers + domain claims; MAINTAINER also reads, writes are OWNER-only)"]
-    O2["/settings/data-exports<br/>(DPDP §11, OWNER + BILLING_ADMIN)"]
+    O1["/settings/sso<br/>(policy + providers + domain claims; OWNER and MAINTAINER read, only OWNER writes)"]
+    O2["/settings/data-exports<br/>(DPDP §11: people bundle OWNER + MAINTAINER,<br/>finance bundle OWNER + BILLING_ADMIN)"]
   end
   HOME --> MGR --> MNT --> OWN
 

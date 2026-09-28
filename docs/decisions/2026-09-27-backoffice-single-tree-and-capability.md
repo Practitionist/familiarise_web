@@ -46,7 +46,7 @@ The two API namespaces (`/api/admin/**` and `/api/staff/**`) were kept as-is bey
 
 - The old `[staffId]` URL segment, which had never done anything, is gone, along with roughly 21 duplicate `loading.tsx` files that existed once per tree.
 - A single capability object, rather than a chain of boolean props, decides what renders on both server pages (`requireBackofficePage`, now tree-aware) and client components.
-- Every previously bookmarked or emailed back-office URL still works, because the legacy-routes mapping is exhaustive by construction (jest-pinned) rather than best-effort.
+- Every retired back-office URL shape that the legacy-routes mapping lists still works, and the jest cases pin those listed routes; a retired URL the mapping does not recognise answers a 404 from the catch-all rather than a redirect.
 
 ### Negative
 

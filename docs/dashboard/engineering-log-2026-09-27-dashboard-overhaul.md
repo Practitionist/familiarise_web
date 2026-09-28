@@ -46,7 +46,7 @@ React hydration error #418 (a server/client markup mismatch) showed up repeatedl
 
 ## The ErrorBoundary fix
 
-`components/ErrorBoundary.tsx` previously treated every thrown error inside a dashboard page, including Next.js's own `notFound()` and `redirect()` control-flow signals, as an application crash, rendering "Dashboard Error" instead of a real 404 or the intended redirect. It now calls `unstable_rethrow(error)` inside both `componentDidCatch` and `render()`; when that call itself throws (meaning the original error was a genuine crash), the boundary shows its fallback UI as before, but when `unstable_rethrow` swallows it (meaning the original error was Next.js's own navigation signal), the boundary re-throws it so Next's own boundary handles it. A 404 inside a dashboard route now renders as a 404.
+`components/ErrorBoundary.tsx` previously treated every thrown error inside a dashboard page, including Next.js's own `notFound()` and `redirect()` control-flow signals, as an application crash, rendering "Dashboard Error" instead of a real 404 or the intended redirect. It now passes each error to `unstable_rethrow(error)` through a small `isNextNavigationSignal` helper, which is used in both `componentDidCatch` and `render()`. `unstable_rethrow` throws only for Next.js's own control-flow signals and returns normally for an ordinary application error, so the helper catches that throw and reports a signal. When the error is a signal, `render()` re-throws the original error so Next's own boundary handles it; when it is a genuine crash, the boundary shows its fallback UI as before. A 404 inside a dashboard route now renders as a 404.
 
 ## The late-join rule in the consultee resources read
 
@@ -77,7 +77,7 @@ The same round also shipped three unrelated fixes queued from QA. `6f8568df0` fi
 
 ## Round 5: support workspace
 
-Four more commits (`dec787d1e`, `2be8c69fd`, `54cbabb31`, `f4b5d9117`) replaced the back office's separate Tickets and Conversations pages with one Support inbox, gave each case its own three-pane workspace, and gave every user-side support conversation a full page of its own instead of a drawer. The table below names the pieces and what each one is.
+Four more commits (`dec787d1e`, `2be8c69fd`, `54cbabb31`, `f4b5d9117`) replaced the back office's separate Tickets and Conversations pages with one Support inbox, gave each case its own two-pane workspace (the case list and the conversation, with a Details panel on demand), and gave every user-side support conversation a full page of its own instead of a drawer. The table below names the pieces and what each one is.
 
 | Layer | What it is | Where it lives |
 | --- | --- | --- |

@@ -95,7 +95,7 @@ branch name — as the `pullRequest` parameter:
 ```
 mcp__sonarqube__list_pull_requests(projectKey: "Practitionist_familiarise_web")
 mcp__sonarqube__get_project_quality_gate_status(projectKey: "Practitionist_familiarise_web", pullRequest: "<n>")
-mcp__sonarqube__search_sonar_issues_in_projects(projects: ["Practitionist_familiarise_web"], pullRequest: "<n>")
+mcp__sonarqube__search_sonar_issues_in_projects(projectKeys: ["Practitionist_familiarise_web"], pullRequest: "<n>")
 ```
 
 Treat every issue the same way as a CodeRabbit finding: verify it against the

@@ -21,7 +21,7 @@ enum OfferingPlanStatus {
 }
 ```
 
-`ConsultationPlan` and `SubscriptionPlan` each gained `status OfferingPlanStatus @default(PUBLISHED)`. This is additive and default-backed: on Postgres, adding a column with a constant default is a metadata-only operation, so every existing row reads as `PUBLISHED` without a backfill pass, and code that had not yet been updated to read the new column continued to behave exactly as before deployment. `WebinarPlan` and `ClassPlan` were not touched, because their existing status fields already cover the same need.
+`ConsultationPlan` and `SubscriptionPlan` each gained `status OfferingPlanStatus @default(PUBLISHED)`. This is additive and default-backed: on PostgreSQL 11 and later, which includes the Supabase Postgres this app runs on, adding a column with a constant default is a metadata-only operation, so every existing row reads as `PUBLISHED` without a backfill pass, and code that had not yet been updated to read the new column continued to behave exactly as before deployment. `WebinarPlan` and `ClassPlan` were not touched, because their existing status fields already cover the same need.
 
 ### What is gated
 
@@ -42,7 +42,7 @@ Unpublishing a plan does not touch anything that already happened against it. Pa
 
 - "Save draft" now does what its label says, closing a defect where a consultant's unfinished pricing or content changes went live the moment they clicked what they believed was a safe, non-publishing action.
 - The plan-detail API no longer leaks booking rows to an arbitrary signed-in caller, and a non-owner can no longer distinguish a real draft plan from a nonexistent one beyond a generic 404.
-- Because the column is additive with a default, the rollout needed no backfill and no window where old and new code disagreed about a plan's status.
+- Because the column is additive with a default, the rollout needed no backfill. It did not by itself guarantee that old code ignored drafts: while an old deployment and new draft writes overlap, old readers such as `generateMetadata` and `api/topics` can still show or count a draft plan, which is why the purchase gates and those readers shipped in the same deploy as the first draft write.
 
 ### Negative
 

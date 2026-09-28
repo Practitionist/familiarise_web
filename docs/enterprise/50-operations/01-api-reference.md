@@ -214,12 +214,12 @@ The org appointment feed sits on a different gate from the roster endpoints abov
 
 ## Library and org support tickets
 
-The org Library (Documents · Recordings) pages a session's files by `scope`, so both routes below accept the same query shape: `scope` (`mine`, the default, or `everyone`), `q`, `kind`, `from`, `to` (`YYYY-MM-DD`), `source`, and `page`. `scope=mine` is open to any ACTIVE or SUSPENDED member of the org, reading only their own sessions with full file URLs; `scope=everyone` requires `operations.read` and returns metadata only per ADR 20. The recordings read's Mine scope applies the #1819 late-join rule through the extractor shared with the consultee resources read.
+The org Library (Documents · Recordings) pages a session's files by `scope`, so both routes below accept the same query shape: `scope` (`mine`, the default, or `everyone`), `q`, `kind`, `from`, `to` (`YYYY-MM-DD`), `source`, and `page`. `scope=mine` is open to any ACTIVE or SUSPENDED member of the org, reading only their own sessions with full file URLs; `scope=everyone` requires an ACTIVE membership holding `operations.read`, so a SUSPENDED operator is refused, and it returns metadata only per ADR 20. The recordings read's Mine scope applies the #1819 late-join rule through the extractor shared with the consultee resources read.
 
 | Path                                                | Verb  | Min role                                             | Purpose                                                                                        | Audit actions |
 | ---------------------------------------------------- | ----- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------- |
-| `/api/organizations/[orgId]/documents`               | `GET` | active member (`scope=mine`) · `operations.read` (`scope=everyone`) | Org Library documents, paged by session                                                          | —             |
-| `/api/organizations/[orgId]/recordings`              | `GET` | active member (`scope=mine`) · `operations.read` (`scope=everyone`) | Org Library recordings, paged by session, late-join rule applied on `scope=mine`                 | —             |
+| `/api/organizations/[orgId]/documents`               | `GET` | ACTIVE or SUSPENDED member (`scope=mine`) · ACTIVE member with `operations.read` (`scope=everyone`) | Org Library documents, paged by session                                                          | —             |
+| `/api/organizations/[orgId]/recordings`              | `GET` | ACTIVE or SUSPENDED member (`scope=mine`) · ACTIVE member with `operations.read` (`scope=everyone`) | Org Library recordings, paged by session, late-join rule applied on `scope=mine`                 | —             |
 | `/api/organizations/[orgId]/support-tickets`         | `GET` | `supportRequests.org` (`operations.read` OR `billing.read`) | The org Support page's "Organization requests" tab — subject, category, status, requester name only; `page`/`pageSize` | —             |
 
 ## SSO and domains
