@@ -434,22 +434,25 @@ export const auth = betterAuth({
           // `lib/auth/session-stamp.ts` for why this is an update and
           // not an insert merge.
           await stampSessionDeviceMetadata(session.id, session.userAgent);
-          // Concurrent-session cap (#1856) — eventually consistent and
-          // MUST never fail sign-in, so fire-and-forget with a Sentry
-          // report. The just-created session is the newest and is always
-          // kept; see `lib/auth/session-cap.ts` for the ordering proof.
-          // An eviction bumps the cross-device counter so opted-in tabs
-          // learn promptly (the ban path does the same post-commit).
-          void enforceSessionCapForUser(session.userId)
-            .then(({ evicted }) => {
-              if (evicted > 0) return signalRevocation(session.userId);
-            })
-            .catch((err) => {
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            });
+          // Concurrent-session cap (#1856) — AWAITED, not fire-and-forget:
+          // a floating promise dies with the serverless freeze after the
+          // response, and with no later sign-in the "eventual" convergence
+          // never comes (proven live: 13 sessions, zero evictions). One
+          // bounded pass costs a single indexed findMany on the rare
+          // sign-in path; failures are caught so sign-in never fails.
+          // The just-created session is the newest and is always kept;
+          // see `lib/auth/session-cap.ts` for the ordering proof.
+          try {
+            const { evicted } = await enforceSessionCapForUser(session.userId);
+            // An eviction bumps the cross-device counter so opted-in tabs
+            // learn promptly (the ban path does the same post-commit).
+            if (evicted > 0) void signalRevocation(session.userId);
+          } catch (err) {
+            Sentry.captureException(
+              err instanceof Error ? err : new Error(String(err)),
+              { tags: { subsystem: "auth" }, level: "warning" },
+            );
+          }
         },
       },
     },

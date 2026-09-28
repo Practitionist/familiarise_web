@@ -69,7 +69,9 @@ activity, ±5 min — the UI says "last seen", never "active now".
 ### 2.4 Cap
 
 `MAX_CONCURRENT_SESSIONS = 10`, enforced in `session.create.after`
-(fire-and-forget, Sentry-reported, never fails sign-in) by
+(awaited but infallible — caught, Sentry-reported, never fails sign-in;
+fire-and-forget would die with the serverless freeze and, with no later
+sign-in, never converge) by
 `enforceSessionCapForUser()`: keep the N newest under the total order
 `(createdAt, id)` — `createdAt` alone ties within a millisecond —
 inside a Serializable retry. Eventually consistent by design; hygiene,
