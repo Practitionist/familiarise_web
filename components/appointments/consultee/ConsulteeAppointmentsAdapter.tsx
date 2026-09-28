@@ -364,14 +364,28 @@ export function useConsulteeAppointmentsAdapter(options?: {
 
   // Extracted so Sonar cognitive-complexity on confirmDestructive stays under
   // the gate; each helper owns its fetch + toast, the dispatcher owns loading.
-  const cancelTrial = async (id: string, title: string) => {
+  // #1846 — the quoted cancel: DELETE carries the refund the dialog showed,
+  // and the server refunds only that amount. A changed quote answers 409; the
+  // preview refetches so the dialog shows the new number before a retry.
+  const cancelTrial = async (
+    id: string,
+    title: string,
+    quote?: { estimatedRefundPaise: number },
+  ) => {
     const response = await fetch(`/api/trials/${id}`, {
-      method: "PATCH",
+      method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "CANCELLED" }),
+      body: JSON.stringify(
+        quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
+      ),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (response.status === 409) {
+        void queryClient.invalidateQueries({
+          queryKey: ["cancel-refund-preview"],
+        });
+      }
       throw new Error(
         (data as { error?: string }).error || "Failed to cancel trial",
       );
@@ -414,7 +428,9 @@ export function useConsulteeAppointmentsAdapter(options?: {
     });
   };
 
-  const confirmDestructive = async () => {
+  const confirmDestructive = async (quote?: {
+    estimatedRefundPaise: number;
+  }) => {
     if (!activeVm) return;
     const id = sourceId(activeVm);
     const destructive = consulteeDestructiveAction(activeVm.kind);
@@ -429,7 +445,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
     try {
       if (destructive === "cancel-trial") {
         if (!id) throw new Error("Trial id is missing");
-        await cancelTrial(id, activeVm.title);
+        await cancelTrial(id, activeVm.title, quote);
       } else if (destructive === "leave-event") {
         if (!id) throw new Error("Event id is missing");
         const userId = session?.user?.id;
@@ -463,7 +479,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
       <>
         <CancelConfirmationDialog
           isOpen={dialog === "cancel" || dialog === "leave"}
-          onConfirm={() => void confirmDestructive()}
+          onConfirm={(quote) => void confirmDestructive(quote)}
           onCancel={closeDialog}
           title={activeVm.title}
           consultant={activeVm.counterpart.name}
@@ -475,6 +491,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
           // is the one side of the booking whose money the quote is about. The
           // consultant adapter has always passed it.
           appointmentId={activeVm.appointmentId}
+          // #1846 — a trial quotes through its own preview, which prices the
+          // trial's payment; the appointment preview has no trial arm.
+          previewUrl={
+            consulteeDestructiveAction(activeVm.kind) === "cancel-trial" &&
+            sourceId(activeVm)
+              ? `/api/trials/${sourceId(activeVm)}/cancel/preview`
+              : null
+          }
         />
 
         {activeVm.appointmentId && dialog === "documents" && (

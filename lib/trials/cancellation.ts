@@ -29,7 +29,11 @@ import {
   POLICY_TERMS_INCLUDE,
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  fundingRailForIntent,
+  refundBookingPayment,
+  type FundingRail,
+} from "@/lib/payments/operations/booking-refund";
 
 export type TrialRefundOutcome = {
   refundPct: number;
@@ -92,25 +96,37 @@ export async function softCancelTrialAppointmentInTx(
 }
 
 /**
- * Refund a paid trial on cancellation, using the same booking-time policy
- * snapshot the appointment cancel route applies.
- *
- * Returns null when there is nothing to refund — a free trial, an unpaid
- * AWAITING_PAYMENT trial that lapsed, or a payment that never captured.
- *
- * Deliberately never throws: the cancellation has already committed by the time
- * this runs, and a gateway failure must not roll it back. A failed refund is
- * reported to Sentry and surfaced to the caller as `failed`, matching how
- * `app/api/appointments/[appointmentId]/cancel/route.ts` handles the same case.
+ * #1846 — what cancelling this paid trial right now pays back, computed and
+ * never written. The trial cancel dialog shows it before the click, and trial
+ * DELETE refunds only the amount the caller confirmed from it (a changed quote
+ * answers 409 with the new one), so the number shown is the number charged.
  */
-export async function refundCancelledTrial(args: {
-  trialId: string;
+export interface TrialRefundQuote {
+  paymentId: string;
+  refundPct: number;
+  estimatedRefundPaise: number;
+  /** What was paid, for the dialog's breakdown line. */
+  grossPaise: number;
+  /** What is still refundable after any earlier partial refund. */
+  refundablePaise: number;
+  currency: string;
+  fundingRail: FundingRail;
+  /** Null when the trial has no session yet, which reads as full notice. */
+  hoursUntilNextSession: number | null;
+  prorated: false;
+}
+
+/**
+ * The quote for a paid trial, or null when there is nothing to refund: a free
+ * trial, an unpaid AWAITING_PAYMENT trial, or a payment that never captured.
+ * Uses the same booking-time policy snapshot the appointment cancel applies.
+ */
+export async function quoteTrialRefund(args: {
   appointmentId: string | null;
   paymentId: string | null;
-  initiatedByUserId: string;
   isConsultantInitiated: boolean;
-}): Promise<TrialRefundOutcome | null> {
-  const { trialId, appointmentId, paymentId, initiatedByUserId } = args;
+}): Promise<TrialRefundQuote | null> {
+  const { appointmentId, paymentId } = args;
 
   // Trial.paymentId is ledger truth once a paid trial settles, but the
   // webhook writes it after capture — fall back to the appointment's payment so
@@ -126,7 +142,13 @@ export async function refundCancelledTrial(args: {
           ? { appointmentId }
           : { id: "__none__" }),
     },
-    select: { id: true, amount: true, ...REFUNDABLE_BALANCE_SELECT },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      paymentIntent: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
   });
 
   if (!payment) return null;
@@ -157,15 +179,93 @@ export async function refundCancelledTrial(args: {
     hoursUntilStart,
     args.isConsultantInitiated,
   );
+  const grossPaise = Number(payment.amount);
+  const refundablePaise = refundableBalancePaise(grossPaise, payment);
   // Clamp to the remaining balance, as the cancel and seat-refund paths do. A
   // percentage of the gross overshoots a payment that has already given some
   // back, `refundPayment` rejects the whole request, and the catch below turns
   // that into "refunded 0" — the buyer loses the remainder they were owed.
-  const amountPaise = Math.min(
-    Math.floor((Number(payment.amount) * refundPct) / 100),
-    refundableBalancePaise(Number(payment.amount), payment),
+  const estimatedRefundPaise = Math.max(
+    0,
+    Math.min(Math.floor((grossPaise * refundPct) / 100), refundablePaise),
   );
 
+  return {
+    paymentId: payment.id,
+    refundPct,
+    estimatedRefundPaise,
+    grossPaise,
+    refundablePaise,
+    currency: payment.currency,
+    fundingRail: fundingRailForIntent(payment.paymentIntent),
+    hoursUntilNextSession: Number.isFinite(hoursUntilStart)
+      ? hoursUntilStart
+      : null,
+    prorated: false,
+  };
+}
+
+/**
+ * #1846 — trial DELETE refunds only after the caller confirmed the quote. A
+ * missing confirmation answers REFUND_QUOTE_REQUIRED and a stale one
+ * REFUND_QUOTE_CHANGED, both with the current quote, so the client can show it
+ * and ask again. Nothing has moved when this is thrown.
+ */
+export class TrialRefundQuoteError extends Error {
+  readonly httpStatus = 409 as const;
+  constructor(
+    readonly code: "REFUND_QUOTE_REQUIRED" | "REFUND_QUOTE_CHANGED",
+    readonly quote: TrialRefundQuote,
+  ) {
+    super(
+      code === "REFUND_QUOTE_REQUIRED"
+        ? "Confirm the refund quote before cancelling this paid trial."
+        : "The refund for this trial has changed since you saw it. Check the new amount and confirm again.",
+    );
+    this.name = "TrialRefundQuoteError";
+  }
+}
+
+/** Throws unless `confirmedRefundPaise` matches the quote a paid trial has. */
+export function assertTrialQuoteConfirmed(
+  quote: TrialRefundQuote | null,
+  confirmedRefundPaise: number | undefined,
+): void {
+  if (!quote) return;
+  if (confirmedRefundPaise === undefined) {
+    throw new TrialRefundQuoteError("REFUND_QUOTE_REQUIRED", quote);
+  }
+  if (confirmedRefundPaise !== quote.estimatedRefundPaise) {
+    throw new TrialRefundQuoteError("REFUND_QUOTE_CHANGED", quote);
+  }
+}
+
+/**
+ * Refund a paid trial on cancellation. A caller that already quoted (trial
+ * DELETE, after the confirmation check) passes that quote so the charge is the
+ * confirmed number; everyone else gets a fresh quote.
+ *
+ * Returns null when there is nothing to refund.
+ *
+ * Deliberately never throws: the cancellation has already committed by the time
+ * this runs, and a gateway failure must not roll it back. A failed refund is
+ * reported to Sentry and surfaced to the caller as `failed`, matching how
+ * `app/api/appointments/[appointmentId]/cancel/route.ts` handles the same case.
+ */
+export async function refundCancelledTrial(args: {
+  trialId: string;
+  appointmentId: string | null;
+  paymentId: string | null;
+  initiatedByUserId: string;
+  isConsultantInitiated: boolean;
+  quote?: TrialRefundQuote | null;
+}): Promise<TrialRefundOutcome | null> {
+  const { trialId, initiatedByUserId } = args;
+  const quote =
+    args.quote === undefined ? await quoteTrialRefund(args) : args.quote;
+  if (!quote) return null;
+
+  const { refundPct, estimatedRefundPaise: amountPaise } = quote;
   if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };
 
   try {
@@ -173,7 +273,7 @@ export async function refundCancelledTrial(args: {
     // free_ trials hit the correct rail (in-ledger reversal / credit restore)
     // instead of throwing UNKNOWN_GATEWAY on the raw gateway path.
     const result = await refundBookingPayment({
-      paymentId: payment.id,
+      paymentId: quote.paymentId,
       amountPaise,
       reason: `trial cancellation (${refundPct}% per booking-time policy, ${
         args.isConsultantInitiated ? "consultant" : "consultee"
@@ -189,10 +289,13 @@ export async function refundCancelledTrial(args: {
       error instanceof Error ? error : new Error(String(error)),
       {
         tags: { subsystem: "trials" },
-        extra: { trialId, paymentId: payment.id },
+        extra: { trialId, paymentId: quote.paymentId },
       },
     );
-    console.error(`[Trials] refund failed for payment ${payment.id}:`, error);
+    console.error(
+      `[Trials] refund failed for payment ${quote.paymentId}:`,
+      error,
+    );
     return { refundPct, amountRefundedPaise: 0, failed: true };
   }
 }
