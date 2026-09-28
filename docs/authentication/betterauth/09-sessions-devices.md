@@ -102,6 +102,14 @@ consumer 1x/min, and still reads the cookie cache.
 The current session survives; the toast says whether other devices
 were signed out.
 
+Password *reset* (email-link flow) is stricter: BetterAuth's
+`revokeSessionsOnPasswordReset` ends every session server-side — the
+resetting browser holds no session, so nothing is preserved — and
+`onPasswordReset` bumps the counter so other tabs learn promptly.
+Unit tests cannot drive the reset flow (it needs a live token); the
+flag is pinned by types plus this paragraph — do not remove one
+without the other.
+
 ### 2.7 Back office
 
 `GET .../admin/users/[userId]/sessions` (`users.read`, OPERATORS) for
