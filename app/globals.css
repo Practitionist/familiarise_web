@@ -126,7 +126,7 @@
    *    on every render, so the fullBleed unmount cannot lose it; and because
    *    the tokens land on `body`, a portal mounted there inherits them
    *    directly. `:has()` is Baseline widely-available — the same call
-   *    `main > div:has(> .content-flush-bottom)` above already makes, with the
+   *    flush-bottom chrome rule further down this file already makes, with the
    *    same graceful degradation: a browser without it simply renders
    *    onboarding light, which is the old behaviour, not a broken one.
    *
