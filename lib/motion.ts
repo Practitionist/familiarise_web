@@ -20,11 +20,12 @@
  * opacity, so content still cross-fades rather than jumping.
  *
  * It does NOT cover CSS keyframes. Those have to be neutralised explicitly in
- * the `prefers-reduced-motion` block at the bottom of `app/globals.css`, and
- * an entrance animation that starts at `opacity: 0` must be settled to its
- * VISIBLE end state there, not merely stopped — otherwise `animation-fill-mode:
- * both` holds the invisible first frame forever. `.onb-enter` is registered
- * alongside `.reveal-up` and `.scale-in` for exactly that reason.
+ * the `prefers-reduced-motion` block at the bottom of `app/globals.css`. When
+ * adding an entrance animation there, settle it to its VISIBLE end state rather
+ * than merely stopping it, and watch the delay: `animation-fill-mode: both`
+ * holds the invisible first frame for the whole `animation-delay`, so
+ * shortening the duration alone leaves later staggered groups stuck at
+ * `opacity: 0`.
  */
 
 import type { TargetAndTransition, Transition, Variants } from "framer-motion";

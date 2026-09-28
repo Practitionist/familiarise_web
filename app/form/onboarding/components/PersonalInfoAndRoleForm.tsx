@@ -611,9 +611,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             </fieldset>
           )}
         />
-        <div id="role-picker-error">
-          <FieldError message={errors.role?.message} />
-        </div>
+        <FieldError id="role-picker-error" message={errors.role?.message} />
       </div>
 
       {/* Role-specific info */}
