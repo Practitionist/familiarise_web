@@ -11,10 +11,8 @@ import {
 } from "@/lib/booking/reschedule-restore";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
-import { notifyAppointmentRescheduled } from "@/lib/novu";
-import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
-import { notificationScope } from "@/lib/novu/workflows";
-import { notificationHref } from "@/lib/novu/resolve-href";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
 
 /**
  * The initiator takes their own reschedule back, and the booking returns to
@@ -113,98 +111,12 @@ export async function withdrawRescheduleRequest(args: {
   reportPartialRestore(request, restored, "reschedule-withdraw");
 
   // PR 2e — the initiator withdrew their own proposal; both parties learn
-  // the booking stays at its original times. Fire-and-forget.
-  try {
-    const detail = await prisma.rescheduleRequest.findUnique({
-      where: { id: rescheduleRequestId },
-      select: {
-        initiatedById: true,
-        appointment: {
-          select: {
-            id: true,
-            organizationId: true,
-            appointmentType: true,
-            consultation: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                consultationPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
-            subscription: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const appt = detail?.appointment;
-    const side = appt?.consultation ?? appt?.subscription;
-    if (detail && side && appt) {
-      const isConsultation = "consultationPlan" in side;
-      const planTitle = isConsultation
-        ? side.consultationPlan.title
-        : side.subscriptionPlan.title;
-      const consultantUser = isConsultation
-        ? side.consultationPlan.consultantProfile.user
-        : side.subscriptionPlan.consultantProfile.user;
-      const consulteeUser = side.requestedBy.user;
-      const withdrawnUserIds = [
-        detail.initiatedById,
-        consultantUser.id,
-        consulteeUser.id,
-      ].filter((id, i, arr) => arr.indexOf(id) === i);
-      await notifyAppointmentRescheduled(withdrawnUserIds, {
-        ...notificationScope(appt.organizationId),
-        appointmentType: appt.appointmentType,
-        consultantName: consultantUser.name || "Consultant",
-        consulteeName: consulteeUser.name || "Consultee",
-        planTitle,
-        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-        outcome: "WITHDRAWN",
-      });
-      // #1653 — the email twin; the sender never throws.
-      await sendAppointmentRescheduledEmail(
-        {
-          appointmentId: appt.id,
-          userIds: withdrawnUserIds,
-          outcome: "WITHDRAWN",
-          appointmentType: appt.appointmentType,
-          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
-    }
-  } catch (notifyErr) {
-    reportSentryError(
-      notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
-      {
-        subsystem: "bookings",
-        op: "reschedule-withdraw-notify",
-        expected: true,
-      },
-    );
-  }
+  // the booking stays at its original times.
+  await notifyRescheduleRestored(
+    rescheduleRequestId,
+    "WITHDRAWN",
+    EMAIL_BUDGET_MS.REQUEST,
+  );
 
   return { withdrawn: true };
 }

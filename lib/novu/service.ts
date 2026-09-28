@@ -458,6 +458,7 @@ const RESCHEDULE_AWAITING_TIME: Record<
   RELEASED: "a new time your consultant will confirm",
   DECLINED: "the time it was already booked for",
   WITHDRAWN: "the time it was already booked for",
+  EXPIRED: "the time it was already booked for",
 };
 
 function rescheduledWire(

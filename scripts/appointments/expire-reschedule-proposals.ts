@@ -40,6 +40,8 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { reportSentryError } from "@/lib/observability/report";
+import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
 import {
   AppointmentBusyError,
   withAppointmentLock,
@@ -124,6 +126,16 @@ async function expireOneProposal(
           });
         });
         reportPartialRestore(row, restored, "reschedule-expiry");
+        // #1846 — both parties hear the original time stands. Only when
+        // something came back: rows an allocation already replaced were not
+        // restored, so "your original time stands" would not be true.
+        if (restored > 0) {
+          await notifyRescheduleRestored(
+            row.id,
+            "EXPIRED",
+            EMAIL_BUDGET_MS.JOB,
+          );
+        }
         return "restored";
       } catch (error) {
         if (!isRestoreMiss(error)) throw error;
