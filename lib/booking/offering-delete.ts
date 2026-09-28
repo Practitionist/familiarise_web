@@ -43,35 +43,12 @@ export class OfferingInUseError extends Error {
   }
 }
 
-/**
- * A booking or a payment of any status: every Payment, PENDING and FAILED
- * included, cascades with its appointment, so "active" is the wrong filter.
- */
-const APPOINTMENT_HAS_HISTORY = {
-  OR: [
-    { payment: { some: {} } },
-    { participants: { some: { role: "CONSULTEE" } } },
-  ],
-} satisfies Prisma.AppointmentWhereInput;
-
-/** The in-WHERE guard for a webinar or class instance. */
-export const UNTOUCHED_EVENT = {
-  NOT: { appointment: { is: APPOINTMENT_HAS_HISTORY } },
-} satisfies Prisma.WebinarWhereInput & Prisma.ClassWhereInput;
-
-/** The in-WHERE guard for a consultation plan: no request row of any status. */
-export const UNTOUCHED_CONSULTATION_PLAN = {
-  consultations: { none: {} },
-} satisfies Prisma.ConsultationPlanWhereInput;
-
-/**
- * The in-WHERE guard for a subscription plan: no request and no trial (Trial's
- * plan key is RESTRICT, so a trial made the old delete fail as a 500).
- */
-export const UNTOUCHED_SUBSCRIPTION_PLAN = {
-  subscriptions: { none: {} },
-  trials: { none: {} },
-} satisfies Prisma.SubscriptionPlanWhereInput;
+// #1846 — the guards live in one module the Offerings card reads too.
+export {
+  UNTOUCHED_CONSULTATION_PLAN,
+  UNTOUCHED_EVENT,
+  UNTOUCHED_SUBSCRIPTION_PLAN,
+} from "@/lib/offerings/delete-guard";
 
 /**
  * The lock must outlive every attempt the retry loop can make, or a checkout

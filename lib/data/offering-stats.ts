@@ -5,10 +5,9 @@ import type { AppointmentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { UNTOUCHED_PLAN } from "@/lib/offerings/delete-guard";
 import {
-  canDeleteOffering,
   offeringStatKey,
-  type OfferingHistory,
   type OfferingPlanType,
   type OfferingStat,
   type OfferingStats,
@@ -42,13 +41,8 @@ const PLAN_HEAD = {
   archivedAt: true,
 } as const;
 
-type Tally = Omit<OfferingHistory, "earningsPaise"> & { bookings: number };
-const emptyTally = (): Tally => ({
-  requestRows: 0,
-  payments: 0,
-  seats: 0,
-  bookings: 0,
-});
+type Tally = { bookings: number };
+const emptyTally = (): Tally => ({ bookings: 0 });
 
 async function readRequestTallies(
   consultationPlanIds: string[],
@@ -57,7 +51,6 @@ async function readRequestTallies(
 ) {
   const add = (key: string, status: AppointmentStatus, count: number) => {
     const t = tallies.get(key) ?? emptyTally();
-    t.requestRows += count;
     if (BOOKED.has(status)) t.bookings += count;
     tallies.set(key, t);
   };
@@ -95,27 +88,21 @@ const SEAT_COUNTS = {
   select: {
     _count: {
       select: {
-        payment: true,
         participants: { where: { ...liveParticipant(), role: "CONSULTEE" } },
       },
     },
   },
 } as const;
 
-/** Group events: seats and payments per instance, rolled up to the plan. */
+/** Group events: live seats per instance, rolled up to the plan. */
 async function readEventTallies(
   webinarPlanIds: string[],
   classPlanIds: string[],
   tallies: Map<string, Tally>,
   instancePlan: Map<string, string>,
 ) {
-  const add = (
-    key: string,
-    counts: { payment: number; participants: number } | undefined,
-  ) => {
+  const add = (key: string, counts: { participants: number } | undefined) => {
     const t = tallies.get(key) ?? emptyTally();
-    t.payments += counts?.payment ?? 0;
-    t.seats += counts?.participants ?? 0;
     t.bookings += counts?.participants ?? 0;
     tallies.set(key, t);
   };
@@ -141,6 +128,39 @@ async function readEventTallies(
       add(key, c.appointment?._count);
     }
   }
+}
+
+/**
+ * #1846 — which plans the DELETE routes would accept right now. The same
+ * `UNTOUCHED_PLAN` guard they carry in their WHERE runs here as a query, so
+ * the card offers Delete exactly when the server would not refuse it.
+ */
+async function readDeletablePlanIds(ids: {
+  consultation: string[];
+  subscription: string[];
+  webinar: string[];
+  class: string[];
+}): Promise<Set<string>> {
+  const pick = { select: { id: true } } as const;
+  const rows = [
+    ...(await prisma.consultationPlan.findMany({
+      where: { id: { in: ids.consultation }, ...UNTOUCHED_PLAN.consultation },
+      ...pick,
+    })),
+    ...(await prisma.subscriptionPlan.findMany({
+      where: { id: { in: ids.subscription }, ...UNTOUCHED_PLAN.subscription },
+      ...pick,
+    })),
+    ...(await prisma.webinarPlan.findMany({
+      where: { id: { in: ids.webinar }, ...UNTOUCHED_PLAN.webinar },
+      ...pick,
+    })),
+    ...(await prisma.classPlan.findMany({
+      where: { id: { in: ids.class }, ...UNTOUCHED_PLAN.class },
+      ...pick,
+    })),
+  ];
+  return new Set(rows.map((row) => row.id));
 }
 
 /** The owner's net share per plan key, plus the lifetime total. */
@@ -239,6 +259,12 @@ export async function readOfferingStats(
     consultantProfileId,
     instancePlan,
   );
+  const deletable = await readDeletablePlanIds({
+    consultation: ids(consultationPlans),
+    subscription: ids(subscriptionPlans),
+    webinar: ids(webinarPlans),
+    class: ids(classPlans),
+  });
 
   const toRows = (planType: OfferingPlanType, plans: PlanHead[]) =>
     plans.map((plan): OfferingStat => {
@@ -251,7 +277,7 @@ export async function readOfferingStats(
         title: plan.title,
         bookings: tally.bookings,
         earningsPaise,
-        canDelete: canDeleteOffering({ ...tally, earningsPaise }),
+        canDelete: deletable.has(plan.id),
         orgGoverned: plan.organizationId !== null,
         archived: plan.archivedAt !== null,
       };
