@@ -463,10 +463,14 @@ function refundablePayments(
 async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
   if (ctx.appointment.trial) return;
   // #1846 SM-B13 — through the helper, so each slot writes its history row.
+  // The tombstone is half of the soft-cancel, as on every other cancel path:
+  // since #1694 the overlap constraint exempts only `deletedAt IS NOT NULL`, so
+  // a CANCELLED row without it kept blocking the consultant's time.
   await transitionOccurrenceCompletion(tx, {
     reason: MAINTENANCE_REASON,
     where: { id: { in: ctx.slots.map((s) => s.id) } },
     to: "CANCELLED",
+    data: { deletedAt: new Date() },
     fromIn: SLOT_RESCHEDULABLE_FROM,
     allowZero: true,
   });

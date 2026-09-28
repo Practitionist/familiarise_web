@@ -32,6 +32,8 @@ describe("freeze-appointments doctrine (#1162)", () => {
     expect(freezeSource).toContain("transitionOccurrenceCompletion(tx, {");
     expect(freezeSource).toContain("fromIn: SLOT_RESCHEDULABLE_FROM");
     expect(freezeSource).toContain('to: "CANCELLED"');
+    // #1846 — the tombstone frees the consultant's time (#1694 exemption).
+    expect(freezeSource).toContain("data: { deletedAt: new Date() }");
   });
 
   it("uses CAS transitions for every event type", () => {
