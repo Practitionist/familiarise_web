@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
 import { FieldError } from "@/components/ui/field-error";
+import { isPersistedDocument } from "@/components/verification/VerificationDocumentUpload";
 import {
   isLinkedinProfileUrl,
   LINKEDIN_PROFILE_URL_HINT,
@@ -109,7 +110,7 @@ export default function ConsultantVerificationForm({
     }
 
     // At least one document is required
-    const completedDocuments = documents.filter((d) => d.status === "uploaded");
+    const completedDocuments = documents.filter(isPersistedDocument);
     if (completedDocuments.length === 0) {
       setError(
         "Please upload at least one supporting document (certification, degree, license, or ID)",
@@ -120,7 +121,11 @@ export default function ConsultantVerificationForm({
     onNext({
       verificationLinkedinUrl: linkedinUrl,
       verificationNotes: notes,
-      verificationDocuments: documents,
+      // The submitted list must be the one that was just checked. It used to
+      // send `documents` — every row, including `uploading` and `error` ones —
+      // so a draft that passed this non-empty check still carried unsubmittable
+      // rows to the write boundary (#1869).
+      verificationDocuments: completedDocuments,
     });
   };
 
