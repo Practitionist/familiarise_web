@@ -6,8 +6,9 @@
  *   1. Where their share of sessions actually goes — `payoutRecipient`
  *      (`SELF` flows to their personal account; `ORGANIZATION` is
  *      absorbed by the org and they get a cut later via internal split).
- *   2. The exact bps split that applies right now — `RateCard` for the
- *      org (default + any consultant-category override).
+ *   2. The exact bps split that applies to them right now — their
+ *      membership override, else the org default, else the platform
+ *      default (#1851: their own split only, never the card list).
  *   3. Their recent earnings via this org so they can reconcile the
  *      personal earnings dashboard against the org-routed flow.
  *
@@ -50,6 +51,17 @@ const EARNING_STATUS_LABEL: Record<string, string> = {
   BATCHED: "Processing payout", // #837 — batched, cash not yet disbursed
   PAID: "Paid",
   REFUNDED: "Refunded",
+};
+
+// #1851 — says whose split this is; only the expert's own card is read.
+const RATE_CARD_SOURCE_COPY: Record<
+  "yours" | "orgDefault" | "platformDefault",
+  (org: string) => string
+> = {
+  yours: (org) => `${org} set this split for you.`,
+  orgDefault: (org) => `The default split for sessions hosted via ${org}.`,
+  platformDefault: (org) =>
+    `${org} has no rate card yet, so the platform's default split applies.`,
 };
 
 const PAYOUT_RECIPIENT_DESCRIPTION: Record<string, string> = {
@@ -95,11 +107,12 @@ export default async function MyArrangementPage({
 
   const member = access.member;
 
-  const { orgDefaultCard, payoutAccount, earnings, upcomingSessions } =
+  const { rateCard, payoutAccount, earnings, upcomingSessions } =
     await getMyArrangementData({
       orgId,
       payoutRecipient: member.payoutRecipient,
       consultantProfileId: member.consultantProfileId,
+      rateCardOverrideId: member.rateCardOverrideId,
     });
 
   // #1166 ORG-7 — the personal appointments page is personal-pinned (ADR 19)
@@ -263,59 +276,46 @@ export default async function MyArrangementPage({
           )}
         </section>
 
-        {/* RateCard split — read-only view of the ACTIVE split (#777 §D.16). */}
+        {/* The split that applies to this expert (#777 §D.16, #1851). */}
         <section className="rounded-lg border bg-card p-5">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">Revenue split</h2>
-            {orgDefaultCard && <StatusBadge label="In effect" tone="success" />}
+            <StatusBadge label="In effect" tone="success" />
           </div>
-          {orgDefaultCard ? (
-            <>
-              <p className="mt-1 text-sm text-muted-foreground">
-                The active default split for sessions hosted via{" "}
-                {access.org.name}. In effect since{" "}
-                {orgDefaultCard.effectiveFrom.toLocaleDateString("en-IN", {
+          <p className="mt-1 text-sm text-muted-foreground">
+            {RATE_CARD_SOURCE_COPY[rateCard.source](access.org.name)}
+            {rateCard.effectiveFrom &&
+              ` In effect since ${rateCard.effectiveFrom.toLocaleDateString(
+                "en-IN",
+                {
                   timeZone: "Asia/Kolkata",
                   day: "2-digit",
                   month: "short",
                   year: "numeric",
-                })}
-                .
-              </p>
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
-                <SplitCard label="Platform" bps={orgDefaultCard.platformBps} />
-                <SplitCard label="Organisation" bps={orgDefaultCard.orgBps} />
-                <SplitCard
-                  label="Your share"
-                  bps={orgDefaultCard.consultantBps}
-                  emphasised
-                />
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Illustration on a ₹1,000 session: platform takes{" "}
-                {formatCurrencyAmount(
-                  Math.round(orgDefaultCard.platformBps * 10),
-                  "INR",
-                )}
-                , the organisation takes{" "}
-                {formatCurrencyAmount(
-                  Math.round(orgDefaultCard.orgBps * 10),
-                  "INR",
-                )}
-                , your share is{" "}
-                {formatCurrencyAmount(
-                  Math.round(orgDefaultCard.consultantBps * 10),
-                  "INR",
-                )}
-                .
-              </p>
-            </>
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">
-              No active rate card configured for this organisation yet. Reach
-              out to your org administrator if you expect to host sessions soon.
-            </p>
-          )}
+                },
+              )}.`}
+          </p>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+            <SplitCard label="Platform" bps={rateCard.platformBps} />
+            <SplitCard label="Organisation" bps={rateCard.orgBps} />
+            <SplitCard
+              label="Your share"
+              bps={rateCard.consultantBps}
+              emphasised
+            />
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Illustration on a ₹1,000 session: platform takes{" "}
+            {formatCurrencyAmount(Math.round(rateCard.platformBps * 10), "INR")}
+            , the organisation takes{" "}
+            {formatCurrencyAmount(Math.round(rateCard.orgBps * 10), "INR")},
+            your share is{" "}
+            {formatCurrencyAmount(
+              Math.round(rateCard.consultantBps * 10),
+              "INR",
+            )}
+            .
+          </p>
         </section>
 
         {/* Recent earnings */}
