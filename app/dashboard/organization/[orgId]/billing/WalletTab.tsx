@@ -6,7 +6,6 @@ import { Coins, Plus } from "lucide-react";
 import { z } from "zod";
 
 import { useOrgRole } from "../useOrgRole";
-import { canSeeFinanceSurface } from "@/lib/auth/role-ranks";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import { useSession } from "@/lib/auth-client";
@@ -222,7 +221,7 @@ export function WalletTab({
 }) {
   // #1132 — top-up is `billing.manage` (OWNER + BILLING_ADMIN), not a rank
   // floor. The server has always authorised BILLING_ADMIN here.
-  const { can, role } = useOrgRole(orgId);
+  const { can } = useOrgRole(orgId);
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery({
@@ -322,11 +321,11 @@ export function WalletTab({
   const walletResponse = data && isWalletResponse(data) ? data : null;
   const walletError = data && !isWalletResponse(data) ? data : null;
 
-  // #777 §C — finance can see + edit balance alerts. canSeeFinanceSurface
-  // includes MANAGER (read-only), but the PATCH gate is BILLING_ADMIN|OWNER,
-  // so we only let those two roles actually save.
-  const canSeeAlerts = canSeeFinanceSurface(role);
-  const canEditAlerts = role === "OWNER" || role === "BILLING_ADMIN";
+  // #777 §C — finance can see + edit balance alerts. billing.read includes
+  // MANAGER (read-only); the PATCH gate is billing.manage, so only those
+  // holders save (#1851: the same keys as the routes).
+  const canSeeAlerts = can("billing.read");
+  const canEditAlerts = can("billing.manage");
 
   // Seed the draft from the persisted account once it loads, keyed on the
   // returned config so a server-side change re-syncs the inputs. Alerts are

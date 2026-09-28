@@ -18,7 +18,6 @@ import prisma from "@/lib/prisma";
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
   requireOrgAccess: jest.fn(),
-  requireOrgOwner: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

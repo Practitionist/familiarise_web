@@ -67,7 +67,6 @@ jest.mock("../../lib/auth-helpers", () => {
   };
   return {
     requireOrgAccess: jest.fn(),
-    requireOrgOwner: jest.fn(),
     orgRoleSatisfies: (caller: string, minimum: string) =>
       (RANK[caller] ?? 0) >= (RANK[minimum] ?? 0),
   };

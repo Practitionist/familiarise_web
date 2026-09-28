@@ -43,7 +43,8 @@ jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn(),
 }));
 jest.mock("../../lib/payments/core/razorpay", () => ({
-  cancelRazorpayOrder: jest.fn(),
+  // #1861 L2 — the sweep expires only an order proven to hold no payment.
+  cancelRazorpayOrder: jest.fn().mockResolvedValue("no_live_payment"),
 }));
 jest.mock("../../lib/payments/core/stripe", () => ({
   __esModule: true,

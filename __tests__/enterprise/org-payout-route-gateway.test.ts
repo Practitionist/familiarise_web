@@ -13,10 +13,7 @@
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
-  requireOrgAccess: jest.fn(),
-}));
-jest.mock("../../lib/auth/billing-admin-gate", () => ({
-  requireOrgBillingAdminOrOwner: jest.fn(async () => ({
+  requireOrgAccess: jest.fn(async () => ({
     org: { canHost: true },
     member: { id: "mem_1" },
   })),

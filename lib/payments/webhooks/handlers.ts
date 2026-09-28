@@ -25,7 +25,10 @@ import {
   TrialStatus,
 } from "@prisma/client";
 import { firstCycleWindow } from "@/lib/booking/entitlement";
-import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   REQUEST_ALLOWED_FROM,
   appendCreationHistory,
@@ -796,11 +799,22 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             }
           }
 
+          // #1861 L1 — `payment` is the pre-stamp read, so its status is still
+          // the one the capture found. A PENDING row past its window had its
+          // slot freed by buildDeadHoldFilter; the recheck must then yield to
+          // a buyer who took that slot and is still inside their own hold.
+          const confirmNow = new Date();
+          const holdExpired =
+            payment.paymentStatus === PaymentStatus.PENDING &&
+            payment.expiresAt !== null &&
+            payment.expiresAt < confirmNow;
+
           // Confirm appointment: set isTentative = false and update status to APPROVED
           const confirmResult = await confirmExistingAppointment(
             tx,
             appointment.id,
             payment.userId,
+            { holdExpired, now: confirmNow },
           );
 
           console.log(
@@ -2147,6 +2161,8 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
+  /** #1861 L1 — the capturing payment's hold had lapsed before the capture. */
+  opts?: { holdExpired?: boolean; now?: Date },
 ): Promise<{ capturedAfterTerminal: boolean; doubleBookingBlocked?: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
@@ -2189,6 +2205,25 @@ export async function confirmExistingAppointment(
     )
       .map((p) => p.userId)
       .filter((id) => id !== userId);
+    // #1861 L1 — an expired hold loses to a live foreign hold as well as to a
+    // confirmed row. "Live" is checkout step 1's predicate (validateSlotAvailability):
+    // an occupying appointment not matched by buildDeadHoldFilter, on a
+    // non-tombstoned occurrence of another appointment.
+    const holdExpired = opts?.holdExpired === true;
+    const now = opts?.now ?? new Date();
+    const conflictStates: Prisma.AppointmentOccurrenceWhereInput = holdExpired
+      ? {
+          OR: [
+            { isTentative: false },
+            {
+              isTentative: true,
+              ...liveOccurrenceWhere,
+              appointmentId: { not: appointmentId },
+              appointment: { NOT: buildDeadHoldFilter(now) },
+            },
+          ],
+        }
+      : { isTentative: false };
     for (const slot of mySlots) {
       if (participantIds.length === 0) continue;
       const conflict = await tx.appointmentOccurrence.findFirst({
@@ -2196,7 +2231,7 @@ export async function confirmExistingAppointment(
           id: { not: slot.id },
           startsAt: { lt: slot.endsAt },
           endsAt: { gt: slot.startsAt },
-          isTentative: false,
+          ...conflictStates,
           appointment: {
             OR: buildOccupiedAppointmentFilter(),
             participants: {
@@ -2214,11 +2249,14 @@ export async function confirmExistingAppointment(
           subsystem: "payments",
           expected: true,
           level: "warning",
+          // #1861 — tells a late capture on a lapsed hold from a #827 race.
+          tags: { expiredHold: String(holdExpired) },
           contexts: {
             booking: {
               appointmentId,
               conflictingAppointmentId: conflict.appointmentId,
               slotId: slot.id,
+              expiredHold: holdExpired,
             },
           },
         });
@@ -2228,6 +2266,7 @@ export async function confirmExistingAppointment(
             appointmentId,
             conflictingAppointmentId: conflict.appointmentId,
             slotId: slot.id,
+            expiredHold: holdExpired,
             timestamp: new Date().toISOString(),
           }),
         );
@@ -2244,12 +2283,15 @@ export async function confirmExistingAppointment(
           await recordSystemError({
             organizationId: null,
             category: "PAYMENT",
-            summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
+            summary: holdExpired
+              ? `Double-booking blocked at confirmation (expired hold): appointment ${appointmentId} was paid after its hold lapsed and another buyer now holds the slot — the payment needs a refund`
+              : `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
             err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
             context: {
               appointmentId,
               conflictingAppointmentId: conflict.appointmentId,
               slotId: slot.id,
+              expiredHold: holdExpired,
             },
             correlationId,
             db: tx,

@@ -66,13 +66,12 @@ describe("requireOrgAccess with a SUSPENDED membership", () => {
     expect(admitted.member.status).toBe("SUSPENDED");
   });
 
-  it("never passes a permission or role gate, even for an OWNER", async () => {
-    for (const gate of [
-      { allowSuspended: true, permission: "operations.read" },
-      { allowSuspended: true, minimumRole: "LEARNER" },
-    ] as const) {
-      expect((await requireOrgAccess("o", gate)).error?.status).toBe(403);
-    }
+  it("never passes a permission gate, even for an OWNER", async () => {
+    const gate = {
+      allowSuspended: true,
+      permission: "operations.read",
+    } as const;
+    expect((await requireOrgAccess("o", gate)).error?.status).toBe(403);
   });
 
   it("still refuses REMOVED even with allowSuspended", async () => {

@@ -12,15 +12,17 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import type { MemberRole } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   OUTBOUND_WEBHOOK_EVENTS,
+  carriesMemberData,
   isOutboundWebhookEvent,
 } from "@/lib/enterprise/outbound-webhooks/event-types";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
 import { rejectIfNotPublicUrl } from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
 
@@ -89,6 +91,39 @@ export async function GET(
   });
 }
 
+/**
+ * #1851 decision 11 — an endpoint carrying member events is the OWNER's:
+ * repointing its URL would route member data to whoever edits it.
+ */
+function assertMayEditMemberEndpoint(
+  role: MemberRole,
+  current: readonly string[],
+  next: readonly string[] | undefined,
+): void {
+  if (
+    (carriesMemberData(current) || carriesMemberData(next ?? [])) &&
+    !hasOrgPermission(role, "webhooks.subscribe.memberEvents")
+  ) {
+    throw Object.assign(
+      new Error(
+        "Only an Owner can change a webhook that carries member events.",
+      ),
+      { httpStatus: 403, code: "WEBHOOK_MEMBER_EVENTS_OWNER_ONLY" },
+    );
+  }
+}
+
+/** A typed refusal thrown inside the transaction, as a response. */
+function refusalResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof Error) || !("httpStatus" in err)) return null;
+  const code =
+    "code" in err && typeof err.code === "string" ? err.code : undefined;
+  return NextResponse.json(
+    { error: err.message, ...(code && { code }) },
+    { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
+  );
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -98,7 +133,9 @@ export async function PATCH(
   },
 ) {
   const { orgId, endpointId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);
@@ -129,47 +166,63 @@ export async function PATCH(
     if (blocked) return blocked;
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const current = await tx.webhookEndpoint.findFirst({
-      where: { id: endpointId, organizationId: orgId },
-    });
-    if (!current) {
-      throw Object.assign(new Error("Webhook endpoint not found"), {
-        httpStatus: 404,
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.webhookEndpoint.findFirst({
+        where: { id: endpointId, organizationId: orgId },
       });
-    }
-    const next = await tx.webhookEndpoint.update({
-      where: { id: endpointId },
-      data: {
-        ...(parsed.data.url !== undefined && { url: parsed.data.url }),
-        ...(parsed.data.status !== undefined && { status: parsed.data.status }),
-        ...(parsed.data.eventSubscriptions !== undefined && {
-          eventSubscriptions: parsed.data.eventSubscriptions,
-        }),
-      },
-    });
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "WEBHOOK",
-        action:
-          parsed.data.status === "PAUSED"
-            ? AUDIT_ACTIONS.WEBHOOK.WEBHOOK_ENDPOINT_PAUSED
-            : parsed.data.status === "ACTIVE" && current.status !== "ACTIVE"
-              ? AUDIT_ACTIONS.WEBHOOK.WEBHOOK_ENDPOINT_RESUMED
-              : AUDIT_ACTIONS.WEBHOOK.WEBHOOK_ENDPOINT_UPDATED,
-        description: `Updated webhook endpoint ${next.url}`,
-        details: {
-          endpointId,
-          changedFields: Object.keys(parsed.data),
-          fromStatus: current.status,
-          toStatus: next.status,
+      if (!current) {
+        throw Object.assign(new Error("Webhook endpoint not found"), {
+          httpStatus: 404,
+        });
+      }
+      assertMayEditMemberEndpoint(
+        access.member.role,
+        current.eventSubscriptions,
+        parsed.data.eventSubscriptions,
+      );
+      const next = await tx.webhookEndpoint.update({
+        where: { id: endpointId },
+        data: {
+          ...(parsed.data.url !== undefined && { url: parsed.data.url }),
+          ...(parsed.data.status !== undefined && {
+            status: parsed.data.status,
+          }),
+          ...(parsed.data.eventSubscriptions !== undefined && {
+            eventSubscriptions: parsed.data.eventSubscriptions,
+          }),
         },
-      },
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "WEBHOOK",
+          action:
+            parsed.data.status === "PAUSED"
+              ? AUDIT_ACTIONS.WEBHOOK.WEBHOOK_ENDPOINT_PAUSED
+              : parsed.data.status === "ACTIVE" && current.status !== "ACTIVE"
+                ? AUDIT_ACTIONS.WEBHOOK.WEBHOOK_ENDPOINT_RESUMED
+                : AUDIT_ACTIONS.WEBHOOK.WEBHOOK_ENDPOINT_UPDATED,
+          description: `Updated webhook endpoint ${next.url}`,
+          details: {
+            endpointId,
+            changedFields: Object.keys(parsed.data),
+            fromStatus: current.status,
+            toStatus: next.status,
+          },
+        },
+      });
+      return next;
     });
-    return next;
-  });
+  } catch (err) {
+    // The 404 and the member-events 403 are thrown inside the transaction so
+    // the check reads the same row the update writes.
+    const refused = refusalResponse(err);
+    if (refused) return refused;
+    throw err;
+  }
 
   return NextResponse.json({
     endpoint: {
@@ -197,7 +250,9 @@ export async function DELETE(
   // org that's actively integrating with a third-party would lose all
   // in-flight events on a single misclick. Restrict to OWNER so the
   // action requires deliberate elevation.
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "webhooks.delete",
+  });
   if (access.error) return access.error;
 
   try {

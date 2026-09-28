@@ -410,11 +410,7 @@ export async function GET(
     const isOrgAdminActor =
       !roles.isParticipant &&
       !isPrivilegedUser &&
-      (await isOrgAdminOfAppointment(
-        session.user.id,
-        appointment.organizationId,
-        "cancel",
-      ));
+      (await isOrgAdminOfAppointment(session.user.id, appointment, "cancel"));
 
     if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(

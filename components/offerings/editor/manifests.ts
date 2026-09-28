@@ -124,6 +124,19 @@ const contentSection = (noun: string): SectionSpec => ({
   ],
 });
 
+/**
+ * The plan's files, identical for all four types. On an org-owned plan each
+ * file the org changed says so (#1851 decision 8).
+ */
+const materialsSection: SectionSpec = {
+  id: "materials",
+  title: "Materials",
+  description: "Files attached to this offering.",
+  icon: FileText,
+  fields: [],
+  slot: "materials",
+};
+
 /** Buyer questions. Identical for all four types; rendered by the FAQ editor. */
 const faqSection: SectionSpec = {
   id: "faq",
@@ -346,6 +359,7 @@ export const CONSULTATION_MANIFEST: OfferingManifest = {
     },
     contentSection("consultation"),
     extrasSection(false),
+    materialsSection,
     faqSection,
   ],
 };
@@ -379,6 +393,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       slot: "roadmap",
       slotFields: ["subscriptionContents"],
     },
+    materialsSection,
     faqSection,
   ],
 };
@@ -415,6 +430,7 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
       ],
     },
     collaboratorsSection,
+    materialsSection,
     faqSection,
   ],
 };
@@ -489,6 +505,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
       slotFields: ["classContents"],
     },
     collaboratorsSection,
+    materialsSection,
     faqSection,
   ],
 };

@@ -47,7 +47,6 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(),
-  requireOrgOwner: jest.fn(),
 }));
 
 jest.mock("../../lib/rate-limit", () => ({
