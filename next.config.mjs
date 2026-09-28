@@ -359,9 +359,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
-  org: "practitionist",
+  // Deployment-specific, read from the environment with the values this repo
+  // has always used as the default. A self-hosted Sentry or a second org in a
+  // different workspace changes these; compiling them in would mean a code
+  // change per environment. The same two names are read at runtime by
+  // `lib/observability/sentry-issues.ts`, so pointing the app at a different
+  // workspace is one env change rather than two that can disagree.
+  org: process.env.SENTRY_ORG || "practitionist",
 
-  project: "familiarise_web",
+  project: process.env.SENTRY_PROJECT || "familiarise_web",
 
   // Only print logs for uploading source maps in CI
   silent: !process.env.CI,

@@ -14,7 +14,10 @@ import { format } from "date-fns";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemErrorSafe,
+} from "@/lib/enterprise/system-events";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import {
   fundingRailForIntent,
@@ -505,12 +508,12 @@ export async function skipClassMakeUp(args: {
   );
   if (ledger.unitPaise <= BigInt(0)) {
     // A credit-funded seat: the credits rail restores whole or not at all.
-    await recordSystemError({
+    await recordSystemErrorSafe({
       category: "PAYMENT",
       summary: `Credit seat skipped class make-up ${args.sourceOccurrenceId} — per-session credit needs a human`,
       err: new Error("CREDIT_SEAT_PARTIAL_RESTORE"),
       context: { ...args, paymentId: payment.id },
-    }).catch(() => {});
+    });
     return { refundId: null, amountRefundedPaise: 0, rail: "CREDITS" as const };
   }
   const dedupeKey = occurrenceRefundKey(args.sourceOccurrenceId, payment.id);

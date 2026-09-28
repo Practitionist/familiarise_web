@@ -12,7 +12,7 @@
 import prisma from "@/lib/prisma";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface OverageSweepResult {
@@ -101,13 +101,13 @@ async function sweepAbandonedOverageChargesUnlocked(
       // base — the org was under-billed for this session. Needs a manual
       // billing adjustment; surface it instead of silently diverging the leg.
       invoicedSkips += 1;
-      void recordSystemError({
+      void recordSystemErrorSafe({
         organizationId: null,
         category: "OVERAGE",
         summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
         err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
         context: { overageEventId: a.id },
-      }).catch(() => {});
+      });
     }
   }
 

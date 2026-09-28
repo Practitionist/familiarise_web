@@ -1,6 +1,10 @@
 import { lookupSession } from "@/lib/auth-session-lookup";
 import { NextResponse } from "next/server";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  setSentryIdentityFromSession,
+  setSentryOrgContext,
+} from "@/lib/observability/identity";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -50,6 +54,11 @@ export async function requireApiAuth(): Promise<
     };
   }
   const { session } = lookup;
+  // Stamp the acting identity BEFORE the ban check, so a suspended user
+  // hitting a 403 is still attributable when support asks "who is being
+  // bounced". The SDK forks the isolation scope per request, so this is
+  // per-request by construction and cannot leak onto a concurrent request.
+  setSentryIdentityFromSession(session);
   // #693 defense-in-depth — ban-time session deletion + the sign-in gate
   // cover the normal paths; this catches a session minted in the race window.
   if (session.user.banned === true) {
@@ -470,6 +479,14 @@ export async function requireOrgAccess(
     };
   }
 
+  // The tenant is now resolved for this request, so stamp it. Deliberately
+  // before every capability check below, not after the grant: a 403 here is
+  // exactly the "user X was bounced off org Y" question support asks, and an
+  // unauthorized probe still records an accurate tenant. The caller's role
+  // *within* the org is not known yet, so it is added at the grant sites
+  // further down rather than guessed.
+  setSentryOrgContext({ orgId: org.id });
+
   if (org.status === "DEACTIVATED") {
     return {
       error: NextResponse.json(
@@ -531,6 +548,11 @@ export async function requireOrgAccess(
   // above still apply so the admin gets the same structural 404 as a
   // regular user — the endpoint genuinely doesn't exist on that org.
   if (auth.session.user.role === "ADMIN") {
+    // A platform admin crossing a tenant boundary. Recorded as `ADMIN`, not as
+    // the stub's synthesised `OWNER` role, and with no membership id — the
+    // `__admin_stub_…` value is not a real `Membership.id` and would be a
+    // broken join key for anyone reading the Sentry user panel.
+    setSentryOrgContext({ orgId: org.id, orgRole: "ADMIN" });
     const stub: Membership = {
       id: `__admin_stub_${userId}`,
       userId,
@@ -600,6 +622,15 @@ export async function requireOrgAccess(
       ),
     };
   }
+
+  // The grant succeeded, so the membership (and its role) is now known for
+  // certain. This is the one place in the request where org_role is a real
+  // `MemberRole` rather than an assumption.
+  setSentryOrgContext({
+    orgId: org.id,
+    orgRole: member.role,
+    membershipId: member.id,
+  });
 
   return { session: auth.session, member, org };
 }

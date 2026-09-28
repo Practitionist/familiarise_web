@@ -24,7 +24,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -102,13 +102,17 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
     if (claimed === null) continue;
     stats.timedOut += 1;
     if (claimed === "invoiced") {
-      void recordSystemError({
+      // Awaited, not `void`. This is the alert that says a human has to fix
+      // the org's billing by hand, and the job can exit immediately after the
+      // loop — fire-and-forget here is a coin flip on whether the row lands at
+      // all. The line below already awaits, so this costs nothing.
+      await recordSystemErrorSafe({
         organizationId: null,
         category: "OVERAGE",
         summary: `Timed-out overage ${ev.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
         err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
         context: { overageEventId: ev.id },
-      }).catch(() => {});
+      });
     }
 
     // Fire-and-forget — committed state, no DB writes in the notify path.

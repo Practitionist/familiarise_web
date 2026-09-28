@@ -89,7 +89,55 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enableLogs: true,
 
     // Never attach PII to events.
-    sendDefaultPii: false,
+    //
+    // `sendDefaultPii: false` said this correctly, but the SDK deprecated it at
+    // 10.54 in favour of the per-category `dataCollection` map, and the
+    // installed resolver documents the trap explicitly
+    // (`@sentry/core/utils/data-collection/resolveDataCollectionOptions`):
+    //
+    //   "In v10, DEFAULTS only apply when `dataCollection` is explicitly
+    //    provided. When `dataCollection` is absent, the legacy `sendDefaultPii`
+    //    bridge is used, which defaults to `userInfo: false` to preserve
+    //    backward compatibility."  …  "TODO(v11): Remove `sendDefaultPii`
+    //    support and always fall through to DEFAULTS so that `userInfo: true`
+    //    will always apply."
+    //
+    // So this is load-bearing, not cosmetic. `dataCollection` is OPT-OUT and
+    // `userInfo` is the ONLY field whose documented default is `false`; every
+    // other field defaults to permissive. A partial object — or the SDK's own
+    // v11 default — therefore silently starts sending data we never agreed to.
+    // Every category we do not want is listed explicitly instead of relied
+    // upon, so the intent survives an SDK upgrade.
+    //
+    // Two of these are not obvious and were worth pinning down:
+    //  - `stackFrameVariables` defaults to TRUE, i.e. local variable VALUES
+    //    are captured into server stack frames. In a Prisma codebase a frame
+    //    routinely holds a `userId`, an email, or a whole row. Off.
+    //  - `httpHeaders` is a `{ request, response }` object, not a bare boolean;
+    //    `httpHeaders: false` is a type error, and getting the shape wrong
+    //    would have left response headers on.
+    //
+    // This suppresses INFERENCE, not our own labelling: `Sentry.setUser` is an
+    // explicit opt-in unaffected by every flag here, and is how
+    // `lib/observability/identity.ts` attributes an event to a user. See
+    // docs/observability/sentry/05-identity-and-triage.md.
+    dataCollection: {
+      // No requester IP, no derived geo, no SDK-inferred user identity.
+      userInfo: false,
+      cookies: false,
+      httpHeaders: { request: false, response: false },
+      queryParams: false,
+      // No request or response bodies, in either direction.
+      httpBodies: [],
+      // No local variable values in stack frames.
+      stackFrameVariables: false,
+      // No generative-AI prompt or completion content. This app issues no
+      // model calls today; pinned so adding one cannot start shipping them.
+      genAI: { inputs: false, outputs: false },
+    },
+    // Source context lines are kept: `frameContextLines` (5 by default) is the
+    // difference between a readable N+1 frame and a bare file/line, and the
+    // surrounding source contains no tenant data.
 
     // Drop non-actionable third-party noise before it reaches the dashboard.
     // - "Connection closed." — RSC flight-stream abort when a client navigates

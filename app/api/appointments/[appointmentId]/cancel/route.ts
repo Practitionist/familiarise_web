@@ -30,7 +30,7 @@ import {
 } from "@/lib/activity/log-activity";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
@@ -765,7 +765,7 @@ export async function POST(
             // the durable ops surface, and this branch owes the same: a credit
             // the buyer is owed but did not get back is money, and Sentry is an
             // alert channel rather than a queue anyone works.
-            await recordSystemError({
+            await recordSystemErrorSafe({
               organizationId: appointment.organizationId ?? null,
               category: "PAYMENT",
               summary:
@@ -776,7 +776,7 @@ export async function POST(
                 paymentId: paidPayment.id,
                 tierRefundPct: quote.tierRefundPct,
               },
-            }).catch(() => {});
+            });
             refund = (await refundLeftPending(freeErr))
               ? { amountRefundedPaise: 0, refundPct: 100, status: "PENDING" }
               : {
@@ -812,7 +812,7 @@ export async function POST(
               `[cancel] refund failed for payment ${paidPayment.id}:`,
               refundErr,
             );
-            await recordSystemError({
+            await recordSystemErrorSafe({
               organizationId: appointment.organizationId ?? null,
               category: "PAYMENT",
               summary:
@@ -826,7 +826,7 @@ export async function POST(
                 attemptedPaise: refundAmount,
                 refundablePaise: paidPayment.refundablePaise,
               },
-            }).catch(() => {});
+            });
             refund = {
               amountRefundedPaise: 0,
               refundPct,

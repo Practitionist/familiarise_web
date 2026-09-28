@@ -64,10 +64,13 @@ jest.mock("../../lib/stream-logger", () => ({
   __esModule: true,
   streamLogger: { info: jest.fn(), error: jest.fn() },
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: () => Promise.resolve(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    __esModule: true,
+    recordSystemError: () => Promise.resolve(),
+    recordSystemErrorSafe: () => Promise.resolve(),
+  };
+});
 jest.mock("../../lib/compliance/dpdp", () => ({
   __esModule: true,
   checkConsent: jest.fn().mockResolvedValue(true),

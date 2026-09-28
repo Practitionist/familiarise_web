@@ -21,11 +21,16 @@
 
 const recordSystemError = jest.fn().mockResolvedValue(undefined);
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: (...args: unknown[]) => recordSystemError(...args),
-  recordSystemEvent: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemEvent = jest.fn().mockResolvedValue(undefined);
+  return {
+    __esModule: true,
+    recordSystemError: (...args: unknown[]) => recordSystemError(...args),
+    recordSystemEvent,
+    recordSystemErrorSafe: (...args: unknown[]) => recordSystemError(...args),
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
   razorpayClient: { payments: { fetch: jest.fn() } },

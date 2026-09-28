@@ -71,7 +71,7 @@ import {
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 export interface NoShowResult {
   success: boolean;
@@ -565,14 +565,14 @@ async function refundNoShowConsultation(
     errors.push(msg);
     // Ops parity with every other refund-failure path: durable signal, not
     // just this job's stdout.
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: `No-show refund failed for consultation ${consultation.id}`,
       err:
         refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
       context: { paymentId: paidPayment.id },
-    }).catch(() => {});
+    });
     return { refundedPaise: 0, succeeded: false, paidPayment };
   }
 }

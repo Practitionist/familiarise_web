@@ -182,3 +182,25 @@ export function recordSystemErrorSafe(
     console.error("[system-events] recordSystemError threw:", err);
   });
 }
+
+/**
+ * The `recordSystemEvent` counterpart of {@link recordSystemErrorSafe}, added
+ * for the same reason.
+ *
+ * `recordSystemErrorSafe` only covers error records, so every void call site
+ * that recorded a plain event had to hand-roll its own guard. Almost all of
+ * them wrote `void recordSystemEvent({...}).catch(() => {})` — which throws
+ * the diagnostic away entirely, and does so at exactly the sites that matter
+ * most: the CRITICAL_DISPUTE_UNLINKED page, the consultant-paid-earnings
+ * clawback, the missing-booking-ledger-transaction page, and the
+ * overage-base restore. The mechanism that exists to record a money-path fault
+ * was itself the thing quietly failing. `console.error` in the replacement
+ * handler is intentional and non-silent.
+ */
+export function recordSystemEventSafe(
+  params: Parameters<typeof recordSystemEvent>[0],
+): Promise<void> {
+  return recordSystemEvent(params).catch((err) => {
+    console.error("[system-events] recordSystemEvent threw:", err);
+  });
+}

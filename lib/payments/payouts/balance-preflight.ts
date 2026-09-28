@@ -1,5 +1,5 @@
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
@@ -45,24 +45,24 @@ export async function assertPayoutBalance(
     const reason =
       "RazorpayX balance unknown (read failed or returned an unexpected shape) — " +
       "proceeding on queue_if_low_balance, but the pre-batch balance guard is blind";
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYOUT",
       summary: `RAZORPAYX_BALANCE_UNKNOWN — ${reason}`,
       err: new Error(reason),
       context: { totalPaise },
-    }).catch(() => {});
+    });
     return { ok: true, balancePaise: null, reason }; // unknown → fail open, loudly
   }
   if (balancePaise < totalPaise) {
     const reason = `RazorpayX balance ${balancePaise} < required ${totalPaise} paise`;
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYOUT",
       summary: `RAZORPAYX_BALANCE_INSUFFICIENT — ${reason}`,
       err: new Error(reason),
       context: { balancePaise, totalPaise },
-    }).catch(() => {});
+    });
     return { ok: false, balancePaise, reason };
   }
   return { ok: true, balancePaise };

@@ -30,6 +30,18 @@ function loadTicker(): {
     status: number,
     maintenance?: boolean,
   ) => "ok" | "held" | "failed";
+  buildFailedTargetsEvent: (failed: { name: string; status: number }[]) => {
+    message: string;
+    level: string;
+    fingerprint: string[];
+    tags: Record<string, string>;
+    contexts: {
+      tick: {
+        failedCount: number;
+        targets: { name: string; status: number; outcome: string }[];
+      };
+    };
+  };
 } {
   const file = path.join(
     __dirname,
@@ -168,5 +180,48 @@ describe("cron-tick bucketFor", () => {
     expect(bucketFor(200)).toBe("ok");
     expect(bucketFor(500)).toBe("failed");
     expect(bucketFor(0)).toBe("failed");
+  });
+});
+
+describe("cron-tick failed-target reporting", () => {
+  const { buildFailedTargetsEvent } = loadTicker();
+
+  // Sentry groups by message text. Naming the failed targets in the message
+  // would mint a separate issue for every distinct combination of failures, so
+  // a sweep that degrades over time fragments into a dozen near-identical
+  // issues and the one that matters gets lost among them.
+  it("uses one fixed message and fingerprint regardless of which targets failed", () => {
+    const a = buildFailedTargetsEvent([
+      { name: "sweep-stuck-webhook-events", status: 0 },
+    ]);
+    const b = buildFailedTargetsEvent([
+      { name: "reconcile-refunds", status: 500 },
+      { name: "release-earnings", status: 503 },
+    ]);
+
+    expect(a.message).toBe(b.message);
+    expect(a.fingerprint).toEqual(b.fingerprint);
+    expect(a.fingerprint).toEqual(["cron-tick-failed-targets"]);
+  });
+
+  it("carries the detail as context, not in the message", () => {
+    const ev = buildFailedTargetsEvent([
+      { name: "reconcile-refunds", status: 500 },
+      { name: "sweep-stuck-webhook-events", status: 0 },
+    ]);
+
+    expect(ev.message).not.toContain("reconcile-refunds");
+    expect(ev.contexts.tick.failedCount).toBe(2);
+    expect(ev.contexts.tick.targets).toEqual([
+      { name: "reconcile-refunds", status: 500, outcome: "http" },
+      // 0 is this module's "never got an answer" value, not an HTTP status.
+      { name: "sweep-stuck-webhook-events", status: 0, outcome: "network" },
+    ]);
+  });
+
+  it("reports at error level, so it is not grouped with the expected refusals", () => {
+    expect(buildFailedTargetsEvent([{ name: "x", status: 500 }]).level).toBe(
+      "error",
+    );
   });
 });

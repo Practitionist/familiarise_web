@@ -51,9 +51,12 @@ jest.mock("../../lib/payments/payouts/earnings-service", () => ({
     mockCreateEarningsFromPayment(...a),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
