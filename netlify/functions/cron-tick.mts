@@ -56,6 +56,8 @@ const TARGETS = [
   "expire-stale-requests",
   // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
   "settle-cancelled-sessions",
+  // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
+  "retry-auto-refunds",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -84,6 +86,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-orphaned-confirmations": 10,
   // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
   "settle-cancelled-sessions": 10,
+  // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
+  "retry-auto-refunds": 10,
 };
 
 /**
@@ -123,6 +127,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
   "settle-cancelled-sessions": 15,
+  "retry-auto-refunds": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -156,6 +161,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
   "settle-cancelled-sessions": 20_000,
+  "retry-auto-refunds": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */

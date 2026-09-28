@@ -28,7 +28,7 @@ import { PRESENTER_ROLES, tierForRole } from "@/lib/collaborators/roles";
 import {
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 
 // #1593 — `removeCollaboratorStanding` is deliberately NOT re-exported here:
@@ -499,15 +499,17 @@ async function syncCollaboratorParticipants(
       }
       // `recordParticipants` skips a row that already exists, so a collaborator
       // removed and accepted again kept a CANCELLED seat (#1580 §3 E2E).
-      await tx.appointmentParticipant.updateMany({
-        where: {
+      // #1846 SM-B9 — the revive widens the map's from-set explicitly.
+      await transitionParticipant(
+        tx,
+        {
           appointmentId: { in: appointments.map((a) => a.id) },
           userId: profile.userId,
           role: "COLLABORATOR",
-          status: "CANCELLED",
         },
-        data: { status: "CONFIRMED" },
-      });
+        "CONFIRMED",
+        { fromIn: ["CANCELLED"] },
+      );
     });
   } catch (error) {
     reportSentryError(error, {
@@ -751,7 +753,7 @@ export async function revokeCollaboratorAccess(
   // #1580 — the shadow participant rows leave with the standing. Idempotent
   // updateMany, so the ban, the erasure and the retry sweep can all run it.
   try {
-    await setParticipantStatus(
+    await transitionParticipant(
       prisma,
       {
         userId,

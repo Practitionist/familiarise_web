@@ -26,6 +26,7 @@ import {
   type MyAppointmentItem,
 } from "./MyAppointmentsClient";
 import { PayerRequestsView } from "./PayerRequestsView";
+import { SponsoredSeatsSection } from "./SponsoredSeatsSection";
 import { AppointmentTabs, type AppointmentTab } from "./AppointmentTabs";
 
 /** Which tab the URL asks for, falling back to "mine" when not allowed. */
@@ -59,11 +60,13 @@ async function AppointmentsTabBody({
   orgId,
   page,
   userId,
+  canSponsor,
 }: Readonly<{
   tab: AppointmentTab;
   orgId: string;
   page: number;
   userId: string;
+  canSponsor: boolean;
 }>) {
   if (tab === "everyone") {
     const queryClient = new QueryClient();
@@ -81,6 +84,8 @@ async function AppointmentsTabBody({
     return (
       <HydrationBoundary state={dehydrate(queryClient)}>
         <AppointmentsPageClient orgId={orgId} />
+        {/* #1852 — seats this org funds in sessions hosted elsewhere. */}
+        {canSponsor && <SponsoredSeatsSection orgId={orgId} />}
       </HydrationBoundary>
     );
   }
@@ -185,6 +190,7 @@ export default async function OrgAppointmentsPage({
             orgId={orgId}
             page={page}
             userId={access.session.user.id}
+            canSponsor={access.org.canSponsor}
           />
         </Suspense>
       </DashboardContent>

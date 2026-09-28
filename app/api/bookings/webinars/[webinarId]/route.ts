@@ -8,6 +8,12 @@ import {
   authorizeEventAccess,
 } from "@/lib/auth-helpers";
 import { EVENT_ALLOWED_FROM } from "@/lib/booking/transitions";
+import {
+  deleteUntouchedOffering,
+  offeringDeleteRefusal,
+  OfferingInUseError,
+  UNTOUCHED_EVENT,
+} from "@/lib/booking/offering-delete";
 
 export async function GET(
   request: Request,
@@ -39,7 +45,8 @@ export async function GET(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -105,7 +112,10 @@ export async function PUT(
         select: { status: true },
       });
       if (!current) {
-        return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Webinar not found" },
+          { status: 404 },
+        );
       }
       allowedFrom = EVENT_ALLOWED_FROM[requestedStatus];
       if (!allowedFrom.includes(current.status)) {
@@ -162,7 +172,8 @@ export async function PUT(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -211,94 +222,71 @@ export async function DELETE(
   try {
     const { webinarId } = await params;
 
-    // FIX #425: Check for active bookings/payments before allowing deletion.
-    // Use same ownership filter as the delete to prevent info disclosure.
-    const ownershipFilter = isPrivileged(session.user.role)
-      ? {}
-      : {
-          webinarPlan: {
-            consultantProfileId: session.user.consultantProfileId ?? "__none__",
-          },
-        };
-    const now = new Date();
-    const webinar = await prisma.webinar.findUnique({
-      where: { id: webinarId, ...ownershipFilter },
-      select: {
-        appointment: {
-          select: {
-            payment: {
-              where: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } },
-              select: { id: true },
+    // Only the owning consultant or ADMIN/STAFF may delete an instance. The
+    // same filter scopes the read and the delete, so a foreign id is a 404
+    // rather than an existence oracle.
+    const owned = {
+      id: webinarId,
+      ...(isPrivileged(session.user.role)
+        ? {}
+        : {
+            webinarPlan: {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
             },
-            occurrences: {
-              where: { endsAt: { gt: now } },
-              select: { id: true },
-            },
-          },
-        },
-      },
+          }),
+    };
+
+    // Ownership first, so a stranger cannot hold the buyers' checkout lock
+    // for this event by calling DELETE in a loop.
+    const mine = await prisma.webinar.findFirst({
+      where: owned,
+      select: { id: true },
     });
-    if (!webinar) {
+    if (!mine) {
       return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
-    if (webinar.appointment?.payment?.length) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete webinar with active payments. Cancel or refund first.",
-        },
-        { status: 400 },
-      );
-    }
-    if (webinar.appointment?.occurrences?.length) {
-      return NextResponse.json(
-        { error: "Cannot delete webinar with upcoming or in-progress slots." },
-        { status: 400 },
-      );
-    }
 
-    // Only the owning consultant or ADMIN/STAFF can delete a webinar instance
-    const webinarData = await prisma.webinar.delete({
-      where: {
-        id: webinarId,
-        ...(isPrivileged(session.user.role)
-          ? {}
-          : {
-              webinarPlan: {
-                consultantProfileId:
-                  session.user.consultantProfileId ?? "__none__",
-              },
-            }),
-      },
-      include: {
-        webinarPlan: {
+    // #1846 CT-02 — Delete only while nobody has booked or paid (#1527
+    // decision 6). The guard counts payments of EVERY status, since a
+    // PENDING or FAILED Payment cascades with the appointment as surely as a
+    // captured one, and it rides the DELETE's WHERE in one Serializable
+    // transaction under the event's checkout lock
+    // (lib/booking/offering-delete.ts). An unsold upcoming instance is
+    // deletable now; anything ever booked is archived instead.
+    const webinarData = await deleteUntouchedOffering(
+      "WEBINAR",
+      webinarId,
+      async (tx) => {
+        const row = await tx.webinar.findFirst({
+          where: owned,
           include: {
-            topics: true,
-            consultantProfile: {
+            webinarPlan: {
               include: {
-                user: true,
+                topics: true,
+                consultantProfile: { include: { user: true } },
               },
             },
+            appointment: { include: { occurrences: true } },
           },
-        },
-        appointment: {
-          include: {
-            occurrences: {
-              include: { // Changed from consulteeProfile to user
-              },
-            },
-          },
-        },
+        });
+        if (!row) return null;
+        const { count } = await tx.webinar.deleteMany({
+          where: { ...owned, ...UNTOUCHED_EVENT },
+        });
+        if (count === 0) throw new OfferingInUseError("WEBINAR");
+        return row;
       },
-    });
+    );
+    if (!webinarData) {
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ data: webinarData }, { status: 200 });
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+    const refusal = offeringDeleteRefusal(error);
+    if (refusal) {
+      return NextResponse.json(refusal.body, { status: refusal.status });
     }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

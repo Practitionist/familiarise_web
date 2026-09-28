@@ -28,20 +28,29 @@ jest.mock("../../lib/reviews-inbox", () => ({
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { canDeleteOffering } from "@/lib/offerings/stats";
+import {
+  TOUCHED_EVENT,
+  UNTOUCHED_EVENT,
+  UNTOUCHED_PLAN,
+} from "@/lib/offerings/delete-guard";
 import { GET as getReviews } from "@/app/api/consultant/reviews/route";
 import PlannerRedirectPage from "@/app/dashboard/consultant/[consultantId]/(features)/planner/page";
 import CollaborationsRedirectPage from "@/app/dashboard/consultant/[consultantId]/(features)/collaborations/page";
 
-const untouched = { requestRows: 0, payments: 0, seats: 0, earningsPaise: 0 };
-
-it("offers Delete only when a plan has no bookings, payments or earnings", () => {
-  expect(canDeleteOffering(untouched)).toBe(true);
-  // A declined request still counts: the 1:1 DELETE route refuses on any row.
-  expect(canDeleteOffering({ ...untouched, requestRows: 1 })).toBe(false);
-  expect(canDeleteOffering({ ...untouched, payments: 1 })).toBe(false);
-  expect(canDeleteOffering({ ...untouched, seats: 1 })).toBe(false);
-  expect(canDeleteOffering({ ...untouched, earningsPaise: 1 })).toBe(false);
+// #1846 — the card and the DELETE routes share one guard, so they cannot
+// disagree, and any seat ever held counts (no status filter), released or not.
+it("offers Delete only where the server's own no-history guard would pass", () => {
+  expect(UNTOUCHED_EVENT).toEqual({ NOT: TOUCHED_EVENT });
+  expect(UNTOUCHED_PLAN.webinar).toEqual({ webinars: { none: TOUCHED_EVENT } });
+  expect(UNTOUCHED_PLAN.class).toEqual({ classes: { none: TOUCHED_EVENT } });
+  expect(TOUCHED_EVENT.appointment.is.OR).toEqual([
+    { payment: { some: {} } },
+    { participants: { some: { role: "CONSULTEE" } } },
+  ]);
+  expect(UNTOUCHED_PLAN.subscription).toEqual({
+    subscriptions: { none: {} },
+    trials: { none: {} },
+  });
 });
 
 it("reads the session's own reviews and ignores any id in the URL", async () => {

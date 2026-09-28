@@ -39,11 +39,11 @@ import {
   PaymentStatus,
   RefundStatus,
 } from "@prisma/client";
-import { setParticipantStatus } from "@/lib/booking/participants";
+import { transitionParticipant } from "@/lib/booking/participants";
 
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
   try {
-    await setParticipantStatus(prisma, { paymentId }, "REFUNDED");
+    await transitionParticipant(prisma, { paymentId }, "REFUNDED");
   } catch (error) {
     // Shadow table: never let it fail a refund that already went through.
     console.warn(
@@ -376,7 +376,7 @@ async function refundFreeCreditPayment(input: {
           initiatedByUserId: input.initiatedByUserId ?? null,
         });
 
-        await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+        await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
         // The Refund row is ₹0; the value that came back is the restored credit.
         notice = await stageRefundNotice(tx, payment, restoredPaise);
         return {
@@ -1086,7 +1086,7 @@ async function refundInternalFundedPayment(input: {
         );
 
         if (!input.keepSeat) {
-          await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+          await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
         }
         notice = await stageRefundNotice(tx, payment, requested);
         return {

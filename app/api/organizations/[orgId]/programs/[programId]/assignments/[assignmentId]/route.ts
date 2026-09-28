@@ -274,6 +274,22 @@ export async function PATCH(
   }
   const body = parsed.data;
 
+  // #1851 decision 3 — changing a seat's period needs OWNER or MAINTAINER:
+  // extending one re-arms sponsored spend. MANAGER keeps assign and unassign
+  // (programs.assign), which includes ending a seat early with `cancel`.
+  if (
+    (body.periodStart !== undefined || body.periodEnd !== undefined) &&
+    !hasOrgPermission(access.member.role, "programs.manage")
+  ) {
+    return NextResponse.json(
+      {
+        error: "Only an Owner or Maintainer can change a seat's period.",
+        code: "SEAT_PERIOD_REQUIRES_MAINTAINER",
+      },
+      { status: 403 },
+    );
+  }
+
   try {
     const updated = await prisma.$transaction(async (tx) =>
       applyAssignmentPatch(tx, {

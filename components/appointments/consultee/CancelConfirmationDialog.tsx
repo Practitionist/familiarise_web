@@ -38,6 +38,12 @@ interface CancelRefundPreview {
    */
   wholeEvent?: boolean;
   attendeeCount?: number | null;
+  /**
+   * #1846 — the trial preview says `paid: false` when there is nothing to
+   * refund, and carries the paid amount for the breakdown line when there is.
+   */
+  paid?: boolean;
+  grossPaise?: number;
 }
 
 /** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
@@ -54,7 +60,11 @@ type SeatLeavePreview =
 
 interface CancelConfirmationDialogProps {
   isOpen: boolean;
-  onConfirm: () => void;
+  /**
+   * Receives the quote the viewer saw, so a caller whose cancel refunds only a
+   * confirmed amount (trial DELETE, #1846) can send it back with the click.
+   */
+  onConfirm: (quote?: { estimatedRefundPaise: number }) => void;
   onCancel: () => void;
   title: string;
   consultant: string;
@@ -75,6 +85,11 @@ interface CancelConfirmationDialogProps {
    * name the Appointment row, and the dialog keeps the policy sentence.
    */
   appointmentId?: string | null;
+  /**
+   * #1846 — a quote endpoint other than the appointment cancel preview; the
+   * trial cancel passes `/api/trials/[trialId]/cancel/preview`.
+   */
+  previewUrl?: string | null;
 }
 
 export function CancelConfirmationDialog({
@@ -88,22 +103,27 @@ export function CancelConfirmationDialog({
   isPendingPayment = false,
   mode = "cancel",
   appointmentId,
+  previewUrl,
 }: Readonly<CancelConfirmationDialogProps>) {
   const isLeave = mode === "leave";
 
   // Only the cancel path: an unpaid request has nothing to quote, and leaving a
   // group event refunds through the roster route rather than this one.
-  const previewEnabled =
-    isOpen && !!appointmentId && !isLeave && !isPendingPayment;
+  const quoteUrl =
+    previewUrl ??
+    (appointmentId
+      ? `/api/appointments/${appointmentId}/cancel/preview`
+      : null);
+  const previewEnabled = isOpen && !!quoteUrl && !isLeave && !isPendingPayment;
   const {
     data: preview,
     isLoading: isPreviewLoading,
     isError: isPreviewError,
   } = useQuery<CancelRefundPreview>({
-    queryKey: ["cancel-refund-preview", appointmentId],
+    queryKey: ["cancel-refund-preview", quoteUrl],
     queryFn: async () => {
       const response = await fetch(
-        `/api/appointments/${appointmentId}/cancel/preview`,
+        quoteUrl as string,
         // R18 — the quote had no deadline, and the confirm button is disabled
         // while it loads. A hung request therefore did not just withhold the
         // number, it locked the user out of cancelling their own booking
@@ -243,11 +263,31 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (preview.paid === false) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          Nothing was paid for this, so there is nothing to refund.
+        </p>
+      );
+    }
     // One sentence per rail, shared with the payments surfaces (#1675 X6).
+    // #1846 — a quote that knows the paid amount shows the breakdown too.
     return (
-      <p className="text-muted-foreground text-sm">
-        {refundRailLine(preview.fundingRail, preview)}
-      </p>
+      <>
+        {preview.grossPaise !== undefined && (
+          <p className="text-muted-foreground text-sm">
+            You paid{" "}
+            <strong className="text-foreground">
+              {formatCurrencyAmount(preview.grossPaise, preview.currency)}
+            </strong>
+            . At this notice the cancellation policy returns {preview.refundPct}
+            % of it.
+          </p>
+        )}
+        <p className="text-muted-foreground text-sm">
+          {refundRailLine(preview.fundingRail, preview)}
+        </p>
+      </>
     );
   };
 
@@ -294,7 +334,13 @@ export function CancelConfirmationDialog({
             {isLeave ? "Stay enrolled" : "Keep Appointment"}
           </AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
+            onClick={() =>
+              onConfirm(
+                preview && preview.paid !== false
+                  ? { estimatedRefundPaise: preview.estimatedRefundPaise }
+                  : undefined,
+              )
+            }
             disabled={
               isLoading ||
               isPreviewLoading ||

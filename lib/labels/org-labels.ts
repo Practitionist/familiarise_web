@@ -257,24 +257,26 @@ export const HOST_INVITABLE_MEMBER_ROLES =
 /**
  * Returns the role list `viewerRole` can pick when inviting or re-roling on
  * the given org:
- *   - OWNER only for an OWNER inviter — the members + invitations routes
- *     refuse anyone else (OWNER_ROLE_REQUIRES_OWNER, #789 / #1527 P1-7)
- *   - operator roles (MAINTAINER / BILLING_ADMIN / MANAGER / SUPPORT) always
+ *   - OWNER, MAINTAINER and BILLING_ADMIN only for an OWNER — the guard in
+ *     lib/enterprise/membership-guards.ts refuses anyone else
+ *     (ROLE_REQUIRES_OWNER, #789 / #1851 decision 6)
+ *   - MANAGER and SUPPORT always
  *   - LEARNER only when canSponsor=true (sponsor-side; needs Contract/Program/Wallet
  *     to actually fund sessions — host-only orgs have no settlement path)
  *   - EXPERT only when canHost=true (host-side; needs payout account / RateCard)
  *
- * Single source of truth for both the dropdown population (UI) and the
- * server-side capability gates (`LEARNER_REQUIRES_CANSPONSOR` +
- * `EXPERT_REQUIRES_CANHOST` in the members + invitations routes).
+ * Mirrors the server-side gates (`LEARNER_REQUIRES_CANSPONSOR`,
+ * `EXPERT_REQUIRES_CANHOST` and the OWNER-only roles) so the dropdown never
+ * offers a role the server would refuse.
  */
 export function getInvitableRoles(
   viewerRole: MemberRole,
   canSponsor: boolean,
   canHost: boolean,
 ): MemberRole[] {
-  const roles: MemberRole[] = viewerRole === "OWNER" ? ["OWNER"] : [];
-  roles.push("MAINTAINER", "BILLING_ADMIN", "MANAGER", "SUPPORT");
+  const roles: MemberRole[] =
+    viewerRole === "OWNER" ? ["OWNER", "MAINTAINER", "BILLING_ADMIN"] : [];
+  roles.push("MANAGER", "SUPPORT");
   if (canSponsor) roles.push("LEARNER");
   if (canHost) roles.push("EXPERT");
   return roles;

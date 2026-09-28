@@ -69,6 +69,8 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => mockRefundPayment(...a),
+  // #1846 — the trial quote names the rail for the cancel dialog.
+  fundingRailForIntent: () => "GATEWAY",
 }));
 
 jest.mock("@sentry/nextjs", () => ({

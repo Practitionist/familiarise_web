@@ -316,8 +316,9 @@ export type RescheduleOutcomeFields =
   | {
       /** PR 2e — the proposal was declined or withdrawn; the booking stays
        *  at its original times (or is in the consultant's queue if slots
-       *  were released). No destination time exists. */
-      outcome: "DECLINED" | "WITHDRAWN";
+       *  were released). #1846 — EXPIRED: nobody answered, so the original
+       *  time was restored and stands. No destination time exists. */
+      outcome: "DECLINED" | "WITHDRAWN" | "EXPIRED";
       oldDateTime?: string;
       newDateTime?: never;
     };

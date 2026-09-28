@@ -16,6 +16,8 @@ jest.mock("../../lib/prisma", () => ({
     user: { findUnique: jest.fn() },
     recording: { findFirst: jest.fn(async () => null) },
     membership: { findFirst: jest.fn(async () => null) },
+    // #1852 — the support context reads the caller's seat org on a webinar.
+    appointmentParticipant: { findUnique: jest.fn(async () => null) },
   },
 }));
 

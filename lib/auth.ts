@@ -24,8 +24,7 @@ import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-t
 import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { buildConsentArtifact } from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { enforceSessionCapForUser } from "@/lib/auth/session-cap";
 import { stampSessionDeviceMetadata } from "@/lib/auth/session-stamp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
@@ -255,7 +254,7 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        after: async (user) => {
+        after: async (user, ctx) => {
           try {
             // NOTE: ConsulteeProfile used to be auto-created here for every
             // signup. It is now lazy — created on the first consumer action
@@ -287,22 +286,18 @@ export const auth = betterAuth({
             // on the signup form (P1 follow-up; see #701). When a user
             // hits the in-app withdrawal flow (/api/.../consent), this
             // artifact is superseded and `checkConsent` fails closed.
+            //
+            // #1846 — an account created by an SSO sign-in (JIT) was not
+            // made by the person on a signup form, so nothing is stamped
+            // for them here. Their first sign-in into the org shows the
+            // consent step (JoinConsentGate), and accepting an invitation
+            // shows it inline (#1854); both write these same rows.
+            const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
             try {
-              for (const purposeCode of [
-                PURPOSE_CODES.PRIMARY_PROCESSING,
-                PURPOSE_CODES.STREAM_DATA_PROCESSING,
-                // #701 — session-booking consent, gated fail-closed at
-                // org-sponsored checkout. Granted at signup like the others.
-                PURPOSE_CODES.SESSION_BOOKING,
-              ] as const) {
-                const draft = buildConsentArtifact({
-                  userId: user.id,
-                  dataFiduciary: "Familiarise",
-                  purposeCodes: [purposeCode],
-                  language: "en-IN",
-                  consentManager: null,
-                  version: 1,
-                });
+              const drafts = ssoProvisioned
+                ? []
+                : buildSignupConsentArtifacts(user.id);
+              for (const draft of drafts) {
                 await prisma.consentArtifact.create({ data: draft });
               }
             } catch (consentError) {

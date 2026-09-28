@@ -302,6 +302,10 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
 
   it("non-owners are never offered OWNER; SUPPORT is invitable (P1-7)", () => {
     expect(getInvitableRoles("MAINTAINER", true, true)).not.toContain("OWNER");
+    // #1851 decision 6 — nor MAINTAINER or BILLING_ADMIN.
+    expect(getInvitableRoles("MAINTAINER", true, true)).not.toContain(
+      "BILLING_ADMIN",
+    );
     expect(getInvitableRoles("MAINTAINER", true, true)).toContain("SUPPORT");
     expect(getInvitableRoles("OWNER", true, true)).toContain("OWNER");
   });

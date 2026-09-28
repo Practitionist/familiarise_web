@@ -19,6 +19,7 @@
 import {
   ASSIGNMENT_ALLOWED_FROM,
   CONTRACT_ALLOWED_FROM,
+  EARNING_ALLOWED_FROM,
   INVOICE_ALLOWED_FROM,
   MEMBER_ALLOWED_FROM,
   ORG_ALLOWED_FROM,
@@ -44,6 +45,7 @@ const MAPS: Record<string, Record<string, readonly string[]>> = {
   PoStatus: PO_ALLOWED_FROM,
   PayoutStatus: PAYOUT_ALLOWED_FROM,
   WalletTopUpStatus: WALLET_TOPUP_ALLOWED_FROM,
+  EarningStatus: EARNING_ALLOWED_FROM,
 };
 
 describe("enterprise FSM terminality invariants", () => {
@@ -64,6 +66,8 @@ describe("enterprise FSM terminality invariants", () => {
     PoStatus: ["CLOSED", "CANCELLED"],
     PayoutStatus: ["FAILED", "CANCELLED", "REVERSED"],
     WalletTopUpStatus: ["CONFIRMED", "FAILED"],
+    // #1846 SM-B12 — a refunded earning never returns to the payable pool.
+    EarningStatus: ["REFUNDED"],
   };
 
   it("derived terminal sets match the pinned literals exactly", () => {

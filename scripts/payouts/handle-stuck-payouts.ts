@@ -28,6 +28,7 @@ import {
   WEBHOOK_STATUS_MAP,
   getStripePayoutStatus,
   getRazorpayPayoutStatus,
+  findRazorpayPayoutByReference,
   mapGatewayStatus,
   retireUnknownGatewayPayout,
 } from "@/lib/payments/payouts/payout-gateway-lookup";
@@ -122,9 +123,60 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     console.log(`   Last updated: ${payout.updatedAt.toISOString()}`);
     console.log(`   Retry count: ${payout.retryCount}`);
 
-    // If no provider payout ID, mark as failed (never sent to gateway)
-    if (!payout.providerPayoutId) {
-      console.log(`   No provider payout ID - marking as FAILED`);
+    let providerPayoutId = payout.providerPayoutId;
+    if (!providerPayoutId) {
+      // #1846 N1 — no provider id does NOT mean "never sent": a submit whose
+      // reply timed out leaves exactly this row, and the transfer may exist.
+      // Ask the gateway by reference id (our row id) before resubmitting or
+      // failing. Only "none" makes either safe; a found payout is stamped and
+      // settled below like any other.
+      if (payout.provider !== PaymentGateway.RAZORPAY) {
+        // Stripe has no reference lookup here and its idempotency keys expire
+        // after 24 hours, which is this sweep's threshold, so a resubmission
+        // could pay twice. An operator settles these.
+        skippedCount++;
+        errors.push(
+          `Payout ${payout.id}: ${payout.provider} payout with no provider id needs manual review`,
+        );
+        continue;
+      }
+      if (!razorpayConfigured) {
+        console.log(`   Skipping - Razorpay credentials not configured`);
+        skippedCount++;
+        continue;
+      }
+      const ref = await findRazorpayPayoutByReference(payout.id);
+      if (ref.kind === "gateway_error" || ref.kind === "ambiguous") {
+        errors.push(
+          `Payout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
+        );
+        if (ref.kind === "ambiguous") {
+          reportSentryMessage(
+            "handle-stuck-payouts: several gateway payouts share one reference",
+            {
+              subsystem: "payments",
+              op: "handle-stuck-payouts",
+              level: "error",
+              extra: { payoutId: payout.id, detail: ref.detail },
+            },
+          );
+        }
+        continue;
+      }
+      if (ref.kind === "found") {
+        await prisma.consultantPayout.updateMany({
+          where: { id: payout.id, providerPayoutId: null },
+          data: { providerPayoutId: ref.providerPayoutId },
+        });
+        console.log(
+          `   Gateway holds ${ref.providerPayoutId} for this reference - settling it`,
+        );
+        providerPayoutId = ref.providerPayoutId;
+      }
+    }
+
+    if (!providerPayoutId) {
+      console.log(`   Gateway holds no payout for this reference`);
 
       if (payout.retryCount >= MAX_RETRIES) {
         // #1205-triage — CAS the terminal flip inside the same tx as the
@@ -137,6 +189,12 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
               status: PayoutStatus.FAILED,
               failureReason:
                 "Payout never sent to gateway after multiple attempts",
+              // The TDS outcome is staged before submission (#1846 N1); a
+              // payout that never left withheld nothing.
+              tdsDeducted: 0,
+              netAmount: null,
+              tdsRateAppliedBps: null,
+              tdsFinancialYear: null,
             },
           });
           if (claimed.count === 0) return { released: 0, claimed: false };
@@ -195,14 +253,14 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
     let lookup: PayoutLookup | null = null;
 
     if (payout.provider === PaymentGateway.STRIPE) {
-      lookup = await getStripePayoutStatus(payout.providerPayoutId);
+      lookup = await getStripePayoutStatus(providerPayoutId);
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;
         continue;
       }
-      lookup = await getRazorpayPayoutStatus(payout.providerPayoutId);
+      lookup = await getRazorpayPayoutStatus(providerPayoutId);
     }
 
     // #1757 — an id the gateway has no record of is terminal for this row, not
@@ -211,7 +269,7 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
       await retireUnknownGatewayPayout(
         {
           provider: payout.provider,
-          providerPayoutId: payout.providerPayoutId,
+          providerPayoutId,
         },
         lookup.detail,
       );
@@ -270,7 +328,7 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
 
       await handlePayoutWebhook(
         payout.provider,
-        payout.providerPayoutId,
+        providerPayoutId,
         webhookStatus,
         mappedStatus === PayoutStatus.FAILED
           ? gatewayStatus.failureMessage || gatewayStatus.failureReason

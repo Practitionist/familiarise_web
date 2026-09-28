@@ -17,6 +17,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionContract } from "@/lib/enterprise/transitions";
 import { getContractLockState } from "@/lib/enterprise/config-lock";
+import { closeContractSeats } from "@/lib/api/organizations/seat-count";
 
 // Term fields that lock once the contract leaves DRAFT or starts billing
 // (#777 §B). `autoRenew` is a safe forward-looking toggle — editable always.
@@ -253,23 +254,20 @@ export async function PATCH(
           },
         });
 
-        // #779 §A — TERMINATED/EXPIRED cascade: a dead contract takes its
-        // programs (ACTIVE → EXPIRED) and their still-ACTIVE assignments
-        // (→ CLOSED) down with it, in this same tx, so nothing is left
-        // drawing against a dead contract. TERMINATED is operator-initiated
-        // mid-cycle and pre-guarded above; EXPIRED may be natural term-end
-        // or a manual early close, and this mirrors jobs/contracts/
-        // expire-contracts.ts exactly — without it, a manually-expired
-        // contract left assignments ACTIVE against it for up to 24h
-        // (#1132 follow-up).
+        // #779 §A / #1846 SM-C14 — a dead contract takes its programs and
+        // their live seats down with it in this same tx, through the same
+        // helper the nightly expiry job uses: ACTIVE and PAUSED seats close,
+        // an in-period seat ends now, the billed seat count is released, and
+        // each seat gets its own audit row. TERMINATED is pre-guarded above
+        // against in-period seats, so for it this only tidies seats whose
+        // period already ended.
         if (body.status === "TERMINATED" || body.status === "EXPIRED") {
-          await tx.program.updateMany({
-            where: { contractId, status: "ACTIVE" },
-            data: { status: "EXPIRED" },
-          });
-          await tx.programAssignment.updateMany({
-            where: { program: { contractId }, status: "ACTIVE" },
-            data: { status: "CLOSED" },
+          await closeContractSeats(tx, {
+            contractId,
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            contractStatus: body.status,
+            now: new Date(),
           });
         }
       } else if (Object.keys(scalarData).length > 0) {

@@ -312,9 +312,14 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
 
     // The confirm machinery flipped the payer's seat (#1554: the shared class
     // occurrences are the consultant's allocation and are never flipped here).
+    // #1846 SM-B9 — the capture's HELD scope is the first AND arm.
     expect(participantUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ userId: "user-1", status: "HELD" }),
+        where: {
+          AND: expect.arrayContaining([
+            expect.objectContaining({ userId: "user-1", status: "HELD" }),
+          ]),
+        },
         data: { status: "CONFIRMED" },
       }),
     );

@@ -15,7 +15,7 @@ import {
   linkParticipantsToPayment,
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
@@ -140,6 +140,7 @@ import {
   type OpenClassEnrolment,
 } from "@/lib/booking/class-enrolment";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -2799,6 +2800,8 @@ export async function handleWebinarCheckout(
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
+  /** #1852 — the org whose money paid for this seat; null for a personal purchase. */
+  payerOrganizationId: string | null = null,
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
@@ -2910,11 +2913,17 @@ export async function handleWebinarCheckout(
   // Webinar participants attend the entire session on the consultant's
   // occurrences; the seat is one participant row (#1554), never a new row.
   if (appointment && appointment.occurrences.length > 0) {
+    // #1852 — the seat carries its OWN payer org, not the host's: one
+    // webinar can seat B2C attendees and members of several orgs, and each
+    // org sees, pays for and reports on only its own seats.
     await recordParticipants(
       tx,
       appointment.id,
       [{ userId, role: "CONSULTEE" }],
-      { status: _skipPayment ? "CONFIRMED" : "HELD" },
+      {
+        status: _skipPayment ? "CONFIRMED" : "HELD",
+        organizationId: payerOrganizationId,
+      },
     );
     // #1780 row 2 — the seat keeps the refund window it was sold under.
     await tx.appointmentParticipant.updateMany({
@@ -2951,6 +2960,8 @@ export async function handleClassCheckout(
   _skipPayment: boolean,
   /** #1819 — the sessions the quote priced; null skips the stale-quote check. */
   quotedSessions: number | null = null,
+  /** #1852 — the org whose money paid for this seat; null for a personal purchase. */
+  payerOrganizationId: string | null = null,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
@@ -3057,8 +3068,10 @@ export async function handleClassCheckout(
 
   // Class participants attend every session on the consultant's occurrences;
   // the seat is one participant row on the wrapper (#1554), never new rows.
+  // #1852 — the seat carries its own payer org (see handleWebinarCheckout).
   await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
     status: _skipPayment ? "CONFIRMED" : "HELD",
+    organizationId: payerOrganizationId,
   });
   // #1780 row 2 — the seat keeps the refund window it was sold under; #1819 —
   // and the sessions it paid for, which fix its refund unit.
@@ -3880,6 +3893,10 @@ export async function handleCheckout(
                   validatedData,
                   userId,
                   skipPayment,
+                  seatPayerOrganizationId(
+                    organizationId,
+                    isOrgSponsoredPayment,
+                  ),
                 );
                 createdAppointment = webinarResult.appointment;
                 engagementsForCap = 1;
@@ -3893,6 +3910,10 @@ export async function handleCheckout(
                   userId,
                   skipPayment,
                   classSessionsQuoted,
+                  seatPayerOrganizationId(
+                    organizationId,
+                    isOrgSponsoredPayment,
+                  ),
                 );
                 // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
@@ -4005,7 +4026,7 @@ export async function handleCheckout(
                 );
               }
               if (skipPayment) {
-                await setParticipantStatus(tx, participantWhere, "CONFIRMED");
+                await transitionParticipant(tx, participantWhere, "CONFIRMED");
               }
             }
 

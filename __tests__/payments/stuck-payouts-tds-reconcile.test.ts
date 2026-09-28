@@ -98,10 +98,13 @@ beforeEach(() => {
   payoutRow = { ...STUCK_PAYOUT };
   process.env.RAZORPAY_KEY_ID = "k";
   process.env.RAZORPAY_SECRET = "s";
-  (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ status: "processed", utr: "UTR1234567890" }),
-  });
+  process.env.RAZORPAYX_ACCOUNT_NUMBER = "acc";
+  (global as unknown as { fetch: jest.Mock }).fetch = jest
+    .fn()
+    .mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "processed", utr: "UTR1234567890" }),
+    });
 });
 
 describe("PM-15 — stuck-payout reconcile delegates to handlePayoutWebhook", () => {
@@ -123,21 +126,25 @@ describe("PM-15 — stuck-payout reconcile delegates to handlePayoutWebhook", ()
 
     // The OLD inline money flip must be gone: no direct COMPLETED status write
     // and no direct earnings→PAID write on the reconciler.
-    const directCompletedFlip = prismaStub.consultantPayout.update.mock.calls.some(
-      ([arg]: [{ data?: Row }]) => arg?.data?.status === "COMPLETED",
-    );
+    const directCompletedFlip =
+      prismaStub.consultantPayout.update.mock.calls.some(
+        ([arg]: [{ data?: Row }]) => arg?.data?.status === "COMPLETED",
+      );
     expect(directCompletedFlip).toBe(false);
-    const directEarningsPaid = prismaStub.consultantEarnings.updateMany.mock.calls.some(
-      ([arg]: [{ data?: Row }]) => arg?.data?.status === "PAID",
-    );
+    const directEarningsPaid =
+      prismaStub.consultantEarnings.updateMany.mock.calls.some(
+        ([arg]: [{ data?: Row }]) => arg?.data?.status === "PAID",
+      );
     expect(directEarningsPaid).toBe(false);
   });
 
   it("failed payout → delegates FAILED with the failure reason", async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "reversed", failure_reason: "bounced" }),
-    });
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "reversed", failure_reason: "bounced" }),
+      });
 
     await handleStuckPayouts();
 
@@ -157,10 +164,15 @@ describe("PM-15 — stuck-payout reconcile delegates to handlePayoutWebhook", ()
   // while Stripe's did, so the payout fell through as an unknown status and was
   // skipped: PROCESSING forever, earnings still linked to money that never left.
   it("gateway `failed` → delegates FAILED, not skipped as an unknown status", async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "failed", failure_reason: "account closed" }),
-    });
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: "failed",
+          failure_reason: "account closed",
+        }),
+      });
 
     const result = await handleStuckPayouts();
 
@@ -175,10 +187,12 @@ describe("PM-15 — stuck-payout reconcile delegates to handlePayoutWebhook", ()
   });
 
   it("still-processing payout → no delegation (status unchanged)", async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "processing" }),
-    });
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "processing" }),
+      });
 
     await handleStuckPayouts();
 
@@ -193,6 +207,17 @@ describe("PM-15 — stuck-payout reconcile delegates to handlePayoutWebhook", ()
  * stamped it back to APPROVED and the next batch paid it twice.
  */
 describe("#1407 — retry reset loses the CAS", () => {
+  // #1846 N1 — a row with no provider id is only re-armed once RazorpayX
+  // confirms it holds no payout under the row's reference id.
+  beforeEach(() => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ entity: "collection", count: 0, items: [] }),
+      });
+  });
+
   it("count 0 → no second payout is armed and the row is reported skipped", async () => {
     // Never reached the gateway, so this is the retry branch.
     payoutRow = { ...STUCK_PAYOUT, providerPayoutId: null, retryCount: 0 };
@@ -226,6 +251,9 @@ describe("#1407 — retry reset loses the CAS", () => {
     expect(prismaStub.consultantPayout.updateMany).toHaveBeenCalledTimes(1);
     expect(result.retriedCount).toBe(1);
     expect(result.skippedCount).toBe(0);
+    const [url] = (global as unknown as { fetch: jest.Mock }).fetch.mock
+      .calls[0] as [string];
+    expect(url).toContain("reference_id=po_stuck_1");
     expect(prismaStub.consultantPayout.update).not.toHaveBeenCalled();
   });
 });

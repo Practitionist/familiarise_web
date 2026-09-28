@@ -23,6 +23,7 @@ import {
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import { supportError } from "@/lib/api/support-http";
+import { seatOrganizationId } from "@/lib/booking/participants";
 
 /** Coded authz failure — map through `appointmentAuthzError`. */
 export type CodedAuthz = {
@@ -46,7 +47,8 @@ export type PartyAuthz = {
 export type ParticipantAuthz = {
   userId: string;
   isOrgParty: false;
-  /** The appointment's owning org (CSAT attribution). */
+  /** The caller's seat org on a group session, else the appointment's org
+   *  (CSAT attribution, #1852). */
   organizationId: string | null;
   detail: TAppointmentDetail;
 };
@@ -67,7 +69,13 @@ export async function authorizeAppointment(
   if (!session?.user?.id) return { code: "UNAUTHORIZED", status: 401 };
   const detail = await readAppointmentDetail(appointmentId);
   if (!detail) return { code: "NOT_FOUND", status: 404 };
-  const organizationId = detail.appointment.organizationId ?? null;
+  // #1852 — the caller's seat org on a group session, not the host's. The
+  // org-party branch below keeps the host org: it is about the org's own
+  // appointment, not about anyone's seat.
+  const hostOrganizationId = detail.appointment.organizationId ?? null;
+  // #1854 — read only on the branches that admit the caller.
+  const seatOrg = () =>
+    seatOrganizationId(prisma, detail.appointment, session.user.id);
   // Staff who are also on the roster keep the whole view: privilege is
   // decided here, not by which branch admitted them.
   const privileged = isPrivileged(session.user.role);
@@ -75,7 +83,7 @@ export async function authorizeAppointment(
     return {
       userId: session.user.id,
       isOrgParty: false,
-      organizationId,
+      organizationId: await seatOrg(),
       detail: scopeAppointmentDetail(detail, session.user.id, privileged),
     };
   }
@@ -83,7 +91,7 @@ export async function authorizeAppointment(
     return {
       userId: session.user.id,
       isOrgParty: false,
-      organizationId,
+      organizationId: await seatOrg(),
       detail,
     };
   }
@@ -99,7 +107,7 @@ export async function authorizeAppointment(
     return {
       userId: session.user.id,
       isOrgParty: false,
-      organizationId,
+      organizationId: await seatOrg(),
       detail: scopeAppointmentDetail(detail, session.user.id, false),
     };
   }
@@ -108,17 +116,21 @@ export async function authorizeAppointment(
   // another user's conversation. Only routes that declare an org-party
   // surface may take this branch — and the grant returns no session content.
   if (orgParty) {
-    if (organizationId) {
+    if (hostOrganizationId) {
       const membership = await prisma.membership.findFirst({
         where: {
           userId: session.user.id,
-          organizationId,
+          organizationId: hostOrganizationId,
           status: "ACTIVE",
         },
         select: { role: true },
       });
       if (membership && hasOrgPermission(membership.role, "operations.read")) {
-        return { userId: session.user.id, isOrgParty: true, organizationId };
+        return {
+          userId: session.user.id,
+          isOrgParty: true,
+          organizationId: hostOrganizationId,
+        };
       }
     }
   }

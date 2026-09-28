@@ -429,6 +429,23 @@ describe("withdrawRescheduleRequest", () => {
     );
   });
 
+  it("answers ORIGINAL_TIME_TAKEN when the restore meets the overlap constraint (#1846 SM-B15)", async () => {
+    seed();
+    tx.appointmentOccurrence.updateManyAndReturn.mockRejectedValueOnce(
+      new Error(
+        'violates exclusion constraint "occurrence_no_confirmed_overlap"',
+      ),
+    );
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: false, reason: "ORIGINAL_TIME_TAKEN" });
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+
   it("reports a partial restore instead of claiming success silently", async () => {
     // One row's status drifted, so the RESCHEDULED-filtered updateMany skips
     // it. The withdrawal is committed and correct, but the booking is
