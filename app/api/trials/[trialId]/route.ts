@@ -347,6 +347,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       appointmentId: string | null;
       paymentId: string | null;
       isConsultantInitiated: boolean;
+      /** #1846 — a CANCELLED here was quoted unpaid, so it refunds nothing. */
+      quote?: null;
     } | null = null;
 
     if (notes !== undefined) {
@@ -821,6 +823,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // through, so anyone else is cancelling on the consultant's side.
           isConsultantInitiated:
             status === TrialStatus.REJECTED || !isTrialConsultee,
+          ...(status === TrialStatus.CANCELLED ? { quote: null } : {}),
         };
       }
 
@@ -907,6 +910,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         await transitionTrial(tx, {
           where: { id: trialId },
           to: nextStatus as TrialStatus,
+          // #1846 — this PATCH cancels only an unpaid trial (a paid one needs
+          // the quoted DELETE). The status it read and "still unpaid" ride the
+          // CAS, so a capture that commits first makes this a 409, and one
+          // that lands after is the webhook's capture-after-release refund.
+          ...(nextStatus === TrialStatus.CANCELLED
+            ? {
+                fromIn: [existingTrial.status],
+                whereAnd: { paymentId: null },
+              }
+            : {}),
         });
       }
       // #1775 C-9 — delivery starts the paid trial's earnings hold.
@@ -983,6 +996,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         paymentId: deferredCancellation.paymentId,
         initiatedByUserId: session.user.id,
         isConsultantInitiated: deferredCancellation.isConsultantInitiated,
+        quote: deferredCancellation.quote,
       });
       // #1775 C-12 — a declined paid trial's learner hears "refunded" only
       // once the money actually moved.
