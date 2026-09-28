@@ -50,7 +50,14 @@ function redactHeaders(headers: Record<string, string> | undefined): void {
 // Key-based redaction for nested data/extra/contexts blobs. Matches the key,
 // not the value, so a differently-shaped payload is still caught.
 const SENSITIVE_KEY_RX =
-  /token|secret|password|passwd|authorization|pan(?!el)|account_?number|ifsc|vpa|card_?number|cvv/i;
+  /token|secret|password|passwd|authorization|account_?number|ifsc|vpa|card_?number|cvv/i;
+// PAN only as a whole word (`pan`, `panNumber`, `pan_last4`, `PAN`) — a bare
+// substring would also redact `companyName` and `participantId`.
+const PAN_KEY_RX = /(?:^|[_-])(?:pan|PAN)(?:[A-Z_-]|$)/;
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEY_RX.test(key) || PAN_KEY_RX.test(key);
+}
 
 /** Plain data objects only — never recurse into a Date, Map, Error, etc. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -68,7 +75,7 @@ function redactByKey(value: unknown, depth: number): unknown {
 
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(value)) {
-    if (SENSITIVE_KEY_RX.test(key)) {
+    if (isSensitiveKey(key)) {
       out[key] = v === null || v === undefined ? v : REDACTED;
     } else {
       out[key] = redactByKey(v, depth + 1);
@@ -109,7 +116,10 @@ function stripSensitiveQueryParams(url: string): string {
     // Breadcrumb URLs are sometimes relative; a placeholder origin lets URL
     // parse them, and is stripped back off below.
     const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(url);
-    const parsed = new URL(url, isAbsolute ? undefined : "http://placeholder.invalid");
+    const parsed = new URL(
+      url,
+      isAbsolute ? undefined : "http://placeholder.invalid",
+    );
     let changed = false;
     for (const key of Array.from(parsed.searchParams.keys())) {
       if (SENSITIVE_QUERY_PARAM_RX.test(key)) {
@@ -118,7 +128,9 @@ function stripSensitiveQueryParams(url: string): string {
       }
     }
     if (!changed) return url;
-    return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return isAbsolute
+      ? parsed.toString()
+      : `${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return url;
   }

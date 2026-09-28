@@ -37,10 +37,29 @@ describe("scrubSentryEvent", () => {
       cardNumber: "[redacted]",
       orderId: "order_123",
     });
-    expect((scrubbed.extra?.payload as Record<string, unknown>).accountNumber).toBe(
-      "[redacted]",
+    expect(
+      (scrubbed.extra?.payload as Record<string, unknown>).accountNumber,
+    ).toBe("[redacted]");
+    expect((scrubbed.extra?.payload as Record<string, unknown>).note).toBe(
+      "fine",
     );
-    expect((scrubbed.extra?.payload as Record<string, unknown>).note).toBe("fine");
+  });
+});
+
+test("redacts PAN only as a whole word", () => {
+  const scrubbed = scrubSentryEvent({
+    extra: {
+      panNumber: "ABCDE1234F",
+      pan_last4: "234F",
+      companyName: "Acme",
+      participantId: "p1",
+    },
+  } as ErrorEvent);
+  expect(scrubbed.extra).toEqual({
+    panNumber: "[redacted]",
+    pan_last4: "[redacted]",
+    companyName: "Acme",
+    participantId: "p1",
   });
 });
 
@@ -50,7 +69,10 @@ describe("scrubSentryBreadcrumb", () => {
       category: "http",
       data: { url: "https://api.example.com/pay?token=xyz&keep=1" },
     };
-    const other: Breadcrumb = { category: "ui.click", data: { url: "irrelevant?token=xyz" } };
+    const other: Breadcrumb = {
+      category: "ui.click",
+      data: { url: "irrelevant?token=xyz" },
+    };
 
     expect((scrubSentryBreadcrumb(http).data as { url: string }).url).toBe(
       "https://api.example.com/pay?token=%5Bredacted%5D&keep=1",
