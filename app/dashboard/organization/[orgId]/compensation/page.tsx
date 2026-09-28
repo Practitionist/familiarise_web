@@ -304,6 +304,12 @@ export default async function MyArrangementPage({
               emphasised
             />
           </div>
+          {member.payoutRecipient === "ORGANIZATION" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Your share is paid to {access.org.name}, which distributes it to
+              you, as the payout arrangement above explains.
+            </p>
+          )}
           <p className="mt-3 text-xs text-muted-foreground">
             Illustration on a ₹1,000 session: platform takes{" "}
             {formatCurrencyAmount(Math.round(rateCard.platformBps * 10), "INR")}

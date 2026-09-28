@@ -186,6 +186,9 @@ export function PayoutRunsPanel({
       await approvePayout(orgId, payoutId);
       refreshPayouts();
     } catch (err) {
+      // A refusal can mean the batch moved under us (approved or cancelled
+      // elsewhere), so the list re-reads either way.
+      refreshPayouts();
       if (
         err instanceof ApproveError &&
         err.code === "PAYOUT_SELF_APPROVAL_CONFIRM_REQUIRED"

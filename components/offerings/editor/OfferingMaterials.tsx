@@ -120,7 +120,10 @@ export function OfferingMaterials({
         );
       })}
       {removed.map((c) => (
-        <li key={`removed-${c.materialId}`} className="flex items-start gap-3 p-3 text-sm">
+        <li
+          key={`removed-${c.materialId}`}
+          className="flex items-start gap-3 p-3 text-sm"
+        >
           <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             <p className="truncate text-muted-foreground line-through">
