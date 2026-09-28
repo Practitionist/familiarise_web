@@ -43,8 +43,8 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | **Documents** (`/api/appointments/[id]/documents`)                              | Allowed                                  | Blocked                    | LOW        |
 | **Consultations** (`/api/bookings/consultations`)                               | GET: Allowed, POST/PATCH: **blocked**    | Blocked                    | HIGH       |
 | **Subscriptions** (`/api/bookings/subscriptions`)                               | GET: Allowed, POST: **blocked**          | Blocked                    | HIGH       |
-| **Webinars** (`/api/bookings/webinars`)                                         | GET: Allowed, POST: **blocked**          | Blocked                    | MEDIUM     |
-| **Classes** (`/api/bookings/classes`)                                           | GET: Allowed, POST: **blocked**          | Blocked                    | MEDIUM     |
+| **Webinars** (`/api/bookings/webinars`)                                         | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
+| **Classes** (`/api/bookings/classes`)                                           | GET: Allowed, POST, PATCH and DELETE: **blocked** | Blocked                    | MEDIUM     |
 | **Allocate slots** (`/api/bookings/*/allocate`)                                 | **Writes blocked (503)**                 | Blocked                    | HIGH       |
 | **Validate** (`/api/bookings/*/validate`)                                       | Allowed (read-only)                      | Blocked                    | LOW        |
 | **Trials** (`/api/trials`, `/api/trials/[id]`)                                  | **Writes blocked (503)**                 | Blocked                    | MEDIUM     |

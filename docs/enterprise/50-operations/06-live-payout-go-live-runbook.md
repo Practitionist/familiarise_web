@@ -33,7 +33,7 @@ flowchart TD
   PROVE --> CHECK{"Pre-flip checklist<br/>all green?<br/>KYB · secrets · VERIFIED accounts ·<br/>TDS/MSME · idempotency keys ·<br/>reconcile ok:true · telemetry on"}
   CHECK -->|"no"| FREEZE
   CHECK -->|"yes"| FLIP["Set ENABLE_LIVE_PAYOUTS=true<br/>+ redeploy → canary ONE<br/>small VERIFIED payout"]
-  FLIP --> LIVE["next tick submits eligible<br/>PROCESSING payouts to RazorpayX<br/>→ COMPLETED on webhook"]
+  FLIP --> LIVE["next process-payouts run claims each<br/>APPROVED payout to PROCESSING and<br/>submits it to RazorpayX → COMPLETED on webhook"]
   LIVE -.->|"rollback: flag=false + redeploy"| STOP["new ticks stop submitting;<br/>already-submitted rows settle via<br/>webhook (can't un-send — clawback,<br/>reversal-engine.ts §C)"]
 ```
 
@@ -131,8 +131,8 @@ Goal: prove the submission path is correct **without** touching the production
 flag. The smoke asserts the gated behaviour and is safe to run anywhere:
 
 ```bash
-# Asserts: with the flag OFF, processOrgPayout advances to PROCESSING and makes
-# NO gateway submission (no providerPayoutId, money does not leave).
+# Asserts: with the flag OFF, processOrgPayout leaves its unapproved PENDING
+# payout unclaimed and makes NO gateway submission (money does not leave).
 DATABASE_URL=… DIRECT_URL=… npx tsx scripts/smoke/org-payout-sandbox-smoke.ts
 ```
 
@@ -141,7 +141,7 @@ step for the ones that need real sandbox creds):
 
 | Proof item                                      | How                                                                                                                                                                                      |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Flag off ⇒ no disbursement                      | smoke: `submittedToGateway === false`, status `PROCESSING`                                                                                                                               |
+| Flag off ⇒ no disbursement                      | smoke: `submittedToGateway === false`, status stays `PENDING` (not claimed)                                                                                                             |
 | No money leaves while gated                     | smoke: `providerPayoutId == null` after process                                                                                                                                          |
 | TDS/MSME stamped before submit                  | inspect a real batch in staging (`tdsAmountPaise`, `mustPayByDate`)                                                                                                                      |
 | Idempotency key never null                      | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |

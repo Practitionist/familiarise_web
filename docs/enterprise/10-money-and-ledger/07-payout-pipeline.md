@@ -119,7 +119,8 @@ sequenceDiagram
   participant WH as Payout webhook
   participant L as Ledger
   CR->>SV: createOrgPayoutBatch — claim READY earnings, compute TDS/MSME
-  CR->>SV: processOrgPayout — PENDING to PROCESSING (live flag on)
+  Note over CR,SV: a payouts.approve holder approves the batch — PENDING to APPROVED
+  CR->>SV: processOrgPayout — APPROVED to PROCESSING (live flag on)
   SV->>GW: createPayout (X-Payout-Idempotency payout_id, queue_if_low_balance)
   GW-->>SV: payout id, status processing (UTR null)
   GW-->>WH: payout.processed — UTR populated

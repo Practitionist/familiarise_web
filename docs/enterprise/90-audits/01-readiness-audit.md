@@ -27,7 +27,7 @@ last-reviewed: 2026-06-11
 - ✅ **Invoice dunning** — `jobs/billing/dunning.ts` (7-day cadence, max 3 reminders).
 - ✅ **CHARGE_MEMBER timeout** — `timeout-member-overages` cron + `OverageEvent.chargeTimedOutAt`/attempt telemetry; abandoned side-charges fail closed instead of stranding money. (#779 §A)
 - ✅ **Refund-failed notify** — no more silent stuck money on reconcile-pending refunds. (#779 §D)
-- ✅ **Field-level RBAC** — the OWNER-or-BILLING_ADMIN disjunction gate (today the `billing.manage` matrix key) on money-bearing org mutations (not a per-column allowlist). (#779 §A)
+- ✅ **Field-level RBAC** — money-bearing org mutations sit behind the OWNER-or-BILLING_ADMIN gate (today the `billing.manage` matrix key), while `PATCH /api/organizations/[orgId]` checks each touched field against a per-field allowlist. (#779 §A)
 - ✅ **SSO break-glass** — `OrganizationSSOSettings.breakGlassUntil` + `/sso/break-glass` route lets an OWNER reopen password login while `enforceSSO` is on and the IdP is down. (#779 §E)
 - ✅ **Self-serve verification resubmit** — Organization stamps + `/verification/resubmit` route (no `RESUBMIT` enum). (#779 §A)
 - ✅ **Wallet auto-top-up** — `BillingAccount.{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise, autoTopUpMandateId}` + `wallet-low-balance` cron; surfaced in the Wallet tab. (#777 §C)

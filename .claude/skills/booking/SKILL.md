@@ -125,7 +125,10 @@ Offerings obey the same rule (#1846 CT-02). The consultation-plan,
 subscription-plan, webinar and class DELETE routes run one Serializable
 transaction under the offering's `event-checkout:` lock through
 `deleteUntouchedOffering` (`lib/booking/offering-delete.ts`), with the no-history
-guard from `lib/offerings/delete-guard.ts` inside the `deleteMany` WHERE. History
+guard from `lib/offerings/delete-guard.ts` inside the `deleteMany` WHERE. Only
+subscription-plan, webinar and class checkout take that key; consultation
+checkout locks its slot atoms, so for a consultation plan the Serializable
+transaction and the in-WHERE guard alone carry the race. History
 is a payment of any status, any consultee seat ever held, and for a subscription
 plan any trial; a zero-row delete answers 409 `OFFERING_IN_USE`, and the offering
 is archived instead. The Offerings card's `canDelete` runs the same fragments as

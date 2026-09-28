@@ -736,8 +736,8 @@ Actions are the rows and the six primary roles are the columns; a checkmark mean
 |---|---|---|---|---|---|---|
 | View org dashboard | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Invite members | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Change member role | ✅ (except own) | ✅ (except OWNER or own) | ❌ | ❌ | ❌ | ❌ |
-| Remove member | ✅ (except sole OWNER or own) | ✅ (except any OWNER or own) | ❌ | ❌ | ❌ | ❌ |
+| Change member role | ✅ (except own) | ✅ (except an OWNER, MAINTAINER or BILLING_ADMIN row, granting those roles, or own) | ❌ | ❌ | ❌ | ❌ |
+| Remove member | ✅ (except sole OWNER or own) | ✅ (except an OWNER, MAINTAINER or BILLING_ADMIN row, or own) | ❌ | ❌ | ❌ | ❌ |
 | Create Program | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Assign Program to member | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Change billing mode | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |

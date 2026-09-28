@@ -234,7 +234,7 @@ When this proposal was written, three helpers answered "can this person do X?":
 - an owner-only convenience wrapper (today OWNER-only keys such as `identity.manage` and `org.delete`)
 - an OWNER-or-BILLING_ADMIN disjunction helper, added because the rank ladder couldn't express "OWNER or specialized admin" (today the `billing.manage`, `purchaseOrders.manage`, `payouts.manage` and `integrations.manage` keys)
 
-**Action — UNIFY into capability matrix:**
+**Action — UNIFY into capability matrix (historical proposal; #1860 shipped a different shape, the `OrgSurface` permission matrix, so the sketch and estimates below are kept only as the original proposal):**
 
 ```ts
 // lib/auth/capabilities.ts
@@ -375,6 +375,8 @@ Actions:
 
 ## Phase 2 — Helper consolidation (1 week post-PR)
 
+> **Status (2026-09-28):** The role-predicate part of this phase is complete; PR #1860 replaced the three helpers with the permission matrix, so the effort and line estimates below are historical.
+
 **Effort:** 2 days. **Risk:** Low.
 
 Actions:
@@ -409,7 +411,7 @@ Don't do these speculatively. Wait for a real feature to justify.
 | Merge ledger docs            | ✅ no code change   | N/A                       | None            | -89    | **YES**                  |
 | Delete 7 stale/cosmetic docs | ✅ no code change   | N/A                       | None            | -1,113 | **YES**                  |
 | Trim/archive 4 docs          | ✅ no code change   | N/A                       | None            | -250   | **YES**                  |
-| Unify role predicates        | ✅ no schema change | ✅ refactor               | None            | -200   | Phase 2                  |
+| Unify role predicates        | ✅ no schema change | ✅ refactor               | None            | -200   | Done in #1860            |
 | Split SchedulingService  | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3                  |
 | Modularize checkout.ts       | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3 (defer)          |
 

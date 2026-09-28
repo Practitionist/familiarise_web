@@ -146,8 +146,8 @@ other attendees or the host beyond the session title.
 Three later pages and tabs belong to the same overhaul, and each reads a
 matrix key. Org › Payouts carries an "Experts' payout routing" section, where
 a holder of `payouts.read` sees each EXPERT member's name and current payout
-recipient, and a holder of `payouts.manage` (OWNER or BILLING_ADMIN) changes
-it through a confirm dialog backed by
+recipient, and a holder of `members.payoutRecipient.change` (OWNER or BILLING_ADMIN)
+changes it through a confirm dialog backed by
 `/api/organizations/[orgId]/expert-payout-routing`; this is where a
 BILLING_ADMIN, who cannot open the member list, decides where experts are
 paid. Org › Payouts › Runs labels a PENDING batch "Awaiting approval", offers
@@ -271,8 +271,8 @@ readable projection of it.
 | `/my-program`  | ✅      | —    | ✅     | `myProgram.read` (LEARNER; page filters server-side to caller's assignments) | yes (LEARNER + canSponsor only) | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false. |
 | `/compensation` | —    | ✅   | ✅     | `myArrangement.read` (EXPERT; page filters to caller's earnings) | yes (EXPERT + canHost only) | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false. |
 | `/members`     | ✅      | ✅   | ✅     | `members.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | BILLING_ADMIN is operator-blind and excluded at sidebar, page, and API. |
-| `/members?tab=experts` | — | ✅ | ✅ | `experts.read` (OWNER, MAINTAINER, MANAGER) | tab (if `canHost`) | Tab on Members. Hidden when `canHost = false`. |
-| `/members?tab=learners` | ✅ | — | ✅ | `learners.read` (OWNER, MAINTAINER, MANAGER) | tab (if `canSponsor`) | Tab on Members. Hidden when `canSponsor = false`. |
+| `/members?tab=experts` | — | ✅ | ✅ | `members.read`, as `/members` | legacy link | Since #1527 the Learners and Experts tabs are folded into one filterable Members list, and this old link redirects to `/members?role=EXPERT`. |
+| `/members?tab=learners` | ✅ | — | ✅ | `members.read`, as `/members` | legacy link | This old link redirects to `/members?role=LEARNER` on the same filterable Members list. |
 | `/members?tab=invitations` | ✅ | ✅ | ✅ | `invitations.manage` (OWNER, MAINTAINER) | tab | Tab on Members. Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
 | `/catalog`     | —       | ✅   | ✅     | `catalog.manage` (OWNER, MAINTAINER, MANAGER) | yes (if `canHost`) | The offerings the org OWNS, distinct from the sponsorship entitlements on `/programs`. Webinar and Class only — `ConsultationPlan` and `SubscriptionPlan` require a `consultantProfileId`, so an org can never solely own one. The named deliverer is re-checked server-side against an ACTIVE EXPERT membership. |
 | `/programs`    | ✅      | —    | ✅     | `programs.manage` (OWNER, MAINTAINER) | yes (if `canSponsor`) | The learner-facing catalog GETs stay open to any active member by design. |
@@ -280,10 +280,10 @@ readable projection of it.
 | `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |
 | `/analytics`   | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation. |
 | `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | no — avatar menu ("<Org> settings") | Branding + policy. As of PR #1842 (part of #1527), org settings is no longer a sidebar row: it opens from the header avatar menu, shown only to a role holding at least one section, and renders through `SettingsLayout` with one URL per section rather than `?tab=` state; see `docs/decisions/2026-09-27-dashboard-shell-and-context-switcher.md`. |
-| `/settings/sso` | ✅ | ✅ | ✅ | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes and break-glass stay **OWNER**-only (rank floor — genuine hierarchy) | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
+| `/settings/sso` | ✅ | ✅ | ✅ | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes and break-glass need `identity.manage`, which only the **OWNER** holds | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
 | `/contracts`   | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER) | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift. |
 | `/purchase-orders` | ✅  | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO` | Receipt icon. |
-| `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.manage` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
+| `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.requestWithdrawal` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
 
 > The `/plans` page (previous "org catalog" over the removed
 > `OrganizationPlan` model) is gone. Discovery now reads each per-type
@@ -376,8 +376,10 @@ The UI is convenience; the server is authoritative in both cases.
 
 Two compliance surfaces sit under the org dashboard:
 
-- **`/settings/data-exports`** (the retired `/settings?tab=data-exports` link now redirects here) — DPDP §11 right-to-access. OWNER +
-  BILLING_ADMIN request a bundle (rate-limited 1/24h via `orgDataExportLimiter`);
+- **`/settings/data-exports`** (the retired `/settings?tab=data-exports` link now redirects here) — DPDP §11 right-to-access. OWNER and
+  MAINTAINER request, list and download the people bundle through
+  `dataExports.people`, and OWNER and BILLING_ADMIN do the same for the
+  finance bundle through `dataExports.finance`; each requests a bundle (rate-limited 1/24h via `orgDataExportLimiter`);
   a worker picks up the `OrgDataExportJob` within ~10 min, uploads to Supabase
   Storage, and the page exposes a 7-day signed-URL download. The page polls every
   15s while `PENDING`/`PROCESSING` and stops on terminal states

@@ -47,7 +47,8 @@ stateDiagram-v2
   PENDING --> READY: holdUntil elapsed (release cron)
   PENDING --> HELD: dispute opened
   READY --> HELD: dispute opened
-  HELD --> READY: dispute resolved for the seller
+  HELD --> READY: dispute resolved for the seller (was READY)
+  HELD --> PENDING: dispute resolved for the seller (was PENDING)
   READY --> BATCHED: claimed into a payout batch
   BATCHED --> PAID: payout COMPLETED with a UTR
   BATCHED --> READY: batch failed before cash moved
@@ -65,7 +66,7 @@ The **`PENDING_TRUST → PENDING`** promotion is performed by the `release-pendi
 
 The **`PENDING → READY`** transition is the hold elapsing. The hourly `releaseEarningsFromHold` function (`earnings-service.ts`) flips every row whose `status` is `PENDING` and whose `holdUntil <= now` to `READY`, for both `ConsultantEarnings` and `OrganizationEarnings` in the same run. Hold mechanics are detailed in §4.
 
-The **`PENDING → HELD`** and **`READY → HELD`** transitions freeze a row for a dispute. There is no longer a named `holdEarnings` function in `earnings-service.ts`; the freeze is an inline CAS `updateMany` inside the dispute webhook handler in `app/api/webhooks/utils.ts`, scoped to rows currently `PENDING` or `READY`, so a `PAID` or `REFUNDED` row can never be re-frozen. The inverse **`HELD → READY`** transition is the same handler's release branch, run when the dispute resolves in the seller's favour, and it acts only on a row that is currently `HELD`.
+The **`PENDING → HELD`** and **`READY → HELD`** transitions freeze a row for a dispute. There is no longer a named `holdEarnings` function in `earnings-service.ts`; the freeze is an inline CAS `updateMany` inside the dispute webhook handler in `app/api/webhooks/utils.ts`, scoped to rows currently `PENDING` or `READY`, so a `PAID` or `REFUNDED` row can never be re-frozen. The inverse release is the same handler's release branch, run when the dispute resolves in the seller's favour, and it acts only on a row that is currently `HELD`. The freeze records the row's prior status in `preDisputeStatus`, and the release restores exactly that status (#1020-1), so a row frozen from `READY` returns to `READY` and a row frozen from `PENDING` returns to `PENDING` and keeps waiting out its hold.
 
 The **`READY → BATCHED → PAID`** progression is where this doc hands off to the payout pipeline. Batching claims a row by stamping its `payoutId` / `orgPayoutId` and flipping it from `READY` to the intermediate **`BATCHED`** status at batch-creation time — on both the consultant and the org rail. A `BATCHED` row is committed to a payout but its cash has **not** yet left, so it is neither eligible to be batched again nor counted as disbursed by finance exports or dashboards. Only when the payout's gateway leg confirms (`PROCESSING → COMPLETED` **with a UTR**) does the pipeline flip `BATCHED → PAID` and post the settlement to the ledger — see [payout pipeline §3](07-payout-pipeline.md). A batch that fails before any cash moves releases its `BATCHED` rows back to `READY` for the next run (§5).
 
@@ -120,7 +121,7 @@ The table below lists the configured hold periods and the reasoning behind each.
 
 Release is the hourly cron `releaseEarningsFromHold`, which runs one `updateMany` per row type: every `PENDING` row whose `holdUntil <= now` becomes `READY`. It does not touch `HELD` rows — a dispute hold is released only by the dispute webhook handler's own CAS write, never by the timer.
 
-A dispute hold is the manual override on top of the timed hold. The dispute-creation branch of `app/api/webhooks/utils.ts` moves a `PENDING` or `READY` row to `HELD` and its `WHERE` clause excludes any other starting status, so disputes can only freeze money that has not yet been paid. When the dispute resolves, the seller-favourable outcome is the same handler's release branch (`HELD → READY`, after which the row re-enters normal batching) and the buyer-favourable outcome is a refund (`HELD → REFUNDED`, §5).
+A dispute hold is the manual override on top of the timed hold. The dispute-creation branch of `app/api/webhooks/utils.ts` moves a `PENDING` or `READY` row to `HELD` and its `WHERE` clause excludes any other starting status, so disputes can only freeze money that has not yet been paid. When the dispute resolves, the seller-favourable outcome is the same handler's release branch, which restores the row's recorded `preDisputeStatus` (`HELD → READY` or `HELD → PENDING`), after which the row re-enters normal release and batching and the buyer-favourable outcome is a refund (`HELD → REFUNDED`, §5).
 
 ---
 

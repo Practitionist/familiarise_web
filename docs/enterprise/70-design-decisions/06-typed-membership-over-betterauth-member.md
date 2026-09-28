@@ -46,11 +46,13 @@ auto-join](../20-iam-and-security/02-jit-and-session-refresh.md)).
 
 The decisive capabilities the typed row buys are the role enum and the
 status lifecycle. A free-string role means every gate is a string
-comparison with no compiler help and no rank arithmetic; the enum gives
-both, and lets `BILLING_ADMIN` sit at rank 70 between `MAINTAINER` (80)
-and `MANAGER` (60) so a finance operator can do everything a manager can
-plus the financial mutations, without renumbering anything
-(`lib/auth/role-ranks.ts`). The status lifecycle is load-bearing for
+comparison with no compiler help; the enum gives compiler-checked role
+names that the permission matrix in `lib/auth/org-permissions.ts` can key
+on. `BILLING_ADMIN` was slotted at 70 in the display order between
+`MAINTAINER` (80) and `MANAGER` (60) without renumbering anything
+(`lib/auth/role-ranks.ts`), but since #1860 that order decides nothing:
+what a finance operator may do is exactly the set of matrix keys that
+list `BILLING_ADMIN`, and it does not inherit a manager's reads by rank. The status lifecycle is load-bearing for
 compliance: `MemberStatus.SUSPENDED` returns a 403 without deleting the
 row, `REMOVED` is a terminal tombstone retained for audit, and
 `MemberStatus.ERASED` is the DPDP §12 tombstone the erasure pipeline sets

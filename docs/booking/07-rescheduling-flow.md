@@ -1015,7 +1015,7 @@ if (slotsToReschedule.length !== slotIds.length) {
 
 **Ideal future mitigation:** Instead of deleting, the cron should either (a) revert the tentative flags and restore the original status, or (b) notify both parties before taking action.
 
-**Update (2026-09-28, #1846):** For a reschedule that opened a proposal, the first half of this mitigation now exists. The hourly `expire-reschedule-proposals` sweep restores the released slots and the request's origin status when a proposal lapses unanswered, and it notifies both parties, as described in the section on expiry at the end of this document.
+**Update (2026-09-28, #1846):** For a reschedule that opened a proposal, the first half of this mitigation now exists. The hourly `expire-reschedule-proposals` sweep restores the released slots and the request's origin status when a proposal lapses unanswered, and it notifies both parties, as described in the section on expiry at the end of this document. The rest of this scenario therefore describes only a reschedule that never opened a proposal, and the "event status stays `PENDING`" line applies to the request kinds whose parent enters `PENDING` during a reschedule, not to every kind.
 
 ### Scenario 4: Concurrent Reschedule Attempts
 

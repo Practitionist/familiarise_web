@@ -152,7 +152,10 @@ so a caller needs at least one export key. Each bundle has a kind: the
 `people` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
 `finance` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
 because it carries financial PII. A caller may request, list and download
-only the kinds they hold.
+only the kinds they hold. A legacy `FULL` job, written before the split,
+carries both bundles, so listing or downloading it needs both keys, which
+in practice means an OWNER; a new request accepts only `people` or
+`finance` and can never create a `FULL` job.
 
 The worker logic lives in `scripts/cleanup/process-data-exports.ts`
 (`processDataExports`). It is scheduled as a GitHub Actions cron
