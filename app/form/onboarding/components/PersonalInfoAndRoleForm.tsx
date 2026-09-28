@@ -249,7 +249,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   if (inviteCheckError && !pendingInvite && !continuedWithoutInvite) {
     return (
       <div className="mx-auto max-w-md space-y-3 py-8 text-center">
-        {/* `text-destructive`, not `text-red-600`: the raw Tailwind red was
+        {/* The destructive token, not a raw Tailwind red: the raw value was
             invisible against the shell's dark surface and had to carry its own
             dark: override. The token resolves in both scopes. */}
         <p className="text-sm text-destructive">
@@ -280,11 +280,10 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   if (pendingInvite && !continuedWithoutInvite) {
     return (
       <div className="mx-auto max-w-md space-y-4 py-8 text-center">
-        {/* `info` token rather than a hand-rolled `border-blue-200
-            bg-blue-50 text-blue-900`. That palette has no dark value, so
-            inside the shell's dark scope it rendered as pale blue on near
-            black; and a raw blue is a new status colour, which the design
-            system explicitly forbids. */}
+        {/* The info token rather than a hand-rolled pale-blue palette. That
+            palette has no dark value, so inside the shell's dark scope it
+            rendered as pale blue on near black; and a raw blue is a new
+            status colour, which the design system explicitly forbids. */}
         <div className="rounded-lg border border-info/40 bg-info/10 p-6">
           <p className="text-lg font-semibold">
             You&apos;ve been invited to join{" "}
@@ -346,11 +345,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
               id="email"
               type="email"
               value={session?.user?.email || ""}
-              // `readOnly`, not `disabled`. A disabled input is removed from
-              // the tab order, skipped by screen readers in browse mode, and
-              // not submitted — and it is only well-behaved as a controlled
-              // input with no onChange *because* it is disabled. readOnly
-              // keeps the value visible, focusable, announced and submitted.
+              // readOnly rather than the boolean attribute that greys a
+              // control out. That one is removed from the tab order, skipped
+              // by screen readers in browse mode, and excluded from
+              // submission — and it is only well-behaved as a controlled input
+              // with no onChange BECAUSE of it. readOnly keeps the value
+              // visible, focusable, announced and submitted.
               readOnly
               aria-readonly="true"
               className="bg-muted"
@@ -531,7 +531,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
 
       {/* Role Selection — hidden in add mode, where the role is fixed */}
       {lockedRole ? (
-        <div className="rounded-lg border border-zinc-200 bg-muted/50 p-4 text-sm text-muted-foreground">
+        <div className="rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
           You are adding an <strong>expert profile</strong> to your existing
           account. Confirm your details below, then set up your expertise,
           availability and verification.
@@ -568,9 +568,9 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             >
               <legend className="sr-only">I want to join as a…</legend>
               <div
-                // No role="radiogroup" here. fieldset + legend IS the
-                // radiogroup; an explicit role nested inside announces two
-                // group boundaries for a single group.
+                // No explicit group role here: fieldset + legend IS the
+                // radiogroup, and nesting an explicit role inside announces
+                // two group boundaries for a single group.
                 className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
               >
                 {Object.entries(ROLE_INFO).map(([role, info]) => {

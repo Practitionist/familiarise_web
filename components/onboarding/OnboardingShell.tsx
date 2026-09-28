@@ -9,31 +9,29 @@
  * The design direction is a dark canvas. This app already ships a COMPLETE
  * `.dark` token block in `globals.css` (`--background: 0 0% 4%`,
  * `--primary: 0 0% 98%`, `--muted-foreground: 0 0% 65%`, …) and roughly 370
- * `dark:` utility usages — but nothing ever sets the `.dark` class, so the
+ * `dark:` utility usages — but nothing ever set the `.dark` class, so the
  * whole system is dormant and every dark surface has to be hand-written.
  *
- * Mounting this route inside a `.dark` scope activates the real token system
- * instead: the stepper, the progress bar, `Card`, `Input` and every other
- * shared primitive resolve to their dark values with no `dark:` variant and no
- * per-component override. That is what makes this a token decision rather
- * than a pile of CSS — and it means promoting `.dark` to an app-wide theme
- * later is a matter of deleting one class, not untangling a special route.
- *
- * If you later add a real theme toggle, this component is where it goes:
- * replace the literal `"dark"` with the resolved theme class.
+ * Activating the real token system instead: the stepper, the progress bar,
+ * `Card`, `Input` and every other shared primitive resolve to their dark values
+ * with no `dark:` variant and no per-component override. The class is applied
+ * by the ROUTE LAYOUT, not here — see the note there for why (Radix portals
+ * escape a subtree scope) and for the pre-paint script that avoids a flash.
+ * Promoting `.dark` to an app-wide theme is then a matter of deleting that
+ * script, not untangling a special route.
  *
  * ── 2. The sticky offset ───────────────────────────────────────────────────
  * The root layout renders `MaintenanceBanner` (fixed, `z-[10001]`) and
  * `AnnouncementBar` (fixed, `z-[1001]`) above this route, and body carries
- * `padding-top: var(--maintenance-banner-height)`. The old header used a bare
- * `sticky top-0`, so it pinned to the viewport top and slid UNDER the fixed
- * banner instead of stacking below it. `top-maintenance` is the existing
- * utility for exactly this; the announcement bar is accounted for on top of it.
+ * `padding-top: var(--maintenance-banner-height)`. The old header pinned to
+ * the very top of the viewport, so it slid under BOTH fixed banners. The
+ * repo's `top-maintenance` utility covers the maintenance banner alone, and
+ * AnnouncementBar is not gated by NO_CHROME, so it stacks on top of it here.
  */
 
 import { MotionConfig } from "framer-motion";
 import { cn } from "@/utils/tailwind";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 interface OnboardingShellProps {
   /** Sticky bar: brand mark, step counter, sign out. */
@@ -57,14 +55,36 @@ export function OnboardingShell({
   className,
   wide,
 }: OnboardingShellProps) {
+  // Remove the root `.dark` scope on unmount. The class is applied pre-paint by
+  // the route layout's inline script (see app/form/onboarding/layout.tsx for
+  // why it cannot live here), and onboarding ends in a `router.replace` to the
+  // dashboard — so without this cleanup the client-side navigation would carry
+  // a dark `<html>` onto a page that never asked for one.
+  useEffect(() => {
+    return () => {
+      document.documentElement.classList.remove("dark");
+    };
+  }, []);
+
   return (
-    // `dark` is the whole point — see the note above. `relative` + `isolate`
-    // contain the absolutely-positioned decorative layers below so they can
-    // never create a stacking context that fights the sticky header.
+    // `MotionConfig reducedMotion="user"` is set ONCE here rather than per
+    // variant, so a newly added animated block cannot forget it. Under it,
+    // framer-motion drops transform animations and keeps opacity.
+    //
+    // No `dark` class on this div: the scope is on <html>. Radix portals
+    // (Select, Dialog, Popover, DropdownMenu, Tooltip) mount to document.body,
+    // outside this subtree, so a scope here left every dropdown and modal
+    // resolving light tokens over a dark card. The `.dark` token block in
+    // globals.css and its ~370 `dark:` utilities are what this activates —
+    // they are authored but dormant today, because nothing set the class.
     <MotionConfig reducedMotion="user">
       <div
         className={cn(
-          "dark relative isolate min-h-svh bg-background text-foreground",
+          // `relative` + `isolate` contain the decorative layer below, which
+          // is a grandchild at `-z-10`: without a stacking context here it
+          // would join the root's negative-z step and paint behind the shell's
+          // own background, i.e. be invisible.
+          "relative isolate min-h-svh bg-background text-foreground",
           className,
         )}
       >
@@ -77,26 +97,26 @@ export function OnboardingShell({
           className="pointer-events-none absolute inset-0 -z-10"
         >
           <div className="absolute inset-0 mesh-gradient-dark" />
-          {/* `dot-pattern`, NOT `dot-pattern-dark`. The "-dark" suffix names
-              the LINE colour, not the surface: `dot-pattern-dark` draws
-              rgba(0,0,0,.05) black dots meant for a light background, which
-              would be invisible here. Plain `dot-pattern` is neutral grey and
-              reads correctly on the dark canvas. Same trap applies to
-              `grid-pattern` (white lines) vs `grid-pattern-dark`. */}
+          {/* globals.css defines only two dot patterns: the neutral-grey
+              one used here, and a near-black one for LIGHT surfaces. There is
+              no third variant, so the "-dark" suffix that appears on the
+              grid patterns names the LINE colour, not the surface — a
+              grid-pattern has white lines for dark backgrounds and
+              grid-pattern-dark has black ones. Hence the neutral dot pattern. */}
           <div className="absolute inset-0 dot-pattern opacity-40" />
         </div>
 
-        <header className="sticky top-maintenance z-50 border-b border-border bg-background/80 backdrop-blur-sm">
+        <header className="sticky top-[calc(var(--maintenance-banner-height,0px)+var(--announcement-bar-height,0px))] z-50 border-b border-border bg-background/80 backdrop-blur-sm">
           {header}
         </header>
 
         <main
           className={cn(
             "container mx-auto px-4 py-8",
-            // A fixed breakpoint width, not a percentage. The old
-            // `max-w-[80%]` scaled continuously with the viewport, so the
-            // slot grid reflowed unpredictably between breakpoints; stepping
-            // at `xl` is both calmer and matches the config's 2xl=1400 screen.
+            // A fixed breakpoint width, not a percentage of the container.
+            // The old percentage scaled continuously with the viewport, so the
+            // weekly slot grid reflowed unpredictably between breakpoints;
+            // stepping at a named width is calmer and matches the config.
             wide ? "max-w-[80rem]" : "max-w-3xl",
           )}
         >

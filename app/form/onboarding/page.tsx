@@ -603,7 +603,12 @@ const MultiStepForm: React.FC = () => {
         // Someone already typing on step 0 keeps their place; the banner
         // offers the stored step instead of yanking the form away.
         if (interactedRef.current) setResumeStep(target);
-        else setStep(target);
+        // The draft can only move the wizard forward from step 0, which is
+        // where this effect runs, so the direction is always forward.
+        if (target > 0) {
+          setDirection(1);
+          setStep(target);
+        }
       }
       if (currentStep > 0 || hasPayload) setDraftRestored(true);
       trackOnboardingEvent("draft_restored", { currentStep, role });
@@ -730,6 +735,8 @@ const MultiStepForm: React.FC = () => {
     setDraftQuarantined(false);
     setDraftOverBudget(false);
     setFormData({});
+    // Always a backward jump to step 0, so the card must animate backwards.
+    setDirection(-1);
     setStep(0);
     await clearOnboardingDraftAction().catch(() => {});
     // Autosave must stay armed: hydration runs once per mount, so resetting
@@ -860,6 +867,7 @@ const MultiStepForm: React.FC = () => {
     // subsequent Next, Back and stepper click is silently ignored: the user
     // cannot finish onboarding and has to reload.
     transitioningRef.current = false;
+    setDirection(-1);
     setStep(0);
     const userId = session?.user?.id;
     if (!userId) return;
@@ -903,12 +911,26 @@ const MultiStepForm: React.FC = () => {
             .join(" · "),
           variant: "destructive",
         });
-        if (targetStep >= 0 && targetStep !== step) setStep(targetStep);
-        // No console.warn: the Sentry breadcrumb below is the durable record,
-        // and a stray log in the client console is how PII-shaped field paths
-        // end up pasted into a bug report.
+        if (targetStep >= 0 && targetStep !== step) {
+          setDirection(targetStep > step ? 1 : -1);
+          setStep(targetStep);
+        }
+        // No client-side logging here: the Sentry breadcrumb below is the
+        // durable record, and a stray log is how PII-shaped field paths end up
+        // pasted into a bug report.
         trackOnboardingEvent("submit_validation_failed", {
           groups: groups.length,
+          // Step keys, not field paths: `summarizeIssues` already groups issues
+          // by owning step, and a step key is a label rather than anything a
+          // user typed — so this stays inside the file's "never log field
+          // values" rule while still answering WHICH step refused. The removed
+          // The removed client log carried the full issue list, and the toast surfaces
+          // only the first four, so without this the owning step was
+          // unrecoverable from telemetry.
+          steps: groups
+            .map((g) => g.stepKey)
+            .filter((k) => k !== null)
+            .join(","),
           role: finalData.role ?? null,
         });
         return;
@@ -970,7 +992,12 @@ const MultiStepForm: React.FC = () => {
           description: errorMessage,
           variant: "destructive",
         });
-        if (refusedStep >= 0 && refusedStep !== step) setStep(refusedStep);
+        if (refusedStep >= 0 && refusedStep !== step) {
+          // Both are backward jumps: a refusal names the step that owns the
+          // field, which by construction is earlier than the review step.
+          setDirection(refusedStep > step ? 1 : -1);
+          setStep(refusedStep);
+        }
         return;
       }
 
@@ -1083,8 +1110,8 @@ const MultiStepForm: React.FC = () => {
         router.replace("/dashboard");
       }
     } catch (error: unknown) {
-      // Sentry only — no `console.error`. But NOT the raw exception: this
-      // path can carry submitted field values, and `captureException` ships
+      // Sentry only, and NOT the raw exception: this path can carry
+      // submitted field values, and captureException ships
       // the message, stack and any attached context to the telemetry SDK,
       // which is a path for onboarding data to leave the browser. Capture a
       // synthetic error carrying only the error NAME, so the event still
@@ -1210,7 +1237,13 @@ const MultiStepForm: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setStep(resumeStep);
+                    // Through the guard, not a bare setStep. The step-0 form
+                    // stays mounted and live for the whole exit animation, so
+                    // a bare jump could be followed by an Enter keypress or a
+                    // click on the still-present Continue — and handleNext
+                    // would then advance from the index the user just asked
+                    // for, landing them short and skipping a step's validation.
+                    handleGoToStep(resumeStep);
                     setResumeStep(null);
                   }}
                   className="text-sm font-medium text-primary hover:underline"

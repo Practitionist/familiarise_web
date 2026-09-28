@@ -32,8 +32,10 @@ export function OnboardingWizardSkeleton() {
         </div>
       }
     >
-      {/* Matches the real card's width and elevation so the swap from
-          skeleton to content does not shift the page. */}
+      {/* Same width and border as the real card, which is `shadow-elevation-2`.
+          The shadow itself is one step lighter: a skeleton is a placeholder,
+          and matching the lifted resting elevation would make the swap look
+          like a content change rather than a load finishing. */}
       <div className="rounded-xl border border-border bg-card p-6 shadow-elevation-1 sm:p-8">
         <div className="space-y-2">
           <Skeleton className="h-7 w-56" />

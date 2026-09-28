@@ -111,7 +111,15 @@
     --muted-foreground: 0 0% 65%;
     --accent: 0 0% 15%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    /* Was 0 62.8% 30.6% (#7f1d1d), which is a SURFACE colour, not a text
+       colour: 1.87:1 on --card (#121212) and 2.1:1 on --background. Every
+       `text-destructive` in a dark scope was therefore effectively invisible —
+       and the heaviest user of that class is `FieldError`, i.e. exactly the
+       validation copy a person must be able to read.
+       This value is 5.20:1 on --card and 5.49:1 on --background (AA is 4.5:1
+       for body text), and still reads unmistakably as red. The original
+       light-mode value is unchanged. */
+    --destructive: 0 75% 62%;
     --destructive-foreground: 0 0% 98%;
     --warning: 38 92% 50%;
     --warning-foreground: 48 96% 10%;

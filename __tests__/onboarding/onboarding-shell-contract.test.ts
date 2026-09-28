@@ -17,24 +17,64 @@ function read(rel: string): string {
 }
 
 /**
- * The source with comments removed.
+ * Assertions run against the RAW source, comments included — no stripping.
  *
- * Necessary, not cosmetic: several assertions below are NEGATIVE, and the
- * prose explaining a fix names the very string it removed ("no `console.warn`
- * here…"). Matching the raw file fails on its own explanation, which is both
- * noisy and wrong — a comment cannot be a violation. The `[^:]` guard keeps
- * `https://` inside string literals intact.
+ * Two earlier versions stripped comments first, and both were wrong in a way
+ * that matters, because a stripper that also eats string literals can turn a
+ * negative assertion green for the wrong reason:
+ *
+ *   - a `(^|[^:])\/\/.*$` regex, whose `[^:]` guard only rescues `://` and
+ *     which therefore truncated `const s = "a//b"`;
+ *   - a small lexer over code / comment / string / template states, which
+ *     desynced on JSX text — a raw apostrophe in prose opened a "string" and
+ *     every later comment stopped being blanked.
+ *
+ * The resolution is not a better stripper. It is that these assertions are
+ * about the CODE, so the comments are written not to contain the tokens being
+ * asserted absent: they describe the old colour in words ("the raw Tailwind
+ * red", "the redundant radiogroup role") rather than pasting the class. That
+ * makes a negative assertion provably about code, with no comment-stripping
+ * step that could be wrong in either direction.
  */
-function readCode(rel: string): string {
-  return read(rel)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
-}
 
 const PAGE = "app/form/onboarding/page.tsx";
 const STEP0 = "app/form/onboarding/components/PersonalInfoAndRoleForm.tsx";
 const STEPPER = "components/onboarding/onboarding-stepper.tsx";
 const SHELL = "components/onboarding/OnboardingShell.tsx";
+const LAYOUT = "app/form/onboarding/layout.tsx";
+const UPLOAD = "components/verification/VerificationDocumentUpload.tsx";
+const GLOBALS = "app/globals.css";
+
+/** WCAG relative luminance + contrast ratio, so token changes are judged by
+ *  measurement rather than by eye. */
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+  };
+  return [f(0) * 255, f(8) * 255, f(4) * 255];
+}
+function luminance([r, g, b]: [number, number, number]): number {
+  const ch = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+}
+function contrast(a: [number, number, number], b: [number, number, number]) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+/** Pull `--name: H S% L%` out of a token block. */
+function token(css: string, block: string, name: string) {
+  const body = css.slice(css.indexOf(block));
+  const m = body.match(
+    new RegExp(`${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`),
+  );
+  if (!m) throw new Error(`token --${name} not found in ${block}`);
+  return hslToRgb(+m[1], +m[2] / 100, +m[3] / 100);
+}
 
 describe("onboarding step transition cannot be double-driven", () => {
   // The regression this pins: AnimatePresence `mode="wait"` holds the OUTGOING
@@ -43,7 +83,7 @@ describe("onboarding step transition cannot be double-driven", () => {
   // already-incremented step index, so a consultant could jump past
   // Professional Profile without it ever validating.
   it("arms a transition guard on every path that changes the step", () => {
-    const src = readCode(PAGE);
+    const src = read(PAGE);
     // All three entry points, because the exiting step's own Back button and
     // the stepper's completed-step dots are equally live during the exit.
     expect(src.match(/if \(transitioningRef\.current\) return;/g)).toHaveLength(
@@ -52,7 +92,7 @@ describe("onboarding step transition cannot be double-driven", () => {
   });
 
   it("releases the guard when the exit completes, and on a no-step-change error", () => {
-    const src = readCode(PAGE);
+    const src = read(PAGE);
     expect(src).toContain("onExitComplete");
     expect(src).toMatch(
       /onExitComplete=\{[^}]*transitioningRef\.current = false/,
@@ -71,7 +111,7 @@ describe("onboarding step transition cannot be double-driven", () => {
     // the AnimatePresence that would call onExitComplete is gone. If the guard
     // survived, the shell remounts at step 0 with it armed and every click is
     // ignored — onboarding becomes impossible without a reload.
-    const src = readCode(PAGE);
+    const src = read(PAGE);
     const at = src.indexOf("const handleExitOrgWizard");
     expect(at).toBeGreaterThan(-1);
     const fn = src.slice(at, at + 600);
@@ -83,16 +123,43 @@ describe("onboarding step transition cannot be double-driven", () => {
   it("bails on a no-op move before arming the guard", () => {
     // A move to the same index changes no key, so no exit runs and the guard
     // would never be released.
-    const src = readCode(PAGE);
+    const src = read(PAGE);
     expect(src).toContain("if (step <= 0) return;");
     expect(src).toContain("if (targetStep === step) return;");
+  });
+
+  it("the resume-banner jump goes through the guard, not a bare setStep", () => {
+    // The step-0 form stays mounted and live for the whole exit animation, so
+    // a bare setStep(resumeStep) could be followed by an Enter keypress or a
+    // click on the still-present Continue — and handleNext would advance from
+    // the index the user just asked for, landing short and skipping a step's
+    // validation.
+    const src = read(PAGE);
+    const at = src.indexOf("Resume at step");
+    expect(at).toBeGreaterThan(-1);
+    expect(src).not.toMatch(/setStep\(resumeStep\)/);
+    expect(src).toContain("handleGoToStep(resumeStep)");
+  });
+
+  it("every backward setStep also sets the animation direction", () => {
+    // `direction` exists so "Back" does not animate identically to "Next". A
+    // setStep that decreases the index without setting direction plays the
+    // forward slide while moving backwards. The draft-restore branch is exempt
+    // because it can only ever move forward from step 0.
+    const src = read(PAGE);
+    // startOver, handleExitOrgWizard, the validation-failure jump and the
+    // refused-step jump.
+    expect(src.match(/setDirection\(-1\)/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(
+      src.match(/setDirection\((refusedStep|targetStep) > step \? 1 : -1\)/g),
+    ).toHaveLength(2);
   });
 
   it("passes direction through custom so the EXITING step animates correctly", () => {
     // The exiting element already rendered with the previous direction, so
     // reading `direction` from the closure animates Back with the direction
     // of the last forward move.
-    const src = readCode(PAGE);
+    const src = read(PAGE);
     expect(src).toMatch(/<AnimatePresence[\s\S]{0,200}custom=\{direction\}/);
     expect(src).toMatch(/custom=\{direction\}[\s\S]{0,120}variants=\{\{/);
   });
@@ -102,7 +169,7 @@ describe("onboarding stepper markup semantics", () => {
   it("the ordered list holds one item per step, with no aria-hidden list items", () => {
     // The connectors used to be <li> siblings of the step <li>s inside the
     // same <ol>, so AT announced 2N-1 items — nine for a five-step wizard.
-    const src = readCode(STEPPER);
+    const src = read(STEPPER);
     const ol = src.slice(src.indexOf("<ol"), src.indexOf("</ol>"));
     expect(ol).toContain("<li");
     // The connector is an aria-hidden span inside the step's own <li>, and
@@ -113,13 +180,13 @@ describe("onboarding stepper markup semantics", () => {
   it("the current step is not a focusable control", () => {
     // It was a `disabled` button carrying aria-current="step": out of the tab
     // order while still advertising itself as current.
-    const src = readCode(STEPPER);
+    const src = read(STEPPER);
     expect(src).toContain('aria-current={isCurrent ? "step" : undefined}');
     expect(src).not.toMatch(/<button[\s\S]{0,400}disabled/);
   });
 
   it("labels are never truncated away from assistive tech", () => {
-    const src = readCode(STEPPER);
+    const src = read(STEPPER);
     expect(src).not.toContain("truncate");
     // Below sm the visual label is dropped but must stay in the a11y tree, so
     // an item reads as a name rather than a bare number.
@@ -135,7 +202,7 @@ describe("onboarding step 0 form semantics", () => {
     // fieldset + legend IS the radiogroup. An explicit role="radiogroup" on the
     // inner div would nest a second group boundary inside the first, so its
     // absence is asserted as deliberately as its presence would be.
-    const src = readCode(STEP0);
+    const src = read(STEP0);
     expect(src).toContain("<fieldset");
     expect(src).toContain("<legend");
     expect(src).toContain('type="radio"');
@@ -145,7 +212,7 @@ describe("onboarding step 0 form semantics", () => {
   it("the email field is readOnly, never disabled", () => {
     // `disabled` took it out of the tab order, skipped it in browse mode and
     // excluded it from submission.
-    const src = readCode(STEP0);
+    const src = read(STEP0);
     expect(src).toContain("aria-readonly");
     const at = src.indexOf('id="email"');
     expect(at).toBeGreaterThan(-1);
@@ -156,48 +223,106 @@ describe("onboarding step 0 form semantics", () => {
 
   it("the invite panels use design tokens, not raw Tailwind status colours", () => {
     // `border-blue-200 bg-blue-50 text-blue-900` has no dark value, so it
-    // rendered pale-on-black inside the shell's dark scope.
-    const src = readCode(STEP0);
-    for (const banned of [
-      "bg-blue-",
-      "text-blue-",
-      "border-blue-",
-      "text-zinc-",
-      "text-red-",
-    ]) {
-      expect(src).not.toContain(banned);
-    }
+    // rendered pale-on-black inside the dark scope.
+    //
+    // The earlier version of this asserted a hand-listed set of five prefixes
+    // (blue, zinc, red), which was a false pass: swapping the invite panel back
+    // to `border-amber-200 bg-amber-50` left the suite green. Every raw
+    // palette is now covered, over every Tailwind colour-carrying utility.
+    // `primary`/`muted`/`destructive` and friends are tokens and deliberately
+    // absent from the list.
+    const src = read(STEP0);
+    const RAW_PALETTE =
+      "slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose";
+    const UTILITY = `\\b(?:bg|text|border|ring|from|to|via|fill|stroke|divide|outline|decoration|accent|caret|shadow)-`;
+    expect(src).not.toMatch(new RegExp(`${UTILITY}(?:${RAW_PALETTE})-\\d`));
   });
 
   it("validates on first blur, not mid-keystroke", () => {
-    const src = readCode(STEP0);
+    const src = read(STEP0);
     expect(src).toContain('mode: "onTouched"');
     expect(src).not.toContain('mode: "onChange"');
   });
 });
 
 describe("onboarding shell is token-driven", () => {
-  it("mounts a .dark token scope rather than hand-written dark overrides", () => {
-    // globals.css already ships a complete .dark block and ~370 dark:
-    // utilities that nothing activated. Mounting the scope brings the real
-    // system up, so a future app-wide theme is a one-class change.
-    const src = readCode(SHELL);
-    expect(src).toMatch(/"dark\b/);
-    expect(src).not.toContain("dark:");
+  it("scopes .dark on <html> in the route layout, not on the shell div", () => {
+    // Radix portals (Select, Dialog, Popover, DropdownMenu, Tooltip) mount to
+    // document.body, which is OUTSIDE the shell subtree. With the class on the
+    // shell, every dropdown and modal resolved --popover / --background against
+    // :root and rendered as a white panel over a near-black card.
+    const layout = read(LAYOUT);
+    expect(layout).toContain("document.documentElement.classList.add('dark')");
+    expect(layout).toContain("dangerouslySetInnerHTML");
+    // The shell must not carry its own scope. Checked on the className string
+    // specifically, not the whole file — the unmount cleanup below legitimately
+    // names "dark" in code.
+    const shell = read(SHELL);
+    const classNames = shell
+      .split(/(?:className|rel)="/)
+      .slice(1)
+      .map((chunk) => chunk.split('"')[0])
+      .join(" ");
+    expect(classNames).not.toMatch(/(^|\s)dark(\s|$)/);
   });
 
-  it("uses the maintenance-banner offset, not a bare sticky top-0", () => {
-    // The root layout renders a fixed MaintenanceBanner at z-[10001] above
-    // this route; a bare top-0 pinned the header underneath it.
-    const src = readCode(SHELL);
-    expect(src).toContain("top-maintenance");
+  it("removes the root .dark scope on unmount so it does not leak", () => {
+    // Onboarding ends in a router.replace to the dashboard; without the
+    // cleanup, that client-side navigation inherits a dark <html>.
+    const src = read(SHELL);
+    expect(src).toMatch(/classList\.remove\("dark"\)[\s\S]{0,80}\},?\s*\[\]/);
+  });
+
+  it("the destructive token is legible on the dark card", () => {
+    // Was hsl(0 62.8% 30.6%) = #7f1d1d: a SURFACE colour, not a text colour.
+    // 1.87:1 on --card, so every text-destructive in a dark scope was
+    // effectively invisible — and FieldError, the validation copy a person must
+    // read, is the heaviest user of that class.
+    const css = read(GLOBALS);
+    const dark = ".dark";
+    const card = token(css, dark, "--card");
+    const bg = token(css, dark, "--background");
+    const destructive = token(css, dark, "--destructive");
+    // AA body text is 4.5:1.
+    expect(contrast(destructive, card)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(destructive, bg)).toBeGreaterThanOrEqual(4.5);
+    // Light mode must be untouched by the dark fix.
+    expect(
+      contrast(
+        token(css, ":root", "--destructive"),
+        token(css, ":root", "--background"),
+      ),
+    ).toBeGreaterThan(1);
+  });
+
+  it("the upload widget inside the dark scope uses tokens only", () => {
+    // Rendered on step 4 (Agreement & Verification). Its raw zinc/red/green
+    // classes had no dark value: the document rows were #fafafa chips on a
+    // #121212 card and the dropzone instruction sat at 2.42:1.
+    const src = read(UPLOAD);
+    const RAW_PALETTE =
+      "slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose";
+    const UTILITY = `\\b(?:bg|text|border|ring|from|to|via|fill|stroke|divide|outline|decoration|accent|caret)-`;
+    expect(src).not.toMatch(new RegExp(`${UTILITY}(?:${RAW_PALETTE})-\\d`));
+    expect(src).toContain("text-destructive");
+    expect(src).toContain("text-success");
+  });
+
+  it("the sticky header clears BOTH fixed banners", () => {
+    // `top-maintenance` covers MaintenanceBanner only. AnnouncementBar is
+    // fixed at top-maintenance z-[1001] and is NOT gated by NO_CHROME, so it
+    // renders on /form/ and a header at plain top-maintenance slides under it.
+    const src = read(SHELL);
+    expect(src).toMatch(
+      /top-\[calc\(var\(--maintenance-banner-height[^)]*\)\+var\(--announcement-bar-height/,
+    );
     expect(src).not.toMatch(/sticky top-0/);
   });
 
   it("uses the stable small viewport and the elevation scale", () => {
-    expect(readCode(SHELL)).toContain("min-h-svh");
-    expect(readCode(SHELL)).not.toMatch(/\bmin-h-screen\b/);
-    const page = readCode(PAGE);
+    expect(read(SHELL)).toContain("min-h-svh");
+    expect(read(SHELL)).not.toMatch(/\bmin-h-screen\b/);
+    const page = read(PAGE);
     expect(page).toContain("shadow-elevation-2");
     expect(page).not.toContain("shadow-lg");
   });
@@ -205,7 +330,7 @@ describe("onboarding shell is token-driven", () => {
   it("a wide step gets a fixed breakpoint width, not a percentage", () => {
     // `max-w-[80%]` scaled the card continuously with the viewport, so the
     // weekly slot grid reflowed unpredictably between breakpoints.
-    const src = readCode(SHELL);
+    const src = read(SHELL);
     expect(src).toContain("max-w-[80rem]");
     expect(src).not.toMatch(/max-w-\[\d+%\]/);
   });
@@ -213,7 +338,7 @@ describe("onboarding shell is token-driven", () => {
   it("the decorative canvas uses the light-on-dark pattern class", () => {
     // The "-dark" suffix names the LINE colour, not the surface:
     // `dot-pattern-dark` is rgba(0,0,0,.05) and would be invisible here.
-    const src = readCode(SHELL);
+    const src = read(SHELL);
     expect(src).toContain("mesh-gradient-dark");
     expect(src).toContain("dot-pattern");
     expect(src).not.toContain("dot-pattern-dark");
@@ -224,17 +349,28 @@ describe("onboarding submit path does not leak submitted values", () => {
   it("captures a synthetic error name, never the raw exception", () => {
     // This path can carry submitted field values, and captureException ships
     // the message, stack and attached context to the telemetry SDK.
-    const src = readCode(PAGE);
-    const at = src.indexOf("Sentry.captureException");
-    expect(at).toBeGreaterThan(-1);
-    const capture = src.slice(at, at + 400);
-    expect(capture).toContain("new Error(");
-    expect(capture).toContain("error.name");
-    expect(capture).not.toMatch(/captureException\(\s*error\b/);
+    //
+    // Scoped to the FIRST call site this was a false pass: adding a second
+    // `Sentry.captureException(error)` further down the file left the suite
+    // green, even though the assertion claims the raw exception never reaches
+    // telemetry. So the check is now over EVERY call site in the file, and the
+    // count is pinned so a second capture cannot slip in either.
+    const src = read(PAGE);
+    const sites = src.match(/captureException\(/g) ?? [];
+    expect(sites).toHaveLength(1);
+    // No call site may hand over a bare error-ish identifier. Named the same
+    // way the caught binding is, plus the other conventional short names, so
+    // a rename cannot quietly reintroduce the leak.
+    expect(src).not.toMatch(
+      /captureException\(\s*(error|err|e|exc|exception)\b/,
+    );
+    const at = src.indexOf("captureException(");
+    expect(src.slice(at, at + 400)).toContain("new Error(");
+    expect(src.slice(at, at + 400)).toContain("error.name");
   });
 
   it("leaves no console logging on the submit path", () => {
-    const src = readCode(PAGE);
+    const src = read(PAGE);
     expect(src).not.toContain("console.warn");
     expect(src).not.toContain("console.error");
   });

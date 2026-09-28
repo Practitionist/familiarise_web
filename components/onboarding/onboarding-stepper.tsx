@@ -14,10 +14,11 @@
  *     tab order and from the accessibility tree's focus ring, while still
  *     carrying `aria-current="step"`. It is a `<span>` here instead: it is not
  *     interactive, so it should not be focusable or activatable.
- *  3. Labels were `truncate`d at `max-w-[80px]` AND `aria-hidden`, so
- *     "Agreement & Verification" rendered as "Agreement & Ve…" with no
- *     tooltip. Labels now wrap, and the dots carry a full `aria-label` so
- *     nothing is lost when the visual label is hidden on small screens.
+ *  3. Labels were clipped to a fixed pixel width AND hidden from assistive
+ *     tech, so "Agreement & Verification" rendered as "Agreement & Ve…"
+ *     with no tooltip and nothing for a screen reader. Labels now wrap, and
+ *     the dots carry a full `aria-label` so nothing is lost when the visual
+ *     label is dropped on small screens.
  *  4. There was no percentage and no progress bar, only "Step 2 of 5" in the
  *     page header. Research on wizard completion is consistent that people
  *     need both the position and the proportion remaining.
