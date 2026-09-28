@@ -37,9 +37,13 @@ verbatim in spirit:
 
 - **Allowlist the type.** `ALLOWED_TYPES` in
   `app/api/verification/documents/route.ts` is png/jpeg/jpg/webp/pdf.
-- **Do not trust `Content-Type`.** It is trivially spoofable, which is why the
-  route calls `normalizeDeclaredMime` to sniff the actual bytes. This is the
+- **Do not trust `Content-Type`.** It is trivially spoofable. The route calls
+  `declaredMimeMatchesBytes(declared, bytes)`, which sniffs the actual bytes with
+  `sniffMime` and requires the result to equal the declared type. This is the
   OWASP File Upload Cheat Sheet's central point.
+- **Note that `normalizeDeclaredMime` is not the check.** It only canonicalises
+  the string `image/jpg` → `image/jpeg`; it inspects nothing. Reading it as
+  "we normalised, therefore we verified" is the mistake to avoid.
 - **Cap the size.** `MAX_FILE_SIZE = 10 * 1024 * 1024`.
 - **Generate the storage filename yourself.** `generateStorageFileName(mimeType)`,
   never the user's name.
@@ -70,14 +74,23 @@ Three properties in one query, and the **count check is what makes it sound** �
 for. `documentIds` is also de-duplicated (`Array.from(new Set(...))`) first, so
 the comparison is against the real intent.
 
-The client sends a whole object per document — `fileUrl`, `storagePath`,
-`fileSize`, `mimeType` — and **none of it is persisted**. Only `id` is read.
-`isPersistableVerificationDoc` enforces that: a real server-issued id, and never
-an `isOnboardingUpload` draft.
+The client **holds** a whole object per document in memory — `fileUrl`,
+`storagePath`, `fileSize`, `mimeType` — because the upload component has to
+render a row. What it **sends** is only the ids: the wizard posts
+`verificationDocuments` with an `id` per entry, and the settings resubmit path
+builds `{ linkedinUrl, notes, documentIds }` explicitly. **None of the metadata
+is persisted.** `isPersistableVerificationDoc` enforces the onboarding side of
+that: a real server-issued id, and never an `isOnboardingUpload` draft.
+
+The distinction is worth keeping straight when reading either client. "The
+client sends the file URL" is false; "the client can see the file URL" is true.
+Only the first would be a vulnerability, and the code never does it.
 
 **How to apply:** if you accept a list of client references to server rows,
 scope the write by owner, and assert the affected-row count matches what you
-asked for. Never trust client-supplied URLs, paths, or sizes.
+asked for. Never trust client-supplied URLs, paths, or sizes — and if you find
+yourself _needing_ one of those from the client, that is the signal the shape is
+wrong.
 
 ---
 

@@ -79,10 +79,12 @@ inline a value in the one component that used it.
 `__tests__/dashboards/shell-overflow-contract.test.ts`, which locates rules with
 a plain `indexOf`.
 
-A comment that names a selector the test scans for **will be matched instead of
-the real rule**, and the assertion reads the comment as the rule body. This
-caused a real CI failure: a prose comment in the dark-scope block spelled out the
-flush-bottom selector, and the test failed with a nonsense diff.
+A comment that names a scanned selector **earlier in the file** wins that
+`indexOf`, so the extraction starts in the wrong place: the assertion then
+compares the comment's fragment plus the block that follows it, not the real
+rule's selector and body. This caused a real CI failure on #1864 — a prose
+comment in the dark-scope block named the flush-bottom selector, and the test
+failed with a diff quoting my own comment back at me.
 
 **Do not spell out a scanned selector inside a comment near it.** Describe it in
-prose instead.
+prose instead. A failure diff that quotes your comment is the tell.

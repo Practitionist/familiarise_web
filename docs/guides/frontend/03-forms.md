@@ -21,15 +21,16 @@ with opposite timing needs:
 **Know what `onTouched` actually does, because it is not the same as
 `onBlur`.** In v7 the sequence is:
 
-1. While the field is untouched, validation waits for the **first blur**.
-2. Once the field is touched, it falls through to `reValidateMode`, which
-   **defaults to `onChange`** — so every subsequent keystroke validates again.
+1. Before the first submit, validation waits for the field's **first blur**.
+2. Once the field is touched, it revalidates on **every subsequent change** —
+   still before any submit. `reValidateMode` is not what does this; it is only
+   consulted _after_ the form has been submitted at least once. The
+   pre-submit revalidation comes from `onTouched` itself.
 
-So `onTouched` only buys you the run-up to the first blur. After that it behaves
-like `onChange` for that field. If you genuinely want "validate when the user
-leaves the field, and stay quiet while they go back and fix it", that is
-`mode: "onBlur"` — or give the long field its own sub-form so the modes can
-differ. Do not reach for `onTouched` expecting `onBlur` behaviour.
+So `onTouched` only buys you the run-up to the first blur. If you genuinely want
+"validate when the user leaves the field, and stay quiet while they go back and
+fix it", that is `mode: "onBlur"` — or give the long field its own sub-form so
+the modes can differ. Do not reach for `onTouched` expecting `onBlur` behaviour.
 
 `ConsultantProfileForm` is the counter-example to watch for: it is `onChange`
 and holds long free-text fields, so it revalidates an unfinished bio on every

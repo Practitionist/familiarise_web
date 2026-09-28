@@ -44,13 +44,18 @@ system invariants. None of them is a style guide, and that is deliberate.
 structural invariants (which chrome a page opts into, that no route mutates
 `<html>`) that would otherwise be invisible to behavioural tests.
 
-**This has one sharp edge you must know about.** Those tests locate rules with a
-plain `indexOf`, so a _comment_ that mentions a selector by name will be matched
-instead of the real rule, and the assertion reads the comment as the rule body.
-This actually happened: a comment in `app/globals.css` referenced
-`main > div:has(> .content-flush-bottom)` in prose, and the test failed on
-`dev` with a nonsense diff.
+**This has one sharp edge you must know about.** `extractCssRule` does
+`css.indexOf(selector)` to find where a rule starts, then slices to the next `{`
+and reads the following block. A _comment_ that names a selector earlier in the
+file therefore wins the `indexOf`, so the extraction **starts in the wrong
+place**: the text the test compares against becomes the comment's fragment
+plus whatever block happens to follow it, not the real rule's selector and body.
+
+This actually happened: a comment in `app/globals.css` named the flush-bottom
+selector in prose, and the test failed on `dev` with a diff that quoted my own
+comment back at me.
 
 So: when you write a comment near a rule that a contract test scans for, **do not
 spell the selector out**. Describe it instead. If a contract test breaks right
-after a comment-only change, this is why.
+after a comment-only change, this is why — and the failure diff quoting your
+comment is the tell.

@@ -12,18 +12,23 @@ only the frontend-specific consequence, which that doc does not address.
 
 ## The frontend question is not "which is better"
 
-It is **"who is the caller?"**
+It is **"what does the caller need?"**
 
-- **Server action** — invoked by _your own_ React code. A form submit, a
-  mutation, a revalidation. Rendered code calls it conveniently and the
-  framework handles the transport and the types.
-- **API route** — invoked by something that is _not_ your React code. The mobile
-  app, a webhook, a cron over HTTP, a third party.
+- **Server action** — a mutation invoked by _your own_ React code, where the
+  ergonomics matter: types flow end to end, the framework handles the transport,
+  and the page re-renders on return.
+- **API route** — anything that needs a **stable HTTP contract**: the mobile app,
+  a webhook, a cron over HTTP, a third party, or a multipart upload.
 
-`app/api/verification/documents/route.ts` is an API route, not a server action,
-and that is correct: the upload is multipart from a component but the route is
-also the durable, CSRF-guarded, size-limited boundary. The onboarding steps use
-server actions, correctly, because the caller is the wizard.
+The second list is the real discriminator, and it is _not_ "called by React vs
+not" — because React can call a route perfectly well.
+`ConsultantVerificationForm` does exactly that, posting `FormData` to
+`/api/verification/documents`. That is the right call: a file upload wants the
+durable, CSRF-guarded, size-limited route boundary, and wants a path that is not
+tied to a generated action id.
+
+The onboarding steps use server actions, correctly, because they are plain
+mutations from the wizard and the type safety is the point.
 
 ## A server action is a POST endpoint — authenticate it like one
 
@@ -44,12 +49,28 @@ What an action genuinely does _not_ give you is a **stable, documented HTTP
 contract** for a third party to integrate against. That, plus multipart, caching
 headers, and webhook semantics, is what should push you to a route.
 
-Server actions also get **end-to-end type propagation**, so a Zod schema change
-breaks the client at build time. A route's payload is an untyped wire format, so
-it needs its own validation at the edge. That is the structural reason
+Server actions also get **end-to-end type propagation for their signature** — a
+well-typed argument and return value are checked at the call site and at build
+time, and a change to either breaks the client build. That is a real benefit and
+it is why a route's untyped wire format needs its own validation at the edge.
+
+**But a type is not a runtime validator, and type propagation does not validate
+arguments for you.** Two things follow, and both bite:
+
+- An argument typed `unknown` is a promise about the _caller's_ intent, not a
+  check. `updateOnboardingInformationAction(userId, body: unknown)` takes
+  `unknown` precisely because the body is a discriminated union the action must
+  narrow at runtime.
+- Changing a Zod schema cannot break a build through that signature, because
+  nothing in the type mentions the schema. A schema change is enforced by
+  **tests**, not by the compiler.
+
+So: TypeScript stops you passing the wrong _shape_ to something typed. It stops
+you passing the wrong _value_ to nothing. Untrusted input — a `body: unknown`, a
+`request.json()`, a search param — needs `safeParse` at the boundary, whatever
+the signature claims. This is the structural reason
 [01-server-data-and-validation.md](./01-server-data-and-validation.md) leans so
-hard on validating at the write boundary — for a route, it is the only validation
-there is.
+hard on validating at the write boundary.
 
 ## Revalidation: partly automatic, and the gap is where stale UI comes from
 
