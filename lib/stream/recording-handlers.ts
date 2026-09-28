@@ -7,6 +7,7 @@ import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import {
   notifyRecordingAvailable,
   notifyRecordingFailed,
@@ -367,10 +368,15 @@ export async function handleRecordingReady(
           "Unknown Consultant";
       }
 
-      // Same serverless rationale as the transfer kick above: run the
-      // notification via `after()` so it survives the webhook response.
-      await runAfterOrInline(() =>
-        notifyRecordingAvailable(userIds, {
+      // #1861 P2r — the Recording row above committed outside any open
+      // transaction, so stage the outbox rows now (awaited, before the
+      // response) rather than inside `after()`: an instance freeze between
+      // the webhook response and `after()` firing used to lose the bell with
+      // no trace. Only the delivery attempt is deferred, same serverless
+      // rationale as the transfer kick above.
+      const staged = await notifyRecordingAvailable(
+        userIds,
+        {
           // ADR 20 still holds: `userIds` here is the participant list from
           // getEventAttendeeIds, never an org roster, so the recordingUrl below
           // does not reach an operator. The scope tag is attribution only — it
@@ -383,12 +389,33 @@ export async function handleRecordingReady(
             appointment?.organizationId,
             "recordings",
           ),
-        }).catch((err) =>
-          streamLogger.error("Failed to send recording notification", err, {
-            streamCallId,
-          }),
-        ),
-      );
+        },
+        { deferAttempt: true },
+      ).catch((err) => {
+        streamLogger.error("Failed to stage recording notification", err, {
+          streamCallId,
+        });
+        return [];
+      });
+      const stagedRows = staged
+        .map((r) => r.staged)
+        .filter((row): row is StagedTrigger => Boolean(row));
+
+      if (stagedRows.length > 0) {
+        await runAfterOrInline(() =>
+          Promise.all(
+            stagedRows.map((row) =>
+              attemptTrigger(row).catch((err) =>
+                streamLogger.error(
+                  "Failed to send recording notification",
+                  err,
+                  { streamCallId },
+                ),
+              ),
+            ),
+          ),
+        );
+      }
     }
   } catch (error) {
     streamLogger.error("Failed to handle recording ready event", error, {

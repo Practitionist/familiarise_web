@@ -15,6 +15,7 @@ import {
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
+import { attemptTrigger } from "@/lib/novu";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -726,8 +727,13 @@ export async function POST(
       "your consultant";
 
     if (consultantUserId) {
-      after(() =>
-        notifyDocumentUploaded(consultantUserId, {
+      // #1861 P2r — the document write already committed above, so this is
+      // not inside its transaction; stage the outbox row now (awaited,
+      // before the response) so it survives an instance freeze, and defer
+      // only the delivery attempt to after().
+      const staged = await notifyDocumentUploaded(
+        consultantUserId,
+        {
           ...notificationScope(appointment.organizationId),
           appointmentId,
           documentId: document.id,
@@ -745,11 +751,23 @@ export async function POST(
                 ? { kind: "consultant", profileId: consultantProfileId }
                 : undefined,
           }),
-        }).catch((notifyError) => {
-          console.error("Failed to notify consultant of document", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
-        }),
-      );
+        },
+        { deferAttempt: true },
+      ).catch((notifyError) => {
+        console.error("Failed to stage consultant document notice", notifyError);
+        Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
+        return null;
+      });
+
+      if (staged?.staged) {
+        const row = staged.staged;
+        after(() =>
+          attemptTrigger(row).catch((notifyError) => {
+            console.error("Failed to notify consultant of document", notifyError);
+            Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
+          }),
+        );
+      }
     }
 
     const appointmentTitle =
