@@ -139,8 +139,27 @@ export function normaliseLinkedinProfileUrl(
   const profile = LINKEDIN_PROFILE_PATH_RE.exec(parsed.pathname);
   if (!profile?.[1]) return { ok: false, reason: LINKEDIN_URL_MESSAGE };
 
-  const handle = decodeURIComponent(profile[1]).trim();
-  if (!handle) return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  // `decodeURIComponent` throws `URIError` on a truncated or malformed escape
+  // (`…/in/a%`, `…/in/%zz`). An exception inside a Zod `.transform()` is not
+  // caught by `safeParse` — it propagates out and turns a bad field into a
+  // thrown error instead of a validation issue, so this must be guarded.
+  let handle: string;
+  try {
+    handle = decodeURIComponent(profile[1]);
+  } catch {
+    return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  }
+
+  // The path regex can only see undecoded characters, so the capture is free of
+  // `/`, `?` and `#` — but percent-encoding smuggles them straight back in
+  // (`a%2Fb` decodes to `a/b`, `a%23x` to `a#x`). Left unchecked, decoding
+  // would rewrite the canonical URL into a *different* path or smuggle a query
+  // string and fragment into a value an admin reads. Structural characters and
+  // whitespace only — real handles are not ASCII (see the `josé` case in the
+  // tests), so this is not a charset restriction.
+  if (!handle || /[/\\?#]/.test(handle) || /\s/.test(handle)) {
+    return { ok: false, reason: LINKEDIN_URL_MESSAGE };
+  }
 
   return { ok: true, url: `https://www.linkedin.com/in/${handle}` };
 }

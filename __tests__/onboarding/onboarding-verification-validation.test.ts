@@ -76,11 +76,13 @@ describe("normaliseLinkedinProfileUrl", () => {
   ];
 
   it.each(accept)("accepts and canonicalises %s", (input, expected) => {
-    const result = normaliseLinkedinProfileUrl(input);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.url).toBe(expected);
-    }
+    // Asserted as a whole object rather than `ok` then a guarded `url`: an
+    // unconditional assertion that also pins the absence of a `reason` field,
+    // and it satisfies jest/no-conditional-expect, which blocks `next build`.
+    expect(normaliseLinkedinProfileUrl(input)).toEqual({
+      ok: true,
+      url: expected,
+    });
   });
 
   const reject = [
@@ -117,6 +119,50 @@ describe("normaliseLinkedinProfileUrl", () => {
       expect(() => normaliseLinkedinProfileUrl(nasty)).not.toThrow();
     }
   });
+
+  it("returns a validation result for malformed percent-encoding", () => {
+    // `decodeURIComponent` throws `URIError` on a truncated or bad escape, and
+    // an exception inside a Zod `.transform()` is not caught by `safeParse` —
+    // it escapes as a thrown error and becomes a 500 instead of a field error.
+    for (const bad of [
+      "https://www.linkedin.com/in/a%",
+      "https://www.linkedin.com/in/%E0%A4%A",
+      "https://www.linkedin.com/in/%%%",
+      "https://www.linkedin.com/in/%zz",
+    ]) {
+      expect(() => normaliseLinkedinProfileUrl(bad)).not.toThrow();
+      expect(normaliseLinkedinProfileUrl(bad)).toEqual({
+        ok: false,
+        reason: expect.any(String),
+      });
+    }
+  });
+
+  it("refuses delimiters smuggled in through percent-encoding", () => {
+    // The path regex only ever sees the *encoded* path, so its capture cannot
+    // contain `/`, `?` or `#` — but decoding puts them back. Unguarded, these
+    // rewrote the canonical URL into a different path or appended a query
+    // string / fragment to a value an admin reads.
+    for (const bad of [
+      "https://www.linkedin.com/in/a%2Fb", // -> /in/a/b
+      "https://www.linkedin.com/in/a%3Fb=c", // -> /in/a?b=c
+      "https://www.linkedin.com/in/a%23frag", // -> /in/a#frag
+      "https://www.linkedin.com/in/a%20b", // -> literal space
+      "https://www.linkedin.com/in/a%5Cb", // -> backslash
+    ]) {
+      expect(normaliseLinkedinProfileUrl(bad).ok).toBe(false);
+    }
+  });
+
+  it("still accepts a non-ASCII handle — this is not a charset restriction", () => {
+    const result = normaliseLinkedinProfileUrl(
+      "https://www.linkedin.com/in/jos%C3%A9-garcia",
+    );
+    expect(result).toEqual({
+      ok: true,
+      url: "https://www.linkedin.com/in/josé-garcia",
+    });
+  });
 });
 
 describe("linkedinProfileUrlSchema", () => {
@@ -139,10 +185,12 @@ describe("linkedinProfileUrlSchema", () => {
 
   it("reports a message the user can act on", () => {
     const result = linkedinProfileUrlSchema.safeParse("nope");
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0]?.message).toMatch(/linkedin\.com\/in/i);
-    }
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        issues: [{ message: expect.stringMatching(/linkedin\.com\/in/i) }],
+      },
+    });
   });
 });
 
@@ -211,16 +259,15 @@ describe("OnboardingBaseSchema — server boundary", () => {
   });
 
   it("accepts a locale-subdomain profile and canonicalises it", () => {
-    const result = OnboardingBaseSchema.safeParse({
-      ...minimal,
-      verificationLinkedinUrl: "https://uk.linkedin.com/in/realname",
+    expect(
+      OnboardingBaseSchema.safeParse({
+        ...minimal,
+        verificationLinkedinUrl: "https://uk.linkedin.com/in/realname",
+      }),
+    ).toMatchObject({
+      success: true,
+      data: { verificationLinkedinUrl: "https://www.linkedin.com/in/realname" },
     });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.verificationLinkedinUrl).toBe(
-        "https://www.linkedin.com/in/realname",
-      );
-    }
   });
 
   it("caps verification notes server-side, matching the form", () => {
