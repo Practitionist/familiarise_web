@@ -35,8 +35,14 @@ export interface SessionCapResult {
 /**
  * Evict the user's oldest sessions beyond `maxSessions`, keeping the
  * newest. Called from `databaseHooks.session.create.after`, where the
- * just-created session is already committed — and being the newest, is
- * always kept.
+ * just-created session is already committed — pass its id as
+ * `excludeSessionId` so it is reserved from eviction. Reservation (not
+ * "newest wins") is load-bearing: `createdAt` has millisecond
+ * resolution and instance clocks skew, so ordering alone could rank the
+ * just-minted session outside the keep window and hand the user a
+ * cookie for a deleted row. Steady state is at most maxSessions + 1
+ * until the next sign-in's pass converges it — acceptable for a hygiene
+ * bound (see below), and strictly better than a dead-session cookie.
  *
  * Concurrency: two simultaneous sign-ins both run this. The composite
  * `orderBy` is a TOTAL order — `createdAt` alone has millisecond
@@ -52,6 +58,7 @@ export interface SessionCapResult {
 export async function enforceSessionCapForUser(
   userId: string,
   maxSessions: number = MAX_CONCURRENT_SESSIONS,
+  excludeSessionId?: string,
 ): Promise<SessionCapResult> {
   // Bounded passes: one pass deletes at most CAP_EVICTION_BATCH rows, so
   // a stuffing victim's 100k rows cannot OOM the lambda via a giant IN
@@ -65,7 +72,12 @@ export async function enforceSessionCapForUser(
       prisma.$transaction(
         async (tx) => {
           const overflow = await tx.session.findMany({
-            where: { userId },
+            where: {
+              userId,
+              // Reserve the just-created session: it is never an eviction
+              // candidate, even under clock skew or same-ms id ties.
+              ...(excludeSessionId ? { id: { not: excludeSessionId } } : {}),
+            },
             orderBy: [{ createdAt: "desc" }, { id: "desc" }],
             skip: maxSessions,
             take: CAP_EVICTION_BATCH,

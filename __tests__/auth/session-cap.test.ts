@@ -74,6 +74,27 @@ describe("enforceSessionCapForUser (#1856)", () => {
     });
   });
 
+  it("never evicts the just-created session, even when it ties for newest", async () => {
+    // Same-millisecond sign-ins share createdAt; random ids decide the
+    // order, so without the reservation the fresh session could fall
+    // outside the keep window and the user would hold a cookie for a
+    // deleted row.
+    findMany.mockResolvedValue([{ id: "old-1" }]);
+    deleteMany.mockResolvedValue({ count: 1 });
+
+    const out = await enforceSessionCapForUser("u1", 10, "fresh");
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u1", id: { not: "fresh" } },
+      }),
+    );
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["old-1"] }, userId: "u1" },
+    });
+    expect(out).toEqual({ evicted: 1 });
+  });
+
   it("honours a custom cap", async () => {
     findMany.mockResolvedValue([]);
 

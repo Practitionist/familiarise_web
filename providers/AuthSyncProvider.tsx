@@ -79,6 +79,34 @@ function writeRevsigCursor(value: number): void {
   }
 }
 
+/**
+ * Same-profile second sign-in as a DIFFERENT account: the shared cookie
+ * jar now belongs to them, but peer tabs still paint the old account
+ * (boolean true→true is no transition). Ping login so peers refetch to
+ * the truth, and drop this tab's revocation cursor — it belonged to the
+ * old account's counter, and a lower counter there would wedge this
+ * tab's poll silent forever.
+ */
+function handleAccountSwitch(
+  authed: boolean,
+  nextUserId: string | null,
+  prevUserId: string | undefined,
+): void {
+  if (
+    authed &&
+    nextUserId !== null &&
+    prevUserId !== undefined &&
+    prevUserId !== nextUserId
+  ) {
+    postAuthSync({ type: "login" });
+    try {
+      sessionStorage.removeItem(REVSIG_CURSOR_KEY);
+    } catch {
+      // Best-effort — a stale cursor only delays one poll cycle.
+    }
+  }
+}
+
 export default function AuthSyncProvider() {
   const { data: session, isPending, refetch } = useSession();
   // In-memory fallback for the previous authed state, used when the cross-tab
@@ -173,26 +201,9 @@ export default function AuthSyncProvider() {
       }
     }
     previousAuthedRef.current = authed;
-    // Same-profile second sign-in as a DIFFERENT account: the shared
-    // cookie jar now belongs to them, but peer tabs still paint the old
-    // account (boolean true→true is no transition). Ping login so peers
-    // refetch to the truth, and drop this tab's revocation cursor — it
-    // belonged to the old account's counter, and a lower counter there
-    // would wedge this tab's poll silent forever.
-    const prevUserId = previousUserIdRef.current;
-    if (
-      authed &&
-      nextUserId !== null &&
-      prevUserId !== undefined &&
-      prevUserId !== nextUserId
-    ) {
-      postAuthSync({ type: "login" });
-      try {
-        sessionStorage.removeItem(REVSIG_CURSOR_KEY);
-      } catch {
-        // Best-effort — a stale cursor only delays one poll cycle.
-      }
-    }
+    // Same-profile second sign-in as a DIFFERENT account is no boolean
+    // transition — detect the user-id change explicitly (see helper).
+    handleAccountSwitch(authed, nextUserId, previousUserIdRef.current);
     previousUserIdRef.current = nextUserId ?? undefined;
     // Also the reconciliation point for the navbar's optimistic first paint:
     // a resolved session rewrites the remembered shape in BOTH directions, and

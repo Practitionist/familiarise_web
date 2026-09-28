@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { Check, Loader2, LogOut, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -95,14 +96,16 @@ export function PasswordSection() {
       } catch (error) {
         reportRevokeFailure("revoke-others", null, error);
       }
+      let sweepDescription: string | undefined;
+      if (sweep === "swept") {
+        sweepDescription = "Your other devices were signed out.";
+      } else if (sweep === "failed") {
+        sweepDescription =
+          "We couldn't sign out your other devices — use 'Sign out other devices' below to finish.";
+      }
       toast({
         title: "Password changed",
-        description:
-          sweep === "swept"
-            ? "Your other devices were signed out."
-            : sweep === "failed"
-              ? "We couldn't sign out your other devices — use 'Sign out other devices' below to finish."
-              : undefined,
+        description: sweepDescription,
         variant: sweep === "failed" ? "destructive" : undefined,
       });
     } catch {
@@ -396,10 +399,11 @@ export function SessionsSection() {
         await signOutEverywhere("/auth/signin");
         return;
       }
+      const deviceWord = revoked === 1 ? "device" : "devices";
       toast({
         title:
           revoked > 0
-            ? `Signed out ${revoked} other ${revoked === 1 ? "device" : "devices"}`
+            ? `Signed out ${revoked} other ${deviceWord}`
             : "No other devices to sign out",
       });
       await load();
@@ -407,70 +411,81 @@ export function SessionsSection() {
     [load, toast],
   );
 
+  let sessionsBody: ReactNode;
+  if (isLoading && sessions === null && loadError === null) {
+    sessionsBody = (
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    );
+  } else if (loadError === "signed-out") {
+    sessionsBody = (
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Your session ended — sign in again to manage your devices.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            window.location.href = "/auth/signin";
+          }}
+        >
+          Sign in again
+        </Button>
+      </div>
+    );
+  } else if (loadError === "retryable" || sessions === null) {
+    sessionsBody = (
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          We couldn&apos;t load your sessions.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => void load()}>
+          Retry
+        </Button>
+      </div>
+    );
+  } else {
+    sessionsBody = (
+      <ul className="divide-y divide-border">
+        {sessions.map((s) => (
+          <li
+            key={s.id}
+            className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+          >
+            <span className="flex min-w-0 flex-col gap-0.5 text-sm">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-foreground">{s.label}</span>
+                {s.isCurrent && (
+                  <StatusBadge label="This device" tone="success" size="sm" />
+                )}
+              </span>
+              <span className="text-muted-foreground">
+                {formatLastSeen(s.lastSeenAt)}
+                {s.ipAddress ? ` · ${s.ipAddress}` : ""}
+              </span>
+            </span>
+            {!s.isCurrent && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPendingRevoke(s)}
+              >
+                Sign out
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <Section
       title="Sessions"
       description="Every device signed in to your account. Signed in somewhere you don't recognize? End that session."
       variant="card"
     >
-      {isLoading && sessions === null && loadError === null ? (
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      ) : loadError === "signed-out" ? (
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            Your session ended — sign in again to manage your devices.
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              window.location.href = "/auth/signin";
-            }}
-          >
-            Sign in again
-          </Button>
-        </div>
-      ) : loadError === "retryable" || sessions === null ? (
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            We couldn&apos;t load your sessions.
-          </p>
-          <Button variant="outline" size="sm" onClick={() => void load()}>
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <ul className="divide-y divide-border">
-          {sessions.map((s) => (
-            <li
-              key={s.id}
-              className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-            >
-              <span className="flex min-w-0 flex-col gap-0.5 text-sm">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">{s.label}</span>
-                  {s.isCurrent && (
-                    <StatusBadge label="This device" tone="success" size="sm" />
-                  )}
-                </span>
-                <span className="text-muted-foreground">
-                  {formatLastSeen(s.lastSeenAt)}
-                  {s.ipAddress ? ` · ${s.ipAddress}` : ""}
-                </span>
-              </span>
-              {!s.isCurrent && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setPendingRevoke(s)}
-                >
-                  Sign out
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      {sessionsBody}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
           variant="outline"

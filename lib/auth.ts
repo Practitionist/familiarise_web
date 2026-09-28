@@ -25,7 +25,10 @@ import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
-import { enforceSessionCapForUser } from "@/lib/auth/session-cap";
+import {
+  enforceSessionCapForUser,
+  MAX_CONCURRENT_SESSIONS,
+} from "@/lib/auth/session-cap";
 import { stampSessionDeviceMetadata } from "@/lib/auth/session-stamp";
 import { signalRevocation } from "@/lib/auth/session-revoke";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
@@ -136,7 +139,9 @@ export const auth = betterAuth({
     // tabs; they classify via the usual tick/visibility paths.
     revokeSessionsOnPasswordReset: true,
     onPasswordReset: async ({ user }) => {
-      void signalRevocation(user.id);
+      // Awaited: signalRevocation swallows its own errors, and a floating
+      // promise can die with the serverless freeze (same class as #1298).
+      await signalRevocation(user.id);
     },
   },
 
@@ -446,13 +451,19 @@ export const auth = betterAuth({
           // never comes (proven live: 13 sessions, zero evictions). One
           // bounded pass costs a single indexed findMany on the rare
           // sign-in path; failures are caught so sign-in never fails.
-          // The just-created session is the newest and is always kept;
-          // see `lib/auth/session-cap.ts` for the ordering proof.
+          // The just-created session is reserved from eviction (never the
+          // delete target, even under clock skew or same-ms id ties);
+          // see `lib/auth/session-cap.ts`.
           try {
-            const { evicted } = await enforceSessionCapForUser(session.userId);
+            const { evicted } = await enforceSessionCapForUser(
+              session.userId,
+              MAX_CONCURRENT_SESSIONS,
+              session.id,
+            );
             // An eviction bumps the cross-device counter so opted-in tabs
             // learn promptly (the ban path does the same post-commit).
-            if (evicted > 0) void signalRevocation(session.userId);
+            // Awaited — the freeze must not drop it; it cannot throw.
+            if (evicted > 0) await signalRevocation(session.userId);
           } catch (err) {
             Sentry.captureException(
               err instanceof Error ? err : new Error(String(err)),

@@ -59,7 +59,7 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 **`session.create.after`** — Fires after the session row commits (#1856):
 
 - Awaited `stampSessionDeviceMetadata()`: writes `deviceLabel` + `lastSeenAt` via one PK update (catches failures internally, throttled-reported, so sign-in never fails — awaiting it only costs milliseconds on a rare path and keeps a serverless freeze from dropping it).
-- Fire-and-forget `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry). Eventually consistent by design and must never fail sign-in — failures are Sentry-reported and swallowed.
+- Awaited `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry, multi-pass convergence for large overflows, just-created session reserved). A floating promise would die with the serverless freeze and never converge — failures are caught and Sentry-reported, so sign-in never fails; overflows past 5×200 keep converging on later sign-ins.
 
 **`account.create.after`** — Fires after linking a non-credential account:
 

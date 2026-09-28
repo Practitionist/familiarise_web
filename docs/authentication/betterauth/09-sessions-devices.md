@@ -74,7 +74,9 @@ fire-and-forget would die with the serverless freeze and, with no later
 sign-in, never converge) by
 `enforceSessionCapForUser()`: keep the N newest under the total order
 `(createdAt, id)` — `createdAt` alone ties within a millisecond —
-inside a Serializable retry. Eventually consistent by design; hygiene,
+inside a Serializable retry. The just-created session is reserved from
+eviction (ordering alone could rank it out under clock skew).
+Eventually consistent by design; hygiene,
 not the security gate (`authLimiter` owns brute force).
 
 ### 2.5 Propagation
@@ -153,9 +155,11 @@ act through the moderation ban path, which shares the helper.
 3. **`session.create.after` cannot fail sign-in.** The device stamp is
    awaited but infallible by construction (one PK update, catches
    internally — awaiting it only costs milliseconds on a rare path and
-   keeps a serverless freeze from dropping it). Only the cap is `void` +
-   catch; awaiting _that_ (findMany + Serializable deleteMany) would
-   serialize sign-ins on the single production connection.
+   keeps a serverless freeze from dropping it). The cap is awaited for
+   the same freeze reason: a floating promise would die with the frozen
+   instance and, with no later sign-in, never converge. Both helpers
+   catch and Sentry-report internally, so awaiting neither fails
+   sign-in.
 4. **The Redis poll default is off for a reason.** Turning it on is
    always-on Upstash traffic per visible tab; the focus check already
    covers revocation within one tab-switch.
