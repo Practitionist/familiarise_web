@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { Sparkles, Flame, Clock, Hash } from "lucide-react";
+import { Sparkles, Flame, Clock } from "lucide-react";
 import type { Program, TopicWithCount } from "@/lib/explore/programs";
 import SectionHeader from "./SectionHeader";
 import FeaturedCarousel from "./FeaturedCarousel";
@@ -81,7 +81,6 @@ function StaticTopRowsImpl({
 
       {/* Browse by Category */}
       <div className="mb-14">
-        <SectionHeader title="Browse by Category" icon={<Hash />} />
         <CategoryGrid
           // Same shape normalisation as the experts surface — the shared grid
           // takes a generic `count`.

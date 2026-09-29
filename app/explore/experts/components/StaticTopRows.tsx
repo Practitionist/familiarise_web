@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { Briefcase, Clock, Flame } from "lucide-react";
+import { Clock, Flame } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import SectionHeader from "@/app/explore/components/SectionHeader";
 import ExpertRow from "./ExpertRow";
@@ -65,7 +65,6 @@ function StaticTopRowsImpl({
           id="domains"
           className="mb-14 scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
         >
-          <SectionHeader title="Browse by Domain" icon={<Briefcase />} />
           <DomainGrid
             // The metadata rows carry `consultantCount`; the shared grid takes
             // a generic `count`, which is what lets one component serve both
