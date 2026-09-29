@@ -272,7 +272,17 @@ describe("onboarding shell is token-driven", () => {
     // <html> -- is forbidden by
     // __tests__/dashboards/shell-overflow-contract.test.ts:156.
     const css = read(GLOBALS);
-    expect(css).toMatch(/\.dark,\s*body:has\(\.onboarding-shell\)\s*\{/);
+    // The dark values are declared once, for two selectors: the onboarding
+    // route (which is dark-only by design) and the user-selectable
+    // `data-mode` axis. The `.dark` class this used to be keyed on is gone —
+    // nothing ever set it, which is why the whole block and its ~370 `dark:`
+    // utilities sat authored but unreachable.
+    expect(css).toMatch(
+      /body\[data-mode="dark"\],\s*body:has\(\.onboarding-shell\)\s*\{/,
+    );
+    // The class route must not come back: setting a class on <html> is what
+    // `02-theming-and-css-scope.md` records the failed attempt at.
+    expect(css).not.toMatch(/^\s*\.dark\s*,/m);
     // The shell carries the marker class...
     expect(read(SHELL)).toMatch(/"onboarding-shell /);
     // ...and no JavaScript mutates the document element anywhere in it.
@@ -295,7 +305,10 @@ describe("onboarding shell is token-driven", () => {
     // effectively invisible — and FieldError, the validation copy a person must
     // read, is the heaviest user of that class.
     const css = read(GLOBALS);
-    const dark = ".dark";
+    // The shared dark block. Its selector is now
+    // `body[data-mode="dark"], body:has(.onboarding-shell)` — see the note in
+    // app/globals.css.
+    const dark = 'body[data-mode="dark"]';
     const card = token(css, dark, "--card");
     const bg = token(css, dark, "--background");
     const destructive = token(css, dark, "--destructive");

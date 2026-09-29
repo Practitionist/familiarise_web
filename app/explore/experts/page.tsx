@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import {
   ExploreHeader,
@@ -68,11 +67,14 @@ export default async function ExploreExperts() {
         </div>
         <div className="relative py-20 md:py-28">
           <ExploreShell width="wide">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-            >
+            {/* The hero reveal is a CSS animation, not framer-motion.
+                This file is a SERVER component (it is ISR-prerendered), and a
+                `motion.*` element rendered here fails static prerendering with
+                "Element type is invalid" — the client reference has no
+                boundary to attach to. `.reveal-up` is the same 0.8s ease-out
+                rise, needs no client JS, and is already neutralised under
+                prefers-reduced-motion in globals.css. */}
+            <div className="reveal-up">
               <ExploreHeader
                 tone="dark"
                 eyebrow={
@@ -106,7 +108,7 @@ export default async function ExploreExperts() {
                   Check back for newly verified experts.
                 </p>
               )}
-            </motion.div>
+            </div>
           </ExploreShell>
         </div>
       </section>
