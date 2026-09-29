@@ -24,6 +24,12 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
   getRazorpayPayoutsService: () => vendor,
 }));
+// `scrubUser` also off-boards Novu, so this test has to stub it or it reaches
+// the real client and reports a vendor failure for a mocked-out scenario.
+// The Novu path has its own coverage in erasure-novu-offboarding.test.ts.
+jest.mock("../../lib/novu/subscriber", () => ({
+  deleteSubscriber: jest.fn(async () => true),
+}));
 
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
 

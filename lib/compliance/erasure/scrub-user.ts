@@ -450,6 +450,30 @@ export async function scrubUser(
     payoutAccounts,
   });
 
+  // Novu (transactional + broadcast email) holds the user's email address and
+  // push tokens. `DELETE /api/user/[id]` has always called `deleteSubscriber`
+  // on both of its branches, but the ADMIN path — `POST
+  // /api/admin/erasure-requests/[id]/process` → this function — never did, so
+  // an erasure executed by an operator left a live mailing-list entry for a
+  // user who had asked to be erased. Calling it here rather than in the route
+  // means every erasure path gets it, including future ones.
+  //
+  // `deleteSubscriber` never throws and never rejects: it resolves `true` on
+  // success *and* when Novu is not configured (nothing was mirrored), and
+  // `false` when the remote delete did not happen. So `false` is the only
+  // signal to act on — there is no exception path to catch, and the try/catch
+  // below is a guard against a future contract change, not the mechanism.
+  const { deleteSubscriber } = await import("@/lib/novu/subscriber");
+  if (!(await deleteSubscriber(userId))) {
+    // The pseudonymous User row is already committed by this point, and a
+    // vendor we could not reach is a retriable problem — not a reason to fail
+    // a completed erasure. It joins `vendorFailures` so the admin queue shows
+    // it rather than it passing silently.
+    vendorFailures.push(
+      "novu: subscriber deletion not confirmed — re-run required",
+    );
+  }
+
   return {
     scrubbed: true,
     pseudonymousId,
