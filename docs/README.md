@@ -337,6 +337,23 @@ Internal team documentation — onboarding, testing guides, and contributor reso
 
 ---
 
+### Market Research
+
+Vendor and pattern research intended to be **reusable in other companies**, not
+just here. Numbered, with the claims register separated from the conclusions so
+a stale fact is visible rather than silently inherited. Read
+[market-research/00-index.md](./market-research/00-index.md) first — it states
+the confidence legend and what is deliberately out of scope.
+
+- [00-index.md](./market-research/00-index.md) - Orientation, re-use method, confidence legend
+- [01-consent-and-terms-landscape.md](./market-research/01-consent-and-terms-landscape.md) - How Indian companies notify a terms change; what the law requires vs what the market does
+- [02-observability-vendors.md](./market-research/02-observability-vendors.md) - Sentry vs SigNoz vs GlitchTip vs CubeAPM vs Datadog vs Better Stack; the recommendation
+- [03-competitor-patterns.md](./market-research/03-competitor-patterns.md) - Mechanisms observed, indexed by pattern rather than by company
+- [04-reusable-substrate.md](./market-research/04-reusable-substrate.md) - **The portable part.** State machines, gate expression, retention engine, jurisdiction model
+- [05-claims-register.md](./market-research/05-claims-register.md) - Every load-bearing claim, its source, its confidence, and what is genuinely open
+
+---
+
 ### Competitors
 
 Competitor analysis and research.
