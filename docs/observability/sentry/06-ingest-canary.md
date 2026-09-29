@@ -89,6 +89,22 @@ rateLimits : 60:default;error;security;attachment:organization:error_usage_excee
 
 The quota is measured against the plan's **included volume**, not against a counter that resets independently of the plan. Upgrading therefore raises the ceiling immediately — the usage already spent is under the new number, and `error_usage_exceeded` clears on the next event. Developer is 5,000 errors/month; Team is 50,000 at $26/mo, and also brings 90-day retention instead of 30 and the `event:read` REST scope that `lib/observability/sentry-issues.ts` needs. So the sequence is: upgrade, then re-run the canary and confirm `healthy: true`. There is no need to wait for the period to roll over.
 
+## Mass events: what each one costs
+
+The question "should we merge or group them" has three different answers depending on which knob is meant, and confusing them is how a reporting mechanism becomes the outage. Measured against the 5,000-error Developer allowance:
+
+| Mechanism                               | Events it costs        | What survives                                                       |
+| --------------------------------------- | ---------------------- | ------------------------------------------------------------------- |
+| Report every occurrence                 | N                      | everything, and nothing left in the budget                          |
+| Shared `fingerprint` (one issue)        | **N** — still N events | grouping in the UI only; the count is real, the budget is not saved |
+| **Throttle** (`INFRA_THROTTLE_MS`)      | ~144/day/class         | one genuine event per window, with a real stack trace               |
+| **Aggregate** (a set, not a repetition) | 1 per run              | the count and the ids, in `extra`                                   |
+| Raise the plan                          | n/a                    | all of it                                                           |
+
+**Grouping into one issue is not grouping into one event.** A shared fingerprint is the cheapest-looking option and it saves nothing: the canary uses one, and each run still costs a stored event. That is precisely how the canary came to cost 8,640 events a month — 173% of the Developer allowance — before it was moved to a 30-minute slot. Only sending fewer _events_ reduces the bill.
+
+**A repetition is throttled, a set is aggregated.** The rule and the reasoning are on the conventions page (`02`), because it is a decision rule rather than a fact about this deployment. The short version: throttle when one failure is happening again and again, because the evidence is one real stack trace and a count you would have to invent; aggregate when one run found many distinct things, because the set is the fact and the ids are the evidence. Aggregating a repetition is the mistake — it replaces a real trace with a number the code computed by discarding events, and that number under-reports exactly when you are trying to size the incident.
+
 ## The standing risk
 
 The canary is wired, but the underlying fragility is unchanged: a 5,000-error monthly allowance is smaller than a single 24-hour dependency outage, and the whole system depends on that allowance never being exhausted. The throttle in `sentry.shared.config.ts` bounds the damage from a _known_ pattern and does so deliberately: `INFRA_THROTTLE_MS` is ten minutes, keyed by error **class** and not by route, and process-local rather than Redis-backed, because Redis _is_ the outage being guarded — a shared limiter needs the downed dependency to answer, and must then either fail open (restoring the firehose) or fail closed (dropping legitimate errors). The resulting bound is warm instances × 6 events/hour/class, against ~3,000/hour unthrottled. Two limits follow from that design and are worth stating plainly. A flood that is _diverse_ rather than repetitive is bounded per class, so the ceiling scales with the number of distinct classes. And a server-side dashboard filter — dropping at ingest, before quota is spent — is the acknowledged follow-up and is not yet built.

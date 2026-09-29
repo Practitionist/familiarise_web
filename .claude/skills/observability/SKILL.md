@@ -35,6 +35,8 @@ An error must be attributable before it is debuggable, and nothing in this domai
 
 **Modelled refusals are warnings.** A full webinar, a credit shortfall, a consent gate — a `BUSINESS_ERROR_CODES`-registered code is `expected: true`, gets re-levelled to warning by `beforeSend`, and must not be an error event. A quota is 5,000 errors a month on Developer; mislabelled business outcomes are how that gets spent in a day, and `INFRA_THROTTLE_MS` in the shared config exists because it happened on 2026-09-21.
 
+**A repetition is throttled; a set is aggregated.** Throttle when one failure recurs (the evidence is one real stack trace; a count would have to be invented, and would under-report exactly when you are sizing an incident). Aggregate when one run found many distinct things (the set is the fact, the ids are the evidence). Never aggregate a repetition. And note that **grouping into one issue is not grouping into one event** — a shared `fingerprint` leaves N events costing N, which is how the ingest canary came to cost 8,640 events a month before its cadence was cut to 30.
+
 **Never attach a person to a synthetic event.** The canary carries a fixed fingerprint so runs collapse into one issue, and carries no user, org, IP or URL. Test events are not evidence about anyone, and a stable user cuid is pseudonymous personal data with DPDP obligations attached — the disclosure sign-off is tracked in `05` and is not optional.
 
 **`SystemEvent` is the row; Sentry is the pager.** For money paths the database row is the truth and survives in `SystemEvent`; Sentry is the notification of it. When they disagree, believe the row. See `/finance`.

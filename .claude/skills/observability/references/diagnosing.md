@@ -105,4 +105,11 @@ If the block is quota, that is a legitimate, dated answer — and the canary is 
 
 **E3** — Check level correctness first ([C](#c-the-event-arrives-at-the-wrong-level)). Modelled outcomes reported as errors are usually the cheapest available reduction.
 
-**E4** — Check whether the `ignoreErrors`/`denyUrls` lists and the breadcrumb path are doing their job, then consider a second sink. `system_events` in Postgres already holds the audit row for money paths, and `lib/observability/betterstack-telemetry.ts` has an out-of-band path that is currently disabled.
+**E4** — Decide throttle vs aggregate before reaching for a plan upgrade, because they fix different shapes:
+
+- **One failure recurring** (`UpstashError` on every request while a dependency is walled off) → **throttle**. `INFRA_THROTTLE_MS` keeps one event per class per 10 min and drops the rest in `beforeSend`; a throttled event never reaches the transport, so it never costs quota. The issue's count then under-reports by design, which is correct — it means "at least one per window", not 3,000.
+- **One run finding many distinct things** (a reconcile pass finding 12 missing ledger transactions) → **aggregate** into one `reportSentryMessage` with the count and ids in `extra`, tagged `expected`. Nothing is discarded, so nothing needs inventing.
+- **Never aggregate a recurrence.** You would replace a real stack trace with a number the code produced by dropping events, and that number silently under-reports during the incident you are trying to size. Events lost to a window boundary, an instance dying mid-window, or a deploy are invisible and uncountable.
+- **Grouping ≠ saving.** A shared `fingerprint` gives N events one issue with a count and costs N. The canary did exactly this and still cost 8,640 events a month until its cadence was cut to 30.
+
+**E5** — Check whether the `ignoreErrors`/`denyUrls` lists and the breadcrumb path are doing their job, then consider a second sink. `system_events` in Postgres already holds the audit row for money paths, and `lib/observability/betterstack-telemetry.ts` has an out-of-band path that is currently disabled.
