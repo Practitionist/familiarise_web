@@ -28,16 +28,19 @@ export function HorizontalRow({
   children,
   heading,
   headerAction,
-  cardWidth = "w-[260px]",
   className,
   label,
 }: {
   children: React.ReactNode;
   heading?: React.ReactNode;
   headerAction?: React.ReactNode;
-  cardWidth?: string;
   className?: string;
-  /** Names the scroll region for assistive tech. */
+  /**
+   * Names the scroll region for assistive tech. There is deliberately NO
+   * `cardWidth` prop: the card sets its own width, and the scroll step is
+   * measured from the first child at press time, so a number passed in here
+   * could only ever disagree with the thing it was meant to describe.
+   */
   label?: string;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);

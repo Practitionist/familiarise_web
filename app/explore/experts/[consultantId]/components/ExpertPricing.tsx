@@ -1,7 +1,5 @@
 "use client";
 
-import Image from "next/image";
-import { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
 import { TIntervalTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,7 +28,6 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
 };
 
 interface ExpertPricingProps {
-  userDetails: User;
   consultantDetails: ConsultantDetailData;
   handleConsultationBooking: (consultationPlanId: string) => Promise<void>;
   handleSubscriptionBooking: (
@@ -51,7 +48,6 @@ interface ExpertPricingProps {
 }
 
 export function ExpertPricing({
-  userDetails,
   consultantDetails,
   handleConsultationBooking,
   handleSubscriptionBooking,
@@ -208,28 +204,19 @@ export function ExpertPricing({
   const hasSubscriptions = subscriptionOptions.length > 0;
 
   return (
-    <div className="sticky top-24 space-y-4">
-      {/* Profile image. Was `rounded-3xl` + `shadow-2xl shadow-black/30` +
-          `ring-1 ring-white/10` — the largest radius and heaviest shadow in
-          the whole explore surface, on a photo. Now the media radius. */}
-      <div className="overflow-hidden rounded-media border border-border shadow-elevation-2">
-        <div className="aspect-[4/3] relative">
-          <Image
-            alt="Profile"
-            className="object-cover"
-            fill
-            src={userDetails.image || "/placeholder.svg"}
-            sizes="(max-width: 768px) 100vw, 400px"
-          />
-        </div>
-      </div>
+    /* NOT sticky.
 
+       Sticky helps when an element is shorter than the viewport and you want
+       it to follow. This panel carries a calendar and a slot grid, so it runs
+       ~1,800px in a ~750px viewport: `sticky top-24` pinned the top 750px and
+       made the remaining ~1,050px — including the slot list and the booking
+       button — unreachable except by scrolling the page past a pinned header.
+       The grid now puts this in a real second column, so it is simply a column
+       of content and scrolls with the biography. */
+    <div className="space-y-4">
       {/* The booking panel. See components/explore/PricingPanel.tsx for why
           this is no longer a dark-glass island with a 24px radius. */}
-      <PricingPanel
-        title="Book a session"
-        eyebrow="Choose your preferred option"
-      >
+      <PricingPanel title="Book a session" eyebrow="Choose your option">
         <div className="text-center">
           {/* #1703 D1 — metadata only: how this expert takes bookings.
               #1775 C-6 — consultations only; a plan is always paid at purchase. */}

@@ -3,20 +3,11 @@
 import { PlanLevel } from "@prisma/client";
 import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import {
-  GraduationCap,
-  Video,
-  Users,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
-import {
-  buildProgramHeroStats,
-  type ProgramStatKey,
-} from "@/lib/data/public-stats";
+import { buildProgramHeroStats } from "@/lib/data/public-stats";
 import {
   useCuratedPrograms,
   useInfiniteScroll,
@@ -26,7 +17,6 @@ import {
   useTopicsWithCount,
 } from "./hooks";
 import ProgramTabs from "./components/ProgramTabs";
-import SectionHeader from "./components/SectionHeader";
 import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips from "./components/FilterChips";
 import StaticTopRows from "./components/StaticTopRows";
@@ -59,12 +49,6 @@ interface ProgramsInteractiveContentProps {
 // stats read returned null, and the data path kept the "25K+" regardless, so
 // that one was fabricated even when the others were real. A figure now either
 // comes from the database or is not shown.
-const PROGRAM_STAT_ICONS: Record<ProgramStatKey, LucideIcon> = {
-  classes: GraduationCap,
-  webinars: Video,
-  learners: Users,
-};
-
 export default function ProgramsInteractiveContent({
   initialTrending,
   initialNewest,
@@ -185,6 +169,18 @@ export default function ProgramsInteractiveContent({
 
   const uniqueLevels = availableLevels;
 
+  // #1490's rule, applied to the listing: the total is only honest when no
+  // filter is narrowing the set.
+  const resultSummary = useMemo(() => {
+    const total = stats?.publishedClassCount;
+    const all = (stats?.publishedClassCount ?? 0) + (stats?.publishedWebinarCount ?? 0);
+    if (!total) return null;
+    if (chips.length === 0) {
+      return `${all} program${all === 1 ? "" : "s"}`;
+    }
+    return `${filteredAndSortedPrograms.length} matching`;
+  }, [stats, chips.length, filteredAndSortedPrograms.length]);
+
   return (
     <main className="min-h-screen bg-background">
       {/* Hero band.
@@ -204,7 +200,7 @@ export default function ProgramsInteractiveContent({
           <div className="absolute -left-24 -top-24 h-[480px] w-[480px] rounded-full bg-brand/15 blur-[120px] motion-reduce:hidden" />
           <div className="absolute -bottom-32 -right-16 h-[420px] w-[420px] rounded-full bg-brand/10 blur-[110px] motion-reduce:hidden" />
         </div>
-        <div className="relative py-20 md:py-28">
+        <div className="relative py-12 md:py-16">
           <ExploreShell width="wide">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -224,24 +220,15 @@ export default function ProgramsInteractiveContent({
                     Classes &amp; <span className="text-brand">webinars</span>
                   </>
                 }
-                description="Expand your knowledge with expert-led classes and live webinars. Learn at your own pace, or join an interactive session."
+                description="Expert-led classes and live webinars. Learn at your own pace, or join an interactive session."
                 meta={
                   stats.length > 0
                     ? stats.map((stat) => {
-                        const Icon = PROGRAM_STAT_ICONS[stat.key];
                         return (
                           <ExploreStat
                             key={stat.key}
                             tone="dark"
-                            value={
-                              <span className="inline-flex items-center gap-2">
-                                <Icon
-                                  className="h-4 w-4 text-brand"
-                                  aria-hidden="true"
-                                />
-                                {stat.display}
-                              </span>
-                            }
+                            value={stat.display}
                             label={stat.label}
                           />
                         );
@@ -281,35 +268,30 @@ export default function ProgramsInteractiveContent({
             onTopicSelect={handleTopicSelect}
           />
 
-          {/* All Programs Section */}
-          <div id="all-programs">
-            <SectionHeader title="All Programs" />
-
-            {/* Advanced Filters */}
-            <motion.div
-              className="mb-8"
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5 }}
-            >
-              <AdvancedFilters
-                filters={filters}
-                onFiltersChange={updateFilters}
-                localSearch={localSearchValue}
-                onLocalSearchChange={onLocalSearchChange}
-                selectedLevel={selectedLevel}
-                onLevelChange={setSelectedLevel}
-                uniqueLevels={uniqueLevels}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-                topics={topicsWithCount}
-              />
-            </motion.div>
+          {/* All Programs Section. The nav deep-links to #all-programs, so it
+              clears the fixed header and the tabs above it. */}
+          <div
+            id="all-programs"
+            className="scroll-mt-[calc(var(--header-height,5rem)+5rem)]"
+          >
+            <AdvancedFilters
+              filters={filters}
+              onFiltersChange={updateFilters}
+              localSearch={localSearchValue}
+              onLocalSearchChange={onLocalSearchChange}
+              selectedLevel={selectedLevel}
+              onLevelChange={setSelectedLevel}
+              uniqueLevels={uniqueLevels}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              topics={topicsWithCount}
+              resultSummary={resultSummary}
+              activeFilterCount={chips.length}
+            />
 
             {/* Active Filter Chips */}
             {chips.length > 0 && (
-              <div className="mb-6">
+              <div className="mt-4">
                 <FilterChips
                   filters={chips}
                   onRemove={removeChip}

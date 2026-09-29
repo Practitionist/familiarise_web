@@ -1,488 +1,294 @@
 "use client";
 
 import { memo } from "react";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import Image from "next/image";
 import Link from "next/link";
-import type { IConsultantCardData } from "@/types/consultant";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import {
-  Star,
-  Clock,
-  Briefcase,
-  Globe,
   ArrowRight,
-  CheckCircle2,
   BadgeCheck,
   Building2,
+  Clock3,
+  Globe,
+  Star,
 } from "lucide-react";
-import { useCurrency } from "@/hooks/useCurrency";
+
 import { ExploreCard } from "@/components/explore/ExploreCard";
+import { exploreHref } from "@/lib/explore/hrefs";
+import { useCurrency } from "@/hooks/useCurrency";
+import type { IConsultantCardData } from "@/types/consultant";
 
-interface ConsultantCardProps {
+/**
+ * The expert result card.
+ *
+ * ── Why this is 150px and not 490px ─────────────────────────────────────────
+ * The previous card was a two-column slab: profile block on the left, and a
+ * 380–420px rail on the right holding a segmented duration control, a price and
+ * a booking button. At 1,304px wide it rendered 490px tall, so the results list
+ * showed **1.5 experts per viewport** and the page ran 9,056px for 14 experts.
+ *
+ * The original code recorded the reason it never became a grid:
+ *
+ *   > "ConsultantCard is a two-column card (profile + plan tabs) that collapses
+ *   >  badly inside a narrow grid cell, so the sidebar grid was removed."
+ *
+ * That is the trap: the card was too wide to grid *because* it was too wide.
+ * The fix is to make the card a card — one column, one job, "who is this and
+ * what does it cost" — and let the profile page and the quick-view sheet own
+ * the booking rail, which is where the duration selector belongs. You choose a
+ * duration for one expert, not while scanning fourteen.
+ *
+ * Everything the card showed is still here. What moved:
+ *   - the duration segmented control → the profile's booking panel
+ *   - the two BadgeRows (field + skills) → one row of at most three chips,
+ *     overflow collapsed to "+N", so the card height does not grow with the
+ *     data
+ *   - the 3-line meta stack (experience / location / languages) → a single meta
+ *     line, one fact per column, the rest in the sheet
+ *
+ * `plan` is derived once here rather than in the page, so the "from" price on
+ * the card and the price on the profile cannot disagree.
+ */
+function ConsultantCardImpl({
+  consultant,
+  onSelect,
+}: {
   consultant: IConsultantCardData;
-  metadata: {
-    domains: { id: string; name: string }[];
-    subdomains: { id: string; name: string }[];
-    tags: { id: string; name: string }[];
-  } | null;
-  /** Opens the quick-view details drawer instead of navigating. */
+  /** Opens the quick-view sheet. Kept as a button rather than making the whole
+   *  card a link, so the sheet is a real activation for keyboard users — the
+   *  card link is the primary path and the button is the shortcut. */
   onSelect?: (consultant: IConsultantCardData) => void;
-}
+}) {
+  const { formatPrice } = useCurrency();
+  const href = exploreHref.experts.detail(consultant.id);
 
-const ConsultantInfo = ({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string | null | undefined;
-}) => (
-  <div className="flex items-center gap-2 text-sm">
-    <Icon className="w-4 h-4 text-muted-foreground/70" />
-    <span className="text-muted-foreground">{label}:</span>
-    <span className="text-foreground font-medium">
-      {value || "Not specified"}
-    </span>
-  </div>
-);
+  // Cheapest bookable price, whichever family it belongs to. A card that says
+  // "from ₹X" and links to a profile whose cheapest option is ₹Y is worse than
+  // no price at all.
+  const fromPrice = minBookablePrice(consultant);
 
-/**
- * A labelled row of badges. The label column is fixed-width so the "Field" and
- * "Skills" rows align with each other and with the ConsultantInfo rows above.
- */
-const BadgeRow = ({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) => (
-  <div className="flex items-start gap-2 mt-2">
-    <span className="w-16 shrink-0 pt-1.5 text-sm text-muted-foreground">
-      {label}:
-    </span>
-    <div className="flex flex-wrap gap-2">{children}</div>
-  </div>
-);
-
-interface SubscriptionPlanCardData {
-  price: number;
-  durationInMonths: number;
-  sessionsPerWeek: number | null;
-  emailSupport: string | null;
-  totalSessions: number | null;
-}
-
-/**
- * Returns true if `value` is a non-empty string that isn't one of the
- * placeholder sentinels users/seeds sometimes leave behind ("none", "n/a", …).
- */
-const isMeaningfulText = (
-  value: string | null | undefined,
-): value is string => {
-  if (!value) return false;
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  return !/^(none|n\/?a|na|null|nil|tbd|-+|\.+)$/i.test(trimmed);
-};
-
-const SubscriptionPlanCard = ({
-  plan,
-  formatPrice,
-}: {
-  plan: SubscriptionPlanCardData;
-  formatPrice: (amountINR: number) => string;
-}) => {
-  const formatDuration = (months: number) => {
-    switch (months) {
-      case 1:
-        return "1 month";
-      case 3:
-        return "3 months";
-      case 6:
-        return "6 months";
-      case 12:
-        return "1 year";
-      default:
-        return `${months} months`;
-    }
-  };
+  const chips = buildChips(consultant);
+  const languages = consultant.languages?.slice(0, 2) ?? [];
 
   return (
-    <div className="bg-card rounded-control p-5 border border-border">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
-        <div className="text-2xl sm:text-3xl font-bold text-foreground">
-          {formatPrice(plan.price)}
-        </div>
-        <div className="text-xs sm:text-sm text-muted-foreground font-medium bg-muted px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
-          {formatDuration(plan.durationInMonths)}
-        </div>
-      </div>
-      <div className="space-y-2.5">
-        {plan.sessionsPerWeek !== null &&
-          plan.sessionsPerWeek !== undefined &&
-          plan.sessionsPerWeek > 0 && (
-            <div className="flex items-center gap-2 text-sm">
-              <CheckCircle2 className="w-4 h-4 text-success" />
-              <span className="text-muted-foreground">
-                {plan.sessionsPerWeek}{" "}
-                {plan.sessionsPerWeek === 1 ? "session" : "sessions"}
-                /week
+    <div className="relative h-full">
+      <Link
+        href={href}
+        aria-label={`View ${consultant.user.name}'s profile`}
+        className="block h-full rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        <ExploreCard className="flex h-full items-start gap-4 p-4 sm:gap-5 sm:p-5">
+          {/* Portrait. 48px is enough to recognise a face at this card size;
+              the previous 80px ate a fifth of the width for no extra signal. */}
+          <div className="relative h-12 w-12 shrink-0 sm:h-14 sm:w-14">
+            <ConsultantAvatar consultant={consultant} />
+            {consultant.isVerified && (
+              <span
+                className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-brand text-brand-foreground ring-2 ring-card"
+                title="Verified expert"
+              >
+                <BadgeCheck className="h-2.5 w-2.5" aria-hidden="true" />
+                <span className="sr-only">Verified</span>
               </span>
-            </div>
-          )}
-        {plan.emailSupport && (
-          <div className="flex items-center gap-2 text-sm">
-            <CheckCircle2 className="w-4 h-4 text-success" />
-            <span className="text-muted-foreground capitalize">
-              {plan.emailSupport.toLowerCase()} email support
-            </span>
+            )}
           </div>
-        )}
-        {plan.totalSessions !== null &&
-          plan.totalSessions !== undefined &&
-          plan.totalSessions > 0 && (
-            <div className="flex items-center gap-2 text-sm">
-              <CheckCircle2 className="w-4 h-4 text-success" />
-              <span className="text-muted-foreground">
-                {plan.totalSessions}{" "}
-                {plan.totalSessions === 1 ? "session" : "sessions"} total
-              </span>
+
+          <div className="min-w-0 flex-1">
+            {/* ── Identity ── */}
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="truncate font-display text-[0.9375rem] font-semibold leading-tight tracking-tight text-foreground">
+                {consultant.user.name}
+              </h3>
+              {consultant.rating !== null && (
+                <span className="tnum flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                  <Star
+                    className="h-3 w-3 fill-warning text-warning"
+                    aria-hidden="true"
+                  />
+                  {consultant.rating.toFixed(1)}
+                  {typeof consultant.reviewCount === "number" && (
+                    <span className="text-muted-foreground/70">
+                      ({consultant.reviewCount})
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
+
+            {consultant.headline && (
+              <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                {consultant.headline}
+              </p>
+            )}
+
+            {/* ── One meta line ── */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {consultant.organizationBadge ? (
+                <MetaItem icon={Building2}>
+                  {consultant.organizationBadge.name}
+                </MetaItem>
+              ) : consultant.isIndependent ? (
+                <MetaItem>Independent</MetaItem>
+              ) : null}
+
+              {typeof consultant.experience === "number" &&
+                consultant.experience > 0 && (
+                  <MetaItem icon={Clock3}>
+                    {consultant.experience} yr experience
+                  </MetaItem>
+                )}
+
+              {languages.length > 0 && (
+                <MetaItem icon={Globe}>{languages.join(", ")}</MetaItem>
+              )}
+            </div>
+
+            {/* ── Chips: hard-capped so the card height is data-independent ── */}
+            {chips.length > 0 && (
+              <ul className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                {chips.map((chip) => (
+                  <li key={chip.key}>
+                    <span className="inline-flex items-center rounded-chip border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      {chip.label}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </ExploreCard>
+      </Link>
+
+      {/* ── The price, and the two things you can do ──────────────────────────
+          A separate row rather than a right-hand column: at 2-up the card is
+          ~640px wide, and splitting off a 200px price rail would re-create the
+          two-column slab this card exists to stop. */}
+      <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-subtle pt-3">
+        {fromPrice !== null ? (
+          <p className="flex items-baseline gap-1.5">
+            <span className="text-xs text-muted-foreground">from</span>
+            <span className="tnum font-display text-base font-bold text-foreground">
+              {formatPrice(fromPrice)}
+            </span>
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Ask about availability
+          </p>
+        )}
+
+        <div className="flex items-center gap-1.5">
+          {onSelect && (
+            <button
+              type="button"
+              onClick={() => onSelect(consultant)}
+              className="rounded-control px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Quick view
+            </button>
           )}
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-brand-foreground-subtle">
+            View profile
+            <ArrowRight
+              className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none"
+              aria-hidden="true"
+            />
+          </span>
+        </div>
       </div>
     </div>
   );
-};
+}
 
-export const ConsultantCard = memo(function ConsultantCard({
-  consultant,
-  metadata: _metadata,
-  onSelect,
-}: Readonly<ConsultantCardProps>) {
-  const { formatPrice } = useCurrency();
-  const profileHref = `/explore/experts/${consultant.id}`;
-
-  const sortedPlans =
-    consultant.subscriptionPlans
-      ?.slice()
-      .sort((a, b) => a.durationInMonths - b.durationInMonths) || [];
-
-  // Count how many plans share each duration so we can disambiguate labels
-  // when multiple plans have the same `durationInMonths`.
-  const durationCounts = sortedPlans.reduce<Record<number, number>>(
-    (acc, plan) => {
-      acc[plan.durationInMonths] = (acc[plan.durationInMonths] || 0) + 1;
-      return acc;
-    },
-    {},
-  );
-  // Trial CTA is driven by real plan data. Previously it rendered
-  // unconditionally, so an expert offering no trial — or one whose trial is
-  // priced — showed a button that dead-ended. Cheapest trial across the
-  // consultant's plans is the honest headline price.
-  const trialPlans = sortedPlans.filter((plan) => plan.trialEnabled);
-  const trialOffer =
-    trialPlans.length > 0
-      ? {
-          priceInPaise: Math.min(
-            ...trialPlans.map((plan) => plan.trialPriceInPaise ?? 0),
-          ),
-        }
-      : null;
-
-  const durationSeen: Record<number, number> = {};
-  const tabLabels = sortedPlans.map((plan) => {
-    const base = `${plan.durationInMonths} Mo`;
-    if (durationCounts[plan.durationInMonths] > 1) {
-      durationSeen[plan.durationInMonths] =
-        (durationSeen[plan.durationInMonths] || 0) + 1;
-      return `${base} (${durationSeen[plan.durationInMonths]})`;
-    }
-    return base;
-  });
-
+/** A small labelled fact. Not a component in its own right — three uses. */
+function MetaItem({
+  icon: Icon,
+  children,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
   return (
-    <ExploreCard className="overflow-hidden">
-      <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Section: Consultant Info. Clicking anywhere here (except
-            nested links/buttons) opens the quick-view drawer; the primary
-            CTA on the right navigates to the full profile page. No
-            role="button" on the container — button semantics would flatten
-            the nested org-badge link for assistive tech — so keyboard/AT
-            users get the native Quick view button in the header instead. */}
-        <div
-          className={`relative flex-grow ${onSelect ? "cursor-pointer" : ""}`}
-          {...(onSelect
-            ? {
-                onClick: (e: React.MouseEvent) => {
-                  // Let nested interactive elements (org badge link, Quick
-                  // view button) behave normally instead of opening the
-                  // drawer twice.
-                  if ((e.target as HTMLElement).closest("a,button")) return;
-                  onSelect(consultant);
-                },
-              }
-            : {})}
-        >
-          {/* Header */}
-          <div className="flex items-start gap-4 mb-6">
-            {onSelect && (
-              <button
-                type="button"
-                onClick={() => onSelect(consultant)}
-                className="absolute right-0 top-0 z-10 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                Quick view
-              </button>
-            )}
-            <div className="relative h-20 w-20 flex-shrink-0">
-              <Image
-                alt={`Portrait of ${consultant.user.name}`}
-                className="rounded-card object-cover ring-2 ring-muted"
-                src={consultant.user.image || "/placeholder-user.jpg"}
-                fill
-                // 80×80 slot — without sizes, `fill` fetches a 100vw image (#932 perf).
-                sizes="80px"
-              />
-              {/* TODO: Add real presence indicator when online tracking is implemented */}
-            </div>
-            <div className="flex-1 min-w-0">
-              {/* Name and org badge share one row, so neither may wrap: a long
-                  org name ("Indian Institute of Technology Madras") otherwise
-                  breaks onto a second line and squeezes the name into wrapping
-                  too. Both truncate instead, and the badge keeps its `title`
-                  so the full name is still reachable on hover. */}
-              <div className="flex items-center gap-1.5 min-w-0">
-                <h3 className="truncate text-xl font-bold text-foreground group-hover:text-brand-foreground-subtle transition-colors">
-                  {consultant.user.name}
-                </h3>
-                {consultant.isVerified && (
-                  <span title="Verified by Familiarise" className="shrink-0">
-                    {/* Verification is an attribute, not a semantic status —
-                        the off-brand blue was the only chromatic accent here. */}
-                    <BadgeCheck className="w-5 h-5 text-foreground" />
-                  </span>
-                )}
-                {consultant.organizationBadge && (
-                  <Link
-                    href={`/explore/enterprise/organisations/${consultant.organizationBadge.slug}`}
-                    title={consultant.organizationBadge.name}
-                    onClick={(e) => e.stopPropagation()}
-                    className="relative z-10 min-w-0"
-                  >
-                    <Badge
-                      variant="outline"
-                      className="max-w-[180px] whitespace-nowrap border-border text-foreground text-xs px-1.5 py-0 hover:bg-muted transition-colors"
-                    >
-                      <Building2 className="w-3 h-3 mr-0.5 shrink-0" />
-                      <span className="truncate">
-                        {consultant.organizationBadge.name}
-                      </span>
-                    </Badge>
-                  </Link>
-                )}
-              </div>
-              {/* #705 — a null score means too few rated sessions to publish
-                  one. Say that rather than printing 0.0. */}
-              <div className="flex items-center gap-2 mt-2">
-                {consultant.rating !== null ? (
-                  <>
-                    <div className="flex items-center gap-1">
-                      <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                      <span className="font-semibold text-foreground">
-                        {consultant.rating.toFixed(1)}
-                      </span>
-                    </div>
-                    <span className="text-muted-foreground/70">•</span>
-                  </>
-                ) : null}
-                <span className="text-sm text-muted-foreground">
-                  {consultant.reviewCount ?? consultant.reviews?.length ?? 0}{" "}
-                  reviews
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Description — only render when it's meaningful free-form text */}
-          {isMeaningfulText(consultant.description) && (
-            <p className="text-muted-foreground leading-relaxed mb-6 line-clamp-2">
-              {consultant.description.trim()}
-            </p>
-          )}
-
-          {/* Meta Info */}
-          <div className="space-y-3 mb-6">
-            {/* Headline - first line */}
-            <ConsultantInfo
-              icon={Briefcase}
-              label="Headline"
-              value={consultant.headline}
-            />
-            {/* Experience and Domain - second line together */}
-            <div className="flex items-center gap-6">
-              <ConsultantInfo
-                icon={Clock}
-                label="Experience"
-                value={
-                  consultant.experience
-                    ? `${consultant.experience} years`
-                    : null
-                }
-              />
-              {/* Domain moved to the labelled badge row below — it was stated
-                  twice, once here and once as the first badge. */}
-            </div>
-            {/* Languages */}
-            {consultant.languages && consultant.languages.length > 0 && (
-              <ConsultantInfo
-                icon={Globe}
-                label="Languages"
-                value={consultant.languages.join(", ")}
-              />
-            )}
-          </div>
-
-          {/* Company Logos */}
-          {consultant.user.workExperiences &&
-            consultant.user.workExperiences.length > 0 && (
-              <div className="flex items-center gap-2 mb-4">
-                {consultant.user.workExperiences.slice(0, 3).map((exp, i) => (
-                  <CompanyLogo
-                    key={`${consultant.id}-company-${i}`}
-                    companyName={exp.company}
-                    companyDomain={exp.companyDomain ?? undefined}
-                    size={36}
-                    className="border-border"
-                  />
-                ))}
-                <span className="text-sm text-muted-foreground ml-1">
-                  {consultant.user.workExperiences[0].company}
-                  {consultant.user.workExperiences.length > 1 &&
-                    ` +${consultant.user.workExperiences.length - 1}`}
-                </span>
-              </div>
-            )}
-
-          {/* Domain & Subdomains. Labelled rather than a bare run of pills:
-              domain, subdomain and skill badges are visually interchangeable,
-              so without a label the reader can't tell which taxonomy they're
-              looking at. */}
-          {(consultant.domain?.name || consultant.subDomains.length > 0) && (
-            <BadgeRow label="Field">
-              {consultant.domain?.name && (
-                <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1">
-                  {consultant.domain.name}
-                </Badge>
-              )}
-              {consultant.subDomains.slice(0, 2).map((sd) => (
-                <Badge
-                  key={`${consultant.id}-subdomain-${sd.id}`}
-                  variant="outline"
-                  className="border-border text-muted-foreground px-3 py-1"
-                >
-                  {sd.name}
-                </Badge>
-              ))}
-            </BadgeRow>
-          )}
-
-          {/* Tags */}
-          {consultant.tags.length > 0 && (
-            <BadgeRow label="Skills">
-              {consultant.tags.slice(0, 3).map((t) => (
-                <Badge
-                  key={`${consultant.id}-tag-${t.id}`}
-                  className="bg-muted text-muted-foreground hover:bg-muted/80 px-3 py-1"
-                >
-                  {t.name}
-                </Badge>
-              ))}
-            </BadgeRow>
-          )}
-        </div>
-
-        {/* Right Section: Subscription Plans & Actions */}
-        <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
-          <div className="bg-muted rounded-control p-4">
-            {sortedPlans.length > 0 ? (
-              <Tabs defaultValue={sortedPlans[0].id} className="w-full">
-                <TabsList className="mb-4 w-full rounded-control border border-border bg-card p-1">
-                  {sortedPlans.map((plan, index) => (
-                    <TabsTrigger
-                      key={`${consultant.id}-tab-trigger-${plan.id}`}
-                      value={plan.id}
-                      className="flex-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-md text-sm font-medium transition-all duration-200"
-                    >
-                      {tabLabels[index]}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-                {sortedPlans.map((plan) => (
-                  <TabsContent
-                    key={`${consultant.id}-tab-content-${plan.id}`}
-                    value={plan.id}
-                  >
-                    <SubscriptionPlanCard
-                      plan={plan}
-                      formatPrice={formatPrice}
-                    />
-                  </TabsContent>
-                ))}
-              </Tabs>
-            ) : (
-              <div className="text-center text-muted-foreground py-8">
-                <p className="text-sm">No subscription plans available</p>
-              </div>
-            )}
-          </div>
-
-          {/* Primary CTA navigates to the full profile page (wrapped in
-              <Link> via Button asChild so the browser context menu offers
-              "Open in new tab" / "Copy link"). The card body opens the
-              quick-view drawer instead. */}
-          <div className="flex flex-col gap-2">
-            <Button
-              asChild
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-control transition-all"
-            >
-              <Link href={profileHref}>
-                <span>View Profile</span>
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Link>
-            </Button>
-            <div
-              className={`grid gap-2 ${trialOffer ? "grid-cols-2" : "grid-cols-1"}`}
-            >
-              {trialOffer && (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-control text-sm font-medium"
-                >
-                  <Link href={`${profileHref}?action=trial`}>
-                    {trialOffer.priceInPaise > 0
-                      ? `Trial · ${formatPrice(trialOffer.priceInPaise)}`
-                      : "Free intro call"}
-                  </Link>
-                </Button>
-              )}
-              <Button
-                asChild
-                variant="outline"
-                className="h-10 rounded-control border-border text-sm font-medium text-muted-foreground hover:bg-muted"
-              >
-                <Link href={`${profileHref}?action=book`}>Book session</Link>
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </ExploreCard>
+    <span className="inline-flex min-w-0 items-center gap-1">
+      {Icon && <Icon className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />}
+      <span className="truncate">{children}</span>
+    </span>
   );
-});
+}
+
+/** The portrait, with the same initial-tile fallback the rest of the app uses. */
+function ConsultantAvatar({
+  consultant,
+}: {
+  consultant: IConsultantCardData;
+}) {
+  const src =
+    consultant.user.profileDisplayImage || consultant.user.image || null;
+  const initial = (consultant.user.name || "?").trim().charAt(0).toUpperCase();
+
+  if (!src) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded-card bg-brand-subtle font-display text-lg font-semibold text-brand-foreground-subtle">
+        {initial}
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      className="h-full w-full rounded-card object-cover"
+    />
+  );
+}
+
+/**
+ * Domain, then subdomains, then tags — most significant first, capped at three
+ * with an overflow count. The previous card rendered every field and every
+ * skill as its own BadgeRow, so a consultant with 12 skills produced a card
+ * half again as tall as one with 3.
+ */
+function buildChips(consultant: IConsultantCardData) {
+  const out: { key: string; label: string }[] = [];
+  if (consultant.domain) {
+    out.push({ key: `d-${consultant.domain.id}`, label: consultant.domain.name });
+  }
+  for (const sub of consultant.subDomains ?? []) {
+    if (out.length >= 2) break;
+    out.push({ key: `s-${sub.id}`, label: sub.name });
+  }
+  for (const tag of consultant.tags ?? []) {
+    if (out.length >= 2) break;
+    out.push({ key: `t-${tag.id}`, label: tag.name });
+  }
+
+  const total =
+    1 +
+    (consultant.subDomains?.length ?? 0) +
+    (consultant.tags?.length ?? 0);
+  const rest = total - out.length;
+  if (rest > 0) out.push({ key: "rest", label: `+${rest}` });
+
+  return out.slice(0, 4);
+}
+
+/**
+ * The cheapest bookable price across both plan families, or null.
+ *
+ * The old card's rail showed the *selected* duration's price, which meant the
+ * number on the card changed as the visitor clicked between 1h / 2h / 4h — so
+ * two cards side by side were not comparable, and a card's headline price was
+ * whatever duration happened to be active.
+ */
+function minBookablePrice(
+  consultant: IConsultantCardData,
+): number | null {
+  const prices = [
+    ...(consultant.consultationPlans ?? []).map((p) => p.price),
+    ...(consultant.subscriptionPlans ?? []).map((p) => p.price),
+  ].filter((p) => typeof p === "number" && p > 0);
+  return prices.length > 0 ? Math.min(...prices) : null;
+}
+
+const ConsultantCard = memo(ConsultantCardImpl);
+export default ConsultantCard;

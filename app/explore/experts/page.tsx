@@ -65,7 +65,7 @@ export default async function ExploreExperts() {
           <div className="absolute -left-24 -top-24 h-[480px] w-[480px] rounded-full bg-brand/15 blur-[120px] motion-reduce:hidden" />
           <div className="absolute -bottom-32 -right-16 h-[420px] w-[420px] rounded-full bg-brand/10 blur-[110px] motion-reduce:hidden" />
         </div>
-        <div className="relative py-20 md:py-28">
+        <div className="relative py-12 md:py-16">
           <ExploreShell width="wide">
             {/* The hero reveal is a CSS animation, not framer-motion.
                 This file is a SERVER component (it is ISR-prerendered), and a
@@ -89,7 +89,7 @@ export default async function ExploreExperts() {
                     <span className="text-brand">mentor</span>
                   </>
                 }
-                description="Ready to level up? Our amazing mentors are here to guide you. Connect with industry experts who understand your journey."
+                description="Connect with industry experts who understand where you want to go."
                 meta={hasHeroStats ? (
                   <>
                     {heroStats.map((stat) => (

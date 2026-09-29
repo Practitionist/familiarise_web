@@ -24,13 +24,20 @@ export function CategoryGrid({
   if (isLoading) return <CategoryGridSkeleton count={10} />;
   if (topics.length === 0) return null;
 
+  // Name → id, for the same reason as the experts shim: the shared grid links
+  // by name, the filter takes an id.
+  const idByName = new Map(topics.map((t) => [t.name, t.id]));
+
   return (
     <SharedCategoryGrid
       categories={topics}
       noun={["program", "programs"]}
       icon={Hash}
       heading="Browse by category"
-      onSelect={onTopicSelect}
+      onSelect={(name) => {
+        const id = idByName.get(name);
+        if (id) onTopicSelect?.(id);
+      }}
     />
   );
 }

@@ -405,110 +405,58 @@ export function ExpertProfileClient({
         </div>
       </div>
 
-      {/* Main Content Area - Profile, About, Availability + Pricing
+      {/* One grid, one row, two columns.
 
-          One grid instead of three separate `flex-col xl:flex-row` rows, two of
-          which existed only to hang a blank `w-[450px] 2xl:w-[500px]` spacer
-          div beside Classes & Webinars and Reviews so they would not run under
-          the pricing rail. The rail width is now a single named column. */}
-      <div className="w-full px-4 md:px-8 lg:px-8 py-8 md:py-12">
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
-          {/* Main Content */}
+          This was three stacked `grid` rows, two of which existed only to hang a
+          blank spacer `<div>` so that a section would not run underneath the
+          booking rail. With the rail at ~1,825px, that made row 1 ~1,825px tall
+          and left the last 200px of the left column as dead space beside an
+          empty cell. A single row lets each column size itself: the rail does
+          not stretch the biography, and the biography does not shorten the
+          rail. */}
+      <div className="w-full px-4 py-8 sm:px-6 md:py-10 lg:px-8">
+        <div className="grid grid-cols-1 items-start gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
+          {/* ── Left: everything about the expert ── */}
           <motion.div
-            className="min-w-0"
-            initial={{ opacity: 0, y: 20 }}
+            className="min-w-0 space-y-6"
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
+            transition={{ duration: 0.4 }}
           >
-            <div className="space-y-8">
-              <ProfileHeader
-                userDetails={userDetails}
-                consultantDetails={consultantDetails}
-                reviewCount={consultantDetails._count.reviews}
-              />
-
-              <AboutSection
-                userDetails={userDetails}
-                consultantDetails={consultantDetails}
-              />
-
-              <ExperienceSection
-                workExperiences={userDetails.workExperiences || []}
-                education={userDetails.education || []}
-                certifications={userDetails.certifications || []}
-              />
-
-              {/* Gated on timezone resolution: the overview used to fire
-                  immediately with the "UTC" fallback and then refire with the
-                  real zone — a third, wrong-zone allocation compute per visit.
-                  One effect-tick delay is invisible inside the page fade-in. */}
-              {!isTimezoneLoading && timezone ? (
-                <ConsultantAvailability
-                  consultantDetails={consultantDetails}
-                  timezone={timezone}
-                  bypassRef={bypassCacheOnce}
-                />
-              ) : null}
-            </div>
-          </motion.div>
-
-          {/* Sidebar - Pricing */}
-          <motion.div
-            ref={pricingRef}
-            className="min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-          >
-            <ExpertPricing
+            <ProfileHeader
               userDetails={userDetails}
               consultantDetails={consultantDetails}
-              handleConsultationBooking={handleConsultationBooking}
-              handleSubscriptionBooking={handleSubscriptionBooking}
-              selectedDate={selectedDate}
-              setSelectedDate={setSelectedDate}
-              currentDate={currentDate}
-              setCurrentDate={setCurrentDate}
-              renderCalendar={renderCalendar}
-              slotTimings={slotTimings}
-              selectedSlot={selectedSlot}
-              setSelectedSlot={setSelectedSlot}
-              timezone={timezone || "UTC"}
-              autoOpenTrial={autoOpenTrial}
-              onRefreshSlots={refreshSlots}
+              reviewCount={consultantDetails._count.reviews}
             />
-          </motion.div>
-        </div>
-      </div>
 
-      {/* Classes & Webinars — column 1, so the pricing rail's own height does
-          not stretch it. Same grid, no spacer div. */}
-      <div className="w-full px-4 pb-8 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
-          <motion.div
-            className="min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-          >
+            <AboutSection
+              userDetails={userDetails}
+              consultantDetails={consultantDetails}
+            />
+
             <ClassesAndWebinars
               classPlans={consultantDetails.classPlans}
               webinarPlans={consultantDetails.webinarPlans}
             />
-          </motion.div>
-          <div aria-hidden="true" className="hidden xl:block" />
-        </div>
-      </div>
 
-      {/* Reviews */}
-      <div className="w-full px-4 pb-12 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
-          <motion.div
-            className="min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-          >
+            <ExperienceSection
+              workExperiences={userDetails.workExperiences || []}
+              education={userDetails.education || []}
+              certifications={userDetails.certifications || []}
+            />
+
+            {/* Gated on timezone resolution: the overview used to fire
+                immediately with the "UTC" fallback and then refire with the
+                real zone — a third, wrong-zone allocation compute per visit.
+                One effect-tick delay is invisible inside the page fade-in. */}
+            {!isTimezoneLoading && timezone ? (
+              <ConsultantAvailability
+                consultantDetails={consultantDetails}
+                timezone={timezone}
+                bypassRef={bypassCacheOnce}
+              />
+            ) : null}
+
             <ReviewsSection
               reviews={reviews}
               reviewTracks={reviewTracks}
@@ -534,9 +482,35 @@ export function ExpertProfileClient({
               }
             />
           </motion.div>
-          <div aria-hidden="true" className="hidden xl:block" />
+
+          {/* ── Right: book a session ── */}
+          <motion.div
+            ref={pricingRef}
+            className="min-w-0"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.08 }}
+          >
+            <ExpertPricing
+              consultantDetails={consultantDetails}
+              handleConsultationBooking={handleConsultationBooking}
+              handleSubscriptionBooking={handleSubscriptionBooking}
+              selectedDate={selectedDate}
+              setSelectedDate={setSelectedDate}
+              currentDate={currentDate}
+              setCurrentDate={setCurrentDate}
+              renderCalendar={renderCalendar}
+              slotTimings={slotTimings}
+              selectedSlot={selectedSlot}
+              setSelectedSlot={setSelectedSlot}
+              timezone={timezone || "UTC"}
+              autoOpenTrial={autoOpenTrial}
+              onRefreshSlots={refreshSlots}
+            />
+          </motion.div>
         </div>
       </div>
+
     </main>
   );
 }

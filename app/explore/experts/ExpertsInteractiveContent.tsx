@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { Search } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
 import SectionHeader from "@/app/explore/components/SectionHeader";
@@ -162,42 +160,21 @@ export default function ExpertsInteractiveContent({
         <div
           ref={browseSectionRef}
           id="all-experts"
-          // Deep-links must land below the fixed header AND the sticky filter
-          // bar (~3 rows); same banner-aware formula as the bar itself.
+          // Deep-links must clear the fixed header AND the sticky filter bar
+          // below it. The bar is two rows on desktop, one on mobile.
           style={{
             scrollMarginTop:
-              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 13rem)",
+              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 9rem)",
           }}
         >
-          <SectionHeader
-            title="Browse Familiarise Experts"
-            icon={<Search className="w-5 h-5 text-white" />}
-          />
-
-          {/* Search banner (not sticky) */}
-          <motion.div
-            className="mb-6"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-          >
-            <div className="relative mb-8 overflow-hidden rounded-card bg-surface-inverse px-6 py-10">
-              <div className="absolute inset-0 opacity-10">
-                <div className="absolute top-0 right-0 w-72 h-72 bg-white rounded-full blur-3xl -translate-y-1/2 translate-x-1/4" />
-                <div className="absolute bottom-0 left-0 w-56 h-56 bg-white rounded-full blur-3xl translate-y-1/2 -translate-x-1/4" />
-              </div>
-              <div className="relative text-center">
-                <h2 className="text-2xl md:text-3xl font-bold text-white mb-2">
-                  Find Your Perfect Expert
-                </h2>
-                <p className="mx-auto max-w-lg text-sm text-white/70 md:text-base">
-                  Search by name, skill, or specialty to connect with top
-                  consultants
-                </p>
-              </div>
-            </div>
-          </motion.div>
+          <div className="mb-4">
+            <SectionHeader
+              title="Browse all experts"
+              description={
+                resultSummary ? `${resultSummary} matching your filters` : undefined
+              }
+            />
+          </div>
 
           {/* Sticky settings navbar: search + sort + affiliation tabs +
               org-kind sub-filter + chips. Advanced facets live in the
@@ -212,9 +189,9 @@ export default function ExpertsInteractiveContent({
             resultSummary={resultSummary}
           />
 
-          {/* Single-column results: ConsultantCard is a two-column card
-              (profile + plan tabs) that collapses badly inside a narrow
-              grid cell, so the sidebar grid was removed. */}
+          {/* A grid again. It was removed because the card was a 490px
+              two-column slab that "collapses badly inside a narrow grid
+              cell" — the card was the problem, and it is now a card. */}
           <ExpertResults
             consultants={consultants}
             metadata={metadata}

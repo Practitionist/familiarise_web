@@ -37,7 +37,6 @@ function ExpertRowImpl({
     <HorizontalRow
       heading={heading}
       label={heading}
-      cardWidth="w-[248px]"
     >
       {experts.map((expert) => (
         <ExpertMiniCard key={expert.id} expert={expert} badge={badge} />

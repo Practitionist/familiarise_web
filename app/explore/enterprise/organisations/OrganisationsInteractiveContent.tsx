@@ -18,7 +18,6 @@ import {
   type IOrganisationFilters,
   type OrganisationListItem,
   type OrganisationsMetadata,
-  type OrgCapabilityFilter,
   type OrgSortOption,
 } from "@/lib/explore/organisation-types";
 import {

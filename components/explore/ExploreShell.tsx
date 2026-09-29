@@ -143,19 +143,19 @@ export function ExploreStat({
   tone?: "light" | "dark";
 }) {
   return (
-    <div className="flex flex-col items-start">
+    <div className="flex items-baseline gap-1.5">
       <span
         className={cn(
-          "tnum font-display text-xl font-bold",
-          tone === "dark" ? "text-white" : "text-foreground",
+          "tnum font-display text-sm font-bold",
+          tone === "dark" ? "text-brand" : "text-brand-foreground-subtle",
         )}
       >
         {value}
       </span>
       <span
         className={cn(
-          "mt-0.5 text-xs",
-          tone === "dark" ? "text-white/60" : "text-muted-foreground",
+          "text-sm",
+          tone === "dark" ? "text-white/70" : "text-muted-foreground",
         )}
       >
         {label}

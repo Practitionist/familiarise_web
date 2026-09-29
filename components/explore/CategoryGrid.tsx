@@ -24,7 +24,6 @@ export function CategoryGrid({
   icon: Icon = Hash,
   heading,
   viewAllHref,
-  viewAllLabel = "View all",
   initialDisplay = 9,
   onSelect,
 }: {
@@ -34,7 +33,6 @@ export function CategoryGrid({
   icon?: React.ComponentType<{ className?: string }>;
   heading?: string;
   viewAllHref?: string;
-  viewAllLabel?: string;
   initialDisplay?: number;
   /**
    * Applies a filter in place instead of navigating. Both the original grids

@@ -82,6 +82,14 @@
     --radius-pill: 9999px;
     --radius: var(--radius-card);
 
+    /* The expert profile's right-hand booking rail.
+       A real CSS custom property, not a Tailwind `width` key: it is consumed
+       INSIDE an arbitrary `grid-cols-[minmax(0,1fr)_var(--profile-rail)]`
+       value, and a `theme.extend.width` entry only emits a `w-profile-rail`
+       utility — it never defines the variable, so the whole declaration was
+       invalid and the grid collapsed to one column. */
+    --profile-rail: clamp(20rem, 24vw, 26rem);
+
     /* ── Elevation ──────────────────────────────────────────────────────────
      * Two channels: a hue-carrying shadow colour (so shadows are tinted by
      * the foreground, not pure black) and a top-highlight overlay used on dark

@@ -31,13 +31,21 @@ export function DomainGrid({
   if (isLoading) return <CategoryGridSkeleton count={10} />;
   if (domains.length === 0) return null;
 
+  // The shared grid hands back a category NAME (that is what a link needs);
+  // the filter wants an ID. Both shapes are in hand here, so the mapping lives
+  // in the shim rather than at each of the two call sites.
+  const idByName = new Map(domains.map((d) => [d.name, d.id]));
+
   return (
     <CategoryGrid
       categories={domains}
       noun={["expert", "experts"]}
       icon={Layers}
       heading="Browse by domain"
-      onSelect={onDomainSelect}
+      onSelect={(name) => {
+        const id = idByName.get(name);
+        if (id) onDomainSelect?.(id);
+      }}
     />
   );
 }

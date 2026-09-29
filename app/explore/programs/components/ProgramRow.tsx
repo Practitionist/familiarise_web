@@ -28,7 +28,7 @@ function ProgramRowImpl({
   if (programs.length === 0) return null;
 
   return (
-    <HorizontalRow heading={heading} label={heading} cardWidth="w-[300px] md:w-[340px]">
+    <HorizontalRow heading={heading} label={heading}>
       {programs.map((program) => (
         <ProgramCard
           key={program.id}
