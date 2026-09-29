@@ -206,7 +206,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   });
 
   return (
-    <div className="group overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3">
+    <ExploreCard className="overflow-hidden">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
         {/* Left Section: Consultant Info. Clicking anywhere here (except
             nested links/buttons) opens the quick-view drawer; the primary
@@ -474,14 +474,14 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Button
                 asChild
                 variant="outline"
-                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-control text-sm font-medium"
+                className="h-10 rounded-control border-border text-sm font-medium text-muted-foreground hover:bg-muted"
               >
-                <Link href={`${profileHref}?action=book`}>Book Session</Link>
+                <Link href={`${profileHref}?action=book`}>Book session</Link>
               </Button>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </ExploreCard>
   );
 });

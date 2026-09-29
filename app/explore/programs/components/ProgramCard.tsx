@@ -9,6 +9,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "@/lib/explore/programs";
 import { programHref } from "@/lib/explore/hrefs";
+import { ExploreCard } from "@/components/explore/ExploreCard";
 import { displayedScore } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
@@ -152,11 +153,8 @@ function GridCard({
   const workExperiences = getInstructorWorkExperiences(program);
 
   return (
-    <Link
-      href={planHref(program)}
-      className="group flex h-full cursor-pointer flex-col overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3"
-      aria-label={`View details for ${program.title}`}
-    >
+    <Link href={planHref(program)} aria-label={`View details for ${program.title}`}>
+      <ExploreCard className="flex h-full cursor-pointer flex-col overflow-hidden">
       <div className="relative aspect-[16/10] overflow-hidden">
         <Image
           src={program.imageUrl}
@@ -241,6 +239,7 @@ function GridCard({
           </span>
         </div>
       </div>
+      </ExploreCard>
     </Link>
   );
 }
@@ -258,11 +257,8 @@ function ListCard({
   const workExperiences = getInstructorWorkExperiences(program);
 
   return (
-    <Link
-      href={planHref(program)}
-      className="group flex cursor-pointer overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3"
-      aria-label={`View details for ${program.title}`}
-    >
+    <Link href={planHref(program)} aria-label={`View details for ${program.title}`}>
+      <ExploreCard className="flex cursor-pointer overflow-hidden">
       <div className="relative w-48 md:w-64 flex-shrink-0">
         <Image
           src={program.imageUrl}
@@ -349,6 +345,7 @@ function ListCard({
           </div>
         </div>
       </div>
+      </ExploreCard>
     </Link>
   );
 }
@@ -364,11 +361,8 @@ function CarouselCard({
   const workExperiences = getInstructorWorkExperiences(program);
 
   return (
-    <Link
-      href={planHref(program)}
-      className="group flex w-[300px] shrink-0 cursor-pointer flex-col overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3 md:w-[340px]"
-      aria-label={`View details for ${program.title}`}
-    >
+    <Link href={planHref(program)} aria-label={`View details for ${program.title}`}>
+      <ExploreCard className="flex w-[300px] shrink-0 cursor-pointer flex-col overflow-hidden md:w-[340px]">
       <div className="relative aspect-[16/10] overflow-hidden">
         <Image
           src={program.imageUrl}
@@ -419,6 +413,7 @@ function CarouselCard({
           </div>
         </div>
       </div>
+      </ExploreCard>
     </Link>
   );
 }

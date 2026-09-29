@@ -98,7 +98,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                     href={`/explore/experts/${expert.id}`}
                     className="group block h-full"
                   >
-                    <div className="bg-card rounded-card p-6 border border-border shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3 h-full flex flex-col">
+                    <ExploreCard className="flex h-full flex-col p-6">
                       {/* Avatar */}
                       <div className="relative mb-4">
                         <Avatar className="mx-auto h-20 w-20 ring-4 ring-muted group-hover:ring-border transition-all">
@@ -193,10 +193,13 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                         {/* View Profile */}
                         <div className="flex items-center justify-center gap-1 text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
                           <span>View Profile</span>
-                          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                          <ArrowRight
+                            className="h-4 w-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none"
+                            aria-hidden="true"
+                          />
                         </div>
                       </div>
-                    </div>
+                    </ExploreCard>
                   </Link>
                 </motion.div>
               ))}

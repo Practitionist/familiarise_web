@@ -77,9 +77,9 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
     <div className="relative">
       <Link
         href={href}
-        className="group block cursor-pointer overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3"
         aria-label={`View details for ${program.title}`}
       >
+      <ExploreCard className="block cursor-pointer overflow-hidden">
         <div className="flex flex-col md:flex-row h-auto md:h-[280px]">
           {/* Image */}
           <div className="relative md:w-[400px] flex-shrink-0 h-[200px] md:h-full overflow-hidden">
@@ -140,6 +140,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
             </div>
           </div>
         </div>
+      </ExploreCard>
       </Link>
 
       {/* Navigation */}

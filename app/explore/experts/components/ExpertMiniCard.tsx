@@ -24,10 +24,10 @@ interface ExpertMiniCardProps {
 function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
   return (
     <Link
-      href={`/explore/experts/${expert.id}`}
+      href={exploreHref.experts.detail(expert.id)}
       className="group block w-[248px] shrink-0 snap-start"
     >
-      <div className="flex h-full flex-col rounded-card border border-border bg-card p-5 shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3">
+      <ExploreCard className="flex h-full flex-col p-5">
         {/* Badge */}
         {badge && (
           <div className="mb-3">
@@ -137,7 +137,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
             <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
           </div>
         </div>
-      </div>
+      </ExploreCard>
     </Link>
   );
 }
