@@ -90,6 +90,8 @@ import * as saml from "samlify";
 import {
   buildStoredSamlConfig,
   readStoredSamlConfig,
+  type SAMLConfig,
+  type StoredConfig,
 } from "@/lib/sso/stored-config";
 import { deriveAcsUrl } from "@/lib/sso/derive-urls";
 import {
@@ -276,6 +278,27 @@ async function idpIssuesResponse(sp: Sp, creds: MockIdpCredentials) {
   return { idp, loginRequest, response };
 }
 
+/**
+ * Cross the storage boundary the way production does.
+ *
+ * `readStoredSamlConfig` accepts `StoredConfig` — `Record<string, unknown>` —
+ * because that is what `lib/prisma-sso-secret-extension.ts` hands over, and
+ * that type is a deliberate barrier: an *interface* like `SAMLConfig` carries
+ * no implicit index signature, so passing one straight in is a compile error.
+ * That is not friction to work around, it is the rule. The real path is
+ * `buildStoredSamlConfig` → `JSON.stringify` → the `String?` column → the
+ * extension parses it back out, and this helper is that hop verbatim.
+ *
+ * Going through the hop also means these tests no longer assert against the
+ * in-memory object the builder happened to return. A builder that returned
+ * something unserialisable — a `BigInt` that throws on stringify, a `Set` that
+ * serialises to `{}` — would pass a direct call and fail in production at the
+ * column write.
+ */
+function throughColumn(config: SAMLConfig): StoredConfig {
+  return JSON.parse(JSON.stringify(config)) as StoredConfig;
+}
+
 describe("stored SAML config → a real SP/IdP round trip", () => {
   // BREAKS IF DELETED: this is the P0. Revert `buildStoredSamlConfig` to the
   // pre-fix `{issuer, entryPoint, cert}` shape and the second assertion below
@@ -285,11 +308,13 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
   // restatement of it is what gives this teeth.
   it("survives the unguarded spMetadata dereference — and the legacy shape does not", () => {
     const fixed = readStoredSamlConfig(
-      buildStoredSamlConfig({
-        issuer: ISSUER,
-        entryPoint: ENTRY_POINT,
-        cert: idpCreds.cert,
-      }),
+      throughColumn(
+        buildStoredSamlConfig({
+          issuer: ISSUER,
+          entryPoint: ENTRY_POINT,
+          cert: idpCreds.cert,
+        }),
+      ),
     );
     expect(() => buildServiceProvider(fixed)).not.toThrow();
 
@@ -316,11 +341,13 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
   // on. The two functions must agree or SAML silently stops working.
   it("derives the same ACS URL the Add Provider dialog shows the admin", () => {
     const stored = readStoredSamlConfig(
-      buildStoredSamlConfig({
-        issuer: ISSUER,
-        entryPoint: ENTRY_POINT,
-        cert: idpCreds.cert,
-      }),
+      throughColumn(
+        buildStoredSamlConfig({
+          issuer: ISSUER,
+          entryPoint: ENTRY_POINT,
+          cert: idpCreds.cert,
+        }),
+      ),
     );
     const { acsUrl, sp } = buildServiceProvider(stored);
 
@@ -353,11 +380,13 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
   // `entryPoint` or `spMetadata` are wrong in a way no shape assertion can see.
   it("completes a SP-initiated round trip and verifies the signed assertion", async () => {
     const stored = readStoredSamlConfig(
-      buildStoredSamlConfig({
-        issuer: ISSUER,
-        entryPoint: ENTRY_POINT,
-        cert: idpCreds.cert,
-      }),
+      throughColumn(
+        buildStoredSamlConfig({
+          issuer: ISSUER,
+          entryPoint: ENTRY_POINT,
+          cert: idpCreds.cert,
+        }),
+      ),
     );
     const { sp } = buildServiceProvider(stored);
 
@@ -443,11 +472,13 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
   // revisited and its removal noticed.
   it("pins two plugin reads that are dead on the POST binding", async () => {
     const stored = readStoredSamlConfig(
-      buildStoredSamlConfig({
-        issuer: ISSUER,
-        entryPoint: ENTRY_POINT,
-        cert: idpCreds.cert,
-      }),
+      throughColumn(
+        buildStoredSamlConfig({
+          issuer: ISSUER,
+          entryPoint: ENTRY_POINT,
+          cert: idpCreds.cert,
+        }),
+      ),
     );
     const { sp } = buildServiceProvider(stored);
     const { idp, response } = await idpIssuesResponse(sp, idpCreds);
@@ -505,11 +536,13 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
   // claim.
   it("refuses an assertion signed by a key the stored cert does not match", async () => {
     const stored = readStoredSamlConfig(
-      buildStoredSamlConfig({
-        issuer: ISSUER,
-        entryPoint: ENTRY_POINT,
-        cert: idpCreds.cert,
-      }),
+      throughColumn(
+        buildStoredSamlConfig({
+          issuer: ISSUER,
+          entryPoint: ENTRY_POINT,
+          cert: idpCreds.cert,
+        }),
+      ),
     );
     const { sp } = buildServiceProvider(stored);
 

@@ -85,7 +85,10 @@ jest.mock("@better-auth/sso", () => ({
 
 // Imported after the mock so the module graph resolves without loading the
 // ESM-only package for real.
-import { buildStoredOidcConfig } from "@/lib/sso/oidc-discovery";
+import {
+  buildStoredOidcConfig,
+  type DiscoveredOidcConfig,
+} from "@/lib/sso/oidc-discovery";
 
 const PROVIDER_ID = "acme-okta";
 const DOMAIN = "acme.test";
@@ -93,14 +96,17 @@ const CLIENT_ID = "acme-portal";
 const CLIENT_SECRET = "s3cret-from-the-idp-console";
 const SCOPES = ["openid", "email", "profile", "offline_access"];
 
-/** The shape `@better-auth/sso`'s `HydratedOIDCConfig` hands back after discovery. */
-type DiscoveredEndpoints = {
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  jwksEndpoint: string;
-  userInfoEndpoint: string;
-  tokenEndpointAuthentication: string;
-};
+/**
+ * No local copy of the discovered shape.
+ *
+ * This suite originally re-declared it as `{…; tokenEndpointAuthentication:
+ * string}`, which is *wider* than what `@better-auth/sso` declares
+ * (`"client_secret_basic" | "client_secret_post" | undefined`,
+ * `index-DyoL-0jp.d.mts:1596`). TypeScript caught it, and it should have been
+ * caught: a hand-copied type can only ever assert that the copy is internally
+ * consistent, never that the copy still matches the plugin. `tsc` failing here
+ * is the argument for importing the production type.
+ */
 
 let idp: MockOidcDiscovery;
 /** The document actually served over the wire, not a hardcoded literal. */
@@ -136,14 +142,29 @@ afterAll(async () => {
  */
 function discoveredFrom(
   document: Record<string, unknown>,
-): DiscoveredEndpoints {
+): DiscoveredOidcConfig {
   const methods = document.token_endpoint_auth_methods_supported as string[];
+
+  // Narrowed, not cast. The IdP advertises whatever it likes; BetterAuth only
+  // knows two methods, so an IdP advertising something else must fail *here*,
+  // where the document is in hand — rather than being written to the column and
+  // discovered at sign-in. A cast would hide precisely the case worth testing.
+  const authMethod = methods.find(
+    (m): m is DiscoveredOidcConfig["tokenEndpointAuthentication"] =>
+      m === "client_secret_basic" || m === "client_secret_post",
+  );
+  if (!authMethod) {
+    throw new Error(
+      `discovery document advertises no auth method BetterAuth supports: ${JSON.stringify(methods)}`,
+    );
+  }
+
   return {
     authorizationEndpoint: document.authorization_endpoint as string,
     tokenEndpoint: document.token_endpoint as string,
     jwksEndpoint: document.jwks_uri as string,
     userInfoEndpoint: document.userinfo_endpoint as string,
-    tokenEndpointAuthentication: methods[0],
+    tokenEndpointAuthentication: authMethod,
   };
 }
 
