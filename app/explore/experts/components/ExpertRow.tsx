@@ -7,7 +7,7 @@ import {
   HorizontalRowSkeleton,
 } from "@/components/explore/HorizontalRow";
 import ExpertMiniCard from "./ExpertMiniCard";
-import type { IConsultantCardData } from "../utils";
+import type { IConsultantCardData } from "@/types/consultant";
 
 /**
  * A thin wrapper over the shared `HorizontalRow` — the twin of
