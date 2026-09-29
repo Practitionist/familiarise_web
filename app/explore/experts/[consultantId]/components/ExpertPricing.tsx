@@ -332,8 +332,6 @@ export function ExpertPricing({
             title="No pricing plans available"
             description="This expert hasn't published a bookable session yet."
           />
-
-          </div>
         )}
 
         {/* Trust Badges — chip style */}
