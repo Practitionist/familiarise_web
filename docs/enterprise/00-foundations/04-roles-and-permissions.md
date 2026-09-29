@@ -3,7 +3,7 @@ title: Roles and permissions
 band: 00-foundations
 audience: sde1
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-09-28
 ---
 
 # Roles and permissions
@@ -32,376 +32,328 @@ intuitive ones:
 - `MAINTAINER` was `ADMIN`. Renamed to avoid collision with
   `UserRole.ADMIN` (platform admin).
 - `BILLING_ADMIN` is the finance-team role added by PR #655 (May 2026).
-  Sits between `MAINTAINER` and `MANAGER` on the rank ladder; gates
-  financial routes via the dedicated `requireOrgBillingAdminOrOwner`
-  helper rather than a rank comparison (see below).
+  It sits between `MAINTAINER` and `MANAGER` in the display order, and it
+  reaches the finance surfaces because the finance matrix keys (such as
+  `billing.manage` and `payouts.manage`) list it, not because of its rank
+  (see below).
 - `EXPERT` was `CONSULTANT`. Renamed to avoid collision with
   `UserRole.CONSULTANT` (platform consultant user).
 - `LEARNER` chosen over `MEMBER` for an explicit "receives sessions"
   semantic.
 
-## Rank ladder
+## Authorization is a permission matrix, not a rank ladder
 
-`lib/auth/role-ranks.ts` exports `ORG_ROLE_RANK`, the numeric ladder reproduced in
-the table below. Each row pairs a role with its rank and a one-line summary of what
-that role is typically responsible for; a higher rank can do everything a lower
-rank can, with the one deliberate exception of the billing surface described
-further down.
+Every org route under `app/api/organizations/**` names one key from the permission matrix in `lib/auth/org-permissions.ts` and passes it to `requireOrgAccess(orgId, { permission: "<key>" })` in `lib/auth-helpers.ts`. A caller whose role does not hold the key gets a 403 whose message is `Forbidden — your role does not grant <key>`, and a list of keys means that any one of them is enough. The dashboard's sidebar, page guards and buttons read the same keys through `useOrgRole().can`, so a surface cannot show a tab that its page or API then refuses. Since #1860 (#1851) the old rank helpers are gone, and a jest pin, `__tests__/enterprise/org-route-matrix-pin.test.ts`, walks every `route.ts` under `app/api/organizations`, fails on any rank comparison, and fails on any handler that names no matrix key and has no allowlist entry with a reason.
 
-| Role            | Rank | Typical responsibility |
-|-----------------|------|-------------------------|
-| `OWNER`         | 100  | Everything: billing, contracts, payouts, settings, SSO, org delete. |
-| `MAINTAINER`    | 80   | Members, invites, plans, programs, contracts (read), branding/identity fields, settings. **No billing, no deletion** — and SSO / domain-claims / capability + tax fields stay OWNER-only (see `MEMBER_ROLE_DESCRIPTION` in `lib/labels/org-labels.ts`: _"Members, plans, programs, and settings. No billing or deletion."_). |
-| `BILLING_ADMIN` | 70   | Invoices, POs, payouts, rate cards, wallet top-ups, outbound webhooks. **No member or SSO changes.** |
-| `MANAGER`       | 60   | Team analytics, seat management, read-only views of invoices/earnings/payouts/rate-cards. |
-| `EXPERT`        | 40   | Delivers services on behalf of the org. |
-| `SUPPORT`       | 30   | Views support tickets and assists members. No billing. |
-| `LEARNER`       | 20   | Consumes services through the org's programs. |
+A matrix replaced the rank ladder because privilege in an organization is not one-dimensional. An organization has an operations track (MANAGER and SUPPORT), a finance track (BILLING_ADMIN) and member roles (EXPERT and LEARNER), so BILLING_ADMIN sits above MANAGER numerically yet must see less of the operations surfaces, and SUPPORT sits below EXPERT yet sees more of them. `ORG_ROLE_RANK` in `lib/auth/role-ranks.ts` still exists, but only as a display order; it picks the most operator-like organization to land on and chooses one role when a SCIM user sits in several mapped groups, and nothing reads it to decide what a role may do.
 
-`isAtLeastRole(actual, minimum)` (`lib/auth/role-ranks.ts`) returns
-`ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum]`.
+Platform admins (`UserRole.ADMIN`) pass every org gate as a synthetic OWNER. `requireOrgAccess` returns a stub membership whose id is `__admin_stub_<userId>`, so that admin-initiated writes still produce valid `OrgAuditLog.actorMembershipId` values. Capability gates such as `canSponsor`, `canHost`, `requiresPO` and `fundingSource` describe the organization's shape rather than the member's role, so they stay outside the matrix and are checked separately at each route.
 
-The class diagram below shows the same ladder as a typed hierarchy: each role
-carries its numeric rank, and the arrows point from each role up to the one
-immediately above it. The ladder is deliberately sparse, in steps of roughly
-twenty, so a future role can slot between two existing rungs without renumbering
-the rest — which is exactly how `BILLING_ADMIN` landed at 70 between `MAINTAINER`
-at 80 and `MANAGER` at 60.
+The next section is the literal output of `npx tsx scripts/utils/print-org-role-matrix.ts`, and it replaces the hand-written gate matrix this page used to carry. To change it, edit `lib/auth/org-permissions.ts`, re-run the script, and paste the new output over it.
 
-```mermaid
-classDiagram
-  class OWNER {
-    rank = 100
-    everything incl. billing + delete
-  }
-  class MAINTAINER {
-    rank = 80
-    org-admin surface, no billing
-  }
-  class BILLING_ADMIN {
-    rank = 70
-    finance surface only
-  }
-  class MANAGER {
-    rank = 60
-    analytics + read-only finance
-  }
-  class EXPERT {
-    rank = 40
-    delivers services
-  }
-  class SUPPORT {
-    rank = 30
-    support tickets, no billing
-  }
-  class LEARNER {
-    rank = 20
-    consumes services
-  }
-  OWNER --|> MAINTAINER
-  OWNER --|> BILLING_ADMIN
-  MAINTAINER --|> MANAGER
-  BILLING_ADMIN --|> MANAGER
-  MANAGER --|> EXPERT
-  EXPERT --|> SUPPORT
-  SUPPORT --|> LEARNER
-```
+## Org role matrix
 
-The generalization arrows point from the broader role to the narrower one it
-extends: `OWNER` is both a `MAINTAINER` and a `BILLING_ADMIN`, and those two
-governance-orthogonal roles each extend `MANAGER`, so `OWNER` inherits every
-capability on both branches. `BILLING_ADMIN` and `MAINTAINER` are siblings, not
-a single rung — which is why the finance surface is gated by an explicit
-disjunction rather than by rank, as the note below explains.
+This table is generated from `lib/auth/org-permissions.ts` by `scripts/utils/print-org-role-matrix.ts`, so edit the code and regenerate rather than editing the table.
+Each row is one permission key, and a tick means the role holds it.
+A platform admin passes every org gate as a synthetic Owner.
+Capability gates such as `canSponsor` and `canHost` are checked separately at each route, so a tick is necessary but not always sufficient.
 
-The numeric order of the ladder is only a capability partial-order, and it is not
-the gate for the finance surface. As the next sections explain, `BILLING_ADMIN`
-sits below `MAINTAINER` by rank yet reaches billing routes that `MAINTAINER`
-cannot, because billing is gated by an explicit OWNER-or-BILLING_ADMIN disjunction
-rather than by the rank number.
+### `activity`
 
-### How a request resolves to allow / deny
+The key below governs the `activity` surface.
 
-A new dev's first question is "given a role and a route, what actually
-decides?" Three mechanisms, applied per route family. The flowchart traces an
-org-scoped request through all three:
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `activity.read` | ✓ | ✓ | — | ✓ | — | — | — |
 
-```mermaid
-flowchart TD
-  REQ["request hits<br/>app/api/organizations/[orgId]/**"] --> AUTH{authenticated<br/>+ ACTIVE member?}
-  AUTH -- no --> D401["401 / 403<br/>(not a live member)"]
-  AUTH -- "yes (or ADMIN stub)" --> KIND{route family?}
+### `appointments`
 
-  KIND -- "most routes" --> RANK["requireOrgAccess(minRole)<br/>rank: RANK[actual] >= RANK[min]"]
-  RANK --> RANKOK{passes?}
-  RANKOK -- yes --> OK["✅ handler runs"]
-  RANKOK -- no --> D403R["403 INSUFFICIENT_ROLE"]
+The 4 keys below govern the `appointments` surface.
 
-  KIND -- "whole-surface financial<br/>(billing-account, payouts,<br/>invoices, POs, rate-cards,<br/>webhooks, data-exports)" --> DISJ["requireOrgBillingAdminOrOwner<br/>LEARNER floor → then disjunction"]
-  DISJ --> DISJOK{role == OWNER<br/>OR BILLING_ADMIN?}
-  DISJOK -- yes --> OK
-  DISJOK -- "no (incl. MAINTAINER!)" --> D403B["403 BILLING_ADMIN_OR_OWNER_REQUIRED"]
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `appointments.actForOrg.cancel` | ✓ | ✓ | — | — | — | — | — |
+| `appointments.actForOrg.reschedule` | ✓ | ✓ | — | ✓ | — | — | — |
+| `appointments.allocate.calendarRead` | ✓ | ✓ | — | — | — | — | — |
+| `appointments.unscheduled.read` | ✓ | ✓ | — | ✓ | — | — | — |
 
-  KIND -- "org PATCH<br/>(mixed-field row)" --> FIELD["field allowlist per touched key"]
-  FIELD --> FOWNER{role == OWNER?}
-  FOWNER -- yes --> OK
-  FOWNER -- no --> FALLOW{every touched field<br/>in caller's set?<br/>MAINTAINER_FIELDS ∪<br/>BILLING_ADMIN_FIELDS}
-  FALLOW -- yes --> OK
-  FALLOW -- no --> D403F["403 FIELD_RBAC_FORBIDDEN<br/>(names offending fields)"]
-```
+### `audit`
 
-The load-bearing subtlety lives in the two right-hand branches: a
-higher-ranked `MAINTAINER` is **denied** on the financial branch (it's not
-`OWNER`/`BILLING_ADMIN`) and **excluded from billing fields** on the PATCH
-branch (`billingEmail` / `paymentTermsDays` aren't in `MAINTAINER_FIELDS`).
-Rank alone never reaches the finance surface.
+The 3 keys below govern the `audit` surface.
 
-### Why BILLING_ADMIN uses a disjunction gate, not a rank gate
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `audit.read` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| `audit.read.money` | ✓ | ✓ | ✓ | — | — | — | — |
+| `audit.read.ops` | ✓ | ✓ | — | ✓ | ✓ | — | — |
 
-A naïve `requireOrgAccess(orgId, { minimumRole: "BILLING_ADMIN" })`
-would let `MAINTAINER` (rank 80) through on the rank comparison —
-which is wrong, because `MAINTAINER` explicitly does not have billing
-rights per the role description. The two roles are
-governance-orthogonal: `MAINTAINER` is the org-admin surface,
-`BILLING_ADMIN` is the finance surface.
+### `billing`
 
-The dedicated helper `requireOrgBillingAdminOrOwner` at
-`lib/auth/billing-admin-gate.ts` encodes this. It first runs
-`requireOrgAccess` with a `LEARNER` floor (so capability checks like
-`canSponsor` still run), then applies the load-bearing role disjunction:
+The 3 keys below govern the `billing` surface.
 
-```ts
-const role = access.member.role;
-if (role !== "OWNER" && role !== "BILLING_ADMIN") {
-  return {
-    error: NextResponse.json(
-      { error: "Forbidden", code: "BILLING_ADMIN_OR_OWNER_REQUIRED" },
-      { status: 403 },
-    ),
-  } as const;
-}
-```
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `billing.fundingSource.switch` | ✓ | — | ✓ | — | — | — | — |
+| `billing.manage` | ✓ | — | ✓ | — | — | — | — |
+| `billing.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
 
-It deliberately does NOT pass `minimumRole: "BILLING_ADMIN"`, because that
-would let `MAINTAINER` (rank 80) through on the rank comparison. Pin-down
-regression: `__tests__/enterprise/billing-admin-gate.test.ts` asserts that
-`MAINTAINER` is **denied** even though its rank is higher.
+### `catalog`
 
-### Design story: why rank-70 touches billing that rank-80 cannot
+The key below governs the `catalog` surface.
 
-This looks upside-down the first time you see it: `BILLING_ADMIN` (rank 70)
-can PATCH the wallet and cut payouts, while `MAINTAINER` (rank 80) — *higher*
-on the ladder — gets a 403 on those exact routes. It is deliberate, and the
-reasoning is recorded in `lib/auth/billing-admin-gate.ts`:
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `catalog.manage` | ✓ | ✓ | — | ✓ | — | — | — |
 
-> _"The two roles are governance-orthogonal: one is the org-admin surface,
-> the other is the finance surface. A rank-based gate would conflate them.
-> Hence the explicit disjunction here."_
+### `consent`
 
-The driver (from `MEMBER_ROLE_DESCRIPTION` in `lib/labels/org-labels.ts`):
-large orgs delegate AP/GL to a finance team that needs invoice + payout +
-rate-card + wallet rights **without** the ability to touch SSO, the member
-roster, or org status. So the ladder ranks `BILLING_ADMIN` *above* `MANAGER`
-(it has more financial privilege) but *below* `MAINTAINER` on the org-admin
-axis — and the rank number is then **never used** to gate billing. Billing
-routes use the OWNER ∨ BILLING_ADMIN disjunction; SSO/member routes gate at
-`MAINTAINER`+ and so auto-deny `BILLING_ADMIN`. The two surfaces don't
-overlap by construction.
+The 2 keys below govern the `consent` surface.
 
-`BILLING_ADMIN` was added by **PR #655** (the enterprise foundation; the gate
-helper was wired in `f7133eaa`). The regression that pins the counter-intuitive
-half down is `__tests__/enterprise/billing-admin-gate.test.ts`, which asserts
-`MAINTAINER` is denied **despite** its higher rank — if someone "simplifies"
-the gate to `minimumRole: "BILLING_ADMIN"` later, that test goes red.
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `consent.read` | ✓ | ✓ | — | ✓ | — | — | — |
+| `consent.requestWithdrawal` | ✓ | ✓ | — | ✓ | — | — | — |
 
-**Who holds what at Wipro (seeded `wipro` org).** A concrete read of the three
-operator tiers:
+### `contracts`
 
-| Role | At Wipro | Sees / can do |
-|------|----------|----------------|
-| `OWNER` | the corporate-ops admin who created the org (the seeded `tour-owner@familiarise.dev` is an OWNER of `wipro`) | everything — capability flips, GSTIN/PAN, SSO, member roster, delete, **and** all billing |
-| `BILLING_ADMIN` | a hypothetical AP clerk in Wipro's finance team | the ₹50L PO, the draft `INV-WIP-2026-0001`, NET-60 terms, rate cards, wallet — but **not** the member roster or SSO |
-| `MANAGER` | a hypothetical L&D lead running the Engineer Leadership Program | team analytics, seat management, **read-only** views of invoices/earnings/payouts — no money mutation, no roster changes |
+The 2 keys below govern the `contracts` surface.
 
-(Wipro is seeded with one OWNER membership + three LEARNERs; the
-BILLING_ADMIN and MANAGER rows above are illustrative — the seed doesn't
-populate every operator tier, but the gate matrix below applies the moment
-one is invited.)
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `contracts.manage` | ✓ | — | — | — | — | — | — |
+| `contracts.read` | ✓ | ✓ | ✓ | — | — | — | — |
 
-### Two enforcement shapes: route-level gate vs field-level gate
+### `dataExports`
 
-There are two distinct mechanisms, and both are live:
+The 2 keys below govern the `dataExports` surface.
 
-1. **Route-level disjunction gate** (`requireOrgBillingAdminOrOwner`) —
-   used by routes whose *entire* surface is financial: the `billing-account`
-   PATCH, wallet top-ups, invoices, POs, payouts, rate-cards, outbound
-   webhook create/update/redeliver, and **data-exports**. The whole route
-   is OWNER ∨ BILLING_ADMIN.
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `dataExports.finance` | ✓ | — | ✓ | — | — | — | — |
+| `dataExports.people` | ✓ | ✓ | — | — | — | — | — |
 
-2. **Field-level gate** (per-field allowlist) — used by the org
-   `PATCH /api/organizations/[orgId]` handler, where a single row mixes
-   identity, branding, billing, tax, and capability fields. OWNER passes
-   everything; a non-OWNER's touched fields must each fall inside the
-   caller's remit or the route returns `403 FIELD_RBAC_FORBIDDEN` naming
-   the offending fields:
+### `disputes`
 
-   | Caller | May set | Source set |
-   |--------|---------|------------|
-   | `OWNER` | every field (incl. `canSponsor`/`canHost`, `gstin`, `pan`, `gstStateCode`, `requiresPO`, policies, `isPublic`) | — (bypass) |
-   | `MAINTAINER` | `name`, `description`, `industry`, `website`, `sizeBucket`, `logo`, `bannerImage`, `primaryColor`, `secondaryColor` | `MAINTAINER_FIELDS` |
-   | `BILLING_ADMIN` | `billingEmail`, `paymentTermsDays` | `BILLING_ADMIN_FIELDS` |
+The key below governs the `disputes` surface.
 
-   The point of the disjunction surfaces here too: `MAINTAINER` (the higher
-   rank) is the identity/branding surface and is deliberately **excluded
-   from billing fields** (`billingEmail`, `paymentTermsDays`) — those sit
-   with `BILLING_ADMIN`. Tax fields (`gstin`/`pan`/`gstStateCode`) and
-   capability flips stay OWNER-only because they're in neither allowlist.
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `disputes.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
 
-### BILLING_ADMIN gate matrix
+### `identity`
 
-The table below lists every route family whose gate is the OWNER-or-BILLING_ADMIN
-disjunction; for each one it gives the verb and confirms that the whole route is
-behind that single gate.
+The 2 keys below govern the `identity` surface.
 
-| Route family | Verb | Gate |
-|---|---|---|
-| `billing-account` | PATCH | OWNER or BILLING_ADMIN |
-| `billing-account/purchase-orders` | POST | OWNER or BILLING_ADMIN |
-| `billing-account/purchase-orders/[poId]` | PATCH / DELETE | OWNER or BILLING_ADMIN |
-| `billing-account/invoices` | POST | OWNER or BILLING_ADMIN |
-| `billing-account/invoices/[invoiceId]` | PATCH | OWNER or BILLING_ADMIN |
-| `billing-account/invoices/[invoiceId]/pay` | POST | OWNER or BILLING_ADMIN |
-| `billing-account/wallet/top-ups` | POST | OWNER or BILLING_ADMIN |
-| `payouts` | POST | OWNER or BILLING_ADMIN |
-| `payouts/[payoutId]` | PATCH | OWNER or BILLING_ADMIN |
-| `rate-cards` | POST | OWNER or BILLING_ADMIN |
-| `rate-cards/[cardId]` | PATCH | OWNER or BILLING_ADMIN |
-| `webhooks` (Batch 3) | POST | OWNER or BILLING_ADMIN |
-| `webhooks/[endpointId]` | PATCH | OWNER or BILLING_ADMIN |
-| `webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | POST | OWNER or BILLING_ADMIN |
-| `data-exports` | GET / POST | OWNER or BILLING_ADMIN |
-| `data-exports/[exportId]/download` | GET | OWNER or BILLING_ADMIN |
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `identity.manage` | ✓ | — | — | — | — | — | — |
+| `identity.read` | ✓ | ✓ | — | — | — | — | — |
 
-### Surfaces that stay OWNER-only
+### `integrations`
 
-- `[orgId]` DELETE (org delete + ownership transfer)
-- `sso/**` (provider CRUD, settings)
-- `domain-claims/**`
-- `members/**` (invite, role change, removal)
-- `invitations/**`
-- `scim/tokens/**` (Batch 4)
-- `webhooks/[endpointId]` DELETE + `webhooks/[endpointId]/rotate-secret` POST (governance-sensitive)
-- `sso/break-glass` POST + DELETE (temporary SSO-enforcement bypass; see [sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md))
-- `contracts/[contractId]/supersede` POST (mints the successor contract)
+The key below governs the `integrations` surface.
 
-## `requireOrgAccess` / `requireOrgOwner`
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `integrations.manage` | ✓ | — | ✓ | — | — | — | — |
 
-Every API route under `app/api/organizations/[orgId]/**` uses one of
-two gates from `lib/auth-helpers.ts`:
+### `invitations`
 
-```ts
-await requireOrgAccess(orgId, "LEARNER");      // any active member
-await requireOrgAccess(orgId, "MAINTAINER");   // promotes
-await requireOrgOwner(orgId);                  // OWNER-only
-```
+The key below governs the `invitations` surface.
 
-Platform admins (`UserRole.ADMIN`) bypass membership checks entirely;
-`requireOrgAccess` returns a synthesized OWNER-rank stub membership so
-admin-initiated writes still produce valid `OrgAuditLog.actorMembershipId`
-values (the stub id is `__admin_stub_<userId>`).
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `invitations.manage` | ✓ | ✓ | — | — | — | — | — |
 
-## Gate matrix — every org-scoped API route
+### `materials`
 
-The table below is the exhaustive map of org-scoped routes to the minimum gate each
-verb requires; read a row as "to call this verb on this route, the caller must
-satisfy this gate", where a named role means that rank or higher and "OWNER or
-BILLING_ADMIN" means the disjunction gate rather than a rank comparison.
+The key below governs the `materials` surface.
 
-| Route | Verbs | Gate |
-|-------|-------|------|
-| `/api/organizations` | `GET` | any authenticated user |
-| `/api/organizations` | `POST` | any authenticated user (creator becomes OWNER) |
-| `/api/organizations/[orgId]` | `GET` | `LEARNER` |
-| `/api/organizations/[orgId]` | `PATCH`, `DELETE` | OWNER |
-| `/api/organizations/[orgId]/members` | `GET` | any active member |
-| `/api/organizations/[orgId]/members` | `POST` | MAINTAINER |
-| `/api/organizations/[orgId]/members/[memberId]` | `GET`, `PATCH`, `DELETE` | MAINTAINER |
-| `/api/organizations/[orgId]/invitations` | `GET`, `POST` | MAINTAINER |
-| `/api/organizations/[orgId]/invitations/[invitationId]` | `GET`, `DELETE` | MAINTAINER |
-| `/api/organizations/invitations/accept` | `POST` | any authenticated user |
-| `/api/organizations/[orgId]/contracts` | `GET` | MAINTAINER |
-| `/api/organizations/[orgId]/contracts` | `POST` | OWNER |
-| `/api/organizations/[orgId]/contracts/[contractId]` | `GET` | MAINTAINER |
-| `/api/organizations/[orgId]/contracts/[contractId]` | `PATCH`, `DELETE` | OWNER |
-| `/api/organizations/[orgId]/contracts/[contractId]/supersede` | `POST` | OWNER |
-| `/api/organizations/[orgId]/programs` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs` | `POST` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs/[programId]` | `PATCH`, `DELETE` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]/assignments` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs/[programId]/assignments` | `POST` | MAINTAINER |
-| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `GET` | any active member |
-| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH`, `DELETE` | MAINTAINER |
-| `/api/organizations/[orgId]/billing-account` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account` | `PATCH` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/billing-account/wallet` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/invoices` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/billing-account/purchase-orders` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/purchase-orders` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `PATCH`, `DELETE` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/rate-cards` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/rate-cards` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/rate-cards/[cardId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/rate-cards/[cardId]` | `PATCH` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/payout-account` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/payout-account` | `PUT` | OWNER |
-| `/api/organizations/[orgId]/earnings` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/payouts` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/payouts` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/payouts/[payoutId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/payouts/[payoutId]` | `PATCH` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/sso` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/sso` | `PATCH` | OWNER |
-| `/api/organizations/[orgId]/sso/providers` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/sso/providers` | `POST` | OWNER |
-| `/api/organizations/[orgId]/sso/providers/[providerId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/sso/providers/[providerId]` | `DELETE` | OWNER |
-| `/api/organizations/[orgId]/sso/break-glass` | `POST`, `DELETE` | OWNER |
-| `/api/organizations/[orgId]/domain-claims` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/domain-claims` | `POST` | OWNER |
-| `/api/organizations/[orgId]/domain-claims/[domain]` | `DELETE` | OWNER |
-| `/api/organizations/[orgId]/hris` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/hris` | `PUT`, `DELETE` | OWNER |
-| `/api/organizations/[orgId]/hris/sync` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/hris/sync` | `POST` | OWNER |
-| `/api/organizations/[orgId]/hris/csv-upload` | `POST` | OWNER |
-| `/api/organizations/[orgId]/consent` | `GET`, `POST`, `DELETE` | MANAGER |
-| `/api/organizations/[orgId]/analytics` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/activity` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/catalog` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/catalog` | `POST`, `DELETE` | OWNER |
-| `/api/organizations/[orgId]/catalog/search` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/settings` | `GET` | MANAGER (read-only wrapper) |
-| `/api/organizations/[orgId]/webhooks` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/webhooks` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/webhooks/[endpointId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/webhooks/[endpointId]` | `PATCH` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/webhooks/[endpointId]` | `DELETE` | OWNER |
-| `/api/organizations/[orgId]/webhooks/[endpointId]/rotate-secret` | `POST` | OWNER |
-| `/api/organizations/[orgId]/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/data-exports` | `GET`, `POST` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/data-exports/[exportId]/download` | `GET` | OWNER or BILLING_ADMIN |
-| `/api/organizations/[orgId]/checkout/overage-preview` | `GET` | any active member |
-| `/api/organizations/[orgId]/verification/resubmit` | `POST` | MAINTAINER |
-| `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN (`action: VERIFY \| REJECT \| SUSPEND \| REACTIVATE \| DEACTIVATE`) |
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `materials.manage.orgPlan` | ✓ | ✓ | — | ✓ | — | — | — |
+
+### `memberContent`
+
+The key below governs the `memberContent` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `memberContent.delete` | — | — | — | — | — | — | — |
+
+### `members`
+
+The 7 keys below govern the `members` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `members.directory` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `members.manage` | ✓ | ✓ | — | — | — | — | — |
+| `members.payoutRecipient.change` | ✓ | — | ✓ | — | — | — | — |
+| `members.read` | ✓ | ✓ | — | ✓ | ✓ | — | — |
+| `members.remove.force` | ✓ | — | — | — | — | — | — |
+| `members.role.grant.governance` | ✓ | — | — | — | — | — | — |
+| `members.role.grant.operational` | ✓ | ✓ | — | — | — | — | — |
+
+### `messaging`
+
+The key below governs the `messaging` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `messaging.read` | ✓ | ✓ | — | ✓ | — | — | — |
+
+### `myArrangement`
+
+The key below governs the `myArrangement` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `myArrangement.read` | — | — | — | — | — | ✓ | — |
+
+### `myProgram`
+
+The key below governs the `myProgram` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `myProgram.read` | — | — | — | — | — | — | ✓ |
+
+### `operations`
+
+The key below governs the `operations` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `operations.read` | ✓ | ✓ | — | ✓ | ✓ | — | — |
+
+### `org`
+
+The key below governs the `org` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `org.delete` | ✓ | — | — | — | — | — | — |
+
+### `payouts`
+
+The 4 keys below govern the `payouts` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `payouts.account.manage` | ✓ | — | — | — | — | — | — |
+| `payouts.approve` | ✓ | — | ✓ | — | — | — | — |
+| `payouts.manage` | ✓ | — | ✓ | — | — | — | — |
+| `payouts.read` | ✓ | ✓ | ✓ | — | — | — | — |
+
+### `programs`
+
+The 4 keys below govern the `programs` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `programs.assign` | ✓ | ✓ | — | ✓ | — | — | — |
+| `programs.manage` | ✓ | ✓ | — | — | — | — | — |
+| `programs.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| `programs.seat.period` | ✓ | ✓ | — | — | — | — | — |
+
+### `purchaseOrders`
+
+The 2 keys below govern the `purchaseOrders` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `purchaseOrders.manage` | ✓ | — | ✓ | — | — | — | — |
+| `purchaseOrders.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+
+### `quality`
+
+The key below governs the `quality` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `quality.read` | ✓ | ✓ | — | ✓ | ✓ | — | — |
+
+### `reimbursements`
+
+The key below governs the `reimbursements` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `reimbursements.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+
+### `settings`
+
+The 4 keys below govern the `settings` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `settings.cancellationPolicy.publish` | ✓ | — | — | — | — | — | — |
+| `settings.manage` | ✓ | ✓ | — | — | — | — | — |
+| `settings.ownerFields` | ✓ | — | — | — | — | — | — |
+| `settings.verification.resubmit` | ✓ | ✓ | — | — | — | — | — |
+
+### `supportRequests`
+
+The key below governs the `supportRequests` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `supportRequests.org` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+
+### `webhooks`
+
+The 3 keys below govern the `webhooks` surface.
+
+| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `webhooks.delete` | ✓ | — | — | — | — | — | — |
+| `webhooks.rotateSecret` | ✓ | — | — | — | — | — | — |
+| `webhooks.subscribe.memberEvents` | ✓ | — | — | — | — | — | — |
+
+## The org PATCH field gate
+
+`PATCH /api/organizations/[orgId]` is the one route whose gate is per field, because a single organization row mixes identity, branding, billing, tax and capability fields. A caller holding `settings.ownerFields` (OWNER) may set every field. Any other caller may touch only the fields inside its remit, and the route returns `403 FIELD_RBAC_FORBIDDEN` naming the offending fields otherwise; the table below lists each remit and the key that grants it.
+
+| Key | Holders | Fields it opens |
+| --- | --- | --- |
+| `settings.ownerFields` | OWNER | Every field, including the slug, `canSponsor` and `canHost`, `gstin`, `pan`, `gstStateCode`, `requiresPO`, the policies and `isPublic`. |
+| `settings.manage` | OWNER, MAINTAINER | `name`, `description`, `industry`, `website`, `sizeBucket`, `logo`, `bannerImage`, `primaryColor` and `secondaryColor`. |
+| `billing.manage` | OWNER, BILLING_ADMIN | `billingEmail` and `paymentTermsDays`. |
+
+## Who may grant, change or remove which role
+
+A MAINTAINER may grant, change or remove only the operational roles, which are MANAGER, SUPPORT, EXPERT and LEARNER, through the `members.role.grant.operational` key. Anything that touches an OWNER, MAINTAINER or BILLING_ADMIN row, or that grants one of those three roles, needs `members.role.grant.governance`, which only the OWNER holds, and this applies to role changes, status changes, removal and invitations alike (#1854, #1851 decision 6). The refusal is `ROLE_REQUIRES_OWNER` from `assertActorMayManage` in `lib/enterprise/membership-guards.ts`, and the members page mirrors the rule by hiding the options a MAINTAINER cannot use.
+
+Nobody changes their own role or status or removes themselves (`SELF_CHANGE`), and the organization's last ACTIVE OWNER cannot be demoted, suspended or removed (`LAST_OWNER`). There is no ownership transfer yet, so an OWNER who wants to leave must first make another member an OWNER; the transfer flow is tracked in #1844.
+
+Three more changes are finance or governance decisions rather than roster edits, and each has its own key. Changing where an EXPERT's organization share is paid needs `members.payoutRecipient.change` (OWNER or BILLING_ADMIN) and writes a `PAYOUT_RECIPIENT_CHANGED` audit row in the PAYOUT category. Changing a program seat's period needs `programs.seat.period` (OWNER or MAINTAINER), because extending a seat re-arms sponsored spend, while a MANAGER keeps seat assign and unassign through `programs.assign`. Removing a member who still has obligations needs `members.remove.force`, which only the OWNER holds.
+
+## The ownership principle
+
+#1851 sorts every record an organization can reach into three classes, and each class has its own rule. The table below lists them.
+
+| Class | Records | Rule |
+| --- | --- | --- |
+| Org-owned | The catalog, programs, contracts, purchase orders, billing, payouts, settings, integrations and data exports. | An explicit role × action matrix decides every create, read, update, delete and special verb. |
+| Member-owned content | Messages, support chats, a member's uploads and recording content. | Org roles can never change or delete this content, and their oversight is metadata only (ADR 20). A legal or compliance takedown is handled by platform staff in the back office, never by the organization, which is why `memberContent.delete` deliberately holds no role. |
+| Members' bookings and seats | Appointments, occurrences and program seats. | Org roles act only through named, audited verbs, each shown behind an "Acting for <Org>" banner. |
+
+The act-for-org verbs reach only 1:1 and subscription bookings that the organization funds. `resolveOrgActor` in `lib/booking/org-actor.ts` refuses a webinar or class seat, because an org-hosted group session carries the host organization's id and moving or cancelling it would change every attendee's seat; the host changes such a session from Catalog as a whole instead. Rescheduling for the organization needs `appointments.actForOrg.reschedule` (OWNER, MAINTAINER or MANAGER), and cancelling needs `appointments.actForOrg.cancel` (OWNER or MAINTAINER), because a cancel refunds money. Each act-for-org cancel or reschedule request writes an `OrgAuditLog` row in the booking's transaction, with the action `APPOINTMENT_CANCELLED_FOR_ORG` or `APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG` in the MEMBER category, because the booking is the member's record.
+
+Plan materials follow the same split. An org role manages materials only on org-owned plans through `materials.manage.orgPlan`, because an expert's personal plan has no organization id and so is never reachable through an org key. Each org change writes a `PLAN_MATERIAL_ADDED`, `PLAN_MATERIAL_UPDATED` or `PLAN_MATERIAL_REMOVED` row in the CATALOG category that targets the delivering expert's membership, and the offering editor's Materials tab shows the expert a "Changed by <Org> · <who> · <when>" line on each file the organization added or replaced, with a removed file kept in the list and struck through.
+
+## Payout approval: the two-person rule
+
+An organization payout batch is paid only after approval, and approving it needs `payouts.approve` (OWNER or BILLING_ADMIN). Org › Payouts › Runs labels a PENDING batch "Awaiting approval", offers an "Awaiting approval (n)" filter, and shows Approve to holders of the key. The member who created a batch cannot approve it while the organization has another ACTIVE holder of `payouts.approve`, and the refusal is `PAYOUT_SECOND_APPROVER_REQUIRED`. In a one-person organization the sole approver approves their own batch by typing the organization's slug as `confirmSelfApproval`, and the audit row carries `selfApproved: true`. The full payout state machine is in the [payout pipeline](../10-money-and-ledger/07-payout-pipeline.md), and a plain-language summary is in [how payouts work](../../payments/payouts/00-how-payouts-work.md).
+
+## Webhook member events
+
+Only the OWNER, through `webhooks.subscribe.memberEvents`, may subscribe an outbound webhook endpoint to `member.*` or `program.assigned`, or edit an endpoint that already carries those events. Editing is covered too, because repointing the URL of such an endpoint would reroute member data. A BILLING_ADMIN, who otherwise manages integrations, no longer sees or redelivers those deliveries, and the event picker hides the member events from anyone without the key.
+
+## Audit categories for finance edits
+
+Billing-account edits moved from the SETTINGS category to INVOICE in #1860, so an operations-only audit reader no longer sees a credit limit. The same change added money-category rows for edits that used to leave no trace: `FUNDING_SOURCE_CHANGED`, `BILLING_ACCOUNT_UPDATED`, `PURCHASE_ORDER_UPDATED`, `PURCHASE_ORDER_DELETED`, `INVOICE_UPDATED` and `REIMBURSEMENTS_EXPORTED`, all in the INVOICE category. The member detail GET also stopped returning `payoutRecipient` and `rateCardOverrideId` to a caller without `payouts.read`, matching the member list.
 
 ## Role narrowing at the API boundary
 
@@ -431,10 +383,10 @@ rejects anything that is not `ACTIVE`.
 
 | Value       | Meaning |
 |-------------|---------|
-| `PENDING`   | The invitation was accepted or the member was HRIS auto-provisioned but the membership is not yet activated (rare). |
+| `PENDING`   | The member was HRIS auto-provisioned, or is a legacy row from a bulk import made before #1854, and the membership is not yet active. Only accepting an invitation makes such a row ACTIVE; the members PATCH refuses PENDING to ACTIVE with `PENDING_REQUIRES_ACCEPT`. |
 | `ACTIVE`    | The role is live. |
 | `SUSPENDED` | The membership is temporarily blocked, and the API returns a 403 with `"Membership is suspended"`. |
-| `REMOVED`   | Terminal. The row is retained for audit. |
+| `REMOVED`   | The member was removed, and the row is retained for audit. REMOVED is not terminal: accepting a new invitation reactivates the same row with the invited role, which keeps its downstream foreign keys. The members PATCH and SCIM can never move a row out of REMOVED. |
 | `ERASED`    | DPDP §12 tombstone, set by the erasure pipeline when a user exercises right-to-erasure. The row remains for audit and financial-trail integrity, but the user identifiers are scrubbed to pseudonymous values (see `User.erasedAt`). |
 
 ## Zod narrowers for self-service
@@ -462,11 +414,13 @@ member flow.
 ## LEARNER ↔ EXPERT is disjoint
 
 LEARNER and EXPERT are treated as disjoint roles on a single
-`Membership`. The server refuses `PATCH /members/[memberId]` and the
-reactivation branch of `POST /members` when the requested transition
-is `LEARNER → EXPERT` or `EXPERT → LEARNER`. The policy lives in
-`lib/enterprise/role-transitions.ts::isBlockedRoleTransition`; callers
-that violate it receive a `409 ROLE_TRANSITION_BLOCKED`, which the
+`Membership`. The server refuses `PATCH /members/[memberId]` and a SCIM reprovision
+when the requested transition is `LEARNER → EXPERT` or `EXPERT → LEARNER`.
+The policy lives in
+`lib/enterprise/role-transitions.ts::isBlockedRoleTransition`, which the
+shared guard `assertRoleChangeAllowed` in
+`lib/enterprise/membership-guards.ts` calls; callers that violate it
+receive a `409 ROLE_TRANSITION_BLOCKED`, which the
 dashboard translates through `humanizeOrgError` (see
 `lib/labels/org-errors.ts`) into: _"Members cannot switch between
 Learner and Expert roles. Remove the member and re-invite them with
@@ -512,8 +466,10 @@ One consequence of that openness needed its own guard. Because the two profiles 
 Identity creation follows one rule, settled in #819: **creating a profile
 requires the user's own action, while an admin acting on someone else's
 behalf requires the identity to already exist.** Concretely, the admin
-direct-add surface (`POST /members`) refuses both roles when the matching
-profile is missing (`NOT_A_CONSULTANT` / `NOT_A_CONSULTEE`), because an
+direct-add surface is gone since #1854: `POST /members` answers 405,
+because members join by invitation and acceptance only, and a role
+change into EXPERT through the members PATCH refuses with
+`NOT_A_CONSULTANT` when the person has no expert profile yet, because an
 org admin's click must never mint a platform identity for somebody else.
 Invitation accept is the user's own consenting click, so it lazy-creates
 the lightweight `ConsulteeProfile` for LEARNER (this is one of the
@@ -522,6 +478,40 @@ EXPERT when no `ConsultantProfile` exists, because a consultant identity
 carries domain, rate, verification, and payout prerequisites that no
 invite click can substitute for. SSO JIT auto-join keeps its own
 lazy-create path as a separately authorized provisioning channel.
+
+### Role changes and removal go through one guard (#1854)
+
+Every role and status move, from the dashboard, from SCIM and from bulk
+import, now goes through the shared guard in
+`lib/enterprise/membership-guards.ts`. Operator roles switch freely
+within the grant rules above. A LEARNER or EXPERT who already has
+bookings, seats, deliveries or earnings at the organization cannot change
+role in place and is refused with `REMOVE_AND_REINVITE`, so the operator
+removes the member and re-invites them with the new role. The members
+PATCH runs at Serializable isolation with the house retry, so two OWNERs
+demoting or suspending each other cannot both succeed.
+
+Removing a member checks their obligations first. The Remove dialog reads
+`GET /api/organizations/[orgId]/members/[memberId]/obligations`, which
+counts upcoming org sessions as learner or deliverer, live program seats
+and money still moving at this organization, and a non-OWNER is refused
+with `MEMBER_HAS_OBLIGATIONS` while any of them is open. An OWNER can
+force the removal, which the dialog confirms by having the OWNER type the
+member's email, and the route receives it as `?force=true`; live seats
+then close at once and the audit row records the forced removal and the
+obligations it overrode.
+
+SCIM provisioning acts with OWNER authority, so it may manage every role,
+but it is fully guarded. It uses the same status compare-and-set, writes
+an audit row, bumps the member's session, releases seats on suspension,
+cannot suspend the last OWNER, and can never revive a REMOVED or ERASED
+membership; a guard refusal answers the identity provider with a SCIM
+conflict rather than a 500. A member created by SSO or SCIM has not
+agreed to the sign-up terms, so the org dashboard shows a first sign-in
+consent step (`JoinConsentGate`) to a member with no core-processing
+consent record at all, and an invitation accepted by such an account
+shows the sign-up consent inline and records it in the accept
+transaction.
 
 ## Per-role landing in `/dashboard/organization/[orgId]`
 
@@ -534,7 +524,7 @@ page it lands on and the reason for that choice.
 |------|----------|-----|
 | `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home` | Operator overview (analytics, members, billing). |
 | `LEARNER` | `/my-program` | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings. |
-| `EXPERT` | `/compensation` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
+| `EXPERT` | `/compensation` | Membership.payoutRecipient, the expert's own split and recent earnings on org-tagged payments. Since #1860 the split is only the card that applies to this expert, resolved by `resolveEffectiveRateCard` as their membership override, else the org default, else the platform default, and the page never lists the org's other rate cards. |
 | no membership | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely. |
 
 Both `/my-program` and `/compensation` are read-only in v1. A LEARNER

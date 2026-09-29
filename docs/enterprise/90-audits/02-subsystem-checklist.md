@@ -95,7 +95,7 @@ components/enterprise/{ScopedListTable,ComingSoonBadge}
 components/collaborators/{CollaboratorsTab,InvitationsPanel,ConsultantSearchInput}
 docs/enterprise/   41 numbered docs (00→52) + explainers/
 prisma/seedFiles/15a-create-organizations.ts   # the SPONSOR/HOST/HYBRID/solo cohort
-__tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admin-gate, … 
+__tests__/enterprise/   cap, overage, credit-pool, reachable-paths, org-route-matrix-pin, … 
 ```
 
 ---
@@ -129,7 +129,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 **Code:** `[orgId]/members/*`, `lib/api/organizations/membership-transitions.ts`, `lib/enterprise/{governance,role-transitions}.ts`
 - [ ] Members list + add/edit/remove `✅` — `members/route.ts`, `[memberId]/route.ts`
 - [ ] Role ladder OWNER(100)/MAINTAINER(80)/BILLING_ADMIN(70)/MANAGER(60)/EXPERT(40)/SUPPORT(30)/LEARNER(20) `✅`
-- [ ] BILLING_ADMIN rank-independent finance gate (MAINTAINER denied) `✅` — `lib/auth/billing-admin-gate.ts`
+- [ ] BILLING_ADMIN rank-independent finance gate (MAINTAINER denied) `✅` — the `billing.manage` key in `lib/auth/org-permissions.ts`
 - [ ] LEARNER↔EXPERT disjoint transition blocked `🔒` — `lib/enterprise/role-transitions.ts`
 - [ ] `sessionGeneration` bump on role/status change (no forced logout) `✅` — `membership-transitions.ts`
 - [ ] Anti-lockout: can't remove/demote last OWNER `✅` — `governance.ts`

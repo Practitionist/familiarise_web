@@ -8,9 +8,11 @@ last-reviewed: 2026-06-05
 
 # Live-payout go-live runbook
 
-> **Status:** `ENABLE_LIVE_PAYOUTS` is **OFF**. Payouts create rows and post
-> `Dr *_PAYABLE / Cr CASH` but freeze at `PROCESSING` — money does **not**
-> leave the gateway. This runbook makes flipping the flag a de-risked,
+> **Status:** `ENABLE_LIVE_PAYOUTS` is **OFF**. Payouts are batched and
+> approved, but approved payouts stay `APPROVED` and are never claimed to
+> `PROCESSING`, so money does **not** leave the gateway. The plain-language
+> summary of the payout model and the four go-live steps is
+> [how payouts work](../../payments/payouts/00-how-payouts-work.md). This runbook makes flipping the flag a de-risked,
 > one-variable operation. Related: [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md),
 > [runbooks](03-runbooks.md).
 
@@ -26,20 +28,23 @@ path between them:
 ```mermaid
 flowchart TD
   START["ENABLE_LIVE_PAYOUTS<br/>(lib/feature-flags.ts —<br/>OFF by default, redeploy to change)"]
-  START -->|"false (today)"| FREEZE["process-payouts runs:<br/>posts Dr *_PAYABLE / Cr CASH,<br/>submittedToGateway = false,<br/>consultant rows freeze at PROCESSING,<br/>org payouts park at PENDING (#785)<br/>(no money leaves)"]
+  START -->|"false (today)"| FREEZE["process-payouts runs:<br/>posts Dr *_PAYABLE / Cr CASH,<br/>submittedToGateway = false,<br/>approved consultant and org payouts<br/>stay APPROVED (#785, #1860)<br/>(no money leaves)"]
   FREEZE --> PROVE["Sandbox proof:<br/>org-payout-sandbox-smoke.ts asserts<br/>gated behaviour + manual RazorpayX<br/>sandbox submit lands payout.processed"]
   PROVE --> CHECK{"Pre-flip checklist<br/>all green?<br/>KYB · secrets · VERIFIED accounts ·<br/>TDS/MSME · idempotency keys ·<br/>reconcile ok:true · telemetry on"}
   CHECK -->|"no"| FREEZE
   CHECK -->|"yes"| FLIP["Set ENABLE_LIVE_PAYOUTS=true<br/>+ redeploy → canary ONE<br/>small VERIFIED payout"]
-  FLIP --> LIVE["next tick submits eligible<br/>PROCESSING payouts to RazorpayX<br/>→ COMPLETED on webhook"]
+  FLIP --> LIVE["next process-payouts run claims each<br/>APPROVED payout to PROCESSING and<br/>submits it to RazorpayX → COMPLETED on webhook"]
   LIVE -.->|"rollback: flag=false + redeploy"| STOP["new ticks stop submitting;<br/>already-submitted rows settle via<br/>webhook (can't un-send — clawback,<br/>reversal-engine.ts §C)"]
 ```
 
 ## Why a runbook and not just "flip the flag"
 
-`processOrgPayout` reads the flag at call time. With it off, `submittedToGateway`
-is always `false` and the row stays `PROCESSING`. Flipping it on makes the very
-next cron tick submit **every** eligible `PROCESSING` payout to RazorpayX. That
+`processOrgPayout` and `processApprovedPayouts` read the flag. With it off,
+`submittedToGateway` is always `false` and an approved row stays `APPROVED`.
+Flipping it on makes the very next `process-payouts` run submit **every**
+`APPROVED` payout to RazorpayX. Since #1860 an org batch is `APPROVED` only
+after a `payouts.approve` holder signs it off, so a batch still awaiting
+approval is not submitted. That
 is real money on the first run — so the prerequisites below are hard gates.
 
 ## Pre-flip checklist (all must be green)
@@ -126,8 +131,8 @@ Goal: prove the submission path is correct **without** touching the production
 flag. The smoke asserts the gated behaviour and is safe to run anywhere:
 
 ```bash
-# Asserts: with the flag OFF, processOrgPayout advances to PROCESSING and makes
-# NO gateway submission (no providerPayoutId, money does not leave).
+# Asserts: with the flag OFF, processOrgPayout leaves its unapproved PENDING
+# payout unclaimed and makes NO gateway submission (money does not leave).
 DATABASE_URL=… DIRECT_URL=… npx tsx scripts/smoke/org-payout-sandbox-smoke.ts
 ```
 
@@ -136,7 +141,7 @@ step for the ones that need real sandbox creds):
 
 | Proof item                                      | How                                                                                                                                                                                      |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Flag off ⇒ no disbursement                      | smoke: `submittedToGateway === false`, status `PROCESSING`                                                                                                                               |
+| Flag off ⇒ no disbursement                      | smoke: `submittedToGateway === false`, status stays `PENDING` (not claimed)                                                                                                             |
 | No money leaves while gated                     | smoke: `providerPayoutId == null` after process                                                                                                                                          |
 | TDS/MSME stamped before submit                  | inspect a real batch in staging (`tdsAmountPaise`, `mustPayByDate`)                                                                                                                      |
 | Idempotency key never null                      | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |
@@ -151,7 +156,8 @@ step for the ones that need real sandbox creds):
    runtime toggle — a redeploy is required; this is intentional).
 3. Redeploy.
 4. **Canary**: ensure only ONE small, fully-VERIFIED payout is eligible for the
-   first `process-payouts` tick (cancel/hold the rest). Watch it go
+   first `process-payouts` tick (cancel/hold the rest; an org batch that
+   nobody has approved stays out of the run on its own). Watch it go
    `PROCESSING → COMPLETED` and confirm the `payout.processed` webhook +
    `notifyOrgPayoutCompleted`.
 5. Reconcile (`reconcile-ledgers`) — expect 0 findings.

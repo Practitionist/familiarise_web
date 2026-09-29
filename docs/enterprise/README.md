@@ -257,7 +257,7 @@ Docs **defer to code** when prose drifts. The load-bearing sources:
 - `lib/enterprise/config-lock.ts` — which contract/program term fields freeze once in use (#779 §A → [contract-lifecycle](30-programs-and-lifecycle/07-contract-lifecycle.md)).
 - `lib/enterprise/org-activation.ts` — the one org-state model behind the activation checklist + action-required banners (#777 §A / #779 §F); server-side reads split into `org-activation-signals.ts`.
 - `lib/enterprise/governance.ts` — `verifiedAt`-gated feature locks (SSO / INVOICE billing / unverified seat cap) (#675/#687).
-- `lib/auth/billing-admin-gate.ts` — OWNER-or-`BILLING_ADMIN` disjunction gate for the financial surface.
+- `lib/auth/org-permissions.ts` — the org permission matrix; the finance keys (`billing.manage`, `purchaseOrders.manage`, `payouts.manage`, `integrations.manage`) hold OWNER and `BILLING_ADMIN` only.
 - `lib/labels/org-labels.ts`, `lib/enterprise/{audit-actions,role-transitions}.ts`, `lib/auth.ts` (the `customSession` hook).
 
 ---

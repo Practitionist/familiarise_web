@@ -10,6 +10,7 @@ How consultant earnings flow from payment success to bank deposit. Covers the fu
 
 | #   | Document                                                   | Description                                                          |
 | --- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| 00  | [How payouts work](./00-how-payouts-work.md)               | A plain-language walk through expert and organisation payouts and the go-live steps |
 | 01  | [Architecture](./01-architecture.md)                       | System design, service layer, database models, provider integrations |
 | 02  | [Earnings Lifecycle](./02-earnings-lifecycle.md)           | PENDING → READY → BATCHED → PAID status flow, hold periods                     |
 | 03  | [Payout Processing](./03-payout-processing.md)             | Batch creation, approval workflow, processing pipeline               |

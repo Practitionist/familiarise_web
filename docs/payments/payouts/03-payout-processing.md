@@ -345,7 +345,7 @@ An unknown provider status never downgrades a payout (R-5). The RazorpayX and St
 | --------- | ------------------- | ------------------- |
 | RazorpayX | `payout.processed`  | Mark COMPLETED      |
 | RazorpayX | `payout.failed`     | Mark FAILED, retry  |
-| RazorpayX | `payout.reversed`   | Mark FAILED, refund |
+| RazorpayX | `payout.reversed`   | Mark FAILED before settlement, REVERSED after it |
 | Stripe    | `transfer.created`  | Mark COMPLETED      |
 | Stripe    | `transfer.failed`   | Mark FAILED, retry  |
 | Stripe    | `transfer.reversed` | Mark FAILED, refund |
@@ -414,6 +414,16 @@ flowchart TD
 5. **New payout created** → Fresh retry
 
 The stuck-payout handler re-arms a payout for retry through a compare-and-set, not a bare update (#1407). `scripts/payouts/handle-stuck-payouts.ts` reads its cohort of `PROCESSING` payouts once and then spends a gateway HTTP round-trip on each one in turn, which leaves a wide window in which a concurrent `process-payouts` run or an inbound payout webhook can move a row that the handler has already read. The reset to `APPROVED` therefore carries the state it expects to find in its `WHERE` clause — `status = PROCESSING` and `providerPayoutId IS NULL` — so a row that something else has advanced in the meantime is no longer matched. When the update affects zero rows the handler counts the payout as skipped and logs that it raced; it neither throws nor retries, because whichever writer moved the row now owns it. Without that guard the handler would stamp a payout back to `APPROVED` after a webhook had already completed it, and the next weekly batch would disburse the same money a second time.
+
+### Only a definitive rejection fails a submitted payout (#1853)
+
+Before #1853 (bucket B of #1846), a RazorpayX submit that timed out was marked `FAILED` and its earnings were released to `READY`, so the next Monday batch paid the consultant a second time under a new idempotency key while the first transfer might already have left. `processSinglePayout` in `lib/payments/payouts/payout-service.ts` now records the instant the gateway request leaves, and from then on only a definitive rejection may fail the payout. A definitive rejection is a 4xx other than 408, 409 or 429, read from the typed `RazorpayXHttpError.httpStatus` or from Stripe's `statusCode` by `isDefinitiveGatewayRejection` in `razorpay-payouts.ts`. A timeout, a socket error, an unreadable body, a 5xx or an unknown error keeps the row `PROCESSING` with its earnings `BATCHED` and linked, writes a "Gateway outcome unknown; awaiting reconcile by reference id" note to `failureReason`, and leaves the settlement to the webhook or to the stuck-payout sweep.
+
+The `FAILED` write itself is a compare-and-set on `PROCESSING` in one transaction with the earnings release (SM-B10), so a row that a webhook or a concurrent run has already moved is never overwritten, and only the writer that actually failed the payout releases its earnings. The TDS outcome is staged before the gateway call, and the provider id is stamped afterwards without writing the status, so a fast `payout.processed` webhook can neither book cash at the gross amount nor be dragged back to `PROCESSING`.
+
+Three paths now settle a payout whose reply never arrived. The payout webhook falls back to `reference_id`, which is our payout row id, when it does not recognise the provider id, and it stamps the provider id inside the status compare-and-set; an event that matches no payout is recorded as a SystemEvent rather than a console warning. `scripts/payouts/handle-stuck-payouts.ts`, which runs every four hours, looks a provider-less RazorpayX row up by reference id (`GET /v1/payouts?reference_id=`, through `findRazorpayPayoutByReference` in `payout-gateway-lookup.ts`) before it ever resubmits under the same key or fails it. A found payout is stamped and settled, an answer of "none" allows the old retry path, and several matches go to an operator through a Sentry error. A Stripe row with no provider id is skipped and reported for manual review, because Stripe may prune an idempotency key once it is at least 24 hours old, which is exactly the sweep's stuck threshold, so a same-key resubmission is no longer guaranteed to be idempotent and could pay twice. Instant payouts share `processSinglePayout`, so they get the same protection.
+
+System Jobs "Run now" answers 202 for `process-payouts` and `create-payout-batch` and runs the job after the response, with the outcome written to the ops log, because the edge cuts a request at about 26 seconds. Every request-path call to `processApprovedPayouts`, which covers System Jobs, `POST /api/admin/payouts/process` and the `/api/cleanup/process-payouts` twin, uses `REQUEST_PAYOUT_RUN_BOUNDS`, which starts no new payout after 20 seconds and takes `lock:payout_processing` for two minutes instead of the scheduled job's 35, so a run that the function limit kills frees the lock quickly and leaves any unstarted payouts `APPROVED` for the next run.
 
 ---
 

@@ -415,7 +415,7 @@ The **`wallet-low-balance`** cron (`jobs/billing/wallet-low-balance.ts`, GitHub 
 
 **Hypothetical (no seed org enables `enforceSSO`).** The seed ships no `OrganizationSSOSettings` with `enforceSSO = true`, so to walk this, turn **Enforce SSO** on for an org first (password login is then blocked for its claimed domains).
 
-Now the IdP goes down and members are locked out. An **OWNER** opens a window: `POST /api/organizations/[orgId]/sso/break-glass` with `{ hours, reason }` — `hours` is `1–72`, **default 4**; `reason` is required (≥5 chars). The route (`requireOrgOwner`):
+Now the IdP goes down and members are locked out. An **OWNER** opens a window: `POST /api/organizations/[orgId]/sso/break-glass` with `{ hours, reason }` — `hours` is `1–72`, **default 4**; `reason` is required (≥5 chars). The route (OWNER-only through the `identity.manage` matrix key):
 1. Refuses with `404` if `enforceSSO` isn't on for this org ("nothing to break").
 2. Sets `OrganizationSSOSettings.breakGlassUntil = now + hours`.
 3. Writes an `OrgAuditLog` row (`SETTINGS_CHANGED`, "SSO break-glass opened") carrying **who** (`actorMembershipId`) + **why** (`details.reason`/`hours`/`until`) — the window's who/why lives only in the audit row, not on columns.
@@ -430,7 +430,7 @@ sequenceDiagram
   participant S as OrganizationSSOSettings
   participant A as enforce-session (auth layer)
   O->>R: { hours: 4, reason: "Okta outage INC-123" }
-  R->>R: requireOrgOwner, refuse 404 if !enforceSSO
+  R->>R: identity.manage check, refuse 404 if !enforceSSO
   R->>S: breakGlassUntil = now + 4h
   R->>R: OrgAuditLog (who + why)
   Note over A: while breakGlassUntil > now → skip enforceSSO gate, password login allowed
