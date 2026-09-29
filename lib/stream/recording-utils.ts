@@ -156,6 +156,51 @@ export function generateRecordingTitle(
 }
 
 /**
+ * How long Stream keeps a recording's bytes and serves its URL.
+ *
+ * Two clocks, and they do not start together. The app-level
+ * `cdn_expiration_seconds` on the live Stream app is 1209600 — fourteen days
+ * measured from WHEN THE URL WAS MINTED. The retention on the object itself is
+ * fourteen days from the CALL. For the webhook path (the URL is written a
+ * minute or two after the call ends) those agree to within minutes, which is
+ * why the difference stayed invisible. For a row recovered late by the orphan
+ * reconciler they are up to fourteen days apart, and measuring from `now()`
+ * hands the user an expiry date at which the bytes stopped existing days
+ * earlier.
+ */
+export const STREAM_RECORDING_RETENTION_DAYS = 14;
+
+/**
+ * When a recording's Stream URL really stops working: the EARLIER of
+ * "call time + retention" and "now + retention", because whichever runs out
+ * first is the moment the object is gone.
+ *
+ * `recordedAt` is the call's start (Stream's own `call_recording.start_time`,
+ * which both the webhook writer and the sync path persist), so it is the anchor
+ * the retention window is actually measured from. Clamping to `now + retention`
+ * keeps the function correct for the webhook path too: a row written a minute
+ * after the call gets a deadline a minute earlier than a naive `recordedAt + 14d`
+ * would give, which is the honest reading of a CDN expiry that is already ticking.
+ *
+ * Computed in UTC. The previous implementation used local `setDate`, so the same
+ * recording expired on a different calendar day depending on which timezone the
+ * Lambda happened to run in — and a day-31 boundary shifts the month.
+ */
+export function streamUrlExpiresAt(
+  recordedAt: Date,
+  now: Date = new Date(),
+): Date {
+  const addDays = (base: Date, days: number) => {
+    const out = new Date(base.getTime());
+    out.setUTCDate(out.getUTCDate() + days);
+    return out;
+  };
+  const fromCall = addDays(recordedAt, STREAM_RECORDING_RETENTION_DAYS);
+  const fromNow = addDays(now, STREAM_RECORDING_RETENTION_DAYS);
+  return fromCall < fromNow ? fromCall : fromNow;
+}
+
+/**
  * Every live seat holder of the meeting's booking (#1554): the event's whole
  * roster for a webinar or class, the two sides for a 1:1.
  */

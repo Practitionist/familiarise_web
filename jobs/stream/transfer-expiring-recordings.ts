@@ -69,12 +69,14 @@ async function main(): Promise<void> {
       // #899 — 14-day window = every READY permanent recording (Stream URLs
       // live exactly 14d), so the sweep starts transfers near-ready and
       // backstops ready-time webhook kicks that died, not just near-expiry.
-      const result =
-        await RecordingTransferService.processExpiringRecordings(
-          14,
-          10,
-          "PERMANENT",
-        );
+      // The batch size is the service's raised default (D7) — do not re-pin it
+      // to 10 here; forty transfers a day is what created the permanent
+      // backlog this sweep is supposed to clear.
+      const result = await RecordingTransferService.processExpiringRecordings(
+        14,
+        undefined,
+        "PERMANENT",
+      );
 
       // Find STREAM_ONLY recordings expiring in 3 days (for warnings)
       const expiringStreamOnly =
@@ -91,26 +93,38 @@ async function main(): Promise<void> {
   // #899 — backlog alert: permanent recordings <72h from Stream expiry that
   // this sweep still left untransferred. Non-zero means the pipeline is
   // falling behind or failing repeatedly; page before the bytes lapse.
+  //
+  // D7 — escalated from `warning` to `error`, and that is the substantive half
+  // of this fix. The per-recording failure page goes through
+  // `recordSystemError`, which writes a SystemEvent row; this one was a bare
+  // Sentry `captureMessage` at `warning`, which is filtered out of the paging
+  // path an on-call human actually watches. So a recording that had already
+  // failed its first attempt — nowhere near the >=3 attempt threshold — and was
+  // then overtaken by the expiry clock produced NO alert at all. That is the
+  // exact failure the alert was added for (#899) and the level is why it never
+  // fired. A permanent recording inside 72h of losing its bytes is a page, not
+  // a warning.
   const atRisk =
     await RecordingTransferService.countAtRiskPermanentRecordings(72);
   if (atRisk > 0) {
     console.warn(
       `⚠️ ${atRisk} permanent recording(s) <72h from Stream expiry, still untransferred`,
     );
-    Sentry.captureMessage(
-      "Permanent recordings at risk of Stream URL expiry",
-      {
-        level: "warning",
-        tags: { subsystem: "jobs", job: "transfer-expiring-recordings" },
-        extra: { atRisk },
-      },
-    );
+    Sentry.captureMessage("Permanent recordings at risk of Stream URL expiry", {
+      level: "error",
+      tags: { subsystem: "jobs", job: "transfer-expiring-recordings" },
+      extra: { atRisk },
+    });
   }
 
   const duration = (Date.now() - startTime) / 1000;
   console.log(`\n⏱️ Job completed in ${duration.toFixed(2)} seconds`);
   console.log(`   Transferred: ${result.succeeded}`);
   console.log(`   Failed: ${result.failed}`);
+  // D7 — reported separately from `Failed` because it is not a failure: the
+  // retention sweep or the expiry sweep retired these rows while the batch held
+  // them, and counting them as failures would make a healthy run exit non-zero.
+  console.log(`   Retired mid-transfer: ${result.retired}`);
   console.log(`   STREAM_ONLY expiring soon: ${expiringStreamOnly.length}`);
 
   if (result.errors.length > 0) {
@@ -119,15 +133,17 @@ async function main(): Promise<void> {
 
   if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `transferred=${result.succeeded}\nfailed=${result.failed}\nexpiring_stream_only=${expiringStreamOnly.length}\nsuccess=true\n`,
+      process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT,
+      `transferred=${result.succeeded}\nfailed=${result.failed}\nretired=${result.retired}\nexpiring_stream_only=${expiringStreamOnly.length}\nsuccess=true\n`,
     );
   }
 
   Sentry.logger.info("job:transfer-expiring-recordings finished", {
     succeeded: result.succeeded,
     failed: result.failed,
+    retired: result.retired,
     expiringStreamOnly: expiringStreamOnly.length,
+    atRisk,
   });
 
   if (result.failed > 0) {

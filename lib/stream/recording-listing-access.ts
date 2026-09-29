@@ -60,69 +60,18 @@ export function resolveListingPlan(
 }
 
 // ---------------------------------------------------------------------------
-// Storage-policy resolution — used by the transfer route AND by
-// handleRecordingReady's premium kick. Covers ALL FOUR plan arms because any
-// appointment type can carry a Meeting.
+// Storage-policy resolution lives in `recording-storage-policy.ts` (D5) and is
+// re-exported here so every existing route-level importer keeps its import
+// path. It is a separate LEAF module because the transfer service — loaded by
+// four crons — needs the resolver, and this file opens with `next/server` and
+// `lib/auth-server`.
 // ---------------------------------------------------------------------------
 
-const storagePolicyPlanSelect = {
-  consultantProfileId: true,
-  recordingStoragePolicy: true,
-} satisfies Prisma.ConsultationPlanSelect;
-
-export const appointmentStoragePolicySelect = {
-  consultation: {
-    select: {
-      consultationPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-  subscription: {
-    select: {
-      subscriptionPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-  webinar: {
-    select: {
-      webinarPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-  class: {
-    select: {
-      classPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-} satisfies Prisma.AppointmentSelect;
-
-interface PolicyArm {
-  consultantProfileId: string | null;
-  recordingStoragePolicy: string;
-}
-
-interface AppointmentWithAllPlans {
-  consultation?: { consultationPlan: PolicyArm | null } | null;
-  subscription?: { subscriptionPlan: PolicyArm | null } | null;
-  webinar?: { webinarPlan: PolicyArm | null } | null;
-  class?: { classPlan: PolicyArm | null } | null;
-}
-
-/**
- * The effective RecordingStoragePolicy for an appointment, and the owning
- * consultant across any arm. Defaults to STREAM_ONLY when no plan arm matches
- * (fail-closed: unknown provenance never earns permanent storage).
- */
-export function resolveAppointmentStoragePolicy(
-  appointment: AppointmentWithAllPlans,
-): { policy: string; ownerProfileId: string | null } {
-  const plan =
-    appointment.consultation?.consultationPlan ??
-    appointment.subscription?.subscriptionPlan ??
-    appointment.webinar?.webinarPlan ??
-    appointment.class?.classPlan;
-  return {
-    policy: plan?.recordingStoragePolicy ?? "STREAM_ONLY",
-    ownerProfileId: plan?.consultantProfileId ?? null,
-  };
-}
+export {
+  appointmentStoragePolicySelect,
+  appointmentStoragePolicyWhere,
+  resolveAppointmentStoragePolicy,
+} from "@/lib/stream/recording-storage-policy";
 
 // ---------------------------------------------------------------------------
 // Shared route loader — the consultant-profile lookup + recording fetch +
