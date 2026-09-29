@@ -14,7 +14,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireScimAuth } from "@/lib/scim/auth";
 import { scimError } from "@/lib/scim/errors";
-import { deprovisionScimUser } from "@/lib/scim/operations";
+import { deprovisionScimUser, setScimUserActive } from "@/lib/scim/operations";
 import { toScimUser } from "@/lib/scim/resource-user";
 
 function baseUrlFrom(req: NextRequest): string {
@@ -75,16 +75,14 @@ export async function PATCH(
   const { id } = await params;
   const orgId = auth.grant.organizationId;
 
-  const body = (await req.json().catch(() => null)) as
-    | {
-        schemas?: string[];
-        Operations?: Array<{
-          op?: string;
-          path?: string;
-          value?: unknown;
-        }>;
-      }
-    | null;
+  const body = (await req.json().catch(() => null)) as {
+    schemas?: string[];
+    Operations?: Array<{
+      op?: string;
+      path?: string;
+      value?: unknown;
+    }>;
+  } | null;
 
   if (!body?.Operations?.length) {
     return scimError(400, "Operations[] is required", "invalidSyntax");
@@ -105,7 +103,11 @@ export async function PATCH(
     }
     if (op.path === "active") {
       if (typeof op.value !== "boolean") {
-        return scimError(400, "replace active requires boolean value", "invalidValue");
+        return scimError(
+          400,
+          "replace active requires boolean value",
+          "invalidValue",
+        );
       }
       activeOverride = op.value;
     } else if (
@@ -134,12 +136,19 @@ export async function PATCH(
     );
   }
 
-  const nextStatus = activeOverride ? "ACTIVE" : "SUSPENDED";
-  if (membership.status !== nextStatus) {
-    await prisma.membership.update({
-      where: { id: membership.id },
-      data: { status: nextStatus },
-    });
+  // N3 — through the shared guard: no REMOVED/ERASED revival, the status
+  // CAS, the last-OWNER rule, an audit row, a session bump and seat release.
+  const result = await setScimUserActive(prisma, {
+    organizationId: orgId,
+    resourceId: id,
+    active: activeOverride,
+  });
+  if ("kind" in result) {
+    if (result.kind === "NOT_FOUND") return scimError(404, "User not found");
+    return scimError(
+      409,
+      result.kind === "CONFLICT" ? result.detail : "Conflict",
+    );
   }
   const refreshed = await loadMembership(orgId, id);
   return NextResponse.json(
@@ -167,6 +176,10 @@ export async function DELETE(
   });
   if ("kind" in result && result.kind === "NOT_FOUND") {
     return scimError(404, "User not found");
+  }
+  // The last active OWNER cannot be deprovisioned (#1846 N4).
+  if ("kind" in result && result.kind === "CONFLICT") {
+    return scimError(409, result.detail);
   }
   // RFC 7644 §3.6: a successful DELETE returns 204 No Content.
   return new NextResponse(null, { status: 204 });

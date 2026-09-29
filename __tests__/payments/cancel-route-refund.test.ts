@@ -60,6 +60,8 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+  // #1851 decision 2 — an act-for-org cancel writes the org's audit row.
+  orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
   appointmentOccurrence: {
@@ -102,6 +104,10 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: (...a: unknown[]) => globalAppointmentFindFirst(...a),
     },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
+    // #1775 P-3 — the reserved row a gateway throw leaves behind.
+    refund: {
+      findUnique: jest.fn(async () => ({ status: "PENDING" })),
+    },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     // #1166 — what `isOrgAdminOfAppointment` reads.
     membership: {
@@ -154,6 +160,7 @@ jest.mock("../../lib/activity/log-activity", () => ({
 }));
 
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
+import { RefundGatewayError } from "@/lib/payments/operations/refund";
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";
@@ -685,6 +692,13 @@ describe("#1166 — an admin of the funding org acts on the payer side", () => {
     expect(res.status).toBe(200);
     expect(body.refund.refundPct).toBe(0);
     expect(body.refund.amountRefundedPaise).toBe(0);
+    expect(txStub.orgAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: "org-1",
+        category: "MEMBER",
+        action: "APPOINTMENT_CANCELLED_FOR_ORG",
+      }),
+    });
   });
 
   it("refuses an EXPERT of the same org", async () => {
@@ -761,6 +775,23 @@ describe("failure modes leave the cancellation standing", () => {
     expect(mockRecordSystemError).toHaveBeenCalledWith(
       expect.objectContaining({ category: "PAYMENT" }),
     );
+  });
+
+  it("answers PENDING when the gateway threw but the Refund row stays PENDING (#1775 P-3)", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+    mockRefundBookingPayment.mockRejectedValue(
+      new RefundGatewayError("timeout", "GATEWAY_REFUND_FAILED", "rf_1"),
+    );
+
+    const body = await (
+      await cancelHandler(makeRequest(), makeParams(APPT))
+    ).json();
+
+    expect(body.refund.status).toBe("PENDING");
   });
 
   it("distinguishes an exhausted balance from a failure", async () => {

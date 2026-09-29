@@ -1,6 +1,6 @@
 /**
  * Segment-aware active-route check shared by the dashboard shells
- * (CollapsibleSidebar nav items + PersonalDashboardShell mobile tabs).
+ * (CollapsibleSidebar nav items + MobileNav tabs).
  *
  * `pathname.includes(...)` was used before, which marked a tab active for
  * any route that merely CONTAINED the target as a substring — e.g.

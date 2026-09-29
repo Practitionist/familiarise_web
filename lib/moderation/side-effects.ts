@@ -45,6 +45,7 @@ import {
   cancelFutureEngagementsForUser,
   type BulkCancelSummary,
 } from "./cancel-user-engagements";
+import { goHref } from "@/lib/dashboard/go";
 
 export interface ModerationReportRef {
   id: string;
@@ -584,7 +585,8 @@ async function triggerModerationNotification(
       return notifyVerificationStatusChanged(report.targetUserId, {
         status: "REJECTED",
         reason: notes,
-        dashboardUrl: "/dashboard",
+        // #1527 — PROFILE_UNVERIFIED only ever targets a consultant.
+        dashboardUrl: goHref("expert", "settings"),
       });
     case "NO_ACTION":
     case "USER_REINSTATED":

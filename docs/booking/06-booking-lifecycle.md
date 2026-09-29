@@ -81,16 +81,16 @@ flowchart LR
 
 ### What Happens at Each Stage
 
-| Stage                    | What Happens                                                                                                                                                                                              | Database Changes                                                                                                                   | Key Source File                                      |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| **Browse**               | Consultee views consultant profiles and available plans. No database writes occur.                                                                                                                        | None                                                                                                                               | Frontend routes                                      |
-| **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                               | Creates: event record (PENDING status), Appointment, tentative AppointmentOccurrence(s)                                            | `lib/payments/operations/checkout.ts`                |
-| **Approval** (if needed) | Consultant reviews and approves. For consultations: sets APPROVED_PENDING_PAYMENT. For subscriptions: approves and allocates slots. For trials: approves and schedules directly (no payment).             | Updates: event record status                                                                                                       | Requests tab API routes                              |
-| **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                       | Creates: Payment record (PENDING)                                                                                                  | `lib/payments/operations/checkout.ts`                |
-| **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
-| **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications. | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
-| **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                               | None (managed by video/meeting integration)                                                                                        | External integrations                                |
-| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                      | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
+| Stage                    | What Happens                                                                                                                                                                                                             | Database Changes                                                                                                                   | Key Source File                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **Browse**               | Consultee views consultant profiles and available plans. No database writes occur.                                                                                                                                       | None                                                                                                                               | Frontend routes                                      |
+| **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                                              | Creates: event record (PENDING status), Appointment, tentative AppointmentOccurrence(s)                                            | `lib/payments/operations/checkout.ts`                |
+| **Approval** (if needed) | Consultant reviews and approves. For consultations: sets APPROVED_PENDING_PAYMENT. For subscriptions: approves and allocates slots. For trials: approves and schedules directly (a paid trial must already be captured). | Updates: event record status                                                                                                       | Requests tab API routes                              |
+| **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                                      | Creates: Payment record (PENDING)                                                                                                  | `lib/payments/operations/checkout.ts`                |
+| **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                               | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
+| **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications.                | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
+| **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                                              | None (managed by video/meeting integration)                                                                                        | External integrations                                |
+| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                                     | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
 
 ---
 
@@ -200,6 +200,16 @@ Every approval of a REQUEST-mode consultation or subscription from the UI — "U
 
 An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment, measured from the last manual reminder's own outbox row (the Upstash window reports its reset on the UTC day bucket, so it is only the same-second burst guard underneath), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` = the last send plus 24 hours when the window has not passed and `409 NOT_AWAITING_PAYMENT` when there is no live PENDING order to remind about. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
 
+#### When the time someone wants is held (#1778)
+
+Two learners can want the same 1:1 window, and the one who loses the race is refused with `SLOT_TAKEN` or `LOCK_CONTENTION`. That learner can now ask to be told if the time frees ("Notify me if this time opens"), which writes a `WindowBackupInterest` row; a learner may wait on at most three windows at once. This is notify-only on purpose. Nothing is reserved, the lock and CAS machinery is unchanged, and when the window frees every waiting learner is told at once and the first to book gets it. Parallel requests with auto-decline and authorise-then-capture were considered and deferred to #1778.
+
+The notices are staged by the paths that free a held window, each inside its own transaction through `stageNoticesForAppointmentHolds` in `lib/booking/backup-interest.ts`: a consultation or subscription decline, the cancel route, the lapse core behind the 7-day sweep and the consultant's Withdraw, checkout's superseded holds, and the abandoned-payment release of a dead hold. Each waiting row moves `WAITING → NOTIFIED` with the status in the WHERE and stages one `window-opened` bell and email keyed on the row, so a second release stages nothing. A capture that confirms a 1:1 booking marks the buyer's own overlapping rows `BOOKED`, and the stale-request sweep marks rows whose window has passed `EXPIRED`.
+
+#### Paying an approval from any surface (#1775 P-1)
+
+For Razorpay the stored pay link on an approval is the order id, not a URL, so no "Pay" button could open it until 2026-09-25. Every surface now resolves its target through `payLinkHref` in `lib/payments/pay-link-href.ts`, which turns an order id into our own pay page at `/checkout/pay/[paymentId]` and leaves a hosted https link alone. The page is a server component that only the payer can open: a paid order redirects to the booking, a live order opens in the Razorpay sheet through `RazorpayCheckout`'s existing-order mode (which never calls `POST /api/checkout`), and an expired or failed order is re-minted through the request's own path before it opens. The pay-link email carries the same page as an absolute URL.
+
 #### Sequence Diagram
 
 ```mermaid
@@ -292,6 +302,10 @@ The capture webhook moves a consultation to `APPROVED` only from `PENDING` or `A
 ### 5b. Subscription
 
 A subscription is a recurring 1:1 arrangement with multiple sessions over a scheduling period. The critical difference from a consultation is that **the consultant allocates session slots after purchase**, not during checkout. This is the most complex 1:1 flow.
+
+#### Plans are paid at purchase (#1775)
+
+A subscription plan is always paid at checkout; the consultant's booking mode applies to consultations only, and the expert page shows its request badge only on the consultations tab. The consultant must allocate the first cycle within 48 hours of the capture (`Payment.capturedAt`, falling back to `createdAt` for rows written before the column existed), or the buyer is refunded in full. The only request-then-pay leg a plan ever had is closed: the detail PATCH answers `409 SUBSCRIPTION_UNPAID` for a plan with no settled payment, and the allocate path refuses the same plan instead of parking it in `APPROVED_PENDING_PAYMENT`. The expiry sweep's `expireUnallocatedPaidSubscriptions` arm moves a paid `PENDING` plan with no live session and no live proposal to `EXPIRED` with reason `UNALLOCATED_48H`, repeating the whole cohort predicate in the CAS WHERE, refunds it through `refundBookingPayment`, and stages the `subscription-unallocated-refunded` bell to both parties inside the same transaction. Before that deadline the consultant is nudged at 12, 24 and 36 hours after the capture, and the consultant's next action on the booking is "Schedule cycle 1" with the deadline shown. Once a cycle is delivered with entitlement left, the next action becomes "Schedule the next N" without a deadline.
 
 #### Why the Consultant Allocates Later
 
@@ -460,7 +474,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For WEBINAR: setParticipantStatus<br/>WHERE appointmentId AND userId<br/>role stays, status flips HELD -> CONFIRMED
+        Note over WH,DB: For WEBINAR: transitionParticipant<br/>WHERE appointmentId AND userId AND status=HELD<br/>role stays, status flips HELD -> CONFIRMED
         Note over WH,DB: Only THIS user's participant row is confirmed, not others'
         WH->>DB: UPDATE Webinar status = SCHEDULED
     end
@@ -572,7 +586,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For CLASS: setParticipantStatus<br/>WHERE classId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
+        Note over WH,DB: For CLASS: transitionParticipant<br/>WHERE classId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
         WH->>DB: UPDATE Class status = SCHEDULED
     end
 
@@ -607,7 +621,7 @@ Because AppointmentParticipant is the only participant list and it is scoped to 
 
 ```typescript
 // confirmExistingAppointment for CLASS:
-await setParticipantStatus(
+await transitionParticipant(
   tx,
   { appointment: { classId }, userId, status: "HELD" },
   "CONFIRMED",
@@ -615,6 +629,8 @@ await setParticipantStatus(
 ```
 
 This scopes by `classId` (not a single `appointmentId`) because the class's wrapper is looked up by its class relation, and it flips exactly one participant row rather than any occurrence. This matters because the Payment record links to the wrapper Appointment, and that one Appointment already carries every session as an occurrence.
+
+Every participant status write goes through `transitionParticipant` in `lib/booking/participants.ts`, which replaced the old `setParticipantStatus` in #1846. The helper looks up the allowed from-statuses for the target in `PARTICIPANT_ALLOWED_FROM` and ANDs that set with the caller's WHERE rather than merging it in, so a caller that already narrows (as the capture does with `status: "HELD"`) keeps its narrower set, and a caller that forgot to narrow still cannot make an illegal move. REFUNDED is terminal under that map, so a later cancel sweep can no longer rewrite a refunded seat back to CANCELLED. A zero-row match is a normal answer, so the helper returns the count and never throws, and participant moves write no BookingStatusHistory row because that enum has no participant entity. The map itself is quoted in [18-state-machines.md](./18-state-machines.md).
 
 #### Source References
 
@@ -628,11 +644,15 @@ This scopes by `classId` (not a single `appointmentId`) because the class's wrap
 
 ### 5e. Trial
 
-A trial is a free 1:1 session tied to a subscription plan. It is the only event type with NO payment involved. The purpose is to let a consultee "try before they buy" -- experience a session with the consultant before committing to a subscription.
+A trial is a 1:1 session tied to a subscription plan, either free or priced by the plan's `trialPriceInPaise`. The purpose is to let a consultee "try before they buy" -- experience a session with the consultant before committing to a subscription.
+
+#### Paid trials are charged at request (#1775)
+
+A paid trial is charged when it is requested and refunded in full if the consultant declines it or does not answer within 48 hours. `POST /api/trials` creates a placeholder `TRIAL` appointment with no session in the same transaction as the trial, then mints the order against that appointment after the commit and hands the buyer the branded trial checkout. The capture webhook stamps the trial's `paymentId` and leaves it `PENDING`, because the consultant has not answered yet. Accepting requires that payment (`409 TRIAL_UNPAID` otherwise) and places the session on the placeholder appointment instead of creating a new one. The expiry sweep cancels an unpaid trial past its pay window without moving money, and cancels a paid trial nobody answered within 48 hours with reason `TRIAL_UNANSWERED` (the enum has no `EXPIRED`), refunding it in full; a decline refunds in full through the consultant-initiated tier. A learner who cancels before a session exists is refunded in full, because no session is read as infinite notice. The trial's earning is written undelivered (`holdUntil` null) and completion starts the hold. The free-trial flow below is unchanged.
 
 #### How Trials Differ
 
-Trials bypass the entire checkout/payment pipeline. Instead:
+A free trial bypasses the checkout and payment pipeline entirely, and a paid trial follows the same steps once its request-time charge has been captured (see the section above). The steps are these:
 
 1. The consultee requests a trial (creates a PENDING Trial record)
 2. The consultant approves and schedules a specific time slot (PENDING --> SCHEDULED)
@@ -865,7 +885,7 @@ The switch is `ConsultantProfile.bookingMode` (#1703, ADR 34), which the consult
 - **Consultations under `INSTANT` (the default)**: the dialog sends a consultee to direct checkout when the chosen slot is clean, and to `POST /api/scheduling/request-for-approval` when the slot is contended, which the availability grid reports as `isAllocated` (the 30-minute atom already overlaps another booking's occurrence, tentative or confirmed). A contended slot cannot be sold outright because the consultant has to decide who gets it, so the request holds tentative occurrences and waits in the Requests tab; the 48-hour expiry above is what releases that hold if nobody decides, and the consultee is told when it does.
 - **Consultations under `REQUEST`**: every slot goes through `request-for-approval`, clean or contended, and the button says "Request this time — the expert confirms before you pay". Approval mints a pay-link that stays open for 24 hours (`APPROVAL_PAYMENT_EXPIRATION_HOURS`), with one reminder email when 12 hours are left; an unpaid link moves the request to `EXPIRED` and tells the consultee.
 - **The consultant's gate**: the same route refuses with `409 CONSULTANT_PAUSED` while `acceptingRequests` is false, and with `409 CONSULTANT_AT_CAPACITY` when `maxOpenRequests` is set and the consultant already holds that many open `PENDING` requests (consultations and subscriptions together). Both refusals name the consultee's recourse: pick another expert, or try later.
-- **Subscriptions**: Support both paths. Direct checkout is more common; the subscription stays PENDING in either case until slots are allocated.
+- **Subscriptions**: A plan is always paid at checkout, whatever the consultant's booking mode, and the paid plan stays `PENDING` until the consultant allocates the first cycle within 48 hours of the capture (see "Plans are paid at purchase" above).
 
 **Requesting validates every arm (2026-09-19, #1583 B-P1-06/E-P1-01/E-P1-03/E-P1-05).** `request-for-approval` now passes both `consulteeUserId` and `consultantProfileId` into `ScheduleValidationService.checkSlotAvailability`, so a consultee's overlap with a different consultant and the co-host arm are checked, not just the target consultant's own calendar. The Zod edge on both the RFA slots schema and the checkout slot-times schema refuses a start that is not on the `:00`/`:30` grid (`400 SLOT_NOT_ON_GRID`, "Times start on the hour or half hour") or that sits inside the checkout lead time (`400 SLOT_TOO_SOON`); `ScheduleValidationService`'s own 5-second `BUFFER_MS` stays as the allocator's re-validation of a server-picked slot, which is a narrower, later check than the Zod edge's lead-time refusal.
 
@@ -1324,7 +1344,8 @@ t=1m       webhook payment.captured -> handlePaymentSuccess (one transaction): P
                             sweep-stuck-webhook-events (`4-59/10 * * * *`, ~10 min) re-drives a stored-but-unprocessed WebhookEvent
 t=1d       Reschedule proposed -> the old occurrence is released in place: isTentative=true, completionStatus=RESCHEDULED
              (kept on the row, not deleted; re-confirmed if the proposal is accepted)
-             proposal ignored -> expire-reschedule-proposals (`45 * * * *`, hourly)
+             proposal ignored -> expire-reschedule-proposals (`45 * * * *`, hourly) expires it and restores
+                            the original slots and request status under the appointment lock (#1846)
 t=call     Meeting on Stream -> reconcile-orphaned-sessions (`25,55 * * * *`, twice hourly) closes the Meeting record
                             against the Stream call state
              consultant never joined -> detect-consultant-no-shows (`57 * * * *`, hourly): cancels and fully refunds
@@ -1348,3 +1369,29 @@ A sweep breaks in exactly one way in this codebase: it treats a row that is perm
 ## Times are rendered in the viewer's zone (2026-09-15)
 
 Every absolute instant on the Appointments list (`components/appointments/AppointmentsShell.tsx`, its rows and the next-up hero) is formatted through `formatInViewerZone` from `lib/time/viewer-zone.ts` in one IANA zone that is resolved once per page: the signed-in user's saved `User.timezone`, else the appointment's scheduling zone where the caller has one, else UTC. The RSC page reads that zone from the session with `getViewerZone()` and passes it down as a prop, so the server render and the hydrating client format each time from the same value; date-fns's bare `format()` reads the runtime's local zone, and with Netlify in UTC and the browser in Asia/Kolkata the same instant produced two wall clocks and React hydration error #418 on both dashboards. A short zone label such as `IST` or `UTC` is appended only when the displayed zone is not the viewer's own, so a time shown in a fallback zone is never mistaken for theirs. Client-only surfaces that never server-render their times, such as the earnings table, take the same zone from the `useViewerZone()` hook. The pin is `__tests__/time/viewer-zone.test.ts`, and the remaining bare `format()` sites are listed in `engineering-log-2026-09-15-viewer-timezone.md`.
+
+## Walking away before paying: the abandon door (2026-09-28, #1846)
+
+A buyer who has not paid for a booking leaves it through one door, `POST /api/bookings/[bookingId]/abandon`, where `bookingId` is the Appointment id that every booking surface already carries (#1527 decision 11). Before this door existed there were three exits with three different meanings: the cancel route handled only consultations and subscriptions, so a trial's Cancel on Home answered 403 (CE-01), the checkout-hold DELETE was keyed by payment rather than by booking, and the trial DELETE also refunded. The route only authenticates, applies the same rate limit as cancel, and answers; the dispatch lives in `lib/booking/abandon.ts`, and the Home widget's approval-pending Cancel (`PendingPaymentsWidget.tsx`) now calls it.
+
+The door resolves the booking first and proves the caller is its buyer, and it answers `NOT_FOUND` for both a missing booking and someone else's, so it cannot be used to probe other people's bookings. It then takes the appointment lock before opening one Serializable transaction, which is the same lock order the cancel route and every other lifecycle writer use. The outcome depends on the kind of booking, as the following table shows.
+
+| Kind | What the door does |
+| --- | --- |
+| Consultation or subscription | The request moves from `PENDING` or `APPROVED_PENDING_PAYMENT` to `CANCELLED` through its CAS helper, anyone waiting on the held times is told they are free, the live slots are cancelled and tombstoned, the participants are released, and any open reschedule proposal is declined through `declineOpenReschedules`. |
+| Trial | The trial moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED`, its pay link and due date are cleared, and its held session is tombstoned through `softCancelTrialAppointmentInTx`. |
+| Webinar or class | Only the caller's own `HELD` consultee seat is released, and the event itself stays live for everyone else. |
+
+In every arm the caller's `PENDING` payment on that appointment moves to `EXPIRED` by compare-and-swap, so a capture that is racing the door keeps its `SUCCEEDED`. Each payment the door expires gives back the referral credits spent at checkout and the organisation engagement that checkout debited, and both give-backs are idempotent. The gateway order is cancelled only after the transaction commits and on a best-effort basis, so a gateway that refuses the cancel never un-abandons the booking, and a capture that still lands is refunded by the webhook's capture-after-release path.
+
+The buyer decided, so the outcome is `CANCELLED`; the `paymentDueAt` sweep remains the backstop and ends in `EXPIRED` because nobody acted (doctrine rule 5). A booking whose payment has already been captured is refused with `ALREADY_PAID` (409), because money has moved and the policy-quoted cancel owns it. That refusal is not only a pre-check: the money predicate rides every CAS WHERE in the door, so a capture that commits between the read and the write makes the CAS match zero rows, and the answer becomes `ALREADY_PAID` instead of a cancelled paid booking. A booking that has already moved on, such as one that is confirmed, cancelled or expired, is refused with `NOT_ABANDONABLE` (409). Home's gateway-pending rows still use the payment-keyed `DELETE /api/checkout/pending/[paymentId]`; only approval-pending rows go through the door.
+
+## An expired reschedule proposal restores the booking (2026-09-28, #1846)
+
+When nobody answers a reschedule proposal, the booking now goes back to exactly what it was (#1527 decision 9). Before #1846 the expiry sweep left the released slots released, so a confirmed session disappeared because a consultant did not click. The restore now lives in `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep share it. A decline is the one ending that keeps the slots released, because someone did decide: the consultee still wants to move, and the booking belongs in the consultant's allocate queue.
+
+The sweep in `scripts/appointments/expire-reschedule-proposals.ts` expires each lapsed proposal under the appointment lock, and it moves the proposal to `EXPIRED` and restores the booking in the same transaction. The restore flips the released `RESCHEDULED` slots back to `SCHEDULED` with `isTentative: false`, and it returns a parent request that the reschedule flipped to `PENDING` to the status it held before, which it reads from the history row the reschedule route wrote when it opened the proposal. Restoring is cheap because a reschedule never rewrites `startsAt`, so the released rows still carry their original times.
+
+If the consultant's original time was booked while the proposal was open, flipping the slots back meets the `occurrence_no_confirmed_overlap` constraint, and the whole transaction rolls back. The sweep reports the miss to Sentry, expires the proposal on its own, and leaves the slots released for the consultant to re-place, which is the pre-#1846 behaviour. It counts each such row in the job result as `proposalsExpiredUnrestored`, and `proposalsExpired` includes those rows too. A withdrawal that meets the same constraint answers 409 `ORIGINAL_TIME_TAKEN` instead of a raw 500, and the proposal stays open.
+
+When a restore brings at least one slot back, the sweep tells both parties that their original time stands. It sends the `EXPIRED` outcome on the existing `appointment-rescheduled` Novu family and the matching email through `notifyRescheduleRestored` in `lib/booking/reschedule-outcome-notice.ts`, which the withdraw notice also uses. The notice runs after the transaction commits, it awaits both triggers, and it never throws, so a notification failure cannot undo the expiry or abort the sweep.

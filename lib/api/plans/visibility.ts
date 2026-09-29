@@ -22,7 +22,7 @@
  * public surface through one constant keeps the gate auditable.
  */
 
-import type { OrgPlanVisibility } from "@prisma/client";
+import type { OfferingPlanStatus, OrgPlanVisibility } from "@prisma/client";
 
 /**
  * Visibility values that are safe to show on the public marketplace.
@@ -67,6 +67,58 @@ export function eventPlanDiscoverableWhere() {
 }
 
 /**
+ * #1527 Q4 — the discovery filter for ConsultationPlan and SubscriptionPlan,
+ * the only plan models with a draft state. Webinar and class drafts live on
+ * `Webinar.status` / `Class.status`, which is why `eventPlanDiscoverableWhere()`
+ * stays unchanged for them.
+ */
+export function oneOnOnePlanDiscoverableWhere() {
+  return {
+    ...eventPlanDiscoverableWhere(),
+    status: "PUBLISHED",
+  } as const;
+}
+
+/**
+ * #1527 Q4 — `where` for the 1:1 and subscription list GETs. The owner's
+ * planner reads its own plans through them, so the owner keeps drafts and the
+ * archived rows it restores from; every other viewer gets the discovery filter.
+ */
+export function oneOnOnePlanListWhere(
+  consultantId: string | null,
+  viewerConsultantProfileId: string | null | undefined,
+) {
+  const isOwner = !!consultantId && consultantId === viewerConsultantProfileId;
+  return {
+    ...(consultantId ? { consultantProfileId: consultantId } : {}),
+    ...(isOwner
+      ? marketplaceVisibilityWhere()
+      : oneOnOnePlanDiscoverableWhere()),
+  };
+}
+
+/**
+ * #1527 Q4 — a list filtered to one consultant may be the owner's view with
+ * drafts in it, so it must never be served from a shared CDN entry.
+ */
+export function oneOnOnePlanListCacheControl(consultantId: string | null) {
+  return consultantId
+    ? "private, no-store"
+    : "public, s-maxage=60, stale-while-revalidate=300";
+}
+
+/**
+ * #1527 Q4 — why a plan cannot be sold right now, or null when it can. Only
+ * new sales call this; existing bookings and their pay-links never do, so
+ * unpublishing a plan cannot strand an approved request.
+ */
+export function planSaleRefusal(plan: {
+  status?: OfferingPlanStatus | null;
+}): "PLAN_NOT_PUBLISHED" | null {
+  return plan.status === "DRAFT" ? "PLAN_NOT_PUBLISHED" : null;
+}
+
+/**
  * Gate for a PLAN DETAIL PAGE, which is reached by id rather than by listing.
  *
  * The list surfaces all compose `marketplaceVisibilityWhere()`, but the four
@@ -91,6 +143,8 @@ export async function isPlanViewable(
      * absent keeps the previous behaviour exactly.
      */
     consultantProfileId?: string | null;
+    /** #1527 Q4 — present on 1:1 and subscription plans only. */
+    status?: OfferingPlanStatus | null;
   } | null,
   viewerUserId: string | null | undefined,
   findActiveMembership: (args: {
@@ -115,6 +169,8 @@ export async function isPlanViewable(
     plan.consultantProfileId === viewerConsultantProfileId;
   if (isOwner) return true;
 
+  // #1527 Q4 — a draft is visible to its author only.
+  if (planSaleRefusal(plan)) return false;
   if (plan.archivedAt) return false;
   if (MARKETPLACE_VISIBILITY.includes(plan.visibility)) return true;
   if (!plan.organizationId || !viewerUserId) return false;

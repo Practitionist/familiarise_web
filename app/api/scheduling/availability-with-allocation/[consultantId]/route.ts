@@ -16,7 +16,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { getSession } from "@/lib/auth-server";
+import { getCachedSession, getSession } from "@/lib/auth-server";
 import {
   buildOverlapMetaIndex,
   overlapMetaCandidatesFor,
@@ -24,6 +24,7 @@ import {
   type AppointmentForOverlapMeta,
 } from "@/lib/booking/overlap-meta";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { rolesWithOrgPermission } from "@/lib/auth/org-permissions";
 import { apiError } from "@/lib/errors/api-error";
 import { Refusal } from "@/lib/errors/refusal";
 import {
@@ -61,33 +62,50 @@ const MAX_AVAILABILITY_WINDOW_DAYS = 32;
 const MAX_AVAILABILITY_WINDOW_MS =
   MAX_AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
-// An org OWNER/MAINTAINER acting for a member consultant (RequestSchedulingTab
+// An org operator acting for a member consultant (RequestSchedulingTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
 // is authorized the same as the owning consultant. isPrivileged only covers
 // PLATFORM staff, so without this an org admin 403s and loses the whole
-// calendar rather than just the tooltip detail. EXPERT/other org roles are
-// deliberately excluded — same Membership shape requireOrgAccess/catalog
-// route use elsewhere (consultantProfileId + role: "EXPERT" identifies the
-// org the consultant belongs to; isAtLeastRole's MAINTAINER floor is the
-// "admin" rank used throughout app/api/organizations/**).
+// calendar rather than just the tooltip detail. The roles come from the org
+// matrix (#1851); consultantProfileId + role: "EXPERT" identifies the org the
+// consultant belongs to.
+//
+// #1851 decision 10 — only for the org's own members. With a consultee named,
+// that person must be an ACTIVE member of the SAME org: the busy/free oracle
+// used to answer for any user id on the platform.
 async function isOrgAdminOfConsultant(
   userId: string,
   consultantId: string,
+  consulteeUserId?: string,
 ): Promise<boolean> {
+  const expertMember = {
+    memberships: {
+      some: {
+        consultantProfileId: consultantId,
+        role: "EXPERT" as const,
+        status: "ACTIVE" as const,
+      },
+    },
+  };
   const membership = await prisma.membership.findFirst({
     where: {
       userId,
       status: "ACTIVE",
-      role: { in: ["OWNER", "MAINTAINER"] },
-      organization: {
-        memberships: {
-          some: {
-            consultantProfileId: consultantId,
-            role: "EXPERT",
-            status: "ACTIVE",
-          },
-        },
+      role: {
+        in: rolesWithOrgPermission("appointments.allocate.calendarRead"),
       },
+      organization: consulteeUserId
+        ? {
+            AND: [
+              expertMember,
+              {
+                memberships: {
+                  some: { userId: consulteeUserId, status: "ACTIVE" },
+                },
+              },
+            ],
+          }
+        : expertMember,
     },
     select: { id: true },
   });
@@ -125,10 +143,11 @@ export async function GET(
     // parameter is present and the route stays anonymous.
     // #1697 item 4 — the busy/free shape reads the session cookie-cached (one
     // poll a minute per calendar); the privileged detail shape reads fresh so
-    // a demotion or a revoked membership takes effect on the next poll.
+    // a demotion or a revoked membership takes effect on the next poll. The
+    // cross-user gate below re-reads the role fresh regardless (#1807).
     let session: Awaited<ReturnType<typeof getSession>> = null;
     if (includeAppointmentDetailsRequested) session = await getSession(true);
-    else if (requestedConsulteeUserId) session = await getSession();
+    else if (requestedConsulteeUserId) session = await getCachedSession();
     // Ownership is a fact about the database, not about the session.
     //
     // The session field is a snapshot from when the session was minted, so a
@@ -144,10 +163,9 @@ export async function GET(
           where: { id: consultantId, userId: session.user.id },
         })) > 0);
 
-    // Resolved lazily and once: BOTH gates below need it, and the second used
-    // not to know about it at all — an org admin cleared the details gate and
-    // was then refused by the consultee gate with "cannot read another user's
-    // calendar", which made Allocate Slots unusable for them.
+    // Resolved lazily, only when details were asked for. The consultee gate
+    // below runs its own narrower check, which also needs the consultee to be
+    // a member of the admin's org (#1851 decision 10).
     let orgAdminCheck: Promise<boolean> | null = null;
     const isOrgAdmin = () => {
       if (!session?.user?.id) return Promise.resolve(false);
@@ -204,13 +222,30 @@ export async function GET(
       // The org-admin arm belongs here too. This parameter only marks cells
       // BUSY — it carries no titles or names — so it is metadata, which ADR 20
       // does allow an org to see, and allocation is wrong without it: the grid
-      // would paint cells green that validation then rejects.
+      // would paint cells green that validation then rejects. It answers only
+      // for a consultee in the admin's own org (#1851 decision 10).
       const isSelf = session?.user?.id === requestedConsulteeUserId;
+      // Role gates must read fresh even on the cached path: the cached
+      // session can lag a demotion or ban by ~5 min (#1807), and this branch
+      // authorizes a cross-user oracle. The extra read runs only here — self
+      // polls and the public path never reach it, so #1697's poll budget
+      // is unchanged.
+      const gateRole =
+        !isSelf && !isOwningConsultant
+          ? (await getSession(true))?.user?.role
+          : session?.user?.role;
       if (
         !isSelf &&
         !isOwningConsultant &&
-        !isPrivileged(session?.user?.role) &&
-        !(await isOrgAdmin())
+        !isPrivileged(gateRole) &&
+        !(
+          !!session?.user?.id &&
+          (await isOrgAdminOfConsultant(
+            session.user.id,
+            consultantId,
+            requestedConsulteeUserId,
+          ))
+        )
       ) {
         return NextResponse.json(
           { error: "Forbidden: cannot read another user's calendar" },

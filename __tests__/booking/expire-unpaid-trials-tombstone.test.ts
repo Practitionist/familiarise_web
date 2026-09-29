@@ -20,6 +20,14 @@ jest.mock("../../lib/novu/service", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
+const refundBookingPayment = jest.fn();
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
+}));
+const stageTrialRefundedBell = jest.fn();
+jest.mock("../../lib/trials/refund-bell", () => ({
+  stageTrialRefundedBell: (...a: unknown[]) => stageTrialRefundedBell(...a),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
 }));
@@ -32,6 +40,9 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       trial: { findMany: jest.fn() },
+      // #1775 C-12 — the retry cohort for a refund that failed after the CAS.
+      bookingStatusHistory: { findMany: jest.fn(async () => []) },
+      refund: { findMany: jest.fn(async () => []) },
       $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
       __tx: tx,
     },
@@ -103,13 +114,14 @@ describe("expire-unpaid-trials tombstones the held call", () => {
     // the CANCELLED trial whose appointment still has deletedAt null.
     db.trial.findMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: "trial-1", appointmentId: "appt-1" }]);
     softCancelTrialAppointment.mockResolvedValueOnce(undefined);
 
     await expireUnpaidTrials();
     expect(softCancelTrialAppointment).toHaveBeenLastCalledWith("appt-1");
-    expect(db.trial.findMany).toHaveBeenLastCalledWith(
+    expect(db.trial.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { status: "CANCELLED", appointment: { deletedAt: null } },
       }),
@@ -124,5 +136,48 @@ describe("expire-unpaid-trials tombstones the held call", () => {
     expect(result.trialsExpired).toBe(0);
     expect(softCancelTrialAppointment).not.toHaveBeenCalled();
     expect(notifyTrialCancelled).not.toHaveBeenCalled();
+  });
+});
+
+// #1775 C-12 — the unpaid lapse arm never touches a captured trial; a paid
+// trial nobody answered in 48 h is cancelled and refunded in full.
+describe("paid trials charged at request", () => {
+  it("(i) the lapse cohort and its CAS require paymentId null", async () => {
+    db.__tx.trial.updateMany.mockResolvedValue({ count: 1 });
+    await expireUnpaidTrials();
+    const cohort = db.trial.findMany.mock.calls[0][0].where;
+    expect(cohort.paymentId).toBeNull();
+    const cas = db.__tx.trial.updateMany.mock.calls[0][0].where;
+    expect(cas.AND[0].paymentId).toBeNull();
+    expect(cas.status).toEqual({ in: ["AWAITING_PAYMENT", "PENDING"] });
+  });
+
+  it("(ii) a paid trial unanswered for 49 h is cancelled from PENDING and refunded in full", async () => {
+    db.trial.findMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          ...lapsed,
+          paymentId: "pay-1",
+          consultantProfile: { user: { id: "u2" } },
+        },
+      ]);
+    db.__tx.trial.updateMany.mockResolvedValue({ count: 1 });
+    refundBookingPayment.mockResolvedValue({ amountRefundedPaise: 50_000 });
+
+    const result = await expireUnpaidTrials();
+
+    const cas = db.__tx.trial.updateMany.mock.calls[0][0].where;
+    expect(cas.status).toEqual({ in: ["PENDING"] });
+    expect(cas.AND[0].paymentId).toEqual({ not: null });
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundBookingPayment.mock.calls[0][0]).not.toHaveProperty(
+      "amountPaise",
+    );
+    expect(stageTrialRefundedBell).toHaveBeenCalledTimes(1);
+    expect(result.trialsUnansweredRefunded).toBe(1);
   });
 });

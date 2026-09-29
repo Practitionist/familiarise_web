@@ -1,6 +1,6 @@
 "use client";
 
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useHoldCountdown } from "@/hooks/useHoldCountdown";
 import { cn } from "@/utils/tailwind";
 
@@ -17,6 +17,7 @@ interface HeldSlotBadgeProps {
  * future held-slot surface agree on when a hold has actually lapsed.
  */
 export function HeldSlotBadge({ deadline, className }: HeldSlotBadgeProps) {
+  const format = useZonedFormat();
   const { minutesLeft, isExpired } = useHoldCountdown(deadline);
 
   if (!deadline) {

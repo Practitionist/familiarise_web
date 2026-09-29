@@ -68,6 +68,9 @@ const CSP_DIRECTIVES = [
   "style-src 'self' 'unsafe-inline'",
   "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
   "font-src 'self' data:",
+  // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
+  // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
+  "frame-ancestors 'none'",
   "report-uri /api/csp-report",
 ].join("; ");
 
@@ -129,6 +132,8 @@ const RESOLVED_APP_URL =
     : process.env.NEXT_PUBLIC_APP_URL;
 
 const nextConfig = {
+  // Drop the `X-Powered-By: Next.js` fingerprinting header.
+  poweredByHeader: false,
   // Origin-dependent values are recomputed per deploy context — see
   // RESOLVED_APP_URL above. Listing them here overrides whatever the Netlify
   // dashboard injected, for the build only.
@@ -200,23 +205,20 @@ const nextConfig = {
       "framer-motion",
       "@stream-io/video-react-sdk",
       "stream-chat-react",
-      "@radix-ui/react-icons",
       // Imported by components/notifications/NotificationInbox.tsx and not in
       // the default list.
-      "@novu/react",
       "@novu/nextjs",
     ],
     // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
     staleTimes: { dynamic: 30, static: 180 },
   },
 
-  // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
-  // NOTE: date-fns is now 4.1.0 and ships an exports map, so this is likely a
-  // leftover from the v2/v3 era — and transpiling a package may defeat Next's
-  // built-in optimizePackageImports handling for it (45 files import date-fns).
-  // Left in place deliberately: the claim above is unverified either way, and
-  // confirming it needs `npm run build:analyze`, not reasoning.
-  transpilePackages: ["date-fns"],
+  // `transpilePackages: ["date-fns"]` was removed 2026-09-24: date-fns is 4.1.0
+  // with a proper exports map, and Next 15 already carries it in the default
+  // optimizePackageImports list — transpiling only re-processed what the
+  // bundler handles natively. Proven with a full local `next build` after
+  // removal: compile + 284/284 static pages green. Restore if a future major
+  // changes that. (date-fns-tz was never listed here and is unaffected.)
 
   // #1244 — the OpenNext server-handler function blew past Netlify's hard
   // 250MB per-function cap. The file tracer was pulling the entire BUILD
@@ -238,6 +240,14 @@ const nextConfig = {
       "node_modules/terser-webpack-plugin/**",
       "node_modules/schema-utils/**",
       "node_modules/jest-worker/**",
+      // #1527 — server maps kept the handler at the 250MB Lambda cap. Sentry
+      // turns them on and never deletes them; nothing reads them at runtime
+      // (no --enable-source-maps). They stay in .next/server for the upload.
+      ".next/server/**/*.map",
+      // #1527 — /_next/image goes to the Netlify Image CDN, so sharp (only
+      // Next's optimizer imports it) never runs in the function.
+      "node_modules/sharp/**",
+      "node_modules/@img/**",
     ],
   },
 
@@ -271,15 +281,14 @@ const nextConfig = {
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg.
   //
-  // `@react-pdf/renderer` is also in Next's own built-in external list, so
-  // listing it here changes nothing — it is external either way, and that is
-  // what forces lib/pdf to resolve its JSX runtime past the bundler (#1468).
+  // NOTE: `@react-pdf/renderer` is intentionally NOT listed here — it is
+  // already in Next's own built-in external list, so listing it was a no-op
+  // (lib/pdf keeps resolving its JSX runtime past the bundler, #1468).
   serverExternalPackages: [
     "pg",
     "@prisma/adapter-pg",
     "pg-pool",
     "pg-connection-string",
-    "@react-pdf/renderer",
     "razorpay",
     "stripe",
     "resend",

@@ -4,31 +4,20 @@
  * #support-hub — the inline support status on the appointment detail page.
  * Renders nothing until a conversation exists; once it does, the page shows
  * its live state (open / with our team / resolved), the latest exchange, and
- * one tap back into the conversation. Staff replies arrive as AGENT messages,
+ * one tap to the conversation's page. Staff replies arrive as AGENT messages,
  * so the user sees the human hand-off right here — no navigation.
  */
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Bot, Headset, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
-import { throwSupportError } from "@/lib/support/error-copy";
-
-interface ThreadMessage {
-  id: string;
-  sender: string;
-  body: string;
-  createdAt: string;
-}
-
-interface ThreadSummary {
-  id: string;
-  status: string;
-  activeChannel: string;
-  messages: ThreadMessage[];
-}
+import {
+  fetchSupportThread,
+  supportThreadKey,
+} from "@/components/support/useSupportThread";
 
 function statusVariant(
   status: string,
@@ -49,24 +38,16 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function AppointmentSupportStatusCard({
   appointmentId,
-  isOrgContext = false,
+  href,
 }: {
   appointmentId: string;
-  isOrgContext?: boolean;
+  /** #1527 — the conversation's own request page. */
+  href: string;
 }) {
+  // Same key and fetcher as the request page, so they share one cache entry.
   const { data } = useQuery({
-    queryKey: ["support-thread", appointmentId],
-    // Same key AND same payload shape as SupportThreadSheet — the sheet reads
-    // this cache entry and needs `intents` too, not a thread-only stub.
-    queryFn: async (): Promise<{
-      thread: ThreadSummary | null;
-      intents: { category: string; title: string }[];
-    }> => {
-      const res = await fetch(`/api/appointments/${appointmentId}/support`);
-      if (!res.ok) await throwSupportError(res, "support status card");
-      const json = await res.json();
-      return { thread: json.data, intents: json.intents ?? [] };
-    },
+    queryKey: supportThreadKey(appointmentId),
+    queryFn: () => fetchSupportThread(appointmentId),
   });
 
   const thread = data?.thread;
@@ -84,7 +65,9 @@ export function AppointmentSupportStatusCard({
               Support
             </span>
             <Badge variant={statusVariant(thread.status)}>
-              {isHuman ? "With our team" : STATUS_LABELS[thread.status] ?? thread.status}
+              {isHuman
+                ? "With our team"
+                : (STATUS_LABELS[thread.status] ?? thread.status)}
             </Badge>
           </div>
           {last && (
@@ -100,15 +83,9 @@ export function AppointmentSupportStatusCard({
             </p>
           )}
         </div>
-        <SupportThreadSheet
-          appointmentId={appointmentId}
-          isOrgContext={isOrgContext}
-          trigger={
-            <Button variant="outline" size="sm">
-              View conversation
-            </Button>
-          }
-        />
+        <Button variant="outline" size="sm" asChild>
+          <Link href={href}>View conversation</Link>
+        </Button>
       </div>
     </div>
   );

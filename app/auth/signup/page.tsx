@@ -4,14 +4,14 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { pendingToast, useToast } from "@/hooks/use-toast";
 import {
   signUp,
   useSession,
   sendVerificationEmail,
   getSession,
 } from "@/lib/auth-client";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { setPendingReferral } from "@/lib/pending-referral";
 import { ReferralCodeField } from "./ReferralCodeField";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
@@ -108,7 +108,14 @@ function SignUpContent() {
     };
 
     getSession({ query: { disableCookieCache: true } })
-      .then(({ data }) => {
+      .then(({ data, error: sessionError }) => {
+        // Better Auth resolves (rather than rejects) HTTP-level failures as
+        // `{ data: null, error }` — fall back to the cached value instead of
+        // stranding the page on the interstitial until the next store update.
+        if (sessionError) {
+          resolveAndGo(!!session.user?.onboardingCompleted);
+          return;
+        }
         // Session revoked between paint and check — no protected redirect.
         if (!data?.user) return;
         resolveAndGo(!!data.user.onboardingCompleted);
@@ -137,14 +144,13 @@ function SignUpContent() {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message
+  // If already logged in, show redirecting message. Generic on purpose —
+  // the cached `onboardingCompleted` can be stale (see the force-fresh effect
+  // above); naming the destination flashed the wrong one for a frame.
   if (session?.user) {
-    const destination = session.user.onboardingCompleted
-      ? "dashboard"
-      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-        <p className="text-white">Redirecting to {destination}...</p>
+        <p className="text-white">Redirecting…</p>
       </div>
     );
   }
@@ -266,7 +272,7 @@ function SignUpContent() {
       return;
     }
     setIsLoading(true);
-    toast({ title: "Creating account..." });
+    const settle = pendingToast({ title: "Creating account..." });
 
     try {
       const { data, error } = await signUp.email({
@@ -279,7 +285,7 @@ function SignUpContent() {
       if (error) {
         const copy = humanizeAuthError("signup", error);
         if (copy.field) setFieldError({ [copy.field]: copy.description });
-        toast({
+        settle({
           title: copy.title,
           description: copy.description,
           variant: "destructive",
@@ -288,7 +294,7 @@ function SignUpContent() {
         // requireEmailVerification: the account is created but no session is
         // issued until the email is verified. Show the check-your-email panel.
         setVerificationSent(true);
-        toast({
+        settle({
           title: "Check your email",
           description: `We sent a verification link to ${email}.`,
         });
@@ -296,11 +302,13 @@ function SignUpContent() {
         // Session created (verification-disabled fallback). The referral code
         // was persisted at first touch and is applied on the onboarding landing
         // (covers OAuth + verified-email paths uniformly). #880
-        toast({
+        // Replace, never push: leaving /auth/signup in history makes Back from
+        // onboarding/dashboard ping-pong forward again.
+        settle({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
         });
-        router.push(onboardingUrl);
+        router.replace(onboardingUrl);
       }
     } catch (error: unknown) {
       Sentry.captureException(
@@ -312,7 +320,7 @@ function SignUpContent() {
         error instanceof Error
           ? error.message
           : "An unexpected error occurred.";
-      toast({
+      settle({
         title: "Sign Up Failed",
         description: message,
         variant: "destructive",

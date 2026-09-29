@@ -23,7 +23,9 @@ export async function GET(
   },
 ) {
   const { orgId, invitationId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "invitations.manage",
+  });
   if (access.error) return access.error;
 
   const invitation = await prisma.invitation.findFirst({
@@ -44,7 +46,9 @@ export async function DELETE(
   },
 ) {
   const { orgId, invitationId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "invitations.manage",
+  });
   if (access.error) return access.error;
 
   // Conditional update: only pending invitations are revocable. An

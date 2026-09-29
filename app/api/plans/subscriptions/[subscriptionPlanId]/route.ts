@@ -18,19 +18,26 @@ import {
 } from "@/lib/api/plans/archive";
 
 import { getSession } from "@/lib/auth-server";
+import {
+  deleteUntouchedOffering,
+  offeringDeleteRefusal,
+  OfferingInUseError,
+  UNTOUCHED_SUBSCRIPTION_PLAN,
+} from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
+import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
     const { subscriptionPlanId } = await params;
+    // #1527 Q4 — no booking rows: this GET is open to any caller, and neither
+    // the editor nor checkout reads them.
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
       where: { id: subscriptionPlanId },
       include: {
         consultantProfile: { select: planConsultantSelect },
-        // The booking rows only: another subscriber's name and email are not part of a plan.
-        subscriptions: true,
         topics: true,
         faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {
@@ -38,6 +45,14 @@ export async function GET(
         },
       },
     });
+
+    // #1527 Q4 — a draft is readable by its author only.
+    if (await isHiddenDraft(subscriptionPlan)) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(subscriptionPlan) },
@@ -71,7 +86,7 @@ export async function PUT(
 ) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -227,6 +242,8 @@ export async function PUT(
           faqs: faqReplaceNested(validatedData.faqs),
           recordingEnabled: validatedData.recordingEnabled,
           recordingStoragePolicy: validatedData.recordingStoragePolicy,
+          // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+          status: validatedData.status,
           trialEnabled: validatedData.trialEnabled,
           trialDurationMinutes: validatedData.trialDurationMinutes,
           trialPriceInPaise: validatedData.trialPriceInPaise,
@@ -316,7 +333,7 @@ export async function PATCH(
   { params }: { params: Promise<{ subscriptionPlanId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -407,7 +424,7 @@ export async function DELETE(
 ) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -439,45 +456,54 @@ export async function DELETE(
       );
     }
 
-    // Check if there are any associated subscriptions
-    const associatedSubscriptions = await prisma.subscription.findMany({
-      where: { subscriptionPlanId },
-    });
-
-    if (associatedSubscriptions.length > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete subscription plan with associated subscriptions",
-        },
-        { status: 400 },
-      );
-    }
-
-    const subscriptionPlan = await prisma.subscriptionPlan.delete({
-      where: { id: subscriptionPlanId },
-      include: {
-        consultantProfile: {
+    // #1846 CT-02 — the no-history guard rides the DELETE's WHERE inside one
+    // Serializable transaction under the plan's checkout lock
+    // (lib/booking/offering-delete.ts); a trial counts as history too.
+    const ownedPlan = {
+      id: subscriptionPlanId,
+      consultantProfile: { userId: session.user.id },
+    };
+    const subscriptionPlan = await deleteUntouchedOffering(
+      "SUBSCRIPTION",
+      subscriptionPlanId,
+      async (tx) => {
+        const plan = await tx.subscriptionPlan.findFirst({
+          where: ownedPlan,
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+            consultantProfile: {
+              include: {
+                user: {
+                  select: { id: true, name: true, email: true, image: true },
+                },
               },
             },
+            topics: true,
           },
-        },
-        topics: true,
+        });
+        if (!plan) return null;
+        const { count } = await tx.subscriptionPlan.deleteMany({
+          where: { ...ownedPlan, ...UNTOUCHED_SUBSCRIPTION_PLAN },
+        });
+        if (count === 0) throw new OfferingInUseError("SUBSCRIPTION");
+        return plan;
       },
-    });
+    );
+    if (!subscriptionPlan) {
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(subscriptionPlan) },
       { status: 200 },
     );
   } catch (error) {
+    const refusal = offeringDeleteRefusal(error);
+    if (refusal) {
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

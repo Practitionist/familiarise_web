@@ -105,9 +105,15 @@ export default function ExpertDetailsSheet({
       <SheetContent
         side="right"
         className="flex w-full flex-col overflow-hidden p-0 sm:max-w-lg lg:max-w-xl"
+        // The site header is `fixed z-[1000]` and outranks every portal, so the
+        // `inset-y-0` sheet variant put this drawer's portrait, name and
+        // headline behind it. Drop the sheet under the header stack and bound it
+        // to the space that leaves — the offset formula StickyFilterBar and
+        // FacetRail already use — so the inner region keeps the scroll and the
+        // footer stays in view.
         style={{
           top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem))",
-          height: "auto",
+          height: "calc(100dvh - var(--maintenance-banner-height, 0px) - var(--header-height, 5rem))",
         }}
       >
         {consultant && (

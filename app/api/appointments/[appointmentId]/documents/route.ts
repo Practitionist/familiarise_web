@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -15,6 +15,7 @@ import {
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -25,7 +26,7 @@ export async function GET(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -305,7 +306,7 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -726,29 +727,34 @@ export async function POST(
       "your consultant";
 
     if (consultantUserId) {
-      after(() =>
-        notifyDocumentUploaded(consultantUserId, {
-          ...notificationScope(appointment.organizationId),
-          appointmentId,
-          documentId: document.id,
-          uploadedByRole: "CONSULTEE",
-          fileName: file.name,
-          isThreaded: Boolean(revisionOf),
-          versionNo: document.versionNo,
-          consultantName,
-          consulteeName,
-          dashboardUrl: scopedHref({
-            organizationId: appointment.organizationId,
-            surface: "documents",
-            personal:
-              consultantProfileId
-                ? { kind: "consultant", profileId: consultantProfileId }
-                : undefined,
-          }),
-        }).catch((notifyError) => {
-          console.error("Failed to notify consultant of document", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
-        }),
+      // #1861 P2r — the document write already committed above, so this is
+      // not inside its transaction; stage the outbox row now (awaited,
+      // before the response) so it survives an instance freeze, and defer
+      // only the delivery attempt to after().
+      await stageNowAttemptAfter("consultant document-upload notice", () =>
+        notifyDocumentUploaded(
+          consultantUserId,
+          {
+            ...notificationScope(appointment.organizationId),
+            appointmentId,
+            documentId: document.id,
+            uploadedByRole: "CONSULTEE",
+            fileName: file.name,
+            isThreaded: Boolean(revisionOf),
+            versionNo: document.versionNo,
+            consultantName,
+            consulteeName,
+            dashboardUrl: scopedHref({
+              organizationId: appointment.organizationId,
+              surface: "documents",
+              personal:
+                consultantProfileId
+                  ? { kind: "consultant", profileId: consultantProfileId }
+                  : undefined,
+            }),
+          },
+          { deferAttempt: true },
+        ),
       );
     }
 

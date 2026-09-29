@@ -1,4 +1,5 @@
 import type { AppointmentVM } from "@/lib/appointments/view-model";
+import { payLinkHref } from "@/lib/payments/pay-link-href";
 
 /** The synthetic row-id prefix the trial mappers mint (map-consultee.ts:246, map-consultant.ts:296). */
 const TRIAL_VM_ID_PREFIX = "trial-";
@@ -24,4 +25,23 @@ export function trialCheckoutHref(
 ): string | null {
   if (vm.kind !== "TRIAL" || !vm.id.startsWith(TRIAL_VM_ID_PREFIX)) return null;
   return `/checkout/plans/trial/${vm.id.slice(TRIAL_VM_ID_PREFIX.length)}`;
+}
+
+/**
+ * #1775 P-1 — the one "Pay now" answer for a booking row: the trial's branded
+ * page, else the pay page for a Razorpay order id, else a hosted https link.
+ */
+export function bookingPayHref(
+  vm: Pick<
+    AppointmentVM,
+    "kind" | "id" | "pendingPaymentUrl" | "pendingPaymentId"
+  >,
+): string | null {
+  return (
+    trialCheckoutHref(vm) ??
+    payLinkHref({
+      paymentId: vm.pendingPaymentId,
+      checkoutUrl: vm.pendingPaymentUrl,
+    })
+  );
 }

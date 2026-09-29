@@ -13,6 +13,9 @@ import { expireRescheduleProposals } from "@/scripts/appointments/expire-resched
 export const { GET, POST } = cleanupRoute({
   job: "expire-reschedule-proposals",
   run: () => expireRescheduleProposals(),
-  summarize: (r) => ({ proposalsExpired: r.proposalsExpired }),
+  summarize: (r) => ({
+    proposalsExpired: r.proposalsExpired,
+    proposalsExpiredUnrestored: r.proposalsExpiredUnrestored,
+  }),
   failureMessage: "Failed to expire reschedule proposals",
 });

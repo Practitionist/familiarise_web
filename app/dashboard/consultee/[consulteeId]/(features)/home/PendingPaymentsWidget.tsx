@@ -30,8 +30,10 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import type { ConsulteeFailedRefund } from "@/lib/data/consultee-payments";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 
 interface PendingPayment {
   id: string;
@@ -47,9 +49,9 @@ interface PendingPayment {
   isExpiringSoon: boolean;
   source?: "approval_pending" | "gateway_pending";
   /**
-   * Appointment record id for approval-pending items — the cancel route
-   * (`POST /api/appointments/[appointmentId]/cancel`) keys on Appointment,
-   * not the consultation/subscription row that `id` refers to.
+   * Appointment record id for approval-pending items — the abandon door
+   * (`POST /api/bookings/[bookingId]/abandon`) keys on Appointment, not the
+   * consultation/subscription/trial row that `id` refers to.
    */
   appointmentId?: string | null;
 }
@@ -61,6 +63,8 @@ interface PendingPayment {
 export interface PendingPaymentsPayload {
   pendingPayments: PendingPayment[];
   lapsedPayLinks: LapsedPayLink[];
+  /** #1527 — recent refunds the gateway rejected, for Home's Needs you. */
+  failedRefunds: ConsulteeFailedRefund[];
 }
 
 export async function fetchPendingPayments(
@@ -76,6 +80,7 @@ export async function fetchPendingPayments(
   return {
     pendingPayments: data.pendingPayments || [],
     lapsedPayLinks: data.lapsedPayLinks || [],
+    failedRefunds: data.failedRefunds || [],
   };
 }
 
@@ -115,6 +120,60 @@ function rowPresentation(payment: PendingPayment) {
       names: { payer: "you", consultant: payment.consultantName },
     },
     "CONSULTEE",
+  );
+}
+
+/** The row's pay action: the trial checkout, our pay page, the gateway link, or a disabled button. */
+function PayNowButton({
+  payment,
+  payLabel,
+}: Readonly<{ payment: PendingPayment; payLabel: string }>) {
+  if (payment.type === "trial") {
+    return (
+      <Button
+        asChild
+        size="sm"
+        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+      >
+        <Link href={`/checkout/plans/trial/${payment.id}`}>{payLabel}</Link>
+      </Button>
+    );
+  }
+  if (payment.paymentUrl && !isExternalPayHref(payment.paymentUrl)) {
+    // #1775 P-1 — our pay page opens the existing order.
+    return (
+      <Button
+        asChild
+        size="sm"
+        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+      >
+        <Link href={payment.paymentUrl}>{payLabel}</Link>
+      </Button>
+    );
+  }
+  if (isExternalPayHref(payment.paymentUrl ?? "")) {
+    return (
+      <Button
+        asChild
+        size="sm"
+        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+      >
+        <a href={payment.paymentUrl} target="_blank" rel="noopener noreferrer">
+          {payLabel}
+          <ExternalLink className="ml-1 h-3 w-3" />
+        </a>
+      </Button>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      disabled
+      className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
+    >
+      {payLabel}
+      <ExternalLink className="ml-1 h-3 w-3" />
+    </Button>
   );
 }
 
@@ -199,20 +258,19 @@ export function PendingPaymentsWidget({
     [queryClient, consulteeId],
   );
 
-  // Cancel an APPROVED_PENDING_PAYMENT booking outright. The cancel route
-  // allows this transition (CANCELLABLE_FROM) and skips refunds for unpaid
-  // bookings, so this is the user-driven exit from the "pay or wait for
-  // expiry" dead end. 409 = the booking already transitioned (e.g. payment
-  // landed in another tab) — refresh rather than error.
+  // Walk away from an approved-but-unpaid booking through the abandon door
+  // (#1527 decision 11). It has a trial arm, which the cancel route lacks, so a
+  // trial's Cancel no longer answers 403 (CE-01). 409 = the booking already
+  // transitioned (e.g. payment landed in another tab) — refresh rather than error.
   const cancelApprovalPending = useCallback(
     async (appointmentId: string) => {
       setCancellingId(appointmentId);
       setCancelNotice(null);
       try {
-        const response = await fetch(
-          `/api/appointments/${appointmentId}/cancel`,
-          { method: "POST", headers: { "Content-Type": "application/json" } },
-        );
+        const response = await fetch(`/api/bookings/${appointmentId}/abandon`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
         if (response.status === 409) {
           setCancelNotice("This booking already changed state — refreshing.");
         } else if (!response.ok) {
@@ -480,41 +538,7 @@ export function PendingPaymentsWidget({
                         before handing off to the gateway: a prefetching
                         Link. Everything else still opens the gateway link
                         directly in a new tab. */}
-                    {payment.type === "trial" ? (
-                      <Button
-                        asChild
-                        size="sm"
-                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      >
-                        <Link href={`/checkout/plans/trial/${payment.id}`}>
-                          {payLabel}
-                        </Link>
-                      </Button>
-                    ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
-                      <Button
-                        asChild
-                        size="sm"
-                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      >
-                        <a
-                          href={payment.paymentUrl as string}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {payLabel}
-                          <ExternalLink className="ml-1 h-3 w-3" />
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        disabled
-                        className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
-                      >
-                        {payLabel}
-                        <ExternalLink className="ml-1 h-3 w-3" />
-                      </Button>
-                    )}
+                    <PayNowButton payment={payment} payLabel={payLabel} />
                   </span>
                 )}
               </div>
@@ -555,7 +579,7 @@ export function PendingPaymentsWidget({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {cancelTarget?.kind === "approval"
-                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the consultant's approval and any held slots are released.`
+                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`
                 : `"${cancelTarget?.title ?? ""}" will be cancelled and your held slot released. If the payment already went through, it will be reconciled automatically.`}
             </AlertDialogDescription>
           </AlertDialogHeader>

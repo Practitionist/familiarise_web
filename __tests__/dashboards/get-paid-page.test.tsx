@@ -302,7 +302,7 @@ describe("Y2-3 Home needs-you row", () => {
     expect(off[0]).toMatchObject({
       key: "payout-setup",
       title: "Add your bank account — payouts begin at launch",
-      ctaHref: `/dashboard/consultant/${CP}/settings/payouts`,
+      ctaHref: `/dashboard/consultant/${CP}/settings/get-paid`,
     });
     expect(
       deriveConsultantActionItems({ ...base, livePayoutsEnabled: true })[0]

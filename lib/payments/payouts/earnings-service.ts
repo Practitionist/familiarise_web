@@ -118,6 +118,8 @@ export interface CreateEarningsParams {
       class?: {
         classPlanId: string;
       } | null;
+      /** #1775 C-9 — a trial's earning waits for delivery (holdUntil null). */
+      trial?: { id: string } | null;
     } | null;
   };
   appointmentType: AppointmentType;
@@ -435,6 +437,9 @@ const EARNINGS_APPOINTMENT_TYPE_MAP: Record<string, AppointmentType> = {
   SUBSCRIPTION: "SUBSCRIPTION",
   WEBINAR: "WEBINAR",
   CLASS: "CLASS",
+  // #1775 C-9 — a trial is a taster of its subscription plan: settled on the
+  // subscription rate card, as it is taxed as one (approval-payment.ts).
+  TRIAL: "SUBSCRIPTION",
 };
 
 export interface ResolvedEarningsPayment {
@@ -493,6 +498,13 @@ export async function resolvePaymentForEarnings(
               },
             },
           },
+          // #1775 C-9 — a paid trial has no consultation/subscription row.
+          trial: {
+            select: {
+              id: true,
+              subscriptionPlan: { include: { consultantProfile: true } },
+            },
+          },
         },
       },
     },
@@ -507,7 +519,9 @@ export async function resolvePaymentForEarnings(
       ?.consultantProfile ||
     paymentWithAppointment.appointment.webinar?.webinarPlan
       ?.consultantProfile ||
-    paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
+    paymentWithAppointment.appointment.class?.classPlan?.consultantProfile ||
+    paymentWithAppointment.appointment.trial?.subscriptionPlan
+      ?.consultantProfile;
 
   if (!consultantProfile) return null;
 
@@ -529,6 +543,9 @@ export async function resolvePaymentForEarnings(
         ? {
             classPlanId: paymentWithAppointment.appointment.class.classPlanId,
           }
+        : null,
+      trial: paymentWithAppointment.appointment.trial
+        ? { id: paymentWithAppointment.appointment.trial.id }
         : null,
     },
   } as CreateEarningsParams["payment"];
@@ -569,11 +586,15 @@ export async function createEarningsFromPayment({
     payment.appointmentId,
     appointmentType,
   );
-  const holdUntil = computeHoldUntil({
-    capturedAt: new Date(),
-    lastOccurrenceEndsAt: anchor.lastOccurrenceEndsAt,
-    holdHours: holdHoursFor(appointmentType),
-  });
+  // #1775 C-9 — a trial is paid before it is delivered: its one row waits
+  // (holdUntil null) until the COMPLETED transition stamps the hold.
+  const holdUntil = payment.appointment?.trial
+    ? null
+    : computeHoldUntil({
+        capturedAt: new Date(),
+        lastOccurrenceEndsAt: anchor.lastOccurrenceEndsAt,
+        holdHours: holdHoursFor(appointmentType),
+      });
 
   // Determine if this payment involves collaborators (webinars/classes only)
   let planType: "webinar" | "class" | null = null;

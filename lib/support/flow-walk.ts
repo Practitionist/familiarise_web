@@ -32,6 +32,21 @@ export type WalkContext = {
 const UNRECOGNIZED_BODY =
   'I didn\'t catch that. Pick one of the options below — or type "agent" to reach a person.';
 
+/** A prompt's chips. `escalates` marks a chip that lands on an escalating
+ *  terminal, so the UI asks for a description before sending it (#1527). */
+function optionsOf(
+  flow: WalkableFlow,
+  node: Extract<FlowNode, { kind: "PROMPT" }>,
+) {
+  return node.options.map((o) => {
+    const target = o.next ? flow.nodes[o.next] : undefined;
+    const escalates = target?.kind === "TERMINAL" && target.escalate === true;
+    return escalates
+      ? { id: o.id, label: o.label, escalates }
+      : { id: o.id, label: o.label };
+  });
+}
+
 /** Fail-safe escalation result for a broken/unknown cursor. */
 function escalateFallback(body: string): SupportTurnResult {
   return {
@@ -62,7 +77,7 @@ function present(
           body: node.body,
           metadata: {
             nodeId: node.id,
-            options: node.options.map((o) => ({ id: o.id, label: o.label })),
+            options: optionsOf(flow, node),
           },
         },
       ],
@@ -128,7 +143,7 @@ export function walkFlow(
             body: UNRECOGNIZED_BODY,
             metadata: {
               nodeId: node.id,
-              options: node.options.map((o) => ({ id: o.id, label: o.label })),
+              options: optionsOf(flow, node),
             },
           },
         ],

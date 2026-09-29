@@ -15,6 +15,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import * as Sentry from "@sentry/nextjs";
 import {
   assertNotInMaintenance,
@@ -44,7 +45,8 @@ async function notifyConsultantsOfExpiringRecordings(
     byConsultant.set(rec.consultantUserId, list);
   }
 
-  const dashboardUrl = `${getAppUrl()}/dashboard`;
+  // #1527 — every recipient here is a consultant.
+  const dashboardUrl = `${getAppUrl()}${goHref("expert", "recordings")}`;
   await Promise.allSettled(
     Array.from(byConsultant.entries()).map(([consultantUserId, recs]) => {
       const soonest = recs.reduce(

@@ -10,6 +10,7 @@ import {
   faqReplaceNested,
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
+import { refundWindowHoursSchema } from "@/lib/booking/refund-window";
 import { ClassStatus, Prisma } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
@@ -18,7 +19,7 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { addMonthsSafely } from "@/utils/dateUtils";
+import { addMonths } from "date-fns";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
@@ -60,6 +61,8 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   classContents: true, // Omit to override with input schema
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
+  // #1780 row 2 — the plan's free-cancellation window (24–168 h).
+  refundWindowHours: refundWindowHoursSchema,
   // Topics as names - API will find or create them
   topics: z
     .array(z.string().min(1, "Topic name cannot be empty"))
@@ -100,10 +103,25 @@ const PatchClassWithPlanBodySchema =
       }),
   });
 
+/** #1819 — a cutoff past the last session is a 400, not a silent clamp. */
+function lateJoinCutoffRefusal(
+  value: number | null | undefined,
+  totalSessions: number,
+): NextResponse | null {
+  if (value === null || value === undefined || value <= totalSessions)
+    return null;
+  return NextResponse.json(
+    {
+      error: `Late joining can run until session ${totalSessions} at most, because this class has ${totalSessions} sessions.`,
+    },
+    { status: 400 },
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -149,6 +167,7 @@ export async function POST(request: NextRequest) {
       price,
       priceCurrency,
       maxParticipants,
+      refundWindowHours,
       language,
       level,
       prerequisites,
@@ -168,6 +187,8 @@ export async function POST(request: NextRequest) {
       classContents,
       status,
       startDate,
+      lateJoinUntilSession,
+      lateJoinersGetPastRecordings,
     } = validatedData;
 
     // Verify ownership - user must own this consultant profile
@@ -197,6 +218,11 @@ export async function POST(request: NextRequest) {
     const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
     const totalSessions = sessionsPerWeek * durationInMonths * 4;
     const totalHours = totalSessions * sessionDurationInHours;
+    const lateJoinRefusal = lateJoinCutoffRefusal(
+      lateJoinUntilSession,
+      totalSessions,
+    );
+    if (lateJoinRefusal) return lateJoinRefusal;
 
     // Calculate end date only if startDate is provided and valid
     let start: Date | undefined = startDate ? new Date(startDate) : undefined;
@@ -206,7 +232,7 @@ export async function POST(request: NextRequest) {
       end = new Date(start);
       // Ensure durationInMonths is valid before using
       if (typeof durationInMonths === "number" && durationInMonths > 0) {
-        end = addMonthsSafely(start, durationInMonths);
+        end = addMonths(start, durationInMonths);
       } else {
         // Handle invalid durationInMonths if necessary, maybe throw error or default
         console.warn("Invalid durationInMonths provided:", durationInMonths);
@@ -253,6 +279,9 @@ export async function POST(request: NextRequest) {
               price,
               priceCurrency,
               maxParticipants,
+              refundWindowHours,
+              lateJoinUntilSession,
+              lateJoinersGetPastRecordings,
               language,
               level,
               prerequisites,
@@ -432,7 +461,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -490,6 +519,7 @@ export async function PATCH(request: NextRequest) {
       sessionsPerWeek,
       emailSupport,
       maxParticipants,
+      refundWindowHours,
       language,
       level,
       prerequisites,
@@ -508,6 +538,8 @@ export async function PATCH(request: NextRequest) {
       recordingEnabled,
       recordingStoragePolicy,
       sessionDurationInHours: patchSessionDuration,
+      lateJoinUntilSession,
+      lateJoinersGetPastRecordings,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -552,6 +584,14 @@ export async function PATCH(request: NextRequest) {
         { status: 403 },
       );
     }
+
+    const lateJoinRefusal = lateJoinCutoffRefusal(
+      lateJoinUntilSession,
+      (sessionsPerWeek ?? existingPlan.sessionsPerWeek) *
+        (durationInMonths ?? existingPlan.durationInMonths) *
+        4,
+    );
+    if (lateJoinRefusal) return lateJoinRefusal;
 
     // Get the class instance - use the provided classId or the first one associated with the plan
     const classToUpdate = classId
@@ -657,6 +697,15 @@ export async function PATCH(request: NextRequest) {
           // caller is editing the plan itself rather than one of its classes.
           if (maxParticipants !== undefined && !classToUpdate)
             updateData.maxParticipants = maxParticipants;
+          // #1780 row 2 — the window lives on the plan; seats snapshot it.
+          if (refundWindowHours !== undefined)
+            updateData.refundWindowHours = refundWindowHours;
+          // #1819 — the host's late-join settings; null resets to "until session 1".
+          if (lateJoinUntilSession !== undefined)
+            updateData.lateJoinUntilSession = lateJoinUntilSession;
+          if (lateJoinersGetPastRecordings !== undefined)
+            updateData.lateJoinersGetPastRecordings =
+              lateJoinersGetPastRecordings;
           if (language !== undefined) updateData.language = language;
           if (level !== undefined) updateData.level = level;
           if (prerequisites !== undefined)

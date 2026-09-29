@@ -54,6 +54,10 @@ const TARGETS = [
   "appointment-reminders",
   "tentative-occurrences",
   "expire-stale-requests",
+  // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
+  "settle-cancelled-sessions",
+  // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
+  "retry-auto-refunds",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -80,6 +84,10 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "drain-notification-outbox": 20,
   // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
   "reconcile-orphaned-confirmations": 10,
+  // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
+  "settle-cancelled-sessions": 10,
+  // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
+  "retry-auto-refunds": 10,
 };
 
 /**
@@ -92,9 +100,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
 // (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
 // batch size — is the burn lever. Targets with an Actions twin at equal or
 // better cadence ride the 15-minute slots; the ticker-only Novu relay rides
-// every 10. Every-tick keeps only the two latency-sensitive money confirms
-// with no equal backstop (payment-status q30m Actions, orphaned-confirmations
-// q30m Actions but chat-access latency is customer-visible).
+// every 10. #1822 Q-3 — the two reconcile confirms left every-tick too
+// (≈83k commands/month); their 30-min Actions twins stay the backstop.
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
   "sweep-orphaned-topup-captures": 15,
@@ -109,6 +116,9 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
+  // #1822 Q-3 — see the block comment above; moved off every-tick.
+  "reconcile-payment-status": 15,
+  "reconcile-orphaned-confirmations": 15,
   // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
   // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
   "expire-unpaid-trials": 15,
@@ -116,6 +126,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "appointment-reminders": 15,
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
+  "settle-cancelled-sessions": 15,
+  "retry-auto-refunds": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -148,6 +160,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   // an overlap with the Actions run a 409, not a double run.
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
+  "settle-cancelled-sessions": 20_000,
+  "retry-auto-refunds": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
@@ -263,6 +277,81 @@ async function alertMissingSecret(error: string): Promise<void> {
   }
 }
 
+/**
+ * #1861 P4a — one Sentry cron monitor for the whole ticker (not per target:
+ * a dedicated monitor per /api/cleanup/* target is billed at $0.78/month
+ * each and out of scope). Dependency-free, unlike alertMissingSecret above —
+ * Sentry's HTTP check-in (https://docs.sentry.io/product/crons/getting-started/http/)
+ * is a plain POST, so no `@sentry/node` import is needed on the happy path.
+ *
+ * The endpoint is built by parsing SENTRY_DSN as Sentry's own DSN shape
+ * (`https://<publicKey>@<host>/<projectId>`) into
+ * `https://<host>/api/<projectId>/cron/<monitorSlug>/<publicKey>/`, which is
+ * exactly the template that doc page gives. A POST body carrying
+ * `monitor_config` upserts the monitor's schedule/margins on every check-in,
+ * so no separate Sentry UI/API step is needed to create `cron-tick` first —
+ * verified against the doc's own POST example, which upserts the same way.
+ */
+const CRON_MONITOR_SLUG = "cron-tick";
+const CRON_CHECKIN_TIMEOUT_MS = 2_000;
+
+function cronCheckInUrl(): string | null {
+  const dsn = process.env.SENTRY_DSN;
+  if (!dsn) return null;
+  try {
+    const parsed = new URL(dsn);
+    const publicKey = parsed.username;
+    const projectId = parsed.pathname.replace(/^\//, "");
+    if (!publicKey || !projectId || !parsed.host) return null;
+    return `${parsed.protocol}//${parsed.host}/api/${projectId}/cron/${CRON_MONITOR_SLUG}/${publicKey}/`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One check-in call. Never throws and bounded to CRON_CHECKIN_TIMEOUT_MS —
+ * a Sentry outage or a malformed DSN must add no latency and never fail the
+ * tick; a missed check-in shows up as a Sentry-side miss alert, which is the
+ * whole point of the monitor.
+ */
+async function sendCheckIn(
+  status: "ok" | "error",
+  durationMs: number,
+): Promise<void> {
+  const url = cronCheckInUrl();
+  if (!url) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CRON_CHECKIN_TIMEOUT_MS);
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        status,
+        duration: durationMs / 1000,
+        // Matches `config.schedule` above — this is the single source for
+        // both Netlify's own trigger and Sentry's missed-check-in alerting.
+        monitor_config: {
+          schedule: { type: "crontab", value: config.schedule },
+          // Three minutes of silence past the cadence is a real miss.
+          checkin_margin: 3,
+          // The first tick after every deploy aborts most targets (status 0),
+          // so one failed tick is noise; three in a row is an outage.
+          failure_issue_threshold: 3,
+          recovery_threshold: 1,
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch {
+    // Belt and suspenders: fetch failures are swallowed here too, even
+    // though every call site also treats this as fire-and-forget.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function cronTick(_req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -306,14 +395,20 @@ export default async function cronTick(_req: Request): Promise<Response> {
     else failed.push({ name, status });
   });
 
+  const durationMs = Date.now() - started;
   const body: TickBody = {
     event: "cron-tick",
     ok,
     lockHeld,
     failed,
-    durationMs: Date.now() - started,
+    durationMs,
   };
   console.log(JSON.stringify(body));
+
+  // #1861 P4a — one heartbeat check-in per tick, sent after the targets so it
+  // never delays them. Health follows `failed`, not the (always-200) HTTP
+  // status; see statusFor's #1686 rationale for why the two diverge.
+  await sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs);
 
   // #1686 — 200 even with a non-empty `failed`; see statusFor.
   return jsonResponse(body, statusFor(failed));

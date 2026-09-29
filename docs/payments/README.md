@@ -21,12 +21,13 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 
 ## Subsections
 
-| Section                                                       | Description                                                |
-| ------------------------------------------------------------- | ---------------------------------------------------------- |
-| [Checkout Flow](./checkout-flow/)                             | 4 appointment types, payment processing, edge cases        |
-| [Gateways](./gateways/)                                       | Stripe and Razorpay setup, architecture, KYC               |
-| [Approval Payments](./approval-payments/)                     | Consultant-approves-first workflow (formerly "pay later")  |
-| [Refunds & Disputes](./refunds-disputes/)                     | Two-phase refund pattern, dispute lifecycle                |
-| [Cancellations & Rescheduling](./cancellations-rescheduling/) | Refund triggers, payment reuse on reschedule               |
-| [Payouts](./payouts/)                                         | Earnings lifecycle, batch processing, gateway disbursement |
-| [Webhooks](./webhooks/)                                       | Monitoring, Razorpay webhook schema                        |
+| Section                                                       | Description                                                                 |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Checkout Flow](./checkout-flow/)                             | 4 appointment types, payment processing, edge cases                         |
+| [Gateways](./gateways/)                                       | Stripe and Razorpay setup, architecture, KYC                                |
+| [Approval Payments](./approval-payments/)                     | Consultant-approves-first workflow (formerly "pay later")                   |
+| [Refunds & Disputes](./refunds-disputes/)                     | Two-phase refund pattern, dispute lifecycle                                 |
+| [Cancellations & Rescheduling](./cancellations-rescheduling/) | Refund triggers, payment reuse on reschedule                                |
+| [Payouts](./payouts/)                                         | Earnings lifecycle, batch processing, gateway disbursement                  |
+| [Webhooks](./webhooks/)                                       | Monitoring, Razorpay webhook schema                                         |
+| [Backoffice](./backoffice/)                                   | The Money console: tabs, audited doors, the class-series and reconcile tabs |

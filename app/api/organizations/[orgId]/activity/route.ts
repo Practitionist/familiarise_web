@@ -21,6 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { auditRowScope } from "@/lib/enterprise/audit-visibility";
 
 const CategorySchema = z.enum([
   "MEMBER",
@@ -50,8 +51,12 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — activity.read (OWNER, MAINTAINER, MANAGER); the MANAGER
+  // rank floor admitted BILLING_ADMIN. Rows follow the Audit page's category
+  // split, so MANAGER gets no money rows.
+  const access = await requireOrgAccess(orgId, { permission: "activity.read" });
   if (access.error) return access.error;
+  const rowScope = auditRowScope(access.member.role) ?? {};
 
   const url = new URL(req.url);
   const parsedQuery = QuerySchema.safeParse(
@@ -68,6 +73,7 @@ export async function GET(
   const rows = await prisma.orgAuditLog.findMany({
     where: {
       organizationId: orgId,
+      AND: [rowScope],
       ...(q.category && { category: q.category }),
       ...(q.action && { action: q.action }),
       ...(q.actorMembershipId && { actorMembershipId: q.actorMembershipId }),

@@ -16,7 +16,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
 import { JitDefaultRoleSchema } from "@/lib/labels/org-labels";
@@ -233,7 +233,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
+  // floor that admitted BILLING_ADMIN; secrets stay OWNER-only below.
+  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
   const [settings, providers, claims] = await Promise.all([
@@ -278,7 +280,9 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

@@ -478,7 +478,7 @@ Before the transaction opens, we extract everything the later phases need for no
 | `consulteeName`    | `"Alice Johnson"`            | `appointment.consultation.requestedBy.user.name`                        |
 | `planTitle`        | `"Career Strategy Session"`  | `appointment.consultation.consultationPlan.title`                       |
 | `appointmentType`  | `"CONSULTATION"`             | `appointment.appointmentType`                                           |
-| `dateTime`         | `"2025-06-17T10:00:00.000Z"` | `appointment.appointmentOccurrences[0].startsAt`                            |
+| `dateTime`         | `"2025-06-17T10:00:00.000Z"` | `appointment.appointmentOccurrences[0].startsAt`                        |
 
 **Why this matters**: the records survive the cancellation, so these values could in principle be re-read afterwards — but doing so would mean a second heavy join for data we already hold. The genuinely order-dependent read is the refund context that follows, which must run now because the transaction is about to terminalise the very slots it measures.
 
@@ -810,6 +810,18 @@ Classes are multi-session group events (e.g., "6-week Python bootcamp"). They be
 
 **What gets written to the database**: Only `status: "CANCELLED"`, same as webinar.
 
+**What the host's series cancel refunds (#1780 D-5)**: A webinar still refunds every seat in full. A class refunds each seat only the sessions it was not delivered. The cancel route reads every paid seat's ledger (`classSeriesLedgers`) before its transaction tombstones the sessions, and each seat then refunds `amount − unit × delivered`, keyed `series-cancel:<paymentId>`. The delivered share of the fee stays with the consultant, because the refund cascade claws back the consultant's share in proportion to the refund. A credit-funded seat that had sessions delivered is escalated to ops, because the credits rail restores all or nothing.
+
+### Cancelling one class session (#1780 row 4)
+
+The host can also cancel a single session of a class without touching the rest of the series. The session is then made up within 14 days or refunded one unit per seat by a sweep, and every such cancellation counts as a miss toward the learner's exit right. The state machine is described in `18-state-machines.md`. Misses are host cancellations only today; consultant no-shows and outage voiding are tracked in #1569.
+
+### The refund window and seat leaves (#1780)
+
+The host sets a free-cancellation window on a webinar or class plan, from 24 to 168 hours before the start (`refundWindowHours`; an unset window means 24 hours). Every seat snapshots the plan's window when it is bought, so a later edit never changes the terms of a seat already sold. When a learner leaves a webinar, or a class none of whose sessions has been delivered to them yet, the rule runs inside the Serializable transaction and before the seat is released: inside the window the leave is refused with `409 REFUND_WINDOW_CLOSED` and the seat stays, and outside it the seat is released and refunded in full. A session the host moved after the purchase (`AppointmentOccurrence.movedAt`, stamped when a reschedule or a re-plan really changes its times) waives the window, so a buyer whose time was changed on them can always leave with their money.
+
+A learner leaving a class already under way is quoted per session. Each seat has its own ledger (`lib/booking/class-series.ts`): the seat holds only the sessions that start after it was bought, one unit is the seat price divided by the sessions it holds, and the refund is every remaining session at its own notice tier plus every never-scheduled session in full, less any session already refunded on its own. The same quote answers `GET /api/appointments/[id]/cancel/preview?scope=seat`, which the leave dialog shows as "Leaving now refunds ₹X for the N remaining sessions". Every seat refund is keyed on the seat and the payment, so a repeated click never refunds twice. An organiser removing an attendee still refunds the seat in full.
+
 ### State Transition Diagram
 
 ```mermaid
@@ -889,18 +901,18 @@ Green marks a row that comes through untouched, amber a row whose status column 
 
 ### Record-by-Record Breakdown
 
-| Record                         | Before                                             | After                                                 | Why                                                                                            |
-| ------------------------------ | -------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `Appointment`                  | Exists with type and foreign keys                  | **Preserved**, untouched                              | `Payment.appointment` cascades on delete, so removing it would destroy the money trail (#1074) |
+| Record                             | Before                                             | After                                                 | Why                                                                                            |
+| ---------------------------------- | -------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `Appointment`                      | Exists with type and foreign keys                  | **Preserved**, untouched                              | `Payment.appointment` cascades on delete, so removing it would destroy the money trail (#1074) |
 | `AppointmentOccurrence` (live)     | `completionStatus` is `SCHEDULED` or `RESCHEDULED` | `completionStatus = "CANCELLED"`                      | The time is released by status; the record of it having been held survives                     |
 | `AppointmentOccurrence` (terminal) | Already `COMPLETED`/`CANCELLED`/`UNVERIFIED`       | Untouched                                             | A delivered session is history, and the proration denominator counts it                        |
-| `RescheduleRequest` (open)     | `PENDING_REVIEW` or similar                        | `status = "DECLINED"`, `openForAppointmentId` cleared | An open proposal would reserve the appointment forever and feed the expiry cron                |
-| `Consultation` (if applicable) | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Preserved for refund decisions and analytics                                                   |
-| `Subscription` (if applicable) | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Same reasoning as consultation                                                                 |
-| `Webinar` (if applicable)      | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Preserved but with minimal state change                                                        |
-| `Class` (if applicable)        | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Same reasoning as webinar                                                                      |
-| `Payment` / `PaymentOrder`     | Various statuses                                   | Preserved; a `Refund` row is added when due           | The policy frozen at checkout decides the amount, not an admin                                 |
-| `Earning` / `PayoutItem`       | May exist if payment was captured                  | Refunded share incremented by the cascade             | Earnings reversal rides the same transaction as the refund                                     |
+| `RescheduleRequest` (open)         | `PENDING_REVIEW` or similar                        | `status = "DECLINED"`, `openForAppointmentId` cleared | An open proposal would reserve the appointment forever and feed the expiry cron                |
+| `Consultation` (if applicable)     | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Preserved for refund decisions and analytics                                                   |
+| `Subscription` (if applicable)     | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Same reasoning as consultation                                                                 |
+| `Webinar` (if applicable)          | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Preserved but with minimal state change                                                        |
+| `Class` (if applicable)            | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Same reasoning as webinar                                                                      |
+| `Payment` / `PaymentOrder`         | Various statuses                                   | Preserved; a `Refund` row is added when due           | The policy frozen at checkout decides the amount, not an admin                                 |
+| `Earning` / `PayoutItem`           | May exist if payment was captured                  | Refunded share incremented by the cascade             | Earnings reversal rides the same transaction as the refund                                     |
 
 ### Why Nothing is Deleted
 
@@ -1025,7 +1037,7 @@ For webinars and classes the organiser is read off the plan and every paid atten
 | `consultantName`  | e.g., `"Bob Smith"` or `"Consultant"` (fallback)              | Extracted in Phase 1, with fallback                                                                                                                |
 | `consulteeName`   | e.g., `"Alice Johnson"` or `"Consultee"` (fallback)           | Extracted in Phase 1, with fallback                                                                                                                |
 | `planTitle`       | e.g., `"Career Strategy Session"` or `"N/A"` (fallback)       | From consultation/subscription plan                                                                                                                |
-| `dateTime`        | ISO 8601 string or `undefined`                                | `appointmentOccurrences[0].startsAt`                                                                                                                   |
+| `dateTime`        | ISO 8601 string or `undefined`                                | `appointmentOccurrences[0].startsAt`                                                                                                               |
 | `dashboardUrl`    | An org or personal appointments href                          | `notificationHref(appointment.organizationId, "appointments")` — both parties share one payload, so the href must suit either                      |
 | `reason`          | e.g., `"SCHEDULE_CONFLICT"` or `undefined`                    | From validated body                                                                                                                                |
 | `cancelledBy`     | `"consultant"`, `"consultee"`, or `"system"`                  | Three-way: the consultant's user ID, then the consultee's, then `system` for a platform or org actor and for group events, which have no consultee |

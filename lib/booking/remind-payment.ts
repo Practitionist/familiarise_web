@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, PaymentStatus } from "@prisma/client";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
-import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
+import { deliver, EMAIL_BUDGET_MS, emailPayUrl, SENDERS } from "@/lib/email";
 import { renderEmail } from "@/lib/email/render";
 import { apiError, isRefusal, Refusal } from "@/lib/errors";
 import { reportSentryError } from "@/lib/observability/report";
@@ -162,7 +162,8 @@ export async function remindApprovedPayment(args: {
       appointmentType: args.kind,
       amount: payment.amount,
       currency: payment.currency,
-      paymentUrl: row.pendingPaymentUrl,
+      // #1775 P-1 — the stored link is an order id on Razorpay.
+      paymentUrl: emailPayUrl(payment.id, row.pendingPaymentUrl),
       expiresAt: payment.expiresAt.toISOString(),
       reminder: true,
     }),

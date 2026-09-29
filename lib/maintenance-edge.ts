@@ -47,7 +47,11 @@ const OFF_STATE: MaintenanceState = {
 // Edge isolates share module scope within an instance lifetime.
 let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
-const CACHE_TTL_MS = 30_000; // 30 seconds
+// #1822 Q-6 — was 30s; the read fails open, so the only cost of a longer
+// window is slower enforcement of a newly-set maintenance phase.
+const CACHE_TTL_MS = 180_000; // 3 minutes
+// A failed read keeps the old 30s window, so one blip can't unblock DEGRADED writes for 3 min.
+const FAILURE_CACHE_MS = 30_000;
 
 // Per-request fail-open budget for the edge Upstash read. Document loads + /api/*
 // pay this (RSC/prefetch sub-navigations use getMaintenanceStateCachedOnly and
@@ -72,7 +76,8 @@ async function redisGet(key: string): Promise<string | null> {
     signal: AbortSignal.timeout(REDIS_FETCH_TIMEOUT_MS),
   });
 
-  if (!res.ok) return null;
+  // Non-OK (e.g. quota exceeded) is a failed read, not an unset phase.
+  if (!res.ok) throw new Error(`Upstash GET ${res.status}`);
   const data = await res.json();
   return data.result ?? null;
 }
@@ -120,7 +125,7 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   } catch {
     // Fail-open: cache OFF to avoid repeated failing calls
     cachedState = OFF_STATE;
-    cacheTimestamp = now;
+    cacheTimestamp = now - CACHE_TTL_MS + FAILURE_CACHE_MS;
     return OFF_STATE;
   }
 }
@@ -132,7 +137,7 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
  * getMaintenanceState() runs before the RSC response can stream, so a soft
  * navigation sits blank until it resolves (the gap before loading.tsx appears).
  * A full document load still does the live read, so a maintenance window is
- * always enforced within one document navigation / the 30s cache window.
+ * always enforced within one document navigation / the 3-min cache window.
  *
  * When the cache is stale we kick off a refresh (so the NEXT sub-navigation sees
  * fresh state) and return the last-known state rather than OFF — otherwise a
@@ -219,6 +224,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/collaborations",
   "/api/payments/disputes", // Block dispute handling mutations
   "/api/admin/payouts", // Block admin payout mutations
+  "/api/consultant/payouts/instant", // #1771 row 6 — expert-initiated payout
   // #1598 P1-W02a — the admin refund front door, TDS filing marks and the
   // wallet unfreeze are money writes too; GETs still pass via READ_ONLY_METHODS.
   "/api/admin/refunds",
@@ -312,6 +318,23 @@ export function isWriteBlockedInDegraded(
   );
 }
 
+// #1861 S3a — this module runs on the edge runtime, where node:crypto's
+// timingSafeEqual is unavailable, so the bypass secret compare needs its own
+// constant-time routine. Length inequality is folded into the accumulator
+// rather than returned early, and every byte up to max(len) is visited, so
+// neither a length mismatch nor an early differing byte shortens the loop.
+function constantTimeEqual(a: string | null | undefined, b: string): boolean {
+  if (a === null || a === undefined) return false;
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  const maxLen = Math.max(aBytes.length, bBytes.length);
+  let diff = aBytes.length === bBytes.length ? 0 : 1;
+  for (let i = 0; i < maxLen; i++) {
+    diff |= (i < aBytes.length ? aBytes[i] : 0) ^ (i < bBytes.length ? bBytes[i] : 0);
+  }
+  return diff === 0;
+}
+
 /**
  * Validate maintenance bypass via header or cookie.
  */
@@ -319,16 +342,21 @@ export function validateBypass(
   request: NextRequest,
   storedSecret: string | null,
 ): boolean {
+  const headerVal = request.headers.get("x-maintenance-bypass");
+  const cookieVal = request.cookies.get("maintenance_bypass")?.value;
+
   if (!storedSecret) {
     const envSecret = process.env.MAINTENANCE_BYPASS_SECRET;
     if (!envSecret) return false;
 
-    const headerVal = request.headers.get("x-maintenance-bypass");
-    const cookieVal = request.cookies.get("maintenance_bypass")?.value;
-    return headerVal === envSecret || cookieVal === envSecret;
+    return (
+      constantTimeEqual(headerVal, envSecret) ||
+      constantTimeEqual(cookieVal, envSecret)
+    );
   }
 
-  const headerVal = request.headers.get("x-maintenance-bypass");
-  const cookieVal = request.cookies.get("maintenance_bypass")?.value;
-  return headerVal === storedSecret || cookieVal === storedSecret;
+  return (
+    constantTimeEqual(headerVal, storedSecret) ||
+    constantTimeEqual(cookieVal, storedSecret)
+  );
 }

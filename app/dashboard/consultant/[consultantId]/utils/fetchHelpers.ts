@@ -228,7 +228,7 @@ export async function fetchDocuments(
             break;
           case 404:
             userFriendlyMessage =
-              "Consultant profile not found. Please check the URL and try again.";
+              "Expert profile not found. Please check the URL and try again.";
             break;
           case 500:
             userFriendlyMessage =

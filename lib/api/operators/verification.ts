@@ -1,14 +1,11 @@
 /**
  * Shared operator profile-verification queue.
  *
- * Used by both `app/api/admin/verification/route.ts` and
- * `app/api/staff/moderation/profiles/route.ts` — same resource (consultant
- * profile verifications) exposed under two URLs for the admin and staff
- * dashboards. The previously-duplicated query+formatting now lives here.
+ * Used by `app/api/admin/verification/route.ts`, which both back-office
+ * trees read (the staff twin URL was deleted, #1527).
  *
  * The result shape matches the `ProfileVerification` type the frontend's
- * shared `VerificationQueue` component already consumes (it accepts an
- * `apiBasePath` prop and is mounted on both dashboards).
+ * shared `VerificationQueue` component already consumes.
  */
 
 import prisma from "@/lib/prisma";
@@ -163,16 +160,14 @@ export async function getVerificationQueue(
         verificationStatus: v.status,
         // Map Prisma field names onto the shape the
         // `VerificationReviewModal` already consumes.
-        workExperiences: v.consultantProfile.user.workExperiences.map(
-          (w) => ({
-            id: w.id,
-            company: w.company,
-            title: w.title,
-            startDate: w.startDate.toISOString(),
-            endDate: w.endDate ? w.endDate.toISOString() : null,
-            current: w.isCurrent,
-          }),
-        ),
+        workExperiences: v.consultantProfile.user.workExperiences.map((w) => ({
+          id: w.id,
+          company: w.company,
+          title: w.title,
+          startDate: w.startDate.toISOString(),
+          endDate: w.endDate ? w.endDate.toISOString() : null,
+          current: w.isCurrent,
+        })),
         education: v.consultantProfile.user.education.map((e) => ({
           id: e.id,
           institution: e.institution,

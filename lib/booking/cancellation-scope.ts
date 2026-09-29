@@ -1,12 +1,11 @@
 /**
  * Resolve the refund facts for a WHOLE booking, not one appointment (#1006).
  *
- * Cancellation is a whole-booking act, but a booking is not always one
- * Appointment row. A subscription is a slot-less placeholder created at
- * checkout — which is the row that carries the Payment — plus one further
- * Appointment per allocated session, none of which carry money. A class is one
- * Appointment per session with every attendee's Payment piled onto the first.
- * Only a consultation and a webinar are genuinely 1:1 with their Appointment.
+ * Cancellation is a whole-booking act. Since #1554 every booking is ONE
+ * Appointment wrapper with N occurrence rows: a subscription's wrapper carries
+ * its Payment and gains an occurrence per allocated session, and a class's
+ * wrapper carries every attendee's Payment and one participant row per seat
+ * (a seat's own ledger is lib/booking/class-series.ts, #1780).
  *
  * The cancel route used to read the payment, the frozen policy snapshot and
  * the start time straight off the appointment it was handed, so:

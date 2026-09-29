@@ -11,7 +11,10 @@ import {
   MAX_OPEN_REQUESTS_RANGE,
   parseMaxOpenRequests,
 } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/sections/BookingRequestsSection";
-import { getInitialFormData } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/settings";
+import {
+  getInitialFormData,
+  saveBookingRequestSettings,
+} from "@/app/dashboard/consultant/[consultantId]/(features)/settings/settings";
 import type { TConsultantProfile } from "@/types/consultant";
 
 describe("booking requests settings", () => {
@@ -43,5 +46,44 @@ describe("booking requests settings", () => {
     expect(bare.bookingMode).toBe("INSTANT");
     expect(bare.acceptingRequests).toBe(true);
     expect(bare.maxOpenRequests).toBeNull();
+  });
+
+  // #1527 QA K10 — the Requests switch PUT the whole profile and a stale
+  // availability overlap 400'd it silently. It now PATCHes only its flag and
+  // surfaces the server's sentence.
+  it("PATCHes only the given setting and throws the server's refusal", async () => {
+    const json = (body: unknown, status: number) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        json(
+          {
+            data: {
+              bookingMode: "REQUEST",
+              acceptingRequests: false,
+              maxOpenRequests: null,
+            },
+          },
+          200,
+        ),
+      )
+      .mockResolvedValueOnce(json({ error: "Validation failed" }, 400));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      saveBookingRequestSettings("cp-1", { acceptingRequests: false }),
+    ).resolves.toMatchObject({ acceptingRequests: false });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/user/consultants/cp-1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({ acceptingRequests: false });
+
+    await expect(
+      saveBookingRequestSettings("cp-1", { acceptingRequests: true }),
+    ).rejects.toThrow("Validation failed");
   });
 });

@@ -166,6 +166,17 @@ const nextCycleSubscription = {
   }),
 };
 
+/** #1775 C-5 — paid at purchase, nothing placed yet: the 48 h allocate clock. */
+export const paidUnallocatedSubscription = {
+  ...subscriptionBase,
+  id: "s-paid",
+  status: "PENDING",
+  requestedAt: hoursAgo(2),
+  appointment: wrapper("a-s3", {
+    payment: [{ status: "SUCCEEDED", amount: 2400000, expiresAt: null }],
+  }),
+};
+
 const awaitingTrial = {
   id: "t-awaiting",
   status: "AWAITING_PAYMENT",

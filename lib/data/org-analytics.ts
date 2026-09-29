@@ -18,6 +18,7 @@ import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -80,7 +81,12 @@ export async function getOrgAnalytics(
       canSponsor: true,
       canHost: true,
       billingAccount: {
-        select: { id: true, fundingSource: true, walletBalance: true, currency: true },
+        select: {
+          id: true,
+          fundingSource: true,
+          walletBalance: true,
+          currency: true,
+        },
       },
     },
   });
@@ -320,13 +326,44 @@ export async function getOrgAnalytics(
       : null,
     // Honesty gate (#687): mirror the query gate above — flag off ⇒ null, not
     // an empty array, so a still-canHost row doesn't imply zeroed host earnings.
-    earnings: ENABLE_HOST_ORGS && org.canHost
-      ? earningsAggregate.map((e) => ({
-          status: e.status,
-          count: e._count._all,
-          orgSharePaise: sumPaise(e._sum.orgSharePaise),
-          refundedPaise: sumPaise(e._sum.refundedAmountPaise),
-        }))
-      : null,
+    earnings:
+      ENABLE_HOST_ORGS && org.canHost
+        ? earningsAggregate.map((e) => ({
+            status: e.status,
+            count: e._count._all,
+            orgSharePaise: sumPaise(e._sum.orgSharePaise),
+            refundedPaise: sumPaise(e._sum.refundedAmountPaise),
+          }))
+        : null,
   };
+}
+
+/**
+ * #1527 — money in the analytics payload follows the matrix: without
+ * `billing.read` (SUPPORT) every paise figure goes; without `payouts.read`
+ * (MANAGER, decision 1) the host-earnings split goes. Applied before the
+ * payload leaves the server (API response and SSR seeds alike).
+ */
+export function orgAnalyticsForRole(
+  payload: OrgAnalyticsPayload,
+  role: MemberRole,
+): OrgAnalyticsPayload {
+  if (!hasOrgPermission(role, "billing.read")) {
+    return {
+      ...payload,
+      capabilities: { ...payload.capabilities, walletBalance: null },
+      // #1527 review — pendingOveragePaise is a paise figure too; keep the
+      // non-money activation signals a SUPPORT viewer still needs.
+      activation: { ...payload.activation, pendingOveragePaise: 0 },
+      wallet: null,
+      invoices: null,
+      subscription: null,
+      reimbursements: null,
+      earnings: null,
+    };
+  }
+  if (!hasOrgPermission(role, "payouts.read")) {
+    return { ...payload, earnings: null };
+  }
+  return payload;
 }

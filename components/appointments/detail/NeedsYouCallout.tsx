@@ -3,7 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import * as Sentry from "@sentry/nextjs";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { BellRing, CreditCard, LifeBuoy, Loader2, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -71,6 +71,8 @@ export interface NeedsYouCalloutProps {
     currency: string;
   } | null;
   onPay?: () => void;
+  /** #1780 E-5 — leave the class with a full refund of the remaining sessions. */
+  onExitSeries?: () => Promise<void>;
   requestAgainHref: string | null;
   decision?: RequestDecision;
   onHelp: () => void;
@@ -164,6 +166,7 @@ function ApproveOrDecline({
   deadline: Date | undefined;
   onHelp: () => void;
 }) {
+  const format = useZonedFormat();
   const [approving, setApproving] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
@@ -365,6 +368,7 @@ function RemindOrWithdraw({
   deadline: Date | undefined;
   onHelp: () => void;
 }>) {
+  const format = useZonedFormat();
   const [reminding, setReminding] = useState(false);
   const [nextAllowedAt, setNextAllowedAt] = useState<string | null>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -505,11 +509,64 @@ function RemindOrWithdraw({
   );
 }
 
+/** #1780 E-5 — the exit right's confirm; a 409 reads as a refusal toast. */
+function ExitSeriesButton({
+  label,
+  onExit,
+}: Readonly<{ label: string; onExit: () => Promise<void> }>) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const exit = async () => {
+    setBusy(true);
+    try {
+      await onExit();
+      toast({ title: "You left the series — the refund is on its way" });
+      setOpen(false);
+    } catch (error) {
+      toast({
+        title: "Could not leave",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Leave with a full refund
+      </Button>
+      <AlertDialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave this class?</AlertDialogTitle>
+            <AlertDialogDescription>{label}.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Stay enrolled</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy}
+              onClick={(e) => {
+                e.preventDefault();
+                void exit();
+              }}
+            >
+              {busy ? "Leaving…" : "Leave and refund"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
 /**
  * #1675 — the primary slot, one action for this role from
  * `presentation.nextAction`. Renders nothing when there is nothing to do.
  */
 export function NeedsYouCallout(props: NeedsYouCalloutProps) {
+  const format = useZonedFormat();
   const {
     presentation,
     names,
@@ -547,6 +604,40 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
           deadline={deadline}
           onHelp={onHelp}
         />
+      );
+    case "EXIT_SERIES":
+      if (!props.onExitSeries) return null;
+      return (
+        <Shell
+          onHelp={onHelp}
+          actions={
+            <ExitSeriesButton
+              label={nextAction.label}
+              onExit={props.onExitSeries}
+            />
+          }
+        >
+          The host has cancelled several sessions of this class, so you may
+          leave the series and get the remaining sessions refunded in full.
+        </Shell>
+      );
+    // #1775 C-5 — a paid plan waiting for cycle 1 (or its next cycle).
+    case "ALLOCATE":
+      if (!decision) return null;
+      return (
+        <Shell
+          onHelp={onHelp}
+          actions={
+            <>
+              {deadline && <TimeLeft deadline={deadline} />}
+              <Button size="sm" asChild>
+                <Link href={decision.allocateHref}>{nextAction.label}</Link>
+              </Button>
+            </>
+          }
+        >
+          {bookingState.why}
+        </Shell>
       );
     case "PAY": {
       if (!pending) return null;

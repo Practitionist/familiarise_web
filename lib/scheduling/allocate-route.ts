@@ -29,7 +29,10 @@ import {
   isEventConsultant,
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
+import {
+  approvalMintConflict,
+  mintApprovalPaymentAfterCommit,
+} from "@/lib/booking/approve-request";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
 const LOG_LABEL: Record<EventType, string> = {
@@ -167,17 +170,42 @@ export async function handleAllocate(
           kind: eventType,
           id: eventId,
         });
-        if (mint.status === "mint_failed" || mint.status === "lapsed") {
+        // #1775 C-1 — a failed mint is a typed answer, never a 200 the client
+        // reads as "sent": the request stays awaiting payment, retry reuses it.
+        if (mint.status === "lapsed") {
+          return NextResponse.json(
+            { error: mint.message, errorCode: "ILLEGAL_TRANSITION" },
+            { status: 409 },
+          );
+        }
+        const conflict =
+          mint.status === "mint_failed"
+            ? approvalMintConflict(mint.error)
+            : null;
+        if (conflict) {
+          return NextResponse.json(
+            { error: conflict.message, errorCode: conflict.code },
+            { status: 409 },
+          );
+        }
+        if (mint.status === "mint_failed") {
           await recordSystemError({
             organizationId: null,
             category: "PAYMENT",
-            summary: `Approval pay-link mint failed after allocation (${mint.status}) — approve again to retry`,
-            err:
-              mint.status === "mint_failed"
-                ? mint.error
-                : new Error(mint.message),
+            summary:
+              "Approval pay-link mint failed after allocation — approve again to retry",
+            err: mint.error,
             context: { eventType, eventId },
           }).catch(() => {});
+          return NextResponse.json(
+            {
+              error:
+                "The times were saved, but generating the payment link failed. Approve again to retry the link.",
+              errorCode: "PAYMENT_LINK_FAILED",
+              awaitingPayment,
+            },
+            { status: 502 },
+          );
         }
       }
 

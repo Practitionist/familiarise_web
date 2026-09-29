@@ -1,10 +1,14 @@
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
-import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
+import {
+  approvalMintConflict,
+  mintApprovalPaymentAfterCommit,
+} from "@/lib/booking/approve-request";
 import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
@@ -531,6 +535,10 @@ export async function PATCH(
               where: { id: consultationId },
               to: status,
             });
+            // #1778 — a decline frees the held times: tell anyone waiting.
+            if (status === AppointmentStatus.REJECTED) {
+              await stageDeclineHoldNotices(tx, consultationId);
+            }
             const consultation = await tx.consultation.findUniqueOrThrow({
               where: { id: consultationId },
               include: {
@@ -709,6 +717,17 @@ export async function PATCH(
             { status: 409 },
           );
         }
+        // #1780 R-4 — a conflict is a 409 with its code, never a 502.
+        const conflict =
+          mint.status === "mint_failed"
+            ? approvalMintConflict(mint.error)
+            : null;
+        if (conflict) {
+          return NextResponse.json(
+            { data: result.data, error: conflict.message, code: conflict.code },
+            { status: 409 },
+          );
+        }
         // The 502 invites a retry; the retry reuses the same PENDING payment.
         if (mint.status === "mint_failed") {
           return NextResponse.json(
@@ -837,6 +856,18 @@ class PaidWithoutAppointmentError extends Error {
     );
     this.name = "PaidWithoutAppointmentError";
   }
+}
+
+// #1778 — lifted out of the approval transaction to keep its complexity in bounds.
+async function stageDeclineHoldNotices(
+  tx: Tx,
+  consultationId: string,
+): Promise<void> {
+  const held = await tx.appointment.findFirst({
+    where: { consultationId: consultationId, deletedAt: null },
+    select: { id: true },
+  });
+  if (held) await stageNoticesForAppointmentHolds(tx, held.id);
 }
 
 /**

@@ -88,6 +88,8 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { isHostMove, type FreedWindow } from "@/lib/booking/class-series";
 import {
   SETTLED_CONSULTATION,
   SETTLED_SUBSCRIPTION,
@@ -599,6 +601,7 @@ export class SchedulingService {
       error instanceof AllocationConflictError ||
       error instanceof AllocationIdempotencyMismatchError ||
       error instanceof IllegalTransitionError ||
+      error instanceof BookingRuleError ||
       error instanceof ProgramAssignmentLimitError ||
       isUniqueViolation(error) ||
       isExclusionViolation(error) ||
@@ -659,6 +662,13 @@ export class SchedulingService {
     }
     if (error instanceof AllocationIdempotencyMismatchError) {
       return { errorCode: error.errorCode, httpStatus: error.httpStatus };
+    }
+    // #1775 C-1 — an unpaid plan; the allocation rolled back.
+    if (
+      error instanceof BookingRuleError &&
+      error.code === "SUBSCRIPTION_UNPAID"
+    ) {
+      return { errorCode: "SUBSCRIPTION_UNPAID", httpStatus: error.httpStatus };
     }
     // #836 — consultee cancelled (or request expired) while the consultant
     // was allocating; the whole allocation tx rolled back.
@@ -1935,6 +1945,7 @@ export class SchedulingService {
           let enrolledUserIds: string[] = [];
           let deletedAppointmentIds: string[] = [];
           let freedOrdinals: number[] = [];
+          let freedWindows: FreedWindow[] = [];
           let reusableAppointmentId: string | undefined;
           if (isTopUp) {
             // A group event's learners live ONLY on the slot↔user M2M, and the
@@ -1955,6 +1966,7 @@ export class SchedulingService {
               enrolledUserIds,
               deletedAppointmentIds,
               freedOrdinals,
+              freedWindows,
               reusableAppointmentId,
             } = await this.deleteExistingAppointments(
               tx,
@@ -1978,6 +1990,7 @@ export class SchedulingService {
             reusableAppointmentId, // #898 — REUSE preserved 1:1 appointment
             idempotencyKey, // #837
             freedOrdinals, // #1554 — replacements keep their position
+            { isReschedule, freedWindows }, // #1780 decision 9 — moves
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -2508,6 +2521,7 @@ export class SchedulingService {
             enrolledUserIds,
             deletedAppointmentIds,
             freedOrdinals,
+            freedWindows,
             reusableAppointmentId,
           } = isTopUp
             ? SchedulingService.nothingDeleted()
@@ -2532,6 +2546,7 @@ export class SchedulingService {
             reusableAppointmentId, // #898 — REUSE preserved 1:1 appointment
             idempotencyKey, // #837
             freedOrdinals, // #1554 — replacements keep their position
+            { isReschedule, freedWindows }, // #1780 decision 9 — moves
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -4074,7 +4089,11 @@ export class SchedulingService {
     // #1554 — ordinals of the rows this allocation replaces, in call order;
     // call i inherits position i and only surplus calls take a new number.
     inheritedOrdinals: number[] = [],
+    // #1780 decision 9 — a reschedule's replacements are moves; a re-plan's
+    // row is a move only when its times differ from the freed row's.
+    moves?: { isReschedule: boolean; freedWindows: FreedWindow[] },
   ): Promise<any[]> {
+    const hostMoves = moves ?? { isReschedule: false, freedWindows: [] };
     const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
     );
@@ -4177,16 +4196,23 @@ export class SchedulingService {
         : {};
       // One occurrence per call with the real end; the 30-minute intervals
       // stay the unit of arithmetic, not the persisted shape.
-      const occurrencesToCreate = calls.map((sessionSlots, callIndex) => ({
-        ordinal: inheritedOrdinals[callIndex] ?? nextFreshOrdinal++,
-        startsAt: sessionSlots[0],
-        endsAt: new Date(
-          sessionSlots[sessionSlots.length - 1].getTime() +
-            SCHEDULING_INTERVAL_MS,
-        ),
-        isTentative: false,
-        consultantProfileId: consultantProfileRow.id,
-      }));
+      const movedAt = new Date();
+      const occurrencesToCreate = calls.map((sessionSlots, callIndex) => {
+        const row = {
+          ordinal: inheritedOrdinals[callIndex] ?? nextFreshOrdinal++,
+          startsAt: sessionSlots[0],
+          endsAt: new Date(
+            sessionSlots[sessionSlots.length - 1].getTime() +
+              SCHEDULING_INTERVAL_MS,
+          ),
+          isTentative: false,
+          consultantProfileId: consultantProfileRow.id,
+        };
+        const inherited = inheritedOrdinals[callIndex] !== undefined;
+        return inherited && isHostMove(row, hostMoves)
+          ? { ...row, movedAt }
+          : row;
+      });
 
       const wrapper = wrapperId
         ? await tx.appointment.update({
@@ -4537,12 +4563,14 @@ export class SchedulingService {
     enrolledUserIds: string[];
     deletedAppointmentIds: string[];
     freedOrdinals: number[];
+    freedWindows: FreedWindow[];
     reusableAppointmentId?: string;
   } {
     return {
       enrolledUserIds: [],
       deletedAppointmentIds: [],
       freedOrdinals: [],
+      freedWindows: [],
     };
   }
 
@@ -4557,6 +4585,7 @@ export class SchedulingService {
     enrolledUserIds: string[];
     deletedAppointmentIds: string[];
     freedOrdinals: number[];
+    freedWindows: FreedWindow[];
     // #898 — id of a preserved 1:1 (consultation/webinar) payment-bearing
     // appointment the caller must REUSE: its @unique event FK is still taken,
     // so a fresh create would throw P2002. At most one per 1:1 event.
@@ -4596,7 +4625,7 @@ export class SchedulingService {
       // scheduled (tentative crud-with-plan slots → onlyTentative path).
       // reconnectEnrolledUsers re-seats them; it filters the consultant itself.
       const enrolledUserIdSet = new Set<string>();
-      const freed: { ordinal: number; startsAt: Date }[] = [];
+      const freed: { ordinal: number; startsAt: Date; endsAt: Date }[] = [];
       for (const appointment of appointments) {
         // Released rows only: a reschedule frees what it released, never a
         // fresh request's tentative holds or crud-with-plan placeholders that
@@ -4667,6 +4696,7 @@ export class SchedulingService {
         enrolledUserIds: Array.from(enrolledUserIdSet),
         deletedAppointmentIds,
         freedOrdinals: this.ordinalsInStartOrder(freed),
+        freedWindows: this.windowsOf(freed),
         reusableAppointmentId,
       };
     } else if (preservePastSlots) {
@@ -4690,7 +4720,7 @@ export class SchedulingService {
 
       let preservedSlotCount = 0;
       const enrolledUserIdSet = new Set<string>();
-      const freed: { ordinal: number; startsAt: Date }[] = [];
+      const freed: { ordinal: number; startsAt: Date; endsAt: Date }[] = [];
       const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
 
       for (const appointment of appointments) {
@@ -4753,6 +4783,7 @@ export class SchedulingService {
         // freed-id contract is scoped to the partial-reschedule case.
         deletedAppointmentIds: [],
         freedOrdinals: this.ordinalsInStartOrder(freed),
+        freedWindows: this.windowsOf(freed),
         // #898 — only class/subscription (1:N) reach this branch; no 1:1 reuse.
         reusableAppointmentId,
       };
@@ -4853,9 +4884,21 @@ export class SchedulingService {
         enrolledUserIds: Array.from(enrolledUserIdSet),
         deletedAppointmentIds: [],
         freedOrdinals: this.ordinalsInStartOrder(freed),
+        freedWindows: this.windowsOf(freed),
         reusableAppointmentId,
       };
     }
+  }
+
+  /** #1780 decision 9 — the times each freed ordinal held before the re-plan. */
+  private static windowsOf(
+    rows: { ordinal: number; startsAt: Date; endsAt: Date }[],
+  ): FreedWindow[] {
+    return rows.map((row) => ({
+      ordinal: row.ordinal,
+      startsAt: new Date(row.startsAt),
+      endsAt: new Date(row.endsAt),
+    }));
   }
 
   /** #1554 — freed ordinals in call order, so call i inherits position i. */
@@ -4912,7 +4955,7 @@ export class SchedulingService {
       data?: D;
     }) => Promise<void>,
     settled: Omit<W, "id">,
-    unpaid: Omit<W, "id">,
+    unpaid: Omit<W, "id"> | (() => Promise<void>),
     data?: D,
   ): Promise<ApprovalOutcome> {
     try {
@@ -4925,6 +4968,12 @@ export class SchedulingService {
       return "approved";
     } catch (error) {
       if (!(error instanceof IllegalTransitionError)) throw error;
+      // #1775 C-1 — a refusal instead of the awaiting-payment edge; it throws
+      // a typed error for an unpaid row, else the original miss stands.
+      if (typeof unpaid === "function") {
+        await unpaid();
+        throw error;
+      }
     }
     await transition({
       where: { id: eventId, ...unpaid } as W,
@@ -4967,12 +5016,28 @@ export class SchedulingService {
           UNPAID_CONSULTATION,
         );
 
+      // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
+      // never parked in APPROVED_PENDING_PAYMENT.
       case "subscription":
         return this.approveByMoney(
           eventId,
           (args) => transitionSubscriptionRequest(tx, args),
           SETTLED_SUBSCRIPTION,
-          UNPAID_SUBSCRIPTION,
+          async () => {
+            const unpaid = await tx.subscription.count({
+              where: {
+                id: eventId,
+                status: { in: ALLOCATION_APPROVABLE_FROM },
+                ...UNPAID_SUBSCRIPTION,
+              },
+            });
+            if (unpaid > 0) {
+              throw new BookingRuleError(
+                "SUBSCRIPTION_UNPAID",
+                "This plan is paid at purchase — the request has no successful payment.",
+              );
+            }
+          },
           {
             // FIX: Only set schedulingPeriod if not already configured
             // This prevents overwriting the user's scheduling period with the first allocated slot

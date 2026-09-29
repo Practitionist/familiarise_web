@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "components/ui/use-toast";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { TConsultantProfile } from "types/consultant";
-import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
+import { useTimezone } from "@/hooks/useTimezone";
 import {
   validateTimeSlot,
   validateAllSlotsDetailed,

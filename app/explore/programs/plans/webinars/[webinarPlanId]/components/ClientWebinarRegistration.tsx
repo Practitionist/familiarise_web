@@ -19,6 +19,8 @@ import { formatInTimeZone } from "date-fns-tz";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { isUserRegisteredForWebinar } from "@/lib/payments/utils/participants";
 import type { TSessionStatus } from "../types";
+import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
+import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 
 type ClientWebinarRegistrationProps = {
   webinarPlanId: string; // The WebinarPlan ID (for URL path)
@@ -33,6 +35,8 @@ type ClientWebinarRegistrationProps = {
   /** Per-instance capacity override; null inherits the plan's value. */
   instanceMaxParticipants?: number | null;
   consultantUserId?: string;
+  /** #1780 — the plan's free-cancellation window (null → 24 h). */
+  refundWindowHours?: number | null;
 };
 
 export function ClientWebinarRegistration({
@@ -46,6 +50,7 @@ export function ClientWebinarRegistration({
   maxParticipants = 100,
   instanceMaxParticipants,
   consultantUserId,
+  refundWindowHours,
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const router = useRouter();
@@ -269,6 +274,13 @@ export function ClientWebinarRegistration({
       </CardHeader>
       <CardContent>
         <p className="text-sm text-muted-foreground mb-4">{sessionInfoText}</p>
+        {sessionStatus === "Upcoming" && (
+          <FreeCancellationLine
+            startsAt={nextSessionDate}
+            windowHours={refundWindowHours}
+          />
+        )}
+        <GroupSessionDisclosure className="mt-2" />
       </CardContent>
       <CardFooter>
         {checkoutUrl && !buttonDisabled ? (

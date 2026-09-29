@@ -25,7 +25,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { promises as dns } from "node:dns";
 import prisma from "@/lib/prisma";
-import { requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 export async function POST(
@@ -38,7 +38,9 @@ export async function POST(
 ) {
   const { orgId, domain: rawDomain } = await params;
   const domain = decodeURIComponent(rawDomain).toLowerCase().trim();
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+  });
   if (access.error) return access.error;
 
   const claim = await prisma.orgDomainClaim.findUnique({

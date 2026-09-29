@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { pendingToast, useToast } from "@/hooks/use-toast";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
@@ -18,7 +18,7 @@ import {
   getSession,
 } from "@/lib/auth-client";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -69,7 +69,14 @@ function useAuthenticatedRedirectTarget(
     };
 
     getSession({ query: { disableCookieCache: true } })
-      .then(({ data }) => {
+      .then(({ data, error: sessionError }) => {
+        // Better Auth resolves (rather than rejects) HTTP-level failures as
+        // `{ data: null, error }` — fall back to the cached value instead of
+        // stranding the page on the interstitial until the next store update.
+        if (sessionError) {
+          resolveAndGo(!!onboardingCompleted);
+          return;
+        }
         // Session revoked between paint and check — no protected redirect.
         if (!data?.user) return;
         resolveAndGo(!!data.user.onboardingCompleted);
@@ -153,14 +160,14 @@ function SignInContent() {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message
+  // If already logged in, show redirecting message. Deliberately generic:
+  // the cached `onboardingCompleted` can be ≤5-min stale, and naming the
+  // destination from it flashed "dashboard" one frame before the force-fresh
+  // check above sent the user to onboarding (or vice-versa).
   if (session?.user) {
-    const destination = session.user.onboardingCompleted
-      ? "dashboard"
-      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-        <p className="text-white">Redirecting to {destination}...</p>
+        <p className="text-white">Redirecting…</p>
       </div>
     );
   }
@@ -336,7 +343,7 @@ function SignInContent() {
     setNeedsVerification(false);
     setFieldError({});
     setIsLoading(true);
-    toast({ title: "Signing in..." });
+    const settle = pendingToast({ title: "Signing in..." });
 
     try {
       const { data, error } = await signIn.email({
@@ -348,10 +355,10 @@ function SignInContent() {
         const copy = humanizeAuthError("signin", error);
         if (copy.needsVerification) {
           setNeedsVerification(true);
-          toast({ title: copy.title, description: copy.description });
+          settle({ title: copy.title, description: copy.description });
         } else {
           if (copy.field) setFieldError({ [copy.field]: copy.description });
-          toast({
+          settle({
             title: copy.title,
             description: copy.description,
             variant: "destructive",
@@ -359,7 +366,7 @@ function SignInContent() {
         }
       } else if (data) {
         Sentry.setUser({ id: data.user.id });
-        toast({
+        settle({
           title: "Sign In Successful",
           description: callbackUrl
             ? "Redirecting to your destination..."
@@ -375,7 +382,7 @@ function SignInContent() {
         { tags: { subsystem: "auth" } },
       );
       console.error("Sign in error:", error);
-      toast({
+      settle({
         title: "Sign In Error",
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive",

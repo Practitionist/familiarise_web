@@ -27,7 +27,7 @@ export async function GET(
 ) {
   try {
     // Authenticate admin/staff
-    const session = await getSession();
+    const session = await getSession(true);
     if (
       !session?.user?.id ||
       (session.user.role !== UserRole.ADMIN &&
@@ -102,7 +102,7 @@ export async function POST(
 ) {
   try {
     // Authenticate admin/staff
-    const session = await getSession();
+    const session = await getSession(true);
     if (
       !session?.user?.id ||
       (session.user.role !== UserRole.ADMIN &&

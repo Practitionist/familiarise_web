@@ -15,9 +15,16 @@ export type AppointmentKind =
   | "CLASS"
   | "TRIAL";
 
+/**
+ * `waiting` (consultee: awaiting the expert's approval) and `inRequests`
+ * (consultant: pre-confirmation work the Requests inbox owns) are #1527's
+ * per-viewer splits of what used to be "Needs action".
+ */
 export type AppointmentBucket =
   | "upcoming"
   | "needsAction"
+  | "waiting"
+  | "inRequests"
   | "past"
   | "cancelled";
 
@@ -143,6 +150,8 @@ export interface AppointmentVM {
   meta: string | null;
   organizationId: string | null;
   pendingPaymentUrl: string | null;
+  /** #1775 P-1 — the payable Payment behind the pay-link; keys the pay page. */
+  pendingPaymentId?: string | null;
   collaborators: Array<PersonVM & { role: string }>;
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;

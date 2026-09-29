@@ -377,3 +377,54 @@ describe("GET /api/checkout/verify?sync=true is budgeted and time-boxed", () => 
     expect((await res.json()).retryAfter).toBeUndefined();
   });
 });
+
+// #1775 C-2 — the 48 h allocate-or-refund clock is stamped by the single
+// writer's confirm CAS, and a replayed webhook (the SUCCEEDED short-circuit)
+// never restamps it.
+describe("capture clock", () => {
+  const handlers = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/lib/payments/webhooks/handlers.ts`, "utf8");
+
+  it("the confirm CAS stamps capturedAt; the replay short-circuit does not", () => {
+    const confirm = handlers
+      .split("const confirmed = recoverable")[1]
+      .split("if (confirmed.count === 0)")[0];
+    expect(confirm).toContain("paymentStatus: PaymentStatus.PENDING");
+    expect(confirm).toContain("capturedAt: new Date()");
+    const replay = handlers
+      .split("const recoverable =")[1]
+      .split("return null; // Signal: already processed")[0];
+    expect(replay).not.toContain("capturedAt");
+  });
+});
+
+// #1775 C-8 — a trial charged at request stays PENDING at capture and is
+// stamped paid; a trial the platform already closed is refunded instead.
+describe("paid-at-request trial capture", () => {
+  const handlers = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/lib/payments/webhooks/handlers.ts`, "utf8");
+  const arm = handlers
+    .split("if (metadata.trialId) {")[1]
+    .split("const confirmResult = await confirmExistingAppointment(")[0];
+
+  it("stamps paymentId on a PENDING, uncaptured trial without moving its status", () => {
+    const stamp = arm
+      .split("const paidAtRequest =")[1]
+      .split(": { count: 0 }")[0];
+    expect(stamp).toContain("status: TrialStatus.PENDING");
+    expect(stamp).toContain("paymentId: null");
+    expect(stamp.split("data:")[1]).not.toContain("status:");
+  });
+
+  it("answers captured_after_release when neither CAS matched (a CANCELLED trial)", () => {
+    const miss = arm.split(
+      "if (scheduled.count === 0 && paidAtRequest.count === 0) {",
+    )[1];
+    expect(miss).toContain("if (!alreadyOurs) {");
+    // A SCHEDULED trial already bound to another payment does not own this one.
+    expect(miss).toContain("trial.paymentId === null");
+    expect(miss).toContain('outcome: "captured_after_release"');
+  });
+});

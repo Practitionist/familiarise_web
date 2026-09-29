@@ -1,0 +1,62 @@
+# Knip drift guard — REPORT-ONLY (warn phase, #1808).
+#
+# Runs Knip in non-blocking mode so unused files/exports/dependencies are
+# visible as PR annotations without failing the build. Work the report
+# top-down (files → exports → dependencies) and re-run after each deletion.
+# Graduation path: remove `continue-on-error` + `--no-exit-code` and enforce
+# `--max-issues 0` with an allowlist once the baseline is triaged.
+
+name: Knip (report-only)
+
+concurrency:
+  group: knip-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only drift report: no writes, so least-privilege token + no persisted
+# credentials for dependency lifecycle scripts to read.
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [dev, staging, prod, "feat/**"]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+jobs:
+  knip:
+    name: Knip drift report
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      # --ignore-scripts (Sonar S6505): this is a read-only analysis job —
+      # nothing here needs lifecycle scripts, and skipping them shrinks the
+      # supply-chain surface (a compromised script could otherwise read the
+      # job token). The build/test jobs keep plain `npm ci` (postinstall
+      # generates the Prisma client they need).
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Restore Knip cache
+        uses: actions/cache@v4
+        with:
+          path: ./node_modules/.cache/knip
+          key: knip-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            knip-${{ runner.os }}-
+
+      - name: Knip report (non-blocking)
+        id: knip
+        continue-on-error: true
+        run: npm run knip -- --reporter github-actions --cache

@@ -18,7 +18,7 @@ export async function GET(
   { params }: { params: Promise<{ materialId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {

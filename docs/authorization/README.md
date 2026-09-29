@@ -70,22 +70,23 @@ A bare `isPrivileged(session.user.role)` in a route is not merely coarse; it mak
 
 ## 5. Org Role Hierarchy
 
-Six org-level roles with numeric rank (`ORG_ROLE_RANK`):
+The seven org-level roles below carry a numeric rank (`ORG_ROLE_RANK` in `lib/auth/role-ranks.ts`), which orders them for display only and never decides access:
 
 | Role | Rank | Typical use |
 |---|---|---|
 | `OWNER` | 100 | Org creator, billing, SSO config, member management |
 | `MAINTAINER` | 80 | Day-to-day ops, can manage most settings |
+| `BILLING_ADMIN` | 70 | Finance: billing, purchase orders, payouts, webhooks |
 | `MANAGER` | 60 | Department leads, program management |
 | `EXPERT` | 40 | Consultants hosted by the org |
 | `SUPPORT` | 30 | Read-only support staff |
 | `LEARNER` | 20 | Employees/consumers using org-sponsored services |
 
-**Role comparison** uses `orgRoleSatisfies(actual, minimum)`:
+**Access checks** read the permission matrix in `lib/auth/org-permissions.ts`, never the rank, because BILLING_ADMIN sits above MANAGER yet sees less of operations, and MAINTAINER sits above BILLING_ADMIN yet holds no money write:
 
 ```typescript
-orgRoleSatisfies("MAINTAINER", "MANAGER"); // true — 80 >= 60
-orgRoleSatisfies("LEARNER", "MANAGER");    // false — 20 < 60
+hasOrgPermission("MAINTAINER", "members.manage"); // true
+hasOrgPermission("MAINTAINER", "billing.manage"); // false — finance is OWNER and BILLING_ADMIN only
 ```
 
 > [!IMPORTANT]
@@ -110,17 +111,16 @@ All helpers live in [`lib/auth-helpers.ts`](../../lib/auth-helpers.ts).
 | Helper | Signature | Use when |
 |---|---|---|
 | `requireOrgAccess(orgId, opts?)` | Returns `{ session, member, org }` or `{ error }` | Any org-scoped API route |
-| `requireOrgOwner(orgId, opts?)` | Convenience wrapper — `minimumRole: "OWNER"` | Owner-only operations |
 
-`opts` can be a bare `MemberRole` string or an `OrgCapabilityGate` object:
+`opts` is an `OrgCapabilityGate` object. Its `permission` field names a key of the org permission matrix in `lib/auth/org-permissions.ts`, and that key is the only role gate; an OWNER-only operation names an OWNER-only key such as `identity.manage` or `org.delete`. `ORG_ROLE_RANK` in `lib/auth/role-ranks.ts` is a display order and never an authorization input.
 
 ```typescript
-// Simple role check
-await requireOrgAccess(orgId, "MAINTAINER");
+// Permission check
+await requireOrgAccess(orgId, { permission: "invitations.manage" });
 
-// Role + capability gate
+// Permission + capability gate
 await requireOrgAccess(orgId, {
-  minimumRole: "MANAGER",
+  permission: "billing.manage",
   canSponsor: true,
   requireActive: true,
 });
@@ -131,7 +131,6 @@ await requireOrgAccess(orgId, {
 | Helper | Purpose |
 |---|---|
 | `checkOwnership(session, resourceOwnerId, profileType)` | Checks if session user owns a resource via their profile ID |
-| `isConsultationParticipant(session, consultantId, consulteeId)` | Checks if user is consultant or consultee in a consultation |
 | `authorizeEventAccess(session, eventType, eventId)` | Authorizes access to consultations, subscriptions, webinars, classes. Checks ownership, collaboration, or privileged role. |
 
 ### 6.4 Response Helpers
@@ -140,7 +139,6 @@ await requireOrgAccess(orgId, {
 |---|---|---|
 | `forbiddenResponse(msg?)` | 403 | User is authenticated but not authorized |
 | `unauthorizedResponse(msg?)` | 401 | No valid session |
-| `unprocessableResponse(msg)` | 422 | Valid request but business logic prevents it |
 
 ## 7. Capability Gates
 
@@ -148,7 +146,7 @@ await requireOrgAccess(orgId, {
 
 | Gate | Type | Effect on failure |
 |---|---|---|
-| `minimumRole` | `MemberRole` | 403 Forbidden |
+| `permission` | `OrgSurface \| readonly OrgSurface[]` | 403 `Forbidden — your role does not grant <key>` (a list passes when the role holds any one key) |
 | `canSponsor` | `true` | **404** — the API doesn't exist for this org shape |
 | `canHost` | `true` | **404** — same |
 | `fundingSource` | `FundingSource` | **404** — e.g., WALLET-only endpoint on INVOICE org |
@@ -189,7 +187,7 @@ if (canSponsor === true && !org.canSponsor) {
 export async function POST(req, { params }) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
+    permission: "billing.manage",
     canSponsor: true,
     requireActive: true,
   });
@@ -214,7 +212,7 @@ export async function POST(req) {
 
 ## 10. Edge Cases & Foot-Guns
 
-1. **Never inline role comparisons.** Use `orgRoleSatisfies()` or the `requireOrgAccess` helpers. Inline `=== "OWNER"` comparisons miss the rank hierarchy.
+1. **Never inline role comparisons.** Name a permission key through `requireOrgAccess(orgId, { permission })` or `hasOrgPermission(role, key)`. Inline `=== "OWNER"` comparisons and rank comparisons bypass the permission matrix.
 2. **ADMIN bypass includes capability gates.** An admin calling a WALLET endpoint on an INVOICE org still gets 404. Capability gates are structural (the feature doesn't exist), not authorization (you're not allowed).
 3. **Deactivated orgs.** `requireOrgAccess` returns 403 for `DEACTIVATED` orgs regardless of the user's role.
 4. **Unique constraint on `userId_organizationId`.** A user can only have one `Membership` per org. The `findUnique` on this composite key is the membership lookup.

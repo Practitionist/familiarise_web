@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,7 +40,9 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
+import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -722,6 +725,8 @@ export default function WebinarCheckoutPage({
             </div>
           </div>
         </div>
+        {/* #1852 decision 4 — shown before anyone picks who pays. */}
+        <GroupSessionDisclosure />
         <Separator className="bg-border" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
@@ -873,7 +878,17 @@ export default function WebinarCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              {/* #1780 D-6 — the host's free-cancellation window. */}
+              <FreeCancellationLine
+                startsAt={nextSession?.startsAt}
+                windowHours={planDetails?.refundWindowHours}
+                className="text-xs text-muted-foreground"
+              />
               <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
               />

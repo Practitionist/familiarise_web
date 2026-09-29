@@ -42,6 +42,7 @@ import { cn } from "@/utils/tailwind";
 import { useState } from "react";
 
 import { KIND_LABEL, NEXT_CYCLE_BADGE, nextCycleLine } from "./labels";
+import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { requestCountLine } from "./request-count-line";
 
 /** What one row can do; the inbox owns the handlers. */
@@ -114,7 +115,7 @@ export function rowActions(
   presentation: Pick<BookingPresentation, "bookingState" | "nextAction">,
 ): RowActions {
   const { bookingState, nextAction } = presentation;
-  if (row.kind === "next-cycle") {
+  if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
   if (row.kind === "trial") {
@@ -176,7 +177,10 @@ function Countdown({ deadline }: Readonly<{ deadline: Date }>) {
   const { minutesLeft, isExpired } = useHoldCountdown(deadline);
   const text = countdownText(minutesLeft, isExpired);
   return (
+    // #1527 QA — the server and the hydrating browser read the clock seconds
+    // apart, so the minute can differ (#418); the interval corrects it.
     <span
+      suppressHydrationWarning
       className={cn(
         "inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium tabular-nums",
         isExpired
@@ -201,12 +205,12 @@ export function moneyLine(
 ): string {
   if (moneyState.detail) return moneyState.detail;
   if (moneyState.state === "FREE") {
-    return row.kind === "trial" ? "Free trial" : moneyState.line;
+    return row.kind === "trial" ? FREE_TRIAL_LABEL : moneyState.line;
   }
   if (moneyState.state === "NOT_DUE" && row.amountPaise !== null) {
     return `${formatCurrencyAmount(row.amountPaise, row.currency)} · ${moneyState.line}`;
   }
-  if (row.kind === "trial" && row.amountPaise === null) return "Free trial";
+  if (row.kind === "trial" && row.amountPaise === null) return FREE_TRIAL_LABEL;
   return moneyState.line;
 }
 
@@ -293,6 +297,13 @@ export function InboxRow({
   const isDesktop = useIsDesktop();
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // #1775 C-5 — "Schedule cycle 1" / "Schedule the next N" from the derivation.
+  const labelFor = (action: RowAction): string =>
+    action.kind === "allocate-next" &&
+    presentation.nextAction.kind === "ALLOCATE"
+      ? presentation.nextAction.label
+      : ACTION_LABEL[action.kind];
+
   const linkFor = (action: RowAction): string | null => {
     if (action.kind === "allocate-next") return row.hrefs.allocate;
     if (action.kind === "approve" && action.mode === "allocate") {
@@ -315,7 +326,7 @@ export function InboxRow({
     if (href) {
       return (
         <Button asChild size="sm" variant={variant} className={className}>
-          <Link href={href}>{ACTION_LABEL[action.kind]}</Link>
+          <Link href={href}>{labelFor(action)}</Link>
         </Button>
       );
     }
@@ -330,7 +341,7 @@ export function InboxRow({
           onAction(action);
         }}
       >
-        {ACTION_LABEL[action.kind]}
+        {labelFor(action)}
       </Button>
     );
   };

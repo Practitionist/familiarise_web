@@ -158,6 +158,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // #1861 P4b — IDs only, whichever entity this event actually carries; the
+  // internal Payment.id/appointmentId are not known until dispatch resolves
+  // them, so the gateway's own order id is what's taggable here.
+  const gatewayOrderId = event.payload?.order?.entity?.id;
+  if (gatewayOrderId) {
+    Sentry.getCurrentScope().setTag("gatewayOrderId", gatewayOrderId);
+  }
+
   // Razorpay sends `x-razorpay-event-id`, and it is tempting as the dedup key.
   // This repo deliberately does NOT use it — see
   // .claude/skills/finance/references/razorpay/references/webhooks.md.

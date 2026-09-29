@@ -86,6 +86,8 @@ jest.mock("../../lib/prisma", () => ({
       // count is what the test steers to model a capture landing first.
       updateMany: jest.fn(async () => ({ count: state.remintCasCount })),
       findUnique: jest.fn(async () => state.remintFreshRow),
+      // #1775 P-1 — the trial arm reads through the appointment first; none here.
+      findFirst: jest.fn(async () => null),
     },
     paymentLeg: { updateMany: jest.fn(async () => ({ count: 1 })) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
@@ -164,6 +166,7 @@ jest.mock("../../lib/payments/operations/checkout", () => ({
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
+  ApprovalAlreadyPaidError,
   ApprovalPaymentExistsError,
   ApprovalWindowLapsedError,
   createApprovalPaymentIntent,
@@ -748,4 +751,10 @@ describe("approval routes thread the appointment (source contract)", () => {
       expect(read(rel)).toMatch(/appointmentId:/);
     }
   });
+});
+
+// #1780 R-4 — both mint conflicts carry the registered business code.
+it("types the exists and already-paid refusals with their codes", () => {
+  expect(new ApprovalPaymentExistsError().code).toBe("PAYMENT_ALREADY_EXISTS");
+  expect(new ApprovalAlreadyPaidError().code).toBe("ALREADY_PAID");
 });

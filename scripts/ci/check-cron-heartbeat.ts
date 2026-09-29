@@ -31,6 +31,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { Redis } from "@upstash/redis";
+import { runJobWithSentry } from "@/lib/observability/job-sentry";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -178,6 +180,113 @@ async function writeFleetHeartbeat(): Promise<void> {
     console.warn("check-cron-heartbeat: heartbeat write failed:", err);
   }
 }
+
+/**
+ * #1822 Q-8 — daily Upstash usage alarm. The cap was hit twice in September
+ * 2026 (696K commands against a 500K cap) with nothing watching the climb
+ * between the vendor's own 90%/100% emails. Reads the per-database monthly
+ * command count from the Upstash MANAGEMENT API — a different credential
+ * (email + management key) from the per-database REST token every other
+ * Redis call in this repo uses — and warns at 70%/90% of the cap. Entirely
+ * optional: skips silently when the management credentials are not set, so a
+ * fork or a repo that never provisions them sees no change in behaviour.
+ */
+const UPSTASH_USAGE_WARN_PCT = 70;
+const UPSTASH_USAGE_CRITICAL_PCT = 90;
+const UPSTASH_STATS_TIMEOUT_MS = 15_000;
+
+// #1822 — a monthly COMMAND count (free 500000, PAYG e.g. 2000000), never
+// dollars; no default, since a free-tier number would mis-alarm PAYG.
+function monthlyCommandCap(): number | null {
+  const cap = Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP);
+  return Number.isFinite(cap) && cap > 0 ? cap : null;
+}
+
+async function checkUpstashUsage(): Promise<void> {
+  const apiKey = process.env.UPSTASH_MANAGEMENT_API_KEY;
+  const email = process.env.UPSTASH_EMAIL;
+  const databaseId = process.env.UPSTASH_DATABASE_ID;
+  if (!apiKey || !email || !databaseId) {
+    console.log(
+      "check-cron-heartbeat: UPSTASH_MANAGEMENT_API_KEY/UPSTASH_EMAIL/UPSTASH_DATABASE_ID not all set — skipping the usage alarm",
+    );
+    return;
+  }
+
+  // Sentry is only initialised for jobs/** processes (lib/observability/job-sentry.ts);
+  // this script is otherwise uninstrumented, so the usage alarm brings its own
+  // init+flush rather than depending on a capture silently going nowhere.
+  await runJobWithSentry("upstash-usage-alarm", async () => {
+    try {
+      await reportUpstashUsage(email, apiKey, databaseId);
+    } catch (err) {
+      // Optional alarm: reported, never fails the heartbeat job.
+      console.warn("check-cron-heartbeat: Upstash usage alarm failed", err);
+      captureThrottled("upstash-usage-alarm:probe", err, {
+        subsystem: "maintenance",
+        op: "upstash-usage-alarm",
+        expected: true,
+        level: "warning",
+      });
+    }
+  });
+}
+
+async function reportUpstashUsage(
+  email: string,
+  apiKey: string,
+  databaseId: string,
+): Promise<void> {
+  const auth = Buffer.from(`${email}:${apiKey}`).toString("base64");
+  const res = await fetch(
+    `https://api.upstash.com/v2/redis/stats/${databaseId}`,
+    {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(UPSTASH_STATS_TIMEOUT_MS),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Upstash stats API answered ${res.status} ${res.statusText}`,
+    );
+  }
+  const stats = (await res.json()) as { total_monthly_requests?: unknown };
+  const used = stats.total_monthly_requests;
+  // A renamed/missing field must not read as 0% usage.
+  if (typeof used !== "number" || !Number.isFinite(used)) {
+    throw new TypeError("Upstash stats API returned no total_monthly_requests");
+  }
+  const cap = monthlyCommandCap();
+  if (cap === null) {
+    console.log(
+      `check-cron-heartbeat: Upstash usage ${used} commands this month; UPSTASH_MONTHLY_COMMAND_CAP unset — alarm skipped`,
+    );
+    return;
+  }
+  const pct = (used / cap) * 100;
+  console.log(
+    `check-cron-heartbeat: Upstash usage ${used}/${cap} commands this month (${pct.toFixed(1)}%)`,
+  );
+
+  if (pct >= UPSTASH_USAGE_WARN_PCT) {
+    const critical = pct >= UPSTASH_USAGE_CRITICAL_PCT;
+    captureThrottled(
+      "upstash-usage-alarm",
+      new Error(
+        `Upstash monthly command usage at ${pct.toFixed(1)}% of cap (${used}/${cap})`,
+      ),
+      {
+        subsystem: "maintenance",
+        op: "upstash-usage-alarm",
+        expected: true,
+        level: critical ? "error" : "warning",
+        tags: { threshold: critical ? "90" : "70" },
+      },
+    );
+  }
+}
+
+void checkUpstashUsage();
 
 void writeFleetHeartbeat().finally(() => {
   // Always print the full picture: this job's log is the only place the fleet's

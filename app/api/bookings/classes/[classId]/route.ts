@@ -8,6 +8,12 @@ import {
   authorizeEventAccess,
 } from "@/lib/auth-helpers";
 import { CLASS_EVENT_ALLOWED_FROM } from "@/lib/booking/transitions";
+import {
+  deleteUntouchedOffering,
+  offeringDeleteRefusal,
+  OfferingInUseError,
+  UNTOUCHED_EVENT,
+} from "@/lib/booking/offering-delete";
 
 export async function GET(
   request: NextRequest,
@@ -44,7 +50,8 @@ export async function GET(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -60,7 +67,10 @@ export async function GET(
     ) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -90,7 +100,9 @@ export async function PUT(
     // CLASS_EVENT_ALLOWED_FROM exists to prevent. The allowed-from set rides
     // the UPDATE's WHERE below, so a racing transition matches zero rows.
     const requestedStatus =
-      typeof body.status === "string" ? (body.status as ClassStatus) : undefined;
+      typeof body.status === "string"
+        ? (body.status as ClassStatus)
+        : undefined;
     if (
       requestedStatus &&
       !Object.values(ClassStatus).includes(requestedStatus)
@@ -161,7 +173,8 @@ export async function PUT(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -187,7 +200,10 @@ export async function PUT(
         { status: statusWriteAttempted ? 409 : 404 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -207,102 +223,80 @@ export async function DELETE(
   try {
     const { classId } = await params;
 
-    // FIX #425: Check for active bookings/payments before allowing deletion.
-    // Use same ownership filter as the delete to prevent info disclosure.
-    // Use DB-side existence checks to avoid loading all appointments into memory.
-    const classOwnershipFilter = isPrivileged(session.user.role)
-      ? {}
-      : { classPlan: { consultantProfileId: session.user.consultantProfileId ?? "__none__" } };
-    const now = new Date();
+    // Only the owning consultant or ADMIN/STAFF may delete an instance. The
+    // same filter scopes the read and the delete, so a foreign id is a 404
+    // rather than an existence oracle.
+    const owned = {
+      id: classId,
+      ...(isPrivileged(session.user.role)
+        ? {}
+        : {
+            classPlan: {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            },
+          }),
+    };
 
-    const classExists = await prisma.class.findUnique({
-      where: { id: classId, ...classOwnershipFilter },
+    // Ownership first, so a stranger cannot hold the buyers' checkout lock
+    // for this event by calling DELETE in a loop.
+    const mine = await prisma.class.findFirst({
+      where: owned,
       select: { id: true },
     });
-    if (!classExists) {
+    if (!mine) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
 
-    const hasActivePayments = !!(await prisma.class.findFirst({
-      where: {
-        id: classId,
-        appointment: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
-      },
-      select: { id: true },
-    }));
-    if (hasActivePayments) {
-      return NextResponse.json(
-        { error: "Cannot delete class with active payments. Cancel or refund first." },
-        { status: 400 },
-      );
-    }
-
-    const hasUpcomingSlots = !!(await prisma.class.findFirst({
-      where: {
-        id: classId,
-        appointment: { occurrences: { some: { endsAt: { gt: now } } } },
-      },
-      select: { id: true },
-    }));
-    if (hasUpcomingSlots) {
-      return NextResponse.json(
-        { error: "Cannot delete class with upcoming or in-progress slots." },
-        { status: 400 },
-      );
-    }
-
-    // Only the owning consultant or ADMIN/STAFF can delete a class instance
-    const classData = await prisma.class.delete({
-      where: {
-        id: classId,
-        ...(isPrivileged(session.user.role)
-          ? {}
-          : {
-              classPlan: {
-                consultantProfileId:
-                  session.user.consultantProfileId ?? "__none__",
-              },
-            }),
-      },
-      include: {
-        classPlan: {
+    // #1846 CT-02 — Delete only while nobody has booked or paid (#1527
+    // decision 6). The guard counts payments of EVERY status, since a
+    // PENDING or FAILED Payment cascades with the appointment as surely as a
+    // captured one, and it rides the DELETE's WHERE in one Serializable
+    // transaction under the event's checkout lock
+    // (lib/booking/offering-delete.ts). An unsold upcoming instance is
+    // deletable now; anything ever booked is archived instead.
+    const classData = await deleteUntouchedOffering(
+      "CLASS",
+      classId,
+      async (tx) => {
+        const row = await tx.class.findFirst({
+          where: owned,
           include: {
-            consultantProfile: {
+            classPlan: {
               include: {
-                user: true,
+                consultantProfile: { include: { user: true } },
+                topics: true,
+                classContents: { orderBy: { order: "asc" } },
               },
             },
-            topics: true,
-            classContents: {
-              orderBy: {
-                order: "asc",
-              },
-            },
+            appointment: { include: { occurrences: true } },
           },
-        },
-        appointment: {
-          include: {
-            occurrences: {
-              include: { // Changed from consulteeProfile to user
-              },
-            },
-          },
-        },
+        });
+        if (!row) return null;
+        const { count } = await tx.class.deleteMany({
+          where: { ...owned, ...UNTOUCHED_EVENT },
+        });
+        if (count === 0) throw new OfferingInUseError("CLASS");
+        return row;
       },
-    });
+    );
+    if (!classData) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ data: classData }, { status: 200 });
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    const refusal = offeringDeleteRefusal(error);
+    if (refusal) {
+      return NextResponse.json(refusal.body, { status: refusal.status });
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
-    console.error(error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
+    console.error("Error deleting class:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while deleting the class" },
       { status: 500 },
     );
   }

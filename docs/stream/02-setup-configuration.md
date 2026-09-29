@@ -694,7 +694,7 @@ try {
 Run before deployment:
 
 ```bash
-npx ts-node scripts/check-stream-env.ts
+npx tsx scripts/check-stream-env.ts
 ```
 
 ---

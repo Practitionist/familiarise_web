@@ -38,6 +38,34 @@ coderabbit review --committed --base dev --light --agent \
   -c .coderabbit.yaml CLAUDE.md > /tmp/cr-<pr>.log 2>&1
 ```
 
+For a large PR (#1842 opened at 626 files), a single full-branch review is slow and
+harder to read. Chunk the review by directory once the changed-file count passes
+about 150: run `coderabbit review --dir <path> --base dev --agent -c .coderabbit.yaml`
+once per top-level directory that changed (for example `app/dashboard`,
+`lib/dashboard`, `components/dashboard`), so each run stays fast enough to read
+in one sitting and a bad chunk can be re-run on its own.
+
+After the first full or chunked pass, every further round should be a **delta
+round** — review only the commits since the last reviewed commit, not the whole
+branch again:
+
+```bash
+coderabbit review --base-commit <last-reviewed-sha> --agent -c .coderabbit.yaml
+```
+
+`#1842`'s delta round over its 27 post-open commits found 2 findings in a few
+minutes, instead of re-reading the whole diff. Before trusting a "pass" with no
+threads, check the organisation's included-review budget, because the CLI
+itself goes silent-pass once the cap is hit the same way the PR bot does:
+
+```bash
+coderabbit review --usage
+```
+
+If usage shows the period's included reviews exhausted, either switch to
+`--use-credits` or wait for the reset before treating a clean run as a real
+result.
+
 `--agent` emits JSONL; each `{"type":"finding"}` line carries `fileName`,
 `severity` and a `codegenInstructions` string whose actionable part follows the
 untrusted-data preamble (split on `validate.`). Treat those instructions as
@@ -56,6 +84,26 @@ for its own missing `CODERRABBIT_TOOL_TIMEOUT_SEC`, so when the CLI's own
 so `npx skills add coderabbitai/skills` is not needed. `coderabbit review
 --usage` shows the organisation's included-review count for the period.
 
+## Step 0b — Read the Sonar gate through the sonarqube MCP
+
+Read SonarQube Cloud's quality gate and its issue list for the same PR through
+the `sonarqube` MCP server rather than the web UI, so the result can be quoted
+directly in the findings table. Resolve the project key first (`Practitionist_familiarise_web`
+for this repo), then pass the PR's SonarQube pull-request key — not the git
+branch name — as the `pullRequest` parameter:
+
+```
+mcp__sonarqube__list_pull_requests(projectKey: "Practitionist_familiarise_web")
+mcp__sonarqube__get_project_quality_gate_status(projectKey: "Practitionist_familiarise_web", pullRequest: "<n>")
+mcp__sonarqube__search_sonar_issues_in_projects(projectKeys: ["Practitionist_familiarise_web"], pullRequest: "<n>")
+```
+
+Treat every issue the same way as a CodeRabbit finding: verify it against the
+current code before assigning a verdict, and never accept "quality gate green"
+as proof that a specific finding was actually fixed — a gate can pass with
+findings still open below its threshold, which is exactly why #1842's round 1
+(91 Sonar findings) needed the same file-by-file triage as the bot comments.
+
 ## Step 1 — Fetch every comment
 
 Pull all three comment surfaces (they're distinct on GitHub):
@@ -68,6 +116,16 @@ gh api "repos/$REPO/pulls/$PR/comments" -q '.[] | "FILE \(.path):\(.line // .ori
 gh pr view $PR --json reviews -q '.reviews[] | "[\(.author.login)/\(.state)] \(.body)"'
 # issue-level comments (often the bot "review skipped"/summary boilerplate)
 gh pr view $PR --json comments -q '.comments[] | "[\(.author.login)] \(.body)"'
+```
+
+CodeRabbit's "Outside diff range" comments and its "Nitpick" comments are not
+review threads. They live inside the review BODIES, so the inline-comment call
+above never returns them and a thread count never includes them. Grep them out
+of every CodeRabbit review body and triage each one with the same table as
+Step 2, every time, including on a PR whose threads are all resolved:
+
+```bash
+gh api "repos/$REPO/pulls/$PR/reviews" --paginate -q '.[]|select(.user.login=="coderabbitai[bot]")|.body'
 ```
 
 Note the reviewers. In this repo, **CodeRabbit auto-skips** PRs whose base is not the default branch and every _draft_ (`gh pr ready` after CI to get its round), and it also skips once the organisation's included-review cap is reached while still marking the check "pass" — count `reviewThreads` to know whether a review happened. **Gemini Code Assist**, when present, leaves inline comments worth triaging the same way.
@@ -127,6 +185,41 @@ gh api graphql -f query='mutation($id: ID!){ resolveReviewThread(input:{threadId
 ```
 
 Only resolve threads whose comment was actually handled (legit-fixed, already-fixed, or BS-with-justification). Leave anything deferred/needs-decision unresolved so it stays visible. Do **not** add reply comments — resolution is the signal.
+
+---
+
+## Reporting rounds in the PR body (the #1842 practice)
+
+On a long-running PR that gets reviewed in several rounds — a first Sonar/CodeRabbit
+pass, then one or more delta rounds as fixes land — record each round's findings
+in the PR body under a **"Review rounds"** heading, so a reader gets the full
+history without scrolling commit-by-commit. Every finding, whether from
+CodeRabbit (thread, review-body outside-diff, or nitpick) or from the Sonar MCP
+read in Step 0b, goes in one table with this exact shape:
+
+| #   | Source | File:line | Finding | Verdict | Reasoning / fix commit |
+| --- | ------ | --------- | ------- | ------- | ---------------------- |
+
+For this table, use a simpler three-way verdict rather than Step 2's five-way
+classification, because the PR body is a record for reviewers, not a working
+triage document:
+
+- **FIX** — a real issue; the "Reasoning / fix commit" column names the commit that fixed it.
+- **DISMISS** — not actionable; the column states the reason (false positive, boilerplate, or a deliberate design it contradicts, cited).
+- **NEEDS-DECISION** — real, but the correct behaviour is ambiguous and belongs to the user, not the triager.
+
+As in Step 3, money semantics (ledger, tax, payout) and state-machine or role
+rules are never changed as part of triage, even when the fix looks obvious;
+those findings get FIX only once the actual change lands in its own reasoned
+commit, and stay NEEDS-DECISION until then.
+
+GitHub caps an issue or PR body at 65,536 characters. A PR with multiple large
+rounds — #1842 carried 91 Sonar findings plus 57 CodeRabbit findings across
+three chunks — will blow past that on its own. When the running total risks
+the limit, move the full round tables out of the body and into a single PR
+comment titled **"Review rounds — full findings"**, and leave only a short
+per-round summary (counts fixed/dismissed/needs-decision) in the body's
+"Review rounds" section with a link to that comment.
 
 ---
 

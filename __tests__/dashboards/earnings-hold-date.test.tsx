@@ -114,20 +114,23 @@ it("renders the hold date on a PENDING row", async () => {
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <EarningsSummaryPanel consultantId="c_1" />
+        <EarningsSummaryPanel consultantId="c_1" view="activity" />
       </QueryClientProvider>,
     );
   });
-  // Let the query resolve and the list render.
-  for (let i = 0; i < 5; i++) {
+  // Poll until the query resolves and the list renders; a fixed number of
+  // microtask flushes was not enough when the suite ran under load.
+  const findPending = () =>
+    Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.startsWith("Pending"),
+    );
+  for (let i = 0; i < 100 && !findPending(); i++) {
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
     });
   }
 
-  const pending = Array.from(container.querySelectorAll("button")).find((b) =>
-    b.textContent?.startsWith("Pending"),
-  );
+  const pending = findPending();
   expect(pending).toBeDefined();
   await act(async () => {
     pending!.click();

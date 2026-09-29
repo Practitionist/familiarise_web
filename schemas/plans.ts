@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Currency, PlanLevel } from "@prisma/client";
+import { Currency, OfferingPlanStatus, PlanLevel } from "@prisma/client";
 import {
   hasDuplicates,
   isMeaningfulText,
@@ -155,7 +155,10 @@ export const PlanFaqSchema = z.object({
       meaningfulContentRefinement,
       "Question contains nonsensical text or gibberish",
     )
-    .refine(profanityFreeRefinement, "Question contains inappropriate language"),
+    .refine(
+      profanityFreeRefinement,
+      "Question contains inappropriate language",
+    ),
   answer: z
     .string()
     .min(1, "Answer is required")
@@ -290,6 +293,10 @@ export const SubscriptionContentSchema = ClassContentSchema.omit({
   subscriptionPlanId: z.string().optional(),
 });
 
+// #1527 Q4 — absent means PUBLISHED (the column default), so older API
+// clients keep publishing exactly as before.
+const offeringPlanStatusSchema = z.nativeEnum(OfferingPlanStatus).optional();
+
 export const ConsultationPlanSchema = z.object({
   id: z.string().optional(),
   title: planTitleSchema,
@@ -312,6 +319,7 @@ export const ConsultationPlanSchema = z.object({
   materialProvided: optionalFreeText("Materials"),
   learningOutcomes: learningOutcomesSchema,
   topics: topicsSchema,
+  status: offeringPlanStatusSchema,
   ...recordingShape,
   ...planPositioningShape,
 });
@@ -367,6 +375,7 @@ export const SubscriptionPlanSchema = z.object({
       const titles = contents.map((c) => c.title.trim().toLowerCase());
       return new Set(titles).size === titles.length;
     }, "Roadmap sessions must have unique titles"),
+  status: offeringPlanStatusSchema,
   ...recordingShape,
   ...planPositioningShape,
 });
@@ -478,6 +487,14 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   // no class ever sent a start date to the API.
   schedulingStartDate: z.date().optional().nullable(),
   endDate: z.date().optional().nullable(),
+  // #1819 — empty means "until session 1"; the route caps it at totalSessions.
+  lateJoinUntilSession: z
+    .number()
+    .int("Choose a whole session number")
+    .min(1, "Choose session 1 or later")
+    .nullable()
+    .optional(),
+  lateJoinersGetPastRecordings: z.boolean().default(false),
 });
 
 // Add ConsultantPlans schema

@@ -1,3 +1,4 @@
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentStatus,
@@ -47,15 +48,8 @@ export type LapseOutcome =
 
 // The unpaid arm of the approval decision (#1775 B-9), one copy for every
 // writer: the CAS WHERE below carries it, never a read ahead of it.
-type LapseTx = Pick<
-  Tx,
-  | "consultation"
-  | "subscription"
-  | "appointment"
-  | "appointmentOccurrence"
-  | "payment"
-  | "bookingStatusHistory"
->;
+// #1778 — the whole client: the release also stages backup-interest notices.
+type LapseTx = Tx;
 
 /** Never throws on a lost CAS: `{ moved: 0 }` and no further write. */
 export async function lapseApprovedRequest(
@@ -99,6 +93,8 @@ export async function lapseApprovedRequest(
   });
   if (!appointment) return { moved: 1, appointmentId: null };
 
+  // #1778 — the held times free: tell anyone waiting on them (same tx).
+  await stageNoticesForAppointmentHolds(tx, appointment.id);
   await transitionOccurrenceCompletion(tx, {
     actorUserId: args.actorUserId,
     reason: args.reason,

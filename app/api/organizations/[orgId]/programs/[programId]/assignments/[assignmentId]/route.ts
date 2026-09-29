@@ -13,6 +13,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
@@ -41,9 +42,9 @@ export async function GET(
   },
 ) {
   const { orgId, programId, assignmentId } = await params;
-  // Read widened to any ACTIVE member so a LEARNER can see their own
-  // assignment details (utilization, limits) without MANAGER access.
-  // PATCH/DELETE remain MANAGER+canSponsor.
+  // Any ACTIVE member may read their OWN assignment (usage counts, limits);
+  // anyone else's needs `programs.read`. Spend stays with `programs.read`
+  // (#1527 P0-2).
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
@@ -53,11 +54,13 @@ export async function GET(
     );
   }
 
+  const canReadAll = hasOrgPermission(access.member.role, "programs.read");
   const assignment = await prisma.programAssignment.findFirst({
     where: {
       id: assignmentId,
       programId,
       program: { contract: { organizationId: orgId } },
+      ...(!canReadAll && { membershipId: access.member.id }),
     },
     include: {
       membership: { include: { user: { select: { id: true, name: true, email: true } } } },
@@ -67,7 +70,21 @@ export async function GET(
   if (!assignment) {
     return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
   }
-  return NextResponse.json({ assignment });
+  if (canReadAll) return NextResponse.json({ assignment });
+  const { consumedPaise: _spend, utilizations, ...own } = assignment;
+  return NextResponse.json({
+    assignment: {
+      ...own,
+      utilizations: utilizations.map((u) => ({
+        id: u.id,
+        engagementsConsumed: u.engagementsConsumed,
+        wasOverage: u.wasOverage,
+        reversedAt: u.reversedAt,
+        appointmentIds: u.appointmentIds,
+        createdAt: u.createdAt,
+      })),
+    },
+  });
 }
 
 /**
@@ -239,8 +256,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, programId, assignmentId } = await params;
+  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
+  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.assign",
     canSponsor: true,
   });
   if (access.error) return access.error;
@@ -254,6 +273,22 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+
+  // #1851 decision 3 — changing a seat's period needs OWNER or MAINTAINER:
+  // extending one re-arms sponsored spend. MANAGER keeps assign and unassign
+  // (programs.assign), which includes ending a seat early with `cancel`.
+  if (
+    (body.periodStart !== undefined || body.periodEnd !== undefined) &&
+    !hasOrgPermission(access.member.role, "programs.seat.period")
+  ) {
+    return NextResponse.json(
+      {
+        error: "Only an Owner or Maintainer can change a seat's period.",
+        code: "SEAT_PERIOD_REQUIRES_MAINTAINER",
+      },
+      { status: 403 },
+    );
+  }
 
   try {
     const updated = await prisma.$transaction(async (tx) =>
@@ -293,8 +328,10 @@ export async function DELETE(
   },
 ) {
   const { orgId, programId, assignmentId } = await params;
+  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
+  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.assign",
     canSponsor: true,
   });
   if (access.error) return access.error;

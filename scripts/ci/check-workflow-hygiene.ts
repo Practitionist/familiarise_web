@@ -351,6 +351,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "expire-event-channels.yml": "scheduled",
   "expire-reschedule-proposals.yml": "scheduled",
   "expire-stale-requests.yml": "scheduled",
+  "settle-cancelled-sessions.yml": "scheduled",
   "expire-unpaid-trials.yml": "scheduled",
   "generate-subscription-invoices.yml": "scheduled",
   "gst-outward-register-export.yml": "scheduled",
@@ -375,6 +376,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "reconcile-payment-status.yml": "scheduled",
   "reconcile-payout-status.yml": "scheduled",
   "reconcile-pending-refunds.yml": "scheduled",
+  "retry-auto-refunds.yml": "scheduled",
   "release-earnings.yml": "scheduled",
   "release-pending-trust-earnings.yml": "scheduled",
   "retry-failed-emails.yml": "scheduled",
@@ -399,6 +401,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "ci.yaml": "infra",
   "claude.yml": "infra",
   "claude-code-review.yml": "infra",
+  "knip.yml": "infra",
   "race-condition-tests.yml": "infra",
 };
 

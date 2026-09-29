@@ -13,7 +13,7 @@ import fs from "fs";
 import path from "path";
 import {
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
   linkParticipantsToPayment,
 } from "../../lib/booking/participants";
 
@@ -72,17 +72,23 @@ describe("recordParticipants", () => {
   });
 });
 
-describe("setParticipantStatus / linkParticipantsToPayment", () => {
+describe("transitionParticipant / linkParticipantsToPayment", () => {
   it("updates by an arbitrary where and returns the count", async () => {
     const { tx: t, updateMany } = tx();
-    const n = await setParticipantStatus(
+    const n = await transitionParticipant(
       t,
       { appointment: { classId: "k1" }, userId: "u2" },
       "CANCELLED",
     );
     expect(n).toBe(2);
+    // #1846 SM-B9 — the map's from-set is ANDed in, so REFUNDED never moves.
     expect(updateMany).toHaveBeenCalledWith({
-      where: { appointment: { classId: "k1" }, userId: "u2" },
+      where: {
+        AND: [
+          { appointment: { classId: "k1" }, userId: "u2" },
+          { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
+        ],
+      },
       data: { status: "CANCELLED" },
     });
   });
@@ -121,20 +127,17 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
     ],
     [
       "lib/payments/webhooks/handlers.ts",
-      /setParticipantStatus\(|participants: \{/,
+      /transitionParticipant\(|participants: \{/,
     ],
-    [
-      "app/api/participants/webinar/[webinarId]/route.ts",
-      /releaseParticipant\(/,
-    ],
-    ["app/api/participants/class/[classId]/route.ts", /releaseParticipant\(/],
+    // #1780 — both participant DELETE routes release through the seat-leave service.
+    ["lib/booking/seat-leave.ts", /releaseParticipant\(/],
     ["lib/payments/operations/cancel-pending.ts", /releaseParticipant\(/],
     [
       "app/api/appointments/[appointmentId]/cancel/route.ts",
-      /setParticipantStatus\(/,
+      /transitionParticipant\(/,
     ],
-    ["lib/trials/cancellation.ts", /setParticipantStatus\(/],
-    ["lib/payments/operations/booking-refund.ts", /setParticipantStatus\(/],
+    ["lib/trials/cancellation.ts", /transitionParticipant\(/],
+    ["lib/payments/operations/booking-refund.ts", /transitionParticipant\(/],
     ["prisma/seedFiles/6a-create-appointments.ts", /participants: \{/],
     [
       "scripts/appointments/reconcile-occurrence-availability.ts",

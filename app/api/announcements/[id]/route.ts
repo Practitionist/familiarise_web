@@ -17,7 +17,7 @@ interface RouteParams {
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -116,7 +116,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(

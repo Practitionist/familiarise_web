@@ -307,6 +307,58 @@ export function boundPayoutIdempotencyKey(key: string): string {
   return `p_${crypto.createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }
 
+/**
+ * A RazorpayX reply that arrived with a non-2xx status. The status is carried
+ * as a number so payout callers classify on it rather than on message text
+ * (#1846 N1): only a definitive rejection may fail a payout and release its
+ * earnings.
+ */
+export class RazorpayXHttpError extends PaymentError {
+  constructor(
+    message: string,
+    code: string,
+    readonly httpStatus: number,
+    originalError?: unknown,
+  ) {
+    super(message, code, "RAZORPAY", originalError);
+    this.name = "RazorpayXHttpError";
+  }
+}
+
+// 408, 409 and 429 are answers about the request, not about the payout, so
+// the payout may still exist at the gateway.
+const NON_DEFINITIVE_4XX = new Set([408, 409, 429]);
+
+/**
+ * True only when a money-out gateway definitively refused the submission, so
+ * no transfer exists and the payout can be failed with its earnings released.
+ *
+ * #1846 N1 — a timeout, a socket error, an unreadable body, a 5xx or any
+ * unrecognised error cannot tell "rejected" from "accepted but the reply was
+ * lost". Failing the payout there released the earnings into the next batch,
+ * which minted a new row under a new idempotency key and paid twice. The
+ * default is therefore "not definitive". Stripe SDK errors carry `statusCode`.
+ */
+export function isDefinitiveGatewayRejection(error: unknown): boolean {
+  let status: number | undefined;
+  if (error instanceof RazorpayXHttpError) {
+    status = error.httpStatus;
+  } else if (
+    error &&
+    typeof error === "object" &&
+    "statusCode" in error &&
+    typeof (error as { statusCode: unknown }).statusCode === "number"
+  ) {
+    status = (error as { statusCode: number }).statusCode;
+  }
+  return (
+    status !== undefined &&
+    status >= 400 &&
+    status < 500 &&
+    !NON_DEFINITIVE_4XX.has(status)
+  );
+}
+
 export class RazorpayPayoutsService {
   private config: RazorpayXConfig;
   private baseUrl = "https://api.razorpay.com/v1";
@@ -396,12 +448,12 @@ export class RazorpayPayoutsService {
           ? ((parsed as { error: { code?: string; description?: string } })
               .error ?? {})
           : {};
-      throw new PaymentError(
+      throw new RazorpayXHttpError(
         `RazorpayX API error (HTTP ${response.status}) on ${method} ${endpoint}: ${
           gatewayError.description || response.statusText || "no description"
         }`,
         gatewayError.code || `RAZORPAYX_HTTP_${response.status}`,
-        "RAZORPAY",
+        response.status,
         parsed,
       );
     }
@@ -468,6 +520,16 @@ export class RazorpayPayoutsService {
     });
   }
 
+  /**
+   * #1771 row 5 — off-boarding deactivates the contact; RazorpayX keeps the
+   * record under its own retention, and `updateContact` cannot send `active`.
+   */
+  async deactivateContact(contactId: string): Promise<Contact> {
+    return this.apiRequest<Contact>("PATCH", `/contacts/${contactId}`, {
+      active: false,
+    });
+  }
+
   // ============================================
   // Fund Accounts API
   // ============================================
@@ -505,6 +567,18 @@ export class RazorpayPayoutsService {
     return this.apiRequest<FundAccount>(
       "GET",
       `/fund_accounts/${fundAccountId}`,
+    );
+  }
+
+  /**
+   * #1771 row 5 — the only off-boarding step for bank data: the account number
+   * lives at RazorpayX, and deactivation stops any further payout to it.
+   */
+  async deactivateFundAccount(fundAccountId: string): Promise<FundAccount> {
+    return this.apiRequest<FundAccount>(
+      "PATCH",
+      `/fund_accounts/${fundAccountId}`,
+      { active: false },
     );
   }
 
@@ -654,6 +728,8 @@ export class RazorpayPayoutsService {
    */
   async listPayouts(params?: {
     fundAccountId?: string;
+    /** The `reference_id` sent at creation, which is our payout row id. */
+    referenceId?: string;
     mode?: string;
     status?: RazorpayPayoutStatus;
     from?: number;
@@ -670,6 +746,8 @@ export class RazorpayPayoutsService {
 
     if (params?.fundAccountId)
       queryParams.set("fund_account_id", params.fundAccountId);
+    if (params?.referenceId)
+      queryParams.set("reference_id", params.referenceId);
     if (params?.mode) queryParams.set("mode", params.mode);
     if (params?.status) queryParams.set("status", params.status);
     if (params?.from) queryParams.set("from", params.from.toString());

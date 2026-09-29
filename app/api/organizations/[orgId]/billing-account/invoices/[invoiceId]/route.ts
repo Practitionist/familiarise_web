@@ -11,16 +11,14 @@
  *
  * The /pay sub-route handles the webhook → PAID transition. This
  * PATCH only covers manual admin actions that don't need payment
- * gateway integration.
+ * gateway integration. #1851 decision 7 — a due-date or PDF edit writes
+ * its own audit row in any status, PAID included.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: invoice PATCH covers status transitions (DRAFT → ISSUED, ISSUED → VOID)
-// which are finance-team mutations; allow BILLING_ADMIN alongside OWNER.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 
@@ -45,7 +43,10 @@ export async function GET(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({
@@ -57,6 +58,29 @@ export async function GET(
         select: { id: true, amount: true, currency: true, createdAt: true },
       },
       payment: true,
+      // #1527 / #1836 — the org Billing detail sheet lists lines and the
+      // issued credit notes (DRAFTs are not legal documents yet).
+      lineItems: {
+        orderBy: { position: "asc" },
+        select: {
+          id: true,
+          description: true,
+          quantity: true,
+          unitPricePaise: true,
+          taxPaise: true,
+        },
+      },
+      creditNotes: {
+        where: { status: "ISSUED" },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          creditNoteNumber: true,
+          totalPaise: true,
+          issuedAt: true,
+          reason: true,
+        },
+      },
     },
   });
   if (!invoice) {
@@ -74,7 +98,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.manage",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -206,6 +233,31 @@ export async function PATCH(
         }
       }
 
+      if (body.dueDate !== undefined || body.pdfUrl !== undefined) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.INVOICE_UPDATED,
+            description: `Invoice ${current.invoiceNumber} updated`,
+            details: {
+              invoiceId,
+              status: current.status,
+              ...(body.dueDate !== undefined && {
+                dueDate: {
+                  from: current.dueDate.toISOString(),
+                  to: body.dueDate.toISOString(),
+                },
+              }),
+              ...(body.pdfUrl !== undefined && {
+                pdfUrl: { from: current.pdfUrl, to: body.pdfUrl },
+              }),
+            },
+          },
+        });
+      }
+
       // updateMany returns no row — re-read in-tx for the response body.
       return tx.organizationInvoice.findUniqueOrThrow({
         where: { id: invoiceId },
@@ -215,8 +267,7 @@ export async function PATCH(
     return NextResponse.json({ invoice: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     throw err;

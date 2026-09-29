@@ -10,6 +10,8 @@ import {
 } from "@/lib/data/appointment-detail";
 import DetailPageClient from "./DetailPageClient";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 type PageProps = {
   params: Promise<{ consultantId: string; appointmentId: string }>;
@@ -55,6 +57,8 @@ export default async function AppointmentDetailPage({
   ];
   if (!planOwnerIds.includes(consultantId)) notFound();
 
+  // One zone for the server render and hydration (#418, #1527 QA).
+  const viewerZone = await getViewerZone();
   const queryClient = new QueryClient();
   // The same shape the API route answers: the host reads every seat, but a
   // receipt pointer travels only on rows the viewer paid (or to staff).
@@ -65,10 +69,12 @@ export default async function AppointmentDetailPage({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <DetailPageClient
-        consultantId={consultantId}
-        appointmentId={appointmentId}
-      />
+      <DisplayZoneProvider zone={viewerZone.zone}>
+        <DetailPageClient
+          consultantId={consultantId}
+          appointmentId={appointmentId}
+        />
+      </DisplayZoneProvider>
     </HydrationBoundary>
   );
 }

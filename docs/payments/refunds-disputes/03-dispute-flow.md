@@ -283,6 +283,10 @@ case 'charge.dispute.updated':
 
 ---
 
+## What the two parties see (#1771 row 8)
+
+Disputes are read-only for both parties, and the copy is plain. The buyer's money line for a disputed payment reads "Under review" with "under review by your bank", and the consultant's keeps "Disputed". An earning held because of a dispute reads "On hold — payment under review" on the Earnings page and stays in the Pending bucket, never in Available, because `bucketOf` maps HELD to Pending.
+
 ## Admin Dashboard
 
 The admin dashboard provides:

@@ -1,5 +1,8 @@
 "use client";
 
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { gatewayLabel } from "@/lib/labels/money-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -52,14 +55,6 @@ async function fetchPayments(params: {
   return response.json() as Promise<PaymentListResponse>;
 }
 
-export interface PaymentsPageProps {
-  /** Base URL for links to the payment detail route (e.g. "/dashboard/admin",
-   *  "/dashboard/staff/abc"). Matches the convention on RefundsPage /
-   *  DisputesPage — without it a staff-tree row would link into the admin
-   *  tree, which staff cannot enter. */
-  basePath: string;
-}
-
 /**
  * #1365 — the B2C tax invoice for a payment. Defined at module scope, not
  * inside the page, so it is never re-created on a render (S6478). An empty
@@ -80,7 +75,9 @@ function renderInvoiceCell(payment: Payment) {
   );
 }
 
-export function PaymentsPage({ basePath }: PaymentsPageProps) {
+export function PaymentsPage() {
+  // #1527 — a staff-tree row must link inside the staff tree.
+  const { basePath } = useBackofficeCapability();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<PaymentStatus | undefined>();
   const [gateway, setGateway] = useState<PaymentGateway | undefined>();
@@ -143,7 +140,7 @@ export function PaymentsPage({ basePath }: PaymentsPageProps) {
                   : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
           }`}
         >
-          {payment.paymentStatus}
+          {paymentStatusBadge(payment.paymentStatus).label}
         </span>
       ),
     },
@@ -152,7 +149,7 @@ export function PaymentsPage({ basePath }: PaymentsPageProps) {
       header: "Gateway",
       cell: (payment) => (
         <span className="text-sm text-foreground">
-          {payment.paymentGateway}
+          {gatewayLabel(payment.paymentGateway)}
         </span>
       ),
     },
@@ -357,7 +354,8 @@ export function PaymentsPage({ basePath }: PaymentsPageProps) {
                 <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm text-muted-foreground">
                     Showing {(page - 1) * limit + 1} to{" "}
-                    {Math.min(page * limit, data.total)} of {data.total} payments
+                    {Math.min(page * limit, data.total)} of {data.total}{" "}
+                    payments
                   </div>
                   <div className="flex gap-2">
                     <Button

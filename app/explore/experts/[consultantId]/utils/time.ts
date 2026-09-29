@@ -29,8 +29,11 @@ export const roundTime = (timeString: string): string => {
   return timeString;
 };
 
-// Helper function to convert time string to minutes for sorting
-export const timeToMinutes = (timeString: string): number => {
+// 12-hour "h:MM AM/PM" → minutes since midnight, for sorting picker slots.
+// NOT interchangeable with the 24-hour "HH:MM" parsers (`timeToMinutes` in
+// utils/dateTimeUtils.ts, `timeStringToMinutes` in slotTimeUtils.ts) — the
+// formats are disjoint, which is why this has its own name.
+export const timeToMinutes12h = (timeString: string): number => {
   const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
   const match = timeString.match(timeRegex);
 

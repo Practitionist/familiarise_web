@@ -22,6 +22,7 @@ import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
 import type { Tx } from "@/lib/prisma";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
 import { loadEmailRecipients, type EmailRecipient } from "../preferences";
@@ -104,7 +105,9 @@ function refundProcessedEnvelope(args: RefundProcessedEmailArgs) {
         planTitle: args.planTitle,
         creditNoteNumber: args.creditNoteNumber,
         refundPolicyUrl: `${appUrl}/refund`,
-        dashboardUrl: `${appUrl}/dashboard`,
+        // #1527 — this envelope is shared by every refund recipient, always
+        // the payer.
+        dashboardUrl: `${appUrl}${goHref("client", "payments")}`,
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };

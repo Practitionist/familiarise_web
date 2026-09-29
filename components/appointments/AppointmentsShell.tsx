@@ -29,27 +29,60 @@ import {
 import { NextUpHero, type HeroStat } from "./NextUpHero";
 
 type TabValue = AppointmentBucket | "all";
+type Viewer = "consultant" | "consultee";
+type View = "list" | "calendar";
 
-// "All" leads, matching AppointmentsFilterBar's "All types" chip: one rule for
-// where the everything-option sits, so the two rows share a left edge. Order
-// here is presentation only — `initialTab` switches on the value, and the
-// default selection is still Upcoming.
-const TABS: Array<{ value: TabValue; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "upcoming", label: "Upcoming" },
-  { value: "needsAction", label: "Needs action" },
-  { value: "past", label: "Past" },
-  { value: "cancelled", label: "Cancelled" },
-];
+/**
+ * Per-viewer tabs (#1527 §13b). The consultee's pending requests wait on the
+ * expert, so they get their own tab instead of "Needs you"; the consultant's
+ * pre-confirmation work lives in Requests and only appears under All.
+ * "All" leads where it exists, matching the filter bar's "All types" chip.
+ */
+const TABS: Record<Viewer, Array<{ value: TabValue; label: string }>> = {
+  consultee: [
+    { value: "upcoming", label: "Upcoming" },
+    { value: "needsAction", label: "Needs you" },
+    { value: "waiting", label: "Waiting on expert" },
+    { value: "past", label: "Past" },
+    { value: "cancelled", label: "Cancelled" },
+  ],
+  consultant: [
+    { value: "all", label: "All" },
+    { value: "upcoming", label: "Upcoming" },
+    { value: "needsAction", label: "Needs action" },
+    { value: "past", label: "Past" },
+    { value: "cancelled", label: "Cancelled" },
+  ],
+};
 
-const EMPTY_COPY: Record<TabValue, { title: string; description: string }> = {
+type EmptyCopy = { title: string; description: string };
+
+const EMPTY_COPY: Record<Exclude<TabValue, "needsAction">, EmptyCopy> & {
+  needsAction: Record<Viewer, EmptyCopy>;
+} = {
   upcoming: {
     title: "No upcoming appointments",
     description: "Sessions you book will show up here.",
   },
   needsAction: {
-    title: "Nothing needs your attention",
-    description: "Payments, approvals, and scheduling tasks will collect here.",
+    consultee: {
+      title: "Nothing needs you",
+      description: "Payments and scheduling tasks will collect here.",
+    },
+    consultant: {
+      title: "Nothing needs action",
+      description:
+        "Confirmed bookings that still need scheduling collect here. New requests live in Requests.",
+    },
+  },
+  waiting: {
+    title: "Nothing waiting on an expert",
+    description: "Requests you send stay here until the expert approves them.",
+  },
+  // Never a tab: consultant pre-confirmation rows show under All only.
+  inRequests: {
+    title: "No requests",
+    description: "Pending requests live in Requests.",
   },
   past: {
     title: "No past appointments",
@@ -65,39 +98,37 @@ const EMPTY_COPY: Record<TabValue, { title: string; description: string }> = {
   },
 };
 
-/** Legacy deep-link values from the old consultee tabs. */
-function initialTab(param: string | null): TabValue {
-  switch (param) {
-    case "past":
-      return "past";
-    case "cancelled":
-      return "cancelled";
-    case "all":
-    case "history": // old BookingHistoryTab deep-links land on All
-      return "all";
-    case "needsAction":
-      return "needsAction";
-    default:
-      return "upcoming";
+function emptyCopyOf(value: TabValue, viewer: Viewer): EmptyCopy {
+  return value === "needsAction"
+    ? EMPTY_COPY.needsAction[viewer]
+    : EMPTY_COPY[value];
+}
+
+/** `?tab=` → a tab this viewer has; legacy values land somewhere sensible. */
+function resolveTab(param: string | null, viewer: Viewer): TabValue {
+  const tabs = TABS[viewer];
+  const known = tabs.find((t) => t.value === param);
+  if (known) return known.value;
+  // Old BookingHistoryTab deep-links: the consultee has no All tab now.
+  if (param === "history" || param === "all") {
+    return viewer === "consultant" ? "all" : "past";
   }
+  return "upcoming";
 }
 
 /**
- * A tab that is NOT a bucket of this shell's appointment VMs, appended after
- * the five standard ones and rendering its own content.
- *
- * Exists so the consultant dashboard can host Trials here — ADR 19 folded
- * trials onto Appointments on the org side because "a trial IS an appointment",
- * and this is the personal half of that move. It is opt-in rather than a sixth
- * entry in `TABS` because the consultee shares this shell and has no trials
- * concept; passing nothing leaves that side byte-identical.
+ * Mirror a param into the address bar without a soft navigation (same
+ * approach as UrlTabs): a shareable URL, no RSC refetch, no history entry.
  */
-export interface AppointmentsExtraTab {
-  value: string;
-  label: string;
-  content: ReactNode;
-  /** Rendered beside the label like the bucket counts. */
-  count?: number;
+function replaceQueryParam(name: string, value: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(name, value);
+  const target = url.pathname + url.search + url.hash;
+  const current =
+    window.location.pathname + window.location.search + window.location.hash;
+  if (target !== current) {
+    window.history.replaceState(window.history.state, "", target);
+  }
 }
 
 interface AppointmentsShellProps {
@@ -111,7 +142,8 @@ interface AppointmentsShellProps {
   notices?: ReactNode;
   /** Row id (VM id) to flash + scroll to (consultant ?highlight= deep-link). */
   highlightedId?: string | null;
-  extraTabs?: AppointmentsExtraTab[];
+  /** Consultant Requests URL — "In Requests" chips on pre-confirmation rows. */
+  requestsHref?: string;
   /** Under the bucket tabs: the consultant's window notice + "Load older". */
   footer?: ReactNode;
 }
@@ -123,23 +155,43 @@ export function AppointmentsShell({
   orgFilterSlot,
   notices,
   highlightedId = null,
-  extraTabs = [],
+  requestsHref,
   footer,
 }: AppointmentsShellProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
+  const viewer: Viewer =
+    adapter.role === "consultant" ? "consultant" : "consultee";
+  const tabs = TABS[viewer];
 
-  const [tab, setTab] = useState<TabValue | string>(() => {
-    const param = searchParams?.get("tab") ?? null;
-    // An extra tab's own value wins over the bucket fallback, so
-    // `?tab=trials` deep-links land on it instead of silently on Upcoming.
-    if (param && extraTabs.some((t) => t.value === param)) return param;
-    return initialTab(param);
-  });
+  // #1527 — tab and view live in the URL (?tab=, ?view=); they were read once.
+  // A local pick applies instantly; an external URL change wins over it.
+  const requestedTab = searchParams?.get("tab") ?? null;
+  const requestedView = searchParams?.get("view") ?? null;
+  const [localTab, setLocalTab] = useState<TabValue | null>(null);
+  const [localView, setLocalView] = useState<View | null>(null);
+  useEffect(() => {
+    setLocalTab(null);
+  }, [requestedTab]);
+  useEffect(() => {
+    setLocalView(null);
+  }, [requestedView]);
+  const tab = localTab ?? resolveTab(requestedTab, viewer);
   // Legacy consultee ?tab=calendar deep-links land on the calendar view.
-  const [view, setView] = useState<"list" | "calendar">(() =>
-    searchParams?.get("tab") === "calendar" ? "calendar" : "list",
-  );
+  const urlView: View =
+    requestedView === "calendar" || requestedTab === "calendar"
+      ? "calendar"
+      : "list";
+  const view = localView ?? urlView;
+  const setTab = (value: string) => {
+    const next = resolveTab(value, viewer);
+    setLocalTab(next);
+    replaceQueryParam("tab", next);
+  };
+  const setView = (value: View) => {
+    setLocalView(value);
+    replaceQueryParam("view", value);
+  };
   const [sheetVm, setSheetVm] = useState<AppointmentVM | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
   const [search, setSearch] = useState("");
@@ -198,6 +250,8 @@ export function AppointmentsShell({
     const map: Record<AppointmentBucket, AppointmentVM[]> = {
       upcoming: [],
       needsAction: [],
+      waiting: [],
+      inRequests: [],
       past: [],
       cancelled: [],
     };
@@ -208,20 +262,19 @@ export function AppointmentsShell({
   const countOf = (value: TabValue) =>
     value === "all" ? filtered.length : byBucket[value].length;
 
-  // An extra tab owns its whole panel: the filter bar and the calendar toggle
-  // both describe appointment VMs and do not apply to content this shell
-  // doesn't own. The hero stays — "what's next" is page-level context, and
-  // dropping it would shift the layout on every tab change.
-  const onExtraTab = extraTabs.some((t) => t.value === tab);
-
   // Hero reads the UNFILTERED list — it answers "what's next", not "what's
   // next among the current filters". A row only qualifies while its anchor
   // session hasn't ended (live sessions stay; an elapsed pending booking in
-  // Needs action is not "next").
+  // Needs action is not "next"). Requests-owned rows are not "next" either.
   const heroVm = useMemo(() => {
     const now = Date.now();
     const candidates = vms.filter((vm) => {
-      if (vm.bucket !== "upcoming" && vm.bucket !== "needsAction") return false;
+      if (
+        vm.bucket !== "upcoming" &&
+        vm.bucket !== "needsAction" &&
+        vm.bucket !== "waiting"
+      )
+        return false;
       if (!vm.nextAt) return false;
       const anchor = vm.occurrences.find(
         (s) => s.startsAt.getTime() === vm.nextAt?.getTime(),
@@ -282,22 +335,12 @@ export function AppointmentsShell({
               view === "calendar" && "opacity-60",
             )}
           >
-            {TABS.map(({ value, label }) => (
+            {tabs.map(({ value, label }) => (
               <TabsTrigger key={value} value={value} className="gap-1.5">
                 {label}
                 <span className="text-[10px] tabular-nums text-muted-foreground">
                   {countOf(value)}
                 </span>
-              </TabsTrigger>
-            ))}
-            {extraTabs.map(({ value, label, count }) => (
-              <TabsTrigger key={value} value={value} className="gap-1.5">
-                {label}
-                {count !== undefined && (
-                  <span className="text-[10px] tabular-nums text-muted-foreground">
-                    {count}
-                  </span>
-                )}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -306,7 +349,6 @@ export function AppointmentsShell({
           <div
             className={cn(
               "flex items-center rounded-lg border border-border bg-card p-0.5",
-              onExtraTab && "hidden",
             )}
           >
             {(
@@ -334,39 +376,32 @@ export function AppointmentsShell({
           </div>
         </div>
 
-        {!onExtraTab && (
-          <div className="mt-4">
-            <AppointmentsFilterBar
-              typeFilter={typeFilter}
-              onTypeChange={setTypeFilter}
-              search={search}
-              onSearchChange={setSearch}
-              dateRange={dateRange}
-              onDateRangeChange={setDateRange}
-              orgFilterSlot={orgFilterSlot}
-            />
-          </div>
-        )}
+        <div className="mt-4">
+          <AppointmentsFilterBar
+            typeFilter={typeFilter}
+            onTypeChange={setTypeFilter}
+            search={search}
+            onSearchChange={setSearch}
+            dateRange={dateRange}
+            onDateRangeChange={setDateRange}
+            orgFilterSlot={orgFilterSlot}
+          />
+        </div>
 
-        {notices && !onExtraTab && <div className="mt-4">{notices}</div>}
-        {footer && !onExtraTab && footer}
+        {notices && <div className="mt-4">{notices}</div>}
+        {footer}
 
-        {extraTabs.map(({ value, content }) => (
-          <TabsContent key={value} value={value} className="mt-4">
-            {content}
-          </TabsContent>
-        ))}
-
-        {onExtraTab ? null : view === "calendar" ? (
+        {view === "calendar" ? (
           <div className="mt-4">
             <AppointmentCalendar vms={filtered} onSelect={openVm} />
           </div>
         ) : (
-          TABS.map(({ value }) => (
+          tabs.map(({ value }) => (
             <TabsContent key={value} value={value} className="mt-4">
               <AppointmentList
                 vms={value === "all" ? filtered : byBucket[value]}
                 bucket={value}
+                requestsHref={requestsHref}
                 adapter={adapter}
                 viewerZone={viewerZone}
                 resolveSponsoredLabel={resolveSponsoredLabel}
@@ -376,8 +411,8 @@ export function AppointmentsShell({
                   if (el) rowRefs.current.set(id, el);
                   else rowRefs.current.delete(id);
                 }}
-                emptyTitle={EMPTY_COPY[value].title}
-                emptyDescription={EMPTY_COPY[value].description}
+                emptyTitle={emptyCopyOf(value, viewer).title}
+                emptyDescription={emptyCopyOf(value, viewer).description}
               />
             </TabsContent>
           ))

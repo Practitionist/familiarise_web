@@ -16,15 +16,17 @@
  * by onboarding and by the profile editor.
  */
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { isValidTimeZone } from "@/lib/time/viewer-zone";
 
-/** A junk zone here silently corrupts every cap for the booking, so gate it. */
+/**
+ * Canonical zone check lives in `lib/time/viewer-zone.ts`. Kept as a thin
+ * deprecated alias because the scheduling-timezone test pins this name —
+ * new code should import `isValidTimeZone` directly.
+ *
+ * @deprecated Use `isValidTimeZone` from `@/lib/time/viewer-zone`.
+ */
 export function isValidIanaTimezone(timezone: string): boolean {
-  try {
-    new Intl.DateTimeFormat(undefined, { timeZone: timezone });
-    return true;
-  } catch {
-    return false;
-  }
+  return isValidTimeZone(timezone);
 }
 
 /**

@@ -8,6 +8,9 @@
 -- Payment amounts use >= 0, not > 0: credit-covered checkouts and
 -- org-sponsored bookings legitimately write amount = 0 (free_/org_ synthetic
 -- payment intents in lib/payments/operations/checkout.ts).
+--
+-- Staged for the #1729 reset (#1771 row 7): ALTER TABLE "OrganizationPayoutAccount"
+-- DROP COLUMN "accountNumberEncrypted"; it is no longer written, as bank data is reference-only.
 
 ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_time_order";
 -- SPLIT
@@ -16,11 +19,12 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_time_order" CHECK
 -- #1554 — `ordinal` is the call's position in its purchase and a replacement
 -- written after a reschedule inherits it, so the unique holds over LIVE rows
 -- only; the RESCHEDULED / CANCELLED row keeps its number for history.
+-- #1569 — a VOIDED row is a miss like a host cancel, so its make-up reuses the ordinal.
 DROP INDEX IF EXISTS "appointment_occurrence_live_ordinal_key";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "appointment_occurrence_live_ordinal_key"
   ON "AppointmentOccurrence" ("appointmentId", "ordinal")
-  WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL;
+  WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED', 'VOIDED') AND "deletedAt" IS NULL;
 -- SPLIT
 -- #1554 / #1550 — a rating is about one call (appointmentOccurrenceId set) or
 -- the whole appointment (NULL). One row per person per level: NULLS NOT
@@ -715,3 +719,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS "cancellation_policy_scope_version"
 --    ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_total_min"
 --      CHECK ("sessionsTotal" >= 1);
 -- ============================================================================
+
+-- SPLIT
+-- #1861 C1 — an Appointment's single parent FK must match its own
+-- appointmentType; every writer already sets exactly one, so this is a
+-- backstop against a future writer (or a direct write) mismatching the two.
+-- TRIAL rows are parentless by design — the placeholder minted at request
+-- time (app/api/trials/route.ts:429) and the free-trial appointment created
+-- on accept (app/api/trials/[trialId]/route.ts:1276) both carry no parent
+-- until conversion. ELSE FALSE means a new AppointmentsType enum value fails
+-- this CHECK loudly instead of silently admitting an unmatched row; extend
+-- the CASE here when one is added.
+-- One live row (id starting `dfgfrgdfvsdv`) violates this; the owner deletes
+-- it before running `db:sidecars`.
+ALTER TABLE "Appointment" DROP CONSTRAINT IF EXISTS "appointment_parent_matches_type";
+-- SPLIT
+ALTER TABLE "Appointment" ADD CONSTRAINT "appointment_parent_matches_type"
+  CHECK (CASE "appointmentType"
+    WHEN 'CONSULTATION' THEN "consultationId" IS NOT NULL AND num_nonnulls("subscriptionId","webinarId","classId") = 0
+    WHEN 'SUBSCRIPTION' THEN "subscriptionId" IS NOT NULL AND num_nonnulls("consultationId","webinarId","classId") = 0
+    WHEN 'WEBINAR'      THEN "webinarId" IS NOT NULL      AND num_nonnulls("consultationId","subscriptionId","classId") = 0
+    WHEN 'CLASS'        THEN "classId" IS NOT NULL        AND num_nonnulls("consultationId","subscriptionId","webinarId") = 0
+    WHEN 'TRIAL'        THEN num_nonnulls("consultationId","subscriptionId","webinarId","classId") = 0
+    ELSE FALSE END);

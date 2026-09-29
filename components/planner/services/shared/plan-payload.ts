@@ -12,6 +12,15 @@
 export const priceToPaise = (rupees: number | null | undefined): number =>
   Math.round((rupees ?? 0) * 100);
 
+/**
+ * #1527 — a webinar/class instance's status, only when the editor chose one
+ * (Save draft → DRAFT, Publish → SCHEDULED); absent leaves the row alone.
+ */
+export const eventStatusPayload = (
+  status: unknown,
+): { status?: "DRAFT" | "SCHEDULED" } =>
+  status === "DRAFT" || status === "SCHEDULED" ? { status } : {};
+
 interface PositioningPlan {
   subtitle?: string | null;
   targetAudience?: string[];

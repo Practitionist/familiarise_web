@@ -11,8 +11,9 @@ import {
 import {
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
+import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
@@ -24,15 +25,19 @@ import {
   TrialStatus,
 } from "@prisma/client";
 import { firstCycleWindow } from "@/lib/booking/entitlement";
-import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   REQUEST_ALLOWED_FROM,
-  EVENT_ALLOWED_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
   appendCreationHistory,
+  transitionClassEvent,
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
+  transitionTrial,
+  transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -45,6 +50,12 @@ import {
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  AUTO_REFUND_PENDING_PREFIX,
+  DOUBLE_BOOKING_BLOCKED_NOTE,
+  autoRefundPendingDescription,
+  settledAutoRefundDescription,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   normalizeLegacySlotKeys,
@@ -75,6 +86,7 @@ import {
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
   processQualifyingAction,
@@ -85,6 +97,10 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
+import {
+  isOrgFundedPaymentMethod,
+  seatPayerOrganizationId,
+} from "@/lib/data/org-sponsored-seats";
 
 // ============================================================================
 // Type Definitions
@@ -152,6 +168,8 @@ interface SubscriptionData {
 interface EventData {
   eventId: string;
   userId: string;
+  /** #1852 — the payer org, stamped on the seat (null for a B2C seat). */
+  organizationId: string | null;
 }
 
 // ============================================================================
@@ -423,6 +441,7 @@ export async function handlePaymentSuccess(
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
+                capturedAt: new Date(), // #1775 C-2
                 description: `Auto-refund pending: capture landed on a ${payment.paymentStatus} payment whose hold was already released. Booking NOT confirmed.`,
               },
             });
@@ -470,9 +489,10 @@ export async function handlePaymentSuccess(
                 },
               },
             );
-            // #837 — mark SUCCEEDED (gateway truth) + stamp REQUIRES_MANUAL_RECOVERY as
-            // the FALLBACK. Phase 2 auto-refunds the wrong-amount capture; the manual
-            // marker only survives if that refund call itself throws.
+            // #837 — mark SUCCEEDED (gateway truth) + stamp the auto-refund
+            // marker. Phase 2 auto-refunds the wrong-amount capture; if that
+            // call throws, the marker keeps it in retry-auto-refunds' queue
+            // (#1846 N2).
             // #1439 — the stamp is a CAS: a late capture on an EXPIRED order
             // resurrected it to SUCCEEDED and its tentative hold leaked, so the
             // status rides the WHERE (ADR 21). Count 0 = already terminal:
@@ -486,7 +506,9 @@ export async function handlePaymentSuccess(
                 // carries only `pay_…`, and without the column it cannot find
                 // the Payment it is reversing.
                 ...capturedGatewayId,
-                description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed; auto-refund attempted.`,
+                description: autoRefundPendingDescription(
+                  `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
+                ),
               },
             });
             if (stamped.count === 0) {
@@ -634,6 +656,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 data: {
                   paymentStatus: PaymentStatus.SUCCEEDED,
                   ...capturedGatewayId,
+                  // #1775 C-2 — the allocate-or-refund clock; the SUCCEEDED
+                  // short-circuit above never reaches here, so a replay keeps it.
+                  capturedAt: new Date(),
                 },
               });
           if (confirmed.count === 0) {
@@ -696,18 +721,26 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           // Phase 2 refunds it in full (the learner never cancelled; the
           // platform closed the trial before the money arrived).
           if (metadata.trialId) {
-            const scheduled = await tx.trial.updateMany({
-              where: {
-                id: metadata.trialId,
-                status: TrialStatus.AWAITING_PAYMENT,
-              },
-              data: {
-                status: TrialStatus.SCHEDULED,
-                paymentId: payment.id,
-                pendingPaymentUrl: null,
-                paymentDueAt: null,
-              },
-            });
+            // #1846 SM-B13 — the same CAS through the helper, which appends
+            // the history row; its zero-row throw is the old `count === 0`.
+            let scheduled = { count: 0 };
+            try {
+              await transitionTrial(tx, {
+                reason: "payment captured",
+                appointmentId: appointment.id,
+                where: { id: metadata.trialId },
+                to: TrialStatus.SCHEDULED,
+                fromIn: [TrialStatus.AWAITING_PAYMENT],
+                data: {
+                  paymentId: payment.id,
+                  pendingPaymentUrl: null,
+                  paymentDueAt: null,
+                },
+              });
+              scheduled = { count: 1 };
+            } catch (err) {
+              if (!(err instanceof IllegalTransitionError)) throw err;
+            }
 
             console.log(
               JSON.stringify({
@@ -720,12 +753,37 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               }),
             );
 
-            if (scheduled.count === 0) {
+            // #1775 C-8 — a trial charged at request: capture stamps it paid
+            // and it stays PENDING for the consultant to accept (or refund).
+            const paidAtRequest =
+              scheduled.count === 0
+                ? await tx.trial.updateMany({
+                    where: {
+                      id: metadata.trialId,
+                      status: TrialStatus.PENDING,
+                      paymentId: null,
+                    },
+                    data: {
+                      paymentId: payment.id,
+                      pendingPaymentUrl: null,
+                      paymentDueAt: null,
+                    },
+                  })
+                : { count: 0 };
+
+            if (scheduled.count === 0 && paidAtRequest.count === 0) {
               const trial = await tx.trial.findUnique({
                 where: { id: metadata.trialId },
-                select: { status: true },
+                select: { status: true, paymentId: true },
               });
-              if (trial?.status !== TrialStatus.SCHEDULED) {
+              // A replay of this capture; a trial bound to another payment is not ours.
+              const alreadyOurs =
+                trial?.paymentId === payment.id
+                  ? trial.status === TrialStatus.SCHEDULED ||
+                    trial.status === TrialStatus.PENDING
+                  : trial?.status === TrialStatus.SCHEDULED &&
+                    trial.paymentId === null;
+              if (!alreadyOurs) {
                 await tx.payment.update({
                   where: { id: payment.id },
                   data: {
@@ -741,11 +799,22 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             }
           }
 
+          // #1861 L1 — `payment` is the pre-stamp read, so its status is still
+          // the one the capture found. A PENDING row past its window had its
+          // slot freed by buildDeadHoldFilter; the recheck must then yield to
+          // a buyer who took that slot and is still inside their own hold.
+          const confirmNow = new Date();
+          const holdExpired =
+            payment.paymentStatus === PaymentStatus.PENDING &&
+            payment.expiresAt !== null &&
+            payment.expiresAt < confirmNow;
+
           // Confirm appointment: set isTentative = false and update status to APPROVED
           const confirmResult = await confirmExistingAppointment(
             tx,
             appointment.id,
             payment.userId,
+            { holdExpired, now: confirmNow },
           );
 
           console.log(
@@ -759,6 +828,21 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           const blocked =
             confirmResult.capturedAfterTerminal ||
             confirmResult.doubleBookingBlocked;
+          if (blocked) {
+            // #1846 N2 — the refund these two outcomes owe happens after
+            // commit, once. The marker is written in this transaction so a
+            // failed or killed refund stays in retry-auto-refunds' queue.
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: {
+                description: autoRefundPendingDescription(
+                  confirmResult.doubleBookingBlocked
+                    ? DOUBLE_BOOKING_BLOCKED_NOTE
+                    : "capture landed after the booking was cancelled",
+                ),
+              },
+            });
+          }
           const appointmentForEmails = blocked
             ? null
             : await loadAppointmentForEmails(tx, appointment.id);
@@ -839,8 +923,12 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // refunds immediately below; re-stamp it so that refund's webhook can
         // match the row.
         ...capturedGatewayId,
-        description:
-          "Refund pending: legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap) — booking NOT confirmed.",
+        capturedAt: new Date(), // #1775 C-2
+        // #1846 N2 — the shared marker, so retry-auto-refunds picks it up
+        // when the refund below throws.
+        description: autoRefundPendingDescription(
+          "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
+        ),
       },
     });
     if (restamped.count === 0) {
@@ -877,7 +965,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
-        "Failed to auto-refund GiST-overlap legacy capture; payment keeps its Refund-pending marker for manual recovery:",
+        "Failed to auto-refund GiST-overlap legacy capture; retry-auto-refunds re-drives its marker:",
         refundError,
       );
     }
@@ -889,8 +977,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // #837 — the gateway captured a different amount than we ordered. Auto-refund
   // the whole capture (never confirm a booking for the wrong money) and skip
-  // Phase 2. REQUIRES_MANUAL_RECOVERY stays stamped as the fallback if the
-  // refund throws. Idempotent: on webhook replay the payment is already
+  // Phase 2. The pending marker stays stamped for retry-auto-refunds if the
+  // refund throws (#1846 N2). Idempotent: on webhook replay the payment is already
   // SUCCEEDED so the SUCCEEDED early-return fires before this path is reached,
   // and refundPayment's refundable-balance guard blocks any double-refund.
   if (txResult.outcome === "amount_mismatch") {
@@ -900,8 +988,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason: "capture amount mismatch",
         initiatedByUserId: null,
       });
-      // Refund succeeded — clear the Phase 1 REQUIRES_MANUAL_RECOVERY marker so
-      // ops dashboards don't flag a payment that no longer needs manual recovery.
+      // Refund succeeded — settle the Phase 1 marker so the retry sweep and
+      // ops dashboards stop treating the payment as owed.
       await prisma.payment.update({
         where: { id: txResult.paymentId },
         data: {
@@ -920,7 +1008,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         },
       });
       console.error(
-        "Failed to auto-refund amount-mismatch capture; REQUIRES_MANUAL_RECOVERY (Phase 2):",
+        "Failed to auto-refund amount-mismatch capture; retry-auto-refunds re-drives its marker (Phase 2):",
         refundError,
       );
     }
@@ -972,6 +1060,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason: "capture after cancellation",
         initiatedByUserId: null,
       });
+      await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
@@ -995,20 +1084,12 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     try {
       await refundPayment({
         paymentId: txResult.paymentId,
-        reason: "double-booking blocked at confirmation",
+        reason: DOUBLE_BOOKING_BLOCKED_NOTE,
         initiatedByUserId: null,
       });
       // Release the tentative hold only once the money is back.
-      await withSerializableRetry(() =>
-        prisma.$transaction(
-          (tx) => cleanupFailedPaymentAppointment(tx, txResult.appointmentId),
-          {
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            maxWait: 10_000,
-            timeout: 15_000,
-          },
-        ),
-      );
+      await releaseBlockedBookingHold(txResult.appointmentId);
+      await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, {
         subsystem: "payments",
@@ -1508,7 +1589,8 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         consultantName,
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
-        retryUrl: `${getAppUrl()}/dashboard`,
+        // #1527 — the recipient is always the payer.
+        retryUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       },
       // Payment failure is urgent: bypass quiet-hours deferral.
       { tx, entityRef: `payment:${payment.id}`, deferrable: false },
@@ -1564,6 +1646,11 @@ async function createAppointmentFromWebhook(
   const userId = payment.user.id;
 
   let appointment;
+  // #1854 — event seats take the org only when the org's money paid for them.
+  const seatOrg = seatPayerOrganizationId(
+    payment.organizationId,
+    isOrgFundedPaymentMethod(payment.paymentMethod),
+  );
 
   switch (appointmentType) {
     case AppointmentsType.CONSULTATION:
@@ -1601,10 +1688,18 @@ async function createAppointmentFromWebhook(
       });
       break;
     case AppointmentsType.WEBINAR:
-      appointment = await createWebinar(tx, { eventId, userId });
+      appointment = await createWebinar(tx, {
+        eventId,
+        userId,
+        organizationId: seatOrg,
+      });
       break;
     case AppointmentsType.CLASS:
-      appointment = await createClass(tx, { eventId, userId });
+      appointment = await createClass(tx, {
+        eventId,
+        userId,
+        organizationId: seatOrg,
+      });
       break;
     default:
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
@@ -1801,7 +1896,7 @@ async function createWebinar(tx: Tx, data: EventData) {
     tx,
     webinar.appointment.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "HELD" },
+    { status: "HELD", organizationId: data.organizationId },
   );
 
   const createdAppointment = await tx.appointment.findUnique({
@@ -1845,7 +1940,7 @@ async function createClass(tx: Tx, data: EventData) {
     tx,
     wrapper.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "HELD" },
+    { status: "HELD", organizationId: data.organizationId },
   );
 
   const createdAppointment = await tx.appointment.findUnique({
@@ -1866,6 +1961,42 @@ async function createClass(tx: Tx, data: EventData) {
  * Confirm consultation or subscription status after successful payment
  * Transitions APPROVED_PENDING_PAYMENT → APPROVED
  */
+/**
+ * B2 — the capture's liveness CAS on a group event: SCHEDULED is re-stamped
+ * only from a live state, so a capture after the event was cancelled matches
+ * nothing. #1846 SM-B13 — through the helpers, so the stamp writes its history
+ * row. Returns false on the miss, which the caller reads fresh to tell a
+ * benign replay from a capture after a terminal state.
+ */
+async function restampLiveEvent(
+  tx: Tx,
+  kind: "class" | "webinar",
+  id: string,
+  appointmentId: string,
+): Promise<boolean> {
+  const args = {
+    reason: "seat payment captured",
+    appointmentId,
+    where: { id },
+    to: "SCHEDULED" as const,
+  };
+  try {
+    // SCHEDULED only: the map also allows IN_PROGRESS → SCHEDULED (reschedule
+    // re-entry), and a seat bought during a live session must not pull the
+    // event back. An IN_PROGRESS event misses here and the caller's fresh
+    // read treats it as benign, so the seat still confirms.
+    if (kind === "class") {
+      await transitionClassEvent(tx, { ...args, fromIn: ["SCHEDULED"] });
+    } else {
+      await transitionWebinarEvent(tx, { ...args, fromIn: ["SCHEDULED"] });
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof IllegalTransitionError) return false;
+    throw err;
+  }
+}
+
 /** The request states a capture may legitimately land on (#1583 A-P0-01). */
 const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.PENDING,
@@ -1898,19 +2029,25 @@ async function confirmApprovalStatus(
     // so a capture landing after a cancel resurrected the booking. Now the
     // guard rides the WHERE; a late capture against a terminal booking is
     // money collected for nothing — surface it for refund instead.
-    const movedConsult = await tx.consultation.updateMany({
-      where: {
-        id: entityId,
-        status: {
-          in: [
-            AppointmentStatus.PENDING,
-            AppointmentStatus.APPROVED_PENDING_PAYMENT,
-          ],
-        },
-      },
-      data: { status: AppointmentStatus.APPROVED },
-    });
-    if (movedConsult.count === 0) {
+    // #1846 SM-B13 — through the helper, so the capture writes its history
+    // row like the subscription arm below; the zero-row throw is the miss.
+    let movedConsult = true;
+    try {
+      await transitionConsultationRequest(tx, {
+        where: { id: entityId },
+        to: AppointmentStatus.APPROVED,
+        fromIn: [
+          AppointmentStatus.PENDING,
+          AppointmentStatus.APPROVED_PENDING_PAYMENT,
+        ],
+        reason: "payment captured",
+        appointmentId,
+      });
+    } catch (err) {
+      if (!(err instanceof IllegalTransitionError)) throw err;
+      movedConsult = false;
+    }
+    if (!movedConsult) {
       // Re-read: the pre-read raced the very transition that made the CAS
       // miss, so logging it would report the wrong state (review catch on
       // #844). The fresh value decides whether this is benign (already
@@ -2024,6 +2161,8 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
+  /** #1861 L1 — the capturing payment's hold had lapsed before the capture. */
+  opts?: { holdExpired?: boolean; now?: Date },
 ): Promise<{ capturedAfterTerminal: boolean; doubleBookingBlocked?: boolean }> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
@@ -2066,6 +2205,25 @@ export async function confirmExistingAppointment(
     )
       .map((p) => p.userId)
       .filter((id) => id !== userId);
+    // #1861 L1 — an expired hold loses to a live foreign hold as well as to a
+    // confirmed row. "Live" is checkout step 1's predicate (validateSlotAvailability):
+    // an occupying appointment not matched by buildDeadHoldFilter, on a
+    // non-tombstoned occurrence of another appointment.
+    const holdExpired = opts?.holdExpired === true;
+    const now = opts?.now ?? new Date();
+    const conflictStates: Prisma.AppointmentOccurrenceWhereInput = holdExpired
+      ? {
+          OR: [
+            { isTentative: false },
+            {
+              isTentative: true,
+              ...liveOccurrenceWhere,
+              appointmentId: { not: appointmentId },
+              appointment: { NOT: buildDeadHoldFilter(now) },
+            },
+          ],
+        }
+      : { isTentative: false };
     for (const slot of mySlots) {
       if (participantIds.length === 0) continue;
       const conflict = await tx.appointmentOccurrence.findFirst({
@@ -2073,7 +2231,7 @@ export async function confirmExistingAppointment(
           id: { not: slot.id },
           startsAt: { lt: slot.endsAt },
           endsAt: { gt: slot.startsAt },
-          isTentative: false,
+          ...conflictStates,
           appointment: {
             OR: buildOccupiedAppointmentFilter(),
             participants: {
@@ -2091,11 +2249,14 @@ export async function confirmExistingAppointment(
           subsystem: "payments",
           expected: true,
           level: "warning",
+          // #1861 — tells a late capture on a lapsed hold from a #827 race.
+          tags: { expiredHold: String(holdExpired) },
           contexts: {
             booking: {
               appointmentId,
               conflictingAppointmentId: conflict.appointmentId,
               slotId: slot.id,
+              expiredHold: holdExpired,
             },
           },
         });
@@ -2105,6 +2266,7 @@ export async function confirmExistingAppointment(
             appointmentId,
             conflictingAppointmentId: conflict.appointmentId,
             slotId: slot.id,
+            expiredHold: holdExpired,
             timestamp: new Date().toISOString(),
           }),
         );
@@ -2121,12 +2283,15 @@ export async function confirmExistingAppointment(
           await recordSystemError({
             organizationId: null,
             category: "PAYMENT",
-            summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
+            summary: holdExpired
+              ? `Double-booking blocked at confirmation (expired hold): appointment ${appointmentId} was paid after its hold lapsed and another buyer now holds the slot — the payment needs a refund`
+              : `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
             err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
             context: {
               appointmentId,
               conflictingAppointmentId: conflict.appointmentId,
               slotId: slot.id,
+              expiredHold: holdExpired,
             },
             correlationId,
             db: tx,
@@ -2156,14 +2321,7 @@ export async function confirmExistingAppointment(
 
   if (appointment.class && userId) {
     const classId = appointment.class.id;
-    const restamped = await tx.class.updateMany({
-      where: {
-        id: classId,
-        status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
-      },
-      data: { status: "SCHEDULED" },
-    });
-    if (restamped.count === 0) {
+    if (!(await restampLiveEvent(tx, "class", classId, appointmentId))) {
       const fresh = await tx.class.findUnique({
         where: { id: classId },
         select: { status: true },
@@ -2187,7 +2345,7 @@ export async function confirmExistingAppointment(
     // capture flips the seat and never the occurrences. Only a HELD seat
     // confirms: a capture landing on a cancelled seat must not resurrect it
     // (the refund arm below handles the money).
-    await setParticipantStatus(
+    await transitionParticipant(
       tx,
       {
         appointment: { classId: appointment.class.id },
@@ -2210,14 +2368,7 @@ export async function confirmExistingAppointment(
   // Webinars share one appointment among all participants
   else if (appointment.webinar && userId) {
     const webinarId = appointment.webinar.id;
-    const restamped = await tx.webinar.updateMany({
-      where: {
-        id: webinarId,
-        status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
-      },
-      data: { status: "SCHEDULED" },
-    });
-    if (restamped.count === 0) {
+    if (!(await restampLiveEvent(tx, "webinar", webinarId, appointmentId))) {
       const fresh = await tx.webinar.findUnique({
         where: { id: webinarId },
         select: { status: true },
@@ -2238,7 +2389,7 @@ export async function confirmExistingAppointment(
 
     // #1554 — same as the class arm: the seat flips, the shared occurrences
     // do not.
-    await setParticipantStatus(
+    await transitionParticipant(
       tx,
       { appointmentId, userId, status: "HELD" },
       "CONFIRMED",
@@ -2261,11 +2412,13 @@ export async function confirmExistingAppointment(
       where: { appointmentId, ...liveOccurrenceWhere },
       data: { isTentative: false },
     });
-    await setParticipantStatus(
+    await transitionParticipant(
       tx,
       { appointmentId, status: "HELD" },
       "CONFIRMED",
     );
+    // #1778 — the buyer's own backup interest in these times is fulfilled.
+    if (userId) await markBookedWindows(tx, appointmentId, userId);
   }
 
   // Update status for consultation and subscription
@@ -2295,6 +2448,67 @@ export async function confirmExistingAppointment(
   // the guard above correctly refused it.
 
   return { capturedAfterTerminal };
+}
+
+/** #1778 — every confirmed window of this booking marks the buyer's own interest BOOKED. */
+async function markBookedWindows(
+  tx: Tx,
+  appointmentId: string,
+  userId: string,
+) {
+  const windows = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointmentId,
+      ...liveOccurrenceWhere,
+      consultantProfileId: { not: null },
+    },
+    select: { consultantProfileId: true, startsAt: true, endsAt: true },
+  });
+  for (const w of windows) {
+    if (!w.consultantProfileId) continue;
+    await markBackupInterestBooked(tx, userId, {
+      consultantProfileId: w.consultantProfileId,
+      windowStart: w.startsAt,
+      windowEnd: w.endsAt,
+    });
+  }
+}
+
+/**
+ * #1846 N2 — rewrite a pending auto-refund marker to its settled form. A CAS
+ * on the marker itself, so a concurrent writer that already settled or
+ * replaced the description is left alone.
+ */
+export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { description: true },
+  });
+  const pending = row?.description;
+  if (!pending?.startsWith(AUTO_REFUND_PENDING_PREFIX)) return;
+  await prisma.payment.updateMany({
+    where: { id: paymentId, description: pending },
+    data: { description: settledAutoRefundDescription(pending) },
+  });
+}
+
+/**
+ * Release the tentative hold of a double-booking loser once its money is
+ * back. Shared by Phase 2 and retry-auto-refunds (#1846 N2).
+ */
+export async function releaseBlockedBookingHold(
+  appointmentId: string,
+): Promise<void> {
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) => cleanupFailedPaymentAppointment(tx, appointmentId),
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
+    ),
+  );
 }
 
 /**
@@ -2511,7 +2725,8 @@ async function stagePaymentSuccessEmail(
         | "class",
       amount,
       currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always the payer.
+      dashboardUrl: `${getAppUrl()}${goHref("client", "appointments")}`,
       paymentReference: payment.id,
     });
   } catch (error) {
@@ -2607,7 +2822,9 @@ async function stagePaymentFailedEmail(
 
   let consultantName = "Consultant";
   let appointmentType: "consultation" | "subscription" = "consultation";
-  let retryUrl = `${getAppUrl()}/dashboard`;
+  // #1527 — the recipient is always the payer; overridden below when a
+  // specific booking is known.
+  let retryUrl = `${getAppUrl()}${goHref("client", "payments")}`;
 
   // Get consultant name and appointment type
   if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {

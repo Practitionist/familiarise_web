@@ -204,6 +204,7 @@ export type AllocationErrorCode =
   | "PERIOD_ENDED" // scheduling period is in the past — 400
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
   | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
+  | "SUBSCRIPTION_UNPAID" // #1775 C-1 — a plan with no settled payment is never approved — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**

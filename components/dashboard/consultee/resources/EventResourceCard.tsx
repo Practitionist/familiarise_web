@@ -112,7 +112,7 @@ export function EventResourceCard({
         <Avatar className="h-10 w-10 shrink-0">
           <AvatarImage
             src={event.consultantImage || undefined}
-            alt={event.consultantName || "Consultant"}
+            alt={event.consultantName || "Expert"}
           />
           <AvatarFallback className="bg-muted text-muted-foreground text-sm">
             {event.consultantName?.charAt(0) || "?"}

@@ -188,13 +188,14 @@ describe("expiry sweep × live reschedule proposals", () => {
   it("an APPROVED subscription with one COMPLETED occurrence is in neither cohort (#1766)", async () => {
     await expireStaleRequests();
 
-    // Both APPROVED sweeps (expire + nudge) exclude any wrapper holding a live
+    // The APPROVED expiry sweep excludes any wrapper holding a live
     // non-tentative row; a COMPLETED row is exactly that, so a plan whose first
     // cycle was delivered and is waiting on its next cycle is left alone.
+    // #1775 C-4 — the nudge now reads the paid PENDING cohort instead.
     const approvedReads = (prisma.subscription.findMany as jest.Mock).mock.calls
       .map(([args]) => args)
       .filter((args) => args?.where?.status === AppointmentStatus.APPROVED);
-    expect(approvedReads).toHaveLength(2);
+    expect(approvedReads).toHaveLength(1);
     const held = { isTentative: false, deletedAt: null };
     for (const read of approvedReads) {
       expect(read.where.NOT).toEqual({

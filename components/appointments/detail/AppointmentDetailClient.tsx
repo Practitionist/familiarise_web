@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -37,7 +37,8 @@ import {
   type BookingStateKind,
 } from "@/lib/dashboard/money-state";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
-import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
+import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
@@ -76,8 +77,10 @@ import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
+import { ClassSessionControls } from "./ClassSessionControls";
+import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
-import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
@@ -141,6 +144,7 @@ type MoneyRow = PaymentDisplayLike & {
 
 /** One line per charge: amount, status, the rail it rode, the date — and the receipt. */
 function MoneyLine({ payment }: { payment: MoneyRow }) {
+  const format = useZonedFormat();
   const rail = paymentRailLabel(payment);
   const receipt = receiptHref(payment);
   return (
@@ -241,6 +245,10 @@ interface AppointmentDetailClientProps {
   joinWindowMs?: number;
   /** Consultant-only: the dashboard whose Requests/allocate pages answer a request. */
   consultantId?: string;
+  /** Extra buttons for the header action bar, e.g. the consultee's Book again / Add to calendar (#1527). */
+  renderExtraActions?: (vm: AppointmentVM) => ReactNode;
+  /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
+  supportRequestsBase: string;
 }
 
 export function AppointmentDetailClient({
@@ -252,7 +260,10 @@ export function AppointmentDetailClient({
   participantsHref,
   joinWindowMs,
   consultantId,
+  renderExtraActions,
+  supportRequestsBase,
 }: AppointmentDetailClientProps) {
+  const format = useZonedFormat();
   const { data: session } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -299,11 +310,11 @@ export function AppointmentDetailClient({
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   const payments = detail?.appointment.payment ?? [];
-  // One support sheet, two doors: "Get help" opens on the intent chips,
-  // "Problem with this charge" opens already on PAYMENT_STATUS.
-  const [help, setHelp] = useState<{ open: boolean; seed?: string }>({
-    open: false,
-  });
+  // #1527 — one request page, two doors: "Get help" opens on the intent
+  // options, "Problem with this charge" already on PAYMENT_STATUS.
+  const supportHref = `${supportRequestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
+  const openHelp = (intent?: string) =>
+    router.push(intent ? `${supportHref}?intent=${intent}` : supportHref);
 
   if (isLoading && !detail) {
     return (
@@ -508,20 +519,16 @@ export function AppointmentDetailClient({
     : undefined;
   const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
   const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
-  // #1429 F2 — a trial's Pay Now lands on our branded trial checkout, which
-  // names the amount and the hold deadline; only a non-trial booking falls
-  // through to the raw gateway link. #1428 added a second Pay Now here without
-  // the branch, so both entry points now ask the one shared helper.
-  const trialHref = trialCheckoutHref(vm);
+  // #1429 F2 / #1775 P-1 — both Pay Now entry points ask the one shared
+  // helper: the trial's branded page or our pay page (SPA push), else a hosted link.
+  const payHref = bookingPayHref(vm);
   const openPendingPayment = () => {
-    if (trialHref) {
-      // Internal checkout page — SPA navigation (was full reload).
-      router.push(trialHref);
+    if (!payHref) return;
+    if (isExternalPayHref(payHref)) {
+      window.open(payHref, "_blank", "noopener,noreferrer");
       return;
     }
-    if (vm.pendingPaymentUrl && /^https?:\/\//.test(vm.pendingPaymentUrl)) {
-      window.open(vm.pendingPaymentUrl, "_blank", "noopener,noreferrer");
-    }
+    router.push(payHref);
   };
 
   return (
@@ -551,9 +558,6 @@ export function AppointmentDetailClient({
                 <h1 className="text-xl font-semibold text-foreground">
                   {vm.title}
                 </h1>
-                <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {KIND_LABEL[vm.kind]}
-                </span>
                 <StatusBadge
                   {...toneBadge(bookingState.tone, bookingState.label)}
                   withDot
@@ -565,8 +569,10 @@ export function AppointmentDetailClient({
                   </span>
                 )}
               </div>
+              {/* #1527 — the kind is a fact about the booking, so it reads in
+                  the meta line rather than as a second chip beside the status. */}
               <p className="text-sm text-muted-foreground mt-1">
-                with {vm.counterpart.name}
+                {KIND_LABEL[vm.kind]} with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
                 {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
               </p>
@@ -634,11 +640,8 @@ export function AppointmentDetailClient({
                 {item.label}
               </Button>
             ))}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setHelp({ open: true })}
-            >
+            {renderExtraActions?.(vm)}
+            <Button variant="outline" size="sm" onClick={() => openHelp()}>
               <LifeBuoy className="mr-1.5 h-4 w-4" />
               Get help
             </Button>
@@ -667,7 +670,7 @@ export function AppointmentDetailClient({
               exists. */}
           <AppointmentSupportStatusCard
             appointmentId={appointmentId}
-            isOrgContext={!!orgName}
+            href={supportHref}
           />
 
           {/* #1766 — a subscription's header already carries "h of T"; a
@@ -704,7 +707,18 @@ export function AppointmentDetailClient({
           names={names}
           heldCount={heldCount}
           pending={pendingRow}
-          onPay={openPendingPayment}
+          onPay={payHref ? openPendingPayment : undefined}
+          onExitSeries={
+            role === "consultee" && detail.appointment.class && viewerId
+              ? () =>
+                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
+                    () =>
+                      queryClient.invalidateQueries({
+                        queryKey: ["appointment-detail", appointmentId],
+                      }),
+                  )
+              : undefined
+          }
           requestAgainHref={
             vm.consultantProfileId
               ? `/explore/experts/${vm.consultantProfileId}`
@@ -724,7 +738,7 @@ export function AppointmentDetailClient({
                 }
               : undefined
           }
-          onHelp={() => setHelp({ open: true })}
+          onHelp={() => openHelp()}
         >
           {nextAction.kind === "JOIN" && action.kind === "join" ? (
             <RowPrimaryAction action={action} size="default" />
@@ -746,6 +760,7 @@ export function AppointmentDetailClient({
             appointmentId={appointmentId}
             proposal={openProposal}
             role={role}
+            readOnly={adapter.readOnly}
           />
         )}
 
@@ -809,6 +824,16 @@ export function AppointmentDetailClient({
                     // and a consultant rating their own session would feed the
                     // org quality average.
                     renderSessionExtra={(session) => {
+                      // #1569 B-4 — the host side sees who attended each session.
+                      const attendance =
+                        role === "consultant" ? (
+                          <SessionAttendance
+                            appointmentId={
+                              session.appointmentId ?? appointmentId
+                            }
+                            occurrenceId={session.occurrenceId}
+                          />
+                        ) : null;
                       const rating =
                         sessionFeedback.ratings[session.occurrenceId] ?? null;
                       // Offer stars only where a rating would be ACCEPTED —
@@ -822,20 +847,25 @@ export function AppointmentDetailClient({
                       // `rating` is null for every row — indistinguishable from
                       // the truth. Show nothing per row and let the notice above
                       // say why, rather than inviting a click we cannot honour.
-                      if (sessionFeedback.isError) return null;
+                      if (sessionFeedback.isError) return attendance;
                       if (role === "consultee" && !canRate && rating === null) {
                         return null;
                       }
                       return (
-                        <SessionRatingRow
-                          appointmentId={session.appointmentId ?? appointmentId}
-                          bookingAppointmentId={appointmentId}
-                          occurrenceId={session.occurrenceId}
-                          existingRating={rating}
-                          // The consultant sees what a call scored; only the
-                          // attendee can set it.
-                          readOnly={role !== "consultee" || !canRate}
-                        />
+                        <>
+                          {attendance}
+                          <SessionRatingRow
+                            appointmentId={
+                              session.appointmentId ?? appointmentId
+                            }
+                            bookingAppointmentId={appointmentId}
+                            occurrenceId={session.occurrenceId}
+                            existingRating={rating}
+                            // The consultant sees what a call scored; only the
+                            // attendee can set it.
+                            readOnly={role !== "consultee" || !canRate}
+                          />
+                        </>
                       );
                     }}
                     occurrences={vm.occurrences}
@@ -858,6 +888,23 @@ export function AppointmentDetailClient({
                   </p>
                 )}
               </Section>
+            )}
+
+            {/* #1780 row 4 — cancel one session, make it up, or skip the make-up. */}
+            {vm.kind === "CLASS" && detail.appointment.class && (
+              <ClassSessionControls
+                appointmentId={appointmentId}
+                sessions={detail.appointment.occurrences}
+                role={role}
+                // The seat's unit depends on when it was bought (#1780); no
+                // list-price guess — the copy says "one session" instead.
+                unitLabel={null}
+                onChanged={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: ["appointment-detail", appointmentId],
+                  });
+                }}
+              />
             )}
 
             {role === "consultant" && (
@@ -991,13 +1038,23 @@ export function AppointmentDetailClient({
                         View receipt
                       </a>
                     )}
+                    {/* #1527 — a refund's s.34 credit note sits beside it. */}
+                    {paidRow?.consumerInvoice?.creditNotes.map((note) => (
+                      <a
+                        key={note.id}
+                        href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-foreground underline underline-offset-4"
+                      >
+                        Credit note {note.creditNoteNumber}
+                      </a>
+                    ))}
                     {role === "consultee" && (
                       <button
                         type="button"
                         className="text-xs font-medium text-foreground underline underline-offset-4"
-                        onClick={() =>
-                          setHelp({ open: true, seed: "PAYMENT_STATUS" })
-                        }
+                        onClick={() => openHelp("PAYMENT_STATUS")}
                       >
                         {hasOwnCharge
                           ? "Problem with this charge"
@@ -1033,7 +1090,7 @@ export function AppointmentDetailClient({
                         renderDocuments(vm)
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          Documents for this booking will appear here.
+                          No documents for this booking.
                         </p>
                       )}
                     </ResourceSubgroup>
@@ -1042,10 +1099,14 @@ export function AppointmentDetailClient({
                   </>
                 )}
 
-                <ResourceSubgroup title="Recordings" icon={Video}>
+                <ResourceSubgroup
+                  title={`Recordings · ${recordings.length}`}
+                  icon={Video}
+                >
                   {recordings.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      Recordings of completed sessions will appear here.
+                      No recordings for this booking yet. Recorded sessions are
+                      listed here once they finish processing.
                     </p>
                   ) : (
                     <div className="space-y-2">
@@ -1098,13 +1159,18 @@ export function AppointmentDetailClient({
           and was: the consultee's detail page never did, leaving Reschedule,
           Cancel and Report issue setting state nothing was listening for. */}
       {adapter.renderDialogs()}
-      <SupportThreadSheet
-        appointmentId={appointmentId}
-        isOrgContext={!!orgName}
-        open={help.open}
-        onOpenChange={(open) => setHelp(open ? { ...help, open } : { open })}
-        seedCategory={help.seed}
-      />
     </DashboardErrorBoundary>
   );
+}
+
+/** #1780 E-5 — the class exit right: a full refund of the remaining sessions. */
+async function exitClassSeries(classId: string, userId: string) {
+  const res = await fetch(
+    `/api/participants/class/${classId}?userId=${encodeURIComponent(userId)}&mode=exit`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "Could not leave the class");
+  }
 }

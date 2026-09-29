@@ -76,7 +76,8 @@ export async function generateMetadata({
   const request = await loadRequest(
     requestId,
     type === "subscription" ? "subscription" : "consultation",
-  ).catch(() => null);
+    consultantId,
+  );
   // Metadata runs BEFORE the body's guards and is not covered by them, so the
   // same ownership check runs here — otherwise the tab title named the
   // offering and the buyer for any request id a signed-in consultant tried.
@@ -112,12 +113,12 @@ export default async function AllocateSlotsPage({
     `/dashboard/consultant/${encodeURIComponent(consultantId)}/requests/${encodeURIComponent(requestId)}/allocate?type=${eventType}`;
 
   const request = requestedType
-    ? await loadRequest(requestId, requestedType)
+    ? await loadRequest(requestId, requestedType, consultantId)
     : null;
   if (!request) {
     const fallbackType =
       requestedType === "subscription" ? "consultation" : "subscription";
-    const fallback = await loadRequest(requestId, fallbackType);
+    const fallback = await loadRequest(requestId, fallbackType, consultantId);
     if (!fallback) notFound();
     redirect(canonicalPath(fallbackType));
   }

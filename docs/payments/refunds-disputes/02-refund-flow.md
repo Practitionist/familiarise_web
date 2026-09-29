@@ -329,6 +329,19 @@ A new `refundedShareAmount` field on `ConsultantEarnings` tracks the cumulative 
 
 ---
 
+## What the buyer sees: the refund timeline (#1780)
+
+The appointment timeline shows one step per refund, derived in `deriveTimeline` (`lib/dashboard/money-state.ts`) and drawn by `TimelineStrip`. The four steps are listed in the table below.
+
+| Step                | When                                                                     | Copy                                                                       |
+| ------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `refund-requested`  | The Refund is PENDING and still carries the front door's placeholder id. | "Refund requested"                                                         |
+| `refund-processing` | The Refund is PENDING and carries the gateway's id (`rfnd_` or `re_`).   | "Refund processing" with the rail's arrival time                           |
+| `refund-completed`  | The Refund SUCCEEDED.                                                    | "Refunded", or "Refunded ₹X (partial)" when it returned less than was paid |
+| `refund-failed`     | The Refund FAILED.                                                       | "Refund failed — our team will retry or contact you", in red               |
+
+The arrival time follows the rail the payment used: a gateway payment reads "cards take 5–7 working days, UPI 1–3", because the Payment row records CARD for every gateway charge and cannot tell a card from UPI; a credits refund reads "back as credits instantly"; and an organisation-funded one reads "back to the organisation". The appointment detail read carries FAILED refunds, their gateway id and `createdAt` for this purpose, while the money sums keep reading PENDING and SUCCEEDED by status.
+
 ## Code References
 
 | Component               | File                                | Lines                    |

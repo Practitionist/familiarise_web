@@ -29,7 +29,7 @@ import { toPlain } from "@/lib/data/serialize";
  * hydration — a view-identity change, not a fill-in.
  *
  * Authorization is not weakened. `getOrgDetailsForSeed` runs the same
- * `requireOrgAccess(orgId, "LEARNER")` the API route runs, and returns null
+ * `requireOrgAccess(orgId, { allowSuspended: true })` the API route runs, and returns null
  * rather than throwing so a non-member simply gets no seed.
  */
 export default async function OrgDashboardLayout({

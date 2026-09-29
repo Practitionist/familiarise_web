@@ -7,12 +7,18 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
-import { readConsulteePayments } from "@/lib/data/consultee-payments";
+import {
+  readConsulteeMoneySummary,
+  readConsulteePayments,
+  type PaymentHistoryFilter,
+  type PaymentHistoryRange,
+} from "@/lib/data/consultee-payments";
 
 /**
  * The consultee's own payment history. Auth and `?orgScope=` resolution live
  * here; the rows come from `readConsulteePayments`, the same read the RSC
- * page seeds with (#1675 X1).
+ * page seeds with (#1675 X1). `?page=&status=&range=` page and filter the
+ * history (#1527); `?view=summary` answers Home's two "This month" facts.
  */
 export async function GET(
   request: Request,
@@ -52,6 +58,17 @@ export async function GET(
       );
     }
 
+    if (searchParams.get("view") === "summary") {
+      const summary = await readConsulteeMoneySummary({
+        consulteeId,
+        userId: consulteeProfile.userId,
+      });
+      return NextResponse.json(
+        { data: summary, success: true },
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+
     // #674 org-scope filter: an Acme + Zeta consultee's history splits per org
     // context; personal scope = the untagged rows.
     const callerMemberships = await prisma.membership.findMany({
@@ -77,6 +94,13 @@ export async function GET(
       consulteeId,
       userId: consulteeProfile.userId,
       orgScope: scopeResolution.scope,
+      // Validated inside the read; unknown values fall back to the defaults.
+      query: {
+        page: Number(searchParams.get("page") ?? 1),
+        pageSize: Number(searchParams.get("pageSize") ?? Number.NaN),
+        status: searchParams.get("status") as PaymentHistoryFilter | null,
+        range: searchParams.get("range") as PaymentHistoryRange | null,
+      },
     });
 
     // Money truth is never cached (finance doctrine); PR #1755 swaps this

@@ -21,14 +21,16 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { getOrgAnalytics } from "@/lib/data/org-analytics";
+import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   if (access.error) return access.error;
 
   const analytics = await getOrgAnalytics(orgId);
@@ -39,5 +41,6 @@ export async function GET(
     );
   }
 
-  return NextResponse.json(analytics);
+  // #1527 — SUPPORT reads operations, never money; MANAGER no host earnings.
+  return NextResponse.json(orgAnalyticsForRole(analytics, access.member.role));
 }

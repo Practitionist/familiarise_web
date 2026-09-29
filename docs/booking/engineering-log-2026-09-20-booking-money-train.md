@@ -16,6 +16,7 @@ An `APPROVED_PENDING_PAYMENT` row had no consultant action: the pay order either
 - **B-7, the seed.** The first `QA_ACCOUNTS_PER_ROLE` users of each role, the `SeedPass123!` logins, get `timezone: "Asia/Kolkata"`; the random population keeps faker's spread.
 
 Docs touched: `docs/booking/06-booking-lifecycle.md` (the Remind and Withdraw paragraph plus the self-approval refusal) and `docs/booking/18-state-machines.md` (the consultant-initiated `APPROVED_PENDING_PAYMENT → EXPIRED` edge and the shared lapse body).
+
 # Engineering log — 2026-09-20 — the booking-money train
 
 **Date:** 2026-09-20 · **Issues:** #1775, #1704, #1705, #1766, #1639 · **Scope:** the consultant Requests inbox on the booking-presentation layer, the remind and withdraw lifecycle, and the money words every booking surface shares. Each PR of the train appends its own dated section below.
@@ -37,3 +38,67 @@ There was no `trials/page.tsx` to turn into a redirect: `TrialsTab` was mounted 
 ### Verification
 
 The read pin (`__tests__/dashboards/requests-inbox.test.ts`) runs the fixture of four rows through the read, the route and Home's dashboard read over one where-aware prisma mock; the render pin (`requests-inbox.test.tsx`) renders the rows into their buckets and asserts no status enum reaches the DOM. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and `jest __tests__/dashboards __tests__/booking-algorithm` were green before the push.
+
+## PR-1 — booking money rules (2026-09-25)
+
+PR-1 folds the old PR-C, PR-D, PR-E and PR-F specs into one branch, together with three live money defects found on `dev` and the #1746 and #1429 fold-ins. Each group below records what changed and why.
+
+### Group P — live money defects
+
+A Razorpay approval or trial "pay link" is the order id, and seven Pay surfaces refused anything that was not an https URL, so no approval could be paid (P-1). The fix is one pure helper, `payLinkHref`, that resolves an order id to a new pay page at `/checkout/pay/[paymentId]`, and an existing-order mode on `RazorpayCheckout` that opens the order without calling checkout. The earnings release sweep released rows whose payment still had a refund in flight (P-2); the cohort and the release CAS now both require that the payment has no PENDING refund. A cancel whose gateway call threw reported the refund as FAILED even though `refund.ts` keeps the row PENDING for reconcile (P-3); the route now reads the row and answers PENDING, which absorbs #1639 item 2.
+
+### Group C — plans are paid at purchase, paid trials are charged at request
+
+A plan can no longer be approved unpaid through either door: the detail PATCH and the allocate path both answer `409 SUBSCRIPTION_UNPAID`, and a failed consultation mint on the allocate path is now a typed answer rather than a 200. `Payment.capturedAt` is the 48-hour clock, stamped by the single writer's three confirmation CAS writes and never by a replay. A paid plan with no allocated session 48 hours after capture expires with reason `UNALLOCATED_48H` and is refunded in full, with the bell staged in the same transaction, and the consultant is nudged at 12, 24 and 36 hours. The presentation layer names the wait: the consultant's next action is `ALLOCATE`, "Schedule cycle 1" with a deadline, and "Schedule the next N" once a cycle is delivered.
+
+A paid trial is now charged when it is requested. The request creates a placeholder appointment and mints the order against it; capture stamps the trial paid while it stays `PENDING`; acceptance requires that payment and places the session on the placeholder. A decline, or 48 hours without an answer, refunds in full; a learner cancelling before a session exists is refunded in full because missing notice is infinite notice; and the trial's earning waits for completion before its hold starts. Neither capturedAt nor the charge-at-request flow backfills anything: rows written before the column exist fall back to `createdAt`.
+
+### Group D — the event refund window and the class-series ledger
+
+The host now sets a free-cancellation window of 24 to 168 hours on each webinar and class plan, and each seat snapshots it at purchase. A seat leave runs the rule inside the release transaction: inside the window it is refused and the seat stays, outside it the seat is refunded in full, and a session the host moved after the purchase waives the window. A class under way is quoted per session from the seat's own ledger, so a mid-series joiner is priced only on the sessions it bought, and a host cancelling a series refunds each seat only what it was not delivered. `Refund.dedupeKey` makes one refund per seat, session or series a database guarantee on every rail. Two readings were needed to make the spec's formulas correct: the join time is the later of the participant row and the seat's payment, because a re-bought seat reuses its row, and the internal CLASS_MULTI reversal splits the per-seat sum in proportion to balances, which is exact only when the seats hold the same sessions. The credits rail cannot restore part of a seat, so a credit seat owed a per-session amount is escalated to ops instead of over-restored.
+
+### Group E — one cancelled class session, its make-up, and the exit right
+
+The host can now cancel one session of a class. It stays countable because only `hostCancelledAt` is written, and it is made up on the same ordinal within 14 days or refunded one unit per seat by the new `settle-cancelled-sessions` sweep, which runs every 15 minutes on the ticker with an hourly Actions backstop. A learner who cannot make a make-up can take that session back at once under the same refund key the sweep uses, so a session can never be refunded twice. Every host cancellation is a miss, and three misses or a quarter of the series give the learner the right to leave with every undelivered session refunded. Two choices were made where the spec left room: a host-cancelled session keeps its place in a seat's count so the per-seat unit never moves while it waits for its make-up, and a make-up row is stamped `movedAt` because it moves a session on the buyer. The per-session class controls share one component, so the consultant half (E-6) and the learner half (E-3b) landed in consecutive commits.
+
+### Group F — backup interest in a held window
+
+A learner who loses a 1:1 window to someone else can now ask to be told if it frees. The interest is notify-only: nothing is reserved, and every release path stages the notices inside its own transaction, so the outbox relays deliver them after the commit and the first to book wins. The consultee Home lists the times a learner is waiting on, with a Withdraw on each. The spec also asked for the prompt on the consultee's request page when the asked-for window is held by someone else; no read tells that page that another learner holds the window, so the prompt is offered at the refusal only, and the page prompt is left for a follow-up.
+
+### Fold-ins — #1429 and #1746
+
+Three fixes rode along. The allocate page's read now answers null for a request that is missing, belongs to another consultant, or fails to read, so the page shows its own not-found page instead of crashing (FAMILIARISE_WEB-4X), and the availability editor no longer refuses a whole save because an unchanged window has since ended. The rejection refund is computed in integer basis points, and a cancelled group event now tells every attendee, including free and credit seats, in the words of the rail their seat was funded by. An approval whose pay order already exists, or whose request is already paid, answers a typed 409 instead of a 502 that invited a retry.
+
+## PR-2 — money accounts (2026-09-25)
+
+### What changed
+
+Every Razorpay Checkout sheet now builds its options through `buildCheckoutOptions` (`lib/payments/client/checkout-options.ts`), so the saved-card and EMI options are opt-in and the three organisation sheets are unchanged. Behind `ENABLE_SAVED_CARDS`, the four plan checkouts and the recording purchase mint their order against the buyer's Razorpay Customer (`User.razorpayCustomerId`, created once by `ensureRazorpayCustomer` with `fail_existing: 0`) and open Checkout with `customer_id` and `remember_customer`, so Razorpay shows its own RBI consent box. `ENABLE_CHECKOUT_EMI` hides the EMI block while it is off and adds the instalment line under totals of ₹3,000 or more while it is on.
+
+Erasure now deletes the buyer's saved-card tokens and deactivates the consultant's RazorpayX fund accounts and contacts after the scrub commits, nulls the masked bank fields inside it, and keeps the RazorpayX ids with the payout and TDS rows under the Rule 6F(5) and CGST section 36 retention clocks. The organisation payout-account PUT no longer stores the account number, and `account-crypto.ts` is gone; the column drop is staged for the #1729 reset.
+
+The free instant payout (`createInstantPayout`, `processPayoutById`, `POST /api/consultant/payouts/instant` and its preview) pays READY earnings once per IST day under the Monday batch's lock, auto-approves at or below ₹25,000 and queues larger amounts for approval. The buyer's dispute line and the held earning's line read plainly, and the appointment timeline shows each refund as requested, processing, completed or failed with the rail's arrival time. An unknown payout status from either gateway now keeps the payout as it is instead of downgrading it to PENDING.
+
+### Findings that contradicted the spec
+
+The four plan pages are client components with no server parent, so the saved-card Customer id reaches Checkout on the checkout and purchase responses rather than as a server prop, and the EMI flag reaches the pages through a provider in the checkout layout. `OrganizationPayoutAccount.accountNumberEncrypted` is NOT NULL, so the PUT writes an empty string rather than null until the #1729 reset drops the column. The Payment row records CARD for every gateway charge, so the refund copy names both the card and the UPI arrival times rather than choosing one. `handlePayoutWebhook`'s switch default also caught the legitimate PENDING value, so PENDING became an explicit case before the default could stop writing.
+
+### Verification
+
+Each item carries its pin: the options builder, the Customer's idempotency and the flag-off order, the EMI hide block, the erasure vendor calls, the reference-only PUT, the four instant-payout cases (flag off, the approval cap, twice in one day, and an interleaving with the Monday batch where only the count check stands), the four refund steps, and the unknown payout status. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and the scoped jest suites were green before the branch was handed back.
+
+## PR-3 — the Money console (2026-09-25)
+
+### What changed
+
+Payments, refunds, payouts and disputes now live behind one Money hub at `/dashboard/admin/money/<tab>` (and its staff twin, tabs filtered by `BACKOFFICE_PERMISSIONS`), mounting the existing page components rather than rewriting them; the four old URLs answer a 308 carrying their query string, and the four sidebar entries became one. Every console mutation runs through `withOpsAction`, which gates the surface, requires a reason of at least five characters, and writes exactly one `OpsActionLog` row in the same transaction as a transactional door or immediately after a gateway call for one that cannot be. New Earnings hold/release CAS primitives refuse to release an earning behind an open refund or dispute. Razorpay dispute evidence — `POST /v1/documents` then `PATCH /v1/disputes/{id}/contest` for a draft or a submit — replaced the stale "no dispute API" comment in `razorpay.ts` with a working evidence flow, gated to `open` disputes and refusing a submit with zero documents before any call is made.
+
+The Class series tab put every #1780 manual door behind the console: staff cancel a session for the host, grant a make-up (with a reason-gated 14-day bypass), clear or note the reliability flag, all under `classSeries.support`; skipping a make-up, cancelling a whole series with refunds, and the refund and credit-restore doors are `classSeries.money`, admin-only, because they move money. A late fix made the reliability flag re-checkable rather than a once-ever write: past the miss threshold, every host cancellation asks again whether the flag is due, and it is due only when the latest event is an operator's clear that a later cancellation has since overtaken — so a cleared class can flag a second time, while the learners' exit-right bell still fires only on the first trip. The Reconcile tab runs the four existing reconcile jobs from a button, each behind its own cron lock so a second click while one is running answers 409 rather than a second overlapping pass. The Audit tab is a paged, RSC-seeded read over `OpsActionLog`, staff limited to their own rows.
+
+### Docs pass (item J)
+
+The class-session state-machine doc's reliability-flag paragraph was updated to describe the re-checkable behaviour above. A new ADR, `docs/decisions/2026-09-25-class-series-money-rules.md`, gathers the eleven #1780/#1771 decisions — upfront payment with an EMI switch, the snapshotted refund window, the per-seat pro-rata unit, the host-move waiver, make-up-or-refund, skip-make-up, series-cancel scope, the exit right, per-seat independence, credit-seat restores, and the ops door for every rule — into one place, naming the deferrals (#1569, #1819, #1745). A new `docs/payments/backoffice/01-money-console.md` documents the hub itself: the tab list, the two `withOpsAction` door shapes, the staff/admin split, and the reconcile and audit tabs; the refund-window, instant-payout and saved-card sections it would otherwise have duplicated already existed in `docs/booking/08-cancellation-flow.md`, `docs/payments/checkout-flow/03-payment-processing.md` and `docs/payments/payouts/03-payout-processing.md` from earlier passes on this branch. The seed's consultation and subscription occurrence blocks now stamp `consultantProfileId` from the same plan they connect (#1639 item 3); the class and webinar blocks were checked and do not set it either, so a follow-up would need to touch those too if the exclusion constraint on seeded group-event rows ever needs to hold.
+
+### #1639 verdict
+
+Of the five items in #1639: item 2 (cancel reporting FAILED for a PENDING refund) shipped in PR-1; item 3 (the seed stamp) shipped in this pass; item 4 (whole-booking feedback rows carrying no consultant) was found already fixed on `dev` independently of this train — the feedback route now copies `consultantProfileId` off the held occurrence it found regardless of whether the rating names one occurrence or the whole booking; item 5 (the webhook worker's own backoff copy) was found already sharing `lib/retry/backoff.ts`'s `nextRetryAt`. Item 1 — the consultant Requests list labelling a request in 30-minute intervals instead of sessions — was never in scope for this train and stays open, so the PR is `Part of #1639`, not `Closes`.

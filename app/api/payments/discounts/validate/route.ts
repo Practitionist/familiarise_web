@@ -34,7 +34,7 @@ interface DiscountCodeResponse {
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user) {
       return NextResponse.json(
         { valid: false, message: "Unauthorized" },

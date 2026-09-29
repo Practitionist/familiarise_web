@@ -22,6 +22,8 @@
  * Stream's own call report before it moves any money.
  */
 
+import type { OutageWindow } from "./session-outcome";
+
 /**
  * How long after the last slot ends a missing consultant is still allowed to be
  * a late join or a delayed webhook rather than a no-show. Deliberately generous
@@ -124,17 +126,23 @@ export function classifyConsultantAttendance(
  *
  * `true` means auto-complete may complete it even in the no-show shape, because
  * the detector has been able to see it for long enough that its silence is a
- * decision rather than a schedule.
+ * decision rather than a schedule. #1746 B — the detector is a financial job
+ * that DEGRADED maintenance holds, so the clock pauses for every outage minute.
  */
 export function isPastNoShowHandoff(
   lastSlotEndsAt: Date | null | undefined,
   now: Date = new Date(),
+  outages: readonly OutageWindow[] = [],
 ): boolean {
   // A booking whose slot end we cannot read cannot be held back on a deadline
   // we cannot compute; treat it as past the handoff so it can never strand.
   if (!lastSlotEndsAt) return true;
-  return (
-    now.getTime() - lastSlotEndsAt.getTime() >=
-    NO_SHOW_HANDOFF_MINUTES * 60 * 1000
-  );
+  const from = lastSlotEndsAt.getTime();
+  const to = now.getTime();
+  const paused = outages.reduce((sum, w) => {
+    const start = Math.max(from, w.startsAt.getTime());
+    const end = Math.min(to, w.endsAt?.getTime() ?? to);
+    return sum + Math.max(0, end - start);
+  }, 0);
+  return to - from - paused >= NO_SHOW_HANDOFF_MINUTES * 60 * 1000;
 }

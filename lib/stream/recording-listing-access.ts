@@ -260,7 +260,7 @@ export type OwnedRecordingGuard =
 export async function guardOwnedListingRecording(
   recordingId: string,
 ): Promise<OwnedRecordingGuard> {
-  const session = await getSession();
+  const session = await getSession(true);
   if (!session?.user?.id) {
     return {
       ok: false,

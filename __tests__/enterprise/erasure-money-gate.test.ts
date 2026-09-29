@@ -68,6 +68,8 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(async () => []),
       count: jest.fn(async () => 0),
     },
+    // #1771 row 5 — the scrub reads payout accounts to off-board RazorpayX.
+    payoutAccount: { findMany: jest.fn(async () => []) },
     consultantPayout: { count: jest.fn(async () => counts.consultantPayout) },
     consultantEarnings: {
       count: jest.fn(async () => counts.consultantEarnings),

@@ -8,6 +8,27 @@ All documentation files follow `NN-kebab-case.md` (e.g., `01-architecture.md`). 
 
 ---
 
+## What belongs in this directory
+
+`docs/` is the engineer's working set. Something belongs here when an engineer
+needs it to build, verify, or operate the system. Four kinds of thing qualify,
+and they have different shelf lives:
+
+- **Reference** — how the system works now. Follows the code; gets rewritten.
+- **Decisions** — why it works that way. Dated, and deliberately never deleted.
+- **Runbooks** — what to do when it breaks. Time-sensitive; check the date.
+- **Research** — what we learned before choosing. Has an expiry; re-verify.
+
+Business and go-to-market material — hiring plans, sales playbooks, marketing
+copy, outreach — is **not** a developer's working set and does not live here.
+That content was removed from this repository; `git log -- docs/` retains it.
+
+**Do not add a new top-level directory for a single document.** A directory is a
+topic with several documents, not a filing cabinet. That is how this index grew
+to 43 top-level entries with no stated boundary.
+
+---
+
 ## Implemented Systems
 
 Documentation for working, production-ready systems.
@@ -244,6 +265,17 @@ Setup guides and how-to documentation.
 - [cleanup-setup.md](./guides/cleanup-setup.md) - Cleanup configuration
 - [cron-setup.md](./guides/cron-setup.md) - Cron job setup
 - [using-fallback-image.md](./guides/using-fallback-image.md) - Fallback image usage
+
+#### Frontend
+
+How to write UI in this codebase — the write-path validation boundary, theming
+and CSS scope, forms, and server actions vs routes. See
+[guides/frontend/00-README.md](./guides/frontend/00-README.md) for reading order.
+
+- [01-server-data-and-validation.md](./guides/frontend/01-server-data-and-validation.md) - The write path is the only boundary that counts
+- [02-theming-and-css-scope.md](./guides/frontend/02-theming-and-css-scope.md) - Dark tokens, `:has()` scoping, never mutate `<html>` from a route
+- [03-forms.md](./guides/frontend/03-forms.md) - Validation timing, wizard transitions, typed refusals
+- [04-server-actions-vs-routes.md](./guides/frontend/04-server-actions-vs-routes.md) - Which to use, and what it means for the UI
 
 ---
 

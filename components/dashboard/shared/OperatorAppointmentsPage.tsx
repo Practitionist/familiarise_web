@@ -3,17 +3,29 @@ import {
   QueryClient,
   dehydrate,
 } from "@tanstack/react-query";
-import { OperatorAppointmentsClient } from "./OperatorAppointmentsClient";
+import type { ReactNode } from "react";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 /**
  * `scope` is passed in rather than defaulted so each operator tree states what
  * it is looking at (#674 defect 13). Both callers pass `{ kind: "all" }` — the
  * platform-wide triage view these pages exist for.
  */
-export async function OperatorAppointmentsPage({ scope }: { scope: Scope }) {
+export async function OperatorAppointmentsPage({
+  scope,
+  children,
+}: {
+  scope: Scope;
+  /** The tree's client view — `OperatorAppointmentsClient` plus its Ops panel. */
+  children: ReactNode;
+}) {
   const queryClient = new QueryClient();
+  // #1527 QA — one zone for the server render and hydration: the list's
+  // dates printed Netlify's UTC, then the browser's zone (hydration #418).
+  const viewerZone = await getViewerZone();
 
   // #890 — SSR prefetch the DEFAULT view (page 1, no filters) so the client
   // useQuery hydrates without a fetch waterfall. The queryKey object MUST match
@@ -33,7 +45,9 @@ export async function OperatorAppointmentsPage({ scope }: { scope: Scope }) {
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <OperatorAppointmentsClient />
+      <DisplayZoneProvider zone={viewerZone.zone}>
+        {children}
+      </DisplayZoneProvider>
     </HydrationBoundary>
   );
 }

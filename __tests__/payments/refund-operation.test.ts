@@ -115,6 +115,11 @@ function txStub() {
       }),
     },
     refund: {
+      // #1780 — the dedupe lookup reads Refund by its unique key.
+      findUnique: jest.fn(
+        async ({ where }: { where: { dedupeKey?: string } }) =>
+          state.refunds.find((r) => r.dedupeKey === where.dedupeKey) ?? null,
+      ),
       findMany: jest.fn(async ({ where, select }: any) => {
         const rows = state.refunds.filter((r) => {
           if (where.paymentId && r.paymentId !== where.paymentId) return false;
@@ -510,6 +515,7 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import prisma from "@/lib/prisma";
+import { prorate } from "@/lib/payments/utils/money";
 
 const tx: any = prisma; // the stub IS the tx in our setup
 
@@ -668,6 +674,44 @@ describe("refundPayment — full single-leg WALLET refund", () => {
     expect(details.amountPaise).toBe(10000);
     expect(details.balanceAfterPaise).toBe(60000);
     expect(details.initiatedByUserId).toBe("user-admin");
+  });
+});
+
+describe("refundPayment — dedupeKey (#1780)", () => {
+  it("a second call with the same key creates nothing and returns the first refund", async () => {
+    seedSinglePartyWalletPayment({});
+    const call = () =>
+      refundPayment({
+        paymentId: "pay-1",
+        amountPaise: 2000,
+        reason: "session not made up",
+        dedupeKey: "occ:occ-5:pay:pay-1",
+      });
+
+    const first = await call();
+    const second = await call();
+
+    expect(tx.refund.create).toHaveBeenCalledTimes(1);
+    expect(second.refundId).toBe(first.refundId);
+    expect(second.amountRefundedPaise).toBe(2000);
+    expect(state.refunds).toHaveLength(1);
+  });
+});
+
+describe("refundPayment — class series cancel (#1780 D-5)", () => {
+  it("5 of 8 undelivered claws back 5/8 of the share and leaves the earning live", async () => {
+    seedSinglePartyWalletPayment({});
+
+    await refundPayment({
+      paymentId: "pay-1",
+      amountPaise: 6250,
+      reason: "series cancelled",
+      dedupeKey: "series-cancel:pay-1",
+    });
+
+    const ce = state.consultantEarnings.get("ce-1");
+    expect(ce?.refundedShareAmount).toBe(prorate(8000, 5, 8));
+    expect(ce?.status).not.toBe("REFUNDED");
   });
 });
 
