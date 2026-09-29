@@ -43,11 +43,16 @@
      * instead, which means choosing a direction here cannot leak into the
      * product surfaces — and promoting it later is a one-line alias flip.
      */
-    --brand: 245 59% 51%;
+    /* Achromatic, deliberately. The app has never had a brand hue — every
+       structural token is `0 0% X%` and the primary is near-black — so the
+       default direction is black-and-white and colour is something the other
+       two directions opt INTO. Making the default coloured would have been a
+       brand decision dressed up as a refresh. */
+    --brand: 240 10% 10%;
     --brand-foreground: 0 0% 100%;
-    --brand-subtle: 245 60% 96%;
-    --brand-foreground-subtle: 245 55% 34%;
-    --brand-border: 245 45% 85%;
+    --brand-subtle: 240 14% 95%;
+    --brand-foreground-subtle: 240 8% 28%;
+    --brand-border: 240 12% 84%;
 
     --destructive: 0 74% 47%;
     --destructive-foreground: 0 0% 98%;
@@ -63,7 +68,7 @@
     --border: 240 12% 90%;
     --border-subtle: 240 14% 94%;
     --input: 240 12% 87%;
-    --ring: 245 59% 51%;
+    --ring: 240 10% 22%;
 
     /* ── Radius ─────────────────────────────────────────────────────────────
      * A NAMED scale, not an arithmetic remap of Tailwind's defaults.
@@ -99,11 +104,11 @@
     --shadow-color: 240 20% 20%;
     --highlight: 0 0% 0%;
 
-    --chart-1: 245 59% 51%;
-    --chart-2: 199 70% 44%;
-    --chart-3: 152 45% 38%;
-    --chart-4: 33 85% 45%;
-    --chart-5: 340 65% 52%;
+    --chart-1: 240 10% 18%;
+    --chart-2: 240 8% 34%;
+    --chart-3: 240 6% 50%;
+    --chart-4: 240 5% 66%;
+    --chart-5: 240 4% 80%;
 
     --sidebar-background: 240 20% 98%;
     --sidebar-foreground: 240 8% 30%;
@@ -112,7 +117,7 @@
     --sidebar-accent: 240 16% 95%;
     --sidebar-accent-foreground: 240 10% 12%;
     --sidebar-border: 240 14% 91%;
-    --sidebar-ring: 245 59% 51%;
+    --sidebar-ring: 240 10% 22%;
 
     /* Monochrome landing page colors */
     --silver: 0 0% 75%;
@@ -363,11 +368,11 @@
     --accent: 240 8% 16%;
     --accent-foreground: 240 8% 96%;
 
-    --brand: 245 85% 74%;
-    --brand-foreground: 245 60% 12%;
-    --brand-subtle: 245 30% 18%;
-    --brand-foreground-subtle: 245 85% 82%;
-    --brand-border: 245 30% 30%;
+    --brand: 240 8% 96%;
+    --brand-foreground: 240 20% 10%;
+    --brand-subtle: 240 8% 18%;
+    --brand-foreground-subtle: 240 10% 78%;
+    --brand-border: 240 8% 28%;
 
     /* Was 0 62.8% 30.6% (#7f1d1d), which is a SURFACE colour, not a text
        colour: 1.87:1 on --card (#121212) and 2.1:1 on --background. Every
@@ -390,7 +395,7 @@
     --border: 240 8% 20%;
     --border-subtle: 240 8% 15%;
     --input: 240 8% 24%;
-    --ring: 245 85% 74%;
+    --ring: 240 10% 72%;
 
     --shadow-color: 240 40% 2%;
     /* The dark-surface depth channel. A drop shadow on a #0C0C0F card is
@@ -398,11 +403,11 @@
        as a raised surface. Consumed by the `edge` utility in components/ui. */
     --highlight: 0 0% 100%;
 
-    --chart-1: 245 85% 74%;
-    --chart-2: 199 80% 62%;
-    --chart-3: 152 50% 55%;
-    --chart-4: 38 90% 62%;
-    --chart-5: 340 75% 68%;
+    --chart-1: 240 8% 80%;
+    --chart-2: 240 7% 64%;
+    --chart-3: 240 6% 50%;
+    --chart-4: 240 6% 36%;
+    --chart-5: 240 5% 24%;
 
     --sidebar-background: 240 11% 7%;
     --sidebar-foreground: 240 8% 95%;
@@ -411,7 +416,7 @@
     --sidebar-accent: 240 8% 15%;
     --sidebar-accent-foreground: 240 8% 95%;
     --sidebar-border: 240 8% 18%;
-    --sidebar-ring: 245 85% 74%;
+    --sidebar-ring: 240 10% 72%;
 
     /* Monochrome landing page colors - dark mode */
     --silver: 0 0% 65%;

@@ -344,7 +344,9 @@ export default function SubscriptionPricingToggle({
             >
               {/* Pricing content — lives directly in glass parent */}
               <div className="space-y-1">
-                <h3 className="text-lg font-bold text-white">{option.title}</h3>
+                <h3 className="font-display text-base font-semibold tracking-tight text-foreground">
+                  {option.title}
+                </h3>
                 <p className="text-sm text-muted-foreground">{option.description}</p>
               </div>
 
@@ -377,7 +379,7 @@ export default function SubscriptionPricingToggle({
                           key={`feature-${index}`}
                           className="flex items-center text-sm text-foreground"
                         >
-                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-success flex-shrink-0" />
                           {feature}
                         </li>
                       ))}
@@ -440,7 +442,7 @@ export default function SubscriptionPricingToggle({
                   <Button
                     asChild
                     variant="outline"
-                    className="w-full bg-white/[0.05] border border-white/[0.12] text-neutral-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-control h-11 text-sm transition-all duration-200"
+                    className="mb-3 h-11 w-full rounded-control border border-border bg-background text-sm font-medium text-foreground transition-colors duration-200 hover:bg-muted hover:text-white font-medium rounded-control h-11 text-sm transition-all duration-200"
                   >
                     <Link
                       href={`/explore/programs/plans/subscriptions/${selectedPlanDetails.id}`}
@@ -453,7 +455,7 @@ export default function SubscriptionPricingToggle({
 
                 {/* Primary CTA */}
                 <Button
-                  className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200"
+                  className="h-11 w-full rounded-control bg-primary text-sm font-semibold text-primary-foreground transition-colors duration-200 hover:bg-primary/90"
                   onClick={handleChoosePlan}
                 >
                   Subscribe

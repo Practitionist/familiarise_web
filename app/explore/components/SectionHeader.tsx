@@ -7,6 +7,9 @@ import { cn } from "@/utils/tailwind";
 
 interface SectionHeaderProps {
   title: string;
+  /** Secondary line under the title. Added for the results headings, which
+   *  want to carry the live result count without it becoming the title. */
+  description?: React.ReactNode;
   seeAllHref?: string;
   onSeeAllClick?: () => void;
   icon?: React.ReactNode;
@@ -29,6 +32,7 @@ interface SectionHeaderProps {
  */
 export default function SectionHeader({
   title,
+  description,
   seeAllHref,
   onSeeAllClick,
   icon,
@@ -49,9 +53,14 @@ export default function SectionHeader({
             {icon}
           </span>
         )}
-        <h2 className="truncate font-display text-lg font-semibold tracking-tight text-foreground">
-          {title}
-        </h2>
+        <div className="min-w-0">
+          <h2 className="truncate font-display text-lg font-semibold tracking-tight text-foreground">
+            {title}
+          </h2>
+          {description && (
+            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+          )}
+        </div>
       </div>
       {showSeeAll &&
         (onSeeAllClick ? (

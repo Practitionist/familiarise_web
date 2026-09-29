@@ -5,7 +5,8 @@ import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 
 import { EmptyState } from "@/components/ui/empty-state";
-import type { IConsultantCardData, IExpertsMetaData } from "../utils";
+import type { IExpertsMetaData } from "../utils";
+import type { IConsultantCardData } from "@/types/consultant";
 import ConsultantCard from "./ConsultantCard";
 
 interface ExpertResultsProps {

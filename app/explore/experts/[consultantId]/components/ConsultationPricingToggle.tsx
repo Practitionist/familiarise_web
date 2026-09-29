@@ -346,7 +346,7 @@ export default function ConsultationPricingToggle({
         <h3 className="font-display text-lg font-semibold tracking-tight text-foreground">
           Consultee Access Required
         </h3>
-        <p className="text-neutral-400">
+        <p className="text-sm text-muted-foreground">
           To book consultations, please sign in with a consultee account.
         </p>
       </div>
@@ -398,7 +398,9 @@ export default function ConsultationPricingToggle({
             >
               {/* Pricing content — no nested dark card, lives directly in glass parent */}
               <div className="space-y-1">
-                <h3 className="text-lg font-bold text-white">{option.title}</h3>
+                <h3 className="font-display text-base font-semibold tracking-tight text-foreground">
+                  {option.title}
+                </h3>
                 <p className="text-sm text-muted-foreground">{option.description}</p>
               </div>
 
@@ -422,7 +424,7 @@ export default function ConsultationPricingToggle({
                           key={`feature-${index}`}
                           className="flex items-center text-sm text-foreground"
                         >
-                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-success flex-shrink-0" />
                           {feature}
                         </li>
                       ))}
@@ -448,7 +450,7 @@ export default function ConsultationPricingToggle({
               <Dialog>
                 <DialogTrigger asChild>
                   <Button
-                    className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200"
+                    className="h-11 w-full rounded-control bg-primary text-sm font-semibold text-primary-foreground transition-colors duration-200 hover:bg-primary/90"
                     onClick={handleBookNowClick}
                   >
                     Book Now

@@ -172,12 +172,12 @@ export default function ProgramsInteractiveContent({
   // #1490's rule, applied to the listing: the total is only honest when no
   // filter is narrowing the set.
   const resultSummary = useMemo(() => {
-    const total = stats?.publishedClassCount;
-    const all = (stats?.publishedClassCount ?? 0) + (stats?.publishedWebinarCount ?? 0);
-    if (!total) return null;
-    if (chips.length === 0) {
-      return `${all} program${all === 1 ? "" : "s"}`;
-    }
+    // `stats` is an array of { key, value, display, label }. Summing `value`
+    // gives the real catalogue total; it is a count of PUBLISHED plans, so it
+    // only matches the rows on screen when nothing is filtered.
+    const total = stats?.reduce((sum, s) => sum + s.value, 0) ?? 0;
+    if (total === 0) return null;
+    if (chips.length === 0) return `${total} programs`;
     return `${filteredAndSortedPrograms.length} matching`;
   }, [stats, chips.length, filteredAndSortedPrograms.length]);
 

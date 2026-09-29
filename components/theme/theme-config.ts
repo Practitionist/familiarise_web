@@ -36,21 +36,21 @@ export const THEME_META: Record<
   { label: string; blurb: string; swatch: string[] }
 > = {
   precision: {
-    label: "Quiet Precision",
+    label: "Neutral",
     blurb:
-      "Near-neutral with one accent. Tinted surfaces, hairline borders, disciplined type. The 'fix what is broken' option.",
-    swatch: ["#FAFAFC", "#FFFFFF", "#4F46E5", "#E4E4E7"],
+      "Black and white, as the site is today — but with a real surface ladder, a real radius scale and disciplined type. The default: no colour added.",
+    swatch: ["#FAFAFC", "#FFFFFF", "#18181B", "#E4E4E7"],
   },
   editorial: {
-    label: "Editorial Warmth",
+    label: "Editorial",
     blurb:
-      "Warm parchment and a real display serif. Hairline rules instead of shadows. Reads like a publication, not a dashboard.",
+      "Warm parchment, a real display serif, and a terracotta accent. Hairline rules instead of shadows — reads like a publication, not a dashboard.",
     swatch: ["#FBF9F4", "#FFFDF8", "#A8552F", "#E4DACB"],
   },
   gallery: {
-    label: "Gallery Dark",
+    label: "Gallery",
     blurb:
-      "Dark-first. Media is the only bright thing; depth comes from borders and an inset top highlight rather than drop shadows.",
+      "Dark-first with a violet accent. Media is the only bright thing; depth comes from borders and an inset top highlight rather than drop shadows.",
     swatch: ["#0C0C0F", "#16161A", "#8B7CFF", "#2A2A31"],
   },
 };
