@@ -31,6 +31,10 @@
  *   npx tsx scripts/stream/ensure-recording-external-storage.ts --list
  *   npx tsx scripts/stream/ensure-recording-external-storage.ts --provider r2 --delete
  *
+ * `--apply` and `--delete` must name the target app — see target-guard.ts. The
+ * credentials handed to Stream here are long-lived and the write is to the
+ * shared app, so "which app" is worth saying out loud before either.
+ *
  * Env, per provider:
  *   R2_BUCKET R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
  *   SUPABASE_S3_BUCKET SUPABASE_S3_ENDPOINT SUPABASE_S3_REGION
@@ -40,6 +44,7 @@
 import "dotenv/config";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
 import { RECORDING_MAX_OBJECT_BYTES } from "@/lib/stream/recording-storage";
+import { requireNamedTargetApp } from "./target-guard";
 
 /** Where Stream writes inside the bucket. Keeps recordings out of the root. */
 const PATH_PREFIX = "recordings/";
@@ -100,6 +105,8 @@ interface Options {
   check: boolean;
   list: boolean;
   remove: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 function parseArgs(argv: string[]): Options {
@@ -110,6 +117,7 @@ function parseArgs(argv: string[]): Options {
     check: argv.includes("--check"),
     list: argv.includes("--list"),
     remove: argv.includes("--delete"),
+    argv,
   };
 }
 
@@ -144,6 +152,19 @@ export async function ensureRecordingExternalStorage(
     console.error(
       `Pass --provider <${Object.keys(all).join("|")}>, or --list.\n`,
     );
+    return 1;
+  }
+
+  // Both writes are gated, and `--check` is not: it calls
+  // `/video/external_storage/{name}/check`, which makes Stream upload a real test
+  // object and is a read of a config that has to exist. `--list` likewise.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/ensure-recording-external-storage.ts",
+      writes: opts.apply || opts.remove,
+      argv: opts.argv,
+    })
+  ) {
     return 1;
   }
 

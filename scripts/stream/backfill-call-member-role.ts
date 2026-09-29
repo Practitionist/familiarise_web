@@ -33,7 +33,8 @@
  *   npx tsx scripts/stream/backfill-call-member-role.ts
  *   npx tsx scripts/stream/backfill-call-member-role.ts --apply
  *
- * NOTE: a dry run READS production. An apply WRITES member roles to production.
+ * NOTE: a dry run READS production. An apply WRITES member roles to production,
+ * and must name the target app — see target-guard.ts.
  */
 import "dotenv/config";
 
@@ -42,6 +43,7 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import { requireNamedTargetApp } from "./target-guard";
 
 type StreamVideoClient = ReturnType<typeof getStreamVideoClient>;
 
@@ -235,6 +237,8 @@ export async function anyOpenCallMemberHolds(
 
 export interface Options {
   apply: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 export interface BackfillResult {
@@ -247,7 +251,7 @@ export interface BackfillResult {
 }
 
 function parseArgs(argv: string[]): Options {
-  return { apply: argv.includes("--apply") };
+  return { apply: argv.includes("--apply"), argv };
 }
 
 export async function backfillCallMemberRole(
@@ -271,6 +275,19 @@ export async function backfillCallMemberRole(
   }
 
   const client = getStreamVideoClient();
+
+  // The credentials say nothing about WHICH app they point at, and this script
+  // rewrites the member role on every open call. Gated like every other writer
+  // in this folder — see target-guard.ts.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/backfill-call-member-role.ts",
+      writes: opts.apply,
+      argv: opts.argv,
+    })
+  ) {
+    return result;
+  }
 
   for await (const call of iterateOpenCalls(client)) {
     result.callsScanned++;

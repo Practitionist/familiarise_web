@@ -24,6 +24,12 @@ const mockWriteFileSync = jest.fn();
 const mockQueryCalls = jest.fn();
 const mockQueryMembers = jest.fn();
 
+// The target-app guard greps its own source in one case, the way
+// grants-deploy-gate.test.ts does for the deploy gate. `node:fs` is mocked
+// above (the drift branch writes a recovery pre-image through it), so the real
+// reader is pulled in where the source is needed.
+import { join } from "path";
+
 // The drift branch writes the recovery pre-image to disk. Unmocked, every run of
 // this suite would leave a real file in tmpdir — and the payload, which is the
 // only copy of a config Stream just discarded, would go unasserted.
@@ -43,15 +49,56 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
-import { ensureCallTypeGrants } from "../../scripts/stream/ensure-call-type-grants";
+import {
+  ensureCallTypeGrants,
+  DRIFT_EXIT_CODE,
+} from "../../scripts/stream/ensure-call-type-grants";
+import { PRODUCTION_APP_NAME } from "../../scripts/stream/target-guard";
 
-/** The live `default` grants, trimmed to the permissions this script touches. */
+/**
+ * The script's own flag object, defaulted.
+ *
+ * Every write case below now has to assert a target app (`target-guard.ts`), and
+ * 30 call sites repeating it would be 30 chances to forget one. The defaults are
+ * the SAFE ones — a dry run that names nothing and asserts no deploy — so a case
+ * that means to write opts in explicitly, which is the direction a mistake
+ * should go.
+ *
+ * `argv: []` passed explicitly means "names no target at all", which is what the
+ * guard cases need; that is why the default is a fallback rather than a spread
+ * that would overwrite it.
+ */
+function opts(
+  o: Partial<Parameters<typeof ensureCallTypeGrants>[0]> = {},
+): Parameters<typeof ensureCallTypeGrants>[0] {
+  const { argv, ...rest } = o;
+  return {
+    apply: false,
+    restore: false,
+    deployConfirmed: false,
+    check: false,
+    ...rest,
+    argv: argv ?? (rest.apply ? ["--target-app", PRODUCTION_APP_NAME] : []),
+  };
+}
+
+/**
+ * The live `default` grants, trimmed to the permissions this script touches.
+ *
+ * Read from `video_get_call_type` on 2026-09-29, not from Stream's docs, which
+ * is the whole lesson of the fixture: the live map has no `host` and no
+ * `moderator` key, and it holds four billable grants that a first pass over the
+ * documentation never named.
+ */
 const LIVE_GRANTS = (): Record<string, string[]> => ({
   admin: [
     "join-call",
     "end-call",
     "start-recording",
     "stop-recording",
+    "start-transcription",
+    "start-broadcasting",
+    "enable-noise-cancellation-any-team",
     "mute-users",
   ],
   call_member: [
@@ -59,16 +106,30 @@ const LIVE_GRANTS = (): Record<string, string[]> => ({
     "end-call",
     "start-recording",
     "stop-recording",
+    "start-transcription",
+    "stop-transcription",
+    "start-closed-captions",
+    "stop-closed-captions",
+    "start-broadcasting",
+    "stop-broadcasting",
+    "enable-noise-cancellation-any-team",
     "send-audio",
   ],
   global_admin: ["read-call"],
   global_read_only: ["read-call"],
-  guest: ["join-call", "send-audio"],
+  guest: ["join-call", "send-audio", "enable-noise-cancellation-any-team"],
   user: [
     "join-call",
     "end-call",
     "start-recording",
     "stop-recording",
+    "start-transcription",
+    "stop-transcription",
+    "start-closed-captions",
+    "stop-closed-captions",
+    "start-broadcasting",
+    "stop-broadcasting",
+    "enable-noise-cancellation-any-team",
     "send-audio",
   ],
 });
@@ -82,13 +143,7 @@ const LIVE_GRANTS = (): Record<string, string[]> => ({
  * make them pass — or fail — for the wrong reason.
  */
 const EXPECTED_GRANTS_AFTER = (): Record<string, string[]> => ({
-  admin: [
-    "join-call",
-    "end-call",
-    "start-recording",
-    "stop-recording",
-    "mute-users",
-  ],
+  admin: LIVE_GRANTS().admin,
   call_member: ["join-call", "send-audio"],
   global_admin: ["read-call"],
   global_read_only: ["read-call"],
@@ -96,22 +151,98 @@ const EXPECTED_GRANTS_AFTER = (): Record<string, string[]> => ({
   user: ["send-audio"],
 });
 
+/**
+ * The live `livestream` grants, read 2026-09-29 with `video_get_call_type`.
+ *
+ * The point of this fixture is that `user` and `call_member` hold NEARLY THE
+ * SAME LIST — both carry the whole owner-suffixed set. Stream has no host
+ * concept on this type, so `call_member`, which the app hands to every
+ * participant, is holding `end-call-owner`. Trimming the two roles down to what
+ * this script touches would have hidden exactly that.
+ */
+const LIVE_LIVESTREAM_GRANTS = (): Record<string, string[]> => ({
+  admin: [
+    "create-call",
+    "end-call",
+    "start-recording",
+    "stop-recording",
+    "update-call",
+  ],
+  global_admin: ["end-call-any-team", "end-call-owner", "update-call-any-team"],
+  global_read_only: ["read-call", "read-call-stats"],
+  // `anonymous` IS a key here, and is not on `default`. One filter for both
+  // types because of it.
+  anonymous: ["read-call"],
+  call_member: [
+    "block-user-owner",
+    "create-call-reaction",
+    "enable-noise-cancellation-any-team",
+    "end-call-owner",
+    "join-backstage-owner",
+    "join-ended-call-owner",
+    "kick-user-owner",
+    "mute-users-owner",
+    "read-call",
+    "remove-call-member-owner",
+    "screenshare-owner",
+    "send-audio-owner",
+    "send-event",
+    "send-video-owner",
+    "start-broadcasting-owner",
+    "start-recording-owner",
+    "stop-broadcasting-owner",
+    "stop-recording-owner",
+    "update-call-member-owner",
+    "update-call-member-role-owner",
+    "update-call-owner",
+  ],
+  user: [
+    "block-user-owner",
+    "create-call-reaction",
+    "enable-noise-cancellation-any-team",
+    "end-call-owner",
+    "join-backstage-owner",
+    "kick-user-owner",
+    "mute-users-owner",
+    "read-call",
+    "remove-call-member-owner",
+    "send-audio-owner",
+    "send-event",
+    "send-video-owner",
+    "start-broadcasting-owner",
+    "start-recording-owner",
+    "stop-broadcasting-owner",
+    "stop-recording-owner",
+    "update-call-member-owner",
+    "update-call-member-role-owner",
+    "update-call-owner",
+  ],
+});
+
 const LIVE_SETTINGS = { recording: { mode: "available", quality: "720p" } };
 const LIVE_NOTIFICATIONS = { enabled: true };
 
-function mockCallType(grants: Record<string, string[]>) {
+function mockCallType(grants: Record<string, string[]>, name = "default") {
   return {
-    name: "default",
+    name,
     grants,
     settings: LIVE_SETTINGS,
     notification_settings: LIVE_NOTIFICATIONS,
   };
 }
 
-/** Grants as they end up on Stream after an --apply run. */
-function applied(): Record<string, string[]> {
-  const call = mockUpdateCallType.mock.calls.at(-1);
-  if (!call) throw new Error("updateCallType was never called");
+/**
+ * The grants of ONE call type as they end up on Stream after an --apply run.
+ *
+ * Filtered by name because the script now writes two call types, and `default`
+ * first: a "last call wins" helper would silently start describing `livestream`
+ * in every case that meant to describe the type a consultation resolves against.
+ */
+function applied(name = "default"): Record<string, string[]> {
+  const call = mockUpdateCallType.mock.calls
+    .filter((c) => c[0].name === name)
+    .at(-1);
+  if (!call) throw new Error(`updateCallType was never called for ${name}`);
   return call[0].grants as Record<string, string[]>;
 }
 
@@ -121,8 +252,12 @@ function applied(): Record<string, string[]> {
  * PRE-write state makes every apply look like a failed write. Storing what was
  * written is what the real server does; tests that need the two to diverge
  * override with `mockResolvedValueOnce`, which is consumed ahead of this.
+ *
+ * Keyed by call type for the same reason `applied()` is: the two types have
+ * different live grants, and a single shared bag would let a livestream write
+ * make a `default` assertion pass.
  */
-let stored: Record<string, string[]>;
+let stored: Record<string, Record<string, string[]>>;
 
 /** One open call whose members hold the roles given. */
 function openCallWithMembers(roles: Array<string | undefined>) {
@@ -138,11 +273,19 @@ function openCallWithMembers(roles: Array<string | undefined>) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  stored = LIVE_GRANTS();
-  mockGetCallType.mockImplementation(async () => mockCallType({ ...stored }));
+  stored = { default: LIVE_GRANTS(), livestream: LIVE_LIVESTREAM_GRANTS() };
+  mockGetCallType.mockImplementation(async ({ name }: { name: string }) =>
+    mockCallType({ ...stored[name] }, name),
+  );
   mockUpdateCallType.mockImplementation(
-    async ({ grants }: { grants: Record<string, string[]> }) => {
-      stored = { ...grants };
+    async ({
+      name,
+      grants,
+    }: {
+      name: string;
+      grants: Record<string, string[]>;
+    }) => {
+      stored[name] = { ...grants };
       return {};
     },
   );
@@ -153,22 +296,18 @@ beforeEach(() => {
 
 describe("ensure-call-type-grants", () => {
   it("is a dry run by default and writes nothing", async () => {
-    const code = await ensureCallTypeGrants({
-      apply: false,
-      restore: false,
-      deployConfirmed: false,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: false, restore: false, deployConfirmed: false }),
+    );
 
     expect(code).toBe(0);
     expect(mockUpdateCallType).not.toHaveBeenCalled();
   });
 
   it("takes join-call off user AND guest", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     // `guest` matters as much as `user`: the app has
     // guest_user_creation_disabled: false, so guest sessions are creatable
@@ -179,11 +318,9 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("leaves call_member able to join — the whole system depends on it", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     // The join route assigns call_member to EVERY participant. If this role
     // cannot join, nobody can join anything.
@@ -191,11 +328,9 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("takes recording control off call_member, not just off user", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     // The live type grants call_member start-recording and stop-recording, and
     // the join route hands call_member to everyone — so revoking these from
@@ -211,11 +346,9 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("revokes end-call from call_member, now that the end route exists", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     // The join route assigns `call_member` to EVERY participant, and Stream's
     // roles do not separate host from participant here — host-ness is
@@ -234,11 +367,9 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("leaves end-call on admin", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     // `admin` is not a role any participant is assigned by the join route, and
     // the server client acts outside the permission system anyway. Stripping it
@@ -247,21 +378,17 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("does not touch admin", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     expect(applied().admin).toEqual(LIVE_GRANTS().admin);
   });
 
   it("does not invent role keys the call type does not have", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     // Review suggested initialising `host` and `moderator`, on the strength of
     // Stream's docs. Neither key exists on this app's `default` type, and the
@@ -273,13 +400,11 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("heals a call type that arrives without a joinable member role", async () => {
-    delete (stored as Record<string, string[] | undefined>).call_member;
+    delete stored.default.call_member;
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     expect(code).toBe(0);
     expect(applied().call_member).toContain("join-call");
@@ -300,28 +425,22 @@ describe("ensure-call-type-grants", () => {
         notification_settings: LIVE_NOTIFICATIONS,
       });
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     expect(code).toBe(1);
   });
 
   it("is idempotent — a second run over its own output is a no-op", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
     mockUpdateCallType.mockClear();
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     expect(code).toBe(0);
     expect(mockUpdateCallType).not.toHaveBeenCalled();
@@ -341,11 +460,9 @@ describe("ensure-call-type-grants", () => {
         notification_settings: LIVE_NOTIFICATIONS,
       });
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     expect(code).toBe(1);
 
@@ -375,11 +492,9 @@ describe("ensure-call-type-grants", () => {
         notification_settings: LIVE_NOTIFICATIONS,
       });
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
 
     expect(code).toBe(0);
     expect(mockWriteFileSync).not.toHaveBeenCalled();
@@ -399,11 +514,9 @@ describe("ensure-call-type-grants", () => {
     it("refuses to apply when no member of any open call holds call_member", async () => {
       openCallWithMembers(["host", "user"]);
 
-      const code = await ensureCallTypeGrants({
-        apply: true,
-        restore: false,
-        deployConfirmed: true,
-      });
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: false, deployConfirmed: true }),
+      );
 
       expect(code).toBe(1);
       expect(mockUpdateCallType).not.toHaveBeenCalled();
@@ -417,11 +530,9 @@ describe("ensure-call-type-grants", () => {
       // outage must not be satisfied by a partial result.
       openCallWithMembers(["host", "call_member"]);
 
-      const code = await ensureCallTypeGrants({
-        apply: true,
-        restore: false,
-        deployConfirmed: true,
-      });
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: false, deployConfirmed: true }),
+      );
 
       expect(code).toBe(1);
       expect(mockUpdateCallType).not.toHaveBeenCalled();
@@ -430,11 +541,9 @@ describe("ensure-call-type-grants", () => {
     it("applies when EVERY member holds it", async () => {
       openCallWithMembers(["call_member", "call_member"]);
 
-      const code = await ensureCallTypeGrants({
-        apply: true,
-        restore: false,
-        deployConfirmed: true,
-      });
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: false, deployConfirmed: true }),
+      );
 
       expect(code).toBe(0);
       expect(mockUpdateCallType).toHaveBeenCalled();
@@ -445,11 +554,9 @@ describe("ensure-call-type-grants", () => {
       // unrunnable rather than safe.
       mockQueryCalls.mockResolvedValue({ calls: [], next: undefined });
 
-      const code = await ensureCallTypeGrants({
-        apply: true,
-        restore: false,
-        deployConfirmed: true,
-      });
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: false, deployConfirmed: true }),
+      );
 
       expect(code).toBe(0);
       expect(mockUpdateCallType).toHaveBeenCalled();
@@ -461,22 +568,18 @@ describe("ensure-call-type-grants", () => {
       // the write does not happen.
       mockQueryCalls.mockRejectedValue(new Error("stream down"));
 
-      const code = await ensureCallTypeGrants({
-        apply: true,
-        restore: false,
-        deployConfirmed: true,
-      });
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: false, deployConfirmed: true }),
+      );
 
       expect(code).toBe(1);
       expect(mockUpdateCallType).not.toHaveBeenCalled();
     });
 
     it("does not scan on a dry run", async () => {
-      await ensureCallTypeGrants({
-        apply: false,
-        restore: false,
-        deployConfirmed: false,
-      });
+      await ensureCallTypeGrants(
+        opts({ apply: false, restore: false, deployConfirmed: false }),
+      );
 
       expect(mockQueryCalls).not.toHaveBeenCalled();
     });
@@ -487,11 +590,9 @@ describe("ensure-call-type-grants", () => {
       // command an operator reaches for when they are already locked out.
       openCallWithMembers(["host", "user"]);
 
-      const code = await ensureCallTypeGrants({
-        apply: true,
-        restore: true,
-        deployConfirmed: false,
-      });
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: true, deployConfirmed: false }),
+      );
 
       expect(code).toBe(0);
       expect(mockQueryCalls).not.toHaveBeenCalled();
@@ -499,18 +600,14 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("restores join-call without handing back recording control", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
     mockUpdateCallType.mockClear();
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: true,
-      deployConfirmed: false,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: true, deployConfirmed: false }),
+    );
 
     expect(code).toBe(0);
     // Rolling the join change back is an availability rollback. Handing every
@@ -521,18 +618,14 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("restores end-call to call_member on a rollback, but only to call_member", async () => {
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
     mockUpdateCallType.mockClear();
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: true,
-      deployConfirmed: false,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: true, deployConfirmed: false }),
+    );
 
     expect(code).toBe(0);
     // This rollback exists for exactly one situation: the end route is not
@@ -556,11 +649,9 @@ describe("ensure-call-type-grants", () => {
     // and returned 0 — reporting success without asking whether the restoration
     // landed. That is the wrong way round: the rollback is the emergency path,
     // reached when the revocation has already locked people out.
-    await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    await ensureCallTypeGrants(
+      opts({ apply: true, restore: false, deployConfirmed: true }),
+    );
     mockGetCallType.mockClear();
 
     // A stale second read: Stream reports the post-revocation grants, i.e. the
@@ -569,11 +660,9 @@ describe("ensure-call-type-grants", () => {
       .mockResolvedValueOnce(mockCallType(EXPECTED_GRANTS_AFTER()))
       .mockResolvedValueOnce(mockCallType(EXPECTED_GRANTS_AFTER()));
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: true,
-      deployConfirmed: false,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: true, deployConfirmed: false }),
+    );
 
     expect(code).toBe(1);
   });
@@ -587,12 +676,409 @@ describe("ensure-call-type-grants", () => {
       .mockResolvedValueOnce(mockCallType(LIVE_GRANTS()))
       .mockResolvedValueOnce(mockCallType(LIVE_GRANTS()));
 
-    const code = await ensureCallTypeGrants({
-      apply: true,
-      restore: false,
-      deployConfirmed: true,
-    });
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, deployConfirmed: true }),
+    );
 
     expect(code).toBe(1);
+  });
+
+  /**
+   * The grants hardening that half-landed.
+   *
+   * The live `default` type, read 2026-09-29, grants seven billable
+   * permissions to BOTH `user` and `call_member` — transcription, closed
+   * captions, broadcasting and the noise-cancellation grant — and this script
+   * revoked only `start-recording`/`stop-recording`. So a run that succeeded
+   * left every participant able to turn on a per-participant-minute meter, and
+   * the run reported success.
+   */
+  describe("the billable grants #1301 left in place", () => {
+    const BILLABLE = [
+      "start-transcription",
+      "stop-transcription",
+      "start-closed-captions",
+      "stop-closed-captions",
+      "start-broadcasting",
+      "stop-broadcasting",
+      "enable-noise-cancellation-any-team",
+    ];
+
+    it("takes every one of them off call_member, not just off user", async () => {
+      await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+      // `call_member` is the load-bearing role: /api/meetings/[meetingId]/join
+      // hands it to EVERY participant. Revoking from `user` alone removes the
+      // grant from nobody and reads exactly like a fix.
+      for (const perm of BILLABLE) {
+        expect(applied().call_member).not.toContain(perm);
+      }
+    });
+
+    it("takes them off user, guest and anonymous too", async () => {
+      await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+      for (const role of ["user", "guest"]) {
+        for (const perm of BILLABLE) {
+          expect(applied()[role]).not.toContain(perm);
+        }
+      }
+    });
+
+    it("filters a role the call type does not have rather than inventing it", async () => {
+      // `anonymous` is not a key on `default` — it IS one on `livestream`, and
+      // listing it in the revoked-roles set means the two types need one filter.
+      // Creating the key would grant a role nobody is ever assigned.
+      delete stored.default.guest;
+      const keysBefore = Object.keys(stored.default).sort();
+
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, deployConfirmed: true }),
+      );
+
+      expect(code).toBe(0);
+      expect(Object.keys(applied())).not.toContain("anonymous");
+      expect(Object.keys(applied()).sort()).toEqual(keysBefore);
+    });
+
+    it("leaves admin alone — an operator must still be able to inspect a call", async () => {
+      await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+      expect(applied().admin).toContain("enable-noise-cancellation-any-team");
+      expect(applied().admin).toEqual(LIVE_GRANTS().admin);
+    });
+
+    it("fails the run if Stream reads any of them back still granted", async () => {
+      // The check the half-landed fix did not have. A 200 from updateCallType is
+      // not evidence that a revocation was stored, and the one that failed to
+      // land here is the one that costs money.
+      mockGetCallType
+        .mockResolvedValueOnce(mockCallType(LIVE_GRANTS()))
+        .mockResolvedValueOnce(
+          mockCallType({
+            ...EXPECTED_GRANTS_AFTER(),
+            call_member: [
+              ...EXPECTED_GRANTS_AFTER().call_member,
+              "enable-noise-cancellation-any-team",
+            ],
+          }),
+        );
+
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, deployConfirmed: true }),
+      );
+
+      expect(code).toBe(1);
+    });
+
+    it("is idempotent with the billable revocations in place", async () => {
+      await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+      mockUpdateCallType.mockClear();
+
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, deployConfirmed: true }),
+      );
+
+      expect(code).toBe(0);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * `--check` is what makes this script usable by a scheduled job at all.
+   *
+   * `ensure-webhook-subscription.ts` returned 0 whatever it found for as long
+   * as it existed, so nothing ran it; a detector that always exits green
+   * detects nothing.
+   */
+  describe("--check", () => {
+    it("exits 2 on drift and writes nothing", async () => {
+      const code = await ensureCallTypeGrants(opts({ check: true }));
+
+      expect(code).toBe(DRIFT_EXIT_CODE);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("exits 0 when the live grants already match the desired ones", async () => {
+      await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+      mockUpdateCallType.mockClear();
+
+      const code = await ensureCallTypeGrants(opts({ check: true }));
+
+      expect(code).toBe(0);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("uses an exit code distinct from the unrunnable one", () => {
+      // 1 means the script could not evaluate drift (Stream unconfigured, or
+      // unreachable) — a failure of the runner. 2 means it read the call type
+      // and there really is drift. Both fail the job; a log reader must not have
+      // to guess which, because a missing credential and a re-granted meter need
+      // completely different responses.
+      expect(DRIFT_EXIT_CODE).toBe(2);
+    });
+
+    it("does not need a deploy assertion or a target app", async () => {
+      // A scheduled job runs this on a runner that has no business asserting
+      // either, and a gate on the read path would train operators to pass the
+      // flags reflexively until they stopped meaning anything.
+      const code = await ensureCallTypeGrants(
+        opts({ check: true, deployConfirmed: false, argv: [] }),
+      );
+
+      expect(code).toBe(DRIFT_EXIT_CODE);
+    });
+  });
+
+  describe("the target-app guard", () => {
+    it("refuses an --apply that names no target app", async () => {
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, deployConfirmed: true, argv: [] }),
+      );
+
+      expect(code).toBe(1);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("refuses an --apply that names a DIFFERENT app", async () => {
+      // A stale `STREAM_TARGET_APP` in a shell is the case this exists for, and
+      // it is why the guard checks the VALUE rather than merely requiring one.
+      const code = await ensureCallTypeGrants(
+        opts({
+          apply: true,
+          deployConfirmed: true,
+          argv: ["--target-app", "SomebodyElsesTrialApp"],
+        }),
+      );
+
+      expect(code).toBe(1);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("gates the rollback too", async () => {
+      // --restore-user-join is a write. The moment it is reached, people are
+      // locked out of every call; that is not the moment to relax the one check
+      // that says which account is being written to.
+      const code = await ensureCallTypeGrants(
+        opts({ apply: true, restore: true, argv: [] }),
+      );
+
+      expect(code).toBe(1);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("leaves a dry run alone", async () => {
+      const code = await ensureCallTypeGrants(opts({ argv: [] }));
+
+      expect(code).toBe(0);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("runs before the call type is even read", async () => {
+      // A refusal that depends on Stream being reachable turns a clear message
+      // into a connection error, and one that reads first has already
+      // established a session against an app the operator did not name.
+      const source = jest
+        .requireActual("node:fs")
+        .readFileSync(
+          join(process.cwd(), "scripts/stream/ensure-call-type-grants.ts"),
+          "utf8",
+        ) as string;
+      const guard = source.indexOf("requireNamedTargetApp({");
+      expect(guard).toBeGreaterThan(-1);
+      // The first READ, not the first mention of the call — the plans' doc
+      // comments and the pre-flight helper both talk about reading call types,
+      // and indexing those would assert nothing about order.
+      const firstRead = source.indexOf(
+        "await client.video.getCallType({ name: plan.name })",
+      );
+      expect(firstRead).toBeGreaterThan(-1);
+      // Source order is not execution order once the body has been split into
+      // `applyPlanTo`, so this pins the position of the guard in the ENTRY point
+      // and the read in the shared helper. What it actually protects is that
+      // neither has been moved below the other's first use.
+      expect(guard).toBeLessThan(source.indexOf("for (const plan of PLANS)"));
+      expect(firstRead).toBeLessThan(guard);
+      expect(source.indexOf("requireDeployConfirmation(opts)")).toBeLessThan(
+        guard,
+      );
+    });
+  });
+});
+
+/**
+ * B3 — `livestream`, where `call_member` is the attendee role and Stream has no
+ * host concept.
+ *
+ * Read off the live type 2026-09-29. `call_member` held `end-call-owner`,
+ * `join-backstage-owner`, `start-recording-owner`, `stop-recording-owner`,
+ * `update-call-owner`, `update-call-member-role-owner` and
+ * `remove-call-member-owner`, so any participant of a webinar could end the
+ * broadcast, remove or promote other participants, and start and stop a paid
+ * recording. `-owner` scopes the permission to a call you own; the owner is the
+ * host; Stream does not know who the host is.
+ */
+describe("livestream — the owner's powers are the attendee's powers", () => {
+  const OWNER_DESTRUCTIVE = [
+    "end-call-owner",
+    "join-backstage-owner",
+    "start-recording-owner",
+    "stop-recording-owner",
+    "remove-call-member-owner",
+    "update-call-member-role-owner",
+    "start-broadcasting-owner",
+    "stop-broadcasting-owner",
+  ];
+
+  it("takes every owner-suffixed destructive grant off call_member", async () => {
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    for (const perm of OWNER_DESTRUCTIVE) {
+      expect(applied("livestream").call_member).not.toContain(perm);
+    }
+  });
+
+  it("takes them off `user` as well as `call_member`", async () => {
+    // On the live type `user` and `call_member` hold nearly the same list, so a
+    // revocation applied to one and not the other would leave the same capability
+    // reachable under the other name. This is the same mistake the first round of
+    // the `default` fix made, with `user` versus `call_member`.
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    for (const perm of OWNER_DESTRUCTIVE) {
+      expect(applied("livestream").user).not.toContain(perm);
+    }
+    // `guest` is in the revoked-roles list and is NOT a key on this type. A plan
+    // that created it would grant a role nobody is ever assigned.
+    expect(applied("livestream").guest).toBeUndefined();
+  });
+
+  it("filters `anonymous`, which is a key here and NOT on `default`", async () => {
+    // One filter for both call types because of this. Inventing the key on
+    // `default` would grant a role nobody is ever assigned.
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    expect(applied("livestream").anonymous).toEqual(["read-call"]);
+    expect(Object.keys(applied("default"))).not.toContain("anonymous");
+  });
+
+  it("leaves admin and global_admin alone — they ARE the operators", async () => {
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    const written = applied("livestream");
+    expect(written.admin).toContain("end-call");
+    expect(written.admin).toContain("start-recording");
+    // `global_admin` holds the `-any-team` forms, which the plan never touches.
+    expect(written.global_admin).toContain("end-call-any-team");
+    expect(written.global_admin).toContain("end-call-owner");
+  });
+
+  it("leaves what an attendee legitimately needs to be in the room", async () => {
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    const member = applied("livestream").call_member;
+    for (const perm of [
+      "send-audio-owner",
+      "send-video-owner",
+      "screenshare-owner",
+    ]) {
+      expect(member).toContain(perm);
+    }
+  });
+
+  it("also takes the metered noise-cancellation grant", async () => {
+    // `harden-unused-call-types.ts` strips the billable STARTERS from this type
+    // but never `enable-noise-cancellation-any-team` and never any of the `stop-`
+    // half. Two scripts removing overlapping sets is fine — they only remove —
+    // and one of them being the SOLE remover of a per-participant-minute grant is
+    // not.
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    expect(applied("livestream").call_member).not.toContain(
+      "enable-noise-cancellation-any-team",
+    );
+  });
+
+  it("fails the run if Stream reads any of them back still granted", async () => {
+    // A 200 from updateCallType is not evidence that a revocation was stored, and
+    // the one that failed to land here is the one that lets an attendee end a
+    // broadcast. `default` is read twice and passes (the stateful mock serves what
+    // was written); `livestream` is then read twice with the PRE-write grants, so
+    // the read-back finds every revocation still in place.
+    mockGetCallType
+      .mockResolvedValueOnce(mockCallType({ ...LIVE_GRANTS() }, "default"))
+      // `default` verifies clean, so the run continues to `livestream` — which is
+      // the point: a per-type failure stops the run, and this case needs livestream
+      // to be REACHED for its read-back to be the thing that fails.
+      .mockResolvedValueOnce(
+        mockCallType({ ...EXPECTED_GRANTS_AFTER() }, "default"),
+      )
+      .mockResolvedValueOnce(
+        mockCallType({ ...LIVE_LIVESTREAM_GRANTS() }, "livestream"),
+      )
+      .mockResolvedValueOnce(
+        mockCallType({ ...LIVE_LIVESTREAM_GRANTS() }, "livestream"),
+      );
+
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, deployConfirmed: true }),
+    );
+
+    expect(code).toBe(1);
+  });
+
+  it("is not touched by --restore-user-join", async () => {
+    // The rollback exists for the `default` lockout. There is nothing here to roll
+    // back: these revocations carry no availability risk on a type the app does
+    // not yet resolve calls against, and handing them back would re-open a hole
+    // rather than fix an outage.
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+    mockUpdateCallType.mockClear();
+
+    const code = await ensureCallTypeGrants(
+      opts({ apply: true, restore: true }),
+    );
+
+    expect(code).toBe(0);
+    expect(
+      mockUpdateCallType.mock.calls.some((c) => c[0].name === "livestream"),
+    ).toBe(false);
+  });
+
+  it("does not run the call_member pre-flight against it", async () => {
+    // The pre-flight asks whether anybody HOLDS `call_member` on `default`, and
+    // `livestream` has no such role to hold. Running it there would refuse a
+    // healthy account for a question that does not apply to it.
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+    mockQueryCalls.mockClear();
+
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+
+    // Once, not twice.
+    expect(mockQueryCalls).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("--check across both call types", () => {
+  it("exits 2 when either type drifts, and names both", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const code = await ensureCallTypeGrants(opts({ check: true }));
+
+    expect(code).toBe(DRIFT_EXIT_CODE);
+    const said = error.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(said).toContain("`default`");
+    expect(said).toContain("`livestream`");
+    error.mockRestore();
+  });
+
+  it("exits 0 when both are at target", async () => {
+    await ensureCallTypeGrants(opts({ apply: true, deployConfirmed: true }));
+    mockUpdateCallType.mockClear();
+
+    const code = await ensureCallTypeGrants(opts({ check: true }));
+
+    expect(code).toBe(0);
+    expect(mockUpdateCallType).not.toHaveBeenCalled();
   });
 });

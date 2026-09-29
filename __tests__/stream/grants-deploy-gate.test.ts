@@ -87,12 +87,30 @@ describe("the script actually implements this", () => {
     // A refusal must not depend on Stream being reachable, and must not read
     // the call type first — otherwise an outage turns a clear refusal into a
     // confusing connection error.
+    //
+    // The read lives in `applyPlanTo`, which the entry point only reaches
+    // through the plan loop, so the ordering assertion is against that loop
+    // rather than against the raw `getCallType` text. Asserting against the text
+    // would compare the gate against a helper that is declared ABOVE it, which
+    // says nothing about the order anything runs in.
     const gateCall = source.indexOf("if (!requireDeployConfirmation(opts))");
     const configCheck = source.indexOf("if (!isStreamConfigured())");
-    const firstRead = source.indexOf("client.video.getCallType");
+    const planLoop = source.indexOf("for (const plan of PLANS)");
+    const preflight = source.indexOf("await DEFAULT_PLAN.preflight(client)");
     expect(gateCall).toBeGreaterThan(-1);
+    expect(planLoop).toBeGreaterThan(-1);
     expect(gateCall).toBeLessThan(configCheck);
-    expect(gateCall).toBeLessThan(firstRead);
+    expect(gateCall).toBeLessThan(preflight);
+    expect(gateCall).toBeLessThan(planLoop);
+  });
+
+  it("gates the call_member pre-flight on --apply alone", () => {
+    // The pre-flight reads real member records, so a dry run must not trigger it —
+    // and a rollback must not either, because it only widens access and it is
+    // reached when people are already locked out.
+    expect(source).toContain(
+      "if (opts.apply && !opts.restore && DEFAULT_PLAN.preflight)",
+    );
   });
 
   it("returns a failing exit code rather than continuing", () => {

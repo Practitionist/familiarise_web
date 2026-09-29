@@ -385,6 +385,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "settle-invoice-accruals.yml": "scheduled",
   "sso-cert-expiry-alert.yml": "scheduled",
   "stream-sync.yml": "scheduled",
+  "stream-calltype-drift.yml": "scheduled",
   "stream-webhook-drift.yml": "scheduled",
   "sweep-abandoned-overage-charges.yml": "scheduled",
   "sweep-orphaned-topup-captures.yml": "scheduled",

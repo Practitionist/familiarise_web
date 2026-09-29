@@ -24,6 +24,7 @@
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts --check
  *   npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
+ *   npx tsx scripts/stream/ensure-webhook-subscription.ts --restore
  *
  * #1270 — the script used to return 0 no matter what it found, which is why it
  * could not be wired to anything. A drift detector that always exits green
@@ -33,13 +34,44 @@
  * it never writes, annotates each finding for the Actions log, and exits
  * non-zero so the scheduled job goes red the day the live hook stops covering
  * what the dispatcher handles.
+ *
+ * ## Why there is a pre-image and a `--restore` at all
+ *
+ * Every other script in this folder writes a pre-image before it writes anything
+ * and has a way back. This one did not, and it is the one script here that writes
+ * to the shared APP rather than to one call type — so the thing it could destroy
+ * is the single most expensive object in the account: `event_hooks`, one hook
+ * carrying every video event type the whole pipeline depends on. The symptom of
+ * losing it is indistinguishable from 2026-08-13, when the pipeline had never
+ * processed an event, and there would have been no record of what it had been
+ * subscribed to.
+ *
+ * `--restore` reinstates the pre-image's `event_types` per hook, by id, and
+ * NOTHING else. It does not restore a whole `event_hooks` array: a rollback that
+ * also reinstated hooks another integration has since added would delete live
+ * configuration, and a rollback that reinstated one another integration has since
+ * removed would recreate it. The unit is the field this script changed.
  */
 import "dotenv/config";
 
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+
 import type { EventHook } from "stream-chat";
 
-import { getStreamChatClient, isStreamConfigured } from "../../lib/stream-client";
+import {
+  getStreamChatClient,
+  isStreamConfigured,
+} from "../../lib/stream-client";
 import { HANDLED_EVENT_TYPES } from "../../lib/stream/webhook-events";
+import { canonical } from "../../lib/stream/config-fingerprint";
+import { requireNamedTargetApp } from "./target-guard";
 
 /**
  * `call.session_started` is subscribed even though the dispatcher does not
@@ -120,9 +152,67 @@ function hookAccepts(hook: EventHook, eventType: string): boolean {
  * `dry-run` reports and exits 0 — the mode a human runs first to see what the
  * script would do. `check` reports, annotates and exits {@link DRIFT_EXIT_CODE}
  * when the live app does not cover every handled event; it is what CI runs.
- * `apply` is the only mode that writes.
+ * `apply` is the only mode that widens, and `restore` is the only mode that
+ * narrows back to the pre-image.
  */
-export type EnsureMode = "dry-run" | "check" | "apply";
+export type EnsureMode = "dry-run" | "check" | "apply" | "restore";
+
+/**
+ * Where the pre-image lives. Committed to a stable, repo-relative path rather
+ * than a timestamped file in tmpdir, because `--restore` reads it back on a LATER
+ * invocation — a path only the writing process could name made the rollback
+ * unusable in practice. `ensure-chat-type-grants.ts` reaches the same conclusion
+ * for the same reason and says so at the same place.
+ */
+const PRE_IMAGE_PATH = join(
+  process.cwd(),
+  ".stream-backups",
+  "webhook-subscription.json",
+);
+
+/**
+ * The rollback target, and deliberately the SMALLEST thing that undoes this
+ * script: one `event_types` array per hook id.
+ *
+ * A whole `event_hooks` array would be the tidier snapshot and a worse rollback —
+ * reinstating it would delete any hook another integration has added since, and
+ * recreate any it has removed. Only the field this script changed, keyed by id,
+ * so a hook that no longer exists is skipped rather than resurrected.
+ */
+interface PreImage {
+  capturedAt: string;
+  /** hook id -> the `event_types` it carried before this script widened it. */
+  hooks: Record<string, string[]>;
+}
+
+function readPreImage(): PreImage | null {
+  try {
+    const parsed = JSON.parse(readFileSync(PRE_IMAGE_PATH, "utf8")) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof (parsed as PreImage).hooks !== "object" ||
+      (parsed as PreImage).hooks === null
+    ) {
+      return null;
+    }
+    return parsed as PreImage;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write-then-rename, so an interrupted write cannot leave a truncated pre-image
+ * where a valid one used to be. Same directory, so the rename stays on one
+ * filesystem and is atomic — the sibling does this for the same reason.
+ */
+function writePreImage(image: PreImage): void {
+  mkdirSync(dirname(PRE_IMAGE_PATH), { recursive: true });
+  const tmpPath = `${PRE_IMAGE_PATH}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(image, null, 2));
+  renameSync(tmpPath, PRE_IMAGE_PATH);
+}
 
 /**
  * Distinct from 1 on purpose. 1 means the script could not evaluate drift at
@@ -144,8 +234,17 @@ function annotate(message: string): void {
 
 export async function ensureWebhookSubscription(
   mode: EnsureMode,
+  opts: { argv?: readonly string[] } = {},
 ): Promise<number> {
   const apply = mode === "apply";
+  const restoring = mode === "restore";
+  // `--apply --restore` is the writing rollback, so `apply` alone is not the
+  // question — "is THIS invocation going to write" is. Derived from argv rather
+  // than folded into the mode so that `--restore` and `--check` stay
+  // distinguishable, which is what lets the restore branch report without
+  // writing.
+  const willWrite =
+    apply || (restoring && (opts.argv ?? []).includes("--apply"));
   if (!isStreamConfigured()) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
@@ -155,6 +254,36 @@ export async function ensureWebhookSubscription(
 
   const client = getStreamChatClient();
   const app = await client.getAppSettings();
+
+  // This script writes the app's `event_hooks`, so it is gated like every other
+  // writer in this folder: dev, preview and production share one Stream app and
+  // the credentials alone do not say which one. `--restore` is a write too, and
+  // it is reached precisely when something is already wrong.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/ensure-webhook-subscription.ts",
+      writes: willWrite,
+      argv: opts.argv,
+      // Free — `getAppSettings` was called anyway.
+      liveAppName: app.app?.name,
+    })
+  ) {
+    return 1;
+  }
+
+  const preImage = readPreImage();
+
+  if (restoring && !preImage) {
+    console.error(
+      `\n🛑 Cannot restore — no pre-image at ${PRE_IMAGE_PATH}.\n` +
+        `Restoring without one would mean guessing which events the hook was\n` +
+        `subscribed to before, and guessing wrong in either direction is either a\n` +
+        `dead pipeline or a silent re-subscription nobody reviewed.\n` +
+        `Re-subscribe the hook in the Stream dashboard instead.\n`,
+    );
+    return 1;
+  }
+
   // Keep the COMPLETE list. `updateAppSettings({ event_hooks })` replaces the
   // whole array, so anything missing from the payload is deleted — including the
   // non-webhook hooks filtered out below (SQS, Pusher) and any second webhook
@@ -171,6 +300,149 @@ export async function ensureWebhookSubscription(
         "pointing at <origin>/api/stream/webhooks, then re-run this script.",
     );
     return 1;
+  }
+
+  // --- Rollback ------------------------------------------------------------
+  // Taken before the widening loop, because restoring and widening are opposite
+  // intents and running both in one invocation would make the exit code mean
+  // nothing. Like `ensure-chat-type-grants.ts`, `--restore` REPORTS and
+  // `--apply --restore` writes: a rollback is the one command somebody types
+  // while an incident is open, and it should show them what it is about to undo
+  // before it undoes it.
+  if (restoring) {
+    // Re-checked rather than carried through the guard above: `restoring` alone
+    // does not narrow `preImage`, and re-reading the file would mean two chances
+    // for it to change underneath an operator mid-incident — so this asserts the
+    // value the guard already validated rather than calling the reader again.
+    if (!preImage) {
+      console.error(
+        `\n🛑 Cannot restore — no pre-image at ${PRE_IMAGE_PATH}.\n`,
+      );
+      return 1;
+    }
+    const rollback = preImage;
+    const known = new Set(hooks.map((h) => h.id));
+    const restorable = Object.entries(rollback.hooks).filter(([id]) =>
+      known.has(id),
+    );
+    const gone = Object.keys(rollback.hooks).filter((id) => !known.has(id));
+
+    if (restorable.length === 0) {
+      console.error(
+        `\n🛑 Cannot restore — none of the hook ids in ${PRE_IMAGE_PATH} exist on\n` +
+          `   this app any more. Restoring would be guesswork.\n`,
+      );
+      return 1;
+    }
+    if (gone.length > 0) {
+      // Reported, not fatal: a hook deleted since the pre-image was taken must
+      // NOT be recreated by a rollback, and the operator should know that is why
+      // their list does not match.
+      console.log(
+        `\nhook(s) in the pre-image no longer exist and will NOT be recreated: ${gone.join(", ")}`,
+      );
+    }
+
+    const differs = restorable.filter(([id, types]) => {
+      const current = hooks.find((h) => h.id === id)?.event_types ?? [];
+      return (
+        canonical([...current].sort(byCodeUnit)) !==
+        canonical([...types].sort(byCodeUnit))
+      );
+    });
+
+    for (const [id, types] of restorable) {
+      const current = hooks.find((h) => h.id === id)?.event_types ?? [];
+      const mark = differs.some(([d]) => d === id) ? "→" : "=";
+      console.log(
+        `\nhook ${id}  ${current.length} ${mark} ${types.length} event types`,
+      );
+      if (mark === "=") console.log(`  already at the pre-image value`);
+    }
+
+    if (differs.length === 0) {
+      console.log("\n✅ already at the pre-image value — nothing to restore");
+      return 0;
+    }
+
+    if (!willWrite) {
+      console.log(
+        `\n(dry run — re-run with --apply to restore: ` +
+          `npx tsx scripts/stream/ensure-webhook-subscription.ts --apply --restore)`,
+      );
+      return 0;
+    }
+
+    // ONE write carrying every hook the app has, for the same reason the
+    // widening path takes one: the array is replaced wholesale, so a payload
+    // built from anything less than the complete list deletes what it omits.
+    const byId = new Map(differs);
+    const nextHooks = allHooks.map((h) => {
+      const next = h.id ? byId.get(h.id) : undefined;
+      return next ? { ...h, event_types: next } : h;
+    });
+    await client.updateAppSettings({ event_hooks: nextHooks });
+
+    // The rollback needs verifying, and used to be unverifiable because there was
+    // nothing to verify against. Assert the read-back equals the pre-image
+    // EXACTLY: a restore that only mostly works leaves the pipeline in a state
+    // nobody has ever reviewed, and "it went back to nearly what it was" is not a
+    // state anybody can reason about at 2am.
+    const verified = await client.getAppSettings();
+    // `Object.entries`, not `map.entries()`. A Map's entries are not own
+    // enumerable properties, so `Object.entries(new Map([...]))` is `[]` — the
+    // verification below would compare nothing, find nothing, and report success
+    // on a rollback that never happened. The same mistake is invisible in
+    // TypeScript at the point of the bug because both sides are iterable.
+    const mismatched = [...byId.entries()].filter(([id, types]) => {
+      const now = (verified.app?.event_hooks ?? []).find(
+        (h): h is IdentifiedHook => h.id === id,
+      );
+      return (
+        canonical([...(now?.event_types ?? [])].sort(byCodeUnit)) !==
+        canonical([...types].sort(byCodeUnit))
+      );
+    });
+
+    if (mismatched.length > 0) {
+      console.error(
+        `\n🚨 Stream did not restore: ${mismatched.map(([id]) => id).join(", ")}.` +
+          `\n   Do not report this run as successful. The subscription is in a` +
+          `\n   state nobody chose; re-read it in the dashboard before serving traffic.`,
+      );
+      return 1;
+    }
+
+    console.log(
+      `\n✅ restored ${differs.length} hook(s) to their pre-image event_types; ` +
+        `${allHooks.length} hook(s) preserved`,
+    );
+    return 0;
+  }
+
+  // Snapshot BEFORE the write, and never silently overwrite an existing one.
+  // Applying twice would otherwise capture the already-widened state as the
+  // rollback target, redefining "before" as "after" so `--restore` becomes a
+  // no-op that reports success — and the failure is invisible until the day
+  // somebody actually needs the rollback. Idempotency means the second run does
+  // not need a new snapshot anyway: by then the live state either already
+  // matches the desired one, or the first pre-image is still the right target.
+  if (apply) {
+    if (existsSync(PRE_IMAGE_PATH)) {
+      console.log(
+        `Pre-image already exists at ${PRE_IMAGE_PATH} — keeping it.\n` +
+          `(delete it deliberately to re-baseline onto the current live state)\n`,
+      );
+    } else {
+      const captured: PreImage = {
+        capturedAt: new Date().toISOString(),
+        hooks: Object.fromEntries(
+          hooks.map((h) => [h.id, [...(h.event_types ?? [])].sort(byCodeUnit)]),
+        ),
+      };
+      writePreImage(captured);
+      console.log(`Pre-image written to ${PRE_IMAGE_PATH}\n`);
+    }
   }
 
   let changed = 0;
@@ -291,13 +563,19 @@ export async function ensureWebhookSubscription(
 }
 
 if (require.main === module) {
-  const argv = process.argv;
-  const mode: EnsureMode = argv.includes("--apply")
-    ? "apply"
-    : argv.includes("--check")
-      ? "check"
-      : "dry-run";
-  ensureWebhookSubscription(mode)
+  const argv = process.argv.slice(2);
+  // `--restore` is checked BEFORE `--check` and independently of `--apply`,
+  // because the two are combinable on purpose: `--restore` alone reports what it
+  // would undo, `--apply --restore` undoes it. Mirrors
+  // ensure-chat-type-grants.ts, where the rollback is `--apply --restore-*`.
+  const mode: EnsureMode = argv.includes("--restore")
+    ? "restore"
+    : argv.includes("--apply")
+      ? "apply"
+      : argv.includes("--check")
+        ? "check"
+        : "dry-run";
+  ensureWebhookSubscription(mode, { argv })
     .then((code) => {
       process.exitCode = code;
     })
