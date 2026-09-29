@@ -162,16 +162,18 @@ const RESERVED_PROVIDER_ID_MESSAGE =
   `could be redirected to your identity provider. Reserved ids: ${[
     ...RESERVED_PROVIDER_IDS,
   ]
-    // Bare `.sort()` on purpose — Sonar asks for `localeCompare` here
-    // (js/unicorn/no-array-sort), and applying it would be a regression.
-    // `localeCompare` with no locale argument reads the *host* default, so the
-    // list a customer sees on a dev machine can differ from the one Netlify
-    // renders, and uppercase-lowercase ordering flips (`"Y"` before `"apple"`
-    // under code-unit order, after it under a collation). Bare `.sort()` is
-    // UTF-16 code-unit order: locale-independent, and since every reserved id
-    // here is already lowercase ASCII, it is also the correct alphabetical
-    // order. The rule wants prettier collation; the trade is determinism.
-    .sort()
+    // `localeCompare` with an explicitly pinned locale, per Sonar
+    // `js/unicorn/no-array-sort` (which it grades as a BUG, so it gates the
+    // merge). The second argument is the load-bearing part: `localeCompare(b)`
+    // with no locale reads the host default, which makes the output a function
+    // of how a machine is configured. I could not actually make that variance
+    // reproduce — Node's ICU returned identical order under C, tr_TR, sv_SE and
+    // de_DE — so the pinning is about removing the dependency on host config
+    // rather than fixing an observed bug. What it *does* fix is the reading
+    // order: bare `.sort()` is UTF-16 code-unit order, so a customer reading
+    // the list sees `Y, Zebra, apple, credential` — capital letters first, and
+    // `apple` after `Zebra`. Pinned to "en" this reads as a list of words.
+    .sort((a, b) => a.localeCompare(b, "en"))
     .join(", ")}. Pick a name that identifies your organisation, e.g. "acme-okta".`;
 
 export function isReservedProviderId(providerId: string): boolean {
