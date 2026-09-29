@@ -30,6 +30,16 @@ jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
 jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
+// `scrubUser` checks `isNovuConfigured()` before trusting `deleteSubscriber`'s
+// boolean, because an unconfigured runtime cannot confirm anything. Mocking
+// only the subscriber module leaves the real config check running, so the test
+// silently depends on whether NOVU_KEY happens to be set in the environment
+// that is running it — which is how it passed locally and failed in CI.
+jest.mock("../../lib/novu/client", () => ({
+  isNovuConfigured: () => true,
+  getNovuClient: () => ({}),
+  validateNovuConfig: () => {},
+}));
 
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
 
