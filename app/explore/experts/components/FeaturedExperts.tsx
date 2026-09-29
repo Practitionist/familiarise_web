@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck, Globe } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
+import { ExploreCard } from "@/components/explore/ExploreCard";
 
 interface FeaturedExpertsProps {
   experts: IConsultantCardData[];

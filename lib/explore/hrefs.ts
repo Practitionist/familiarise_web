@@ -44,6 +44,6 @@ export const exploreHref = {
 } as const;
 
 /** The detail path for a program card / carousel slide / rail item. */
-export function programHref(program: Pick<Program, "id" | "type">): string {
+export function programHref(program: Program): string {
   return exploreHref.programs.detail(program.id, isClassProgram(program));
 }

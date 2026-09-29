@@ -19,6 +19,7 @@ import {
   Building2,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
+import { ExploreCard } from "@/components/explore/ExploreCard";
 
 interface ConsultantCardProps {
   consultant: IConsultantCardData;

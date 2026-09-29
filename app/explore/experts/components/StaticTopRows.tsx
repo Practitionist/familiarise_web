@@ -67,7 +67,14 @@ function StaticTopRowsImpl({
         >
           <SectionHeader title="Browse by Domain" icon={<Briefcase />} />
           <DomainGrid
-            domains={metadata.consultantMetadata.consultantsByDomain}
+            // The metadata rows carry `consultantCount`; the shared grid takes
+            // a generic `count`, which is what lets one component serve both
+            // the experts and programs surfaces.
+            domains={metadata.consultantMetadata.consultantsByDomain.map((d) => ({
+              id: d.id,
+              name: d.name,
+              count: d.consultantCount,
+            }))}
             isLoading={false}
             onDomainSelect={onDomainSelect}
           />

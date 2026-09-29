@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
+import { ExploreCard } from "@/components/explore/ExploreCard";
+import { exploreHref } from "@/lib/explore/hrefs";
 
 interface ExpertMiniCardProps {
   expert: IConsultantCardData;

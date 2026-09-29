@@ -83,7 +83,13 @@ function StaticTopRowsImpl({
       <div className="mb-14">
         <SectionHeader title="Browse by Category" icon={<Hash />} />
         <CategoryGrid
-          topics={topics}
+          // Same shape normalisation as the experts surface — the shared grid
+          // takes a generic `count`.
+          topics={topics.map((t) => ({
+            id: t.id,
+            name: t.name,
+            count: t.programCount,
+          }))}
           isLoading={topicsLoading}
           onTopicSelect={onTopicSelect}
         />

@@ -9,6 +9,7 @@ import { CompanyLogo } from "@/components/ui/company-logo";
 import { useCurrency } from "@/hooks/useCurrency";
 import { Program } from "@/lib/explore/programs";
 import { programHref as sharedProgramHref } from "@/lib/explore/hrefs";
+import { ExploreCard } from "@/components/explore/ExploreCard";
 
 interface FeaturedCarouselProps {
   programs: Program[];

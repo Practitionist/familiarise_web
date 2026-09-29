@@ -18,6 +18,8 @@ import { useState } from "react";
 
 import { PricingOption } from "../defaults";
 import { bookingModeBadge } from "@/lib/booking/booking-mode";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PricingPanel } from "@/components/explore/PricingPanel";
 
 const getDurationLabel = (durationInHours: number): string => {
   return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
