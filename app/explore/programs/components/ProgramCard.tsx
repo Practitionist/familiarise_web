@@ -280,7 +280,7 @@ function ListCard({
       <div className="p-6 flex-1 flex flex-col justify-between min-w-0">
         <div>
           <div className="flex items-start justify-between gap-4 mb-2">
-            <h3 className="text-lg font-semibold text-foreground group-hover:text-muted-foreground transition-colors">
+            <h3 className="font-display text-base font-semibold leading-snug tracking-tight text-foreground group-hover:text-brand-foreground-subtle transition-colors">
               {program.title}
             </h3>
             {program.isRegistered && (
@@ -388,7 +388,7 @@ function CarouselCard({
       </div>
 
       <div className="p-4">
-        <h3 className="text-base font-semibold text-foreground mb-1 line-clamp-1 group-hover:text-muted-foreground transition-colors">
+        <h3 className="mb-1 line-clamp-1 font-display text-base font-semibold leading-snug tracking-tight text-foreground group-hover:text-brand-foreground-subtle transition-colors">
           {program.title}
         </h3>
         <p className="text-sm text-muted-foreground line-clamp-1 mb-3">

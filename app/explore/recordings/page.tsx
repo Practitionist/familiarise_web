@@ -111,9 +111,9 @@ async function RecordingsGrid() {
  * A 4-up grid of video thumbnails, under one header.
  *
  * The previous version was a bare `<img>` (no `next/image`, so no AVIF/WebP
- * and no responsive `sizes`), `rounded-xl border bg-card` with
- * `hover:shadow-md` — a fourth shadow value against the other cards' `xl` —
- * and a `text-[10px]`-adjacent `text-xs` price sitting *above* the title at
+ * and no responsive `sizes`), `rounded-control border bg-card` with
+ * `hover:shadow-elevation-1` — a fourth shadow value against the other cards' `xl` —
+ * and a `text-xs`-adjacent `text-xs` price sitting *above* the title at
  * `text-primary`. There was no page header, and the empty state was a bare
  * centred paragraph.
  */

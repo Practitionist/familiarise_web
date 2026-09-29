@@ -114,7 +114,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
   return (
     <div>
-      <div className="bg-card rounded-2xl border border-border overflow-hidden">
+      <div className="bg-card rounded-card border border-border overflow-hidden">
         {/* Header with Tabs */}
         <div className="border-b border-border px-6 md:px-8 py-5">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -149,7 +149,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                     {activeTab === key && (
                       <motion.div
                         layoutId="activeTab"
-                        className="absolute inset-0 bg-card rounded-lg shadow-sm"
+                        className="absolute inset-0 rounded-control bg-card"
                         transition={{
                           type: "spring",
                           bounce: 0.2,

@@ -222,7 +222,7 @@ function FilterPanelImpl({
                 value={selectedDomain || "all"}
                 onValueChange={handleDomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring">
+                <SelectTrigger className="h-10 w-full rounded-control border-border bg-muted">
                   <SelectValue placeholder="All fields" />
                 </SelectTrigger>
                 <SelectContent>
@@ -244,7 +244,7 @@ function FilterPanelImpl({
                 value={selectedSubdomain || "all"}
                 onValueChange={handleSubdomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring disabled:opacity-50">
+                <SelectTrigger className="h-10 w-full rounded-control border-border bg-muted disabled:opacity-50">
                   <SelectValue
                     placeholder={
                       selectedDomain
@@ -284,7 +284,7 @@ function FilterPanelImpl({
             </label>
             <div className="relative" ref={tagDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
+                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-control focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
                 placeholder={
                   selectedDomain ? "Search skills..." : "Select a field first"
                 }
@@ -295,7 +295,7 @@ function FilterPanelImpl({
                 disabled={!selectedDomain}
               />
               {isDropdownOpen && filteredTags.length > 0 && (
-                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-xl shadow-xl max-h-48 overflow-auto">
+                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-control shadow-elevation-3 max-h-48 overflow-auto">
                   {filteredTags.map((tag) => (
                     <button
                       key={tag.id}
@@ -381,7 +381,7 @@ function FilterPanelImpl({
                         minRating: minRating === rating ? undefined : rating,
                       })
                     }
-                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-control text-xs font-medium transition-colors ${
                       minRating === rating
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted border border-border text-muted-foreground hover:bg-muted/80"
@@ -393,7 +393,7 @@ function FilterPanelImpl({
                 ))}
                 <button
                   onClick={() => updateFilters({ minRating: undefined })}
-                  className={`inline-flex items-center px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  className={`inline-flex items-center px-2.5 py-1.5 rounded-control text-xs font-medium transition-colors ${
                     minRating === undefined
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted border border-border text-muted-foreground hover:bg-muted/80"
@@ -436,7 +436,7 @@ function FilterPanelImpl({
               <span>{formatPrice(0)}</span>
               <span>{formatPrice(MAX_PRICE_PAISE)}+</span>
             </div>
-            <p className="mt-3 text-[11px] text-muted-foreground/70 leading-tight">
+            <p className="mt-3 text-xs text-muted-foreground/70 leading-tight">
               Prices shown in {currency}. Final price may vary based on your
               region and payment method.
             </p>
@@ -457,7 +457,7 @@ function FilterPanelImpl({
             </label>
             <div className="relative" ref={companyDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+                className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-control focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
                 placeholder="e.g. Google, Deloitte..."
                 type="text"
                 value={companySearchTerm}
@@ -465,7 +465,7 @@ function FilterPanelImpl({
                 onFocus={() => setIsCompanyDropdownOpen(true)}
               />
               {isCompanyDropdownOpen && filteredCompanies.length > 0 && (
-                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-xl shadow-xl max-h-48 overflow-auto">
+                <div className="absolute z-20 w-full mt-2 bg-popover border border-border rounded-control shadow-elevation-3 max-h-48 overflow-auto">
                   {filteredCompanies.map((company) => (
                     <button
                       key={company}
@@ -515,7 +515,7 @@ function FilterPanelImpl({
               value={language || "all"}
               onValueChange={handleLanguageChange}
             >
-              <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring">
+              <SelectTrigger className="h-10 w-full rounded-control border-border bg-muted">
                 <SelectValue placeholder="Any Language" />
               </SelectTrigger>
               <SelectContent>

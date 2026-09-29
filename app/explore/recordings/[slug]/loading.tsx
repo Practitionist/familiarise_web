@@ -5,17 +5,17 @@ export default function Loading() {
       aria-hidden
     >
       <div className="space-y-6">
-        <div className="aspect-video rounded-xl bg-muted motion-safe:animate-pulse" />
+        <div className="aspect-video rounded-control bg-muted motion-safe:animate-pulse" />
         <div className="space-y-3">
           <div className="h-4 w-40 bg-muted rounded motion-safe:animate-pulse" />
-          <div className="h-8 w-3/4 bg-muted rounded-lg motion-safe:animate-pulse" />
+          <div className="h-8 w-3/4 bg-muted rounded-control motion-safe:animate-pulse" />
           <div className="h-4 w-full bg-muted rounded motion-safe:animate-pulse" />
           <div className="h-4 w-5/6 bg-muted rounded motion-safe:animate-pulse" />
         </div>
       </div>
-      <aside className="space-y-4 h-fit rounded-xl border bg-card p-6 lg:sticky lg:top-24">
-        <div className="h-9 w-28 bg-muted rounded-lg motion-safe:animate-pulse" />
-        <div className="h-10 w-full bg-muted rounded-lg motion-safe:animate-pulse" />
+      <aside className="space-y-4 h-fit rounded-control border bg-card p-6 lg:sticky lg:top-24">
+        <div className="h-9 w-28 bg-muted rounded-control motion-safe:animate-pulse" />
+        <div className="h-10 w-full bg-muted rounded-control motion-safe:animate-pulse" />
         <div className="h-3 w-full bg-muted rounded motion-safe:animate-pulse" />
         <div className="h-3 w-4/5 bg-muted rounded motion-safe:animate-pulse" />
       </aside>

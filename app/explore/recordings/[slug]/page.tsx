@@ -83,7 +83,7 @@ export default async function RecordingDetailPage({
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
       <div className="space-y-6">
-        <div className="aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
+        <div className="aspect-video rounded-control bg-muted flex items-center justify-center overflow-hidden">
           {renderMedia(listing)}
         </div>
 
@@ -92,7 +92,7 @@ export default async function RecordingDetailPage({
             present, findable and selectable rather than hidden behind a
             player nobody can hear. Timed captions are the follow-up. */}
         {listing.previewClipUrl && listing.previewTranscript && (
-          <details className="rounded-lg border bg-card/50 p-4">
+          <details className="rounded-control border bg-card/50 p-4">
             <summary className="cursor-pointer text-sm font-medium">
               Preview transcript
             </summary>
@@ -127,7 +127,7 @@ export default async function RecordingDetailPage({
         </div>
       </div>
 
-      <aside className="space-y-4 h-fit rounded-xl border bg-card p-6 lg:sticky lg:top-24">
+      <aside className="space-y-4 h-fit rounded-control border bg-card p-6 lg:sticky lg:top-24">
         <p className="text-3xl font-bold">
           {formatCurrencyAmount(listing.listPricePaise, "INR")}
         </p>

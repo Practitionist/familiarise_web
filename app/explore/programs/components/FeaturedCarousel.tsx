@@ -77,7 +77,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
     <div className="relative">
       <Link
         href={href}
-        className="group bg-card rounded-card overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"
+        className="group block cursor-pointer overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3"
         aria-label={`View details for ${program.title}`}
       >
         <div className="flex flex-col md:flex-row h-auto md:h-[280px]">
@@ -110,7 +110,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
 
           {/* Content */}
           <div className="flex-1 p-6 md:p-8 flex flex-col justify-center min-w-0">
-            <h3 className="text-xl md:text-2xl font-bold text-foreground mb-3 line-clamp-2 group-hover:text-muted-foreground transition-colors">
+            <h3 className="mb-3 line-clamp-2 font-display text-lg font-semibold leading-snug tracking-tight text-foreground group-hover:text-brand-foreground-subtle transition-colors">
               {program.title}
             </h3>
             <p className="text-sm md:text-base text-muted-foreground mb-6 line-clamp-3">
@@ -147,14 +147,14 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
         <>
           <button
             onClick={() => prev()}
-            className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-card/90 backdrop-blur border border-border shadow-md flex items-center justify-center hover:bg-card transition-colors"
+            className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-card/90 backdrop-blur border border-border shadow-elevation-2 flex items-center justify-center hover:bg-card transition-colors"
             aria-label="Previous"
           >
             <ChevronLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <button
             onClick={() => next()}
-            className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-card/90 backdrop-blur border border-border shadow-md flex items-center justify-center hover:bg-card transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-card/90 backdrop-blur border border-border shadow-elevation-2 flex items-center justify-center hover:bg-card transition-colors"
             aria-label="Next"
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />

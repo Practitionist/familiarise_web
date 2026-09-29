@@ -19,16 +19,16 @@ export const ConsultantSkeletonLoader: React.FC = () => {
             {/* Profile Header Skeleton */}
             <div className="space-y-6">
               <div className="flex flex-col md:flex-row gap-6 items-start">
-                <Skeleton className="w-32 h-32 rounded-full flex-shrink-0" />
+                <Skeleton className="w-32 h-32 rounded-control flex-shrink-0" />
                 <div className="flex-1 space-y-4 w-full">
                   <div className="space-y-2">
                     <Skeleton className="h-8 w-1/2 md:w-1/3" />
                     <Skeleton className="h-5 w-3/4 md:w-1/2" />
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Skeleton className="h-6 w-20 rounded-full" />
-                    <Skeleton className="h-6 w-24 rounded-full" />
-                    <Skeleton className="h-6 w-16 rounded-full" />
+                    <Skeleton className="h-6 w-20 rounded-control" />
+                    <Skeleton className="h-6 w-24 rounded-control" />
+                    <Skeleton className="h-6 w-16 rounded-control" />
                   </div>
                 </div>
               </div>
@@ -56,10 +56,10 @@ export const ConsultantSkeletonLoader: React.FC = () => {
 
           {/* Right Column (Sidebar - Pricing) */}
           <div className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0">
-            <div className="bg-card rounded-2xl p-6 shadow-sm border border-border space-y-6">
+            <div className="space-y-6 rounded-card border border-border bg-card p-6">
               {/* Tabs */}
               <div className="flex bg-muted p-1 rounded-xl">
-                <Skeleton className="h-10 w-1/2 rounded-lg bg-card shadow-sm" />
+                <Skeleton className="h-10 w-1/2 rounded-control bg-card" />
                 <Skeleton className="h-10 w-1/2 rounded-lg bg-transparent" />
               </div>
 
@@ -68,15 +68,15 @@ export const ConsultantSkeletonLoader: React.FC = () => {
                 <div className="flex justify-between items-center">
                   <Skeleton className="h-6 w-32" />
                   <div className="flex gap-2">
-                    <Skeleton className="h-8 w-8 rounded-full" />
-                    <Skeleton className="h-8 w-8 rounded-full" />
+                    <Skeleton className="h-8 w-8 rounded-control" />
+                    <Skeleton className="h-8 w-8 rounded-control" />
                   </div>
                 </div>
                 <div className="grid grid-cols-7 gap-2">
                   {Array.from({ length: 35 }).map((_, i) => (
                     <Skeleton
                       key={i}
-                      className="h-10 w-10 rounded-full mx-auto"
+                      className="h-10 w-10 rounded-control mx-auto"
                     />
                   ))}
                 </div>

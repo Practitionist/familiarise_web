@@ -71,7 +71,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                 .map((_, index) => (
                   <div
                     key={index}
-                    className="bg-card rounded-2xl p-6 shadow-sm border border-border animate-pulse"
+                    className="bg-card rounded-card p-6 border border-border bg-card animate-pulse motion-reduce:animate-none"
                   >
                     <div className="w-20 h-20 rounded-full bg-muted mx-auto mb-4" />
                     <div className="h-5 bg-muted rounded w-3/4 mx-auto mb-3" />
@@ -98,7 +98,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                     href={`/explore/experts/${expert.id}`}
                     className="group block h-full"
                   >
-                    <div className="bg-card rounded-2xl p-6 border border-border shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3 h-full flex flex-col">
+                    <div className="bg-card rounded-card p-6 border border-border shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3 h-full flex flex-col">
                       {/* Avatar */}
                       <div className="relative mb-4">
                         <Avatar className="mx-auto h-20 w-20 ring-4 ring-muted group-hover:ring-border transition-all">
@@ -113,7 +113,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                         </Avatar>
                         {/* Top Expert Badge */}
                         {index === 0 && (
-                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-brand rounded-full flex items-center justify-center shadow-lg">
+                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-brand rounded-full flex items-center justify-center shadow-elevation-2">
                             <Award className="w-4 h-4 text-white" />
                           </div>
                         )}
@@ -121,7 +121,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
 
                       {/* Name */}
                       <div className="flex items-center justify-center gap-1 mb-2">
-                        <h3 className="text-lg font-semibold text-foreground text-center line-clamp-1 group-hover:text-muted-foreground transition-colors">
+                        <h3 className="font-display text-base font-semibold leading-snug tracking-tight text-foreground text-center line-clamp-1 group-hover:text-brand-foreground-subtle transition-colors">
                           {expert.user.name}
                         </h3>
                         {expert.isVerified && (

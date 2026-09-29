@@ -77,7 +77,7 @@ export function ReviewsSection({
   return (
     <div
       id="reviews"
-      className="bg-card rounded-2xl border border-border p-6 md:p-8"
+      className="bg-card rounded-card border border-border p-6 md:p-8"
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">

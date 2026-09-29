@@ -448,7 +448,7 @@ export default function ConsultationPricingToggle({
               <Dialog>
                 <DialogTrigger asChild>
                   <Button
-                    className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                    className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200"
                     onClick={handleBookNowClick}
                   >
                     Book Now

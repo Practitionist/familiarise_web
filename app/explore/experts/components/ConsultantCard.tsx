@@ -112,7 +112,7 @@ const SubscriptionPlanCard = ({
   };
 
   return (
-    <div className="bg-card rounded-xl p-5 border border-border">
+    <div className="bg-card rounded-control p-5 border border-border">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div className="text-2xl sm:text-3xl font-bold text-foreground">
           {formatPrice(plan.price)}
@@ -126,7 +126,7 @@ const SubscriptionPlanCard = ({
           plan.sessionsPerWeek !== undefined &&
           plan.sessionsPerWeek > 0 && (
             <div className="flex items-center gap-2 text-sm">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className="w-4 h-4 text-success" />
               <span className="text-muted-foreground">
                 {plan.sessionsPerWeek}{" "}
                 {plan.sessionsPerWeek === 1 ? "session" : "sessions"}
@@ -136,7 +136,7 @@ const SubscriptionPlanCard = ({
           )}
         {plan.emailSupport && (
           <div className="flex items-center gap-2 text-sm">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            <CheckCircle2 className="w-4 h-4 text-success" />
             <span className="text-muted-foreground capitalize">
               {plan.emailSupport.toLowerCase()} email support
             </span>
@@ -146,7 +146,7 @@ const SubscriptionPlanCard = ({
           plan.totalSessions !== undefined &&
           plan.totalSessions > 0 && (
             <div className="flex items-center gap-2 text-sm">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className="w-4 h-4 text-success" />
               <span className="text-muted-foreground">
                 {plan.totalSessions}{" "}
                 {plan.totalSessions === 1 ? "session" : "sessions"} total
@@ -206,7 +206,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   });
 
   return (
-    <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
+    <div className="group overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
         {/* Left Section: Consultant Info. Clicking anywhere here (except
             nested links/buttons) opens the quick-view drawer; the primary
@@ -242,7 +242,7 @@ export const ConsultantCard = memo(function ConsultantCard({
             <div className="relative h-20 w-20 flex-shrink-0">
               <Image
                 alt={`Portrait of ${consultant.user.name}`}
-                className="rounded-2xl object-cover ring-2 ring-muted"
+                className="rounded-card object-cover ring-2 ring-muted"
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
                 // 80×80 slot — without sizes, `fill` fetches a 100vw image (#932 perf).
@@ -257,7 +257,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                   too. Both truncate instead, and the badge keeps its `title`
                   so the full name is still reachable on hover. */}
               <div className="flex items-center gap-1.5 min-w-0">
-                <h3 className="truncate text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
+                <h3 className="truncate text-xl font-bold text-foreground group-hover:text-brand-foreground-subtle transition-colors">
                   {consultant.user.name}
                 </h3>
                 {consultant.isVerified && (
@@ -276,7 +276,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                   >
                     <Badge
                       variant="outline"
-                      className="max-w-[180px] whitespace-nowrap border-border text-foreground text-[10px] px-1.5 py-0 hover:bg-muted transition-colors"
+                      className="max-w-[180px] whitespace-nowrap border-border text-foreground text-xs px-1.5 py-0 hover:bg-muted transition-colors"
                     >
                       <Building2 className="w-3 h-3 mr-0.5 shrink-0" />
                       <span className="truncate">
@@ -408,10 +408,10 @@ export const ConsultantCard = memo(function ConsultantCard({
 
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
-          <div className="bg-muted rounded-xl p-4">
+          <div className="bg-muted rounded-control p-4">
             {sortedPlans.length > 0 ? (
               <Tabs defaultValue={sortedPlans[0].id} className="w-full">
-                <TabsList className="w-full mb-4 bg-card p-1 rounded-lg border border-border">
+                <TabsList className="mb-4 w-full rounded-control border border-border bg-card p-1">
                   {sortedPlans.map((plan, index) => (
                     <TabsTrigger
                       key={`${consultant.id}-tab-trigger-${plan.id}`}
@@ -448,7 +448,7 @@ export const ConsultantCard = memo(function ConsultantCard({
           <div className="flex flex-col gap-2">
             <Button
               asChild
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
+              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-control transition-all"
             >
               <Link href={profileHref}>
                 <span>View Profile</span>
@@ -462,7 +462,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                 <Button
                   asChild
                   variant="outline"
-                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
+                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-control text-sm font-medium"
                 >
                   <Link href={`${profileHref}?action=trial`}>
                     {trialOffer.priceInPaise > 0
@@ -474,7 +474,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Button
                 asChild
                 variant="outline"
-                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
+                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-control text-sm font-medium"
               >
                 <Link href={`${profileHref}?action=book`}>Book Session</Link>
               </Button>

@@ -126,7 +126,7 @@ export default function ExpertDetailsSheet({
                     src={consultant.user.image || "/placeholder-user.jpg"}
                     fill
                     sizes="64px"
-                    className="rounded-2xl object-cover ring-2 ring-muted"
+                    className="rounded-card object-cover ring-2 ring-muted"
                   />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -161,7 +161,7 @@ export default function ExpertDetailsSheet({
                       >
                         <Badge
                           variant="outline"
-                          className="max-w-[200px] whitespace-nowrap text-[10px]"
+                          className="max-w-[200px] whitespace-nowrap text-xs"
                         >
                           <Building2 className="mr-0.5 h-3 w-3 shrink-0" />
                           <span className="truncate">
@@ -223,7 +223,7 @@ export default function ExpertDetailsSheet({
                     {experiences.map((exp, i) => (
                       <li
                         key={`${consultant.id}-drawer-company-${i}`}
-                        className="flex items-center gap-3 rounded-xl border border-border bg-card p-2.5"
+                        className="flex items-center gap-3 rounded-control border border-border bg-card p-2.5"
                       >
                         <CompanyLogo
                           companyName={exp.company}
@@ -237,7 +237,7 @@ export default function ExpertDetailsSheet({
                         {exp.isCurrent && (
                           <Badge
                             variant="outline"
-                            className="shrink-0 text-[10px]"
+                            className="shrink-0 text-xs"
                           >
                             Current
                           </Badge>
@@ -291,7 +291,7 @@ export default function ExpertDetailsSheet({
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Recent reviews
                   </p>
-                  <div className="rounded-xl border border-border bg-card p-3.5">
+                  <div className="rounded-control border border-border bg-card p-3.5">
                     <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
                       <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
                       {reviewAvg.toFixed(1)}
@@ -342,7 +342,7 @@ export default function ExpertDetailsSheet({
                 </div>
               )}
 
-              <div className="mt-6 space-y-2 rounded-xl border border-border bg-muted p-4">
+              <div className="mt-6 space-y-2 rounded-control border border-border bg-muted p-4">
                 <p className="text-sm text-muted-foreground">
                   Consultation plans start from{" "}
                   {cheapestOneOnOne ? (
@@ -384,7 +384,7 @@ export default function ExpertDetailsSheet({
             </div>
 
             <div className="space-y-2 border-t border-border bg-card p-4">
-              <Button asChild className="h-12 w-full rounded-xl font-medium">
+              <Button asChild className="h-12 w-full rounded-control font-medium">
                 <Link href={profileHref}>
                   <span>View full profile</span>
                   <ArrowRight className="ml-2 h-4 w-4" />
@@ -397,7 +397,7 @@ export default function ExpertDetailsSheet({
                   <Button
                     asChild
                     variant="outline"
-                    className="h-10 rounded-xl text-sm"
+                    className="h-10 rounded-control text-sm"
                   >
                     <Link href={`${profileHref}?action=trial`}>
                       {trialPlan.trialPriceInPaise > 0
@@ -410,7 +410,7 @@ export default function ExpertDetailsSheet({
                   type="button"
                   variant="outline"
                   onClick={shareProfile}
-                  className="h-10 rounded-xl text-sm"
+                  className="h-10 rounded-control text-sm"
                 >
                   {copied ? (
                     <Check className="mr-1.5 h-4 w-4" />

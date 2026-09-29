@@ -63,7 +63,7 @@ export default function FacetRail({
               <SlidersHorizontal className="h-4 w-4" />
               Filters
               {activeCount > 0 && (
-                <span className="ml-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-foreground">
+                <span className="ml-1 rounded-chip bg-brand-subtle px-1.5 py-0.5 tnum text-xs font-semibold text-brand-foreground-subtle">
                   {activeCount}
                 </span>
               )}
@@ -101,7 +101,7 @@ export default function FacetRail({
       >
         {/* Underscores = spaces: CSS calc() rejects unspaced `-` operators,
             which would drop the max-height (and the rail's inner scroll). */}
-        <div className="max-h-[calc(100vh_-_var(--maintenance-banner-height,0px)_-_var(--header-height,5rem)_-_3rem)] overflow-y-auto rounded-2xl border border-border bg-card p-4">
+        <div className="max-h-[calc(100vh_-_var(--maintenance-banner-height,0px)_-_var(--header-height,5rem)_-_3rem)] overflow-y-auto rounded-card border border-border bg-card p-4">
           {header}
           <div className="mt-2">{children}</div>
         </div>

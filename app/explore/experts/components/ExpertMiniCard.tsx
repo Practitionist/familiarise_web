@@ -64,7 +64,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
           </Avatar>
           <div className="min-w-0">
             <div className="flex items-center gap-1">
-              <h3 className="text-sm font-semibold text-foreground line-clamp-1 group-hover:text-muted-foreground transition-colors">
+              <h3 className="line-clamp-1 font-display text-sm font-semibold leading-snug tracking-tight text-foreground group-hover:text-brand-foreground-subtle transition-colors">
                 {expert.user.name}
               </h3>
               {expert.isVerified && (

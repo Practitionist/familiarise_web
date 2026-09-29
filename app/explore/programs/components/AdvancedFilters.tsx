@@ -121,7 +121,7 @@ function AdvancedFiltersImpl({
   return (
     <div className="rounded-card border border-border bg-card p-5 shadow-elevation-1 shadow-edge sm:p-6">
       <div className="flex items-center gap-2 mb-6">
-        <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+        <div className="w-10 h-10 rounded-control bg-primary flex items-center justify-center">
           <SlidersHorizontal className="w-5 h-5 text-primary-foreground" />
         </div>
         <div>
@@ -154,10 +154,10 @@ function AdvancedFiltersImpl({
                 setTopicDropdownOpen(true);
               }}
               onFocus={() => setTopicDropdownOpen(true)}
-              className="w-full h-11 px-3 bg-card border border-border text-foreground text-sm rounded-xl focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
+              className="h-10 w-full rounded-control border border-border bg-card px-3 text-sm text-foreground focus:ring-2 focus:ring-ring focus:border-transparent transition-all"
             />
             {topicDropdownOpen && filteredTopics.length > 0 && (
-              <div className="absolute z-30 w-full mt-1 bg-card border border-border rounded-xl shadow-xl max-h-48 overflow-auto">
+              <div className="absolute z-30 w-full mt-1 bg-card border border-border rounded-control shadow-elevation-3 max-h-48 overflow-auto">
                 {filteredTopics.map((topic) => (
                   <button
                     key={topic.id}
@@ -181,7 +181,7 @@ function AdvancedFiltersImpl({
             Price
           </Label>
           <Select value={currentPriceRange} onValueChange={handlePriceChange}>
-            <SelectTrigger className="h-11 bg-card border-border rounded-xl focus:ring-ring">
+            <SelectTrigger className="h-10 bg-card border-border rounded-control">
               <SelectValue placeholder="All Prices" />
             </SelectTrigger>
             <SelectContent>
@@ -205,7 +205,7 @@ function AdvancedFiltersImpl({
               onFiltersChange({ language: v === "all" ? undefined : v })
             }
           >
-            <SelectTrigger className="h-11 bg-card border-border rounded-xl focus:ring-ring">
+            <SelectTrigger className="h-10 bg-card border-border rounded-control">
               <SelectValue placeholder="All Languages" />
             </SelectTrigger>
             <SelectContent>
@@ -224,7 +224,7 @@ function AdvancedFiltersImpl({
             Level
           </Label>
           <Select value={selectedLevel} onValueChange={onLevelChange}>
-            <SelectTrigger className="h-11 bg-card border-border rounded-xl focus:ring-ring">
+            <SelectTrigger className="h-10 bg-card border-border rounded-control">
               <SelectValue placeholder="All Levels" />
             </SelectTrigger>
             <SelectContent>
@@ -249,7 +249,7 @@ function AdvancedFiltersImpl({
               onFiltersChange({ sort: v === "none" ? undefined : v })
             }
           >
-            <SelectTrigger className="h-11 bg-card border-border rounded-xl focus:ring-ring">
+            <SelectTrigger className="h-10 bg-card border-border rounded-control">
               <SelectValue placeholder="Select sorting" />
             </SelectTrigger>
             <SelectContent>
@@ -276,14 +276,14 @@ function AdvancedFiltersImpl({
                 placeholder="Search..."
                 value={localSearch}
                 onChange={(e) => onLocalSearchChange(e.target.value)}
-                className="h-11 pl-10 bg-card border-border rounded-xl focus:ring-ring"
+                className="h-11 pl-10 bg-card border-border rounded-control focus:ring-ring"
               />
             </div>
             <div className="flex gap-1">
               <Button
                 variant={viewMode === "grid" ? "default" : "outline"}
                 size="icon"
-                className={`h-11 w-11 rounded-xl ${viewMode === "grid" ? "bg-primary hover:bg-primary/90" : "border-border"}`}
+                className={`h-11 w-11 rounded-control ${viewMode === "grid" ? "bg-primary hover:bg-primary/90" : "border-border"}`}
                 onClick={() => onViewModeChange("grid")}
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -291,7 +291,7 @@ function AdvancedFiltersImpl({
               <Button
                 variant={viewMode === "list" ? "default" : "outline"}
                 size="icon"
-                className={`h-11 w-11 rounded-xl ${viewMode === "list" ? "bg-primary hover:bg-primary/90" : "border-border"}`}
+                className={`h-11 w-11 rounded-control ${viewMode === "list" ? "bg-primary hover:bg-primary/90" : "border-border"}`}
                 onClick={() => onViewModeChange("list")}
               >
                 <List className="h-4 w-4" />

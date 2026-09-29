@@ -453,7 +453,7 @@ export default function SubscriptionPricingToggle({
 
                 {/* Primary CTA */}
                 <Button
-                  className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                  className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200"
                   onClick={handleChoosePlan}
                 >
                   Subscribe
@@ -466,7 +466,7 @@ export default function SubscriptionPricingToggle({
 
       {/* Start-date dialog (#1766) */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-neutral-900 text-white p-0 border border-white/10 rounded-card shadow-2xl z-[1002] scrollbar-hide">
+        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90dvh] overflow-y-auto bg-neutral-900 text-white p-0 border border-white/10 rounded-card shadow-elevation-4 z-[1002] scrollbar-hide">
           <DialogHeader className="p-6 border-b border-white/10">
             <DialogTitle className="text-xl font-semibold">
               When do you want to start?

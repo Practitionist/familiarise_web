@@ -91,7 +91,7 @@ export function RecordingBuyButton({
         type="button"
         onClick={handleBuy}
         disabled={status === "loading"}
-        className="w-full rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+        className="w-full rounded-control bg-primary px-6 py-3 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
       >
         {status === "loading"
           ? "Opening checkout…"
