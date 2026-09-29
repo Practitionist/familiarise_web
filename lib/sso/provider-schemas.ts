@@ -162,7 +162,7 @@ const RESERVED_PROVIDER_ID_MESSAGE =
   `could be redirected to your identity provider. Reserved ids: ${[
     ...RESERVED_PROVIDER_IDS,
   ]
-    .sort()
+    .sort((a, b) => a.localeCompare(b))
     .join(", ")}. Pick a name that identifies your organisation, e.g. "acme-okta".`;
 
 export function isReservedProviderId(providerId: string): boolean {

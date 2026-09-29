@@ -174,10 +174,14 @@ export async function POST(
     // because `safeParse` discards input on failure — re-reading it here
     // keeps the 422/400 decision in one place instead of duplicating the
     // reserved-id set in this route.
+    // `typeof … === "string"` rather than `String(…)`. `String({})` is
+    // `"[object Object]"`, which is a *truthy* string — so a client posting
+    // `{"providerId": {"$ne": null}}` used to produce a provider id that
+    // looked well-formed, sailed past `isReservedProviderId`, and reached the
+    // uniqueness check as a literal nonsense value instead of a 400.
+    const rawProviderId = (raw as { providerId?: unknown } | null)?.providerId;
     const submittedProviderId =
-      raw && typeof raw === "object" && "providerId" in raw
-        ? String((raw as { providerId: unknown }).providerId ?? "")
-        : "";
+      typeof rawProviderId === "string" ? rawProviderId : "";
     const status = isReservedProviderId(submittedProviderId) ? 422 : 400;
     return NextResponse.json(
       {

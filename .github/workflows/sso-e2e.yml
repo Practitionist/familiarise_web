@@ -65,13 +65,25 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        # `--ignore-scripts` is deliberate. Nothing this suite needs runs a
+        # postinstall hook, and a lifecycle script is arbitrary code executing
+        # with the job's token. If a future dependency genuinely needs one,
+        # the fix is to name it here explicitly, not to opt the whole job out.
+        run: npm ci --ignore-scripts
 
       - name: SSO end-to-end suites
         # The P0 regression suite first: if `buildStoredSamlConfig` ever loses
         # `spMetadata` again, that is the failure worth seeing immediately.
+        #
+        # `./node_modules/.bin/jest`, not `npx jest`. `npx` will download and
+        # execute an arbitrary package from the registry when the local binary
+        # is missing, and this step runs with the repository's full
+        # `GITHUB_TOKEN` in the environment — so an npx fallback here is a
+        # supply-chain path to credential exfiltration, not a convenience. The
+        # local bin is also what the main CI job uses, so a divergence between
+        # the two suites would otherwise be invisible until one of them broke.
         run: >-
-          npx jest
+          ./node_modules/.bin/jest
           __tests__/sso/saml.e2e.test.ts
           __tests__/sso/oidc.e2e.test.ts
           __tests__/sso/jit.e2e.test.ts

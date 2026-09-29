@@ -59,8 +59,7 @@
  * `lib/auth/degraded-captcha.ts`, which is where its reasoning lives.
  */
 
-import { createAuthMiddleware } from "better-auth/api";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 
 import {
   clearSignInAttempts,

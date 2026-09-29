@@ -358,7 +358,9 @@ function describeShape(
   violations: readonly SamlInvariant[],
 ): string {
   if (violations.length === 0) return "canonical";
-  const keys = Object.keys(value).sort().join(",");
+  const keys = Object.keys(value)
+    .sort((a, b) => a.localeCompare(b))
+    .join(",");
   const legacyOnly = violations.every((v) => LEGACY_ONLY_VIOLATIONS.includes(v));
   return legacyOnly ? `legacy{${keys}}` : `noncanonical{${keys}}`;
 }
