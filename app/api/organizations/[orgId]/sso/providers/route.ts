@@ -296,7 +296,15 @@ export async function POST(
       );
     }
   } catch (err) {
-    return gateErrorResponse(err);
+    const response = gateErrorResponse(err);
+    if (response) return response;
+    // Not one of our tagged refusals — the pre-flight's own failure, and one
+    // we have no status for. Returning `gateErrorResponse(err)` directly would
+    // type the handler as `NextResponse | null`, which Next.js rejects at build
+    // time, and silently swallow the error at runtime by returning `null` from
+    // a route that has already begun writing headers.
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    throw err;
   }
 
   // Discovery, now that the org is known to own a verified domain.
