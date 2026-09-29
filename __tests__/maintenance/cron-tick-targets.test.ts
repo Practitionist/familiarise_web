@@ -148,6 +148,27 @@ describe("cron-tick dueTargets cadence", () => {
     expect(dueTargets(at(5))).not.toContain("drain-notification-outbox");
     expect(dueTargets(at(10))).toContain("drain-notification-outbox");
   });
+
+  it("fires the Sentry ingest canary every 30 minutes, not every tick", () => {
+    /**
+     * #1868 — the canary posts a real STORED event on every run, so its
+     * cadence is a direct line item on the Sentry error allowance. On the
+     * 5-minute tick that is 288/day, 8,640/month — 173% of the Developer
+     * plan's 5,000 included errors, i.e. the health check would exhaust the
+     * budget it exists to protect. 30 minutes is 48/day, 1,440/month.
+     *
+     * Losing 25 minutes of detection latency is close to free here: the
+     * canary's alert email fires on the FAILING run, so the healthy runs this
+     * removes were the ones that could not do anything about anything.
+     */
+    const name = "sentry-ingest-canary";
+
+    for (const minute of [5, 10, 15, 20, 25]) {
+      expect(dueTargets(at(minute))).not.toContain(name);
+    }
+    expect(dueTargets(at(30))).toContain(name);
+    expect(dueTargets(at(60))).toContain(name);
+  });
 });
 
 // #1686 — Netlify re-invokes a scheduled function that answers 5xx, up to

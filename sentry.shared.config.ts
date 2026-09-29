@@ -35,6 +35,13 @@ export const INFRA_THROTTLE_MS = 10 * 60 * 1000;
 export const INFRA_TRANSIENT_PATTERNS = [
   /max requests limit exceeded/i, // Upstash quota wall
   /CronLockUnavailableError/, // fail-closed lock refusal (pager already fires)
+  // #1868 — a failed `SystemEvent` audit write (lib/enterprise/system-events.ts).
+  // Keyed on that module's exported marker so it trickles per class per window
+  // instead of once per call site; a systemic database outage fails every
+  // write at once, which is the same flood shape as 2026-09-21. Deliberately
+  // scoped to the marker rather than to a database-error pattern, which would
+  // also swallow genuine faults elsewhere.
+  /\[system-events\] write failed/,
 ];
 
 const infraLastSent = new Map<string, number>();

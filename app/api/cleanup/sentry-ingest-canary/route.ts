@@ -12,7 +12,8 @@ import { sendSentryIngestAlert } from "@/lib/observability/ingest-alert";
  * Sentry ingest canary — "is Sentry actually taking our error events?"
  *
  * The HTTP twin every scheduled job has (ADR 27), so this can be driven by the
- * five-minute Netlify ticker, by GitHub Actions, or by hand. It shares the
+ * Netlify ticker (every 30 minutes — see TARGET_EVERY_MINUTES), by GitHub
+ * Actions, or by hand. It shares the
  * `cleanupRoute` factory rather than hand-rolling the bearer check, the
  * maintenance guard and the cron lock.
  *

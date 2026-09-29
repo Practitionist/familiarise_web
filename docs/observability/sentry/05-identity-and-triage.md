@@ -333,7 +333,7 @@ Three design points, each of which exists because of how the failure presented:
   derive the fix. Recipient is `OBSERVABILITY_ALERT_EMAIL`, defaulting to the
   platform support mailbox.
 
-The canary event carries a fixed fingerprint, so five-minute runs collapse into
+The canary event carries a fixed fingerprint, so half-hourly runs collapse into
 one issue with a count rather than hundreds of near-identical ones, and it
 carries no user, org, IP or URL — it is an infrastructure probe and should never
 become a record about a person.

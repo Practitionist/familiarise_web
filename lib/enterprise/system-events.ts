@@ -17,6 +17,10 @@ import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+import {
+  reportSentryError,
+  SYSTEM_EVENT_WRITE_FAILURE_MARKER,
+} from "@/lib/observability/report";
 
 // Map the DB severity enum onto the telemetry sink's level.
 function severityToTelemetryLevel(
@@ -180,7 +184,60 @@ export function recordSystemErrorSafe(
 ): Promise<void> {
   return recordSystemError(params).catch((err) => {
     console.error("[system-events] recordSystemError threw:", err);
+    reportSystemEventWriteFailure("recordSystemError", err);
   });
+}
+
+/**
+ * Report that recording a `SystemEvent` itself failed.
+ *
+ * This is the blind spot the two `*Safe` wrappers were hiding: a failed audit
+ * write used to be visible only in Netlify logs, and the sites that matter
+ * most — the CRITICAL_DISPUTE_UNLINKED page, the consultant clawback, the
+ * missing-ledger-transaction page, the overage-base restore — are exactly the
+ * ones nobody reads logs for.
+ *
+ * `expected: true` because the *report* is the failure, not a new fault: the
+ * thing that actually broke is whatever made the write fail, and that is
+ * reported by its own path. It becomes a Sentry **info**-level event with
+ * `expected:true`, so it is findable without paging anyone for a database
+ * blip.
+ *
+ * The quota argument is NOT made here, because it does not hold: Sentry counts
+ * every event against the error allowance regardless of level, so `expected`
+ * buys severity, not budget. What bounds the budget is the throttle — this
+ * marker is matched by `INFRA_TRANSIENT_PATTERNS`, so repeats inside a
+ * 10-minute window are dropped before transport and cost nothing. During a
+ * systemic database outage every call site fails at once, which is precisely
+ * the flood shape that spent the 2026-09-21 allowance.
+ *
+ * Must never throw. It runs inside the `.catch()` of a never-throw contract,
+ * and an observability helper that raised there would convert a handled
+ * failure into an unhandled rejection — the exact crash the wrappers exist to
+ * prevent.
+ */
+function reportSystemEventWriteFailure(
+  operation: "recordSystemEvent" | "recordSystemError",
+  err: unknown,
+): void {
+  try {
+    const detail = err instanceof Error ? err.message : String(err);
+    reportSentryError(
+      new Error(
+        `${SYSTEM_EVENT_WRITE_FAILURE_MARKER}: ${operation} — ${detail}`,
+        { cause: err },
+      ),
+      {
+        subsystem: "observability",
+        op: "system-event-write-failed",
+        expected: true,
+        extra: { operation, thrown: err },
+      },
+    );
+  } catch {
+    // Nothing left to report to. Losing the report is strictly better than
+    // letting the reporting itself become the unhandled rejection.
+  }
 }
 
 /**
@@ -202,5 +259,8 @@ export function recordSystemEventSafe(
 ): Promise<void> {
   return recordSystemEvent(params).catch((err) => {
     console.error("[system-events] recordSystemEvent threw:", err);
+    reportSystemEventWriteFailure("recordSystemEvent", err);
   });
 }
+
+export { SYSTEM_EVENT_WRITE_FAILURE_MARKER };

@@ -3,7 +3,7 @@
  * `app/api/cleanup/sentry-ingest-canary/route.ts`.
  *
  * Every scheduled job in this repo has both halves (ADR 27): the HTTP twin
- * that the five-minute Netlify ticker POSTs, and a bare `tsx` entrypoint that
+ * that the Netlify ticker POSTs (every 30 min), and a bare `tsx` entrypoint that
  * GitHub Actions can run on a schedule of its own. This one earns the second
  * half more than most, because the failure it detects is silent — if the ticker
  * route is itself unreachable, only the Actions run will notice.

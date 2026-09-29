@@ -120,6 +120,14 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
+  // #1868 — the Sentry ingest canary. Deliberately NOT on the 5-minute tick:
+  // it posts a real stored event every run, so 5 min is 8,640 events/month,
+  // which is 173% of the Developer plan's 5,000 allowance — the health check
+  // alone would exhaust the plan it is meant to protect. 30 min is
+  // 1,440/month (2.9% of Team, 29% of Developer). The detection latency this
+  // trades away is close to free, because the alert email fires on the
+  // FAILING run, not on the healthy ones it cannot do anything about.
+  "sentry-ingest-canary": 30,
   // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
   // tick on twelve targets was a cold burst billed as duration (ticket #1112198).
   "reconcile-ledgers": 15,
