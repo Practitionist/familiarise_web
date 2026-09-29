@@ -65,6 +65,22 @@
  *
  * Real RSA signing, real X.509 verification, real protocol. No port, no socket,
  * nothing to leak.
+ *
+ * ## Two things this file has to configure that are not obvious
+ *
+ * 1. **An XML schema validator.** `samlify` refuses to parse anything until one
+ *    is registered, and `@better-auth/sso` registers the plugin's own
+ *    (`dist/index.mjs:2980`) at import time — which, for the reason above, never
+ *    happens here. `installSamlSchemaValidator()` in `beforeAll` installs the
+ *    identical one. Skip it and the suite fails with `ERR_INVALID_XML` on the
+ *    very first parse, which is to say on the AuthnRequest, before any assertion
+ *    exists to be malformed.
+ * 2. **A login-response template and the callback that fills it.** An
+ *    `samlify` IdP with neither emits a well-formed response with *no*
+ *    `AttributeStatement`, which the plugin would silently accept by falling
+ *    back to the NameID. `createMockSamlIdP` / `createMockSamlTemplateCallback`
+ *    in the fixture are the fix, and why the template is ignored without the
+ *    callback is documented there.
  */
 
 import { readFileSync } from "node:fs";
@@ -77,7 +93,11 @@ import {
 } from "@/lib/sso/stored-config";
 import { deriveAcsUrl } from "@/lib/sso/derive-urls";
 import {
+  createMockSamlIdP,
+  createMockSamlTemplateCallback,
+  installSamlSchemaValidator,
   mintSelfSignedIdpCredentials,
+  mockSamlAcsUrl,
   type MockIdpCredentials,
 } from "../fixtures/mock-idp";
 
@@ -102,6 +122,17 @@ const RSA_SHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 let idpCreds: MockIdpCredentials;
 
 beforeAll(() => {
+  // samlify validates nothing on its own: `libsaml.isValidXml` rejects unless a
+  // validator has been registered on its module-global context
+  // (`build/src/libsaml.js:682-685`), and `@better-auth/sso` registers one at
+  // `dist/index.mjs:2980`. Importing `samlify` directly does not, so without
+  // this the *first* parse in the suite — the AuthnRequest, before any assertion
+  // exists — dies inside `redirectFlow`'s `try` and is flattened to the literal
+  // string `'ERR_INVALID_XML'` (`flow.js:105-112`). The error names the
+  // assertion while the assertion has not been built yet, which is exactly how
+  // this file came to be blamed on a malformed response. The fixture installs
+  // the plugin's own validator so the two agree on what valid means.
+  installSamlSchemaValidator();
   // One keypair for the whole suite. The P0 was never about throughput, and
   // minting RSA keys per-test is the slowest thing in the file.
   idpCreds = mintSelfSignedIdpCredentials();
@@ -161,17 +192,30 @@ function buildServiceProvider(
   };
 }
 
-/** The IdP the plugin builds at `dist/index.mjs:2466-2473` (and `createIdP`, `:1469`). */
+/**
+ * The IdP the plugin builds at `dist/index.mjs:2466-2473` (and `createIdP`, `:1469`),
+ * plus the response template it would have if it were the one signing. The
+ * template is the load-bearing part and is explained in the fixture: without
+ * it the assertion carries no `AttributeStatement`, so `extract.attributes` is
+ * empty and the plugin's identity mapping silently falls through to the NameID
+ * — a round trip that passes without ever having proved attribute mapping. */
 function makeIdp(creds: MockIdpCredentials): Idp {
-  return saml.IdentityProvider({
+  return createMockSamlIdP({
     entityID: ISSUER,
     singleSignOnService: [{ Binding: HTTP_REDIRECT, Location: ENTRY_POINT }],
     signingCert: creds.cert,
     privateKey: creds.privateKey,
-    wantAuthnRequestsSigned: false,
-    isAssertionEncrypted: false,
   });
 }
+
+/** The subject the IdP asserts, in the shape the response template's tags expect. */
+const SUBJECT = {
+  email: USER.email,
+  emailAddress: USER.email,
+  givenName: USER.givenName,
+  surname: USER.surname,
+  displayName: `${USER.givenName} ${USER.surname}`,
+};
 
 /**
  * The IdP half of the round trip: read the AuthnRequest the SP produced, then
@@ -185,9 +229,13 @@ async function idpIssuesResponse(sp: Sp, creds: MockIdpCredentials) {
 
   const loginRequest = sp.createLoginRequest(idp, "redirect");
   // The browser would land on the IdP with this URL and the IdP would read the
-  // request out of the query string. `URLSearchParams` has already
-  // percent-decoded it, which is the state `redirectFlow`'s own
-  // `decodeURIComponent` expects (`samlify/build/src/flow.js:97`).
+  // request out of the query string. `redirectFlow` then applies its own
+  // `decodeURIComponent` to whatever it is handed
+  // (`samlify/build/src/flow.js:97`), which is why a browser hands it the
+  // *raw* param; `URLSearchParams.get` has already performed that single
+  // decode, and base64 contains no `%`, so the further decode `redirectFlow`
+  // applies is a no-op. The value is therefore the same either way — but only
+  // because it is base64, not because two decodes are equivalent in general.
   const samlRequest = new URL(loginRequest.context).searchParams.get(
     "SAMLRequest",
   );
@@ -200,21 +248,27 @@ async function idpIssuesResponse(sp: Sp, creds: MockIdpCredentials) {
   // A real IdP operation: mints an assertion ID, fills
   // Destination/Audience/Recipient from the SP metadata, applies Conditions
   // validity, and signs the message with the IdP key.
+  //
+  // The fifth argument is not optional decoration. `base64LoginResponse` only
+  // consults `loginResponseTemplate` when `customTagReplacement` is passed too
+  // (`binding-post.js:202-205`) — a template with no callback is silently
+  // ignored and you get the attribute-less default response instead. The
+  // callback fills the placeholders the IdP constructor pre-rendered,
+  // including the `{attrEmailAddress}`-style tags that carry the
+  // `AttributeStatement`, and takes `InResponseTo` from the request samlify
+  // just parsed.
+  //
+  // The sixth argument is `encryptThenSign` and the seventh is `relayState`.
+  // They were previously in the wrong order, which read as
+  // `encryptThenSign = "relay-state-abc123"` — truthy, so samlify took the
+  // sign-after-encrypt branch (`binding-post.js:251-256`) and skipped the
+  // ordinary sign-then-encrypt one at `:230-236`.
   const response = (await idp.createLoginResponse(
     sp,
     requestInfo,
     "post",
-    {
-      email: USER.email,
-      attributes: {
-        email: USER.email,
-        nameID: USER.email,
-        givenName: USER.givenName,
-        surname: USER.surname,
-        displayName: `${USER.givenName} ${USER.surname}`,
-      },
-    },
-    undefined,
+    SUBJECT,
+    createMockSamlTemplateCallback(idp, sp, SUBJECT, requestInfo),
     undefined,
     RELAY_STATE,
   )) as { id: string; context: string };
@@ -278,9 +332,18 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
 
     // And the SP actually publishes that ACS, so the assertion has somewhere
     // real to arrive.
-    expect(sp.entityMeta.getAssertionConsumerService(HTTP_POST)).toBe(
-      DERIVED_ACS,
-    );
+    //
+    // `mockSamlAcsUrl` rather than an inline lookup, because the binding
+    // argument here is the **word** `"post"`, not `HTTP_POST`. samlify resolves
+    // it as `namespace.binding[binding]` (`metadata-sp.js:198-217`) and that map
+    // is keyed by the words (`urn.js:50-54`) — passing the URN looks up an
+    // undefined key, matches no entry and returns `undefined` with no warning,
+    // so the assertion would have compared `undefined` against a URL. The
+    // fixture helper is the same one the mock IdP fills `Destination`,
+    // `Recipient` and `SubjectRecipient` from, so this line and the emitted
+    // assertion cannot drift apart.
+    expect(mockSamlAcsUrl(sp)).toBe(DERIVED_ACS);
+    expect(mockSamlAcsUrl(sp)).toBe(acsUrl);
   });
 
   // BREAKS IF DELETED: the sign-in path end to end — the SP builds an
@@ -423,11 +486,23 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
   });
 
   // BREAKS IF DELETED: the round-trip test above would keep passing if
-  // `parseLoginResponse` stopped verifying signatures. samlify rejects with
-  // `FAILED_TO_VERIFY_SIGNATURE` when the message signature does not check out
-  // against the IdP metadata, so a response signed by a key the stored `cert`
-  // does not match must be refused. Without this, "it verified" in the test
-  // above is an unbacked claim.
+  // `parseLoginResponse` stopped verifying signatures, or if it stopped caring
+  // *which* key signed. Two samlify behaviours carry that, and both are worth
+  // naming because only the first is obvious:
+  //
+  //   - `parseLoginResponse` always runs `checkSignature: true`
+  //     (`entity-sp.js:106-117`), so a broken signature is
+  //     `FAILED_TO_VERIFY_SIGNATURE` (`flow.js:241`).
+  //   - The embedded `<ds:KeyInfo>` carries an **empty** `<ds:X509Data>`, not the
+  //     signing certificate: samlify hands `xml-crypto` a *public key* PEM
+  //     (`getKeyInfo(...).getKey()`), which matches no `X509Certificate`
+  //     pattern, so `verifySignature` finds no certificate node in the response
+  //     and falls back to the one in the IdP **metadata** (`libsaml.js:387-390`).
+  //     The trusted key therefore comes from the stored `cert`, which is the
+  //     point: a response signed by anything else cannot verify.
+  //
+  // Without this test, "it verified" in the round trip above is an unbacked
+  // claim.
   it("refuses an assertion signed by a key the stored cert does not match", async () => {
     const stored = readStoredSamlConfig(
       buildStoredSamlConfig({
@@ -444,6 +519,12 @@ describe("stored SAML config → a real SP/IdP round trip", () => {
     // … but verified against the cert we actually stored.
     const honestIdp = makeIdp(idpCreds);
 
+    // `toBeDefined()` rather than a message matcher, deliberately. samlify
+    // rejects with a bare **string** (`Promise.reject('FAILED_TO_VERIFY_SIGNATURE')`,
+    // `flow.js:241`), and Jest's `rejects.toThrow` only unwraps rejections that
+    // are `Error` instances — matching on the message would be silently
+    // vacuous here. The property under test is "it is refused", not which of the
+    // two refusals fired.
     await expect(
       sp.parseLoginResponse(honestIdp, "post", {
         body: { SAMLResponse: response.context },
