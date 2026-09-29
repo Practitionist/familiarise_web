@@ -26,17 +26,36 @@ If the complaint is "we lost the error", branch A is always the right entry even
 npx tsx -r dotenv/config jobs/observability/sentry-ingest-canary.ts
 ```
 
-| Verdict               | Meaning                                                 | Go to |
-| --------------------- | ------------------------------------------------------- | ----- |
-| `accepted`            | Ingest is healthy; the problem is upstream of Sentry    | A2    |
-| `rate-limited`        | Quota or window exhausted — read `x-sentry-rate-limits` | A5    |
-| `dropped-despite-2xx` | Sentry is 2xx-ing and discarding                        | A5    |
-| `rejected-auth`       | DSN or public key is wrong; nothing can ever arrive     | A1.1  |
-| `unavailable`         | 5xx or unreachable; Sentry is unwell                    | A5    |
+| Verdict               | Meaning                                                               | Go to |
+| --------------------- | --------------------------------------------------------------------- | ----- |
+| `accepted`            | Ingest is healthy; the problem is upstream of Sentry                  | A2    |
+| `rate-limited`        | Quota or window exhausted — read `x-sentry-rate-limits`               | A5    |
+| `dropped-despite-2xx` | Sentry is 2xx-ing and discarding                                      | A5    |
+| `rejected-auth`       | Sentry saw the DSN and refused it — wrong project, revoked key        | A1.1  |
+| `unconfigured`        | No DSN in the runtime; nothing was sent and the SDK never initialised | A1.3  |
+| `unavailable`         | 5xx or unreachable; Sentry is unwell                                  | A5    |
 
-**A1.1** — `rejected-auth` means the client is aimed at a project that does not exist or will not accept. Two dead values are in circulation: a numeric project id from a mis-rotation (answers `403 event submission rejected with_reason: ProjectId`) and `NEXT_PUBLIC_SENTRY_DSN` unset in the context being tested. Check that `NEXT_PUBLIC_SENTRY_DSN` is set on the Netlify context you are testing, and that it is not carrying the dead project.
+**A1.1** — `rejected-auth` means the client is aimed at a project that does not
+exist or will not accept. Two dead values are in circulation: a numeric project
+id from a mis-rotation (answers `403 event submission rejected with_reason:
+ProjectId`) and a revoked public key. Check that `NEXT_PUBLIC_SENTRY_DSN` is not
+carrying the dead project. Beware that the org id and the project id are both
+sixteen digits and both live in the DSN — the org's is in the **host** as
+`o<orgId>`, the project's is the last **path** segment — and the dead project id
+that caused the 2026-09-20 incident shared its first ten digits with the org id,
+so the two read as siblings. `01` has the full taxonomy.
 
 **A1.2** — Repeated identical alerts? That is a symptom of a long outage, not of noise: it means ingest has been unhealthy for days and the cause is further down. Check `alertSuppressed` in the route's JSON. `true` means the cooldown is correctly holding the repeats back. `false` on a stream of emails means the cooldown's Redis state is unreachable — it fails open by design so you keep getting told, but the store needs fixing.
+
+**A1.3** — `unconfigured` is deliberately distinct from `rejected-auth`, because
+the operator's action is different and paging someone about auth when nothing was
+ever sent is a false alarm about the wrong subsystem. Nothing reached Sentry and
+nothing was refused: the SDK is simply not initialised in that runtime, so
+there is no error reporting at all — which is worse precisely because it is
+silent from the start. This is a **configuration** fault. `initSentry()` is
+gated on `Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN)`, so a missing value
+disables Sentry by design and without an error; set the DSN on the context you
+are testing and do not go looking at whether it is valid.
 
 **A2 — Does the code path report at all?** Read it. If it has no `reportSentryError`/`reportSentryMessage` call, or swallows the error in a `catch` that only logs, the event was never intended. The canonical shape of this bug is on the `maintenance` skill's list: a post-commit `scheduleAfter` failure or a `recordSystemError` whose rejection was unhandled. Both are fixed; grep for `.catch(() => {})` near any error you expected to be reported.
 
@@ -60,6 +79,8 @@ If instead the header names a _short_ window (a `retry-after` with no `organizat
 
 **B1 — Confirm the gap is real before changing anything.** Open the issue, check `Users`. Sentry derives a user from an IP when no user is attached, so a non-zero `Users` count is not evidence of identity. The reliable check is the `user.id` on a single event, and the reliable way to get one is branch [D](#d-the-event-arrives-and-you-still-cannot-prove-it).
 
+**Before you do that, read the switch.** `SENTRY_IDENTITY_ENABLED` is **default off** — the disclosure is opt-in and currently off, so `Users: 0` is the expected, correct state of the system and not the symptom of anything. If the report is "Sentry shows no user", the first question is whether the stamp was ever switched on for that context, not where the plumbing is missing. The code and all six call sites are in place either way. `05` has the flag and the compliance preconditions behind it.
+
 **B2 — Is the surface request-scoped at all?** Identity is stamped per request by `lib/observability/identity.ts`, entered through `requireApiAuth`, `requireOrgAccess`, the server guards, `AuthSyncProvider` and the sign-out path. A surface that never enters one of those has no identity to attach: a new route group, a background job, a `scheduleAfter` continuation (which runs after the request has ended and the AsyncLocalStorage scope has closed), an edge route, or anything firing from a webhook with no session.
 
 The `scheduleAfter` case is the recurring one. Work that continues past the response is a different lifetime from the request, and `05` covers the shape of the fix.
@@ -76,7 +97,7 @@ exists to prevent, reintroduced through the back door.
 
 **B4 — Is the event client-side?** Browser events take the client scope set by `AuthSyncProvider`. A client event that is unattributed usually means the provider has not run yet, or the user is signed out and the scope was cleared. Server events take the request scope. Identify which side produced the event before choosing a branch — `environment` and `release` tell you, and a preview vs. production split is the fastest discriminator.
 
-**B5 — Are you blocked on disclosure rather than plumbing?** The identity is a stable cuid, which is pseudonymous personal data under DPDP. It is deliberately not an email address. If the request is "just put the email on the event", the answer is that this needs the compliance sign-off recorded in `05`, not a code change.
+**B5 — Are you blocked on disclosure rather than plumbing?** The identity is a stable cuid, which is pseudonymous personal data under DPDP. It is deliberately not an email address. If the request is "just put the email on the event", the answer is that this needs the compliance sign-off recorded in `05`, not a code change. Note also that the switch is `=== "on"` exactly and defaults off, so `"true"`, `"1"`, `"yes"` and `"ON"` are all still off — a context that looks configured is not.
 
 ---
 

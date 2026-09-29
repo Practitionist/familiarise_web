@@ -66,6 +66,80 @@ export function infraThrottleKey(event: {
  * NODE_ENV is unset and so the gating below reads differently than it does for
  * the app. No app entrypoint passes it, so their behaviour is unchanged. (#1066)
  */
+/**
+ * Strip the fields `dataCollection` does not gate.
+ *
+ * Measured on the wire, 2026-09-29, against 10.59.0 / 10.75.3 / 11.1.0 with
+ * this repo's exact config: `contexts.culture.timezone` arrives in every
+ * version, on the event AND on the transaction. Nothing in `dataCollection`
+ * controls it, so the only place to remove it is a send hook.
+ *
+ * A timezone is a coarse location signal — `Asia/Kolkata` narrows a principal
+ * to a country of a few hundred million — so it is personal data in a way the
+ * cuid discussion does not reach, and it was being sent while the disclosure
+ * switch was believed to be the only thing leaving.
+ *
+ * Known residual, stated rather than hidden: this does NOT cover spans. On
+ * 10.75.x the span hook needs `beforeSendSpan`, and on v11 its signature
+ * changed and could not be characterised reliably. Spans therefore still carry
+ * the timezone until that is done. See the handoff issue.
+ */
+function stripUngatedPII(event: Sentry.Event): Sentry.Event {
+  const culture = event.contexts?.culture as
+    | Record<string, unknown>
+    | undefined;
+  if (culture && "timezone" in culture) {
+    // Reassign rather than mutate: the event object may be frozen downstream,
+    // and a silent no-op on a frozen object is how this would go unnoticed.
+    event.contexts = {
+      ...event.contexts,
+      culture: Object.fromEntries(
+        Object.entries(culture).filter(([k]) => k !== "timezone"),
+      ),
+    };
+  }
+  return event;
+}
+
+/**
+ * The data-minimisation policy, as a named, testable artefact rather than an
+ * inline literal.
+ *
+ * Exported so `__tests__/observability/sentry-data-collection.test.ts` can
+ * assert the key SET rather than the behaviour. That distinction is the whole
+ * point: measured on 2026-09-29 across 10.59.0 / 10.75.3 / 11.1.0, dropping a
+ * single key here does not error, does not warn, and does not fail any existing
+ * test. It silently resolves that category to a permissive default. A test that
+ * asserts the keys exist is the only thing standing between an edit and a
+ * privacy regression.
+ */
+export const SENTRY_DATA_COLLECTION: NonNullable<
+  SentryInitOptions["dataCollection"]
+> = {
+  // No requester IP, no derived geo, no SDK-inferred user identity.
+  userInfo: false,
+  cookies: false,
+  httpHeaders: { request: false, response: false },
+  // BOTH keys, deliberately. The v10 name and the v11 name for the same
+  // setting, kept side by side so the rename cannot become a silent
+  // regression: `queryParams` is what v10 reads, `urlQueryParams` is what
+  // v11 reads, and v11's resolver has NO fallback between them — it does
+  // `urlQueryParams ?? DEFAULTS.urlQueryParams`, and the default is `true`.
+  // So a v11 upgrade with only the old key silently starts shipping query
+  // strings again, and the failure is not an error, just a default.
+  // Dropping either key is a regression; `__tests__/observability/sentry-data-collection.test.ts`
+  // fails if one goes.
+  queryParams: false,
+  urlQueryParams: false,
+  // No request or response bodies, in either direction.
+  httpBodies: [],
+  // No local variable values in stack frames.
+  stackFrameVariables: false,
+  // No generative-AI prompt or completion content. This app issues no
+  // model calls today; pinned so adding one cannot start shipping them.
+  genAI: { inputs: false, outputs: false },
+};
+
 export function initSentry(overrides?: Partial<SentryInitOptions>): void {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
@@ -128,20 +202,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // explicit opt-in unaffected by every flag here, and is how
     // `lib/observability/identity.ts` attributes an event to a user. See
     // docs/observability/sentry/05-identity-and-triage.md.
-    dataCollection: {
-      // No requester IP, no derived geo, no SDK-inferred user identity.
-      userInfo: false,
-      cookies: false,
-      httpHeaders: { request: false, response: false },
-      queryParams: false,
-      // No request or response bodies, in either direction.
-      httpBodies: [],
-      // No local variable values in stack frames.
-      stackFrameVariables: false,
-      // No generative-AI prompt or completion content. This app issues no
-      // model calls today; pinned so adding one cannot start shipping them.
-      genAI: { inputs: false, outputs: false },
-    },
+    dataCollection: SENTRY_DATA_COLLECTION,
     // Source context lines are kept: `frameContextLines` (5 by default) is the
     // difference between a readable N+1 frame and a bare file/line, and the
     // surrounding source contains no tenant data.
@@ -184,6 +245,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // the thrown error and this stamps the tag. Never drops an event — it only
     // re-levels one. (FAMILIARISE_WEB-10)
     beforeSend(event, hint) {
+      stripUngatedPII(event);
       if (isExpectedError(hint?.originalException)) {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
@@ -200,6 +262,12 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
         infraLastSent.set(throttleKey, now);
       }
       return event;
+    },
+
+    // Transactions need their own hook: `beforeSend` is never called for them,
+    // and the timezone was measured arriving on both. Same scrubber.
+    beforeSendTransaction(event) {
+      return stripUngatedPII(event) as typeof event;
     },
 
     // Last, so a caller can narrow a knob it has better information about.

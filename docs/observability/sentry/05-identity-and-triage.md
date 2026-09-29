@@ -15,6 +15,12 @@ This is a code problem, not a tooling problem. Sentry already indexes
 function that holds a session in hand — `requireApiAuth()` — never called
 `Sentry.setUser`.
 
+**Read the rest of this page knowing the fix is not on.** The code exists and
+is wired into six call sites, and none of it runs: `SENTRY_IDENTITY_ENABLED`
+defaults to off, deliberately, and the sections below explain what switching it
+on is waiting for. So "Sentry shows no user" is the expected state of the
+system today, not a symptom of anything.
+
 ## Where identity is stamped
 
 `lib/observability/identity.ts` is the whole module. Six call sites, because
@@ -32,6 +38,12 @@ and fallback ones:
 
 Nothing was added to the 48 individual routes. The win comes from the fact that
 the auth helpers were already the chokepoint.
+
+**None of it is switched on.** Every one of those call sites is in place and
+every one of them early-returns until `SENTRY_IDENTITY_ENABLED=on`. The module
+is written, wired and deliberately inert; see the preconditions below for why,
+because "we added identity to Sentry" is otherwise the natural thing to
+believe about this page and it is not what is running.
 
 ## Why the org is not guessed
 
@@ -109,10 +121,36 @@ The codebase already has the pattern: `User.pseudonymousId` is
 investigations still trace events back to a (deterministic) actor without
 exposing PII".
 
+### The disclosure is opt-in, and it is off
+
+`lib/observability/identity.ts` exports `isSentryIdentityEnabled()`, which is
+`process.env.SENTRY_IDENTITY_ENABLED === "on"`, and that is the whole of it.
+**The default is off.** `setSentryIdentity` and `setSentryOrgContext` both
+return immediately when it is false; the org is gated separately from the user
+so that turning the switch off cannot leave a named tenant on an otherwise
+anonymous event. `clearSentryIdentity` is deliberately _not_ gated — clearing
+is always safe, and on the client the isolation scope outlives a sign-out, so an
+unset switch must never be the reason a previous user's identity survives on the
+scope.
+
+The check is an exact `=== "on"` and that is deliberate rather than fussy. Unset,
+`true`, `1`, `yes`, `ON` and every typo are all **off**. A privacy gate that a
+misspelling can switch on is not a gate. It is read per call, not at module
+load, so a test can toggle it and a runtime env change takes effect without a
+rebuild.
+
+**What off costs is the thing at the top of this page.** The issues go back to
+`Users: 0` and a support agent again cannot answer "which of my users hit
+this" from Sentry alone. That is the deliberate trade, and the trade has a
+direction: an unattributable error is an operational cost, while a disclosed
+pseudonym is a legal one, and only the second is irreversible. The code is
+present, the toggle is one environment variable, and nothing else is blocking a
+switch-on; what is blocking it is the next section.
+
 ### Preconditions before this is considered settled
 
-Treat these as blocking for a production rollout of the identity stamp, and
-route them through whoever owns DPDP compliance — **not** through code review:
+Treat these as blocking for flipping the switch on in production, and route them
+through whoever owns DPDP compliance — **not** through code review:
 
 1. **Sentry DPA** — confirm the existing data processing agreement covers
    transferring a stable pseudonymous user id to a US processor, and check the
@@ -131,6 +169,38 @@ route them through whoever owns DPDP compliance — **not** through code review:
 **A negative answer on any of the three is blocking.** It does not get worked
 around by substituting a hash — shipping the feature on a surrogate because the
 review came back unfavourable is shipping it anyway, with less evidence.
+
+Three things about those three that are easy to get wrong, and which is why
+this is a compliance question rather than an engineering one:
+
+**Consent does not solve the transfer problem, and that is the part only a
+legal determination can close.** The data principal is in India and Sentry's
+region is not, so every event carrying a cuid is a transfer out of India. DPDP
+§16 governs that transfer _separately_ from the consent that would justify the
+processing in the first place. They are two gates, and only one of them is ours
+to set: a consent flag is a switch we can throw, a transfer position is a
+determination about our arrangements with the processor and our ability to
+honour an erasure or a purpose limitation once the data has left. No code review
+can supply that determination, and the flag being available is not evidence that
+it has been made. For the statutory position, what the industry actually does,
+and the same wire measurements below written up for reuse outside this
+repository, see [08 error telemetry and privacy](08-error-telemetry-privacy-reference.md).
+
+**The end state is per-user consent layered on top of this flag, and it does not
+exist yet.** Granular consent at consumer signup is Gap #1 in
+`docs/compliance/08-dpdp-and-privacy.md`, dated to Phase 3 — so there is no
+per-user value to check, and a global environment variable is the only thing
+that can be gated today. It is the coarse switch that has to exist first. It is
+not the finished answer, it should not be read as one, and the natural
+refinement — check the individual user's consent before stamping their cuid —
+is blocked on that gap rather than on anything in this module.
+
+**The cost of being wrong is not symmetric, which is why this defaults off.** If
+the disclosure turns out to have been unlawful, no later change to a flag undoes
+it — the events are already at the processor. If the identity turns out to have
+been worth having, the price of waiting is slow triage. The switch exists to make
+that asymmetry explicit and to let whoever owns the legal call make it, rather
+than leaving it as an accident of deployment order.
 
 The surrogate is a separate, _additional_ data-minimisation measure, worth
 considering on its own merits, and it is not a one-line change. The same
@@ -210,11 +280,15 @@ dead locally (401). Two differently-scoped tokens with similar names is a
 trap, so the new one is app-only and separately named.
 
 It is wired into `readUser360` as the last section, and every failure path —
-no token, 401, 403, 429, timeout, malformed body — resolves to
-`{ configured: false }` rather than throwing. A triage panel is an enrichment,
-not a gate: an agent opening the page mid-incident must not be shown a failure
-caused by the observability provider. The token is not set yet, so the panel
-currently renders empty and nothing else changes.
+no token, 401, 403, 429, timeout, malformed body, and a malformed
+`SENTRY_API_URL` — resolves to `{ configured: false }` rather than throwing. A
+triage panel is an enrichment, not a gate: an agent opening the page
+mid-incident must not be shown a failure caused by the observability provider.
+The token is not set yet, so the panel currently renders empty and nothing else
+changes. The `SENTRY_API_URL` case has its own history worth reading before you
+change that base — it used to reject rather than degrade, and the regression
+test for it was a false green — and it is on the setup page next to the
+coordinate itself.
 
 Still open, and deliberately not in this change:
 
@@ -356,15 +430,49 @@ signed in as a Wipro org OWNER, contained:
 
 and the session envelope carried `"did":"<cuid>"`, Sentry's distinct-id, which
 is derived from `setUser`. Before this branch the same project's events carried
-`user: ip:<address>` and no application identity at all.
+`user: ip:<address>` and no application identity at all. That preview ran with
+`SENTRY_IDENTITY_ENABLED=on` set explicitly, because that is the path under
+test and the default is off — so this is evidence about what the module does
+_when it stamps_, not evidence that it stamps today.
 
 **Not verified** — that Sentry stored, indexed or displayed any of it. Every
 error event in that window was refused at ingest with a 429. So the claim is
 "the plumbing labels the event correctly", not "the event is queryable in
 Sentry". The second half needs the quota fixed, and can then be checked in one
-request against the canary.
+request against the canary. And the whole rung ladder is conditional on the
+switch above: with the flag off, the correct observation on any of these is that
+nothing is attached, which is the switch working rather than a regression.
 
-Two things noticed in the payload and worth folding into the privacy review:
-`contexts.culture.timezone` is still sent (`CultureContext` is not covered by
-`dataCollection`), and `request.headers` still carries `User-Agent` despite
-`httpHeaders: false`.
+Measured on the wire on 2026-09-29, across `@sentry/nextjs` 10.59.0, 10.75.3
+and 11.1.0 with this repo's exact config: **`contexts.culture.timezone` is still
+sent** — `CultureContext` is not covered by `dataCollection`, and a timezone is
+a coarse location signal, so it is now stripped in `beforeSend` and
+`beforeSendTransaction`. **`request.headers` does NOT carry `User-Agent`**: the
+earlier claim here was wrong, and with `httpHeaders: {request:false}` the header
+is absent from every captured payload in all three versions.
+
+Three other measurements from the same experiment, recorded because each was
+assumed rather than known:
+
+- **`Sentry.setUser()` is always sent regardless of `dataCollection`.** Sentry's
+  own documentation says so. `userInfo: false` therefore cannot be relied on to
+  withhold the cuid — the call site and the switch in `identity.ts` are the
+  control, which is why the switch exists and why it defaults off.
+- **`userInfo: false` strips IP.** Contrary to the assumption, no IP address
+  reached the payload in any version, by header, cookie or query string: the
+  integration drops all twelve IP-bearing header names when `userInfo` is off.
+  With `userInfo: true` the IP does appear.
+- **Query strings were a live leak on 10.59.0 and are fixed by 10.75.3.** On
+  10.59.0 `queryParams: false` only suppressed the separate `query_string`
+  field; `event.request.url` still carried the raw query string, so an email or
+  token in a query parameter reached Sentry in cleartext. This is why the SDK is
+  pinned to 10.75.3, and why `urlQueryParams: false` now sits alongside
+  `queryParams: false` — v11 renamed the key with no fallback, and its default
+  is `true`, so a v11 upgrade carrying only the old key would reintroduce the
+  leak silently.
+
+One thing no client-side measurement can answer: the payload is what the SDK
+puts in the event, not what Sentry's edge observes. Their ingest endpoint still
+sees the connecting IP address regardless of `dataCollection`, and scrubbing is
+never retroactive for events already accepted. Both belong in the privacy
+review as open questions rather than as resolved facts.

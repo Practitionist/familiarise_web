@@ -40,6 +40,19 @@ import {
 } from "../../lib/observability/identity";
 import { reportSentryError } from "../../lib/observability/report";
 
+/**
+ * The disclosure is DEFAULT OFF (see `isSentryIdentityEnabled`). These suites
+ * exercise the ENABLED path — they are about what the module does when it
+ * stamps — so they turn it on explicitly rather than relying on a default that
+ * is deliberately the other way. The disabled path has its own tests below.
+ */
+beforeAll(() => {
+  process.env.SENTRY_IDENTITY_ENABLED = "on";
+});
+afterAll(() => {
+  delete process.env.SENTRY_IDENTITY_ENABLED;
+});
+
 const SYNTHETIC_DSN =
   "https://0123456789abcdef0123456789abcdef@o0123456789abcdef.ingest.us.sentry.io/0123456789abcdef";
 

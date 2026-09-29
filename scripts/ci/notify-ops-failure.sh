@@ -49,18 +49,26 @@ set -euo pipefail
 # deployment identifier rather than application configuration, and a copy
 # kept in the repository is exactly how it silently rots against a future
 # project change — it would keep "validating" a project nobody sends to. It
-# comes from LIVE_SENTRY_PROJECT, which must be set wherever SENTRY_DSN is
-# set. Unset fails closed rather than skipping, because a skipped check is
-# the silent no-op this guard exists to prevent.
-LIVE_SENTRY_PROJECT="${LIVE_SENTRY_PROJECT:-}"
+# comes from EXPECTED_SENTRY_PROJECT_ID, which must be set wherever
+# SENTRY_DSN is set. Unset fails closed rather than skipping, because a
+# skipped check is the silent no-op this guard exists to prevent.
+#
+# Renamed from LIVE_SENTRY_PROJECT to EXPECTED_SENTRY_PROJECT_ID. The old
+# name was ambiguous between "the live project" and "the project id of the
+# live thing", and Sentry's org id and project id are both bare 16-digit
+# numbers that invite exactly the wrong paste: the org id is embedded in the
+# DSN host as o<orgId> and shares its first ten digits with at least one
+# dead project id. The new name states the role — it is the value SENTRY_DSN
+# is CHECKED AGAINST. Behaviour is unchanged by the rename.
+EXPECTED_SENTRY_PROJECT_ID="${EXPECTED_SENTRY_PROJECT_ID:-}"
 if [ -n "${SENTRY_DSN:-}" ]; then
-  if [ -z "$LIVE_SENTRY_PROJECT" ]; then
-    echo "::error::LIVE_SENTRY_PROJECT is not set, so SENTRY_DSN cannot be verified. Set it to the live familiarise_web project id (Sentry → Settings → Projects) in this workflow's env. Refusing to skip the check: a well-formed but dead DSN looks delivered, and every cron failure then goes unpaged." >&2
+  if [ -z "$EXPECTED_SENTRY_PROJECT_ID" ]; then
+    echo "::error::EXPECTED_SENTRY_PROJECT_ID is not set, so SENTRY_DSN cannot be verified. Set it to the live familiarise_web PROJECT id — the project id, NOT the organization id (the org id is embedded in the DSN host as o<orgId>); read the project id from Sentry → Settings → Projects → familiarise_web — in this workflow's env. Refusing to skip the check: a well-formed but dead DSN looks delivered, and every cron failure then goes unpaged." >&2
     exit 1
   fi
   dsn_project_check="$(echo "$SENTRY_DSN" | sed -E 's#.*/([0-9]+)(\?.*)?$#\1#')"
-  if [ "$dsn_project_check" != "$LIVE_SENTRY_PROJECT" ]; then
-    echo "::error::SENTRY_DSN names project ${dsn_project_check:-unparseable} — expected live familiarise_web project ${LIVE_SENTRY_PROJECT}; rotate the secret (see 07-required-secrets.md)" >&2
+  if [ "$dsn_project_check" != "$EXPECTED_SENTRY_PROJECT_ID" ]; then
+    echo "::error::SENTRY_DSN names project ${dsn_project_check:-unparseable} — expected the live familiarise_web PROJECT id ${EXPECTED_SENTRY_PROJECT_ID}. Note this is the project id, NOT the organization id (the org id is embedded in the DSN host as o<orgId>), and the two are easy to confuse. Read the project id from Sentry → Settings → Projects → familiarise_web, where it also appears as the ?project= query parameter. Rotate the secret (see 07-required-secrets.md)" >&2
     exit 1
   fi
 fi

@@ -28,11 +28,25 @@ jest.mock("@sentry/nextjs", () => ({
 
 import {
   clearSentryIdentity,
+  isSentryIdentityEnabled,
   ORG_ID_TAG,
   setSentryIdentity,
   setSentryIdentityFromSession,
   setSentryOrgContext,
 } from "../../lib/observability/identity";
+
+/**
+ * The disclosure is DEFAULT OFF (see `isSentryIdentityEnabled`). These suites
+ * exercise the ENABLED path — they are about what the module does when it
+ * stamps — so they turn it on explicitly rather than relying on a default that
+ * is deliberately the other way. The disabled path has its own tests below.
+ */
+beforeAll(() => {
+  process.env.SENTRY_IDENTITY_ENABLED = "on";
+});
+afterAll(() => {
+  delete process.env.SENTRY_IDENTITY_ENABLED;
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -331,5 +345,67 @@ describe("the org_id tag", () => {
 
     clearSentryIdentity();
     expect(setTag).toHaveBeenCalledWith(ORG_ID_TAG, "");
+  });
+});
+
+describe("the disclosure switch, which is DEFAULT OFF", () => {
+  const original = process.env.SENTRY_IDENTITY_ENABLED;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.SENTRY_IDENTITY_ENABLED;
+    else process.env.SENTRY_IDENTITY_ENABLED = original;
+  });
+
+  it("is off when the variable is unset — the state production ships in", () => {
+    delete process.env.SENTRY_IDENTITY_ENABLED;
+    expect(isSentryIdentityEnabled()).toBe(false);
+  });
+
+  it.each(["true", "1", "yes", "ON", "On", "enabled", ""])(
+    "treats %p as OFF, so a typo cannot switch a disclosure on",
+    (value) => {
+      process.env.SENTRY_IDENTITY_ENABLED = value;
+      expect(isSentryIdentityEnabled()).toBe(false);
+    },
+  );
+
+  it("is on only for the exact value 'on'", () => {
+    process.env.SENTRY_IDENTITY_ENABLED = "on";
+    expect(isSentryIdentityEnabled()).toBe(true);
+  });
+
+  it("stamps nothing when off, and never reaches the SDK", () => {
+    delete process.env.SENTRY_IDENTITY_ENABLED;
+    setSentryIdentity({ userId: "usr_gate", role: "STAFF" });
+    setSentryOrgContext({ orgId: "org_gate", orgRole: "OWNER" });
+    expect(setUser).not.toHaveBeenCalled();
+    expect(setTag).not.toHaveBeenCalled();
+  });
+
+  it("leaves the org off too — not just the user", () => {
+    // The tenant is the more sensitive half: it names a company and a role.
+    // Gating only the user stamp would leave a named org on an anonymous event.
+    delete process.env.SENTRY_IDENTITY_ENABLED;
+    setSentryOrgContext({ orgId: "org_gate2", orgRole: "ADMIN" });
+    expect(setUser).not.toHaveBeenCalled();
+    expect(setTag).not.toHaveBeenCalled();
+  });
+
+  it("still CLEARS when off, so a previous user cannot survive on the client scope", () => {
+    // The one asymmetry, and it is deliberate: clearing is always safe, and on
+    // the client the isolation scope outlives a sign-out. An unset switch must
+    // never be why a stale identity persists.
+    delete process.env.SENTRY_IDENTITY_ENABLED;
+    clearSentryIdentity();
+    expect(setUser).toHaveBeenCalledWith(null);
+  });
+
+  it("reads the switch per call, not at module load", () => {
+    // A module-level read would freeze the decision at import time, which would
+    // make it untestable and unchangeable without a rebuild.
+    delete process.env.SENTRY_IDENTITY_ENABLED;
+    expect(isSentryIdentityEnabled()).toBe(false);
+    process.env.SENTRY_IDENTITY_ENABLED = "on";
+    expect(isSentryIdentityEnabled()).toBe(true);
   });
 });

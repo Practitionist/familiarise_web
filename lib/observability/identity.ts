@@ -218,12 +218,46 @@ function mergeUser(
 }
 
 /**
+ * Master switch for the acting-identity disclosure. **DEFAULT OFF.**
+ *
+ * Why a switch at all, and why off: attaching a stable pseudonymous user id to
+ * every error event is a real increase in personal data processed by a third
+ * party, and the data principal here is in India while Sentry's region is not —
+ * so every event is a transfer out of India, which DPDP §16 governs
+ * separately from the consent that would justify the processing. Consent and
+ * transfer are different gates, and only one of them is ours to set. See
+ * docs/compliance/08-dpdp-and-privacy.md and the preconditions in
+ * docs/observability/sentry/05-identity-and-triage.md.
+ *
+ * Consequence of off: the back to `Users: 0` on most issues, which is the
+ * state this module was written to fix. That is the deliberate trade — an
+ * unattributable error is an operational cost, a disclosed pseudonym is a legal
+ * one, and only the second is irreversible.
+ *
+ * Fail-closed on purpose: the check is an exact `=== "on"`, so unset, `true`,
+ * `1`, `yes` and a typo are all OFF. A privacy gate that a misspelling can
+ * switch on is not a gate.
+ *
+ * The intended end state is per-user consent on top of this — but consumer
+ * consent does not exist yet (`docs/compliance/08` Gap #1, Phase 3), so there is
+ * nothing to check per user. This flag is the coarse switch that has to exist
+ * first; it is not the finished answer and should not be read as one.
+ *
+ * Read per call, not at module load, so a test can toggle it and so a runtime
+ * env change takes effect without a rebuild.
+ */
+export function isSentryIdentityEnabled(): boolean {
+  return process.env.SENTRY_IDENTITY_ENABLED === "on";
+}
+
+/**
  * Stamp the acting user onto the current isolation scope.
  *
  * Idempotent and cheap: it only touches the isolation scope, issues no I/O,
  * and is safe to call from any code path that already holds a session.
  */
 export function setSentryIdentity(identity: SentryIdentity): void {
+  if (!isSentryIdentityEnabled()) return;
   const fields: Record<string, unknown> = {
     id: identity.userId,
     // `username` is the human-facing label Sentry shows next to the id; the
@@ -271,6 +305,10 @@ export function setSentryIdentityFromSession(
  * membership list, which is ambiguous for multi-tenant users.
  */
 export function setSentryOrgContext(context: SentryOrgContext): void {
+  // Gated separately: this writes the tenant independently of the user stamp,
+  // so guarding only `setSentryIdentity` would leave a named org on an
+  // otherwise-anonymous event while the switch is off.
+  if (!isSentryIdentityEnabled()) return;
   const stamped = mergeUser(
     {
       org_id: context.orgId,
@@ -300,6 +338,9 @@ export function setSentryOrgContext(context: SentryOrgContext): void {
  * on the same tab are attributed to whoever signed out last.
  */
 export function clearSentryIdentity(): void {
+  // Deliberately NOT gated. Clearing is always safe and always wanted: on the
+  // client the isolation scope outlives a sign-out, so an unset switch must
+  // never be the reason a previous user's identity survives on the scope.
   try {
     Sentry.setUser(null);
   } catch {
