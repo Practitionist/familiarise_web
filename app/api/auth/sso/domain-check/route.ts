@@ -127,13 +127,23 @@ export async function GET(req: NextRequest) {
   //
   // OIDC providers don't have a cert; they fail differently (discoveryEndpoint
   // unreachable, etc.) and are out of scope for this guard.
-  const saml = readStoredSamlConfig(provider.samlConfig);
-  if (!saml?.cert || !validateSamlCert(saml.cert)) {
-    return NextResponse.json({
-      enforceSSO: true,
-      providerMisconfigured: true,
-      errorCode: "SSO_PROVIDER_MISCONFIGURED",
-    });
+  //
+  // The `samlConfig` presence test is load-bearing, not defensive. An OIDC-only
+  // provider stores `samlConfig: null`, so `readStoredSamlConfig` returns
+  // `null` and the `!saml?.cert` test below would be true — flagging every
+  // OIDC provider as misconfigured and refusing OIDC sign-in outright. The
+  // "does this provider have a SAML config at all" question and the "is that
+  // config's certificate valid" question have to be asked separately, because
+  // only the second one has a certificate to be wrong about.
+  if (provider.samlConfig) {
+    const saml = readStoredSamlConfig(provider.samlConfig);
+    if (!saml?.cert || !validateSamlCert(saml.cert)) {
+      return NextResponse.json({
+        enforceSSO: true,
+        providerMisconfigured: true,
+        errorCode: "SSO_PROVIDER_MISCONFIGURED",
+      });
+    }
   }
 
   // The org name is the only extra field this endpoint emits beyond

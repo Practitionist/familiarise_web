@@ -65,12 +65,17 @@ describe("GET /api/auth/sso/domain-check — provider cert pre-flight", () => {
       providerId: "acme-saml",
       // Placeholder body — passes the BEGIN/END marker shape but not the
       // X509 parse, exactly the case that crashes BetterAuth's adapter.
-      samlConfig: JSON.stringify({
+      // A parsed object, not a JSON string: `ssoSecretDecryptExtension` is a
+      // Prisma *result* extension, so `oidcConfig`/`samlConfig` arrive
+      // deserialised (and decrypted) whether the row is an `sso:v1:` envelope
+      // or legacy plaintext. Mocking Prisma bypasses it, so the mock has to
+      // supply what the extension would have produced.
+      samlConfig: {
         issuer: "https://idp.acme.com",
         entryPoint: "https://idp.acme.com/saml",
         cert:
           "-----BEGIN CERTIFICATE-----\nMIIC...not-valid-base64\n-----END CERTIFICATE-----",
-      }),
+      },
       oidcConfig: null,
     });
 
@@ -110,14 +115,15 @@ describe("GET /api/auth/sso/domain-check — provider cert pre-flight", () => {
     mockedPrisma.ssoProvider.findFirst.mockResolvedValue({
       providerId: "acme-oidc",
       samlConfig: null,
-      oidcConfig: JSON.stringify({
+      // Parsed, for the same reason as the SAML mock above.
+      oidcConfig: {
         issuer: "https://acme.auth0.com/",
         clientId: "abc",
         clientSecret: "shh",
         discoveryEndpoint:
           "https://acme.auth0.com/.well-known/openid-configuration",
         pkce: true,
-      }),
+      },
     });
 
     const res = await GET(makeRequest("user@acme.com"));

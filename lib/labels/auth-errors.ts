@@ -162,36 +162,24 @@ function fieldFromValidationMessage(
 /* Resolution                                                                */
 /* -------------------------------------------------------------------------- */
 
+/** Better Auth validates with zod before its own codes apply. */
+const VALIDATION_CODES = new Set(["VALIDATION_ERROR", "MISSING_FIELD"]);
+
 function copyForCode(
   flow: AuthFlow,
   code: string,
   message: string | undefined,
 ): AuthErrorCopy | null {
-  const perFlow = flowAuthErrorCopy(flow, code);
-  const base = baseAuthErrorCopy(code);
-
-  // A flow override is an *amendment* to the base entry, so a base must exist.
-  // `AUTH_ERROR_COPY` is exhaustive over `AuthErrorCode` and every key of
-  // `AUTH_ERROR_COPY_BY_FLOW` is an `AuthErrorCode`, so this cannot be null for
-  // a code we recognise — but the check keeps a future bad override from
-  // rendering a `{ title: undefined }` toast instead of failing loudly.
-  if (perFlow) {
-    if (!base) {
-      throw new Error(
-        `auth-errors: flow override for "${flow}/${code}" has no base entry in AUTH_ERROR_COPY`,
-      );
-    }
-    return { ...base, ...perFlow };
-  }
-
-  if (base) return base;
-
-  // A zod validation failure only has generic copy, so the *field* is the whole
-  // message. This is the one place a server message is read, and it is read for
-  // a path token only.
-  if (code === "VALIDATION_ERROR" || code === "MISSING_FIELD") {
+  // The validation codes are checked FIRST, and must be, because
+  // `AUTH_ERROR_COPY` has generic entries for them with no `field`. Looking
+  // those up before the sniff would return the generic sentence and the field
+  // would never be recovered — which is the whole value of the code, since
+  // BetterAuth's own zod message ("[body.email] Invalid email") is the only
+  // signal that names the offending input. Only the field *token* is read from
+  // that message; the message itself is never returned.
+  if (VALIDATION_CODES.has(code)) {
     const field = fieldFromValidationMessage(message);
-    if (!field) return null;
+    if (!field) return baseAuthErrorCopy(code) ?? null;
     return {
       title:
         field === "email"
@@ -210,7 +198,25 @@ function copyForCode(
       field,
     };
   }
-  return null;
+
+  const perFlow = flowAuthErrorCopy(flow, code);
+  const base = baseAuthErrorCopy(code);
+
+  // A flow override is an *amendment* to the base entry, so a base must exist.
+  // `AUTH_ERROR_COPY` is exhaustive over `AuthErrorCode` and every key of
+  // `AUTH_ERROR_COPY_BY_FLOW` is an `AuthErrorCode`, so this cannot be null for
+  // a code we recognise — but the check keeps a future bad override from
+  // rendering a `{ title: undefined }` toast instead of failing loudly.
+  if (perFlow) {
+    if (!base) {
+      throw new Error(
+        `auth-errors: flow override for "${flow}/${code}" has no base entry in AUTH_ERROR_COPY`,
+      );
+    }
+    return { ...base, ...perFlow };
+  }
+
+  return base ?? null;
 }
 
 /**

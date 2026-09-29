@@ -246,7 +246,15 @@ describe("status fallbacks", () => {
     for (const status of [401, 403]) {
       const copy = humanizeAuthError("signin", { status });
       expect(copy.action).toBe("retry");
-      expect(copy.description).toMatch(/blocked/i);
+      // Assert the two things that make this copy useful: it says the request
+      // was stopped *before reaching the service* (so the customer does not go
+      // hunting for a password problem that does not exist), and it names the
+      // preview-deployment cause (which is what it actually is, in practice).
+      expect(copy.description).toMatch(/stopped the request/i);
+      expect(copy.description).toMatch(/security policy/i);
+      expect(copy.description).toMatch(/preview deployment/i);
+      // And it must not read as a credential problem.
+      expect(`${copy.title} ${copy.description}`).not.toMatch(/password|sign-in failed/i);
     }
   });
 
