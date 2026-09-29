@@ -10,9 +10,11 @@ import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
 import AuthSyncProvider from "@/providers/AuthSyncProvider";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher";
 import type { Metadata, Viewport } from "next";
 
-import { sora } from "@/lib/fonts";
+import { fraunces, inter, sora } from "@/lib/fonts";
 
 import "./globals.css";
 
@@ -73,10 +75,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={sora.variable}>
+    <html
+      lang="en"
+      // `inter` is the text face and carries the weight axis; `sora` stays on
+      // the element for the landing typography that still references it, and
+      // `fraunces` is declared here but only ever fetched by a browser that
+      // has the editorial direction active (globals.css scopes it to
+      // `body[data-theme="editorial"]`).
+      className={`${inter.variable} ${fraunces.variable} ${sora.variable}`}
+    >
       <body
-        className={`${sora.className} flex flex-col min-h-svh antialiased`}
+        className={`${inter.className} flex flex-col min-h-svh antialiased`}
       >
+        {/* Renders null and writes the theme attributes to the body element in
+            an effect, which is why this layout needs no pre-paint script and
+            no hydration escape hatch. See components/theme/ThemeProvider.tsx
+            for why, and __tests__/dashboards/shell-overflow-contract.test.ts
+            for the assertion that forbids the usual alternative. */}
+        <ThemeProvider />
         <ReactQueryProvider>
           <AuthSyncProvider />
           <MaintenanceProvider>
@@ -93,6 +109,10 @@ export default function RootLayout({
             <CookieConsentBanner />
           </MaintenanceProvider>
         </ReactQueryProvider>
+        {/* Dev/review affordance: renders nothing unless `?themes=1` is
+            present or NODE_ENV is not production. Kept outside the providers
+            so it cannot be re-parented by a portal. */}
+        <ThemeSwitcher />
       </body>
     </html>
   );

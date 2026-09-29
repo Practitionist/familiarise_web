@@ -4,47 +4,103 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 9%;
+    /* ── Base surfaces ──────────────────────────────────────────────────────
+     * `--background` is the page, `--surface` is a banded section on it, and
+     * `--card` sits ABOVE both. On the previous all-white scale those three
+     * were the same value, so a card had nothing to be a card *against* — the
+     * only separation available was a shadow, which is why the same surface
+     * used `shadow-xl` in one place and `shadow-md` in another. Tinting the
+     * page instead of the card puts the hierarchy in the background.
+     */
+    --background: 240 20% 99%;
+    --foreground: 240 10% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 9%;
+    --card-foreground: 240 10% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 9%;
-    --primary: 0 0% 9%;
+    --popover-foreground: 240 10% 10%;
+    --surface: 240 16% 97%;
+    --surface-raised: 0 0% 100%;
+    --surface-sunken: 240 14% 95%;
+
+    --primary: 240 10% 10%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%;
-    --accent: 0 0% 96%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
+    --secondary: 240 16% 96%;
+    --secondary-foreground: 240 10% 12%;
+    --muted: 240 14% 95%;
+    --muted-foreground: 240 5% 44%;
+    --accent: 240 16% 95%;
+    --accent-foreground: 240 10% 12%;
+
+    /* ── Brand ──────────────────────────────────────────────────────────────
+     * A NEW axis, deliberately separate from `--primary`.
+     *
+     * `--primary` stays near-black because it is load-bearing across every
+     * dashboard in the app; repainting it would re-skin 400+ files that are
+     * out of scope for this change. The explore surfaces consume `--brand`
+     * instead, which means choosing a direction here cannot leak into the
+     * product surfaces — and promoting it later is a one-line alias flip.
+     */
+    --brand: 245 59% 51%;
+    --brand-foreground: 0 0% 100%;
+    --brand-subtle: 245 60% 96%;
+    --brand-foreground-subtle: 245 55% 34%;
+    --brand-border: 245 45% 85%;
+
+    --destructive: 0 74% 47%;
     --destructive-foreground: 0 0% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 48 96% 10%;
-    --info: 210 90% 50%;
-    --info-foreground: 210 90% 10%;
-    --error: 0 90% 50%;
-    --error-foreground: 0 90% 10%;
-    --success: 142 71% 45%;
+    --warning: 33 90% 42%;
+    --warning-foreground: 40 96% 96%;
+    --info: 205 78% 42%;
+    --info-foreground: 200 90% 96%;
+    --error: 0 72% 45%;
+    --error-foreground: 0 0% 98%;
+    --success: 152 52% 34%;
     --success-foreground: 0 0% 100%;
-    --border: 0 0% 90%;
-    --input: 0 0% 90%;
-    --ring: 0 0% 9%;
-    --radius: 0.75rem;
-    --chart-1: 0 0% 20%;
-    --chart-2: 0 0% 35%;
-    --chart-3: 0 0% 50%;
-    --chart-4: 0 0% 65%;
-    --chart-5: 0 0% 80%;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 0 0% 30%;
-    --sidebar-primary: 0 0% 9%;
+
+    --border: 240 12% 90%;
+    --border-subtle: 240 14% 94%;
+    --input: 240 12% 87%;
+    --ring: 245 59% 51%;
+
+    /* ── Radius ─────────────────────────────────────────────────────────────
+     * A NAMED scale, not an arithmetic remap of Tailwind's defaults.
+     *
+     * The previous config overwrote `rounded-lg`/`rounded-xl` with
+     * `--radius` ± N px while leaving `rounded-3xl` at Tailwind's 24px, so
+     * "rounded-xl" meant 16px and "rounded-2xl" 20px — adjacent names, near
+     * identical sizes, and a name that lied about its value. These are
+     * semantic: pick by ROLE, and the value follows. `--radius` is kept as an
+     * alias for the handful of call sites that still reference it.
+     */
+    --radius-control: 0.5rem;
+    --radius-card: 0.75rem;
+    --radius-media: 1rem;
+    --radius-pill: 9999px;
+    --radius: var(--radius-card);
+
+    /* ── Elevation ──────────────────────────────────────────────────────────
+     * Two channels: a hue-carrying shadow colour (so shadows are tinted by
+     * the foreground, not pure black) and a top-highlight overlay used on dark
+     * surfaces, where a drop shadow is close to invisible and a 1px inner
+     * highlight is what actually reads as an edge.
+     */
+    --shadow-color: 240 20% 20%;
+    --highlight: 0 0% 0%;
+
+    --chart-1: 245 59% 51%;
+    --chart-2: 199 70% 44%;
+    --chart-3: 152 45% 38%;
+    --chart-4: 33 85% 45%;
+    --chart-5: 340 65% 52%;
+
+    --sidebar-background: 240 20% 98%;
+    --sidebar-foreground: 240 8% 30%;
+    --sidebar-primary: 240 10% 10%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 96%;
-    --sidebar-accent-foreground: 0 0% 9%;
-    --sidebar-border: 0 0% 91%;
-    --sidebar-ring: 0 0% 9%;
+    --sidebar-accent: 240 16% 95%;
+    --sidebar-accent-foreground: 240 10% 12%;
+    --sidebar-border: 240 14% 91%;
+    --sidebar-ring: 245 59% 51%;
 
     /* Monochrome landing page colors */
     --silver: 0 0% 75%;
@@ -96,12 +152,137 @@
     }
   }
 
+  /* ── Theme directions ─────────────────────────────────────────────────────
+   *
+   * Three candidate visual languages, expressed as token overrides so the
+   * whole choice is a `data-theme` attribute rather than a branch. They are
+   * evaluated side-by-side on the live pages (see the ThemeSwitcher) and the
+   * losers get deleted once one is chosen — which is why each is a small,
+   * self-contained block that declares ONLY what differs from `:root`.
+   *
+   * Ordering is load-bearing. `:root` is (0,1,0); each `body[...]` axis rule is
+   * (0,1,1) and they tie, so source order decides. These two light blocks sit
+   * BEFORE the dark block deliberately, so the dark-only onboarding scope
+   * declared after them can still win on a tie.
+   *
+   * Semantic differences between the three, worth stating because they are not
+   * just palette swaps:
+   *   precision — tinted page, white cards. Separation comes from the BACKDROP.
+   *   editorial — tighter radius (6/8px vs 8/12px) and near-zero shadow;
+   *              separation comes from HAIRLINE RULES. Serif display face.
+   *   gallery   — larger media radius, stronger elevation, and a cooler
+   *              high-chroma accent built to sit on near-black.
+   */
+
+  /* A: Editorial Warmth — warm parchment, terracotta, hairline rules. */
+  body[data-theme="editorial"] {
+    --background: 40 33% 97%;
+    --foreground: 30 14% 11%;
+    --card: 40 40% 99%;
+    --card-foreground: 30 14% 11%;
+    --popover: 40 40% 99%;
+    --popover-foreground: 30 14% 11%;
+    --surface: 38 26% 93%;
+    --surface-raised: 40 40% 99%;
+    --surface-sunken: 36 22% 90%;
+
+    --primary: 28 26% 14%;
+    --primary-foreground: 40 40% 98%;
+    --secondary: 38 24% 92%;
+    --secondary-foreground: 28 20% 16%;
+    --muted: 36 24% 91%;
+    --muted-foreground: 30 8% 40%;
+    --accent: 36 24% 90%;
+    --accent-foreground: 28 20% 16%;
+
+    --brand: 18 52% 44%;
+    --brand-foreground: 40 40% 98%;
+    --brand-subtle: 22 45% 92%;
+    --brand-foreground-subtle: 18 48% 30%;
+    --brand-border: 20 34% 80%;
+
+    --border: 34 20% 84%;
+    --border-subtle: 36 24% 89%;
+    --input: 34 18% 80%;
+    --ring: 18 52% 44%;
+
+    /* The print-like part of this direction: 6px controls, 8px cards. */
+    --radius-control: 0.375rem;
+    --radius-card: 0.5rem;
+    --radius-media: 0.75rem;
+
+    /* A tinted hairline shadow, not a black one — the shadow is doing almost
+       no work here and should not read as smudge. */
+    --shadow-color: 28 30% 40%;
+
+    --chart-1: 18 52% 44%;
+    --chart-2: 205 45% 38%;
+    --chart-3: 150 35% 32%;
+    --chart-4: 38 60% 40%;
+    --chart-5: 340 40% 46%;
+  }
+
+  /* C: Gallery Dark — tuned for its dark mode but complete in light. */
+  body[data-theme="gallery"] {
+    --background: 240 16% 98%;
+    --foreground: 240 18% 7%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 18% 7%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 18% 7%;
+    --surface: 240 18% 95%;
+    --surface-raised: 0 0% 100%;
+    --surface-sunken: 240 16% 93%;
+
+    --primary: 240 18% 7%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 16% 94%;
+    --secondary-foreground: 240 18% 10%;
+    --muted: 240 16% 94%;
+    --muted-foreground: 240 6% 40%;
+    --accent: 240 16% 93%;
+    --accent-foreground: 240 18% 10%;
+
+    /* High-chroma violet: it has to hold its own against near-black media. */
+    --brand: 250 88% 56%;
+    --brand-foreground: 0 0% 100%;
+    --brand-subtle: 250 60% 96%;
+    --brand-foreground-subtle: 250 70% 38%;
+    --brand-border: 250 50% 84%;
+
+    --border: 240 14% 88%;
+    --border-subtle: 240 16% 92%;
+    --input: 240 14% 84%;
+    --ring: 250 88% 56%;
+
+    /* Media is the point of this direction, so it gets the largest radius. */
+    --radius-control: 0.5rem;
+    --radius-card: 0.875rem;
+    --radius-media: 1.25rem;
+
+    --shadow-color: 250 30% 25%;
+
+    --chart-1: 250 88% 60%;
+    --chart-2: 190 85% 45%;
+    --chart-3: 150 60% 40%;
+    --chart-4: 35 95% 55%;
+    --chart-5: 330 85% 60%;
+  }
+
   /*
    * The dark token set, reachable two ways.
    *
-   * 1. `.dark` on <html> — the normal route, and what a future real theme
-   *    would use. Dormant today: nothing in the app sets the class, so the
-   *    whole block and its ~370 `dark:` utilities are authored but inactive.
+   * 1. `body[data-mode="dark"]` — the user-selectable route. Set by
+   *    `components/theme/ThemeProvider.tsx`, which writes to `body` (never
+   *    `documentElement`) in an effect and renders nothing, so there is no
+   *    pre-paint window and no hydration escape hatch to buy. The theme
+   *    library that would normally be used here requires exactly that escape
+   *    hatch on the document element, which
+   *    __tests__/dashboards/shell-overflow-contract.test.ts:156 forbids.
+   *
+   *    This block was authored-but-dormant for as long as nothing set the
+   *    class; the ~370 `dark:` utilities across the app became reachable when
+   *    the provider landed.
    *
    * 2. `body:has(.onboarding-shell)` — onboarding is a DARK-ONLY route, not a
    *    user-toggleable theme, so it must not need the theme machinery at all.
@@ -130,59 +311,90 @@
    *    same graceful degradation: a browser without it simply renders
    *    onboarding light, which is the old behaviour, not a broken one.
    *
-   * One block, two selectors: the dark values are declared once, so a real
-   * theme later only has to start setting `.dark`.
+   * Both selectors share ONE declaration block. The onboarding route is
+   * dark-only by design (it is a full-bleed product tour, not a theme), so it
+   * keeps working with no theme machinery of its own — and because the tokens
+   * land on `body`, a Radix portal mounted there inherits them.
+   *
+   * Declared LAST among the axis rules so that a light theme chosen by the user
+   * cannot out-specify it: `body:has(...)` ties with `body[data-theme=...]` on
+   * specificity, and source order breaks the tie.
    */
-  .dark,
+  body[data-mode="dark"],
   body:has(.onboarding-shell) {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 7%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 7%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 15%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 65%;
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 98%;
+    /* Near-black, but not pure: a flat #000 has nowhere for an edge to go, so
+       every surface needs a hairline to be visible at all. */
+    --background: 240 12% 5%;
+    --foreground: 240 8% 96%;
+    --card: 240 10% 8%;
+    --card-foreground: 240 8% 96%;
+    --popover: 240 11% 9%;
+    --popover-foreground: 240 8% 96%;
+    /* On dark the hierarchy INVERTS: the page is the darkest thing and cards
+       sit lighter than it. Mirroring the light rule (page tinted, card white)
+       would leave every card invisible. */
+    --surface: 240 11% 7%;
+    --surface-raised: 240 9% 11%;
+    --surface-sunken: 240 13% 4%;
+
+    --primary: 240 8% 96%;
+    --primary-foreground: 240 20% 10%;
+    --secondary: 240 8% 15%;
+    --secondary-foreground: 240 8% 96%;
+    --muted: 240 8% 15%;
+    --muted-foreground: 240 6% 62%;
+    --accent: 240 8% 16%;
+    --accent-foreground: 240 8% 96%;
+
+    --brand: 245 85% 74%;
+    --brand-foreground: 245 60% 12%;
+    --brand-subtle: 245 30% 18%;
+    --brand-foreground-subtle: 245 85% 82%;
+    --brand-border: 245 30% 30%;
+
     /* Was 0 62.8% 30.6% (#7f1d1d), which is a SURFACE colour, not a text
        colour: 1.87:1 on --card (#121212) and 2.1:1 on --background. Every
        `text-destructive` in a dark scope was therefore effectively invisible —
        and the heaviest user of that class is `FieldError`, i.e. exactly the
        validation copy a person must be able to read.
        This value is 5.20:1 on --card and 5.49:1 on --background (AA is 4.5:1
-       for body text), and still reads unmistakably as red. The original
-       light-mode value is unchanged. */
-    --destructive: 0 75% 62%;
-    --destructive-foreground: 0 0% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 48 96% 10%;
-    --info: 210 90% 50%;
-    --info-foreground: 210 90% 10%;
-    --error: 0 90% 50%;
-    --error-foreground: 0 90% 10%;
-    --success: 142 65% 45%;
-    --success-foreground: 0 0% 100%;
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 0 0% 85%;
-    --chart-1: 0 0% 80%;
-    --chart-2: 0 0% 65%;
-    --chart-3: 0 0% 50%;
-    --chart-4: 0 0% 35%;
-    --chart-5: 0 0% 20%;
-    --sidebar-background: 0 0% 7%;
-    --sidebar-foreground: 0 0% 95%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 9%;
-    --sidebar-accent: 0 0% 15%;
-    --sidebar-accent-foreground: 0 0% 95%;
-    --sidebar-border: 0 0% 18%;
-    --sidebar-ring: 0 0% 85%;
+       for body text), and still reads unmistakably as red. */
+    --destructive: 0 75% 68%;
+    --destructive-foreground: 0 0% 10%;
+    --warning: 38 92% 60%;
+    --warning-foreground: 40 96% 10%;
+    --info: 205 90% 66%;
+    --info-foreground: 205 90% 10%;
+    --error: 0 85% 68%;
+    --error-foreground: 0 0% 10%;
+    --success: 152 55% 55%;
+    --success-foreground: 152 60% 8%;
+
+    --border: 240 8% 20%;
+    --border-subtle: 240 8% 15%;
+    --input: 240 8% 24%;
+    --ring: 245 85% 74%;
+
+    --shadow-color: 240 40% 2%;
+    /* The dark-surface depth channel. A drop shadow on a #0C0C0F card is
+       imperceptible; a 1px white-at-6% inner top edge is what actually reads
+       as a raised surface. Consumed by the `edge` utility in components/ui. */
+    --highlight: 0 0% 100%;
+
+    --chart-1: 245 85% 74%;
+    --chart-2: 199 80% 62%;
+    --chart-3: 152 50% 55%;
+    --chart-4: 38 90% 62%;
+    --chart-5: 340 75% 68%;
+
+    --sidebar-background: 240 11% 7%;
+    --sidebar-foreground: 240 8% 95%;
+    --sidebar-primary: 240 8% 96%;
+    --sidebar-primary-foreground: 240 20% 10%;
+    --sidebar-accent: 240 8% 15%;
+    --sidebar-accent-foreground: 240 8% 95%;
+    --sidebar-border: 240 8% 18%;
+    --sidebar-ring: 245 85% 74%;
 
     /* Monochrome landing page colors - dark mode */
     --silver: 0 0% 65%;
@@ -193,9 +405,88 @@
     --ash: 0 0% 15%;
     --steel: 0 0% 45%;
     --graphite: 0 0% 20%;
+  }
 
-    /* Darker base so elevation shadows read against the near-black surfaces */
-    --shadow-color: 0 0% 0%;
+  /* ── Dark + direction ─────────────────────────────────────────────────────
+   * (0,2,1) — beats both the light direction blocks and the dark axis, so each
+   * direction can hold its own identity in dark rather than collapsing to the
+   * shared dark palette. Without these, choosing `editorial` and then toggling
+   * dark would silently hand you `precision`'s dark.
+   */
+  body[data-theme="editorial"][data-mode="dark"] {
+    --background: 30 12% 8%;
+    --foreground: 40 24% 90%;
+    --card: 30 11% 11%;
+    --card-foreground: 40 24% 90%;
+    --popover: 30 12% 12%;
+    --popover-foreground: 40 24% 90%;
+    --surface: 30 10% 13%;
+    --surface-raised: 30 9% 17%;
+    --surface-sunken: 30 14% 6%;
+
+    --primary: 40 24% 92%;
+    --primary-foreground: 28 26% 12%;
+    --secondary: 30 10% 18%;
+    --secondary-foreground: 40 20% 90%;
+    --muted: 30 10% 18%;
+    --muted-foreground: 34 12% 66%;
+    --accent: 30 10% 19%;
+    --accent-foreground: 40 20% 90%;
+
+    --brand: 22 70% 66%;
+    --brand-foreground: 22 60% 10%;
+    --brand-subtle: 22 30% 20%;
+    --brand-foreground-subtle: 22 70% 80%;
+    --brand-border: 22 25% 32%;
+
+    --border: 32 12% 24%;
+    --border-subtle: 32 10% 19%;
+    --input: 32 12% 28%;
+    --ring: 22 70% 66%;
+
+    --radius-control: 0.375rem;
+    --radius-card: 0.5rem;
+    --radius-media: 0.75rem;
+
+    --shadow-color: 25 40% 3%;
+  }
+
+  body[data-theme="gallery"][data-mode="dark"] {
+    --background: 250 14% 5%;
+    --foreground: 250 10% 97%;
+    --card: 250 12% 8%;
+    --card-foreground: 250 10% 97%;
+    --popover: 250 13% 10%;
+    --popover-foreground: 250 10% 97%;
+    --surface: 250 12% 7%;
+    --surface-raised: 250 10% 12%;
+    --surface-sunken: 250 16% 4%;
+
+    --primary: 250 10% 97%;
+    --primary-foreground: 250 30% 8%;
+    --secondary: 250 10% 16%;
+    --secondary-foreground: 250 10% 97%;
+    --muted: 250 10% 16%;
+    --muted-foreground: 250 8% 64%;
+    --accent: 250 10% 17%;
+    --accent-foreground: 250 10% 97%;
+
+    --brand: 250 95% 72%;
+    --brand-foreground: 250 60% 10%;
+    --brand-subtle: 250 35% 19%;
+    --brand-foreground-subtle: 250 95% 84%;
+    --brand-border: 250 35% 32%;
+
+    --border: 250 10% 21%;
+    --border-subtle: 250 10% 16%;
+    --input: 250 10% 25%;
+    --ring: 250 95% 72%;
+
+    --radius-control: 0.5rem;
+    --radius-card: 0.875rem;
+    --radius-media: 1.25rem;
+
+    --shadow-color: 250 50% 2%;
   }
 }
 
@@ -207,7 +498,46 @@
   body {
     @apply bg-background text-foreground;
     padding-top: var(--maintenance-banner-height, 0px);
+    /* Inter is a variable font, so the whole weight axis ships in one file.
+       The `cv` axis gives a little more character to the numerals and
+       `ss01` opens the single-storey a — both matter far more here than they
+       did under a single-weight family. */
     font-feature-settings:
+      "rlig" 1,
+      "calt" 1,
+      "cv05" 1,
+      "ss01" 1;
+    transition:
+      background-color 200ms ease,
+      color 200ms ease;
+  }
+
+  /* The display face is chosen by THEME, not by a utility class, so the
+   * switcher changes the whole page's voice in one attribute flip.
+   *
+   * Scoping Fraunces to the editorial direction also means the browser only
+   * fetches its woff2 when that direction is actually selected — an unused
+   * @font-face costs no request. */
+  body[data-theme="editorial"] .font-display,
+  body[data-theme="editorial"] h1,
+  body[data-theme="editorial"] h2 {
+    font-family: var(--font-fraunces), Georgia, serif;
+    font-variation-settings:
+      "SOFT" 0,
+      "WONK" 1,
+      "opsz" 40;
+    letter-spacing: -0.015em;
+  }
+
+  /* Prices, ratings, counts and dates are compared vertically, not read as
+     prose — proportional figures make a column of them ragged and make
+     tabular ones shimmer as values change. Applied where the numbers live
+     rather than globally, because letter-spaced tabular digits in body copy
+     look wrong. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings:
+      "tnum" 1,
       "rlig" 1,
       "calt" 1;
   }
