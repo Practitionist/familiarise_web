@@ -8,12 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
 import { Calendar, Clock, Users, GraduationCap, ArrowLeft } from "lucide-react";
-import { formatInTimeZone } from "date-fns-tz";
-import {
-  buildSessionsFromAppointment,
-  groupSessionsByWeek,
-} from "@/app/explore/programs/plans/schedule-utils";
+import { deriveBatchCards } from "@/lib/booking/batch-cards";
 import { formatRole } from "@/components/collaborators/format";
+import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
