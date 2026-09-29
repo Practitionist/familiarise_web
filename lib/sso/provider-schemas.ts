@@ -162,7 +162,16 @@ const RESERVED_PROVIDER_ID_MESSAGE =
   `could be redirected to your identity provider. Reserved ids: ${[
     ...RESERVED_PROVIDER_IDS,
   ]
-    .sort((a, b) => a.localeCompare(b))
+    // Bare `.sort()` on purpose — Sonar asks for `localeCompare` here
+    // (js/unicorn/no-array-sort), and applying it would be a regression.
+    // `localeCompare` with no locale argument reads the *host* default, so the
+    // list a customer sees on a dev machine can differ from the one Netlify
+    // renders, and uppercase-lowercase ordering flips (`"Y"` before `"apple"`
+    // under code-unit order, after it under a collation). Bare `.sort()` is
+    // UTF-16 code-unit order: locale-independent, and since every reserved id
+    // here is already lowercase ASCII, it is also the correct alphabetical
+    // order. The rule wants prettier collation; the trade is determinism.
+    .sort()
     .join(", ")}. Pick a name that identifies your organisation, e.g. "acme-okta".`;
 
 export function isReservedProviderId(providerId: string): boolean {

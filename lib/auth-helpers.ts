@@ -210,7 +210,7 @@ export function impersonatedBy(session: Session): string | null {
   // session callback that re-spreads the session (or a test double) can leave
   // it absent entirely, and "absent" must not read as "impersonated".
   const value = (session as { impersonatedBy?: string | null }).impersonatedBy;
-  return value ? value : null;
+  return value ?? null;
 }
 
 export interface OperatorGateOptions {

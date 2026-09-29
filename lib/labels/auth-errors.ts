@@ -31,15 +31,23 @@ import {
   UNREACHABLE,
   baseAuthErrorCopy,
   flowAuthErrorCopy,
-  type AuthErrorAction,
   type AuthErrorCopy,
   type AuthErrorField,
   type AuthFlow,
 } from "./auth-errors.catalog";
 import { normalizeAuthErrorCode } from "./auth-error-codes";
 
-export type { AuthErrorAction, AuthErrorCopy, AuthErrorField, AuthFlow };
-export { AUTH_ERROR_COPY, UNREACHABLE };
+// This module is the app's single import seam for the catalog, so the re-exports
+// below are load-bearing for every page. Written as `export … from` rather than
+// "import, then export the local binding" so each name has exactly one
+// declaration — the catalog — and none of them can be renamed here alone.
+export type {
+  AuthErrorAction,
+  AuthErrorCopy,
+  AuthErrorField,
+  AuthFlow,
+} from "./auth-errors.catalog";
+export { AUTH_ERROR_COPY, UNREACHABLE } from "./auth-errors.catalog";
 
 /* -------------------------------------------------------------------------- */
 /* Input                                                                     */
@@ -165,6 +173,46 @@ function fieldFromValidationMessage(
 /** Better Auth validates with zod before its own codes apply. */
 const VALIDATION_CODES = new Set(["VALIDATION_ERROR", "MISSING_FIELD"]);
 
+/**
+ * The title/description pair for a field the validation sniffer recovered.
+ *
+ * A table rather than a chain of conditionals, deliberately: a chain chooses a
+ * sentence by fall-through, so the "no field matched" case is whichever branch
+ * was written last and a reader has to prove it. Here every field the sniffer
+ * can return has its own row, and typing the table over `AuthErrorField` means
+ * a *new* field is a compile error in this file rather than a customer reading
+ * a sentence nobody chose. That is the same exhaustiveness bargain the catalog
+ * itself makes over `AuthErrorCode`.
+ */
+const VALIDATION_FIELD_COPY: Record<
+  AuthErrorField,
+  Pick<AuthErrorCopy, "title" | "description">
+> = {
+  email: {
+    title: "Check the email address",
+    description: "Enter a valid email address.",
+  },
+  newPassword: {
+    title: "Enter a new password",
+    description: "This field can't be empty.",
+  },
+  password: {
+    title: "Check this field",
+    description: "This field can't be empty.",
+  },
+  code: {
+    title: "Check this field",
+    description: "Enter the code from your app or email.",
+  },
+  // Unreachable from `fieldFromValidationMessage`, which never sniffs a
+  // referral field. Listed so the table stays exhaustive over `AuthErrorField`
+  // and keeps the generic sentence rather than becoming a runtime miss.
+  referral: {
+    title: "Check this field",
+    description: "This field can't be empty.",
+  },
+};
+
 function copyForCode(
   flow: AuthFlow,
   code: string,
@@ -180,23 +228,7 @@ function copyForCode(
   if (VALIDATION_CODES.has(code)) {
     const field = fieldFromValidationMessage(message);
     if (!field) return baseAuthErrorCopy(code) ?? null;
-    return {
-      title:
-        field === "email"
-          ? "Check the email address"
-          : field === "newPassword"
-            ? "Enter a new password"
-            : "Check this field",
-      description:
-        field === "email"
-          ? "Enter a valid email address."
-          : field === "newPassword"
-            ? "This field can't be empty."
-            : field === "code"
-              ? "Enter the code from your app or email."
-              : "This field can't be empty.",
-      field,
-    };
+    return { ...VALIDATION_FIELD_COPY[field], field };
   }
 
   const perFlow = flowAuthErrorCopy(flow, code);

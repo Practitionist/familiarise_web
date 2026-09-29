@@ -62,12 +62,12 @@
 import { APIError, createAuthMiddleware } from "better-auth/api";
 
 import {
+  classifyAccountState,
   clearSignInAttempts,
   readSignInAttempt,
   recordSignInFailure,
   type SignInAttemptVerdict,
 } from "@/lib/auth/attempts";
-import { classifyAccountState } from "@/lib/auth/attempts";
 import { degradedCaptchaRefusal } from "@/lib/auth/degraded-captcha";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { markExpected } from "@/lib/observability/expected";

@@ -170,6 +170,27 @@ const ADMIN_HINT: Record<OidcDiscoveryFailure, string> = {
 };
 
 /**
+ * Upstream `DiscoveryError.code` → our failure set.
+ *
+ * A table rather than a conditional chain, because `DiscoveryErrorCode` is a
+ * union that grows with the plugin: an unmapped code then shows up as a missing
+ * row a reviewer can see, rather than sliding into whichever branch was written
+ * last. Anything absent still collapses to `discovery_failed`, which is what the
+ * chain this replaced did.
+ */
+const FAILURE_BY_DISCOVERY_CODE: Partial<
+  Record<DiscoveryError["code"], OidcDiscoveryFailure>
+> = {
+  // Two upstream codes, one operator-facing sentence: the IdP did not answer,
+  // and which of the two ways it failed to is not something they can act on.
+  discovery_timeout: "discovery_unreachable",
+  discovery_unexpected_error: "discovery_unreachable",
+  discovery_invalid_json: "discovery_invalid_json",
+  discovery_incomplete: "discovery_incomplete",
+  issuer_mismatch: "issuer_mismatch",
+};
+
+/**
  * Map a BetterAuth `DiscoveryError.code` onto our failure set. The codes are
  * the literals the plugin throws (`dist/index.mjs:1003-1013`); the full
  * upstream list is enumerated in `mapDiscoveryErrorToAPIError` in the same
@@ -177,15 +198,7 @@ const ADMIN_HINT: Record<OidcDiscoveryFailure, string> = {
  */
 function fromDiscoveryError(err: DiscoveryError): OidcDiscoveryError {
   const failure: OidcDiscoveryFailure =
-    err.code === "discovery_timeout" || err.code === "discovery_unexpected_error"
-      ? "discovery_unreachable"
-      : err.code === "discovery_invalid_json"
-        ? "discovery_invalid_json"
-        : err.code === "discovery_incomplete"
-          ? "discovery_incomplete"
-          : err.code === "issuer_mismatch"
-            ? "issuer_mismatch"
-            : "discovery_failed";
+    FAILURE_BY_DISCOVERY_CODE[err.code] ?? "discovery_failed";
 
   return new OidcDiscoveryError(failure, ADMIN_HINT[failure]);
 }

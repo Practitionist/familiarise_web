@@ -358,9 +358,12 @@ function describeShape(
   violations: readonly SamlInvariant[],
 ): string {
   if (violations.length === 0) return "canonical";
-  const keys = Object.keys(value)
-    .sort((a, b) => a.localeCompare(b))
-    .join(",");
+  // Bare `.sort()`: this string is a diff key a human compares across runs and
+  // across machines, so it has to be byte-identical everywhere. `localeCompare`
+  // with no locale argument reads the host default and would make the same
+  // shape render differently on two checkouts. See the note on the reserved-id
+  // list in `lib/sso/provider-schemas.ts`.
+  const keys = Object.keys(value).sort().join(",");
   const legacyOnly = violations.every((v) => LEGACY_ONLY_VIOLATIONS.includes(v));
   return legacyOnly ? `legacy{${keys}}` : `noncanonical{${keys}}`;
 }
