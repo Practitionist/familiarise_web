@@ -69,6 +69,10 @@ const config: Config = {
         // The stock keys below are kept so existing call sites keep working
         // while they migrate; new code uses the semantic ones.
         control: "var(--radius-control)",
+        // 6px — the small-pill step (badges, tags, status chips). Deliberately
+        // tighter than `control`: at a 20px badge height an 8px radius reads
+        // as a lozenge, which is the wrong signal for a status label.
+        chip: "var(--radius-chip)",
         card: "var(--radius-card)",
         media: "var(--radius-media)",
         pill: "var(--radius-pill)",

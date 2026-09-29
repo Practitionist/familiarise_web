@@ -24,7 +24,11 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 sm:text-sm",
+      // Aligned to Input: same h-10, same rounded-control, same bg, same
+      // ring-offset-2. This trigger had `focus:` (not `focus-visible:`), so a
+      // mouse click left a ring that a Button would not have shown, and a
+      // `py-2` where Input had `py-1` on the same box height.
+      "flex h-10 w-full items-center justify-between whitespace-nowrap rounded-control border border-input bg-background px-3 py-2 text-base shadow-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 sm:text-sm",
       className,
     )}
     {...props}

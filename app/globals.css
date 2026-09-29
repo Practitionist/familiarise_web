@@ -73,6 +73,7 @@
      * alias for the handful of call sites that still reference it.
      */
     --radius-control: 0.5rem;
+    --radius-chip: 0.375rem;
     --radius-card: 0.75rem;
     --radius-media: 1rem;
     --radius-pill: 9999px;
@@ -208,6 +209,7 @@
 
     /* The print-like part of this direction: 6px controls, 8px cards. */
     --radius-control: 0.375rem;
+    --radius-chip: 0.3125rem;
     --radius-card: 0.5rem;
     --radius-media: 0.75rem;
 
@@ -257,6 +259,7 @@
 
     /* Media is the point of this direction, so it gets the largest radius. */
     --radius-control: 0.5rem;
+    --radius-chip: 0.375rem;
     --radius-card: 0.875rem;
     --radius-media: 1.25rem;
 
@@ -445,6 +448,7 @@
     --ring: 22 70% 66%;
 
     --radius-control: 0.375rem;
+    --radius-chip: 0.3125rem;
     --radius-card: 0.5rem;
     --radius-media: 0.75rem;
 
@@ -483,6 +487,7 @@
     --ring: 250 95% 72%;
 
     --radius-control: 0.5rem;
+    --radius-chip: 0.375rem;
     --radius-card: 0.875rem;
     --radius-media: 1.25rem;
 
