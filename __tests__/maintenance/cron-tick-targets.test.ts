@@ -26,6 +26,7 @@ function loadTicker(): {
   targetRequest: TargetRequest;
   dueTargets: (now: Date) => string[];
   statusFor: (failed: { name: string; status: number }[]) => number;
+  reportableToSentry: (name: string) => boolean;
   bucketFor: (
     status: number,
     maintenance?: boolean,
@@ -169,6 +170,23 @@ describe("cron-tick dueTargets cadence", () => {
     expect(dueTargets(at(30))).toContain(name);
     expect(dueTargets(at(60))).toContain(name);
   });
+  it("never reports the Sentry ingest canary's failure TO Sentry", () => {
+    /**
+     * #1868 — the canary detects that Sentry is discarding events. Reporting
+     * that failure to Sentry is the monitor reporting through the failing
+     * system: an event per tick that can never arrive, and one more per tick
+     * from the allowance it is protecting once ingest recovers.
+     *
+     * Two things are asserted because both matter and they pull opposite ways:
+     * the canary must stay OUT of the Sentry report, and it must stay IN the
+     * failed list so a 503 is still visible in the tick's status and body.
+     */
+    const { reportableToSentry } = loadTicker();
+
+    expect(reportableToSentry("sentry-ingest-canary")).toBe(false);
+    expect(reportableToSentry("process-payouts")).toBe(true);
+    expect(reportableToSentry("reconcile-ledgers")).toBe(true);
+  });
 });
 
 // #1686 — Netlify re-invokes a scheduled function that answers 5xx, up to
@@ -191,6 +209,25 @@ describe("cron-tick statusFor", () => {
 // #1598 P1-W03 — a twin refusing inside a maintenance hold answers 503 with
 // a `phase` in the body; that is a healthy hold and joins the 409 bucket. A
 // bare 503 (dead route, platform, dependency) stays a failure.
+describe("cron-tick reportableToSentry", () => {
+  const { reportableToSentry, bucketFor } = loadTicker();
+
+  it("excludes the canary from the Sentry report but keeps it in the failed list", () => {
+    /**
+     * #1868 — the canary detects that Sentry is discarding events, so
+     * reporting that failure to Sentry is the monitor reporting through the
+     * failing system. The two halves matter and pull opposite ways: out of the
+     * Sentry report, still in the tick's own status and body.
+     */
+    expect(reportableToSentry("sentry-ingest-canary")).toBe(false);
+    expect(reportableToSentry("process-payouts")).toBe(true);
+    expect(reportableToSentry("reconcile-ledgers")).toBe(true);
+
+    // Suppression is of the Sentry report only, never of the tick's visibility.
+    expect(bucketFor(503)).toBe("failed");
+  });
+});
+
 describe("cron-tick bucketFor", () => {
   const { bucketFor } = loadTicker();
 

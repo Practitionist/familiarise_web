@@ -42,7 +42,7 @@ npx tsx -r dotenv/config jobs/observability/sentry-ingest-canary.ts
 
 **A3 — Is the SDK initialised in this runtime?** Three runtimes call `initSentry()` from `sentry.shared.config.ts`: server, edge, and client via `instrumentation-client.ts`. A runtime added later does not call it, and `instrumentation.ts` must register the server hooks. A bare-Node job needs `initJobSentry()` from `lib/observability/job-sentry.ts` and a `flushJobSentry()` with a budget before exit — a job missing either is invisible however loudly it fails.
 
-**A4 — Is the error `expected`?** If the error carries the expected marker, `beforeSend` re-levels it to a **warning**. Warnings do not appear in the issue list, only under the log/trace views. An issue list that is "missing" all of its warnings is a level problem, not a capture problem — go to [C](#c-the-event-arrives-at-the-wrong-level).
+**A4 — Is the error `expected`?** If the error carries the expected marker, `beforeSend` re-levels it to a **warning**. Warnings do not appear in the issue list, only under the log and trace views, so an issue list that is "missing" all of its warnings is a level problem rather than a capture problem — go to [C](#c-the-event-arrives-at-the-wrong-level).
 
 **A5 — Quota or unavailability.** The response names itself:
 
@@ -64,7 +64,15 @@ If instead the header names a _short_ window (a `retry-after` with no `organizat
 
 The `scheduleAfter` case is the recurring one. Work that continues past the response is a different lifetime from the request, and `05` covers the shape of the fix.
 
-**B3 — Is the scope stale?** The identity store is cleared at the end of each request so a pooled instance cannot serve one user's scope to the next request. If a surface is doing work outside a request, a stale scope is a worse failure than none: it attributes events to the previous request's user. Treat any attempt to reach into that store from outside a request as a bug, not a limitation to work around.
+**B3 — Is the surface inside a request at all?** There is no identity _store_ to go stale and nothing is cleared at the
+end of a request: `lib/observability/identity.ts` holds no state and uses no AsyncLocalStorage. Per-request isolation is the
+**SDK's** — `@sentry/nextjs` forks a fresh isolation scope at every request boundary, and `Sentry.setUser`/`setTag` write to
+that scope rather than the process scope. So the question is not whether a value went stale but whether the surface still has
+a live request scope at all. A `scheduleAfter` continuation, a cron job, an edge route or a webhook has left it, and there is
+no scope to inherit — which is why those surfaces are the ones that legitimately show no user. Anything that reaches _around_
+the SDK to remember the last user itself is the actual bug: a warm Lambda serves requests concurrently, so a remembered user
+is routinely a different person's, and misattribution is worse than no attribution. That is the harm the isolation scope
+exists to prevent, reintroduced through the back door.
 
 **B4 — Is the event client-side?** Browser events take the client scope set by `AuthSyncProvider`. A client event that is unattributed usually means the provider has not run yet, or the user is signed out and the scope was cleared. Server events take the request scope. Identify which side produced the event before choosing a branch — `environment` and `release` tell you, and a preview vs. production split is the fastest discriminator.
 

@@ -54,10 +54,14 @@ export default function AuthSyncProvider() {
   // unattributed; and this also covers session expiry and cross-tab sign-out,
   // neither of which touches the sign-in page.
   //
-  // The wrapped `signOut` in `lib/auth-client.ts` clears the identity eagerly,
-  // because `signOutEverywhere` hard-navigates on success and this effect
-  // would never get the chance to run. This effect is the backstop for every
-  // path that resolves a session change without a sign-out call.
+  // The wrapped `signOut` in `lib/auth-client.ts` clears the identity on
+  // SUCCESS, not eagerly — a failed sign-out leaves the user authenticated, so
+  // the id already on the scope is still correct and clearing it would drop the
+  // actor for someone who never left (see that file for the full argument). It
+  // needs no backstop on the success path, because `signOutEverywhere` and the
+  // `onError` paths hard-navigate, which reloads this provider. This effect is
+  // the backstop for every path that resolves a session change WITHOUT a
+  // sign-out call: session expiry, cross-tab sign-out, SSO, and OAuth.
   useEffect(() => {
     if (isPending) return;
     const userId = session?.user?.id ?? null;

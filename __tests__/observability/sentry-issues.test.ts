@@ -37,6 +37,59 @@ const load = async () => {
   return mod.findUserIssues;
 };
 
+describe("malformed configuration", () => {
+  /**
+   * `SENTRY_API_BASE` is read at module load, so the env var must be set
+   * before the first import — an earlier version of this test set it inside
+   * the body and passed for the wrong reason, on the valid default.
+   */
+  it("a scheme-less SENTRY_API_URL resolves instead of rejecting", async () => {
+    jest.resetModules();
+    process.env.SENTRY_API_TOKEN = "sntrys_test";
+    process.env.SENTRY_API_URL = "us.sentry.io"; // no scheme: `new URL` throws
+    try {
+      const { findUserIssues } =
+        await import("../../lib/observability/sentry-issues");
+      await expect(findUserIssues({ userId: "usr_x" })).resolves.toEqual({
+        configured: false,
+        issues: null,
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.SENTRY_API_URL;
+      jest.resetModules();
+    }
+  });
+
+  it("a base that already carries /api/0 is not silently accepted twice", async () => {
+    // The documented default is the bare host precisely because the code
+    // appends /api/0 itself. This records the shape so a future doc edit that
+    // puts it back in the default is caught rather than shipped as a 404.
+    jest.resetModules();
+    process.env.SENTRY_API_TOKEN = "sntrys_test";
+    process.env.SENTRY_API_URL = "https://us.sentry.io";
+    try {
+      const { findUserIssues } =
+        await import("../../lib/observability/sentry-issues");
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      });
+      await findUserIssues({ userId: "usr_x" });
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        "/api/0/organizations/",
+      );
+      expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(
+        "/api/0/api/0/",
+      );
+    } finally {
+      delete process.env.SENTRY_API_URL;
+      jest.resetModules();
+    }
+  });
+});
+
 describe("findUserIssues", () => {
   it("returns not-configured and makes no network call without a token", async () => {
     const findUserIssues = await load();

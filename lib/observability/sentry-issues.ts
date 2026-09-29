@@ -99,18 +99,24 @@ export async function findUserIssues(opts: {
   const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), 25);
   const statsPeriod = opts.statsPeriod ?? DEFAULT_STATS_PERIOD;
 
-  const url = new URL(
-    `${SENTRY_API_BASE}/api/0/organizations/${SENTRY_ORG_SLUG}/issues/`,
-  );
-  url.searchParams.set("query", buildQuery(userId));
-  url.searchParams.set("project", SENTRY_PROJECT_SLUG);
-  url.searchParams.set("statsPeriod", statsPeriod);
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("sort", "date");
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
+    // INSIDE the try on purpose. `new URL` throws on a malformed base — a
+    // `SENTRY_API_URL` with no scheme, or one carrying a stray path — and a
+    // throw here used to reject `findUserIssues` outright, which rejected
+    // `readUser360` and could take the support page down with it. This module
+    // promises every failure path resolves to `{configured:false}`, and a
+    // misconfigured base is a failure path, not a programming error.
+    const url = new URL(
+      `${SENTRY_API_BASE}/api/0/organizations/${SENTRY_ORG_SLUG}/issues/`,
+    );
+    url.searchParams.set("query", buildQuery(userId));
+    url.searchParams.set("project", SENTRY_PROJECT_SLUG);
+    url.searchParams.set("statsPeriod", statsPeriod);
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("sort", "date");
+
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${process.env.SENTRY_API_TOKEN}` },
       signal: controller.signal,

@@ -17,7 +17,11 @@ import {
   isIngestHealthy,
   probeSentryIngest,
 } from "@/lib/observability/ingest-canary";
-import { sendSentryIngestAlert } from "@/lib/observability/ingest-alert";
+import {
+  canaryAlertNeeded,
+  recordCanaryAlertSent,
+  sendSentryIngestAlert,
+} from "@/lib/observability/ingest-alert";
 import { runJob } from "@/lib/observability/job-sentry";
 
 export async function runSentryIngestCanary(): Promise<void> {
@@ -35,13 +39,22 @@ export async function runSentryIngestCanary(): Promise<void> {
   const summary = describeIngest(probe);
   console.error(`[sentry-ingest-canary] ${summary}`);
 
-  const alerted = await sendSentryIngestAlert(probe).catch((err: unknown) => {
-    console.error(
-      "[sentry-ingest-canary] alert could not be sent:",
-      err instanceof Error ? err.message : String(err),
-    );
-    return false;
-  });
+  // The SAME cooldown gate the HTTP twin uses. Without it this path emails on
+  // every failing Actions run regardless of what the ticker already reported,
+  // so whichever scheduler fires more often sets the real alert rate — and the
+  // whole point of the cooldown is that the rate is not the scheduler's to
+  // choose. Armed on a successful send only, and fail-open.
+  const needed = await canaryAlertNeeded(probe.verdict);
+  const alerted = needed
+    ? await sendSentryIngestAlert(probe).catch((err: unknown) => {
+        console.error(
+          "[sentry-ingest-canary] alert could not be sent:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return false;
+      })
+    : false;
+  if (alerted) await recordCanaryAlertSent(probe.verdict);
   console.error(
     `[sentry-ingest-canary] verdict=${probe.verdict} status=${probe.status} alerted=${alerted} eventId=${probe.eventId}`,
   );

@@ -88,8 +88,19 @@ export type IngestVerdict =
   | "dropped-despite-2xx"
   /** 429 — throttled or over quota. `detail` carries Sentry's own words. */
   | "rate-limited"
-  /** 401/403 — the DSN or key is wrong. */
+  /** 401/403 — Sentry saw the DSN and refused it. The DSN or key is wrong. */
   | "rejected-auth"
+  /**
+   * No DSN at all, or one that does not parse — nothing was ever sent.
+   *
+   * Distinct from `rejected-auth` because the operator's action is different
+   * and neither is urgent-in-the-same-way: here the SDK is simply not
+   * initialised in this deployment, so there is no error reporting to be lost.
+   * Paging someone to fix their auth when nothing was ever sent is a false
+   * alarm about the wrong subsystem, and it is a *config* fault, found by
+   * looking at configuration.
+   */
+  | "unconfigured"
   /** 5xx or transport failure — Sentry is unwell, or we cannot reach it. */
   | "unavailable";
 
@@ -134,7 +145,7 @@ export async function probeSentryIngest(opts?: {
 
   if (!url) {
     return {
-      verdict: "rejected-auth",
+      verdict: "unconfigured",
       status: 0,
       detail:
         "NEXT_PUBLIC_SENTRY_DSN is unset or unparseable, so no error event " +
@@ -232,6 +243,15 @@ export function describeIngest(r: IngestProbeResult): string {
       return `Sentry answered 200 but dropped the event. ${r.detail ?? ""}`.trim();
     case "unavailable":
       return `Could not reach Sentry ingest (status ${r.status}). ${r.detail ?? ""}`.trim();
+    case "unconfigured":
+      return [
+        "Sentry is not configured — no DSN was available, so nothing was sent",
+        " and no error reporting is happening at all. This is a deployment",
+        " configuration gap, not a Sentry fault: set NEXT_PUBLIC_SENTRY_DSN in",
+        " the runtime environment and confirm the SDK is initialised. Note this",
+        " is NOT the same as a rejected DSN — nothing ever reached Sentry to be",
+        " rejected.",
+      ].join("");
   }
 }
 

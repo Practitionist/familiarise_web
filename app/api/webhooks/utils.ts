@@ -1280,7 +1280,10 @@ export async function handleDisputeCreated(
       // PM-4 — without the gateway lookup we can't link the dispute, so
       // earnings won't be held. The 6h reconcile-disputes cron is the only
       // backstop; page so it isn't silently dropped for 6h.
-      void recordSystemErrorSafe({
+      // Awaited, not `void`: a floating write is lost whenever the invocation
+      // ends first, which is the failure `*Safe` exists to stop hiding. This one
+      // is outside the transaction, so the global client is fine here.
+      await recordSystemErrorSafe({
         category: "WEBHOOK",
         summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
         err: error,
@@ -1300,6 +1303,17 @@ export async function handleDisputeCreated(
   // rw-antidependency aborts one and the retry sees the winner's effect.
   // #1654 — the bell is staged inside the tx and sent only after COMMIT.
   let stagedNotification: StagedTrigger | null = null;
+
+  // #1868 — same shape as `stagedNotification` and for the same reason. The
+  // CRITICAL_DISPUTE_UNLINKED page used to be written THROUGH the tx, so a
+  // later rollback silently discarded it: exactly the case where a critical
+  // page matters most, the one where it would have vanished. Staged inside the
+  // tx, written after COMMIT. The write deliberately does NOT pass `db: tx` —
+  // the transaction has closed by then, and reaching for the global client
+  // from inside an open tx is the PG_POOL_MAX=1 deadlock. Telemetry only; no
+  // money outcome depends on it.
+  type UnlinkAlert = Parameters<typeof recordSystemErrorSafe>[0];
+  let stagedUnlinkAlert: UnlinkAlert | null = null;
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -1331,16 +1345,16 @@ export async function handleDisputeCreated(
           // earnings stay payable until the 6h reconcile-disputes cron — page on it,
           // unless the lookup-failure catch above already paged for this incident.
           if (!unlinkAlertRecorded) {
-            // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps
-            // a telemetry failure from aborting the webhook.
-            await recordSystemErrorSafe({
+            // Staged, not written — see `stagedUnlinkAlert`. Writing through the
+            // tx meant a CRITICAL page was rolled back with everything else, on
+            // precisely the failure it was raised to catch.
+            stagedUnlinkAlert = {
               category: "WEBHOOK",
               summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
               err: new Error("dispute payment not found"),
               context: { disputeId, chargeId, gateway },
               correlationId: disputeId,
-              db: tx,
-            });
+            };
           }
           return;
         }
@@ -1446,6 +1460,12 @@ export async function handleDisputeCreated(
     ),
   );
   await attemptStaged(stagedNotification);
+  if (stagedUnlinkAlert) {
+    // Post-commit and awaited: the tx is closed, so the global client is safe
+    // here, and awaiting means the page cannot be lost to the invocation
+    // ending. `*Safe` still guarantees a recorder failure cannot throw.
+    await recordSystemErrorSafe(stagedUnlinkAlert);
+  }
   return result;
 }
 

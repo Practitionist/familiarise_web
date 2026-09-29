@@ -84,6 +84,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   // its own FAILs via chargeTimedOutAt.
   let failed = 0;
   let invoicedSkips = 0;
+  const pendingRecords: Promise<void>[] = [];
   for (const a of abandoned) {
     const outcome = await prisma.$transaction(async (tx) => {
       const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
@@ -101,15 +102,25 @@ async function sweepAbandonedOverageChargesUnlocked(
       // base — the org was under-billed for this session. Needs a manual
       // billing adjustment; surface it instead of silently diverging the leg.
       invoicedSkips += 1;
-      void recordSystemErrorSafe({
-        organizationId: null,
-        category: "OVERAGE",
-        summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
-        err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
-        context: { overageEventId: a.id },
-      });
+      // Collected, not awaited inline: the loop can be long, and serialising one
+      // DB write per iteration would make the sweep materially slower. Awaited
+      // as a batch before returning so the write cannot be lost to the process
+      // exiting on an empty event loop — which is the failure `*Safe` exists to
+      // stop, and a `void` reintroduces at the exit.
+      pendingRecords.push(
+        recordSystemErrorSafe({
+          organizationId: null,
+          category: "OVERAGE",
+          summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
+          err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+          context: { overageEventId: a.id },
+        }),
+      );
     }
   }
+  // `*Safe` never rejects, so this cannot throw; the batch is awaited purely so
+  // the writes are complete before the process is allowed to exit.
+  await Promise.all(pendingRecords);
 
   console.log(
     `🧹 Failed ${failed} abandoned CHARGE_MEMBER overage charge(s) — circuit-breaker ceiling freed` +

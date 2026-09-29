@@ -55,22 +55,105 @@ function rowsFor(r: IngestProbeResult): [string, string][] {
   ];
 }
 
-const REMEDY = [
-  "What this means: the application is reporting errors and they are being",
-  "discarded before storage. The Sentry dashboard will look quiet, which is",
-  "indistinguishable from 'no errors' unless you know to check.",
-  "",
-  "What to do:",
-  "  - If the rate-limit header names error_usage_exceeded, the organisation's",
-  "    error allowance for the billing period is spent. Upgrading the plan",
-  "    raises the ceiling immediately (Team includes 50k errors/month against",
-  "    Developer's 5k), so this does not have to wait for the period to roll",
-  "    over.",
-  "  - Then re-check: POST /api/cleanup/sentry-ingest-canary with the",
-  "    CRON_SECRET bearer. A healthy:true body means ingest is back.",
-  "",
-  "Reference: lib/observability/ingest-canary.ts",
-].join("\n");
+const REMEDY_RECHECK =
+  "  - Then re-check: POST /api/cleanup/sentry-ingest-canary with the\n" +
+  "    CRON_SECRET bearer. A healthy:true body means ingest is back.";
+
+/**
+ * The remedy is chosen per verdict, because the one thing an operator must
+ * never be told is the wrong action. A `rate-limited` alert that said "fix
+ * your DSN" would be worse than no alert at all.
+ */
+function remedyFor(r: IngestProbeResult): string {
+  const recheck = [
+    "  - Then re-check: POST /api/cleanup/sentry-ingest-canary with the",
+    "    CRON_SECRET bearer. A healthy:true body means ingest is back.",
+  ];
+
+  if (r.verdict === "unconfigured") {
+    return [
+      "What this means: no DSN was available in this runtime, so the SDK never",
+      "initialised and NOTHING was sent. There is no Sentry incident here —",
+      "there is no error reporting at all, which is worse precisely because it",
+      "is silent from the start.",
+      "",
+      "What to do:",
+      "  - Set NEXT_PUBLIC_SENTRY_DSN in the runtime environment (Netlify: the",
+      "    context the app runs in; the job: the same in GitHub Actions).",
+      "  - Confirm sentry.shared.config.ts initialised. It is gated on",
+      "    Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN), so a missing value",
+      "    disables Sentry silently and by design.",
+      "  - Do NOT go looking at whether your DSN is valid: nothing was sent, so",
+      "    nothing was rejected.",
+      ...recheck,
+    ].join("\n");
+  }
+
+  if (r.verdict === "rate-limited") {
+    return [
+      "What this means: the application is reporting errors and they are being",
+      "discarded before storage. The Sentry dashboard will look quiet, which is",
+      "indistinguishable from 'no errors' unless you know to check.",
+      "",
+      "What to do:",
+      "  - If the rate-limit header names error_usage_exceeded, the organisation's",
+      "    error allowance for the billing period is spent. Upgrading the plan",
+      "    raises the ceiling immediately (Team includes 50k errors/month against",
+      "    Developer's 5k), so this does not have to wait for the period to roll",
+      "    over.",
+      // Only mention a quota when the header actually does. A short-window
+      // throttle clears on its own, and telling someone to upgrade for it
+      // spends money on a problem that resolves itself.
+      ...(r.rateLimits?.includes("error_usage_exceeded")
+        ? []
+        : [
+            "  - The header does NOT name error_usage_exceeded, so this is a",
+            "    short-window throttle rather than a spent allowance. It clears",
+            "    on its own; do not buy a plan for it.",
+          ]),
+      ...recheck,
+    ].join("\n");
+  }
+
+  // rejected-auth / dropped-despite-2xx / unavailable
+  return [
+    "What this means: the application is reporting errors and they are not",
+    "reaching storage. This is NOT a quota problem — do not upgrade the plan on",
+    "the strength of this alert.",
+    "",
+    "What to do:",
+    ...(r.verdict === "rejected-auth"
+      ? [
+          "  - Sentry saw the DSN and refused it. Confirm NEXT_PUBLIC_SENTRY_DSN",
+          "    names the live project and that the public key has not been rotated",
+          "    out from under it.",
+        ]
+      : [
+          "  - Read the HTTP status and Sentry's own message in the table above;",
+          "    they say which of a bad key, a warm cache dropping the first",
+          "    envelope, or Sentry being unwell it is.",
+        ]),
+    ...recheck,
+  ].join("\n");
+}
+
+/**
+ * Subject and heading, per verdict. `unconfigured` must not say errors are
+ * "being discarded" — nothing was sent, so nothing was discarded, and the
+ * message would point an operator at a quota that is not the problem.
+ */
+function headlineFor(r: IngestProbeResult): { subject: string; html: string } {
+  if (r.verdict === "unconfigured") {
+    return {
+      subject: `[Familiarise] Sentry is not configured — no error reporting is happening`,
+      html: "Sentry is not configured — nothing is being reported",
+    };
+  }
+  return {
+    subject: `[Familiarise] Sentry ingest ${r.verdict} — errors are being discarded`,
+    html: "Sentry is not accepting error events",
+  };
+}
 
 /** Exported for the test to assert on, rather than matching a live send. */
 export function buildAlertEmail(r: IngestProbeResult): {
@@ -80,19 +163,21 @@ export function buildAlertEmail(r: IngestProbeResult): {
 } {
   const summary = describeIngest(r);
   const rows = rowsFor(r);
+  const remedy = remedyFor(r);
+  const headline = headlineFor(r);
 
   const text = [
-    "Sentry is not accepting error events.",
+    headline.html,
     "",
     summary,
     "",
     ...rows.map(([k, v]) => `${k}: ${v}`),
     "",
-    REMEDY,
+    remedy,
   ].join("\n");
 
   const html = [
-    `<h2 style="margin:0 0 12px">Sentry is not accepting error events</h2>`,
+    `<h2 style="margin:0 0 12px">${escapeHtml(headline.html)}</h2>`,
     `<p style="margin:0 0 12px">${escapeHtml(summary)}</p>`,
     `<table cellpadding="6" style="border-collapse:collapse;font-size:14px">`,
     ...rows.map(
@@ -101,12 +186,12 @@ export function buildAlertEmail(r: IngestProbeResult): {
         `<td style="border:1px solid #ddd"><code>${escapeHtml(v)}</code></td></tr>`,
     ),
     `</table>`,
-    `<p style="margin:12px 0 0">${escapeHtml(REMEDY.split("\n\n")[0])}</p>`,
+    `<p style="margin:12px 0 0">${escapeHtml(remedy.split("\n\n")[0])}</p>`,
     `<p style="margin:12px 0 0">If the rate-limit header names <code>error_usage_exceeded</code>, the billing period's error allowance is spent. Upgrading the plan raises the ceiling immediately — it does not have to wait for the period to roll over.</p>`,
   ].join("");
 
   return {
-    subject: `[Familiarise] Sentry ingest ${r.verdict} — errors are being discarded`,
+    subject: headline.subject,
     text,
     html,
   };
@@ -175,20 +260,48 @@ export function redisAlertStateStore(): AlertStateStore {
  * check for the same underlying reason: a sink that can silently skip is a dead
  * sink nobody sees.
  */
-export async function shouldSendCanaryAlert(
+export async function canaryAlertNeeded(
   verdict: string,
   store: AlertStateStore = redisAlertStateStore(),
 ): Promise<boolean> {
   try {
-    if ((await store.get()) === verdict) return false;
-    await store.set(verdict, CANARY_ALERT_REASSERT_MS);
-    return true;
+    return (await store.get()) !== verdict;
   } catch (err) {
     console.error(
       "[sentry-ingest-canary] alert state unavailable, sending anyway:",
       err instanceof Error ? err.message : String(err),
     );
     return true;
+  }
+}
+
+/**
+ * Arm the cooldown — called ONLY after the alert was actually sent.
+ *
+ * Split from {@link canaryAlertNeeded} deliberately, and the separation is the
+ * fix. An earlier version read the state and wrote the new verdict in one
+ * step, before the send was attempted, so a single failed delivery — the email
+ * provider down, a `deliver` throw — armed a 24-hour suppression for a
+ * verdict nobody had been told about. The canary would then stay silent about
+ * broken ingest for a day, which is the exact failure this whole mechanism
+ * exists to prevent, arrived at by the alerting itself.
+ *
+ * Arming on success only means the two remaining failure modes both cost a
+ * duplicate email rather than a missed alert: a send that succeeds and a
+ * cooldown write that then fails, and a healthy run that races another. That
+ * is the right direction for both.
+ */
+export async function recordCanaryAlertSent(
+  verdict: string,
+  store: AlertStateStore = redisAlertStateStore(),
+): Promise<void> {
+  try {
+    await store.set(verdict, CANARY_ALERT_REASSERT_MS);
+  } catch (err) {
+    console.error(
+      "[sentry-ingest-canary] could not arm the alert cooldown:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 

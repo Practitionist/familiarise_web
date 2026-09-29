@@ -565,7 +565,12 @@ async function refundNoShowConsultation(
     errors.push(msg);
     // Ops parity with every other refund-failure path: durable signal, not
     // just this job's stdout.
-    void recordSystemErrorSafe({
+    // Awaited, not `void`. This is a single write on a failure path rather than
+    // a per-iteration call, so serialising it costs nothing, and awaiting is
+    // what makes the record durable: the job exits when its event loop drains,
+    // and a floating write is lost whenever the loop drains first — which is
+    // precisely the failure `*Safe` was introduced to stop hiding.
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: `No-show refund failed for consultation ${consultation.id}`,

@@ -60,15 +60,19 @@ const TARGETS = [
   "settle-cancelled-sessions",
   // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
   "retry-auto-refunds",
-  // #1868 — the Sentry ingest canary. On the ticker's cadence rather than a
-  // 15-minute slot, because the failure it detects is SILENT: Sentry answers
-  // 200 for sessions and transactions while discarding error events once the
-  // organisation's error allowance is spent, so nothing else in the system
-  // notices. On 2026-09-22 that condition went live and the error stream stayed
-  // empty for six days. Five minutes is the right cadence for a check whose
-  // whole job is to bound how long a monitoring outage lasts, and it costs one
-  // HTTPS round trip to a vendor — no Redis, so none of the per-tick lock
-  // cost the other targets pay.
+  // #1868 — the Sentry ingest canary. The failure it detects is SILENT: Sentry
+  // answers 200 for sessions and transactions while discarding error events
+  // once the organisation's error allowance is spent, so nothing else in the
+  // system notices. On 2026-09-22 that condition went live and the error
+  // stream stayed empty for six days.
+  //
+  // It runs on a 30-minute slot, NOT this ticker's five-minute default, and the
+  // reason is quota rather than latency: it posts a real stored event every run,
+  // so five minutes is 8,640 events a month — 173% of the Developer plan's
+  // 5,000 allowance, i.e. the health check would exhaust the budget it exists
+  // to protect. 30 minutes is 1,440/month. See TARGET_EVERY_MINUTES, and
+  // 06-ingest-canary.md. It costs one HTTPS round trip to a vendor and no
+  // Redis, so unlike the other targets it has no per-tick lock cost to amortise.
   "sentry-ingest-canary",
 ] as const;
 
@@ -285,6 +289,26 @@ export function bucketFor(
   return "failed";
 }
 
+/**
+ * #1868 — which failed targets are reported to Sentry itself.
+ *
+ * The Sentry ingest canary is excluded. An unhealthy canary answers 503 with
+ * no `phase`, so `bucketFor` files it under `failed`, and `alertFailedTargets`
+ * reports to Sentry — the very system whose outage the canary just detected.
+ * During a quota outage that is one event per tick that can never arrive; after
+ * recovery, one more per tick spent from the allowance being protected. A
+ * monitor that reports its own failure through the failing system is not a
+ * monitor.
+ *
+ * The canary is still counted as failed: it stays in the HTTP status and the
+ * response body, so a 503 remains visible in the tick's output and the job
+ * history. Only the Sentry report is suppressed, and the email alert — which
+ * fails open, so this same outage cannot silence it — carries the signal.
+ */
+export function reportableToSentry(name: string): boolean {
+  return name !== "sentry-ingest-canary";
+}
+
 /** #1582 F-P2-02 — a missing secret is a silent fleet outage; page Sentry, not just the log. */
 async function alertMissingSecret(error: string): Promise<void> {
   try {
@@ -431,7 +455,20 @@ export default async function cronTick(_req: Request): Promise<Response> {
     durationMs: Date.now() - started,
   };
   console.log(JSON.stringify(body));
-  await alertFailedTargets(failed);
+  // #1868 — the Sentry ingest canary is deliberately NOT reported here. An
+  // unhealthy canary answers 503 with no `phase`, so `bucketFor` files it
+  // under `failed` — and `alertFailedTargets` reports failures to Sentry, which
+  // is precisely the system whose outage the canary just detected. During a
+  // quota outage that is one Sentry event per tick that can never arrive, and
+  // after recovery one more per tick spent from the allowance we are trying to
+  // protect. A monitor that reports its own failure through the failing system
+  // is not a monitor. The email alert is the canary's channel, and it fails
+  // open, so nothing is lost by excluding it here.
+  //
+  // It stays in `failed` for the HTTP status and the body, so a 503 from the
+  // canary is still visible in the tick's own output and in the job-execution
+  // history — only the Sentry report is suppressed.
+  await alertFailedTargets(failed.filter((f) => reportableToSentry(f.name)));
 
   // #1686 — 200 even with a non-empty `failed`; see statusFor.
   return jsonResponse(body, statusFor(failed));

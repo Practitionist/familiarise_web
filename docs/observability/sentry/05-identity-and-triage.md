@@ -296,7 +296,7 @@ curl -sS -D - -o /dev/null -X POST \
 
 Look at the status code, and at `x-sentry-rate-limits`. A `429` naming
 `error_usage_exceeded` is the smoking gun; a `200` is the healthy case. This is
-the same probe `lib/observability/ingest-canary.ts` runs on every tick.
+the same probe `lib/observability/ingest-canary.ts` runs every 30 minutes.
 
 ### Fixing it does not mean waiting for the month to end
 

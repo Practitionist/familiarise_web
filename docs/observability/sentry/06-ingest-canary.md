@@ -4,7 +4,7 @@ Everything on this page exists because of one incident, and the incident is the 
 
 ## What happened
 
-On 2026-09-22 the organisation's error allowance for the billing period was spent. Sentry had answered `200 {}` for every envelope for six days afterwards, the app was healthy, deploys were green, the cron jobs were quiet — and the error stream was empty. Nothing in the product, in CI, or in the deploy pipeline could tell, because the thing that reports on errors is the thing that had stopped working.
+On 2026-09-22 the organisation's error allowance for the billing period was spent. For six days afterwards Sentry answered **`429` to the `error` item of every envelope while answering `200` to its `session` and `transaction` items** — the app was healthy, deploys were green, the cron jobs were quiet, and the error stream was empty. Nothing in the product, in CI, or in the deploy pipeline could tell, because the thing that reports on errors is the thing that had stopped working. The partial nature of the failure is the reason it was invisible: the dashboard kept receiving data, just not errors.
 
 The cause is on the record in `sentry.shared.config.ts`: on 2026-09-21 the Upstash request cap (`ERR max requests limit exceeded. Limit: 500000`) put 2,147 `UpstashError` events and roughly 900 `CronLockUnavailableError` events through the Developer plan's 5,000-error allowance in 24 hours. The `INFRA_THROTTLE_MS` guard was added that day to stop a repeat, and it worked — but the allowance for the period was already gone, and a throttle cannot un-spend it.
 
@@ -31,13 +31,14 @@ Three properties of that response make it the worst failure mode an error tracke
 
 `lib/observability/ingest-canary.ts` posts one real, minimal error envelope at Sentry's envelope endpoint and classifies the response.
 
-| Verdict               | Meaning                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------- |
-| `accepted`            | 2xx with no drop notice. Error events are being taken.                                                   |
-| `dropped-despite-2xx` | 2xx, but the body says the data was dropped. Sentry does this.                                           |
-| `rate-limited`        | 429. Read `x-sentry-rate-limits` to separate a short-window throttle from an exhausted period allowance. |
-| `rejected-auth`       | 401/403, or no parseable DSN. The DSN or public key is wrong.                                            |
-| `unavailable`         | 5xx, or the request never completed. Sentry is unwell or unreachable.                                    |
+| Verdict               | Meaning                                                                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accepted`            | 2xx with no drop notice. Error events are being taken.                                                                                                                                         |
+| `dropped-despite-2xx` | 2xx, but the body says the data was dropped. Sentry does this.                                                                                                                                 |
+| `rate-limited`        | 429. Read `x-sentry-rate-limits` to separate a short-window throttle from an exhausted period allowance.                                                                                       |
+| `rejected-auth`       | 401/403. Sentry saw the DSN and refused it — wrong project or revoked key.                                                                                                                     |
+| `unconfigured`        | No DSN in the runtime, so nothing was ever sent and the SDK never initialised. Distinct from `rejected-auth` on purpose: nothing was rejected, and the fix is configuration rather than a key. |
+| `unavailable`         | 5xx, or the request never completed. Sentry is unwell or unreachable.                                                                                                                          |
 
 `isIngestHealthy()` is true for `accepted` and nothing else — in particular a 2xx alone is not sufficient, because `dropped-despite-2xx` exists and is the case that hid this for six days.
 
@@ -67,9 +68,11 @@ The canary event carries a **fixed fingerprint**, so half-hourly runs collapse i
 
 `sendSentryIngestAlert` has no throttle of its own, so without a gate the canary emails the same content on every failing run — **48 identical emails a day** at the 30-minute cadence. An alert nobody reads is the same as no alert, which reintroduces through the front door the exact outcome this canary exists to prevent.
 
-`shouldSendCanaryAlert` sends **one email per distinct state**, re-armed the moment the state changes, and re-asserted at most once per **24 hours** so a week-long outage does not go silent after its first email. A change from `rate-limited` to `rejected-auth` alerts immediately, because that changes what the operator should do. The route reports `alertSuppressed` alongside `alerted`, because "told them" and "told them recently" are different things to see in a log.
+`canaryAlertNeeded` sends **one email per distinct state**, re-armed the moment the state changes, and re-asserted at most once per **24 hours** so a week-long outage does not go silent after its first email. A change from `rate-limited` to `rejected-auth` alerts immediately, because that changes what the operator should do. The route reports `alertSuppressed` alongside `alerted`, because "told them" and "told them recently" are different things to see in a log.
 
 Two decisions in there are forced by the runtime rather than chosen, and both are the opposite of what the rest of this page does:
+
+**The cooldown is armed only by a send that actually landed.** `canaryAlertNeeded` is a pure read; `recordCanaryAlertSent` does the write and the route calls it _after_ `sendSentryIngestAlert` returns true. This separation is the fix for a bug that shipped in the first version, where the read and the write happened together before the send was attempted: one failed delivery — the email provider down — armed a 24-hour suppression for a verdict nobody had been told about, and the canary went quiet about broken ingest for a day. That is the exact failure this mechanism exists to prevent, reached by the alerting itself. Both remaining failure modes cost a duplicate email rather than a missed alert: a send that succeeds and a cooldown write that then fails, and two healthy runs racing.
 
 **The state lives in Redis, not in a module variable.** A 30-minute cron against serverless functions means the process is almost certainly cold, so an in-memory value is reset before the next run and the gate would suppress nothing. The _probe_ still has no Redis dependency — it runs and reports regardless — and only suppression consults it. `lib/redis`'s circuit breaker means a walled-off Redis fails fast rather than adding latency to a check whose job is to be fast.
 

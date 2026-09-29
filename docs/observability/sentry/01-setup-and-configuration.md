@@ -24,15 +24,17 @@ Source-map upload runs inside `next build` through the Sentry bundler plugin and
 
 Until 2026-09-28 the Sentry organisation, project and both URLs were hardcoded in TypeScript — four literals in `sentry.shared.config.ts` and two more in `lib/observability/sentry-issues.ts`. Every one of them is now read from the environment with a `||` default to the live project, so the same code runs against a real project and a fixture in a test:
 
-| Variable                    | Read by                               | Default                      | Purpose                                                    |
-| --------------------------- | ------------------------------------- | ---------------------------- | ---------------------------------------------------------- |
-| `SENTRY_API_URL`            | `sentry-issues.ts`                    | `https://us.sentry.io/api/0` | REST base, for the back-office issue lookup                |
-| `SENTRY_WEB_URL`            | `sentry-issues.ts`                    | `https://us.sentry.io`       | Base for the issue links shown to support                  |
-| `SENTRY_ORG`                | `next.config.mjs`, `sentry-issues.ts` | `practitionist`              | Slug, not id — what the CLI and the UI paths want          |
-| `SENTRY_PROJECT`            | `next.config.mjs`, `sentry-issues.ts` | `familiarise_web`            | Slug, not id                                               |
-| `SENTRY_API_TOKEN`          | `sentry-issues.ts`                    | _unset_                      | REST read token, needs `event:read`                        |
-| `SENTRY_AUTH_TOKEN`         | the build plugin                      | _unset_                      | Source-map upload, needs `project:releases` and `org:read` |
-| `OBSERVABILITY_ALERT_EMAIL` | `ingest-alert.ts`                     | the support mailbox          | Who the canary emails                                      |
+| Variable                    | Read by                               | Default                           | Purpose                                                    |
+| --------------------------- | ------------------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| `SENTRY_API_URL`            | `sentry-issues.ts`                    | `https://us.sentry.io`            | **Bare host** — the code appends `/api/0/…` itself         |
+| `SENTRY_WEB_URL`            | `sentry-issues.ts`                    | `https://practitionist.sentry.io` | Base for the issue links shown to support                  |
+| `SENTRY_ORG`                | `next.config.mjs`, `sentry-issues.ts` | `practitionist`                   | Slug, not id — what the CLI and the UI paths want          |
+| `SENTRY_PROJECT`            | `next.config.mjs`, `sentry-issues.ts` | `familiarise_web`                 | Slug, not id                                               |
+| `SENTRY_API_TOKEN`          | `sentry-issues.ts`                    | _unset_                           | REST read token, needs `event:read`                        |
+| `SENTRY_AUTH_TOKEN`         | the build plugin                      | _unset_                           | Source-map upload, needs `project:releases` and `org:read` |
+| `OBSERVABILITY_ALERT_EMAIL` | `ingest-alert.ts`                     | the support mailbox               | Who the canary emails                                      |
+
+`SENTRY_API_URL` is the **bare host**, not a base that includes the version prefix: `findUserIssues` appends `/api/0/organizations/<org>/issues/` itself, so a value already ending in `/api/0` produces `/api/0/api/0/…` and every lookup 404s. This page previously documented the default _with_ `/api/0`, which is the one way to set it wrong; the code and `.env.sample` were always right.
 
 The org and project are **slugs, not ids**, which is the thing that goes wrong: the two numeric project ids in circulation both appear in `next build` output and neither is usable as a slug. Read the slug from the Sentry UI; never infer it from a DSN. The two tokens are separate credentials for separate jobs and neither is set today. `SENTRY_API_TOKEN` is deliberately left unset rather than set to an empty string, because an empty string enables the token path and then fails every call with an unauthenticated request; unset is the off switch.
 

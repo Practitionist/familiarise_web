@@ -150,13 +150,40 @@ describe("probeSentryIngest verdicts", () => {
 
   // A preview or a build machine with no DSN is not a healthy deployment, and
   // saying so beats posting nowhere and reporting success.
-  it("reports rejected-auth when there is no DSN at all", async () => {
+  it("reports unconfigured — not rejected-auth — when there is no DSN at all", async () => {
     const r = await probeSentryIngest({
-      send: send(fakeResponse({ status: 200 })),
       dsn: "",
+      send: send(fakeResponse({ status: 200 })),
+    });
+    // Distinct verdict, and the distinction is the point: nothing was ever
+    // sent, so nothing could be rejected. Reporting `rejected-auth` would page
+    // someone to fix a DSN that was never transmitted, and would say Sentry
+    // refused an event it never saw.
+    expect(r.verdict).toBe("unconfigured");
+    expect(r.status).toBe(0);
+    expect(r.detail).toContain("NEXT_PUBLIC_SENTRY_DSN");
+    // Unhealthy either way — the point of the canary is that error events are
+    // not being taken.
+    expect(isIngestHealthy(r)).toBe(false);
+  });
+
+  it("keeps rejected-auth for a DSN Sentry actually refused", async () => {
+    const r = await probeSentryIngest({
+      dsn: DSN,
+      send: send(fakeResponse({ status: 403, body: "forbidden" })),
     });
     expect(r.verdict).toBe("rejected-auth");
-    expect(r.detail).toContain("NEXT_PUBLIC_SENTRY_DSN");
+  });
+
+  it("describes unconfigured as a config gap, not a Sentry outage", async () => {
+    const r = await probeSentryIngest({
+      dsn: "",
+      send: send(fakeResponse({ status: 200 })),
+    });
+    const text = describeIngest(r);
+    expect(text).toContain("not configured");
+    // Must not tell the operator Sentry is dropping events — nothing was sent.
+    expect(text).not.toContain("REJECTING error events");
   });
 });
 

@@ -101,3 +101,53 @@ describe("sendSentryIngestAlert", () => {
     await expect(sendSentryIngestAlert(RATE_LIMITED)).resolves.toBe(false);
   });
 });
+
+describe("the remedy and headline are per-verdict", () => {
+  /**
+   * The one thing an operator must never be told is the wrong action. A
+   * rate-limited alert that said "fix your DSN" would be worse than no alert,
+   * and an `unconfigured` alert that said "your errors are being discarded"
+   * points at a quota when nothing was ever sent.
+   */
+  const base = {
+    status: 0,
+    rateLimits: null,
+    eventId: "a".repeat(32),
+    detail: null,
+  } as const;
+
+  it("unconfigured does not claim errors are being discarded", () => {
+    const { subject, text, html } = buildAlertEmail({
+      ...base,
+      verdict: "unconfigured",
+    });
+    expect(subject).toContain("not configured");
+    expect(subject).not.toContain("discarded");
+    expect(text).not.toContain("error_usage_exceeded");
+    // and it must not send anyone to look at DSN validity
+    expect(text).toContain("Do NOT go looking at whether your DSN is valid");
+    expect(html).toContain("nothing is being reported");
+  });
+
+  it("rate-limited still gets the quota remedy", () => {
+    const { subject, text } = buildAlertEmail({
+      ...base,
+      verdict: "rate-limited",
+      rateLimits: "60:default;error;organization:error_usage_exceeded",
+    });
+    expect(subject).toContain("errors are being discarded");
+    expect(text).toContain("error_usage_exceeded");
+    expect(text).toContain("raises the ceiling immediately");
+  });
+
+  it("rejected-auth does not get told to upgrade the plan", () => {
+    const { text } = buildAlertEmail({
+      ...base,
+      status: 403,
+      verdict: "rejected-auth",
+      detail: "forbidden",
+    });
+    expect(text).toContain("DSN or public key is wrong");
+    expect(text).not.toContain("raises the ceiling immediately");
+  });
+});

@@ -26,6 +26,8 @@ Some issue classes are throttled: `INFRA_TRANSIENT_PATTERNS` in `sentry.shared.c
 
 So `Events: 1` on one of those does **not** mean it happened once. It means "at least once per ten-minute window while the window was live", and the true figure during a sustained outage is roughly 144 per hour. Read the issue's `last seen` span and the tag, not the event count, to judge whether something is ongoing.
 
+Read the issue's `last seen` span and the tag rather than the event count. The throttle admits one event per class per ten minutes **per warm instance** — roughly 6/hour, so ~144/day — and that is the _admitted_ count, not the number of occurrences: the other 143 may or may not have happened, and the throttle deliberately does not claim otherwise.
+
 The failure this prevents is triaging a live dependency outage as a rarity because its counter reads 1. The 2026-09-22 quota incident was the same trap one level up: the dashboard looked healthy because sessions and transactions kept flowing while the `error` category alone was rate limited.
 
 Where a count is the real signal — a sweep that found N broken records — the event carries it in `extra`, and there is no throttle, because there the set _is_ the fact. See the conventions page for which mechanism a given mass event should use.
