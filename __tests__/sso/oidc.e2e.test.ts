@@ -150,8 +150,9 @@ function discoveredFrom(
   // where the document is in hand — rather than being written to the column and
   // discovered at sign-in. A cast would hide precisely the case worth testing.
   const authMethod = methods.find(
-    (m): m is DiscoveredOidcConfig["tokenEndpointAuthentication"] =>
-      m === "client_secret_basic" || m === "client_secret_post",
+    (m): m is NonNullable<
+      DiscoveredOidcConfig["tokenEndpointAuthentication"]
+    > => m === "client_secret_basic" || m === "client_secret_post",
   );
   if (!authMethod) {
     throw new Error(
