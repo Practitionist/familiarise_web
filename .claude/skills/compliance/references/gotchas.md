@@ -197,3 +197,33 @@ that every copy needs checking.
 
 **The check.** When a claim involves a schedule or an env-gated behaviour, read
 the workflow file and the flag, not the doc that mentions it.
+
+---
+
+## 10. A test that only passed locally because of `.env`
+
+**What broke.** `erasure-payment-vendors.test.ts` mocked
+`lib/novu/subscriber` but not `lib/novu/client`, so the _real_
+`isNovuConfigured()` ran. Locally `NOVU_KEY` is set, so the check returned
+"configured" and the test passed. In CI it is unset, the check returned
+"unconfigured", `scrubUser` correctly reported a vendor failure, and
+`expect(result.vendorFailures).toEqual([])` failed.
+
+**Why it was invisible.** The full suite passed locally — and would have failed
+locally too had the developer's `.env` not happened to contain `NOVU_KEY`. A
+test whose result depends on ambient environment is not a test of the unit.
+
+**The class.** Mocking a _collaborator_ does not mock the _configuration_ that
+gates it. Every new `isConfigured()` branch multiplies the environment
+combinations a test must survive.
+
+**The check.** When adding a config gate, mock the config module explicitly and
+make it a mutable stub so the test can drive both branches. Then verify the
+suite under **both** states:
+
+```bash
+mv .env .env.off && npx jest --maxWorkers=2   # what CI sees
+mv .env.off .env     && npx jest --maxWorkers=2   # what you see
+```
+
+If the results differ, the difference is a test defect, not a CI problem.
