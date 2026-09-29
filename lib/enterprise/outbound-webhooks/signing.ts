@@ -36,16 +36,14 @@ export const SIGNATURE_HEADER = "X-Familiarise-Signature";
 
 /**
  * Default replay window, in seconds. Receivers should reject any
- * signature whose timestamp drifts beyond this — the window has to be
- * generous enough to absorb clock skew + retry delay (worker pushes
- * the same signature on retries; see `worker.ts`) but small enough
- * that a captured body can't be replayed days later.
- *
- * Tuned for the worker's longest retry interval (8 hours) plus
- * headroom. If the worker's backoff schedule changes, this window has
- * to widen accordingly.
+ * signature whose timestamp drifts beyond this. The worker signs every
+ * attempt afresh with the current time (`worker.ts`), so the window only
+ * has to absorb clock skew and transit, not the retry backoff — 5 minutes,
+ * the Stripe / Standard Webhooks default. #1861: it was 9 h on the wrong
+ * premise that retries reuse the first signature, which let a captured
+ * delivery be replayed for hours.
  */
-export const DEFAULT_REPLAY_WINDOW_SECONDS = 60 * 60 * 9; // 9h
+export const DEFAULT_REPLAY_WINDOW_SECONDS = 5 * 60;
 
 /**
  * Secret-rotation grace window. After /rotate-secret stamps
