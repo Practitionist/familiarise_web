@@ -12,6 +12,7 @@
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import { toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -81,8 +82,9 @@ export async function handleSessionEnded(
 ): Promise<void> {
   const { call_cid, created_at } = event;
 
-  // Extract call ID from call_cid (format: "default:callId")
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  // #C10 — the one cid → id split, lib/stream/call-cid.ts. This file held four
+  // hand-rolled copies, one per event.
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Session ended", {
     streamCallId,
@@ -185,8 +187,8 @@ export async function handleCallEnded(
 ): Promise<void> {
   const { call_cid, created_at, ended_by_user_id } = event;
 
-  // Extract call ID from call_cid (format: "default:callId")
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  // #C10 — the one cid → id split, lib/stream/call-cid.ts.
+  const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Call ended", {
     streamCallId,
@@ -321,7 +323,7 @@ export async function handleSessionParticipantJoined(
   event: StreamSessionParticipantJoinedEvent,
 ): Promise<void> {
   const { call_cid, created_at, participant } = event;
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
   const userId = participant?.user?.id;
 
   if (!userId) {
@@ -413,12 +415,18 @@ export async function handleSessionParticipantJoined(
  * Stamps lastLeftAt on the participant's attendance row. If the join was never
  * recorded (missed/duplicate webhook ordering), create the row so the leave is
  * not lost — firstJoinedAt falls back to the leave time.
+ *
+ * The stamp is MONOTONIC (C3), on both the per-device presence row and the
+ * per-user attendance summary: only a leave later than the one recorded is
+ * applied. Webhook delivery is not ordered and is retried for 168 h, so "the
+ * last write wins" is the wrong rule for a value that answers "is this person
+ * still in the room?".
  */
 export async function handleSessionParticipantLeft(
   event: StreamSessionParticipantLeftEvent,
 ): Promise<void> {
   const { call_cid, created_at, participant } = event;
-  const streamCallId = call_cid.split(":")[1] || call_cid;
+  const streamCallId = toCallId(call_cid);
   const userId = participant?.user?.id;
 
   if (!userId) {
@@ -471,6 +479,10 @@ export async function handleSessionParticipantLeft(
       });
       // upsert (not update) — a leave arriving without a recorded join still
       // creates the row, with firstJoinedAt rebuilt from the leave's duration.
+      // `lastLeftAt` is NOT in the update branch, and that omission is the fix
+      // (C3): Prisma has no conditional form for an upsert's update, and a bare
+      // `lastLeftAt: leftAt` there let a LATE delivery move the value
+      // backwards. The monotonic write is the updateMany immediately below.
       await tx.meetingAttendance.upsert({
         where: {
           meetingId_userId: { meetingId, userId },
@@ -483,9 +495,30 @@ export async function handleSessionParticipantLeft(
           lastLeftAt: leftAt,
         },
         update: {
-          lastLeftAt: leftAt,
           ...(newSessions > 0 && { joinCount: { increment: newSessions } }),
         },
+      });
+      // #C3 — `lastLeftAt` is the SUMMARY of a per-user session and #472
+      // (overrun) derives "still in the room" from it: a user is present while
+      // `lastLeftAt` is null or older than the slot end. So a value that moves
+      // BACKWARDS does not lose a millisecond, it invents an absence: a
+      // participant who rejoined at 11:04 and was still on the call at 11:40
+      // reads as having left at 10:58 the moment a stale `participant_left`
+      // landed, and the overrun detector is downstream of that number. The
+      // presence row above already carried this guard; the per-user summary did
+      // not, and the summary is the one #472 reads.
+      //
+      // Ordered AFTER the upsert on purpose: when the upsert took its create
+      // branch it has already written this exact timestamp, so this matches
+      // nothing and is a no-op — which is the desired outcome anyway, not a race
+      // to lose.
+      await tx.meetingAttendance.updateMany({
+        where: {
+          meetingId,
+          userId,
+          OR: [{ lastLeftAt: null }, { lastLeftAt: { lt: leftAt } }],
+        },
+        data: { lastLeftAt: leftAt },
       });
     });
 

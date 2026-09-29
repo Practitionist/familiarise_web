@@ -33,6 +33,10 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import {
+  rebuiltRoomIdForOccurrence,
+  roomIdForOccurrence,
+} from "@/lib/meetings/room-id";
 import { liveParticipant } from "@/lib/booking/participants";
 
 // Input validation schemas
@@ -968,7 +972,18 @@ export type ProvisionedMeeting =
  * The room id is `occurrence-<occurrenceId>` (#1554): both sides resolve the
  * same row, so they resolve the same call. The one exception is a room rebuilt
  * after a pre-start end, which carries an `-r<suffix>` (#1607); the row's
- * `streamCallId` is the truth.
+ * `streamCallId` is the truth. Both shapes are built by
+ * `lib/meetings/room-id.ts` and parsed back out of a URL by
+ * `resolveMeetingAccess`, because a rebuild changes the id an already-open tab
+ * is holding.
+ *
+ * ## The row is written before the call is minted (C1)
+ *
+ * Read the two writes below in that order and do not "tidy" them back: the
+ * `Meeting` row is the source of truth and the Stream call is the recoverable
+ * half. Every reconciler in the product finds work by scanning `prisma.meeting`,
+ * so a call with no row is invisible to all of them, permanently — the reason
+ * the write order is a correctness property and not a style choice.
  *
  * Deliberately NOT sent (still deferred to #1070): `backstage`,
  * `join_ahead_time_seconds`, and `settings_override.limits.max_duration_seconds`.
@@ -978,6 +993,99 @@ export type ProvisionedMeeting =
  *
  * @param slot Any row of the session. The anchor is resolved here.
  */
+
+/**
+ * The DATABASE half of provisioning (C1): claim the occurrence's one `Meeting`
+ * row for `streamCallId`, before anything is minted on Stream.
+ *
+ * Split out of `provisionAppointmentMeeting` only to keep that function flat —
+ * the reasoning it is implementing lives in full on the call site, and this is
+ * the same comment's second half in code. Two shapes, because there are two
+ * claims to make:
+ *
+ *   - a REBUILD (#1607) rebinds the row that already exists, compare-and-set on
+ *     `endedReason` so a concurrent rebuild that already won is the only thing
+ *     that loses. Minting first meant a losing racer created a room no row would
+ *     ever point at — the same orphan the first-mint branch below is ordered to
+ *     make impossible. Rebinding first means the loser never mints at all.
+ *   - a FIRST MINT creates the row, which is also the fence for two concurrent
+ *     joins of a brand-new occurrence: the loser gets P2002, `createDbMeeting`
+ *     recovers the winner's row, and the id comparison below sends it home.
+ *
+ * `already_claimed` means "someone else owns this occurrence's room, and its id
+ * is not the one you computed" — the caller must return that id and must NOT
+ * mint. A legacy or seeded row lands here too, which is the point: the row is
+ * the truth about which room this occurrence is, and this function never
+ * overwrites it.
+ */
+async function claimRoomForOccurrence(args: {
+  anchorSlot: MeetingSlot;
+  streamCallId: string;
+  existingMeeting: Meeting | null;
+  rebuildEndedEarly: boolean;
+}): Promise<
+  | { status: "claimed"; sessionId: string }
+  | {
+      status: "already_claimed";
+      streamCallId: string;
+    }
+> {
+  const { anchorSlot, streamCallId, existingMeeting, rebuildEndedEarly } = args;
+
+  if (rebuildEndedEarly && existingMeeting) {
+    const rebound = await prisma.meeting.updateMany({
+      where: { id: existingMeeting.id, endedReason: ENDED_EARLY_REASON },
+      data: {
+        streamCallId,
+        endedAt: null,
+        endedReason: null,
+        isRecording: false,
+      },
+    });
+    if (rebound.count === 0) {
+      const current = await prisma.meeting.findUnique({
+        where: { id: existingMeeting.id },
+        select: { streamCallId: true },
+      });
+      const winner = current?.streamCallId ?? streamCallId;
+      streamLogger.info("Room already rebuilt by a concurrent join", {
+        sessionId: existingMeeting.id,
+        slotId: anchorSlot.id,
+        streamCallId: winner,
+      });
+      return { status: "already_claimed", streamCallId: winner };
+    }
+    streamLogger.info("Rebuilt the room after a pre-start end", {
+      sessionId: existingMeeting.id,
+      slotId: anchorSlot.id,
+      previousStreamCallId: existingMeeting.streamCallId,
+      streamCallId,
+    });
+    return { status: "claimed", sessionId: existingMeeting.id };
+  }
+
+  // Attached to the anchor, so Meeting.appointmentOccurrenceId stays
+  // @unique-correct: one session per run, not one per half hour. Re-checks the
+  // refusal and the entitlement itself; it is the authoritative write gate and is
+  // deliberately not weakened by the hoisted copies in the caller.
+  const meeting = await createDbMeeting(anchorSlot, streamCallId);
+  if (meeting.streamCallId !== streamCallId) {
+    streamLogger.info(
+      "Room already claimed for this occurrence under another id",
+      {
+        sessionId: meeting.id,
+        slotId: anchorSlot.id,
+        claimedStreamCallId: meeting.streamCallId,
+        computedStreamCallId: streamCallId,
+      },
+    );
+    return {
+      status: "already_claimed",
+      streamCallId: meeting.streamCallId,
+    };
+  }
+  return { status: "claimed", sessionId: meeting.id };
+}
 
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
@@ -1038,8 +1146,8 @@ export async function provisionAppointmentMeeting(
 
   // A rebuilt room carries a suffix so it never collides with the dead call.
   const streamCallId = rebuildEndedEarly
-    ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
-    : `occurrence-${anchorSlot.id}`;
+    ? rebuiltRoomIdForOccurrence(anchorSlot.id)
+    : roomIdForOccurrence(anchorSlot.id);
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
   // The occurrence's own bounds, resolved server-side.
@@ -1092,6 +1200,65 @@ export async function provisionAppointmentMeeting(
     });
   }
 
+  // #C1 — THE ROW IS WRITTEN FIRST, and this is the whole fix.
+  //
+  // The order used to be the other way round: `call.getOrCreate()` here, and
+  // `createDbMeeting(anchorSlot, streamCallId)` as the LAST statement of the
+  // function. Every gate that can refuse a join was correctly hoisted above the
+  // mint, and the row was still written last, so anything that threw between the
+  // two left a live, billable Stream call that no `Meeting` row pointed at.
+  //
+  // That failure is unrecoverable by construction, and that is what makes it
+  // P0 rather than annoying. Every reconciler in the product — the orphan
+  // reconciler, the maintenance drain, the earnings healer, every org audit
+  // query — finds candidates by SCANNING `prisma.meeting`. None of them ever
+  // calls `queryCalls`, and none of them ever will: they are database jobs whose
+  // entire job is to repair rows that exist. So a call with no row is not
+  // "repaired on the next run", it is invisible forever, and the only evidence it
+  // ever existed is a Stream-side bill. The refactor that put the mint first
+  // (moving it server-side) fixed the ATTACK (a stranger minting a room) and
+  // opened this: it replaced one order with the other, and the window moved from
+  // "before the entitlement check" to "after it", where nothing is watching.
+  //
+  // Writing the row first is safe precisely because the id is deterministic.
+  // `occurrence-<occurrenceId>` needs nothing from Stream to compute, so the row
+  // can be complete before the call exists, and the call is the RECOVERABLE half
+  // of the pair: `POST /api/meetings/[id]/join` calls `getOrCreate` itself, after
+  // `resolveMeetingAccess`, so the next person to enter the room materialises
+  // it. The reverse is not true of anything.
+  //
+  // Compensation, decided rather than left implicit: the row is LEFT IN PLACE
+  // when the mint below fails, and nothing is marked. The alternatives and why
+  // they are worse:
+  //
+  //   - delete the row. Reopens the C1 window in a new place (a delete that
+  //     fails is the same orphan), and the row is the thing every reader needs;
+  //     it also breaks the retry, because the second attempt would re-derive the
+  //     same id and be free to succeed, whereas a row that survives is the proof
+  //     the id was already claimed.
+  //   - mark it (`endedReason: "provision_failed"` and friends). `endedReason` is
+  //     load-bearing, not a label: `isDeliberateEnd` reads it, and an absent
+  //     reason is read as DELIBERATE. A synthetic reason either closes the room
+  //     to the two people who are about to join it, or invents a state the rest
+  //     of the app has never seen and will mis-read. There is no spare bit here
+  //     to spend on a status the product does not have.
+  //
+  // So the leftover state is "a session with a room id and no room yet", which
+  // is exactly the state the seeded rows and the drain already produce, and
+  // exactly the state the join route already heals. The retry path is one line
+  // long: the next `provisionAppointmentMeeting` short-circuits on the existing
+  // row above, hands back the same id, and the join route creates the room.
+  const claim = await claimRoomForOccurrence({
+    anchorSlot,
+    streamCallId,
+    existingMeeting,
+    rebuildEndedEarly,
+  });
+  if (claim.status === "already_claimed") {
+    return { ok: true, streamCallId: claim.streamCallId };
+  }
+  const claimedSessionId = claim.sessionId;
+
   try {
     await withStreamCircuitBreaker(async () => {
       // Stream refuses a call operation naming a user it does not hold, and a
@@ -1141,9 +1308,14 @@ export async function provisionAppointmentMeeting(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "stream" } },
     );
+    // The row exists and is left in place — see the compensation note above for
+    // why deleting or marking it is worse. This throw is the caller being told
+    // the room is not ready; the retry finds the row, returns the same id, and
+    // the join route mints the call.
     streamLogger.error("Failed to create the Stream call", error, {
       slotId: anchorSlot.id,
       streamCallId,
+      sessionId: claimedSessionId,
     });
     throw error instanceof Error
       ? new Error(`Failed to create meeting session: ${error.message}`, {
@@ -1151,43 +1323,6 @@ export async function provisionAppointmentMeeting(
         })
       : new Error("Failed to create meeting session.", { cause: error });
   }
-
-  if (rebuildEndedEarly && existingMeeting) {
-    // Rebind the run's one row to the fresh call. CAS on the reason: if a
-    // concurrent join already rebuilt it, keep that room rather than a third.
-    const rebound = await prisma.meeting.updateMany({
-      where: { id: existingMeeting.id, endedReason: ENDED_EARLY_REASON },
-      data: {
-        streamCallId,
-        endedAt: null,
-        endedReason: null,
-        isRecording: false,
-      },
-    });
-    if (rebound.count === 0) {
-      const current = await prisma.meeting.findUnique({
-        where: { id: existingMeeting.id },
-        select: { streamCallId: true },
-      });
-      return {
-        ok: true,
-        streamCallId: current?.streamCallId ?? streamCallId,
-      };
-    }
-    streamLogger.info("Rebuilt the room after a pre-start end", {
-      sessionId: existingMeeting.id,
-      slotId: anchorSlot.id,
-      previousStreamCallId: existingMeeting.streamCallId,
-      streamCallId,
-    });
-    return { ok: true, streamCallId };
-  }
-
-  // Attached to the anchor, so Meeting.appointmentOccurrenceId stays
-  // @unique-correct: one session per run, not one per half hour. Re-checks the
-  // refusal and the entitlement itself; it is the authoritative write gate and
-  // is deliberately not weakened by the hoisted copies above.
-  await createDbMeeting(anchorSlot, streamCallId);
 
   return { ok: true, streamCallId };
 }

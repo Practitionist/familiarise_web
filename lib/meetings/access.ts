@@ -9,6 +9,7 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { occurrenceIdFromRoomId } from "@/lib/meetings/room-id";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
@@ -149,11 +150,48 @@ const MEETING_SESSION_INCLUDE = {
   },
 } satisfies Prisma.MeetingInclude;
 
+/**
+ * The row the gate evaluates, read by the id in the URL.
+ *
+ * #C8 — the URL segment is normalised through `toCallId` first. The segment is
+ * a bare call id in every normal case, but nothing stops a bookmark, a copied
+ * link or `client.call()` from carrying a `default:`-prefixed cid, and the end
+ * route has always accepted one. Two authorities for a single id is how a
+ * legitimate participant gets a 404 on one route and a 200 on the other.
+ *
+ * #C9 — and if the bare id names no row, an id of the form
+ * `occurrence-<occurrenceId>` is looked up by `appointmentOccurrenceId`, which is
+ * `@unique` on `Meeting` and is the one identifier that survives a #1607 rebuild.
+ * A rebuild REBINDS `streamCallId` to `occurrence-<id>-r<suffix>`, so every URL
+ * minted before it — including the one in the tab that is still open in the room,
+ * and the "Try to Rejoin" button in `CallEnded`, which re-posts to the current
+ * URL — stops matching on the bare id alone. The occurrence id does not change
+ * when the room does, so it is the durable key; falling back to it turns a dead
+ * link back into a working rejoin without a redirect, and without a second
+ * authority on `streamCallId`.
+ *
+ * This widens WHICH ids resolve, never WHO may resolve them: everything below
+ * runs unchanged on whichever row came back, so the refusals — booking status,
+ * the time gate, `isDeliberateEnd`, the roster — apply to a rebuilt room exactly
+ * as they do to a first-minted one. That is the property to preserve if this is
+ * ever refactored: an old URL must not become a quieter way into a closed room.
+ */
 function loadMeeting(callId: string) {
-  return prisma.meeting.findUnique({
-    where: { streamCallId: callId },
-    include: MEETING_SESSION_INCLUDE,
-  });
+  const include = MEETING_SESSION_INCLUDE;
+  return prisma.meeting
+    .findUnique({
+      where: { streamCallId: toCallId(callId) },
+      include,
+    })
+    .then((meeting) => {
+      if (meeting) return meeting;
+      const occurrenceId = occurrenceIdFromRoomId(toCallId(callId));
+      if (!occurrenceId) return null;
+      return prisma.meeting.findUnique({
+        where: { appointmentOccurrenceId: occurrenceId },
+        include,
+      });
+    });
 }
 
 /**
@@ -321,7 +359,9 @@ async function callHasLiveParticipants(streamCallId: string): Promise<boolean> {
 }
 
 export async function resolveMeetingAccess(
-  // The `/meetings/[id]` segment: the Stream call id, not the Meeting row id.
+  // The `/meetings/[id]` segment: the Stream call id, not the Meeting row id —
+  // and, since #C9, an `occurrence-<id>` room id of any vintage. See loadMeeting
+  // for what that accepts and, more importantly, what it must never accept.
   callId: string,
   userId: string,
 ): Promise<MeetingAccess> {

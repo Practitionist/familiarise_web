@@ -5,8 +5,15 @@
  * split on `:` defensively, the session and recording webhook handlers each did
  * their own `call_cid.split(":")[1] || call_cid`, and the orphan reconciler
  * passed the stored value straight through — so a prefixed value 404'd there and
- * was silently recorded as an UNVERIFIED completion. All of them go through here
- * now.
+ * was silently recorded as an UNVERIFIED completion.
+ *
+ * That paragraph used to end "All of them go through here now", and it was
+ * FALSE: eight sites in `session-handlers.ts` and `recording-handlers.ts` still
+ * had their own copy of the split, which is how the two ends of the same webhook
+ * could disagree about which call an event was about. They do not any more. If
+ * you are adding a site that reads a `call_cid`, import `toCallId` — do not
+ * inline a split, and do not assume the value is already bare. `toCallId` is
+ * idempotent, so applying it to a value of unknown provenance is free.
  *
  * `Meeting.streamCallId` stores the BARE id (e.g. `occurrence-<occurrenceId>`),
  * never the cid. Stream webhooks send the cid. Keep the two straight.

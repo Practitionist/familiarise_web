@@ -36,6 +36,7 @@ import {
   replaceOccurrence,
 } from "@/lib/appointments/occurrences";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { syncCallWindowForOccurrence } from "@/lib/meetings/sync-call-window";
 
 /**
  * Nested include for "what is the current live run?".
@@ -638,6 +639,13 @@ export async function PATCH(request: NextRequest) {
       durationInHours ?? existingPlan.durationInHours;
 
     // Update webinar plan and related data in a transaction
+    // #C7 — hoisted out of the transaction body for the same reason `result` is:
+    // the Stream call may only be touched AFTER the commit. Set only on the
+    // branch that actually moved a live run, and re-assigned on every
+    // `withSerializableRetry` attempt, so a retried attempt cannot leave a stale
+    // occurrence id behind (it re-derives the same one — `replaceOccurrence`
+    // updates the kept row in place, so the id is stable across attempts).
+    let movedOccurrenceId: string | null = null;
     const result = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
@@ -902,13 +910,21 @@ export async function PATCH(request: NextRequest) {
                   durationInHours: effectiveDurationForSlots,
                 });
 
-                await replaceOccurrence(tx, {
+                const replaced = await replaceOccurrence(tx, {
                   appointmentId: appointment.id,
                   startsAt: startTime,
                   durationInHours: effectiveDurationForSlots,
                   consultantProfileId: ownerProfileId,
                   isTentative: false,
                 });
+                // #C7 — a moved run leaves the Stream call describing the OLD
+                // window, including the SFU's hard duration cap. Remember it here
+                // and re-stamp it below, once the transaction has committed:
+                // `replaceOccurrence` is handed an open transaction, so a provider
+                // call inside it would hold Serializable locks across the network.
+                if (replaced.movedFrom) {
+                  movedOccurrenceId = replaced.occurrenceId;
+                }
               } else {
                 console.log("Creating new appointment + occurrence");
 
@@ -979,6 +995,24 @@ export async function PATCH(request: NextRequest) {
     console.log(
       "Update transaction completed successfully. Returning updated webinar data.",
     );
+
+    // #C7 — the room follows the calendar, AFTER the commit.
+    //
+    // Outside the transaction on purpose (see the note on `movedOccurrenceId`),
+    // awaited so it is not a floating promise on a serverless instance, and
+    // best-effort: `syncCallWindowForOccurrence` never throws, because the row is
+    // already saved and a 500 here would report a failed save that in fact
+    // succeeded. A booking that moved from 10:00–11:00 to 10:00–14:00 and kept a
+    // 105-minute SFU cap is the failure this exists to stop.
+    if (movedOccurrenceId) {
+      const moved = await prisma.appointmentOccurrence.findUnique({
+        where: { id: movedOccurrenceId },
+        select: { id: true, startsAt: true, endsAt: true },
+      });
+      if (moved?.startsAt && moved.endsAt) {
+        await syncCallWindowForOccurrence(moved);
+      }
+    }
 
     // Transform topics to strings in response
     let responseData;
