@@ -6,6 +6,7 @@ import {
   FieldValues,
   useController,
 } from "react-hook-form";
+import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -72,21 +73,29 @@ export function PriceField<T extends FieldValues = FieldValues>({
   });
 
   const error = priceError || currencyError;
+  const priceId = useId();
 
   return (
     <FormItem className={className}>
-      <FormLabel>
+      <FormLabel htmlFor={priceId}>
         {label}
         {required && <RequiredMark />}
       </FormLabel>
-      {description && <FormDescription>{description}</FormDescription>}
+      {description && (
+        <FormDescription id={`${priceId}-description`}>
+          {description}
+        </FormDescription>
+      )}
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 rounded-2xl border border-border bg-muted/40 p-2">
         <Select
           value={currencyField.value}
           onValueChange={currencyField.onChange}
         >
-          <SelectTrigger className="w-[90px]">
+          <SelectTrigger
+            className="h-11 w-[90px] rounded-xl bg-background"
+            aria-label="Price currency"
+          >
             <SelectValue placeholder="Currency" />
           </SelectTrigger>
           <SelectContent>
@@ -99,11 +108,27 @@ export function PriceField<T extends FieldValues = FieldValues>({
         </Select>
 
         <Input
+          id={priceId}
+          name={priceField.name}
+          ref={priceField.ref}
+          onBlur={priceField.onBlur}
+          aria-invalid={!!priceError}
+          aria-describedby={
+            [
+              description ? `${priceId}-description` : "",
+              error ? `${priceId}-error` : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
           type="number"
           min="0"
           max={99999999}
           placeholder="0"
-          className={cn("flex-1", error && "border-destructive")}
+          className={cn(
+            "h-11 min-w-0 flex-1 rounded-xl bg-background",
+            error && "border-destructive",
+          )}
           value={priceField.value}
           onChange={(e) => {
             const value = e.target.value;
@@ -112,7 +137,9 @@ export function PriceField<T extends FieldValues = FieldValues>({
         />
       </div>
 
-      {error && <FormMessage>{error.message}</FormMessage>}
+      {error && (
+        <FormMessage id={`${priceId}-error`}>{error.message}</FormMessage>
+      )}
     </FormItem>
   );
 }

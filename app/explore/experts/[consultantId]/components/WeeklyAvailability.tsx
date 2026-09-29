@@ -63,12 +63,12 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-6 backdrop-blur-sm">
+    <div className="calendar-surface overflow-x-auto p-4 sm:p-6 relative">
       {/* Glossy overlay effect */}
       <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
 
       <div className="relative">
-        <div className="grid grid-cols-7 gap-3">
+        <div className="grid min-w-[620px] grid-cols-7 gap-3">
           {DAY_NAMES.map((day) => {
             const allSlots = mergedSlotsByDay[day];
             const visibleSlots = isExpanded
@@ -79,7 +79,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
               <div key={day} className="space-y-3">
                 {/* Day header with glossy effect */}
                 <div className="text-center">
-                  <h4 className="font-semibold text-sm text-gray-800 bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
+                  <h4 className="font-semibold text-sm text-foreground bg-muted px-3 py-2 rounded-xl border border-border shadow-sm">
                     {day.charAt(0) + day.slice(1).toLowerCase()}
                   </h4>
                 </div>
@@ -101,7 +101,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                           key={slot.id}
                           className={`
                             w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
-                            border shadow-lg backdrop-blur-sm relative overflow-hidden
+                            border shadow-none relative overflow-hidden
                             ${
                               isFullyBooked
                                 ? SLOT_STATUS_TOKENS.fullyBooked.className

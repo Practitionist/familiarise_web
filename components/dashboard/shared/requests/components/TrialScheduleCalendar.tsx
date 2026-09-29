@@ -29,7 +29,7 @@ const slotColorClasses: Record<SlotStatus, string> = {
   partial:
     "bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border-yellow-400",
   booked: "bg-red-100 text-red-600 cursor-not-allowed border-red-400",
-  selected: "bg-gray-900 hover:bg-gray-800 text-white border-gray-900",
+  selected: "bg-primary hover:bg-gray-800 text-white border-gray-900",
 };
 
 // Determine slot status based on allocation
@@ -66,7 +66,9 @@ export function TrialScheduleCalendar({
   );
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
+    null,
+  );
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
   const durationInHours = trialDurationMinutes / 60;
@@ -179,9 +181,7 @@ export function TrialScheduleCalendar({
 
     // Empty cells for days before the first day of month
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11" />,
-      );
+      days.push(<div key={`empty-${i}`} className="h-10 w-full" />);
     }
 
     // Day cells
@@ -200,14 +200,21 @@ export function TrialScheduleCalendar({
       days.push(
         <button
           key={i}
+          type="button"
+          aria-pressed={isSelected}
+          aria-label={date.toLocaleDateString(undefined, {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
           disabled={isPast}
-          className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
+          className={`w-full h-10 rounded-xl text-base font-medium transition-all duration-200 flex items-center justify-center
             ${
               isSelected
-                ? "bg-gray-900 text-white shadow-md"
+                ? "bg-primary text-white shadow-md"
                 : isPast
                   ? "text-gray-300 cursor-not-allowed"
-                  : "text-gray-700 hover:bg-gray-100"
+                  : "text-foreground hover:bg-accent"
             }`}
           onClick={() => {
             if (!isPast) {
@@ -242,13 +249,13 @@ export function TrialScheduleCalendar({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="calendar-surface space-y-6 p-4 sm:p-6">
       {/* Header */}
-      <div className="border-b border-gray-200 pb-4">
-        <h2 className="text-xl font-semibold text-gray-900">
+      <div className="border-b border-border pb-4">
+        <h2 className="text-xl font-semibold text-foreground">
           Schedule Trial
         </h2>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           {consulteeUserName
             ? `Select a ${trialDurationMinutes}-minute slot for the trial session with ${consulteeUserName}`
             : `Select a ${trialDurationMinutes}-minute slot for the trial session`}
@@ -258,17 +265,18 @@ export function TrialScheduleCalendar({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
         {/* Calendar Section */}
         <div>
-          <h3 className="text-base font-medium mb-4 flex items-center text-gray-900">
-            <Calendar className="mr-2 h-5 w-5 text-gray-500" />
+          <h3 className="text-base font-medium mb-4 flex items-center text-foreground">
+            <Calendar className="mr-2 h-5 w-5 text-muted-foreground" />
             Select a Date
           </h3>
-          <div className="bg-gray-50 p-4 lg:p-5 rounded-xl border border-gray-200">
+          <div className="bg-muted/50 p-4 lg:p-5 rounded-xl border border-border">
             {/* Month Navigation */}
             <div className="flex justify-between items-center mb-4">
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 h-9 w-9"
+                aria-label="Previous month"
+                className="text-muted-foreground hover:text-foreground hover:bg-accent h-9 w-9"
                 onClick={() =>
                   setCurrentDate(
                     new Date(
@@ -281,7 +289,7 @@ export function TrialScheduleCalendar({
               >
                 &lt;
               </Button>
-              <span className="font-semibold text-gray-900">
+              <span className="font-semibold text-foreground">
                 {currentDate.toLocaleString("default", {
                   month: "long",
                   year: "numeric",
@@ -290,7 +298,8 @@ export function TrialScheduleCalendar({
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 h-9 w-9"
+                aria-label="Next month"
+                className="text-muted-foreground hover:text-foreground hover:bg-accent h-9 w-9"
                 onClick={() =>
                   setCurrentDate(
                     new Date(
@@ -306,7 +315,7 @@ export function TrialScheduleCalendar({
             </div>
 
             {/* Weekday Headers */}
-            <div className="grid grid-cols-7 gap-2 text-center text-sm font-medium text-gray-500 mb-2">
+            <div className="grid grid-cols-7 gap-2 text-center text-sm font-medium text-muted-foreground mb-2">
               <div>Mo</div>
               <div>Tu</div>
               <div>We</div>
@@ -323,16 +332,18 @@ export function TrialScheduleCalendar({
 
         {/* Slots Section */}
         <div>
-          <h3 className="text-base font-medium mb-4 flex items-center text-gray-900">
-            <Clock className="mr-2 h-5 w-5 text-gray-500" />
+          <h3 className="text-base font-medium mb-4 flex items-center text-foreground">
+            <Clock className="mr-2 h-5 w-5 text-muted-foreground" />
             Available {trialDurationMinutes}-min Slots
           </h3>
 
-          <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 min-h-[280px] max-h-[350px] overflow-y-auto">
+          <div className="bg-muted/50 p-4 rounded-xl border border-border min-h-[280px] max-h-[350px] overflow-y-auto">
             {isLoadingSlots ? (
               <div className="flex items-center justify-center h-full py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-                <span className="ml-2 text-gray-500">Loading slots...</span>
+                <span className="ml-2 text-muted-foreground">
+                  Loading slots...
+                </span>
               </div>
             ) : availableSlots.length > 0 ? (
               <>
@@ -373,7 +384,7 @@ export function TrialScheduleCalendar({
                             {slotStatus === "booked" && (
                               <Badge
                                 variant="secondary"
-                                className="text-xs bg-gray-200 text-gray-500"
+                                className="text-xs bg-gray-200 text-muted-foreground"
                               >
                                 Booked
                               </Badge>
@@ -397,7 +408,7 @@ export function TrialScheduleCalendar({
                 </div>
 
                 {/* Legend */}
-                <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-gray-200 text-xs text-gray-600">
+                <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-border text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded bg-green-200 border border-green-500" />
                     <span>Available</span>
@@ -411,7 +422,7 @@ export function TrialScheduleCalendar({
                     <span>Booked</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-gray-900 border border-gray-900" />
+                    <div className="w-3 h-3 rounded bg-primary border border-gray-900" />
                     <span>Selected</span>
                   </div>
                 </div>
@@ -419,7 +430,7 @@ export function TrialScheduleCalendar({
             ) : (
               <div className="flex flex-col items-center justify-center h-full py-8 text-center">
                 <Clock className="h-10 w-10 text-gray-300 mb-3" />
-                <p className="text-gray-500 text-sm">
+                <p className="text-muted-foreground text-sm">
                   No available slots for this date.
                 </p>
                 <p className="text-gray-400 text-xs mt-1">
@@ -437,18 +448,20 @@ export function TrialScheduleCalendar({
           <span className="font-medium">Duration:</span> {trialDurationMinutes}{" "}
           minutes
         </p>
-        <p className="text-xs text-gray-600 mt-1">Timezone: {timezone}</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Timezone: {timezone}
+        </p>
       </div>
 
       {/* Actions */}
-      <div className="flex justify-end gap-3 pt-2 border-t border-gray-200">
+      <div className="flex justify-end gap-3 pt-2 border-t border-border">
         <Button variant="outline" onClick={onCancel} disabled={isProcessing}>
           Cancel
         </Button>
         <Button
           onClick={handleConfirm}
           disabled={!selectedSlot || isProcessing}
-          className="bg-gray-900 hover:bg-gray-800 text-white"
+          className="bg-primary hover:bg-gray-800 text-white"
         >
           {isProcessing ? (
             <>

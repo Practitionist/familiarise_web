@@ -13,11 +13,23 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { motion } from "framer-motion";
-import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
+import {
+  ClockIcon,
+  CheckCircle2,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+import { BookingSteps } from "@/components/booking/BookingSteps";
+import { BookingSummary } from "@/components/booking/BookingSummary";
+import {
+  sameBookingWindow,
+  isCurrentBookingWindow,
+} from "@/lib/booking/selection";
+import { cn } from "@/utils/tailwind";
+import { formatInTimeZone } from "date-fns-tz";
 import { useSession } from "@/lib/auth-client";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
@@ -68,6 +80,10 @@ interface ConsultationPricingToggleProps {
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
   timezone: string;
   onRefreshSlots?: () => void;
+  slotsLoading?: boolean;
+  slotsError?: boolean;
+  initialPlanId?: string | null;
+  bookingRequest?: number;
 }
 
 export default function ConsultationPricingToggle({
@@ -84,6 +100,10 @@ export default function ConsultationPricingToggle({
   timezone,
   consultantDetails,
   onRefreshSlots,
+  slotsLoading = false,
+  slotsError = false,
+  initialPlanId,
+  bookingRequest = 0,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const router = useRouter();
@@ -92,7 +112,26 @@ export default function ConsultationPricingToggle({
   // Track the active plan by id so plans that share a duration (e.g. two
   // 1-hour consultations) remain independently selectable and bookable.
   const [activeConsultationOption, setActiveConsultationOption] =
-    useState<string>(consultationOptions[0]?.id ?? "");
+    useState<string>(
+      consultationOptions.some((o) => o.id === initialPlanId)
+        ? initialPlanId!
+        : (consultationOptions[0]?.id ?? ""),
+    );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const previousBookingRequest = useRef(bookingRequest);
+  const [step, setStep] = useState(0);
+  const [selectionNotice, setSelectionNotice] = useState("");
+  const [pendingIntent, setPendingIntent] =
+    useState<ReturnType<typeof consumePurchaseIntent>>(null);
+  useEffect(() => {
+    if (bookingRequest > previousBookingRequest.current) {
+      returnFocus.current = document.activeElement as HTMLElement;
+      setStep(0);
+      setDialogOpen(true);
+    }
+    previousBookingRequest.current = bookingRequest;
+  }, [bookingRequest]);
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
   // #1778 — the window another learner holds, offered as "notify me".
   const [heldWindow, setHeldWindow] = useState<BackupWindowRequest | null>(
@@ -107,15 +146,6 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
-
-  // #1703 D1 — REQUEST routes every slot through approval; INSTANT keeps the
-  // contended-slot-only arm. Decided once here so the button and its hint agree.
-  const cta = consultationCtaFor(
-    consultantDetails.bookingMode ?? "INSTANT",
-    selectedSlot?.isAllocated ?? false,
-  );
-  const paused =
-    cta.action === "request" && consultantDetails.acceptingRequests === false;
 
   const availableSlots = useMemo((): SlotWithStatus[] => {
     if (
@@ -153,48 +183,134 @@ export default function ConsultationPricingToggle({
     }));
   }, [slotTimings, selectedDuration, timezone, selectedDate]);
 
-  // #booking-journey — restore a slot stashed before the auth bounce. Runs
-  // once per mount, and only once slots have actually loaded: the stashed
-  // pick is only applied when it still exists in the calendar (not past, not
-  // fully booked), so a stale intent can never select an invalid slot.
+  // Restore the plan and day before matching against that day's fetched windows.
   const purchaseIntentConsumedRef = useRef(false);
   useEffect(() => {
-    if (purchaseIntentConsumedRef.current) return;
-    if (availableSlots.length === 0 || !session?.user?.id) return;
+    if (purchaseIntentConsumedRef.current || !session?.user?.id) return;
     purchaseIntentConsumedRef.current = true;
-
     const intent = consumePurchaseIntent(consultantDetails.id);
-    if (!intent) return;
-
     if (
-      consultationOptions.some((opt) => opt.id === intent.consultationPlanId)
-    ) {
-      setActiveConsultationOption(intent.consultationPlanId);
-    }
+      !intent ||
+      !consultationOptions.some((o) => o.id === intent.consultationPlanId)
+    )
+      return;
+    const date = new Date(intent.slot.startsAt);
+    if (!Number.isFinite(date.getTime())) return;
+    setActiveConsultationOption(intent.consultationPlanId);
+    setSelectedDate(date);
+    setCurrentDate(new Date(date.getFullYear(), date.getMonth(), 1));
+    setPendingIntent(intent);
+    setDialogOpen(true);
+    setStep(1);
+  }, [
+    session?.user?.id,
+    consultantDetails.id,
+    consultationOptions,
+    setSelectedDate,
+    setCurrentDate,
+  ]);
 
+  useEffect(() => {
+    if (
+      !pendingIntent ||
+      slotsLoading ||
+      slotsError ||
+      !selectedDate ||
+      !timezone
+    )
+      return;
+    if (
+      activeConsultationOption !== pendingIntent.consultationPlanId ||
+      formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd") !==
+        formatInTimeZone(
+          new Date(pendingIntent.slot.startsAt),
+          timezone,
+          "yyyy-MM-dd",
+        )
+    )
+      return;
     const match = availableSlots.find(
       (slot) =>
-        slot.startsAt === intent.slot.startsAt &&
-        slot.endsAt === intent.slot.endsAt &&
-        !slot._isPast &&
-        slot.bookingStatus !== "fully-booked",
+        sameBookingWindow(slot, pendingIntent.slot) &&
+        isCurrentBookingWindow(slot, Date.now(), MINIMUM_BOOKING_LEAD_TIME_MS),
     );
+    setPendingIntent(null);
     if (match) {
       setSelectedSlot(match);
+      setStep(2);
       toast({
         title: "Welcome back",
         description: "Your previously selected time slot was restored.",
       });
+    } else {
+      setSelectionNotice(
+        "Your previous time is no longer available. Please choose another.",
+      );
     }
   }, [
+    pendingIntent,
+    slotsLoading,
+    slotsError,
+    selectedDate,
+    timezone,
     availableSlots,
-    consultationOptions,
-    consultantDetails.id,
-    session?.user?.id,
-    setActiveConsultationOption,
+    activeConsultationOption,
     setSelectedSlot,
     toast,
   ]);
+
+  // A refreshed window can become booked or allocated while the dialog is open.
+  // Never retain yesterday's data during a fetch or submit a removed window.
+  const currentSlot =
+    selectedSlot && !slotsLoading && !slotsError
+      ? availableSlots.find(
+          (slot) =>
+            sameBookingWindow(slot, selectedSlot) &&
+            isCurrentBookingWindow(
+              slot,
+              Date.now(),
+              MINIMUM_BOOKING_LEAD_TIME_MS,
+            ),
+        )
+      : undefined;
+  // Use the live window's allocation, not the selection snapshot: a refresh
+  // must switch an INSTANT slot to approval before the next user interaction.
+  const cta = consultationCtaFor(
+    consultantDetails.bookingMode ?? "INSTANT",
+    currentSlot?.isAllocated ?? false,
+  );
+  const paused =
+    cta.action === "request" && consultantDetails.acceptingRequests === false;
+  useEffect(() => {
+    if (!selectedSlot || slotsLoading || slotsError || pendingIntent) return;
+    if (!currentSlot) {
+      setSelectedSlot(null);
+      setStep(1);
+      setSelectionNotice(
+        "Availability changed. Please choose an available time.",
+      );
+    } else if (
+      currentSlot.isAllocated !== selectedSlot.isAllocated ||
+      currentSlot.bookingStatus !== selectedSlot.bookingStatus
+    ) {
+      setSelectedSlot(currentSlot);
+    }
+  }, [
+    currentSlot,
+    selectedSlot,
+    slotsLoading,
+    slotsError,
+    pendingIntent,
+    setSelectedSlot,
+  ]);
+
+  const choosePlan = (id: string) => {
+    setActiveConsultationOption(id);
+    setSelectedSlot(null);
+    setHeldWindow(null);
+    setStep(0);
+    setSelectionNotice("");
+  };
 
   const handleRequestForApproval = async () => {
     if (!selectedSlot || !consultantDetails) {
@@ -295,6 +411,7 @@ export default function ConsultationPricingToggle({
       });
 
       setSelectedSlot(null);
+      setDialogOpen(false);
     } catch (error) {
       console.error("Error requesting approval:", error);
       if (
@@ -326,12 +443,14 @@ export default function ConsultationPricingToggle({
   const handleBookNowClick = () => {
     const today = new Date();
     setSelectedDate(today);
+    setSelectedSlot(null);
+    setStep(0);
     setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
   };
 
   if (consultationOptions.length === 0) {
     return (
-      <div className="w-full p-8 text-center text-zinc-400">
+      <div className="w-full p-8 text-center text-muted-foreground">
         <p>No consultation plans available at the moment.</p>
       </div>
     );
@@ -343,7 +462,7 @@ export default function ConsultationPricingToggle({
   ) {
     return (
       <div className="w-full p-8 text-center space-y-3">
-        <h3 className="text-2xl font-medium tracking-tight text-zinc-300">
+        <h3 className="text-2xl font-medium tracking-tight text-foreground">
           Consultee Access Required
         </h3>
         <p className="text-zinc-500">
@@ -354,288 +473,347 @@ export default function ConsultationPricingToggle({
   }
 
   return (
-    <Tabs
-      value={activeConsultationOption}
-      onValueChange={setActiveConsultationOption}
-      className="w-full space-y-5"
-    >
-      {/* Segmented pill duration toggle */}
-      <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
-        {consultationOptions.map((option) => {
-          const isActive = activeConsultationOption === option.id;
-          return (
-            <TabsTrigger
-              key={option.id}
-              value={option.id}
-              className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
-            >
-              {isActive && (
-                <motion.div
-                  layoutId="consultation-duration-pill"
-                  className="absolute inset-0 bg-white rounded-xl shadow-sm"
-                  transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
-                />
-              )}
-              <span className="relative z-10">{option.title}</span>
+    <div className="space-y-5">
+      <Tabs value={activeConsultationOption} onValueChange={choosePlan}>
+        <TabsList
+          className="pricing-segments w-full"
+          aria-label="Consultation plan"
+        >
+          {consultationOptions.map((option) => (
+            <TabsTrigger key={option.id} value={option.id}>
+              {option.title}
             </TabsTrigger>
-          );
-        })}
-      </TabsList>
-
-      <div className="grid grid-cols-1 gap-4">
-        {consultationOptions.map((option) => {
-          const isActive = activeConsultationOption === option.id;
-          return (
-            <motion.div
-              key={option.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{
-                opacity: isActive ? 1 : 0,
-                y: 0,
-              }}
-              transition={{ duration: 0.2 }}
-              className={isActive ? "block" : "hidden"}
+          ))}
+        </TabsList>
+      </Tabs>
+      {activePlanOption && (
+        <>
+          <div>
+            <h3 className="text-lg font-semibold">{activePlanOption.title}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {activePlanOption.description}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="text-4xl font-semibold tracking-tight break-all">
+              {formatPrice(activePlanOption.price)}
+            </span>
+            <span className="text-sm text-muted-foreground">/ session</span>
+          </div>
+          {!!activePlanOption.features?.length && (
+            <ul className="space-y-3 text-sm">
+              {activePlanOption.features.map((feature, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+                  {feature}
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button
+            className="h-12 w-full rounded-xl"
+            onClick={() => {
+              returnFocus.current = document.activeElement as HTMLElement;
+              setStep(0);
+              setDialogOpen(true);
+            }}
+          >
+            Choose a time
+          </Button>
+          <Button asChild variant="outline" className="h-11 w-full rounded-xl">
+            <Link
+              href={`/explore/programs/plans/consultations/${activePlanOption.id}`}
             >
-              {/* Pricing content — no nested dark card, lives directly in glass parent */}
-              <div className="space-y-1">
-                <h3 className="text-lg font-bold text-white">{option.title}</h3>
-                <p className="text-xs text-zinc-500">{option.description}</p>
-              </div>
-
-              <div className="flex items-end gap-2 my-5">
-                <span className="text-5xl font-bold tracking-tight text-white">
-                  {formatPrice(option.price)}
-                </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ session</span>
-              </div>
-
-              {option.features && option.features.length > 0 && (
-                <>
-                  <div className="border-t border-white/[0.06] mb-4" />
-                  <div className="space-y-2 mb-5">
-                    <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
-                      Includes
-                    </p>
-                    <ul className="space-y-2">
-                      {option.features.map((feature, index) => (
-                        <li
-                          key={`feature-${index}`}
-                          className="text-zinc-200 flex items-center text-sm"
-                        >
-                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
-              )}
-
-              {/* Two CTAs: read first, or book now. The toggle stays a chooser
-                and hands detail off to the plan page. */}
-              <Button
-                asChild
-                variant="outline"
-                className="w-full mb-3 bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
-              >
-                <Link
-                  href={`/explore/programs/plans/consultations/${option.id}`}
+              Read plan details
+            </Link>
+          </Button>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogContent
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                returnFocus.current?.focus();
+              }}
+              overlayClassName="z-[1100]"
+              className="booking-dialog z-[1101] sm:max-w-3xl"
+            >
+              <DialogHeader className="p-6 pr-12">
+                <DialogTitle className="text-2xl font-semibold">
+                  Book your consultation
+                </DialogTitle>
+                <DialogDescription>
+                  {activePlanOption.description || activePlanOption.title} ·{" "}
+                  {activePlanOption.duration}
+                </DialogDescription>
+              </DialogHeader>
+              <BookingSteps steps={["Date", "Time", "Review"]} current={step} />
+              {selectionNotice && (
+                <p
+                  role="status"
+                  className="mx-6 mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
                 >
-                  Open details
-                </Link>
-              </Button>
-
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button
-                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
-                    onClick={handleBookNowClick}
+                  {selectionNotice}
+                </p>
+              )}
+              {step < 2 ? (
+                <div className="grid gap-6 p-4 sm:p-6 md:grid-cols-2">
+                  <section
+                    className={cn(step !== 0 && "hidden md:block")}
+                    aria-label="Choose a date"
                   >
-                    Book Now
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
-                  <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
-                    <DialogTitle className="text-xl lg:text-2xl font-semibold">
-                      Book {option.title} Consultation
-                    </DialogTitle>
-                    <DialogDescription className="text-zinc-400 text-base">
-                      Select a date and time for your {option.duration}{" "}
-                      consultation
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
-                    {/* Calendar Section */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
-                        <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                        Select a Date
-                      </h3>
-                      <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
-                        <div className="flex justify-between items-center mb-5">
-                          <span className="font-semibold text-white text-lg">
-                            {currentDate.toLocaleString("default", {
-                              month: "long",
-                              year: "numeric",
-                            })}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {/* #1785 L-4 — back to the current month and today's date. */}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
-                              onClick={handleBookNowClick}
-                            >
-                              Today
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="default"
-                              aria-label="Previous month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
-                              onClick={() =>
-                                setCurrentDate(
-                                  new Date(
-                                    currentDate.getFullYear(),
-                                    currentDate.getMonth() - 1,
-                                    1,
-                                  ),
-                                )
-                              }
-                            >
-                              &lt;
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="default"
-                              aria-label="Next month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
-                              onClick={() =>
-                                setCurrentDate(
-                                  new Date(
-                                    currentDate.getFullYear(),
-                                    currentDate.getMonth() + 1,
-                                    1,
-                                  ),
-                                )
-                              }
-                            >
-                              &gt;
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
-                          <div>Mo</div>
-                          <div>Tu</div>
-                          <div>We</div>
-                          <div>Th</div>
-                          <div>Fr</div>
-                          <div>Sa</div>
-                          <div>Su</div>
-                        </div>
-                        <div className="grid grid-cols-7 gap-2">
-                          {renderCalendar()}
+                    <h3 className="mb-4 flex items-center gap-2 font-semibold">
+                      <CalendarIcon className="h-4 w-4" />
+                      Choose a date
+                    </h3>
+                    <div className="calendar-surface p-3 sm:p-4">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">
+                          {currentDate.toLocaleString("default", {
+                            month: "long",
+                            year: "numeric",
+                          })}
+                        </span>
+                        <div className="flex items-center">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleBookNowClick}
+                          >
+                            Today
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Previous month"
+                            onClick={() =>
+                              setCurrentDate(
+                                new Date(
+                                  currentDate.getFullYear(),
+                                  currentDate.getMonth() - 1,
+                                  1,
+                                ),
+                              )
+                            }
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Next month"
+                            onClick={() =>
+                              setCurrentDate(
+                                new Date(
+                                  currentDate.getFullYear(),
+                                  currentDate.getMonth() + 1,
+                                  1,
+                                ),
+                              )
+                            }
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
-                    </div>
-
-                    {/* Available Slots Section */}
-                    <div>
-                      <div className="flex items-center justify-between mb-5">
-                        <h3 className="text-lg font-semibold flex items-center text-white">
-                          <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                          Available {selectedDuration} hour Slots
-                        </h3>
-                        {onRefreshSlots && (
-                          <button
-                            type="button"
-                            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
-                            title="Refresh slot availability"
-                            onClick={async () => {
-                              setIsRefreshing(true);
-                              try {
-                                await onRefreshSlots();
-                              } finally {
-                                setIsRefreshing(false);
-                              }
-                            }}
-                            disabled={isRefreshing}
-                          >
-                            <RefreshCw
-                              className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-                            />
-                          </button>
+                      <div className="mb-2 grid grid-cols-7 text-center text-xs text-muted-foreground">
+                        {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map(
+                          (day) => (
+                            <span key={day}>{day}</span>
+                          ),
                         )}
                       </div>
-                      {consultantDetails?.scheduleType && (
-                        <div className="mb-4 p-3 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
-                          <p className="text-sm text-zinc-400">
-                            This consultant prefers{" "}
-                            <span
-                              className={`px-2 py-1 rounded text-xs font-medium ${
-                                consultantDetails.scheduleType === "WEEKLY"
-                                  ? "bg-zinc-700 text-zinc-300"
-                                  : "bg-zinc-700 text-zinc-300"
-                              }`}
-                            >
-                              {consultantDetails.scheduleType === "WEEKLY"
-                                ? "📅 Weekly"
-                                : "🎯 Custom"}
-                            </span>{" "}
-                            scheduling
-                          </p>
-                        </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {renderCalendar()}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Outlined days have available times. Times shown in{" "}
+                      {timezone}.
+                    </p>
+                  </section>
+                  <section
+                    className={cn(step !== 1 && "hidden md:block")}
+                    aria-label="Choose a time"
+                  >
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                      <h3 className="flex items-center gap-2 font-semibold">
+                        <ClockIcon className="h-4 w-4" />
+                        Choose a time
+                      </h3>
+                      {onRefreshSlots && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Refresh slot availability"
+                          disabled={isRefreshing}
+                          onClick={async () => {
+                            setIsRefreshing(true);
+                            try {
+                              await onRefreshSlots();
+                            } finally {
+                              setIsRefreshing(false);
+                            }
+                          }}
+                        >
+                          <RefreshCw
+                            className={cn(
+                              "h-4 w-4",
+                              isRefreshing && "animate-spin",
+                            )}
+                          />
+                        </Button>
                       )}
-                      <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
+                    </div>
+                    {selectedDate && (
+                      <p className="mb-3 text-sm text-muted-foreground">
+                        {formatInTimeZone(
+                          selectedDate,
+                          timezone,
+                          "EEEE, MMMM d",
+                        )}
+                      </p>
+                    )}
+                    <div
+                      className="max-h-80 space-y-2 overflow-y-auto"
+                      aria-busy={slotsLoading}
+                    >
+                      {slotsLoading ? (
+                        <p
+                          role="status"
+                          className="py-6 text-sm text-muted-foreground"
+                        >
+                          Checking available times…
+                        </p>
+                      ) : slotsError ? (
+                        <p
+                          role="alert"
+                          className="py-6 text-sm text-destructive"
+                        >
+                          Couldn’t load times. Refresh to try again.
+                        </p>
+                      ) : (
                         <SlotList
                           slots={availableSlots}
                           selectedSlot={selectedSlot as SlotWithStatus | null}
-                          onSelect={setSelectedSlot}
+                          onSelect={(slot) => {
+                            setSelectedSlot(slot);
+                            setSelectionNotice("");
+                          }}
                           bookingMode={
                             consultantDetails.bookingMode ?? "INSTANT"
                           }
                         />
-                      </div>
+                      )}
                     </div>
-                  </div>
-                  <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex flex-col items-end gap-2 rounded-b-2xl border-t border-zinc-800">
-                    {(paused || cta.hint) && (
-                      <p className="text-xs text-zinc-400 text-right">
-                        {paused ? CONSULTANT_PAUSED_HINT : cta.hint}
+                  </section>
+                </div>
+              ) : (
+                <div className="p-6">
+                  <BookingSummary
+                    title={
+                      activePlanOption.description || activePlanOption.title
+                    }
+                    price={formatPrice(activePlanOption.price)}
+                    unit="/ session"
+                  >
+                    {currentSlot && (
+                      <p className="font-medium text-foreground">
+                        {formatInTimeZone(
+                          new Date(currentSlot.startsAt),
+                          timezone,
+                          "EEEE, MMMM d, yyyy",
+                        )}
+                        <br />
+                        {formatInTimeZone(
+                          new Date(currentSlot.startsAt),
+                          timezone,
+                          "h:mm a",
+                        )}{" "}
+                        –{" "}
+                        {formatInTimeZone(
+                          new Date(currentSlot.endsAt),
+                          timezone,
+                          "h:mm a",
+                        )}
                       </p>
                     )}
+                    <p>Time zone: {timezone}</p>
+                    <p>{activePlanOption.duration} consultation</p>
+                    {(paused || cta.hint) && (
+                      <p>{paused ? CONSULTANT_PAUSED_HINT : cta.hint}</p>
+                    )}
+                  </BookingSummary>
+                </div>
+              )}
+              <div className="booking-footer">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    step === 0 ? setDialogOpen(false) : setStep(step - 1)
+                  }
+                >
+                  {step === 0 ? "Cancel" : "Back"}
+                </Button>
+                {step === 0 ? (
+                  <>
                     <Button
-                      className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base"
-                      onClick={
-                        cta.action === "request"
-                          ? handleRequestForApproval
-                          : () => handleConsultationBooking(option.id)
-                      }
-                      disabled={
-                        !selectedSlot ||
-                        paused ||
-                        isRequestingApproval ||
-                        (selectedSlot as SlotWithStatus)?._isPast ||
-                        selectedSlot?.bookingStatus === "fully-booked"
-                      }
+                      className="md:hidden"
+                      disabled={!selectedDate || slotsLoading || slotsError}
+                      onClick={() => setStep(1)}
                     >
-                      {isRequestingApproval ? "Submitting..." : cta.label}
+                      Choose time
                     </Button>
-                    {heldWindow &&
-                      heldWindow.windowStart === selectedSlot?.startsAt && (
-                        <NotifyWhenFreeButton window={heldWindow} />
-                      )}
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </motion.div>
-          );
-        })}
-      </div>
-    </Tabs>
+                    <Button
+                      className="hidden md:inline-flex"
+                      disabled={!currentSlot}
+                      onClick={() => setStep(2)}
+                    >
+                      Review booking
+                    </Button>
+                  </>
+                ) : step === 1 ? (
+                  <Button disabled={!currentSlot} onClick={() => setStep(2)}>
+                    Review booking
+                  </Button>
+                ) : (
+                  <Button
+                    disabled={!currentSlot || paused || isRequestingApproval}
+                    onClick={() => {
+                      if (
+                        !currentSlot ||
+                        !isCurrentBookingWindow(
+                          currentSlot,
+                          Date.now(),
+                          MINIMUM_BOOKING_LEAD_TIME_MS,
+                        )
+                      ) {
+                        setSelectedSlot(null);
+                        setStep(1);
+                        setSelectionNotice(
+                          "This time is no longer available. Please choose another.",
+                        );
+                        return;
+                      }
+                      if (cta.action === "request")
+                        void handleRequestForApproval();
+                      else handleConsultationBooking(activePlanOption.id);
+                    }}
+                  >
+                    {isRequestingApproval ? "Submitting…" : cta.label}
+                  </Button>
+                )}
+                {heldWindow &&
+                  heldWindow.windowStart === selectedSlot?.startsAt && (
+                    <NotifyWhenFreeButton window={heldWindow} />
+                  )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
+    </div>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { RegistrationReview } from "@/components/booking/RegistrationReview";
 import { formatInTimeZone } from "date-fns-tz";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useSession } from "@/lib/auth-client";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
@@ -54,7 +54,7 @@ function SessionRow({
 }: Readonly<{ session: SessionInfo; zone: string }>) {
   return (
     <div
-      className={`flex items-center justify-between p-3 rounded-lg bg-muted ${
+      className={`flex flex-wrap gap-2 items-center justify-between p-3 rounded-xl bg-muted/50 ${
         session.status === "Completed" ? "opacity-60" : ""
       }`}
     >
@@ -141,6 +141,7 @@ function BatchPanel({
   userId: string | undefined;
 }>) {
   const { formatPrice } = useCurrency();
+  const router = useRouter();
   const checkoutUrl = `/checkout/plans/class/${plan.id}?eventId=${card.classId}`;
   const enrolled = !!userId && isUserEnrolled(batch.appointment, userId);
   const href = userId
@@ -175,9 +176,33 @@ function BatchPanel({
           <Badge variant="secondary">You are enrolled</Badge>
         ) : (
           card.canEnrol && (
-            <Button asChild size="sm">
-              <Link href={href}>Enrol in this batch</Link>
-            </Button>
+            <RegistrationReview
+              mobileAction={false}
+              title={`${plan.title} · ${card.label}`}
+              price={formatPrice(
+                card.enrolment.state === "open"
+                  ? card.enrolment.basePaise
+                  : plan.price,
+              )}
+              onContinue={() => router.push(href)}
+              label={userId ? "Continue to checkout" : "Sign in to continue"}
+            >
+              <p>
+                {card.startsAt
+                  ? formatInTimeZone(
+                      card.startsAt,
+                      zone,
+                      "MMMM d, yyyy 'at' h:mm a zzz",
+                    )
+                  : "Dates to be announced"}
+              </p>
+              <p>Time zone: {zone}</p>
+              <p>
+                {enrolmentLine(card, formatPrice, (d) =>
+                  formatInTimeZone(d, zone, "EEE d MMM"),
+                )}
+              </p>
+            </RegistrationReview>
           )
         )}
       </div>

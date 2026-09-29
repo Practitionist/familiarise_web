@@ -34,7 +34,7 @@ export function ProfileHeader({
   // review count is the wrong number beside a per-track mean.
   const headlineCount = displayedScoreCount(consultantDetails, "ONE_TO_ONE");
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
+    <div className="explore-profile-header bg-card rounded-3xl border border-border p-6 md:p-8">
       <div className="flex flex-col sm:flex-row gap-6">
         {/* Profile Display Image - Square format */}
         <div className="relative flex-shrink-0">

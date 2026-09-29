@@ -15,6 +15,7 @@ import type { Metadata, Viewport } from "next";
 import { sora } from "@/lib/fonts";
 
 import "./globals.css";
+import "./explore-ui.css";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -74,9 +75,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={sora.variable}>
-      <body
-        className={`${sora.className} flex flex-col min-h-svh antialiased`}
-      >
+      <body className={`${sora.className} flex flex-col min-h-svh antialiased`}>
         <ReactQueryProvider>
           <AuthSyncProvider />
           <MaintenanceProvider>

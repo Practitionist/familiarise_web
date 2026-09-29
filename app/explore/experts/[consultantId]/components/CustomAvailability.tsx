@@ -35,7 +35,8 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
     return days.map((day) => {
       const sorted = day.slots.slice().sort((a, b) => {
         return (
-          timeToMinutes12h(a.localStartTime) - timeToMinutes12h(b.localStartTime)
+          timeToMinutes12h(a.localStartTime) -
+          timeToMinutes12h(b.localStartTime)
         );
       });
       return {
@@ -64,12 +65,12 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
+    <div className="calendar-surface p-4 sm:p-6 relative">
       {/* Glossy overlay effect */}
       <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
 
       <div className="relative">
-        <h3 className="text-2xl font-bold mb-6 text-center text-gray-800 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+        <h3 className="text-lg font-semibold mb-6 text-foreground">
           Custom Availability
         </h3>
 
@@ -81,7 +82,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
             disabled={!onPrevWeek}
             className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
               onPrevWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
+                ? "bg-muted border-border text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
                 : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
             }`}
             aria-label="Previous week"
@@ -90,13 +91,13 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           </button>
 
           {/* Date headers and slots */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 overflow-x-auto">
             {/* Date headers */}
-            <div className="grid grid-cols-7 gap-4 mb-6">
+            <div className="grid min-w-[620px] grid-cols-7 gap-4 mb-6">
               {mergedDays.map(({ date }) => (
                 <div key={date.toISOString()} className="text-center">
-                  <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
-                    <div className="text-sm font-semibold text-gray-800">
+                  <div className="bg-muted px-3 py-2 rounded-xl border border-border shadow-sm">
+                    <div className="text-sm font-semibold text-foreground">
                       {date.toLocaleDateString(undefined, { weekday: "short" })}
                     </div>
                     <div className="text-xs text-gray-600 mt-1">
@@ -111,7 +112,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
             </div>
 
             {/* Slots grid */}
-            <div className="grid grid-cols-7 gap-4">
+            <div className="grid min-w-[620px] grid-cols-7 gap-4">
               {mergedDays.map(({ date, slots: daySlots }) => {
                 const visibleSlots = isExpanded
                   ? daySlots
@@ -135,14 +136,16 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                             key={slot.id}
                             className={`
                               w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
-                              border shadow-lg backdrop-blur-sm relative overflow-hidden
+                              border shadow-none relative overflow-hidden
                               ${
                                 isFullyBooked
                                   ? SLOT_STATUS_TOKENS.fullyBooked.className
                                   : isPartiallyBooked
-                                    ? SLOT_STATUS_TOKENS.partiallyBooked.className
+                                    ? SLOT_STATUS_TOKENS.partiallyBooked
+                                        .className
                                     : slot.isAllocated
-                                      ? SLOT_STATUS_TOKENS.rescheduling.className
+                                      ? SLOT_STATUS_TOKENS.rescheduling
+                                          .className
                                       : SLOT_STATUS_TOKENS.available.className
                               }
                             `}
@@ -224,7 +227,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
             disabled={!onNextWeek}
             className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
               onNextWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
+                ? "bg-muted border-border text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
                 : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
             }`}
             aria-label="Next week"

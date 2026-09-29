@@ -37,7 +37,7 @@ export interface PlanDetailBodyProps {
 
 function SectionCard({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <Card className="border-border shadow-sm">
+    <Card className="rounded-2xl border-border shadow-none">
       <CardContent className="p-6 md:p-8">{children}</CardContent>
     </Card>
   );

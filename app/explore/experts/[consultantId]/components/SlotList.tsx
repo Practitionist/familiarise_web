@@ -20,7 +20,7 @@ interface SlotListProps {
 /**
  * The booking dialog's list of times (#1785 L-3), in the quiet-monochrome
  * system: every bookable time is the same neutral pill, the selected one is
- * filled white, and a time the expert must confirm carries a "Request" tag
+ * filled charcoal, and a time the expert must confirm carries a "Request" tag
  * instead of a colour. Taken and past times are not rendered.
  */
 export function SlotList({
@@ -57,8 +57,8 @@ export function SlotList({
             className={cn(
               "w-full rounded-xl border p-4 text-left text-base font-medium transition-all duration-200",
               isSelected
-                ? "border-white bg-white text-zinc-900 shadow-md ring-2 ring-white"
-                : "border-white/[0.12] bg-transparent text-zinc-200 hover:bg-white/[0.06]",
+                ? "border-primary bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2"
+                : "border-border bg-background text-foreground hover:bg-accent",
             )}
             onClick={() => onSelect(slot)}
           >
@@ -72,8 +72,8 @@ export function SlotList({
                   className={cn(
                     "rounded-md border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide",
                     isSelected
-                      ? "border-zinc-300 text-zinc-600"
-                      : "border-white/[0.16] text-zinc-400",
+                      ? "border-white/30 text-white"
+                      : "border-border text-muted-foreground",
                   )}
                 >
                   Request

@@ -34,7 +34,7 @@ export function SubscriptionDetails({
   const mentorName = consultant?.user?.name ?? "This expert";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="explore-page min-h-screen pb-24 lg:pb-0">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Link
           href="/explore/experts"
@@ -44,7 +44,7 @@ export function SubscriptionDetails({
           Back to experts
         </Link>
 
-        <div className="mb-8">
+        <div className="explore-plan-header mb-8">
           <Badge className="bg-muted text-muted-foreground mb-3">
             Mentorship programme
           </Badge>
@@ -61,7 +61,7 @@ export function SubscriptionDetails({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-16">
           <motion.div
             className="lg:col-span-2 space-y-8"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
@@ -106,11 +106,11 @@ export function SubscriptionDetails({
           {/* Sidebar: price + booking */}
           <motion.div
             className="lg:col-span-1"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <Card className="border-border shadow-sm lg:sticky lg:top-24">
+            <Card className="rounded-2xl border-border shadow-sm lg:sticky lg:top-[calc(var(--header-height,5rem)+var(--maintenance-banner-height,0px)+1.5rem)]">
               <CardContent className="p-6 space-y-5">
                 <div>
                   <p className="text-3xl font-bold text-foreground">
@@ -118,8 +118,8 @@ export function SubscriptionDetails({
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
                     for {plan.durationInMonths} month
-                    {plan.durationInMonths !== 1 ? "s" : ""} ·{" "}
-                    {plan.totalHours}h total
+                    {plan.durationInMonths !== 1 ? "s" : ""} · {plan.totalHours}
+                    h total
                   </p>
                 </div>
 
@@ -141,7 +141,7 @@ export function SubscriptionDetails({
 
                 <Button asChild className="w-full h-11">
                   <Link
-                    href={`/checkout/plans/subscription/${plan.id}`}
+                    href={`/explore/experts/${consultant?.id}?action=subscribe&plan=${plan.id}`}
                   >
                     Subscribe
                   </Link>
@@ -158,7 +158,9 @@ export function SubscriptionDetails({
                     >
                       <div className="relative w-11 h-11 flex-shrink-0">
                         <Image
-                          src={consultant.user?.image ?? "/placeholder-user.jpg"}
+                          src={
+                            consultant.user?.image ?? "/placeholder-user.jpg"
+                          }
                           alt={mentorName}
                           fill
                           className="rounded-xl object-cover"
@@ -181,6 +183,16 @@ export function SubscriptionDetails({
             </Card>
           </motion.div>
         </div>
+      </div>
+      <div className="mobile-booking-bar lg:!hidden">
+        <span className="font-semibold">{formatPrice(plan.price)}</span>
+        <Button asChild className="rounded-xl">
+          <Link
+            href={`/explore/experts/${consultant?.id}?action=subscribe&plan=${plan.id}`}
+          >
+            Choose a start date
+          </Link>
+        </Button>
       </div>
     </div>
   );

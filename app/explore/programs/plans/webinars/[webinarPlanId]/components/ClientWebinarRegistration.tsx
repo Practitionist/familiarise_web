@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { useSession } from "@/lib/auth-client";
@@ -20,9 +19,11 @@ import { getWebinarCapacity } from "@/lib/events/capacity";
 import { isUserRegisteredForWebinar } from "@/lib/payments/utils/participants";
 import type { TSessionStatus } from "../types";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
+import { RegistrationReview } from "@/components/booking/RegistrationReview";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 
 type ClientWebinarRegistrationProps = {
+  title?: string;
   webinarPlanId: string; // The WebinarPlan ID (for URL path)
   webinarId?: string; // The actual Webinar instance ID (for eventId query param)
   price: number;
@@ -41,6 +42,7 @@ type ClientWebinarRegistrationProps = {
 
 export function ClientWebinarRegistration({
   webinarPlanId,
+  title = "Webinar",
   webinarId,
   price,
   currency: _currency,
@@ -177,7 +179,7 @@ export function ClientWebinarRegistration({
     }
 
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -198,13 +200,26 @@ export function ClientWebinarRegistration({
               Please sign in to register for this webinar.
             </p>
           )}
-          <Button
-            onClick={handleRegistration} // This redirects to sign-in
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-            disabled={signInButtonDisabled}
-          >
-            {signInButtonText}
-          </Button>
+          {signInButtonDisabled ? (
+            <Button className="w-full" disabled>
+              {signInButtonText}
+            </Button>
+          ) : (
+            <RegistrationReview
+              title={title}
+              price={formatPrice(price)}
+              onContinue={handleRegistration}
+              label="Sign in to continue"
+            >
+              <p>{sessionInfoText}</p>
+              <p>Time zone: {userTimeZone}</p>
+              <GroupSessionDisclosure />
+              <FreeCancellationLine
+                startsAt={nextSessionDate}
+                windowHours={refundWindowHours}
+              />
+            </RegistrationReview>
+          )}
         </CardContent>
       </Card>
     );
@@ -213,7 +228,7 @@ export function ClientWebinarRegistration({
   // Show "Already Registered" state for logged-in users who are already registered
   if (isAlreadyRegistered) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -239,7 +254,7 @@ export function ClientWebinarRegistration({
   // raising the capacity on this webinar.
   if (isFull && isLoggedIn && !isAlreadyRegistered) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -268,7 +283,7 @@ export function ClientWebinarRegistration({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-border shadow-sm">
       <CardHeader>
         <CardTitle>Webinar Registration</CardTitle>
       </CardHeader>
@@ -284,14 +299,19 @@ export function ClientWebinarRegistration({
       </CardContent>
       <CardFooter>
         {checkoutUrl && !buttonDisabled ? (
-          <Button
-            asChild
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+          <RegistrationReview
+            title={title}
+            price={formatPrice(price)}
+            onContinue={handleRegistration}
           >
-            <Link href={checkoutUrl} prefetch>
-              {buttonText}
-            </Link>
-          </Button>
+            <p>{sessionInfoText}</p>
+            <p>Time zone: {userTimeZone}</p>
+            <GroupSessionDisclosure />
+            <FreeCancellationLine
+              startsAt={nextSessionDate}
+              windowHours={refundWindowHours}
+            />
+          </RegistrationReview>
         ) : (
           <Button
             onClick={handleRegistration}

@@ -14,6 +14,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   addDays,
   differenceInCalendarDays,
@@ -60,6 +61,7 @@ export function ExpertProfileClient({
   const { toast } = useToast();
   const pricingRef = useRef<HTMLDivElement>(null);
   const [autoOpenTrial, setAutoOpenTrial] = useState(false);
+  const [bookingRequest, setBookingRequest] = useState(0);
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
@@ -152,6 +154,8 @@ export function ExpertProfileClient({
         behavior: "smooth",
         block: "start",
       });
+      if (action === "book" || action === "subscribe")
+        setBookingRequest((n) => n + 1);
       if (action === "trial") {
         setAutoOpenTrial(true);
       }
@@ -300,9 +304,7 @@ export function ExpertProfileClient({
     const marksLoading = monthQuery.isPending && !!timezone;
 
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
-      );
+      days.push(<div key={`empty-${i}`} className="h-10 w-full"></div>);
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
@@ -335,14 +337,14 @@ export function ExpertProfileClient({
           aria-pressed={isSelected}
           aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
           className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
-            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
+            "relative flex h-10 w-full items-center justify-center rounded-xl text-sm transition-colors duration-200",
+            isSelected && "bg-primary font-semibold text-primary-foreground",
             !isSelected &&
               bookable &&
-              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
+              "ring-1 ring-border font-semibold text-foreground hover:bg-accent",
             !isSelected &&
               (state === "unknown" || state === "today+unknown") &&
-              "font-medium text-zinc-300 hover:bg-zinc-700/60",
+              "font-medium text-foreground hover:bg-accent",
             !isSelected &&
               (state === "none" || state === "today+none") &&
               "text-zinc-500",
@@ -350,7 +352,7 @@ export function ExpertProfileClient({
             marksLoading &&
               state !== "past" &&
               !isSelected &&
-              "animate-pulse ring-1 ring-white/10",
+              "animate-pulse ring-1 ring-border",
           )}
           onClick={() => {
             setSelectedDate(date);
@@ -391,10 +393,10 @@ export function ExpertProfileClient({
   ]);
 
   return (
-    <main className="bg-muted">
+    <main className="explore-page pb-24 xl:pb-0">
       {/* Back Navigation */}
       <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
+        <div className="explore-profile w-full px-4 md:px-8 lg:px-12 py-4">
           <Link
             href="/explore/experts"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -406,12 +408,12 @@ export function ExpertProfileClient({
       </div>
 
       {/* Main Content Area - Profile, About, Availability + Pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           {/* Main Content */}
           <motion.div
             className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
@@ -450,8 +452,10 @@ export function ExpertProfileClient({
           {/* Sidebar - Pricing */}
           <motion.div
             ref={pricingRef}
+            data-booking-panel
+            id="expert-booking"
             className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
@@ -470,18 +474,40 @@ export function ExpertProfileClient({
               setSelectedSlot={setSelectedSlot}
               timezone={timezone || "UTC"}
               autoOpenTrial={autoOpenTrial}
+              bookingRequest={bookingRequest}
+              initialPlanId={searchParams.get("plan")}
+              initialService={
+                searchParams.get("action") === "subscribe" ||
+                searchParams.get("action") === "trial"
+                  ? "subscriptions"
+                  : searchParams.get("action") === "book"
+                    ? "consultations"
+                    : undefined
+              }
+              slotsLoading={dayQuery.isFetching || isTimezoneLoading}
+              slotsError={dayQuery.isError}
               onRefreshSlots={refreshSlots}
             />
           </motion.div>
         </div>
       </div>
 
+      <div className="mobile-booking-bar">
+        <span className="text-sm font-medium">Find your next step</span>
+        <Button
+          className="rounded-xl"
+          onClick={() => setBookingRequest((n) => n + 1)}
+        >
+          Choose a session
+        </Button>
+      </div>
+
       {/* Classes & Webinars - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-8">
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 pb-8">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           <motion.div
             className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
@@ -496,11 +522,11 @@ export function ExpertProfileClient({
       </div>
 
       {/* Reviews - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-12">
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 pb-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           <motion.div
             className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
           >
