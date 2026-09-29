@@ -6,7 +6,10 @@ import {
   isIngestHealthy,
   probeSentryIngest,
 } from "@/lib/observability/ingest-canary";
-import { sendSentryIngestAlert } from "@/lib/observability/ingest-alert";
+import {
+  sendSentryIngestAlert,
+  shouldSendCanaryAlert,
+} from "@/lib/observability/ingest-alert";
 
 /**
  * Sentry ingest canary — "is Sentry actually taking our error events?"
@@ -38,21 +41,29 @@ const { GET, POST } = cleanupRoute({
       // Best-effort by design: the alert channel is email precisely because
       // Sentry is not a usable one right now. A failure here must not change
       // the probe's verdict.
-      const alerted = await sendSentryIngestAlert(probe).catch(
-        (err: unknown) => {
-          console.error(
-            "[sentry-ingest-canary] alert could not be sent:",
-            err instanceof Error ? err.message : String(err),
-          );
-          return false;
-        },
-      );
+      //
+      // One email per distinct state, re-armed on change and re-asserted daily
+      // — without this the 30-minute cadence emails the same content 48 times
+      // a day, which is how an alert gets ignored. `alerted` stays false when
+      // suppressed, so the response distinguishes "told them" from "told them
+      // recently", which are different things to see in a log.
+      const shouldSend = await shouldSendCanaryAlert(probe.verdict);
+      const alerted = shouldSend
+        ? await sendSentryIngestAlert(probe).catch((err: unknown) => {
+            console.error(
+              "[sentry-ingest-canary] alert could not be sent:",
+              err instanceof Error ? err.message : String(err),
+            );
+            return false;
+          })
+        : false;
       return {
         healthy,
         verdict: probe.verdict,
         status: probe.status,
         eventId: probe.eventId,
         alerted,
+        alertSuppressed: !shouldSend,
         detail: describeIngest(probe),
       };
     }

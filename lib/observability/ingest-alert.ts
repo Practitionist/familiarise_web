@@ -27,6 +27,7 @@
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "@/lib/email/config";
 import { deliver } from "@/lib/email/deliver";
 import { describeIngest, type IngestProbeResult } from "./ingest-canary";
+import redis from "@/lib/redis";
 
 /**
  * Owner address for observability alerts. Falls back to the platform support
@@ -109,6 +110,86 @@ export function buildAlertEmail(r: IngestProbeResult): {
     text,
     html,
   };
+}
+
+/**
+ * Redis key holding the verdict we last emailed about, and the window after
+ * which an UNCHANGED verdict is re-asserted.
+ *
+ * The window is what stops this being a "tell me once" design: an outage that
+ * lasts a week must not go silent after its first email. 24 h means one
+ * reminder a day, which is enough to keep it on someone's radar and not enough
+ * to train anyone to ignore the subject line.
+ */
+export const CANARY_ALERT_KEY = "observability:canary:last-alerted-verdict";
+export const CANARY_ALERT_REASSERT_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Durable "what did we last tell them" store. Injected so the gate is testable
+ * without Redis, mirroring how `probeSentryIngest` takes an injected `send`.
+ */
+export interface AlertStateStore {
+  get(): Promise<string | null>;
+  set(value: string, ttlMs: number): Promise<void>;
+}
+
+/**
+ * The real store.
+ *
+ * Why Redis and not a module-level variable: this runs on a 30-minute cron
+ * against serverless functions, so the process is almost certainly cold and an
+ * in-memory value would be reset before the next run — the gate would re-arm
+ * every time and suppress nothing. The probe itself still has no Redis
+ * dependency (it runs and reports regardless); only the suppression consults it.
+ *
+ * Why `lib/redis`'s default export rather than a new client: it carries the
+ * circuit breaker, so a walled-off Redis fails fast instead of adding latency
+ * to a check whose whole job is to be fast.
+ */
+export function redisAlertStateStore(): AlertStateStore {
+  return {
+    async get() {
+      const value = await redis.get<string>(CANARY_ALERT_KEY);
+      return value ?? null;
+    },
+    async set(value, ttlMs) {
+      await redis.set(CANARY_ALERT_KEY, value, { px: ttlMs });
+    },
+  };
+}
+
+/**
+ * Should this verdict be emailed?
+ *
+ * One email per distinct state, re-armed the moment the state changes, and
+ * re-asserted at most once per {@link CANARY_ALERT_REASSERT_MS} while it
+ * persists. A verdict that changes from `rate-limited` to `rejected-auth`
+ * alerts immediately, because that is new information.
+ *
+ * FAILS OPEN, deliberately, and this is the one place in the canary where that
+ * is the right direction. If the store is unreachable the answer is "yes, send":
+ * a duplicate email costs a glance, a suppressed one costs an outage nobody
+ * was told about — which is the exact failure this whole canary exists to
+ * prevent, and the reason it must never be able to silence itself. The
+ * `notify-ops-failure.sh` guard reaches the opposite conclusion about its own
+ * check for the same underlying reason: a sink that can silently skip is a dead
+ * sink nobody sees.
+ */
+export async function shouldSendCanaryAlert(
+  verdict: string,
+  store: AlertStateStore = redisAlertStateStore(),
+): Promise<boolean> {
+  try {
+    if ((await store.get()) === verdict) return false;
+    await store.set(verdict, CANARY_ALERT_REASSERT_MS);
+    return true;
+  } catch (err) {
+    console.error(
+      "[sentry-ingest-canary] alert state unavailable, sending anyway:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return true;
+  }
 }
 
 /**
