@@ -152,8 +152,15 @@ export const CONSENT_AUDIT_RETENTION_YEARS = 7;
  * and the sweeper compares the two values directly.
  */
 function addYears(from: Date, years: number): Date {
+  // UTC methods, not the local ones. `getFullYear()`/`setFullYear()` read and
+  // write in the host's local zone, so a DST transition inside the retention
+  // window shifts the stored deadline by an hour. The sweeper compares this
+  // value directly, so a one-hour ambiguity is a real boundary: on a
+  // spring-forward date a deadline computed in local time can land an hour
+  // earlier in UTC than intended, and the row is eligible for deletion an
+  // hour early. Deterministic, server-independent, and immune to the host's TZ.
   const out = new Date(from);
-  out.setFullYear(out.getFullYear() + years);
+  out.setUTCFullYear(out.getUTCFullYear() + years);
   return out;
 }
 

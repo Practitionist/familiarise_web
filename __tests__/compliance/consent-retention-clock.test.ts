@@ -19,6 +19,8 @@
  *    data.
  */
 
+import { execFileSync } from "node:child_process";
+
 const mockFindFirst = jest.fn();
 const mockUpdateMany = jest.fn();
 
@@ -44,8 +46,6 @@ import {
   CONSENT_AUDIT_RETENTION_YEARS,
 } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
-
-const SEVEN_YEARS_MS = 7 * 365.25 * 24 * 60 * 60 * 1000;
 
 beforeEach(() => {
   mockFindFirst.mockReset();
@@ -85,7 +85,7 @@ describe("consent audit retention clock", () => {
   });
 
   it("keeps a withdrawn record alive for the full 7 years from that moment", async () => {
-    const before = Date.now();
+    const before = new Date();
     await withdrawConsent({
       userId: "u1",
       purposeCode: PURPOSE_CODES.SESSION_BOOKING,
@@ -95,10 +95,17 @@ describe("consent audit retention clock", () => {
       mockUpdateMany.mock.calls[0][0] as { data: Record<string, Date> }
     ).data;
 
-    const span = auditRetainedUntil.getTime() - before;
-    // Allow a second of slack for the test's own execution window, then assert
-    // the clock is ~7 years out rather than "already expired".
-    expect(span).toBeGreaterThan(SEVEN_YEARS_MS - 60 * 60 * 1000);
+    // Deliberately NOT a fixed millisecond threshold. A 7-calendar-year window
+    // contains either one or two leap days, so its length is 2556 or 2557 days
+    // while `7 * 365.25` is 2556.75 — a fixed threshold passes only on the
+    // two-leap-day years and fails on the one-leap-day ones. That is a
+    // date-dependent flake which surfaces in 2028 and again in 2032.
+    // The always-safe bounds: at least 7 * 365 days, and at most 7 * 366,
+    // since no 7-year window can contain three leap days.
+    const spanDays =
+      (auditRetainedUntil.getTime() - before.getTime()) / (24 * 60 * 60 * 1000);
+    expect(spanDays).toBeGreaterThan(7 * 365 - 1);
+    expect(spanDays).toBeLessThan(7 * 366 + 1);
   });
 
   it("never sets the clock in the past, even for an ancient artifact", async () => {
@@ -131,6 +138,7 @@ describe("consent audit retention clock", () => {
   });
 
   it("uses calendar years, not a fixed millisecond offset", async () => {
+    const before = new Date();
     await withdrawConsent({ userId: "u1" });
     const { auditRetainedUntil } = (
       mockUpdateMany.mock.calls[0][0] as { data: Record<string, Date> }
@@ -138,12 +146,70 @@ describe("consent audit retention clock", () => {
     // A 7*365-day offset lands on a different date than 7 calendar years
     // whenever a leap day falls in the window. Assert the calendar property:
     // same month and day, seven years on.
-    const now = new Date();
-    expect(auditRetainedUntil.getUTCDate()).toBe(now.getUTCDate());
-    expect(auditRetainedUntil.getUTCMonth()).toBe(now.getUTCMonth());
+    expect(auditRetainedUntil.getUTCDate()).toBe(before.getUTCDate());
+    expect(auditRetainedUntil.getUTCMonth()).toBe(before.getUTCMonth());
     expect(auditRetainedUntil.getUTCFullYear()).toBe(
-      now.getUTCFullYear() + CONSENT_AUDIT_RETENTION_YEARS,
+      before.getUTCFullYear() + CONSENT_AUDIT_RETENTION_YEARS,
     );
+  });
+
+  it("computes the deadline in UTC, not the host's local zone", async () => {
+    // A DST transition inside the retention window shifts a local-time
+    // computation by an hour, and the sweeper compares this value directly — so
+    // a deadline computed in local time can become eligible for deletion an
+    // hour early.
+    //
+    // The instant is FROZEN at a DST boundary rather than taken from `now`.
+    // A `new Date()`-based version of this test is only able to catch the bug
+    // when the suite happens to run near a transition — the same
+    // date-dependence this file already flagged once. 2026-03-08T07:00Z is
+    // the first hour for which local and UTC year-arithmetic diverge under
+    // America/New_York, which is the zone Netlify's own docs warn about for
+    // serverless scheduling.
+    const before = new Date("2026-03-08T07:00:00.000Z");
+    jest.useFakeTimers({ now: before });
+    try {
+      await withdrawConsent({ userId: "u1" });
+      const { auditRetainedUntil } = (
+        mockUpdateMany.mock.calls[0][0] as { data: Record<string, Date> }
+      ).data;
+
+      const expected = new Date(before);
+      expected.setUTCFullYear(
+        expected.getUTCFullYear() + CONSENT_AUDIT_RETENTION_YEARS,
+      );
+      expect(auditRetainedUntil.toISOString()).toBe(expected.toISOString());
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("would have differed under a DST zone, which is why the UTC fix matters", () => {
+    // Proves the assertion above has teeth.
+    //
+    // A `process.env.TZ` change does not work here: V8 caches the timezone, so
+    // a runtime change does not take effect and the test would pass or fail
+    // depending on the host. A child process with the zone set at launch is
+    // the only deterministic way to exercise a different zone, so this is the
+    // shape that makes the check reproducible on a developer laptop (IST, no
+    // DST) and in CI (usually UTC) alike.
+    const at = "2026-03-08T07:00:00.000Z";
+    const script = `
+      const b = new Date(${JSON.stringify(at)});
+      const l = new Date(b); l.setFullYear(l.getFullYear() + ${CONSENT_AUDIT_RETENTION_YEARS});
+      const u = new Date(b); u.setUTCFullYear(u.getUTCFullYear() + ${CONSENT_AUDIT_RETENTION_YEARS});
+      process.stdout.write(String(l.getTime() - u.getTime()));
+    `;
+    const localMinusUtc = Number(
+      execFileSync(process.execPath, ["-e", script], {
+        env: { ...process.env, TZ: "America/New_York" },
+        encoding: "utf8",
+      }).trim(),
+    );
+    // One hour, the DST offset shift. If this ever becomes 0, the host Node no
+    // longer observes the zone and the assertion above has lost its teeth —
+    // revisit it rather than trusting it.
+    expect(localMinusUtc).toBe(60 * 60 * 1000);
   });
 
   it("applies the same clock to a withdraw-everything call", async () => {

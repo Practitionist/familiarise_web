@@ -172,6 +172,41 @@ export async function moneyInFlightForUser(
   };
 }
 
+/**
+ * Delete the user's Novu subscriber, and be honest about what that proves.
+ *
+ * `deleteSubscriber` never throws and never rejects. It resolves `true` both
+ * when the remote delete succeeded AND when Novu is not configured at all —
+ * the two are indistinguishable from its return value, and that is the trap: a
+ * deployment that lost `NOVU_KEY` would report a clean erasure while an earlier
+ * deployment's subscriber still held the email address and push tokens.
+ *
+ * So "not configured" is checked here rather than inferred. It is reported as
+ * a failure because that is what it is: the vendor copy is of unknown state,
+ * and an erasure that cannot confirm a processor's copy is gone has not
+ * discharged its duty.
+ *
+ * Re-runnable by design: Novu deletion is idempotent, so calling this again on
+ * an already-erased user is the retry path for a previously unconfirmed delete.
+ *
+ * `DELETE /api/user/[id]` has the same "not configured" conflation in its
+ * `novuCleanup: "done"` field. It is left alone here because the fix belongs in
+ * `deleteSubscriber`'s contract rather than in each caller, and changing that
+ * return type is a wider change than a hotfix should carry.
+ */
+async function offboardNotificationVendor(userId: string): Promise<string[]> {
+  const { isNovuConfigured } = await import("@/lib/novu/client");
+  if (!isNovuConfigured()) {
+    return [
+      "novu: not configured in this runtime — cannot confirm the vendor copy " +
+        "was deleted; verify manually and re-run once NOVU_KEY is restored",
+    ];
+  }
+  const { deleteSubscriber } = await import("@/lib/novu/subscriber");
+  if (await deleteSubscriber(userId)) return [];
+  return ["novu: subscriber deletion not confirmed — re-run required"];
+}
+
 /** True when any money-in-flight count is non-zero. */
 export function hasMoneyInFlight(counts: MoneyInFlight): boolean {
   return Object.values(counts).some((n) => n > 0);
@@ -196,14 +231,30 @@ export async function scrubUser(
     throw Object.assign(new Error("User not found"), { httpStatus: 404 });
   }
   if (existing.erasedAt && existing.pseudonymousId) {
-    // Idempotency: nothing to do. Return the existing pseudonym so
-    // callers can still react (e.g. audit "we processed the request"
-    // for compliance trail).
+    // Idempotency for the LOCAL scrub: the pseudonymous row is already
+    // committed, so there is nothing left to rewrite here. Return the existing
+    // pseudonym so callers can still react (e.g. audit "we processed the
+    // request" for compliance trail).
+    //
+    // The VENDOR legs are still re-attempted. They are idempotent, and a
+    // previous run may have failed to reach a processor — a network error, a
+    // credential that was briefly wrong, or a Novu deployment that had lost
+    // its key. Returning `vendorFailures: []` here without retrying meant a
+    // transient failure was permanent: re-running the erasure reported a
+    // clean success and the processor kept the data forever. This is the
+    // retry path for exactly that.
+    //
+    // Payment vendors are NOT re-attempted: they are guarded by the cleared
+    // `razorpayCustomerId`, so a second pass has nothing to act on. A durable
+    // outbox is the correct answer for guaranteed vendor delivery across a
+    // process death between commit and the vendor calls — see the note on
+    // `StreamRevocationRetry`, which is the pattern to extend rather than
+    // reinvent.
     return {
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
       affectedOrganizationIds: [],
-      vendorFailures: [],
+      vendorFailures: await offboardNotificationVendor(userId),
     };
   }
 
@@ -450,29 +501,8 @@ export async function scrubUser(
     payoutAccounts,
   });
 
-  // Novu (transactional + broadcast email) holds the user's email address and
-  // push tokens. `DELETE /api/user/[id]` has always called `deleteSubscriber`
-  // on both of its branches, but the ADMIN path — `POST
-  // /api/admin/erasure-requests/[id]/process` → this function — never did, so
-  // an erasure executed by an operator left a live mailing-list entry for a
-  // user who had asked to be erased. Calling it here rather than in the route
-  // means every erasure path gets it, including future ones.
-  //
-  // `deleteSubscriber` never throws and never rejects: it resolves `true` on
-  // success *and* when Novu is not configured (nothing was mirrored), and
-  // `false` when the remote delete did not happen. So `false` is the only
-  // signal to act on — there is no exception path to catch, and the try/catch
-  // below is a guard against a future contract change, not the mechanism.
-  const { deleteSubscriber } = await import("@/lib/novu/subscriber");
-  if (!(await deleteSubscriber(userId))) {
-    // The pseudonymous User row is already committed by this point, and a
-    // vendor we could not reach is a retriable problem — not a reason to fail
-    // a completed erasure. It joins `vendorFailures` so the admin queue shows
-    // it rather than it passing silently.
-    vendorFailures.push(
-      "novu: subscriber deletion not confirmed — re-run required",
-    );
-  }
+  const notificationFailures = await offboardNotificationVendor(userId);
+  vendorFailures.push(...notificationFailures);
 
   return {
     scrubbed: true,
