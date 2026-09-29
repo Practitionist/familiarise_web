@@ -21,8 +21,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../lib/auth-helpers", () => ({
-  requireOrgAccess: jest.fn(),
-  requireOrgOwner: jest.fn(async () => ({
+  requireOrgAccess: jest.fn(async () => ({
     org: { canHost: true, billingEmail: null },
     member: { id: "m1" },
   })),

@@ -104,6 +104,25 @@ export async function POST(req: NextRequest) {
     if (!result.success) {
       return NextResponse.json(result, { status: 400 });
     }
+
+    // #1861 P4b — gateway order id only; handleCheckout's return shape has
+    // no top-level appointmentId or internal Payment.id to tag (both are
+    // resolved deeper in the pipeline, not surfaced to this route), so this
+    // reads defensively with `in` rather than assuming a field on every
+    // branch. Read-only: never affects the response.
+    const gatewayOrderId =
+      ("orderId" in result && typeof result.orderId === "string" && result.orderId) ||
+      ("paymentIntent" in result &&
+        result.paymentIntent &&
+        typeof result.paymentIntent === "object" &&
+        "id" in result.paymentIntent &&
+        typeof result.paymentIntent.id === "string" &&
+        result.paymentIntent.id) ||
+      undefined;
+    if (gatewayOrderId) {
+      Sentry.getCurrentScope().setTag("gatewayOrderId", gatewayOrderId);
+    }
+
     return NextResponse.json(result);
   } catch (error) {
     // #828 — two concurrent identical requests can both miss the replay

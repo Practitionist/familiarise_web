@@ -20,8 +20,8 @@ import {
   redactOrgDetailsForRole,
   suspendedOrgDetails,
 } from "@/lib/data/org-details-include";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrganization } from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -140,9 +140,10 @@ export async function GET(
 }
 
 // #779 §A — field-level RBAC instead of a blanket OWNER gate. Descriptive /
-// branding fields are operational (MAINTAINER+); billing contact + NET-X terms
-// are the finance remit (BILLING_ADMIN or OWNER); everything else — slug,
-// capabilities, tax identity, policies, isPublic — stays OWNER-only.
+// branding fields are settings.manage (OWNER, MAINTAINER); billing contact +
+// NET-X terms are billing.manage (OWNER, BILLING_ADMIN); everything else —
+// slug, capabilities, tax identity, policies, isPublic — is
+// settings.ownerFields (#1851: the matrix, not the rank ladder).
 const MAINTAINER_FIELDS = new Set([
   "name",
   "description",
@@ -183,16 +184,16 @@ export async function PATCH(
     ? (numericStateCode(body.gstin, null) ?? body.gstStateCode)
     : body.gstStateCode;
 
-  // Field-level gate: OWNER passes everything; otherwise every touched field
-  // must be inside the caller's remit. 403 names the offending fields so the
-  // dashboard can explain instead of a silent failure.
+  // Field-level gate: settings.ownerFields passes everything; otherwise every
+  // touched field must be inside the caller's remit. 403 names the offending
+  // fields so the dashboard can explain instead of a silent failure.
   const role = access.member.role;
-  if (!isAtLeastRole(role, "OWNER")) {
+  if (!hasOrgPermission(role, "settings.ownerFields")) {
     const allowed = new Set<string>();
-    if (isAtLeastRole(role, "MAINTAINER")) {
+    if (hasOrgPermission(role, "settings.manage")) {
       MAINTAINER_FIELDS.forEach((f) => allowed.add(f));
     }
-    if (role === "BILLING_ADMIN") {
+    if (hasOrgPermission(role, "billing.manage")) {
       BILLING_ADMIN_FIELDS.forEach((f) => allowed.add(f));
     }
     const touched = Object.keys(body).filter((k) => !CONTROL_FIELDS.has(k));
@@ -593,7 +594,7 @@ export async function DELETE(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { permission: "org.delete" });
   if (access.error) return access.error;
 
   try {

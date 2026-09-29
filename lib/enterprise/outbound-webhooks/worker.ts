@@ -287,7 +287,7 @@ export async function runDispatchTick(params: {
       httpStatusCode >= 200 &&
       httpStatusCode < 300;
     // 4xx that are NOT 408 / 429 are permanent: the receiver told us
-    // the request is malformed. Retrying same body + same signature
+    // the request is malformed. Retrying the same body (freshly signed)
     // won't change the outcome.
     const isPermanentClientError =
       httpStatusCode !== undefined &&

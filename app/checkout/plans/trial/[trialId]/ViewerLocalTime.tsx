@@ -31,9 +31,15 @@ export function ViewerLocalTime({
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return;
     setFormatted(
+      // #1861 — explicit fields, not dateStyle/timeStyle: ECMA-402 rejects
+      // timeZoneName alongside the style options, and V8 throws "Invalid
+      // option", which took the pay-link resume page down to the error page.
       new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
         timeZoneName: "short",
       }).format(date),
     );

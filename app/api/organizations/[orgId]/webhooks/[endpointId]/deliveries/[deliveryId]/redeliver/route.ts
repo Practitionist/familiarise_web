@@ -22,7 +22,9 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { carriesMemberData } from "@/lib/enterprise/outbound-webhooks/event-types";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
 
@@ -39,7 +41,9 @@ export async function POST(
   },
 ) {
   const { orgId, endpointId, deliveryId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "integrations.manage",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);
@@ -53,7 +57,16 @@ export async function POST(
           endpoint: { select: { organizationId: true, status: true } },
         },
       });
-      if (!delivery || delivery.endpoint.organizationId !== orgId) {
+      // #1851 decision 11 — a member-event delivery is invisible without
+      // webhooks.subscribe.memberEvents, so it answers as not found.
+      if (
+        delivery?.endpoint.organizationId !== orgId ||
+        (carriesMemberData([delivery.eventType]) &&
+          !hasOrgPermission(
+            access.member.role,
+            "webhooks.subscribe.memberEvents",
+          ))
+      ) {
         throw Object.assign(new Error("Delivery not found"), {
           httpStatus: 404,
         });

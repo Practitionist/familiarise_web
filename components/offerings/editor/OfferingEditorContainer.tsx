@@ -34,6 +34,7 @@ import {
   type OfferingSaveContext,
 } from "./adapters";
 import { OFFERING_MANIFESTS, TRIAL_FIELD_NAMES } from "./manifests";
+import { OfferingMaterials } from "./OfferingMaterials";
 import type { OfferingManifest, OfferingType } from "./manifest";
 import {
   applySponsorPricingHintToManifest,
@@ -330,6 +331,15 @@ export function OfferingEditorContainer({
                 ),
               }
             : {}),
+          // Files attach to a plan id, so there is nothing to list while
+          // creating (#1851 decision 8).
+          materials: planId ? (
+            <OfferingMaterials type={type} planId={planId} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Files attached to this offering appear here once it is saved.
+            </p>
+          ),
           ...extraSlots,
         }}
         onSaveDraft={(values) => {

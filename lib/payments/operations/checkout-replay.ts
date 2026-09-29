@@ -17,6 +17,7 @@ export async function replayByIdempotencyKey(userId: string, key: string) {
       currency: true,
       appointmentId: true,
       isMockPayment: true,
+      expiresAt: true,
     },
   });
   if (!existing) return null;
@@ -45,6 +46,8 @@ export async function replayByIdempotencyKey(userId: string, key: string) {
       amount: Number(existing.amount),
       currency: existing.currency,
       isMockPayment: existing.isMockPayment,
+      // #1861 L1 — Checkout's `timeout` is sized to the hold's end.
+      holdExpiresAt: existing.expiresAt?.toISOString() ?? null,
       message: "Resuming your in-progress checkout.",
     });
   }

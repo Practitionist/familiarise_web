@@ -202,6 +202,69 @@ Approves pre-created appointments from a consultee's request. Verifies appointme
 
 ---
 
+## Lifecycle Endpoints (#1846)
+
+The endpoints in this section end, restore or remove a booking or an offering, and they were added or changed by #1846. The writers among them take the booking's appointment lock or the offering's checkout lock before their transaction, and they answer a held lock with the structured 423 `APPOINTMENT_BUSY` or 409 `EVENT_CHECKOUT_BUSY` and an unreachable Redis with a 503, never with a 500.
+
+### Abandon an unpaid booking
+
+**Method**: `POST /api/bookings/[bookingId]/abandon`
+
+This is the one door a buyer uses to walk away from a booking they have not paid for (#1527 decision 11). The `bookingId` is the Appointment id. A consultation, subscription or trial ends `CANCELLED`, and a webinar or class seat hold releases only the caller's own `HELD` seat. The caller's `PENDING` payment expires by compare-and-swap, its referral credits and organisation engagement are given back, and the gateway order is cancelled after the transaction commits. The dispatch lives in `lib/booking/abandon.ts`, and [06-booking-lifecycle.md](./06-booking-lifecycle.md) describes each arm.
+
+A successful call answers 200 with the body below.
+
+```json
+{ "abandoned": true, "kind": "consultation", "paymentsExpired": 1, "slotsReleased": 2 }
+```
+
+The refusals carry a `code` next to the `error` text, as the following table shows.
+
+| Status | Code              | Meaning                                                                                                                                  |
+| ------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 404    | `NOT_FOUND`       | No booking with this id exists, or it is not the caller's; the two answers are the same so the door reveals nothing about other people's bookings. |
+| 409    | `NOT_ABANDONABLE` | The booking has already moved on (confirmed, cancelled or expired).                                                                      |
+| 409    | `ALREADY_PAID`    | A payment on the booking has been captured, including one that committed while the door was running, so the buyer must use Cancel, which quotes the refund. |
+
+### Withdraw a reschedule proposal
+
+**Method**: `POST /api/appointments/[appointmentId]/reschedule/withdraw`
+
+The initiator of an open proposal may take it back, and the withdrawal restores the released slots and the request's origin status through `lib/booking/reschedule-restore.ts`. If the original time was booked while the proposal was open, the restore meets the overlap constraint (SQLSTATE 23P01), the transaction rolls back, and the route answers 409 with the code `ORIGINAL_TIME_TAKEN`. The proposal then stays open, and agreeing a new time is the way forward. A proposal the other party answered first answers 409 `PROPOSAL_NOT_OPEN`, and a caller with no open proposal of their own on the booking gets 404.
+
+### Delete an offering
+
+**Methods**: `DELETE /api/plans/consultations/[consultationPlanId]`, `DELETE /api/plans/subscriptions/[subscriptionPlanId]`, `DELETE /api/bookings/webinars/[webinarId]` and `DELETE /api/bookings/classes/[classId]`
+
+Each route deletes an offering only while nothing has ever touched it (#1527 decision 6). The route checks ownership before it takes any lock, so a stranger cannot hold buyers' checkout busy; a plan route answers 403 for someone else's plan, and a webinar or class route answers 404 for someone else's instance. It then runs one Serializable transaction under the offering's `event-checkout:` lock through `deleteUntouchedOffering` in `lib/booking/offering-delete.ts`, with the no-history guard from `lib/offerings/delete-guard.ts` inside the `deleteMany` WHERE. That lock is the key checkout takes for a subscription plan, webinar or class; consultation checkout locks its slot atoms instead, so for a consultation plan the Serializable transaction and the in-WHERE guard carry the race on their own. The guard counts a payment of any status and any consultee seat ever held, and a subscription plan also counts its trials. A delete that matches zero rows answers 409 with the code `OFFERING_IN_USE`, and the offering should be archived instead.
+
+The Offerings card and the server share this one rule. The guard fragments live in `lib/offerings/delete-guard.ts`, the DELETE routes put them inside their `deleteMany` WHERE, and the card's `canDelete` (`lib/data/offering-stats.ts`) runs the same fragments as a query. Any history therefore means Archive instead of Delete, whether it is a booking, a payment of any status (a `PENDING` or `FAILED` payment cascades with its appointment as surely as a captured one), a consultee seat ever held (a released seat still records that someone held it), or, for a subscription plan, a trial. A webinar or class plan is deletable from the card only while none of its instances has history, and an unsold upcoming instance is deletable. A consultation plan has no checkout lock key, because checkout locks its slot atoms instead, so for that kind the Serializable transaction and the in-WHERE guard carry the race on their own.
+
+The two `DELETE /api/bookings/{webinars,classes}/crud-with-plan/[id]` routes were removed in #1846, because they had no callers and no guard. The `crud-with-plan` collection routes keep their `POST` and `PATCH` handlers.
+
+### Preview a trial cancellation
+
+**Method**: `GET /api/trials/[trialId]/cancel/preview`
+
+This route returns what cancelling the trial right now would pay back, and it never writes. It uses the same ownership scope as trial DELETE, so it answers 404 wherever the cancel would. The response is `{ "paid": false }` when there is nothing to refund, and otherwise it is `{ "paid": true, ... }` with the quote in the appointment cancel preview's shape (`paymentId`, `refundPct`, `estimatedRefundPaise`, `refundablePaise`, `currency`, `fundingRail`, `hoursUntilNextSession` and `prorated`) plus `grossPaise`, the amount paid, for the dialog's breakdown line. The response is sent with `Cache-Control: no-store`.
+
+### Cancel a trial
+
+**Method**: `DELETE /api/trials/[trialId]`
+
+The optional JSON body carries `confirmedRefundPaise`, which is the `estimatedRefundPaise` the caller saw in the preview. The route re-quotes the refund under the appointment lock, cancels the trial and tombstones its session in one transaction, and then refunds exactly the confirmed quote. A free or unpaid trial needs no body. The refusals specific to a paid trial are listed in the following table, and both carry the current `quote` so the dialog can show it and ask again.
+
+| Status | Code                   | Meaning                                                              |
+| ------ | ---------------------- | -------------------------------------------------------------------- |
+| 409    | `REFUND_QUOTE_REQUIRED` | The trial is paid and the body carried no valid `confirmedRefundPaise`. |
+| 409    | `REFUND_QUOTE_CHANGED`  | The confirmed amount no longer matches the refund quoted under the lock. |
+
+The compare-and-swap narrows to the status the caller read, so a trial accepted or paid since that read answers 409 `ILLEGAL_TRANSITION` instead of being cancelled on a stale view.
+
+`PATCH /api/trials/[trialId]` with `status: "CANCELLED"` no longer cancels a paid trial. It answers 409 `REFUND_QUOTE_REQUIRED` with the quote and points the caller at the cancel dialog, and its compare-and-swap carries `paymentId: null`, so a capture that commits first also turns the cancel into a 409.
+
+---
+
 ## Error Codes
 
 | Status | Cause                   | Example                                                                   |

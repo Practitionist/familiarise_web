@@ -318,8 +318,9 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
     );
     const scimTokens = read(`${API}/scim/tokens/route.ts`);
     expect(scimTokens.split("export async function POST")[1]).toContain(
-      "requireOrgOwner(orgId)",
+      'permission: "identity.manage"',
     );
+    expect(hasOrgPermission("MAINTAINER", "identity.manage")).toBe(false);
   });
 
   it("MANAGER assigns seats; design stays GOVERNANCE (decision 8)", () => {

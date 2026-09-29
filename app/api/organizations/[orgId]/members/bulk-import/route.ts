@@ -68,7 +68,7 @@ export async function POST(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "invitations.manage",
   });
   if (access.error) return access.error;
 

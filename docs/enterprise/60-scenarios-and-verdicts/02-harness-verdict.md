@@ -95,7 +95,7 @@ Each row covers a capability that spans all four org shapes — RBAC, audit trai
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
 | 23 | `OrgAuditLog` row emitted for every mutating route | ✅ | Handlers emit via `AUDIT_ACTIONS` constants (incl. the v2 actions: `CONTRACT_SUPERSEDED`, `CONTRACT_AUTO_RENEWED`, `PROGRAM_ASSIGNMENT_ROLLED`, `VERIFICATION_RESUBMITTED`, break-glass `SETTINGS_CHANGED`). |
-| 24 | Field-level RBAC on money-bearing org fields | ✅ | `requireOrgBillingAdminOrOwner` + org-PATCH allowlists gate billing email / funding / branding-money fields to OWNER/BILLING_ADMIN (#779 §A). |
+| 24 | Field-level RBAC on money-bearing org fields | ✅ | The OWNER-or-BILLING_ADMIN gate (today the `billing.manage` matrix key) + org-PATCH allowlists gate billing email / funding / branding-money fields to OWNER/BILLING_ADMIN (#779 §A). |
 | 25 | Config lock 🔒 — program money config + contract terms immutable once in use | ✅ | `lib/enterprise/config-lock.ts`: `Program.configLockedAt` (`PROGRAM_CONFIG_LOCKED`) on first assignment; `LOCKED_CONTRACT_FIELDS` on a non-DRAFT/billing contract (`CONTRACT_TERMS_LOCKED`). Change-by-supersede, never mutate. |
 | 26 | Program archive / soft-delete | ✅ | `Program.archivedAt` hides from active lists + the cycle engine skips it; archive PATCH refuses while any ACTIVE in-window assignment exists (`PROGRAM_HAS_ACTIVE_ASSIGNMENTS`); DELETE stays DRAFT-only (#777 §B). |
 | 27 | Verification reject → resubmit loop (self-serve) | ✅ | `REJECT` is a sub-state of `PENDING_VERIFICATION` (stamps `verificationReason`/`verificationRejectedAt`); OWNER/MAINTAINER `POST /verification/resubmit` clears it; no `RESUBMIT` enum (#779 §A). |

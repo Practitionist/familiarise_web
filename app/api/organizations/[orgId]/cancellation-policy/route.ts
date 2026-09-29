@@ -100,7 +100,9 @@ export async function PUT(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "settings.cancellationPolicy.publish",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

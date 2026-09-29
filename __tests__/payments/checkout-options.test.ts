@@ -20,6 +20,7 @@ describe("buildCheckoutOptions", () => {
     expect(options).not.toHaveProperty("remember_customer");
     expect(options).not.toHaveProperty("config");
     expect(options).not.toHaveProperty("modal");
+    expect(options).not.toHaveProperty("timeout");
     expect(options.order_id).toBe("order_1");
   });
 

@@ -42,7 +42,7 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
-import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
 import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
@@ -371,15 +371,12 @@ export async function POST(
 
     // #1166 — an admin of the org that FUNDS this booking may cancel it. They
     // act on the payer side: the tier logic below must never read them as
-    // consultant-initiated.
-    const isOrgAdminActor =
-      !isParticipant &&
-      !isPrivilegedUser &&
-      (await isOrgAdminOfAppointment(
-        session.user.id,
-        appointment.organizationId,
-        "cancel",
-      ));
+    // consultant-initiated. #1851 decision 1 — 1:1 and subscription only.
+    const orgActor =
+      !isParticipant && !isPrivilegedUser
+        ? await resolveOrgActor(session.user.id, appointment, "cancel")
+        : null;
+    const isOrgAdminActor = orgActor !== null;
 
     if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
@@ -590,6 +587,15 @@ export async function POST(
               ),
               { httpStatus: 409, code: "NOT_CANCELLABLE" },
             );
+          }
+          // #1851 decision 2 — the org's own trail, beside the booking's.
+          if (orgActor) {
+            await recordActForOrg(tx, {
+              actor: orgActor,
+              action: "cancel",
+              appointmentId,
+              reason: validatedData.reason,
+            });
           }
 
           // Soft-cancel: mark slots as CANCELLED instead of deleting.

@@ -7,6 +7,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { isExpectedError } from "@/lib/observability/expected";
 import {
+  scrubSentryBreadcrumb,
+  scrubSentryEvent,
+} from "@/lib/observability/sentry-scrubber";
+import {
   isNotDevelopmentEnvironment,
   isProductionEnvironment,
 } from "@/utils/env";
@@ -261,7 +265,16 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
         }
         infraLastSent.set(throttleKey, now);
       }
-      return event;
+      // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
+      // removes data, it never changes a drop/keep or level decision.
+      return scrubSentryEvent(event);
+    },
+
+    // #1861 S4 — same redaction as beforeSend, for the http/fetch
+    // breadcrumbs Sentry auto-records (these carry their own headers/URL and
+    // are not covered by beforeSend's event.request scrub).
+    beforeBreadcrumb(breadcrumb) {
+      return scrubSentryBreadcrumb(breadcrumb);
     },
 
     // Transactions need their own hook: `beforeSend` is never called for them,

@@ -43,6 +43,8 @@ export interface RazorpayCheckoutOptions {
   customer_id?: string;
   remember_customer?: boolean;
   config?: RazorpayDisplayConfig;
+  /** Seconds before Checkout closes itself and fires `ondismiss`. */
+  timeout?: number;
 }
 
 export interface BuildCheckoutOptionsInput {
@@ -62,6 +64,12 @@ export interface BuildCheckoutOptionsInput {
   rememberCustomer?: boolean;
   /** Hides the EMI block while `ENABLE_CHECKOUT_EMI` is off (#1780 row 1). */
   hideEmi?: boolean;
+  /**
+   * #1861 L1 — when the slot hold behind this order ends (ISO or Date). The
+   * sheet then times out a minute before it, so nobody starts paying for a
+   * slot that is about to be offered to someone else.
+   */
+  holdExpiresAt?: string | Date | null;
   handler: (response: RazorpayCheckoutResponse) => void;
   onDismiss?: () => void;
 }
@@ -73,9 +81,30 @@ const HIDE_EMI_CONFIG: RazorpayDisplayConfig = {
   },
 };
 
+/** Below this many seconds of hold left, nobody can finish paying in time. */
+const MIN_PAYABLE_HOLD_SECONDS = 120;
+
+/**
+ * Checkout's `timeout` for a hold ending at `holdExpiresAt`: a minute short of
+ * the hold, so the sheet closes before the slot is offered to someone else.
+ * `undefined` when the expiry is unknown; `0` when too little of the hold is
+ * left to pay in, which callers treat as "do not open Checkout".
+ */
+export function holdTimeoutSeconds(
+  holdExpiresAt: string | Date | null | undefined,
+): number | undefined {
+  if (!holdExpiresAt) return undefined;
+  const endsAt = new Date(holdExpiresAt).getTime();
+  if (Number.isNaN(endsAt)) return undefined;
+  const secondsLeft = Math.floor((endsAt - Date.now()) / 1000);
+  if (secondsLeft <= MIN_PAYABLE_HOLD_SECONDS) return 0;
+  return secondsLeft - 60;
+}
+
 export function buildCheckoutOptions(
   input: BuildCheckoutOptionsInput,
 ): RazorpayCheckoutOptions {
+  const timeout = holdTimeoutSeconds(input.holdExpiresAt);
   return {
     key: input.keyId,
     amount: input.amount,
@@ -94,5 +123,6 @@ export function buildCheckoutOptions(
         }
       : {}),
     ...(input.hideEmi ? { config: HIDE_EMI_CONFIG } : {}),
+    ...(timeout ? { timeout } : {}),
   };
 }

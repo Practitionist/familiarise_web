@@ -18,7 +18,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { generateEndpointSecret } from "@/lib/enterprise/outbound-webhooks/signing";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
@@ -32,7 +32,9 @@ export async function POST(
   },
 ) {
   const { orgId, endpointId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    permission: "webhooks.rotateSecret",
+  });
   if (access.error) return access.error;
 
   const rl = await applyRateLimit(orgWebhookLimiter, `org:${orgId}`);
