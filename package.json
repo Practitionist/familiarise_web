@@ -90,7 +90,7 @@
     "@radix-ui/react-toast": "^1.2.15",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-pdf/renderer": "^4.3.2",
-    "@sentry/nextjs": "^10.59.0",
+    "@sentry/nextjs": "^10.75.3",
     "@stream-io/node-sdk": "0.7.64",
     "@stream-io/video-react-sdk": "1.42.0",
     "@stripe/stripe-js": "^8.6.4",

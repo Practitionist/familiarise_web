@@ -366,7 +366,10 @@ export async function POST(req: NextRequest) {
     });
 
     const { stagedCreated, ...responseBody } = result;
-    scheduleAfter(() => attemptOnboardingEmail(stagedCreated));
+    scheduleAfter(
+      () => attemptOnboardingEmail(stagedCreated),
+      "org.create.onboarding-email",
+    );
 
     return NextResponse.json(responseBody, { status: 201 });
   } catch (err) {

@@ -53,7 +53,7 @@ import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -185,13 +185,13 @@ async function reportOrgPayoutWithholdingMismatch(
     amountPaise: err.amountPaise,
     tdsAmountPaise: err.tdsAmountPaise,
   };
-  await recordSystemError({
+  await recordSystemErrorSafe({
     organizationId: err.organizationId,
     category: "PAYOUT",
     summary: `${err.code} — org payout journal refused: amountPaise + tdsAmountPaise does not equal netPayoutPaise`,
     err,
     context,
-  }).catch(() => {});
+  });
   reportSentryError(err, {
     subsystem: "payments",
     op,
@@ -1389,13 +1389,13 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     };
     // Never throws by contract, and the `.catch` keeps a failed sink from
     // turning a settled payout into an error for the webhook caller.
-    await recordSystemError({
+    await recordSystemErrorSafe({
       organizationId: result.missingTdsRate.organizationId,
       category: "PAYOUT",
       summary: `ORG_PAYOUT_TDS_RATE_MISSING — ${summary}`,
       err: new Error(summary),
       context,
-    }).catch(() => {});
+    });
     reportSentryMessage(summary, {
       subsystem: "payments",
       op: "markOrgPayoutCompleted",

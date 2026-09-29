@@ -36,7 +36,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
-import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { z } from "zod";
 
 const verifySignatureSchema = z.object({
@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
       // ones whose row could be dropped. `after()` holds the invocation open,
       // and the `.catch` keeps this best-effort, so awaiting costs one insert
       // of post-response latency and can never fail a confirmation.
-      await recordSystemEvent({
+      await recordSystemEventSafe({
         category: "PAYMENT",
         message: "client-side payment confirmation",
         correlationId: razorpay_order_id,
@@ -246,7 +246,7 @@ export async function POST(req: NextRequest) {
           paymentId: payment.id,
           gatewayPaymentId: razorpay_payment_id,
         },
-      }).catch(() => {});
+      });
 
       try {
         await routeCapturedPayment({

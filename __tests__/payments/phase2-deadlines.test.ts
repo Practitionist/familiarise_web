@@ -136,10 +136,13 @@ jest.mock("../../lib/stream-logger", () => ({
     error: jest.fn(),
   },
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: () => Promise.resolve(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    __esModule: true,
+    recordSystemError: () => Promise.resolve(),
+    recordSystemErrorSafe: () => Promise.resolve(),
+  };
+});
 jest.mock("../../schemas/webhooks/metadata", () => ({
   __esModule: true,
   normalizeLegacySlotKeys: (m: unknown) => m,

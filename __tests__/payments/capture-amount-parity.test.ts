@@ -114,9 +114,14 @@ jest.mock("../../lib/stream-logger", () => ({
 const recordSystemError = jest.fn(
   async (_args: { context?: Record<string, unknown> }) => undefined,
 );
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => recordSystemError(...(a as [never])),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) =>
+      recordSystemError(...(a as [never])),
+    recordSystemErrorSafe: (...a: unknown[]) =>
+      recordSystemError(...(a as [never])),
+  };
+});
 const validateWebhookMetadata = jest.fn();
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,

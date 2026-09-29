@@ -71,7 +71,7 @@ import {
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 export interface NoShowResult {
   success: boolean;
@@ -565,14 +565,19 @@ async function refundNoShowConsultation(
     errors.push(msg);
     // Ops parity with every other refund-failure path: durable signal, not
     // just this job's stdout.
-    void recordSystemError({
+    // Awaited, not `void`. This is a single write on a failure path rather than
+    // a per-iteration call, so serialising it costs nothing, and awaiting is
+    // what makes the record durable: the job exits when its event loop drains,
+    // and a floating write is lost whenever the loop drains first — which is
+    // precisely the failure `*Safe` was introduced to stop hiding.
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: `No-show refund failed for consultation ${consultation.id}`,
       err:
         refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
       context: { paymentId: paidPayment.id },
-    }).catch(() => {});
+    });
     return { refundedPaise: 0, succeeded: false, paidPayment };
   }
 }

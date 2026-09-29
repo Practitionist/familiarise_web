@@ -71,5 +71,5 @@ export function attemptBellsAfterResponse(staged: StagedTrigger[]): void {
   if (staged.length === 0) return;
   scheduleAfter(async () => {
     for (const row of staged) await attemptTrigger(row);
-  });
+  }, "verification.admin-bells");
 }

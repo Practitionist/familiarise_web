@@ -34,9 +34,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 import { PLATFORM_DEFAULT_TERMS } from "@/lib/payments/operations/cancellation-policy";
 import {
