@@ -300,6 +300,81 @@ is dropped, so a `Partial<OIDCConfig>` cannot be obtained by asserting a
 `Record` into one. A legacy row with `cert: 42` must fail the
 certificate check loudly, not reach `new X509Certificate(42)`.
 
+### Backfilling existing SAML rows
+
+[`buildStoredSamlConfig`](../../../lib/sso/stored-config.ts) fixes every
+**new** registration. It does not touch rows already in `SsoProvider`, and a
+shape fix that leaves the table unchanged is worse than no fix at all — the
+code claims a guarantee the data does not have. Until the backfill runs,
+every SAML provider this app has ever registered still 500s with an empty
+body on sign-in.
+
+```bash
+# 1. always first — dry run is the default, writes nothing
+npx tsx -r dotenv/config scripts/backfill-sso-saml-shape.ts
+
+# 2. invariants only, no writes; exits non-zero on any drift
+npx tsx -r dotenv/config scripts/backfill-sso-saml-shape.ts --verify
+
+# 3. commit the rewrite
+npx tsx -r dotenv/config scripts/backfill-sso-saml-shape.ts --apply
+```
+
+| Mode | Writes? | Meaning |
+|---|---|---|
+| *(none)* / `--dry-run` | no | report only. The default, and it says so |
+| `--verify` | no | every row against the invariants; report drift |
+| `--apply` | **yes** | one transaction over the rows that need it |
+
+What it does per row:
+
+| Action | Condition | Written? |
+|---|---|---|
+| `rewritten` | plaintext JSON, old `{issuer, entryPoint, cert}` shape | yes, as `buildStoredSamlConfig` output |
+| `already-correct` | shape already satisfies every invariant — **this is what makes a second `--apply` a no-op** | no |
+| `rewritten-invalid-cert` | shape rewritten but `cert` fails `validateSamlCert` | yes, **and counted separately with a non-zero exit** |
+| `skipped-unreadable` | `sso:v1:` envelope, missing / rotated key | no, **never overwritten** |
+| `skipped-not-a-saml-config` | payload is not an object, or `issuer` / `entryPoint` / `cert` are not strings | no |
+| `skipped-no-saml` | `samlConfig IS NULL` — an OIDC-only provider | no, not a failure |
+
+Four things worth knowing before running it:
+
+- **The rewrite preserves the at-rest format.** It reads the RAW column via
+  its own unextended `PrismaClient` (same reasoning, and the same
+  `assertRawColumns` runtime proof, as `scripts/encrypt-sso-secrets.ts`)
+  precisely so it can tell an `sso:v1:` envelope from legacy plaintext and
+  re-write each row in the format it already had. An envelope row must not be
+  written back as plaintext — that would undo `encrypt-sso-secrets.ts` with no
+  error anywhere, because the read path keeps working either way. For the
+  same reason this script is **not** gated on
+  `SSO_CONFIG_ENCRYPTION_ENABLED`: it never changes a row's format, so it
+  cannot create the rollback hazard that flag exists to keep closed.
+- **It writes exactly what the create route writes.** The canonical value is
+  produced by calling `buildStoredSamlConfig`, not by hand-writing the object,
+  so the backfill and the app cannot drift into two "canonical" shapes.
+  `__tests__/sso/backfill-saml-shape.test.ts` pins the byte identity.
+- **One transaction for the whole table.** A mid-run crash that converted rows
+  1–3 and not 4–7 would leave a boundary nobody can locate; a single
+  transaction makes that outcome "nothing happened". Each update is a
+  CAS-in-`WHERE` on the bytes it read, so a row edited by an admin mid-run
+  aborts the whole run rather than being clobbered.
+- **A row it cannot decrypt is never overwritten.** Rewriting a config it
+  cannot read would destroy a working provider in the name of repairing one.
+
+**A passing `--verify` is necessary but NOT sufficient.** It proves the stored
+shape, the empty `callbackUrl`, that the cert still parses as X.509, and that
+`issuer` / `entryPoint` are unchanged — it does not exercise the plugin. A
+config can satisfy every invariant and still fail a real sign-in, because
+sufficiency is a property of the AuthnRequest → assertion exchange, and the
+SAML round-trip test for that is being written separately and **does not
+exist in this repo yet**. Read a green `--verify` as "the shape can no longer
+be the reason SAML does not work", not as "SAML works".
+
+Rows reported `rewritten-invalid-cert` are **still broken providers after the
+run** — the shape fix cannot help a bad certificate. Their recovery is
+[cert rotation](#cert-rotation) (delete-then-recreate), and the non-zero exit
+is there so they do not get lost.
+
 ## `OrgDomainClaim`
 
 ```prisma

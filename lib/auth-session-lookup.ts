@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { markExpected } from "@/lib/observability/expected";
 
 /**
  * #1716 — the three answers a session lookup can give. `getSession` alone
@@ -22,14 +23,58 @@ export type SessionLookup =
   | { kind: "none" }
   | { kind: "failed"; cause: unknown };
 
-/** Thrown by page guards on a failed lookup, so the boundary retries, never signs out. */
+/**
+ * Thrown by page guards on a failed lookup, so the boundary retries, never signs out.
+ *
+ * ## Why the constructor marks the error
+ *
+ * Failure-modes row 19 names this exact object as one of the three sites that
+ * "currently page": the code is `SESSION_LOOKUP_FAILED`, the catalog maps it to
+ * `UNREACHABLE`, and the whole point of the tri-state is that a lookup which
+ * threw is an *answer we modelled* — the boundary retries and the customer keeps
+ * their session. Paging on it is the failure the row exists to describe: correct
+ * behaviour, reported as a fault, indistinguishable from a real defect in a log.
+ *
+ * Marking in the constructor rather than at each throw site is deliberate. There
+ * is one throw site in `lib/auth-guard.ts` today and no reason to believe a
+ * second will be written more carefully; a marker that has to be remembered at
+ * every construction is a marker that is eventually forgotten, and the failure it
+ * leaves behind is invisible rather than loud.
+ *
+ * The one other construction (`lib/auth-guard.ts:73`, "stale-session cleanup did
+ * not redirect") is an internal invariant, not a lookup failure — but it is
+ * unreachable by construction, since `redirect()` throws rather than returning, so
+ * the class-level marker costs nothing real there. A future caller that needs a
+ * genuine fault to page should throw its own error type, not this one: an error
+ * carrying a typed refusal code is a refusal by this repo's Rule 3, and the code
+ * is what says so.
+ */
 export class SessionLookupFailedError extends Error {
   readonly code = "SESSION_LOOKUP_FAILED";
   constructor(readonly cause: unknown) {
     super("Session lookup failed");
     this.name = "SessionLookupFailedError";
+    markExpected(this);
   }
 }
+
+/**
+ * Mark a lookup `cause` on the way out, when it is something a marker can ride on.
+ *
+ * The wrapper above is what escapes a page render, but `lib/auth-helpers.ts`
+ * captures the *cause* directly (`reportSentryError(lookup.cause, …)` on the
+ * `requireApiAuth` path), and a consumer is free to rethrow the cause instead of
+ * the wrapper. Marking here means the marker is attached exactly once, at the
+ * point where the tri-state decided this is a `failed` rather than a `none`.
+ *
+ * Non-`Error` throws are left alone: `markExpected` has nothing object-shaped to
+ * stamp, and `reportSentryError` would build a fresh `Error` from them anyway
+ * (see `lib/observability/expected.ts` for why that loses the marker).
+ */
+function markLookupCause(cause: unknown): unknown {
+  return cause instanceof Error ? markExpected(cause) : cause;
+}
+
 
 // Better Auth's default names: the `__Secure-` prefix rides on https origins.
 const SESSION_TOKEN_COOKIES = [
@@ -79,7 +124,7 @@ export async function lookupSession(
     session = await getSession(disableCookieCache);
   } catch (cause) {
     if (isNextControlFlowError(cause)) throw cause;
-    return { kind: "failed", cause };
+    return { kind: "failed", cause: markLookupCause(cause) };
   }
   if (session?.user?.id) return { kind: "found", session };
 
@@ -99,13 +144,15 @@ export async function lookupSession(
     if (row && row.expiresAt > new Date()) {
       return {
         kind: "failed",
-        cause: new Error(
-          "session row is live but the session lookup answered null",
+        cause: markLookupCause(
+          new Error(
+            "session row is live but the session lookup answered null",
+          ),
         ),
       };
     }
     return { kind: "none" };
   } catch (cause) {
-    return { kind: "failed", cause };
+    return { kind: "failed", cause: markLookupCause(cause) };
   }
 }

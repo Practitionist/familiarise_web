@@ -1,6 +1,7 @@
 /**
  * Better Auth `hooks.before` / `hooks.after` for credential sign-in: the
- * per-account lockout gate, the failure counter, and the disclosure verdict.
+ * per-account lockout gate, the failure counter, the disclosure verdict, and
+ * the limiter-degradation gate.
  *
  * ## Why hooks and not `databaseHooks`
  *
@@ -51,6 +52,11 @@
  * rate-limit refusal, a `REQUIRE_EMAIL_VERIFICATION` bounce or a validation
  * error as a "failed password" would hand an attacker who cannot authenticate
  * at all a denial of service against real customers.
+ *
+ * The limiter-degradation gate is the one thing here that is not about
+ * credential sign-in, and it is here because of where it can be registered
+ * rather than what it is about — see the `signInAttemptBeforeHook` docblock and
+ * `lib/auth/degraded-captcha.ts`, which is where its reasoning lives.
  */
 
 import { createAuthMiddleware } from "better-auth/api";
@@ -63,7 +69,10 @@ import {
   type SignInAttemptVerdict,
 } from "@/lib/auth/attempts";
 import { classifyAccountState } from "@/lib/auth/attempts";
+import { degradedCaptchaRefusal } from "@/lib/auth/degraded-captcha";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
+import { markExpected } from "@/lib/observability/expected";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import prisma from "@/lib/prisma";
 
 /** BetterAuth's credential endpoint. Verified in `dist/api/routes/sign-in.mjs`. */
@@ -129,8 +138,35 @@ function lockedResponse(verdict: SignInAttemptVerdict): Response {
  * `hasAccount` probe is one indexed read against `accounts`; the `enforceSSO`
  * probe is the same `lookupEnforcedOrg` the session-creation veto uses, so the
  * two answers cannot disagree about whether a domain is SSO-enforced.
+ *
+ * ## Why the catch is split in two (failure-modes row 19)
+ *
+ * Collapsing these into one `catch` and reporting once was the obvious first
+ * cut, and it is wrong in the direction that costs a page: the two failures are
+ * not the same kind of thing.
+ *
+ *   - The three **probes** failing is infrastructure. A dead database or a pool
+ *     exhausted by `PG_POOL_MAX=1` is a real outage, but *this function's*
+ *     response to it is already correct and complete — `"unknown"`, which is the
+ *     collapsed sentence, which is the safe direction. The refusal is by design
+ *     and only the probe is broken, so it is marked expected and lands at
+ *     warning. Marking it matters twice over, because the disclosure is
+ *     unlocked precisely on a repeat-failure path, so an unthrottled capture
+ *     here would fire once per attempt for as long as the database is down.
+ *   - `classifyAccountState` throwing is **our** bug. It is a pure function over
+ *     a value we just read; if it throws, something is wrong in this file, and
+ *     swallowing that silently is how the next reader inherits a classifier
+ *     nobody is testing. It is reported unmarked so it pages.
+ *
+ * Both still return `"unknown"`. The difference is only whether a human is
+ * woken up, which is precisely the distinction row 19 is about.
  */
 async function describeAccount(email: string): Promise<string> {
+  let probe: {
+    user: { id: string; emailVerified: boolean; banned: boolean | null } | null;
+    hasPassword: boolean;
+    ssoEnforced: boolean;
+  };
   try {
     const [user, account, enforcedOrg] = await Promise.all([
       prisma.user.findUnique({
@@ -143,27 +179,72 @@ async function describeAccount(email: string): Promise<string> {
       }),
       lookupEnforcedOrg(prisma, email.split("@")[1] ?? ""),
     ]);
-
-    return classifyAccountState({
+    probe = {
       user,
       hasPassword: account !== null,
       ssoEnforced: enforcedOrg !== null,
-    });
-  } catch {
+    };
+  } catch (error) {
     // A database fault must not turn a wrong password into an account
     // disclosure — and must not turn sign-in into a 500 either. "unknown"
     // degrades to the collapsed sentence, which is the safe direction.
+    // Marked expected *and* throttled: see the docblock.
+    markExpected(error as Error);
+    captureThrottled("auth/sign-in-attempt-hooks:describeAccount", error, {
+      subsystem: "auth",
+      op: "describeAccount:probe",
+      expected: true,
+      level: "warning",
+    });
+    return "unknown";
+  }
+
+  try {
+    return classifyAccountState(probe);
+  } catch (error) {
+    // Not marked. See the docblock: a throw from a pure classifier is a defect
+    // in this file, and the disclosure is an answer we are obliged to give.
+    captureThrottled(
+      "auth/sign-in-attempt-hooks:classifyAccountState",
+      error,
+      {
+        subsystem: "auth",
+        op: "describeAccount:classify",
+        expected: false,
+      },
+    );
     return "unknown";
   }
 }
 
 /**
- * The gate. Refuses a locked account before the password is ever compared.
+ * The gate. Refuses a locked account before the password is ever compared, and
+ * carries the limiter-degradation gate.
  *
  * A read, not a write, so calling it on every request to a sign-in-shaped
  * route cannot itself be turned into a counter an attacker can inflate.
+ *
+ * ## Why the degradation gate lives here
+ *
+ * `lib/auth/degraded-captcha.ts` needs a hook that runs per request in the
+ * handler isolate, and this before/after pair is the only auth hook this repo
+ * owns. Registering a third hook means editing `lib/auth.ts`, which belongs to
+ * a different change; folding the check in costs one call and keeps the
+ * "which auth failures are refusals" reasoning in one file.
+ *
+ * It runs **before** the sign-in-path early return below, because the endpoints
+ * it cares about (`/send-verification-email`) are not the sign-in path at all —
+ * putting it after the guard would have made it dead code.
  */
 export const signInAttemptBeforeHook = createAuthMiddleware(async (ctx) => {
+  const degraded = await degradedCaptchaRefusal({
+    path: ctx.path,
+    headers: ctx.headers,
+    request: ctx.request,
+    authContext: ctx.context,
+  });
+  if (degraded) return degraded;
+
   if (ctx.path !== SIGN_IN_EMAIL) return;
 
   const email = emailFromBody(ctx.body);

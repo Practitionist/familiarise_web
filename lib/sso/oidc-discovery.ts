@@ -81,6 +81,7 @@ import {
   assertPublicUrl,
   SsrfBlockedError,
 } from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
+import { markExpected } from "@/lib/observability/expected";
 
 /**
  * Why discovery failed, as a closed set. Each maps to a distinct operator
@@ -105,10 +106,23 @@ export type OidcDiscoveryFailure =
 export class OidcDiscoveryError extends Error {
   readonly failure: OidcDiscoveryFailure;
 
+  /**
+   * Marked expected in the constructor (failure-modes row 19, the
+   * "`SecretPayloadError` behind a 200" pattern's sibling).
+   *
+   * Every `OidcDiscoveryError` is a *typed refusal* about the tenant's IdP —
+   * unreachable, incomplete, an issuer mismatch — carrying one of eight closed
+   * failure names and an operator-facing next step. The registration route turns
+   * it into a 422, so today it produces no Sentry event at all; marking it means
+   * that if a future call site lets one escape instead, the thing that wakes
+   * someone up is a discovery that stopped being *handled*, not the discovery
+   * itself. That distinction is the whole row.
+   */
   constructor(failure: OidcDiscoveryFailure, message: string) {
     super(message);
     this.name = "OidcDiscoveryError";
     this.failure = failure;
+    markExpected(this);
   }
 }
 

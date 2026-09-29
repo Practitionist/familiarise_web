@@ -18,6 +18,9 @@
  * Intentionally does NOT use `requireApiAuth` — this runs before login.
  * The response payload is shaped to be minimal (no PII, no provider
  * internals) so leaking it to unauthenticated callers is safe.
+ *
+ * One non-payload field rides on every response: the edge's rate-limit
+ * degradation flag, echoed from the request. See `degradedEcho` below.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -27,6 +30,7 @@ import prisma from "@/lib/prisma";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { validateSamlCert } from "@/lib/sso/provider-schemas";
 import { SecretPayloadError } from "@/lib/sso/secret-crypto";
+import { markExpected } from "@/lib/observability/expected";
 import {
   readStoredSamlConfig,
   type StoredConfig,
@@ -38,17 +42,45 @@ const QuerySchema = z.object({
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "";
 
+/**
+ * The limiter's degradation flag, echoed from the request onto the response.
+ *
+ * This is the only channel by which the sign-in and sign-up pages can learn that
+ * the auth surface is currently running with no rate limiter. The flag itself
+ * travels on the *request* header `middleware.ts` stamps — the browser never
+ * sees that, because the middleware is upstream of this handler — and the page
+ * already fetches this endpoint on email blur, which is the earliest moment on
+ * the form where "we have no bot protection right now" is actionable.
+ *
+ * The value is copied verbatim, never computed, so this route cannot disagree
+ * with the edge about whether the limiter is up. Mirrors the constant in
+ * `lib/auth/degraded-captcha.ts`; both are pinned to `RATE_LIMIT_DEGRADED_HEADER`
+ * by `__tests__/auth/degraded-captcha.test.ts`.
+ */
+const DEGRADED_HEADER = "x-rate-limit-degraded";
+
+function degradedEcho(req: NextRequest): Record<string, string> {
+  return req.headers.get(DEGRADED_HEADER) === "1"
+    ? { [DEGRADED_HEADER]: "1" }
+    : {};
+}
+
+/** `NextResponse.json` that always carries the edge's degradation flag. */
+function json(req: NextRequest, body: unknown) {
+  return NextResponse.json(body, { headers: degradedEcho(req) });
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
     email: url.searchParams.get("email"),
   });
   if (!parsed.success) {
-    return NextResponse.json({ enforceSSO: false });
+    return json(req, { enforceSSO: false });
   }
 
   const domain = parsed.data.email.split("@")[1]?.toLowerCase();
-  if (!domain) return NextResponse.json({ enforceSSO: false });
+  if (!domain) return json(req, { enforceSSO: false });
 
   // Single source of truth for "is this domain enforced + by which org?"
   // (audit B.6). Returns null when any precondition fails: no verified
@@ -58,7 +90,7 @@ export async function GET(req: NextRequest) {
   // issue #673.
   const enforced = await lookupEnforcedOrg(prisma, domain);
   if (!enforced) {
-    return NextResponse.json({ enforceSSO: false });
+    return json(req, { enforceSSO: false });
   }
 
   // Provider lookup is scoped to BOTH (domain, organizationId). The
@@ -93,7 +125,22 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     if (!(error instanceof SecretPayloadError)) throw error;
-    Sentry.captureException(error, {
+    // Failure-modes row 19, verbatim: "a `SecretPayloadError` behind a 200". The
+    // response below is a *modelled* answer — `providerMisconfigured: true` with
+    // a typed code, HTTP 200, the signin page falling back to credentials — so
+    // this is a refusal that reports itself, not a fault. Unmarked it pages
+    // on-call for every email blur by every user of an org whose encryption key
+    // was rotated, which is the whole tenant rather than one person.
+    //
+    // `markExpected` is the right tool here and not `reportSentryError(…,
+    // { expected: true })` because the capture below is a direct
+    // `Sentry.captureException(error)`: `@sentry/core@10.59.0` puts the exception
+    // it was handed on the event hint as `originalException`
+    // (`build/cjs/scope.js:481-497`), and `beforeSend` reads the marker off
+    // exactly that field. No `level` is passed deliberately — the re-levelling to
+    // `warning` is then provably the marker's doing and not a hand-written
+    // option that would mask a regression in it.
+    Sentry.captureException(markExpected(error), {
       tags: { subsystem: "auth", op: "sso-domain-check" },
       extra: { failure: error.failure },
     });
@@ -101,14 +148,14 @@ export async function GET(req: NextRequest) {
     // the same situation: this org's SSO cannot be used, so the signin page
     // stays on the credentials form and shows a typed error. The Sentry
     // capture above is the only place the two remain distinguishable.
-    return NextResponse.json({
+    return json(req, {
       enforceSSO: true,
       providerMisconfigured: true,
       errorCode: "SSO_PROVIDER_MISCONFIGURED",
     });
   }
   if (!provider) {
-    return NextResponse.json({ enforceSSO: false });
+    return json(req, { enforceSSO: false });
   }
 
   // Pre-flight integrity check on the stored cert. Legacy SsoProvider rows
@@ -138,7 +185,7 @@ export async function GET(req: NextRequest) {
   if (provider.samlConfig) {
     const saml = readStoredSamlConfig(provider.samlConfig);
     if (!saml?.cert || !validateSamlCert(saml.cert)) {
-      return NextResponse.json({
+      return json(req, {
         enforceSSO: true,
         providerMisconfigured: true,
         errorCode: "SSO_PROVIDER_MISCONFIGURED",
@@ -160,7 +207,7 @@ export async function GET(req: NextRequest) {
   // first-timers (relative-path XSS-guarded there). The auto-joined membership
   // is committed in the same customSession request, so the org layout resolves.
   const orgHome = `/dashboard/organization/${enforced.organizationId}/home`;
-  return NextResponse.json({
+  return json(req, {
     enforceSSO: true,
     organizationName: org?.name ?? null,
     ssoBody: {
