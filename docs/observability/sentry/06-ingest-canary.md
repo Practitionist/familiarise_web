@@ -63,6 +63,18 @@ The HTTP twin uses the shared `cleanupRoute` factory rather than hand-rolling th
 
 The canary event carries a **fixed fingerprint**, so half-hourly runs collapse into one issue with a count rather than hundreds of near-identical issues, and it carries **no user, org, IP or URL**. It is an infrastructure probe and must never become a record about a person.
 
+## The alert has a cooldown, on purpose
+
+`sendSentryIngestAlert` has no throttle of its own, so without a gate the canary emails the same content on every failing run — **48 identical emails a day** at the 30-minute cadence. An alert nobody reads is the same as no alert, which reintroduces through the front door the exact outcome this canary exists to prevent.
+
+`shouldSendCanaryAlert` sends **one email per distinct state**, re-armed the moment the state changes, and re-asserted at most once per **24 hours** so a week-long outage does not go silent after its first email. A change from `rate-limited` to `rejected-auth` alerts immediately, because that changes what the operator should do. The route reports `alertSuppressed` alongside `alerted`, because "told them" and "told them recently" are different things to see in a log.
+
+Two decisions in there are forced by the runtime rather than chosen, and both are the opposite of what the rest of this page does:
+
+**The state lives in Redis, not in a module variable.** A 30-minute cron against serverless functions means the process is almost certainly cold, so an in-memory value is reset before the next run and the gate would suppress nothing. The _probe_ still has no Redis dependency — it runs and reports regardless — and only suppression consults it. `lib/redis`'s circuit breaker means a walled-off Redis fails fast rather than adding latency to a check whose job is to be fast.
+
+**It fails open.** If the store is unreachable, the answer is "send". A duplicate email costs a glance; a suppressed one costs an outage nobody was told about. This is the one place in the canary where a skip is the dangerous direction, and it is the same reasoning that makes `notify-ops-failure.sh` refuse to skip its own check: a sink that can silently skip is a dead sink nobody sees. The store's error is logged rather than swallowed, so a gate that has silently degraded to permanently-off is still visible.
+
 ## Running it by hand
 
 ```bash

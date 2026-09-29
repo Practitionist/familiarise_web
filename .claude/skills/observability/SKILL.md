@@ -31,6 +31,8 @@ An error must be attributable before it is debuggable, and nothing in this domai
 
 **A 2xx from Sentry is not proof of acceptance, and acceptance is not proof of queryability.** The ingest canary treats `200` plus a drop notice as a distinct `dropped-despite-2xx` verdict precisely because Sentry does 2xx-and-drop. And read `x-sentry-rate-limits`: it names the limited categories and omits the healthy ones, so a working session or transaction stream is no evidence at all that errors are being taken. That partial outage is the 2026-09-22 incident.
 
+**A monitor that cannot silence itself must fail open, and one that repeats must be gated.** The canary emails, because a check reporting through the failing system is not a check — which means it must also _cooldown_: one email per distinct state, re-armed on change, re-asserted daily. An alert nobody reads is the same as no alert. And its Redis-backed state fails **open**: a duplicate email costs a glance, a suppressed one costs an outage nobody was told about.
+
 **A check that reports its own failure through the failing system is not a check.** The canary emails through Resend. If the monitor's first stop is the thing it monitors, the monitor is decorative.
 
 **Modelled refusals are warnings.** A full webinar, a credit shortfall, a consent gate — a `BUSINESS_ERROR_CODES`-registered code is `expected: true`, gets re-levelled to warning by `beforeSend`, and must not be an error event. A quota is 5,000 errors a month on Developer; mislabelled business outcomes are how that gets spent in a day, and `INFRA_THROTTLE_MS` in the shared config exists because it happened on 2026-09-21.
