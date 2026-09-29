@@ -65,10 +65,7 @@ function StaticTopRowsImpl({
           id="domains"
           className="mb-14 scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
         >
-          <SectionHeader
-            title="Browse by Domain"
-            icon={<Briefcase className="w-5 h-5 text-white" />}
-          />
+          <SectionHeader title="Browse by Domain" icon={<Briefcase />} />
           <DomainGrid
             domains={metadata.consultantMetadata.consultantsByDomain}
             isLoading={false}

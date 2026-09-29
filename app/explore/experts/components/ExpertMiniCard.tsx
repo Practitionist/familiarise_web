@@ -25,16 +25,16 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className="group flex-shrink-0 w-[260px] block"
+      className="group block w-[248px] shrink-0 snap-start"
     >
-      <div className="bg-card rounded-2xl p-5 border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+      <div className="flex h-full flex-col rounded-card border border-border bg-card p-5 shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3">
         {/* Badge */}
         {badge && (
           <div className="mb-3">
             {/* Neutral taxonomy, not a status — monochrome, and unlike the
                 previous *-100/*-700 pairs these survive dark mode. */}
             <span
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${
                 badge === "trending"
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted text-muted-foreground border border-border"
@@ -106,14 +106,14 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
           {expert.languages && expert.languages.length > 0 && (
             <div className="flex items-center gap-1 mb-2">
               <Globe className="w-3 h-3 text-muted-foreground/70 flex-shrink-0" />
-              <p className="text-[10px] text-muted-foreground line-clamp-1">
+              <p className="text-xs text-muted-foreground line-clamp-1">
                 {expert.languages.slice(0, 2).join(", ")}
               </p>
             </div>
           )}
 
           {/* Domain badge */}
-          <Badge className="text-[10px] px-2 py-0.5 bg-muted text-muted-foreground hover:bg-muted border-0 w-fit mb-2">
+          <Badge className="text-xs px-2 py-0.5 bg-muted text-muted-foreground hover:bg-muted border-0 w-fit mb-2">
             {expert.domain?.name || "General"}
           </Badge>
 
@@ -123,7 +123,7 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
               {expert.tags.slice(0, 2).map((tag) => (
                 <span
                   key={tag.id}
-                  className="text-[10px] px-2 py-0.5 bg-muted text-muted-foreground rounded-full"
+                  className="text-xs px-2 py-0.5 bg-muted text-muted-foreground rounded-full"
                 >
                   {tag.name}
                 </span>

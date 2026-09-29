@@ -18,6 +18,7 @@ import {
   Presentation,
   Layers,
   Star,
+  Video,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { accountSettingsHref } from "@/lib/dashboard/account-href";
@@ -131,6 +132,12 @@ const EXPLORE_COLUMNS: NavColumn[] = [
         href: "/explore/programs",
         description: "Everything on offer right now",
         icon: Layers,
+      },
+      {
+        label: "Recordings",
+        href: "/explore/recordings",
+        description: "Buy a replay and watch it on your own schedule",
+        icon: Video,
       },
     ],
   },

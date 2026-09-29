@@ -21,6 +21,9 @@
     --surface: 240 16% 97%;
     --surface-raised: 0 0% 100%;
     --surface-sunken: 240 14% 95%;
+    /* The banded hero band. Deliberately NOT inverted in dark: it is already
+       the dark surface, so flipping it would turn the hero white. */
+    --surface-inverse: 240 20% 7%;
 
     --primary: 240 10% 10%;
     --primary-foreground: 0 0% 100%;
@@ -186,6 +189,7 @@
     --surface: 38 26% 93%;
     --surface-raised: 40 40% 99%;
     --surface-sunken: 36 22% 90%;
+    --surface-inverse: 28 22% 10%;
 
     --primary: 28 26% 14%;
     --primary-foreground: 40 40% 98%;
@@ -235,6 +239,7 @@
     --surface: 240 18% 95%;
     --surface-raised: 0 0% 100%;
     --surface-sunken: 240 16% 93%;
+    --surface-inverse: 250 22% 6%;
 
     --primary: 240 18% 7%;
     --primary-foreground: 0 0% 100%;
@@ -339,6 +344,7 @@
     --surface: 240 11% 7%;
     --surface-raised: 240 9% 11%;
     --surface-sunken: 240 13% 4%;
+    --surface-inverse: 250 30% 4%;
 
     --primary: 240 8% 96%;
     --primary-foreground: 240 20% 10%;
@@ -426,6 +432,7 @@
     --surface: 30 10% 13%;
     --surface-raised: 30 9% 17%;
     --surface-sunken: 30 14% 6%;
+    --surface-inverse: 30 14% 5%;
 
     --primary: 40 24% 92%;
     --primary-foreground: 28 26% 12%;
@@ -465,6 +472,7 @@
     --surface: 250 12% 7%;
     --surface-raised: 250 10% 12%;
     --surface-sunken: 250 16% 4%;
+    --surface-inverse: 250 24% 4%;
 
     --primary: 250 10% 97%;
     --primary-foreground: 250 30% 8%;

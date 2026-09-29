@@ -40,7 +40,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
   );
 
   return (
-    <main className="min-h-screen bg-muted">
+    <main className="min-h-screen bg-surface">
       {/* Hero Banner */}
       <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
         <Image
@@ -50,11 +50,18 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           className="object-cover"
           priority
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
+        {/* Scrim over an arbitrary cover photo. Was a hard-coded `zinc-950`; the
+            bottom stop has to be opaque enough for the h1 to clear WCAG AA
+            over any image, so it stays near-black — but it is a photo scrim,
+            not a themed surface, and should not track the direction. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/55 to-transparent"
+        />
 
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
+          <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-8">
             <Link
               href="/explore/programs"
               className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
@@ -67,13 +74,13 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
+          <div className="mx-auto w-full max-w-[1200px] px-4 pb-8 sm:px-6 lg:px-8">
             <Badge className="bg-background text-foreground mb-4">Class</Badge>
-            <h1 className="text-fluid-4xl tracking-tight font-bold text-white mb-2">
+            <h1 className="font-display text-fluid-3xl font-bold tracking-[-0.02em] text-white mb-2">
               {plan.title}
             </h1>
             <div className="flex items-center gap-4 text-white/80">
-              <span className="text-2xl md:text-3xl font-bold text-white">
+              <span className="tnum font-display text-2xl font-bold text-white">
                 {formatPrice(plan.price)}
               </span>
               <span className="text-white/60">•</span>
@@ -84,7 +91,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       </div>
 
       {/* Content */}
-      <div className="w-full max-w-[92%] xl:max-w-[88%] 2xl:max-w-[1600px] mx-auto py-8 md:py-12">
+      <div className="w-full max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
           {/* Main Content */}
           <motion.div
@@ -135,7 +142,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             />
 
             {/* Schedule */}
-            <Card className="border-border shadow-sm">
+            <Card className="">
               <CardContent className="p-6 md:p-8">
                 <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
@@ -154,7 +161,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           >
             <div className="sticky top-24 space-y-6">
               {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
+              <Card className="">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Instructor</CardTitle>
                 </CardHeader>
@@ -196,7 +203,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="border-border shadow-sm">
+                <Card className="">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />

@@ -3,6 +3,7 @@
 import { memo, type RefObject } from "react";
 import { motion } from "framer-motion";
 import { Search } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { Program } from "@/lib/explore/programs";
 import ProgramCard from "./ProgramCard";
 
@@ -15,24 +16,43 @@ interface ProgramResultsProps {
   viewerOrgs?: Record<string, string>;
 }
 
-function EmptyState() {
+function Empty() {
   return (
     <motion.div
-      className="text-center py-16"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.3 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
     >
-      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
-        <Search className="w-10 h-10 text-muted-foreground/70" />
-      </div>
-      <h3 className="text-xl font-semibold text-foreground mb-2">
-        No programs found
-      </h3>
-      <p className="text-muted-foreground max-w-md mx-auto">
-        Try adjusting your filters or search terms to discover more programs
-      </p>
+      <EmptyState
+        icon={Search}
+        title="No programs match those filters"
+        description="Try widening a filter, or clear the search to see everything currently on offer."
+      />
     </motion.div>
+  );
+}
+
+/**
+ * The load-more affordance.
+ *
+ * This was `<div className="w-8 h-8 border-3 border-muted border-t-primary" />`
+ * — and `border-3` is **not in Tailwind's default width scale** (0/2/4/8), so
+ * the class resolved to nothing and the "spinner" rendered as a bare circle
+ * with one coloured arc. `border-2` is what it meant.
+ */
+function LoadMore() {
+  return (
+    <div
+      className="flex items-center justify-center gap-3 py-10"
+      role="status"
+      aria-live="polite"
+    >
+      <span
+        className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-brand motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+      <span className="text-sm text-muted-foreground">Loading more programs…</span>
+    </div>
   );
 }
 
@@ -50,55 +70,39 @@ function ProgramResultsImpl({
 }: ProgramResultsProps) {
   return (
     <>
-      {viewMode === "grid" ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {programs.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
-              <ProgramCard program={item} variant="grid" viewerOrgs={viewerOrgs} />
-            </motion.div>
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {programs.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
-              <ProgramCard program={item} variant="list" viewerOrgs={viewerOrgs} />
-            </motion.div>
-          ))}
-        </div>
-      )}
+      <div
+        className={
+          viewMode === "grid"
+            ? "grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            : "flex flex-col gap-4"
+        }
+      >
+        {programs.map((item, index) => (
+          <motion.div
+            key={item.id}
+            initial={{ opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-64px" }}
+            transition={{
+              duration: 0.35,
+              delay: Math.min(index * 0.04, 0.4),
+            }}
+          >
+            <ProgramCard
+              program={item}
+              variant={viewMode}
+              viewerOrgs={viewerOrgs}
+            />
+          </motion.div>
+        ))}
+      </div>
 
-      {programs.length === 0 && !isLoading && <EmptyState />}
+      {programs.length === 0 && !isLoading && <Empty />}
 
       {/* Sentinel for infinite scroll — observed by useInfiniteScroll. */}
       <div ref={sentinelRef} aria-hidden="true" />
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 border-3 border-muted border-t-primary rounded-full animate-spin" />
-            <span className="text-muted-foreground">Loading programs...</span>
-          </div>
-        </div>
-      )}
+      {isLoading && <LoadMore />}
     </>
   );
 }

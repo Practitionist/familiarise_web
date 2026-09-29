@@ -1,6 +1,11 @@
 import { Suspense } from "react";
-import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { motion } from "framer-motion";
+import { Sparkles } from "lucide-react";
+import {
+  ExploreHeader,
+  ExploreShell,
+  ExploreStat,
+} from "@/components/explore/ExploreShell";
 import { FeaturedExperts } from "./components/FeaturedExperts";
 import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
@@ -8,11 +13,7 @@ import {
   getCuratedExperts,
 } from "@/lib/data/explore-experts";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
-import {
-  buildExpertHeroStats,
-  type ExpertStatKey,
-  type IPublicStat,
-} from "@/lib/data/public-stats";
+import { buildExpertHeroStats } from "@/lib/data/public-stats";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
@@ -35,70 +36,6 @@ import {
 // profiles purge this path on demand at the write sites.
 export const revalidate = 300;
 
-const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
-  experts: Users,
-  rating: Star,
-  sessions: TrendingUp,
-};
-
-function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
-  return (
-    <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-      </div>
-      <div className="absolute inset-0 grid-pattern opacity-20" />
-
-      <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-            <Sparkles className="w-4 h-4 text-white" />
-            <span className="text-sm font-medium text-zinc-300">
-              World-Class Mentorship
-            </span>
-          </div>
-
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight text-white mb-6">
-            Meet Your Perfect <span className="silver-text">Mentor</span>
-          </h1>
-
-          <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-            Ready to level up? Our amazing mentors are here to guide you!
-            Connect with industry experts who understand your journey.
-          </p>
-
-          {/* #1485 — real figures or nothing. Before launch every one of these
-              is zero, and the honest line below is what a visitor sees instead
-              of the "10K+ / 4.9 / 50K+" that used to be rendered from nowhere. */}
-          {stats.length > 0 ? (
-            <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-              {stats.map((stat) => {
-                const Icon = STAT_ICONS[stat.key];
-                return (
-                  <div key={stat.key} className="text-center">
-                    <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="text-2xl md:text-3xl font-bold text-white">
-                      {stat.display}
-                    </div>
-                    <div className="text-sm text-zinc-500">{stat.label}</div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-zinc-500">
-              Check back for newly verified experts.
-            </p>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default async function ExploreExperts() {
   // These used to degrade to empty rows on a transient timeout. This route is ISR,
   // so that empty page would be cached and served to everyone until the window
@@ -111,15 +48,74 @@ export default async function ExploreExperts() {
       withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
     ]);
 
+  // #1485 — real figures or nothing. Before launch every one of these is zero,
+  // and the honest fallback line below is what a visitor sees instead of the
+  // "10K+ / 4.9 / 50K+" that used to be rendered from nowhere.
+  const heroStats = buildExpertHeroStats(metadata.consultantMetadata);
+  const hasHeroStats = heroStats.length > 0;
+
   return (
     <main className="min-h-screen bg-background">
-      <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
+      {/* Hero band — see ProgramsInteractiveContent.tsx for the same block and
+          the reasoning. Was a hand-rolled slab: `bg-zinc-950`, two
+          `animate-blob` orbs, a `grid-pattern` overlay, a `rounded-full`
+          `bg-zinc-800/50` pill, and a `silver-text` gradient word. The two
+          listings were visually near-identical while sharing no code. */}
+      <section className="relative overflow-hidden border-b border-border-subtle bg-surface-inverse">
+        <div aria-hidden="true" className="absolute inset-0">
+          <div className="absolute -left-24 -top-24 h-[480px] w-[480px] rounded-full bg-brand/15 blur-[120px] motion-reduce:hidden" />
+          <div className="absolute -bottom-32 -right-16 h-[420px] w-[420px] rounded-full bg-brand/10 blur-[110px] motion-reduce:hidden" />
+        </div>
+        <div className="relative py-20 md:py-28">
+          <ExploreShell width="wide">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <ExploreHeader
+                tone="dark"
+                eyebrow={
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                    World-class mentorship
+                  </span>
+                }
+                title={
+                  <>
+                    Meet your perfect{" "}
+                    <span className="text-brand">mentor</span>
+                  </>
+                }
+                description="Ready to level up? Our amazing mentors are here to guide you. Connect with industry experts who understand your journey."
+                meta={hasHeroStats ? (
+                  <>
+                    {heroStats.map((stat) => (
+                      <ExploreStat
+                        key={stat.key}
+                        tone="dark"
+                        value={stat.display}
+                        label={stat.label}
+                      />
+                    ))}
+                  </>
+                ) : undefined}
+              />
+              {!hasHeroStats && (
+                <p className="mt-6 text-sm text-white/50">
+                  Check back for newly verified experts.
+                </p>
+              )}
+            </motion.div>
+          </ExploreShell>
+        </div>
+      </section>
 
       <FeaturedExperts experts={featuredExperts} isLoading={false} />
 
       <Suspense
         fallback={
-          <section className="mx-auto max-w-[1600px] space-y-6 px-4 py-10 md:px-8 lg:px-12">
+          <section className="mx-auto max-w-[1400px] space-y-6 px-4 py-10 md:px-8 lg:px-12">
             <div className="flex flex-wrap gap-2">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div

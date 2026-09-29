@@ -63,9 +63,9 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-6 backdrop-blur-sm">
+    <div className="rounded-card border border-border bg-card p-6 shadow-elevation-1 shadow-edge">
       {/* Glossy overlay effect */}
-      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-card pointer-events-none" />
 
       <div className="relative">
         <div className="grid grid-cols-7 gap-3">
@@ -79,7 +79,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
               <div key={day} className="space-y-3">
                 {/* Day header with glossy effect */}
                 <div className="text-center">
-                  <h4 className="font-semibold text-sm text-gray-800 bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
+                  <h4 className="rounded-control border border-border bg-muted px-3 py-2 text-sm font-semibold text-foreground">
                     {day.charAt(0) + day.slice(1).toLowerCase()}
                   </h4>
                 </div>
@@ -100,7 +100,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                         <div
                           key={slot.id}
                           className={`
-                            w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
+                            w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-control
                             border shadow-lg backdrop-blur-sm relative overflow-hidden
                             ${
                               isFullyBooked
@@ -112,25 +112,25 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                           `}
                         >
                           {/* Glossy overlay for buttons */}
-                          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
+                          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-control pointer-events-none" />
 
                           <div className="relative flex flex-col items-center justify-center h-full space-y-1">
                             {/* Time range in one line */}
-                            <div className="font-medium leading-tight text-center text-[11px]">
+                            <div className="font-medium leading-tight text-center text-xs">
                               {roundTime(slot.localStartTime)} -{" "}
                               {roundTime(slot.localEndTime)}
                             </div>
 
                             {/* Status and date for booked slots */}
                             {isFullyBooked && (
-                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                              <div className="text-xs font-semibold opacity-90 text-center leading-tight">
                                 Booked
                                 <br />
                                 {bookedDate && `(${bookedDate})`}
                               </div>
                             )}
                             {isPartiallyBooked && (
-                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                              <div className="text-xs font-semibold opacity-90 text-center leading-tight">
                                 Partially
                                 <br />
                                 Booked {bookedDate && `(${bookedDate})`}
@@ -141,7 +141,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                       );
                     })
                   ) : (
-                    <div className="h-16 flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
+                    <div className="flex h-16 items-center justify-center rounded-control border border-border-subtle bg-surface-sunken px-2 text-center text-xs text-muted-foreground">
                       No slots
                     </div>
                   )}
@@ -156,7 +156,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
           <div className="flex justify-center mt-4">
             <button
               onClick={() => setIsExpanded((prev) => !prev)}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer shadow-sm"
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-control border border-emerald-200 transition-colors cursor-pointer shadow-sm"
             >
               {isExpanded ? (
                 <>

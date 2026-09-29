@@ -36,7 +36,7 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h4 className="text-md font-semibold text-foreground">
+            <h4 className="text-sm font-medium text-foreground text-foreground">
               {reviewerName}
             </h4>
             <p className="text-xs text-muted-foreground">
@@ -92,7 +92,7 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
             width={14}
             height={14}
           />
-          <span className="text-[10px] text-muted-foreground/70">
+          <span className="text-xs text-muted-foreground/70">
             Reviewed on Familiarise
           </span>
         </div>

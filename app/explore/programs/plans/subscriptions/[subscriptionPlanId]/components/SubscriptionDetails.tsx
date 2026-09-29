@@ -34,8 +34,8 @@ export function SubscriptionDetails({
   const mentorName = consultant?.user?.name ?? "This expert";
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-surface">
+      <div className="w-full max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Link
           href="/explore/experts"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
@@ -161,7 +161,7 @@ export function SubscriptionDetails({
                           src={consultant.user?.image ?? "/placeholder-user.jpg"}
                           alt={mentorName}
                           fill
-                          className="rounded-xl object-cover"
+                          className="rounded-control object-cover"
                         />
                       </div>
                       <div className="min-w-0">

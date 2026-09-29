@@ -31,6 +31,11 @@ import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips from "./components/FilterChips";
 import StaticTopRows from "./components/StaticTopRows";
 import ProgramResults from "./components/ProgramResults";
+import {
+  ExploreHeader,
+  ExploreShell,
+  ExploreStat,
+} from "@/components/explore/ExploreShell";
 
 interface ProgramStats {
   publishedClassCount: number;
@@ -182,72 +187,81 @@ export default function ProgramsInteractiveContent({
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Hero Section */}
-      <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-          <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
+      {/* Hero band.
+          Was a hand-rolled slab: `bg-zinc-950`, two 600px `blur-[120px]`
+          `animate-blob` orbs, a `grid-pattern` overlay, a `rounded-full`
+          `bg-zinc-800/50` pill, `text-zinc-300/400/500` for the three text
+          roles, and a `text-4xl md:text-5xl lg:text-6xl` h1 that shared no
+          tracking or scale with the experts page beside it.
+
+          All of that is now `ExploreHeader` + one `--surface-inverse` token, so
+          the two listings cannot drift again and the dark band re-themes with
+          the direction instead of being hard-coded to near-black. The orbs are
+          `--brand` at low alpha, which is why they now read as brand-tinted
+          rather than as grey smudge. */}
+      <section className="relative overflow-hidden border-b border-border-subtle bg-surface-inverse">
+        <div aria-hidden="true" className="absolute inset-0">
+          <div className="absolute -left-24 -top-24 h-[480px] w-[480px] rounded-full bg-brand/15 blur-[120px] motion-reduce:hidden" />
+          <div className="absolute -bottom-32 -right-16 h-[420px] w-[420px] rounded-full bg-brand/10 blur-[110px] motion-reduce:hidden" />
         </div>
-        <div className="absolute inset-0 grid-pattern opacity-20" />
-
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-          <motion.div
-            className="max-w-4xl mx-auto text-center"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
-
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
-            </p>
-
-            {stats.length > 0 ? (
-              <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-                {stats.map((stat, index) => {
-                  const Icon = PROGRAM_STAT_ICONS[stat.key];
-                  return (
-                    <motion.div
-                      key={stat.key}
-                      className="text-center"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: 0.2 + index * 0.1 }}
-                    >
-                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                        <Icon className="w-6 h-6 text-white" />
-                      </div>
-                      <div className="text-2xl md:text-3xl font-bold text-white">
-                        {stat.display}
-                      </div>
-                      <div className="text-sm text-zinc-500">{stat.label}</div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500">
-                Check back for new classes and webinars.
-              </p>
-            )}
-          </motion.div>
+        <div className="relative py-20 md:py-28">
+          <ExploreShell width="wide">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <ExploreHeader
+                tone="dark"
+                eyebrow={
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                    Learn from the best
+                  </span>
+                }
+                title={
+                  <>
+                    Classes &amp; <span className="text-brand">webinars</span>
+                  </>
+                }
+                description="Expand your knowledge with expert-led classes and live webinars. Learn at your own pace, or join an interactive session."
+                meta={
+                  stats.length > 0
+                    ? stats.map((stat) => {
+                        const Icon = PROGRAM_STAT_ICONS[stat.key];
+                        return (
+                          <ExploreStat
+                            key={stat.key}
+                            tone="dark"
+                            value={
+                              <span className="inline-flex items-center gap-2">
+                                <Icon
+                                  className="h-4 w-4 text-brand"
+                                  aria-hidden="true"
+                                />
+                                {stat.display}
+                              </span>
+                            }
+                            label={stat.label}
+                          />
+                        );
+                      })
+                    : undefined
+                }
+              />
+              {stats.length === 0 && (
+                <p className="mt-6 text-sm text-white/50">
+                  Check back for new classes and webinars.
+                </p>
+              )}
+            </motion.div>
+          </ExploreShell>
         </div>
       </section>
 
       {/* Content Section */}
       <section className="py-10 md:py-16">
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12">
+        <ExploreShell width="wide">
           {/* Tabs */}
           <div className="mb-10">
             <ProgramTabs
@@ -312,7 +326,7 @@ export default function ProgramsInteractiveContent({
               viewerOrgs={viewerOrgs}
             />
           </div>
-        </div>
+        </ExploreShell>
       </section>
     </main>
   );

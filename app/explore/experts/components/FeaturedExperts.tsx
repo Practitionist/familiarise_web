@@ -22,10 +22,10 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
     return (
       <div className="flex items-center gap-1">
         {[...Array(fullStars)].map((_, i) => (
-          <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />
+          <Star key={i} className="w-4 h-4 fill-brand text-brand" />
         ))}
         {hasHalfStar && (
-          <StarHalf className="w-4 h-4 fill-amber-400 text-amber-400" />
+          <StarHalf className="w-4 h-4 fill-brand text-brand" />
         )}
         <span className="text-sm font-medium text-muted-foreground ml-1">
           {rating.toFixed(1)}
@@ -35,11 +35,11 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
   };
 
   return (
-    <section className="py-20 bg-gradient-to-b from-zinc-100 to-white relative overflow-hidden">
+    <section className="py-20 bg-surface relative overflow-hidden">
       {/* Background Pattern */}
       <div className="absolute inset-0 dot-pattern opacity-30" />
 
-      <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
         {/* Section Header */}
         <motion.div
           className="text-center mb-16"
@@ -54,7 +54,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
               Familiarise Pick
             </span>
           </div>
-          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-foreground mb-4">
+          <h2 className="font-display text-fluid-2xl font-bold tracking-[-0.02em] text-foreground mb-4">
             Top Familiarise <span className="silver-text">Experts</span>
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
@@ -98,7 +98,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                     href={`/explore/experts/${expert.id}`}
                     className="group block h-full"
                   >
-                    <div className="bg-card rounded-2xl p-6 shadow-sm border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+                    <div className="bg-card rounded-2xl p-6 border border-border shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3 h-full flex flex-col">
                       {/* Avatar */}
                       <div className="relative mb-4">
                         <Avatar className="mx-auto h-20 w-20 ring-4 ring-muted group-hover:ring-border transition-all">
@@ -113,7 +113,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                         </Avatar>
                         {/* Top Expert Badge */}
                         {index === 0 && (
-                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center shadow-lg">
+                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-brand rounded-full flex items-center justify-center shadow-lg">
                             <Award className="w-4 h-4 text-white" />
                           </div>
                         )}

@@ -26,6 +26,7 @@ export function CategoryGrid({
   viewAllHref,
   viewAllLabel = "View all",
   initialDisplay = 9,
+  onSelect,
 }: {
   categories: { id: string; name: string; count: number }[];
   /** Singular then plural — drives the count label: "12 experts" / "3 programs". */
@@ -35,6 +36,14 @@ export function CategoryGrid({
   viewAllHref?: string;
   viewAllLabel?: string;
   initialDisplay?: number;
+  /**
+   * Applies a filter in place instead of navigating. Both the original grids
+   * used this (they call the owning page's `onDomainSelect` /
+   * `onTopicSelect`); the href form is kept for the org directory, which does
+   * navigate. A tile is a real `<Link>` either way so it stays middle-clickable
+   * and prefetched — `onSelect` fires alongside, never instead of.
+   */
+  onSelect?: (name: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [singular, plural] = noun;
@@ -45,6 +54,7 @@ export function CategoryGrid({
     ? categories
     : categories.slice(0, initialDisplay);
   const hidden = categories.length - visible.length;
+  const baseHref = viewAllHref ?? "";
 
   return (
     <section>
@@ -54,7 +64,13 @@ export function CategoryGrid({
         {visible.map((category) => (
           <Link
             key={category.id}
-            href={viewAllHref ? `${viewAllHref}?category=${encodeURIComponent(category.name)}` : "#"}
+            href={
+              onSelect
+                ? baseHref || "#"
+                : `${baseHref}?category=${encodeURIComponent(category.name)}`
+            }
+            onClick={() => onSelect?.(category.name)}
+            scroll={false}
             className={cn(
               "group flex items-center gap-3 rounded-card border border-border bg-card p-3.5",
               "shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200",

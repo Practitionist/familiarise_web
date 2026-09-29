@@ -14,7 +14,6 @@ import {
   RotateCcw,
   CheckCircle,
 } from "lucide-react";
-import { motion } from "framer-motion";
 import { useState } from "react";
 
 import { PricingOption } from "../defaults";
@@ -208,8 +207,10 @@ export function ExpertPricing({
 
   return (
     <div className="sticky top-24 space-y-4">
-      {/* Profile Image Card — refined, no flat border */}
-      <div className="rounded-3xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
+      {/* Profile image. Was `rounded-3xl` + `shadow-2xl shadow-black/30` +
+          `ring-1 ring-white/10` — the largest radius and heaviest shadow in
+          the whole explore surface, on a photo. Now the media radius. */}
+      <div className="overflow-hidden rounded-media border border-border shadow-elevation-2">
         <div className="aspect-[4/3] relative">
           <Image
             alt="Profile"
@@ -221,19 +222,18 @@ export function ExpertPricing({
         </div>
       </div>
 
-      {/* Pricing Card — glassmorphism dark */}
-      <div className="bg-zinc-950/90 backdrop-blur-xl rounded-3xl p-6 shadow-2xl shadow-black/40 border border-white/[0.07] ring-1 ring-white/[0.04]">
-        {/* Header */}
-        <div className="text-center mb-5">
-          <h3 className="text-xl font-bold text-white mb-1">Book a Session</h3>
-          <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">
-            Choose your preferred option
-          </p>
+      {/* The booking panel. See components/explore/PricingPanel.tsx for why
+          this is no longer a dark-glass island with a 24px radius. */}
+      <PricingPanel
+        title="Book a session"
+        eyebrow="Choose your preferred option"
+      >
+        <div className="text-center">
           {/* #1703 D1 — metadata only: how this expert takes bookings.
               #1775 C-6 — consultations only; a plan is always paid at purchase. */}
           {hasConsultations &&
             (!hasSubscriptions || activeServiceTab === "consultations") && (
-              <span className="mt-3 inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
+              <span className="mt-3 inline-flex items-center rounded-chip border border-brand-border bg-brand-subtle px-2 py-0.5 text-xs font-medium text-brand-foreground-subtle">
                 {bookingModeBadge(
                   consultantDetails.bookingMode,
                   consultantDetails.acceptingRequests,
@@ -250,33 +250,28 @@ export function ExpertPricing({
             }
             className="w-full"
           >
-            {/* Segmented pill toggle for service type */}
-            <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm mb-6 h-auto">
+            {/* Service-type switch. This was the 3rd of the four hand-rolled
+                segmented controls in the app, and the only one still needing
+                a framer-motion `layoutId` — purely to slide a background pill.
+                `data-[state=active]` does that in CSS, which also drops
+                framer-motion out of this subtree.
+
+                The trigger used `data-[state=active]:text-zinc-900` with a
+                `bg-white` thumb, sized for a dark panel. On the light panel
+                both had to invert. */}
+            <TabsList className="mb-6 h-auto w-full gap-1 rounded-control border border-border bg-muted p-1">
               {(["consultations", "subscriptions"] as const).map((tab) => (
                 <TabsTrigger
                   key={tab}
                   value={tab}
-                  className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl flex items-center justify-center gap-2 data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto"
+                  className="flex h-9 flex-1 items-center justify-center gap-2 rounded-[0.3125rem] px-3 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-elevation-1 data-[state=active]:shadow-edge"
                 >
-                  {activeServiceTab === tab && (
-                    <motion.div
-                      layoutId="service-type-pill"
-                      className="absolute inset-0 bg-white rounded-xl shadow-sm"
-                      transition={{
-                        type: "spring",
-                        bounce: 0.15,
-                        duration: 0.35,
-                      }}
-                    />
+                  {tab === "consultations" ? (
+                    <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
                   )}
-                  <span className="relative z-10 flex items-center gap-2">
-                    {tab === "consultations" ? (
-                      <Calendar className="w-3.5 h-3.5" />
-                    ) : (
-                      <MessageSquare className="w-3.5 h-3.5" />
-                    )}
-                    {tab === "consultations" ? "One-time" : "Mentorship"}
-                  </span>
+                  {tab === "consultations" ? "One-time" : "Mentorship"}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -332,29 +327,33 @@ export function ExpertPricing({
             timezone={timezone}
           />
         ) : (
-          <div className="text-center py-8">
-            <p className="text-zinc-400">No pricing plans available</p>
+          <EmptyState
+            size="inline"
+            title="No pricing plans available"
+            description="This expert hasn't published a bookable session yet."
+          />
+
           </div>
         )}
 
         {/* Trust Badges — chip style */}
-        <div className="mt-6 pt-5 border-t border-white/[0.06]">
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
-              <Shield className="w-3 h-3" />
-              Secure
-            </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
-              <RotateCcw className="w-3 h-3" />
-              Money-back
-            </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
-              <CheckCircle className="w-3 h-3" />
-              Verified
-            </span>
-          </div>
+        {/* Was `bg-white/[0.04] border-white/[0.06] text-zinc-500` — an
+            alpha-white pill that only made sense over the old dark glass. */}
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2 border-t border-border-subtle pt-5">
+          <span className="inline-flex items-center gap-1.5 rounded-chip border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+            <Shield className="h-3 w-3" aria-hidden="true" />
+            Secure
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-chip border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+            Money-back
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-chip border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+            <CheckCircle className="h-3 w-3" aria-hidden="true" />
+            Verified
+          </span>
         </div>
-      </div>
+      </PricingPanel>
     </div>
   );
 }

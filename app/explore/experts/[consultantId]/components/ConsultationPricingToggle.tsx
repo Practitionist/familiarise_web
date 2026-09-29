@@ -331,7 +331,7 @@ export default function ConsultationPricingToggle({
 
   if (consultationOptions.length === 0) {
     return (
-      <div className="w-full p-8 text-center text-zinc-400">
+      <div className="w-full py-8 text-center text-sm text-muted-foreground">
         <p>No consultation plans available at the moment.</p>
       </div>
     );
@@ -343,10 +343,10 @@ export default function ConsultationPricingToggle({
   ) {
     return (
       <div className="w-full p-8 text-center space-y-3">
-        <h3 className="text-2xl font-medium tracking-tight text-zinc-300">
+        <h3 className="font-display text-lg font-semibold tracking-tight text-foreground">
           Consultee Access Required
         </h3>
-        <p className="text-zinc-500">
+        <p className="text-neutral-400">
           To book consultations, please sign in with a consultee account.
         </p>
       </div>
@@ -360,19 +360,19 @@ export default function ConsultationPricingToggle({
       className="w-full space-y-5"
     >
       {/* Segmented pill duration toggle */}
-      <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
+      <TabsList className="mb-5 h-auto w-full gap-1 rounded-control border border-border bg-muted p-1">
         {consultationOptions.map((option) => {
           const isActive = activeConsultationOption === option.id;
           return (
             <TabsTrigger
               key={option.id}
               value={option.id}
-              className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
+              className="h-8 flex-1 whitespace-nowrap rounded-[0.3125rem] px-3 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-elevation-1 data-[state=active]:shadow-edge"
             >
               {isActive && (
                 <motion.div
                   layoutId="consultation-duration-pill"
-                  className="absolute inset-0 bg-white rounded-xl shadow-sm"
+                  className="absolute inset-0 bg-white rounded-control shadow-sm"
                   transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
                 />
               )}
@@ -399,28 +399,28 @@ export default function ConsultationPricingToggle({
               {/* Pricing content — no nested dark card, lives directly in glass parent */}
               <div className="space-y-1">
                 <h3 className="text-lg font-bold text-white">{option.title}</h3>
-                <p className="text-xs text-zinc-500">{option.description}</p>
+                <p className="text-sm text-muted-foreground">{option.description}</p>
               </div>
 
               <div className="flex items-end gap-2 my-5">
-                <span className="text-5xl font-bold tracking-tight text-white">
+                <span className="tnum font-display text-3xl font-bold tracking-tight text-foreground">
                   {formatPrice(option.price)}
                 </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ session</span>
+                <span className="mb-1.5 text-sm text-muted-foreground">/ session</span>
               </div>
 
               {option.features && option.features.length > 0 && (
                 <>
-                  <div className="border-t border-white/[0.06] mb-4" />
+                  <div className="mb-4 border-t border-border-subtle" />
                   <div className="space-y-2 mb-5">
-                    <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       Includes
                     </p>
                     <ul className="space-y-2">
                       {option.features.map((feature, index) => (
                         <li
                           key={`feature-${index}`}
-                          className="text-zinc-200 flex items-center text-sm"
+                          className="flex items-center text-sm text-foreground"
                         >
                           <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
                           {feature}
@@ -436,7 +436,7 @@ export default function ConsultationPricingToggle({
               <Button
                 asChild
                 variant="outline"
-                className="w-full mb-3 bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
+                className="mb-3 h-11 w-full rounded-control border border-border bg-background font-medium text-sm text-foreground transition-colors duration-200 hover:bg-muted"
               >
                 <Link
                   href={`/explore/programs/plans/consultations/${option.id}`}
@@ -448,18 +448,18 @@ export default function ConsultationPricingToggle({
               <Dialog>
                 <DialogTrigger asChild>
                   <Button
-                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                    className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                     onClick={handleBookNowClick}
                   >
                     Book Now
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
-                  <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
+                <DialogContent className="max-h-[85dvh] overflow-y-auto rounded-card border border-white/10 bg-neutral-950 p-0 text-neutral-50 shadow-elevation-4">
+                  <DialogHeader className="border-b border-white/10 p-6 lg:p-8">
                     <DialogTitle className="text-xl lg:text-2xl font-semibold">
                       Book {option.title} Consultation
                     </DialogTitle>
-                    <DialogDescription className="text-zinc-400 text-base">
+                    <DialogDescription className="text-neutral-400 text-base">
                       Select a date and time for your {option.duration}{" "}
                       consultation
                     </DialogDescription>
@@ -468,10 +468,10 @@ export default function ConsultationPricingToggle({
                     {/* Calendar Section */}
                     <div>
                       <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
-                        <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                        <CalendarIcon className="mr-2 h-5 w-5 text-neutral-400" />{" "}
                         Select a Date
                       </h3>
-                      <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
+                      <div className="rounded-card border border-white/10 bg-white/[0.04] p-5 lg:p-6">
                         <div className="flex justify-between items-center mb-5">
                           <span className="font-semibold text-white text-lg">
                             {currentDate.toLocaleString("default", {
@@ -485,7 +485,7 @@ export default function ConsultationPricingToggle({
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
+                              className="text-neutral-400 hover:text-white hover:bg-white/10 h-9 px-3"
                               onClick={handleBookNowClick}
                             >
                               Today
@@ -495,7 +495,7 @@ export default function ConsultationPricingToggle({
                               variant="ghost"
                               size="default"
                               aria-label="Previous month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              className="text-neutral-400 hover:text-white hover:bg-white/10 h-9 w-9 text-lg"
                               onClick={() =>
                                 setCurrentDate(
                                   new Date(
@@ -513,7 +513,7 @@ export default function ConsultationPricingToggle({
                               variant="ghost"
                               size="default"
                               aria-label="Next month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              className="text-neutral-400 hover:text-white hover:bg-white/10 h-9 w-9 text-lg"
                               onClick={() =>
                                 setCurrentDate(
                                   new Date(
@@ -528,7 +528,7 @@ export default function ConsultationPricingToggle({
                             </Button>
                           </div>
                         </div>
-                        <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
+                        <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-neutral-400 mb-3">
                           <div>Mo</div>
                           <div>Tu</div>
                           <div>We</div>
@@ -547,13 +547,13 @@ export default function ConsultationPricingToggle({
                     <div>
                       <div className="flex items-center justify-between mb-5">
                         <h3 className="text-lg font-semibold flex items-center text-white">
-                          <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                          <ClockIcon className="mr-2 h-5 w-5 text-neutral-400" />{" "}
                           Available {selectedDuration} hour Slots
                         </h3>
                         {onRefreshSlots && (
                           <button
                             type="button"
-                            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
+                            className="p-2 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
                             title="Refresh slot availability"
                             onClick={async () => {
                               setIsRefreshing(true);
@@ -572,14 +572,14 @@ export default function ConsultationPricingToggle({
                         )}
                       </div>
                       {consultantDetails?.scheduleType && (
-                        <div className="mb-4 p-3 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
-                          <p className="text-sm text-zinc-400">
+                        <div className="mb-4 rounded-card border border-white/10 bg-white/[0.04] p-3">
+                          <p className="text-sm text-neutral-400">
                             This consultant prefers{" "}
                             <span
                               className={`px-2 py-1 rounded text-xs font-medium ${
                                 consultantDetails.scheduleType === "WEEKLY"
-                                  ? "bg-zinc-700 text-zinc-300"
-                                  : "bg-zinc-700 text-zinc-300"
+                                  ? "bg-white/[0.12] text-white"
+                                  : "bg-white/[0.06] text-neutral-300"
                               }`}
                             >
                               {consultantDetails.scheduleType === "WEEKLY"
@@ -602,14 +602,14 @@ export default function ConsultationPricingToggle({
                       </div>
                     </div>
                   </div>
-                  <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex flex-col items-end gap-2 rounded-b-2xl border-t border-zinc-800">
+                  <div className="flex flex-col items-end gap-2 border-t border-white/10 px-6 py-5 lg:px-8">
                     {(paused || cta.hint) && (
-                      <p className="text-xs text-zinc-400 text-right">
+                      <p className="text-xs text-neutral-400 text-right">
                         {paused ? CONSULTANT_PAUSED_HINT : cta.hint}
                       </p>
                     )}
                     <Button
-                      className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base"
+                      className="bg-white text-neutral-950 hover:bg-neutral-200 font-medium px-8 h-12 text-base"
                       onClick={
                         cta.action === "request"
                           ? handleRequestForApproval

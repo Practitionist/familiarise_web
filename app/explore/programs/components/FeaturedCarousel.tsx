@@ -7,7 +7,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { useCurrency } from "@/hooks/useCurrency";
-import { isClassProgram, Program } from "@/lib/explore/programs";
+import { Program } from "@/lib/explore/programs";
+import { programHref as sharedProgramHref } from "@/lib/explore/hrefs";
 
 interface FeaturedCarouselProps {
   programs: Program[];
@@ -16,7 +17,7 @@ interface FeaturedCarouselProps {
 
 function SkeletonSlide() {
   return (
-    <div className="flex-shrink-0 w-full rounded-2xl overflow-hidden border border-border bg-muted animate-pulse">
+    <div className="flex-shrink-0 w-full rounded-card overflow-hidden border border-border bg-muted animate-pulse">
       <div className="flex flex-col md:flex-row h-[320px] md:h-[280px]">
         <div className="md:w-[400px] bg-muted flex-shrink-0 h-[160px] md:h-full" />
         <div className="flex-1 p-6 md:p-8 space-y-4">
@@ -70,15 +71,13 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
     program.consultantProfile?.user?.workExperiences ?? [];
 
   // Plain href (not router.push) so the featured slide prefetches on hover.
-  const programHref = isClassProgram(program)
-    ? `/explore/programs/plans/classes/${program.id}`
-    : `/explore/programs/plans/webinars/${program.id}`;
+  const href = sharedProgramHref(program);
 
   return (
     <div className="relative">
       <Link
-        href={programHref}
-        className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"
+        href={href}
+        className="group bg-card rounded-card overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"
         aria-label={`View details for ${program.title}`}
       >
         <div className="flex flex-col md:flex-row h-auto md:h-[280px]">
@@ -102,7 +101,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
               >
                 {program.type === "class" ? "Class" : "Webinar"}
               </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500 text-white">
+              <span className="inline-flex items-center gap-1 rounded-chip border border-transparent bg-brand px-2 py-0.5 text-xs font-medium text-brand-foreground">
                 <Sparkles className="w-3 h-3" />
                 Featured
               </span>

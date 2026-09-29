@@ -43,7 +43,7 @@ function StaticTopRowsImpl({
       <div className="mb-14">
         <SectionHeader
           title="Familiarise Featured"
-          icon={<Sparkles className="w-5 h-5 text-white" />}
+          icon={<Sparkles />}
         />
         <FeaturedCarousel
           programs={featuredPrograms}
@@ -55,7 +55,7 @@ function StaticTopRowsImpl({
       <div className="mb-14">
         <SectionHeader
           title="Trending Now"
-          icon={<Flame className="w-5 h-5 text-white" />}
+          icon={<Flame />}
           seeAllHref="/explore/programs?sort=trending"
         />
         <ProgramRow
@@ -69,7 +69,7 @@ function StaticTopRowsImpl({
       <div className="mb-14">
         <SectionHeader
           title="Newly Added"
-          icon={<Clock className="w-5 h-5 text-white" />}
+          icon={<Clock />}
           seeAllHref="/explore/programs?sort=newest"
         />
         <ProgramRow
@@ -81,10 +81,7 @@ function StaticTopRowsImpl({
 
       {/* Browse by Category */}
       <div className="mb-14">
-        <SectionHeader
-          title="Browse by Category"
-          icon={<Hash className="w-5 h-5 text-white" />}
-        />
+        <SectionHeader title="Browse by Category" icon={<Hash />} />
         <CategoryGrid
           topics={topics}
           isLoading={topicsLoading}

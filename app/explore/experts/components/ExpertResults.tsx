@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Search } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import { memo, type RefObject } from "react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { ConsultantCard } from "./ConsultantCard";
@@ -22,24 +23,19 @@ interface ExpertResultsProps {
   onSelect?: (consultant: IConsultantCardData) => void;
 }
 
-function EmptyState() {
+/** Was the 6th hand-rolled empty state in scope. Now the shared primitive. */
+function Empty() {
   return (
     <motion.div
-      className="text-center py-16"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.3 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
     >
-      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
-        <Search className="w-10 h-10 text-muted-foreground/70" />
-      </div>
-      <h3 className="text-xl font-semibold text-foreground mb-2">
-        No experts found
-      </h3>
-      <p className="text-muted-foreground max-w-md mx-auto">
-        Try adjusting your filters or search terms to discover more amazing
-        mentors
-      </p>
+      <EmptyState
+        icon={Search}
+        title="No experts match those filters"
+        description="Try clearing a filter or searching a different domain — there are plenty more mentors to meet."
+      />
     </motion.div>
   );
 }
@@ -70,7 +66,7 @@ function ExpertResultsImpl({
         {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
-            className="h-36 animate-pulse rounded-xl bg-muted"
+            className="h-36 animate-pulse rounded-card border border-border bg-card"
           />
         ))}
       </div>
@@ -82,7 +78,7 @@ function ExpertResultsImpl({
       {/* Soft refetch veil — keep stale results visible (no spinner CLS). */}
       {isRefetching && consultants.length > 0 && (
         <div
-          className="pointer-events-none absolute inset-0 z-10 rounded-2xl bg-background/40"
+          className="pointer-events-none absolute inset-0 z-10 rounded-card bg-background/50 backdrop-blur-[1px]"
           aria-hidden
         />
       )}
@@ -102,12 +98,11 @@ function ExpertResultsImpl({
                 viewport={{ once: true }}
                 transition={{ duration: 0.5 }}
               >
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-1 h-8 bg-gradient-to-b from-foreground to-muted-foreground/70 rounded-full" />
-                  <h3 className="text-2xl font-bold text-foreground">
+                <div className="mb-5 flex items-center gap-3">
+                  <h3 className="font-display text-xl font-bold tracking-tight text-foreground">
                     {domain.name}
                   </h3>
-                  <span className="px-3 py-1 bg-muted rounded-full text-sm text-muted-foreground">
+                  <span className="tnum rounded-chip border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                     {domainConsultants.length} expert
                     {domainConsultants.length !== 1 ? "s" : ""}
                   </span>
@@ -149,17 +144,23 @@ function ExpertResultsImpl({
         </div>
       )}
 
-      {showEmpty && <EmptyState />}
+      {showEmpty && <Empty />}
 
       {/* Sentinel for infinite scroll — observed by useInfiniteScroll. */}
       <div ref={sentinelRef} aria-hidden="true" />
 
+      {/* Load-more placeholders. These were the 4th skeleton idiom in scope —
+          the listings had hand-rolled `animate-pulse` divs here, `loading.tsx`
+          had another set, and the programs page used the <Skeleton> primitive
+          with a different fill. All match the real card silhouette now. */}
       {isLoadingMore && (
-        <div className="space-y-4 py-6">
+        <div className="space-y-4 py-6" role="status" aria-live="polite">
+          <span className="sr-only">Loading more experts</span>
           {[1, 2].map((i) => (
             <div
               key={i}
-              className="h-28 animate-pulse rounded-xl bg-muted"
+              aria-hidden="true"
+              className="h-28 animate-pulse rounded-card border border-border bg-card motion-reduce:animate-none"
             />
           ))}
         </div>

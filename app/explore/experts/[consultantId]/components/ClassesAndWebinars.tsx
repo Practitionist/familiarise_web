@@ -119,7 +119,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         <div className="border-b border-border px-6 md:px-8 py-5">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+              <div className="h-9 w-9 rounded-control bg-brand-subtle text-brand-foreground-subtle flex items-center justify-center">
                 <GraduationCap className="w-5 h-5 text-muted-foreground" />
               </div>
               <div>

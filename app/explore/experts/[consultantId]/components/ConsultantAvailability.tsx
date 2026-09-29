@@ -150,9 +150,9 @@ export function ConsultantAvailability({
 
   if (showErrorCard) {
     return (
-      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
+      <div className="relative rounded-card border border-border bg-card p-8 shadow-elevation-1 shadow-edge">
         <div className="relative text-center">
-          <h3 className="text-xl font-bold mb-2 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+          <h3 className="mb-2 font-display text-lg font-semibold tracking-tight text-foreground">
             Consultant Availability
           </h3>
           <p className="text-sm text-muted-foreground mb-4">
@@ -161,7 +161,7 @@ export function ConsultantAvailability({
           <button
             type="button"
             onClick={() => weekQuery.refetch()}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700"
+            className="rounded-control bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             Retry
           </button>
@@ -172,16 +172,16 @@ export function ConsultantAvailability({
 
   if (showLoadingCard) {
     return (
-      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
-        <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+      <div className="relative rounded-card border border-border bg-card p-8 shadow-elevation-1 shadow-edge">
+        <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-card pointer-events-none" />
         <div className="relative">
-          <h3 className="text-xl font-bold mb-4 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+          <h3 className="mb-4 font-display text-lg font-semibold tracking-tight text-foreground">
             Consultant Availability
           </h3>
           <div className="flex items-center justify-center py-8">
             <div className="text-muted-foreground flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-muted-foreground"></div>
-              <span>Loading availability...</span>
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-b-brand motion-reduce:animate-none"></div>
+              <span className="text-sm">Loading availability…</span>
             </div>
           </div>
         </div>
@@ -200,10 +200,10 @@ export function ConsultantAvailability({
       }
     >
       <div className="text-center">
-        <h3 className="text-2xl font-bold mb-3 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+        <h3 className="mb-3 font-display text-lg font-semibold tracking-tight text-foreground">
           Consultant Availability
         </h3>
-        <p className="text-sm text-muted-foreground bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-xl border border-border shadow-sm inline-block">
+        <p className="inline-block max-w-2xl rounded-control border border-border bg-surface px-4 py-2 text-sm text-muted-foreground">
           {consultantDetails.scheduleType === "WEEKLY"
             ? "Weekly schedule. Use the 'Book Now' button to schedule a meeting."
             : "Custom schedule. Use the arrows to navigate weeks. Use the 'Book Now' button to schedule a meeting."}

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "@/lib/explore/programs";
+import { programHref } from "@/lib/explore/hrefs";
 import { displayedScore } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
@@ -21,37 +22,45 @@ interface ProgramCardProps {
   viewerOrgs?: Record<string, string>;
 }
 
-// Curation state is a neutral taxonomy, not a status — colour is reserved for
-// destructive/success/warning/info here, so these read monochrome (filled for
-// the editorial pick, muted for the derived ones) and survive dark mode.
+// Curation state is a neutral taxonomy, not a status — so these use the
+// `secondary`/`outline` badge variants rather than the reserved status colours.
+// The editorial pick takes the brand, which is the one place on the card where
+// a saturated fill earns its keep: it is the difference between "someone chose
+// this" and "this is popular".
 const badgeConfig: Record<
   ProgramBadge,
   { label: string; icon: React.ReactNode; className: string }
 > = {
   featured: {
     label: "Familiarise Pick",
-    icon: <Sparkles className="w-3 h-3" />,
-    className: "bg-primary text-primary-foreground",
+    icon: <Sparkles className="h-3 w-3" />,
+    className: "bg-brand text-brand-foreground border-transparent",
   },
   trending: {
     label: "Trending",
-    icon: <Flame className="w-3 h-3" />,
-    className: "bg-background/90 text-foreground border border-border",
+    icon: <Flame className="h-3 w-3" />,
+    className: "bg-card/95 text-foreground border-border backdrop-blur",
   },
   new: {
     label: "New",
-    icon: <Sparkles className="w-3 h-3" />,
-    className: "bg-background/90 text-foreground border border-border",
+    icon: <Sparkles className="h-3 w-3" />,
+    className: "bg-card/95 text-foreground border-border backdrop-blur",
   },
 };
 
+/**
+ * `backdrop-blur` on the image overlays is what makes them survive an
+ * arbitrary cover photo. A solid pill over a white thumbnail was invisible;
+ * the old code leaned on `bg-black/70` for one of them and nothing for the
+ * others.
+ */
 function TypeBadge({ type }: { type: "class" | "webinar" }) {
   return (
     <span
-      className={`px-3 py-1 rounded-full text-xs font-medium ${
+      className={`inline-flex items-center rounded-chip border px-2 py-0.5 text-xs font-medium backdrop-blur ${
         type === "class"
-          ? "bg-primary text-primary-foreground"
-          : "bg-card text-foreground"
+          ? "border-transparent bg-brand text-brand-foreground"
+          : "border-border bg-card/95 text-foreground"
       }`}
     >
       {type === "class" ? "Class" : "Webinar"}
@@ -127,9 +136,7 @@ function getInstructorWorkExperiences(program: Program): Array<{
  * router.push, which defeats prefetch entirely).
  */
 function planHref(program: Program): string {
-  return isClassProgram(program)
-    ? `/explore/programs/plans/classes/${program.id}`
-    : `/explore/programs/plans/webinars/${program.id}`;
+  return programHref(program);
 }
 
 function GridCard({
@@ -147,7 +154,7 @@ function GridCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+      className="group flex h-full cursor-pointer flex-col overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -175,7 +182,7 @@ function GridCard({
       </div>
 
       <div className="p-5 flex-1 flex flex-col">
-        <h3 className="text-lg font-semibold text-foreground mb-2 line-clamp-1 group-hover:text-muted-foreground transition-colors">
+        <h3 className="mb-2 line-clamp-1 font-display text-base font-semibold leading-snug tracking-tight text-foreground transition-colors group-hover:text-brand-foreground-subtle">
           {program.title}
         </h3>
         <p className="text-sm text-muted-foreground mb-4 line-clamp-2 flex-1">
@@ -204,7 +211,7 @@ function GridCard({
 
         <div className="flex items-center justify-between pt-4 border-t border-border">
           <div className="flex items-center gap-2">
-            <div className="text-xl font-bold text-foreground">
+            <div className="tnum font-display text-lg font-bold text-foreground">
               {formatPrice(program.price)}
             </div>
             {rating !== null && (
@@ -229,7 +236,7 @@ function GridCard({
             width={12}
             height={12}
           />
-          <span className="text-[10px] text-muted-foreground/70">
+          <span className="text-xs text-muted-foreground">
             on Familiarise
           </span>
         </div>
@@ -253,7 +260,7 @@ function ListCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
+      className="group flex cursor-pointer overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative w-48 md:w-64 flex-shrink-0">
@@ -310,7 +317,7 @@ function ListCard({
         <div>
           <div className="flex items-center justify-between mt-4">
             <div className="flex items-center gap-2">
-              <div className="text-xl font-bold text-foreground">
+              <div className="tnum font-display text-lg font-bold text-foreground">
                 {formatPrice(program.price)}
               </div>
               {rating !== null && (
@@ -336,7 +343,7 @@ function ListCard({
               width={12}
               height={12}
             />
-            <span className="text-[10px] text-muted-foreground/70">
+            <span className="text-xs text-muted-foreground">
               on Familiarise
             </span>
           </div>
@@ -359,7 +366,7 @@ function CarouselCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
+      className="group flex w-[300px] shrink-0 cursor-pointer flex-col overflow-hidden rounded-card border border-border bg-card shadow-elevation-1 shadow-edge transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-border hover:shadow-elevation-3 md:w-[340px]"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -389,7 +396,7 @@ function CarouselCard({
         </p>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="text-lg font-bold text-foreground">
+            <div className="tnum font-display text-lg font-bold text-foreground">
               {formatPrice(program.price)}
             </div>
             {workExperiences.length > 0 && (

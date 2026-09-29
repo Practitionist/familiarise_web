@@ -336,17 +336,17 @@ export function ExpertProfileClient({
           aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
           className={cn(
             "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
-            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
+            isSelected && "bg-brand font-medium text-brand-foreground shadow-elevation-1",
             !isSelected &&
               bookable &&
-              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
+              "font-semibold text-foreground hover:bg-muted",
             !isSelected &&
               (state === "unknown" || state === "today+unknown") &&
-              "font-medium text-zinc-300 hover:bg-zinc-700/60",
+              "font-medium text-foreground hover:bg-muted/60",
             !isSelected &&
               (state === "none" || state === "today+none") &&
-              "text-zinc-500",
-            state === "past" && "opacity-40 text-zinc-500",
+              "text-muted-foreground",
+            state === "past" && "opacity-40 text-muted-foreground",
             marksLoading &&
               state !== "past" &&
               !isSelected &&
@@ -373,7 +373,7 @@ export function ExpertProfileClient({
         <p
           key="marks-error"
           role="status"
-          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
+          className="col-span-7 pt-2 text-center text-xs text-muted-foreground"
         >
           Couldn&apos;t load availability marks — pick a day to see its times.
         </p>,
@@ -391,26 +391,31 @@ export function ExpertProfileClient({
   ]);
 
   return (
-    <main className="bg-muted">
+    <main className="bg-surface">
       {/* Back Navigation */}
       <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
+        <div className="w-full px-4 py-4 sm:px-6 lg:px-8">
           <Link
             href="/explore/experts"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            className="inline-flex items-center gap-2 rounded-control text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Experts
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            Back to experts
           </Link>
         </div>
       </div>
 
-      {/* Main Content Area - Profile, About, Availability + Pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
-        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+      {/* Main Content Area - Profile, About, Availability + Pricing
+
+          One grid instead of three separate `flex-col xl:flex-row` rows, two of
+          which existed only to hang a blank `w-[450px] 2xl:w-[500px]` spacer
+          div beside Classes & Webinars and Reviews so they would not run under
+          the pricing rail. The rail width is now a single named column. */}
+      <div className="w-full px-4 md:px-8 lg:px-8 py-8 md:py-12">
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
           {/* Main Content */}
           <motion.div
-            className="flex-1 min-w-0"
+            className="min-w-0"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
@@ -450,7 +455,7 @@ export function ExpertProfileClient({
           {/* Sidebar - Pricing */}
           <motion.div
             ref={pricingRef}
-            className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
+            className="min-w-0"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
@@ -476,11 +481,12 @@ export function ExpertProfileClient({
         </div>
       </div>
 
-      {/* Classes & Webinars - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-8">
-        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+      {/* Classes & Webinars — column 1, so the pricing rail's own height does
+          not stretch it. Same grid, no spacer div. */}
+      <div className="w-full px-4 pb-8 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
           <motion.div
-            className="flex-1 min-w-0"
+            className="min-w-0"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
@@ -490,16 +496,15 @@ export function ExpertProfileClient({
               webinarPlans={consultantDetails.webinarPlans}
             />
           </motion.div>
-          {/* Spacer to match pricing sidebar width */}
-          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+          <div aria-hidden="true" className="hidden xl:block" />
         </div>
       </div>
 
-      {/* Reviews - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-12">
-        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+      {/* Reviews */}
+      <div className="w-full px-4 pb-12 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_var(--profile-rail)] xl:gap-12">
           <motion.div
-            className="flex-1 min-w-0"
+            className="min-w-0"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
@@ -529,8 +534,7 @@ export function ExpertProfileClient({
               }
             />
           </motion.div>
-          {/* Spacer to match pricing sidebar width */}
-          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+          <div aria-hidden="true" className="hidden xl:block" />
         </div>
       </div>
     </main>

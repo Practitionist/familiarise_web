@@ -188,7 +188,7 @@ export function ClientWebinarRegistration({
           {isFull && (
             <Badge
               variant="secondary"
-              className="mb-4 bg-amber-100 text-amber-800"
+              className="mb-4 rounded-control border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-foreground"
             >
               Sold out — all {capacity.max} seats taken
             </Badge>
@@ -249,7 +249,7 @@ export function ClientWebinarRegistration({
           </p>
           <Badge
             variant="secondary"
-            className="mb-4 bg-amber-100 text-amber-800"
+            className="mb-4 rounded-control border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-foreground"
           >
             Sold out — all {capacity.max} seats taken
           </Badge>

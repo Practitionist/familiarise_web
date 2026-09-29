@@ -1,9 +1,18 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { PlayCircle, Clock } from "lucide-react";
+import { PlayCircle, Clock, ArrowRight } from "lucide-react";
+
 import { listPublicRecordings } from "@/lib/data/recordings-explore";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreCard, ExploreCardMeta, ExploreCardTitle } from "@/components/explore/ExploreCard";
+import {
+  ExploreHeader,
+  ExploreShell,
+} from "@/components/explore/ExploreShell";
+import { exploreHref } from "@/lib/explore/hrefs";
 
 // ISR — same rationale as /explore/experts: anonymous, session-free listing;
 // prerendered HTML off the CDN. Publish/unpublish purge on demand at the
@@ -29,78 +38,134 @@ async function RecordingsGrid() {
 
   if (items.length === 0) {
     return (
-      <div className="py-24 text-center text-muted-foreground">
-        <PlayCircle className="mx-auto mb-4 h-12 w-12 opacity-40" />
-        <p className="text-lg font-medium">No published recordings yet</p>
-        <p className="mt-1 text-sm">
-          Consultants can publish webinar and class replays from their dashboard.
-        </p>
-      </div>
+      <EmptyState
+        icon={PlayCircle}
+        title="No published recordings yet"
+        description="Consultants can publish webinar and class replays from their dashboard — check back soon."
+      />
     );
   }
 
   return (
-    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {items.map((rec) => (
         <Link
           key={rec.id}
-          href={rec.slug ? `/explore/recordings/${rec.slug}` : `/explore/recordings`}
-          className="group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-shadow"
+          href={
+            rec.slug
+              ? exploreHref.recordings.detail(rec.slug)
+              : exploreHref.recordings.list
+          }
+          className="block h-full"
         >
-          <div className="aspect-video relative bg-muted">
-            {rec.thumbnailUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={rec.thumbnailUrl}
-                alt={rec.listingTitle}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center">
-                <PlayCircle className="h-10 w-10 text-muted-foreground/50" />
-              </div>
-            )}
-            <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs text-white flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {rec.durationInMinutes}m
-            </span>
-          </div>
-          <div className="p-4 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                {rec.planType}
-              </span>
-              <span className="font-semibold text-primary">
-                {formatPrice(rec.listPricePaise)}
+          <ExploreCard className="flex h-full flex-col overflow-hidden">
+            <div className="relative aspect-video overflow-hidden bg-muted">
+              {rec.thumbnailUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={rec.thumbnailUrl}
+                  alt=""
+                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] motion-reduce:transform-none"
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center">
+                  <PlayCircle
+                    className="h-10 w-10 text-muted-foreground/50"
+                    aria-hidden="true"
+                  />
+                </div>
+              )}
+              <span className="tnum absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-chip bg-black/70 px-1.5 py-0.5 text-xs text-white backdrop-blur">
+                <Clock className="h-3 w-3" aria-hidden="true" />
+                {rec.durationInMinutes}m
               </span>
             </div>
-            <h3 className="line-clamp-2 text-sm font-medium group-hover:text-primary transition-colors">
-              {rec.listingTitle}
-            </h3>
-            <p className="text-xs text-muted-foreground truncate">
-              {rec.consultant.name}
-              {rec.consultant.headline ? ` · ${rec.consultant.headline}` : ""}
-            </p>
-          </div>
+
+            <div className="flex flex-1 flex-col p-4">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  {rec.planType}
+                </span>
+                <span className="tnum font-display text-base font-bold text-foreground">
+                  {formatPrice(rec.listPricePaise)}
+                </span>
+              </div>
+              <ExploreCardTitle className="line-clamp-2">
+                {rec.listingTitle}
+              </ExploreCardTitle>
+              <ExploreCardMeta className="mt-1.5">
+                {rec.consultant.name}
+                {rec.consultant.headline
+                  ? ` · ${rec.consultant.headline}`
+                  : ""}
+              </ExploreCardMeta>
+            </div>
+          </ExploreCard>
         </Link>
       ))}
     </div>
   );
 }
 
+/**
+ * A 4-up grid of video thumbnails, under one header.
+ *
+ * The previous version was a bare `<img>` (no `next/image`, so no AVIF/WebP
+ * and no responsive `sizes`), `rounded-xl border bg-card` with
+ * `hover:shadow-md` — a fourth shadow value against the other cards' `xl` —
+ * and a `text-[10px]`-adjacent `text-xs` price sitting *above* the title at
+ * `text-primary`. There was no page header, and the empty state was a bare
+ * centred paragraph.
+ */
 export default function ExploreRecordingsPage() {
   return (
-    <div className="container mx-auto px-4 py-10 space-y-8">
-      <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight">Recordings Library</h1>
-        <p className="text-muted-foreground max-w-2xl mx-auto">
-          Replays of paid webinars and classes, published by their consultants.
-          Buy once, watch anytime.
-        </p>
-      </header>
-      <Suspense fallback={<div className="py-24 text-center text-muted-foreground">Loading recordings…</div>}>
-        <RecordingsGrid />
-      </Suspense>
-    </div>
+    <main className="min-h-screen bg-background">
+      <section className="border-b border-border-subtle bg-surface py-14 md:py-20">
+        <ExploreShell width="wide">
+          <ExploreHeader
+            eyebrow="Watch on your schedule"
+            title="Recordings library"
+            description="Replays of paid webinars and classes, published by their consultants. Buy once, watch anytime."
+          />
+        </ExploreShell>
+      </section>
+
+      <section className="py-10 md:py-14">
+        <ExploreShell width="wide">
+          <Suspense
+            fallback={
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="overflow-hidden rounded-card border border-border bg-card"
+                  >
+                    <Skeleton className="aspect-video w-full rounded-none" />
+                    <div className="space-y-2 p-4">
+                      <Skeleton className="h-4 w-1/3" />
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-3 w-2/3" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            }
+          >
+            <RecordingsGrid />
+          </Suspense>
+
+          <p className="mt-10 flex items-center gap-1.5 text-sm text-muted-foreground">
+            Looking for live sessions instead?
+            <a
+              href={exploreHref.programs.list}
+              className="inline-flex items-center gap-1 font-medium text-brand-foreground-subtle underline-offset-4 hover:underline"
+            >
+              Browse programs
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
+          </p>
+        </ExploreShell>
+      </section>
+    </main>
   );
 }

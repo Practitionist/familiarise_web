@@ -53,6 +53,16 @@ const config: Config = {
           raw: "(orientation: landscape) and (max-height: 500px)",
         },
       },
+      width: {
+        /**
+         * The expert profile's right-hand rail. Was a literal
+         * `w-[450px] 2xl:w-[500px]` repeated in three places — twice as a
+         * blank spacer div whose only job was to stop a section running under
+         * the pricing panel. A named token means the grid track and the panel
+         * cannot disagree.
+         */
+        "profile-rail": "clamp(22rem, 26vw, 27rem)",
+      },
       borderRadius: {
         // SEMANTIC, not an arithmetic remap of Tailwind's defaults.
         //
@@ -104,6 +114,9 @@ const config: Config = {
           DEFAULT: "hsl(var(--surface))",
           raised: "hsl(var(--surface-raised))",
           sunken: "hsl(var(--surface-sunken))",
+          // The banded hero band. Intentionally does not invert in dark —
+          // see the token's comment in globals.css.
+          inverse: "hsl(var(--surface-inverse))",
         },
         // The brand accent, kept separate from `--primary` on purpose:
         // `--primary` is load-bearing across every dashboard in this app, so

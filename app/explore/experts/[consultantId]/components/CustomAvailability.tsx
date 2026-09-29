@@ -64,12 +64,12 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
+    <div className="relative rounded-card border border-border bg-card p-8 shadow-elevation-1 shadow-edge">
       {/* Glossy overlay effect */}
-      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-card pointer-events-none" />
 
       <div className="relative">
-        <h3 className="text-2xl font-bold mb-6 text-center text-gray-800 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+        <h3 className="mb-6 text-center font-display text-lg font-semibold tracking-tight text-foreground">
           Custom Availability
         </h3>
 
@@ -79,10 +79,10 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           <button
             onClick={onPrevWeek}
             disabled={!onPrevWeek}
-            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
+            className={`flex-shrink-0 mt-2 p-2 rounded-control border shadow-sm transition-all ${
               onPrevWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
-                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
+                ? "cursor-pointer border border-border bg-muted text-foreground transition-colors hover:bg-accent"
+                : "bg-muted border-border/50 text-muted-foreground cursor-not-allowed"
             }`}
             aria-label="Previous week"
           >
@@ -95,11 +95,11 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
             <div className="grid grid-cols-7 gap-4 mb-6">
               {mergedDays.map(({ date }) => (
                 <div key={date.toISOString()} className="text-center">
-                  <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
-                    <div className="text-sm font-semibold text-gray-800">
+                  <div className="rounded-control border border-border bg-muted px-3 py-2">
+                    <div className="text-sm font-semibold text-foreground">
                       {date.toLocaleDateString(undefined, { weekday: "short" })}
                     </div>
-                    <div className="text-xs text-gray-600 mt-1">
+                    <div className="text-xs text-foreground mt-1">
                       {date.toLocaleDateString(undefined, {
                         month: "short",
                         day: "numeric",
@@ -134,7 +134,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                           <div
                             key={slot.id}
                             className={`
-                              w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
+                              w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-control
                               border shadow-lg backdrop-blur-sm relative overflow-hidden
                               ${
                                 isFullyBooked
@@ -148,25 +148,25 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                             `}
                           >
                             {/* Glossy overlay for buttons */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-control pointer-events-none" />
 
                             <div className="relative flex flex-col items-center justify-center h-full space-y-1">
                               {/* Time range in one line */}
-                              <div className="font-medium leading-tight text-center text-[11px]">
+                              <div className="font-medium leading-tight text-center text-xs">
                                 {roundTime(slot.localStartTime)} -{" "}
                                 {roundTime(slot.localEndTime)}
                               </div>
 
                               {/* Status and date for booked/allocated slots */}
                               {isFullyBooked && (
-                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                <div className="text-xs font-semibold opacity-90 text-center leading-tight">
                                   Booked
                                   <br />
                                   {bookedDate && `(${bookedDate})`}
                                 </div>
                               )}
                               {isPartiallyBooked && (
-                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                <div className="text-xs font-semibold opacity-90 text-center leading-tight">
                                   Partially
                                   <br />
                                   Booked {bookedDate && `(${bookedDate})`}
@@ -175,7 +175,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                               {slot.isAllocated &&
                                 !isFullyBooked &&
                                 !isPartiallyBooked && (
-                                  <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                  <div className="text-xs font-semibold opacity-90 text-center leading-tight">
                                     Request
                                     <br />
                                     Approval {bookedDate && `(${bookedDate})`}
@@ -186,7 +186,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                         );
                       })
                     ) : (
-                      <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
+                      <div className="flex min-h-[4.5rem] items-center justify-center rounded-control border border-border-subtle bg-surface-sunken px-2 text-center text-xs text-muted-foreground">
                         No slots
                       </div>
                     )}
@@ -200,7 +200,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
               <div className="flex justify-center mt-4">
                 <button
                   onClick={() => setIsExpanded((prev) => !prev)}
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer shadow-sm"
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-control border border-emerald-200 transition-colors cursor-pointer shadow-sm"
                 >
                   {isExpanded ? (
                     <>
@@ -222,10 +222,10 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           <button
             onClick={onNextWeek}
             disabled={!onNextWeek}
-            className={`flex-shrink-0 mt-2 p-2 rounded-xl border shadow-sm transition-all ${
+            className={`flex-shrink-0 mt-2 p-2 rounded-control border shadow-sm transition-all ${
               onNextWeek
-                ? "bg-gradient-to-b from-gray-100 to-gray-200/80 border-gray-300/50 text-gray-700 hover:from-gray-200 hover:to-gray-300/80 cursor-pointer"
-                : "bg-gray-50 border-gray-200/50 text-gray-300 cursor-not-allowed"
+                ? "cursor-pointer border border-border bg-muted text-foreground transition-colors hover:bg-accent"
+                : "bg-muted border-border/50 text-muted-foreground cursor-not-allowed"
             }`}
             aria-label="Next week"
           >

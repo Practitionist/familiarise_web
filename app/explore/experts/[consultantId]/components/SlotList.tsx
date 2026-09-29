@@ -34,7 +34,7 @@ export function SlotList({
 
   if (bookable.length === 0) {
     return (
-      <p className="py-4 text-center text-sm text-zinc-500">
+      <p className="py-4 text-center text-sm text-muted-foreground">
         {takenLine
           ? `${takenLine}. Pick another day.`
           : "No available slots for the selected date."}
@@ -55,10 +55,10 @@ export function SlotList({
             type="button"
             aria-pressed={isSelected}
             className={cn(
-              "w-full rounded-xl border p-4 text-left text-base font-medium transition-all duration-200",
+              "w-full rounded-control border p-4 text-left text-base font-medium transition-all duration-200",
               isSelected
-                ? "border-white bg-white text-zinc-900 shadow-md ring-2 ring-white"
-                : "border-white/[0.12] bg-transparent text-zinc-200 hover:bg-white/[0.06]",
+                ? "border-brand-border bg-brand text-brand-foreground shadow-elevation-1"
+                : "border-white/[0.12] bg-transparent text-neutral-200 hover:bg-white/[0.06]",
             )}
             onClick={() => onSelect(slot)}
           >
@@ -70,10 +70,10 @@ export function SlotList({
               {needsRequest && (
                 <span
                   className={cn(
-                    "rounded-md border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide",
+                    "rounded-md border px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide",
                     isSelected
-                      ? "border-zinc-300 text-zinc-600"
-                      : "border-white/[0.16] text-zinc-400",
+                      ? "border-border text-muted-foreground"
+                      : "border-white/[0.16] text-muted-foreground",
                   )}
                 >
                   Request
@@ -84,7 +84,7 @@ export function SlotList({
         );
       })}
       {takenLine && (
-        <p className="pt-1 text-xs text-zinc-500" aria-live="polite">
+        <p className="pt-1 text-xs text-muted-foreground" aria-live="polite">
           {takenLine}
         </p>
       )}

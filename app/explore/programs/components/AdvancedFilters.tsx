@@ -119,23 +119,25 @@ function AdvancedFiltersImpl({
     .filter(Boolean);
 
   return (
-    <div className="bg-muted rounded-2xl p-6 border border-border">
+    <div className="rounded-card border border-border bg-card p-5 shadow-elevation-1 shadow-edge sm:p-6">
       <div className="flex items-center gap-2 mb-6">
         <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
           <SlidersHorizontal className="w-5 h-5 text-primary-foreground" />
         </div>
         <div>
-          <h3 className="font-semibold text-foreground">Filter Programs</h3>
+          <h3 className="font-display text-base font-semibold tracking-tight text-foreground">
+          Filter programs
+        </h3>
           <p className="text-sm text-muted-foreground">
             Find the perfect program for you
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {/* Topics Multi-select */}
         <div className="relative" ref={topicRef}>
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+          <Label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Topics
           </Label>
           <div>
@@ -175,7 +177,7 @@ function AdvancedFiltersImpl({
 
         {/* Price Range */}
         <div>
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+          <Label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Price
           </Label>
           <Select value={currentPriceRange} onValueChange={handlePriceChange}>
@@ -194,7 +196,7 @@ function AdvancedFiltersImpl({
 
         {/* Language */}
         <div>
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+          <Label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Language
           </Label>
           <Select
@@ -218,7 +220,7 @@ function AdvancedFiltersImpl({
 
         {/* Level */}
         <div>
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+          <Label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Level
           </Label>
           <Select value={selectedLevel} onValueChange={onLevelChange}>
@@ -238,7 +240,7 @@ function AdvancedFiltersImpl({
 
         {/* Sort */}
         <div>
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+          <Label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Sort By
           </Label>
           <Select
@@ -263,7 +265,7 @@ function AdvancedFiltersImpl({
 
         {/* Search + View Mode */}
         <div>
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+          <Label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Search
           </Label>
           <div className="flex gap-2">

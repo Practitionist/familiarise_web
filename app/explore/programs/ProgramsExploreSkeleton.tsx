@@ -4,22 +4,22 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function ProgramsExploreSkeleton() {
   return (
     <main className="min-h-screen bg-background">
-      <section className="relative bg-zinc-950 px-4 pb-20 pt-32 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1600px] space-y-6">
-          <Skeleton className="h-6 w-28 rounded-full bg-zinc-800" />
-          <Skeleton className="h-12 w-full max-w-xl bg-zinc-800" />
-          <Skeleton className="h-5 w-full max-w-lg bg-zinc-800" />
+      <section className="relative bg-surface-inverse px-4 pb-20 pt-32 md:px-8 lg:px-12">
+        <div className="mx-auto max-w-[1400px] space-y-6">
+          <Skeleton className="h-6 w-28 rounded-full bg-white/10" />
+          <Skeleton className="h-12 w-full max-w-xl bg-white/10" />
+          <Skeleton className="h-5 w-full max-w-lg bg-white/10" />
           <div className="grid max-w-xl grid-cols-2 gap-4 pt-4 sm:grid-cols-4">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="space-y-2">
-                <Skeleton className="h-8 w-14 bg-zinc-800" />
-                <Skeleton className="h-3 w-20 bg-zinc-800" />
+                <Skeleton className="h-8 w-14 bg-white/10" />
+                <Skeleton className="h-3 w-20 bg-white/10" />
               </div>
             ))}
           </div>
         </div>
       </section>
-      <section className="mx-auto max-w-[1600px] space-y-8 px-4 py-10 md:px-8 md:py-16 lg:px-12">
+      <section className="mx-auto max-w-[1400px] space-y-8 px-4 py-10 md:px-8 md:py-16 lg:px-12">
         <div className="flex flex-wrap gap-2">
           {[1, 2, 3, 4].map((i) => (
             <Skeleton key={i} className="h-10 w-28 rounded-full" />

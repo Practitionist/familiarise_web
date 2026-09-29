@@ -31,7 +31,7 @@ export function AboutSection({
       {/* About */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+          <div className="h-9 w-9 rounded-control bg-brand-subtle text-brand-foreground-subtle flex items-center justify-center">
             <User2 className="w-4 h-4 text-muted-foreground" />
           </div>
           <h3 className="text-lg font-semibold text-foreground">About</h3>
@@ -55,7 +55,7 @@ export function AboutSection({
       {/* Education & Background */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+          <div className="h-9 w-9 rounded-control bg-brand-subtle text-brand-foreground-subtle flex items-center justify-center">
             <GraduationCap className="w-4 h-4 text-muted-foreground" />
           </div>
           <h3 className="text-lg font-semibold text-foreground">
@@ -76,7 +76,7 @@ export function AboutSection({
       {/* Skills & Specialties */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+          <div className="h-9 w-9 rounded-control bg-brand-subtle text-brand-foreground-subtle flex items-center justify-center">
             <Sparkles className="w-4 h-4 text-muted-foreground" />
           </div>
           <h3 className="text-lg font-semibold text-foreground">

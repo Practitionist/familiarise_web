@@ -1,55 +1,51 @@
 "use client";
 
-import { memo } from "react";
-import { GraduationCap, Layers, Video } from "lucide-react";
-import { ProgramType } from "@/lib/explore/programs";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 
-interface ProgramTabsProps {
-  activeTab: ProgramType;
-  onTabChange: (tab: ProgramType) => void;
-}
+export type ProgramTypeTab = "all" | "class" | "webinar";
 
-const tabs: { value: ProgramType; label: string; icon: React.ReactNode }[] = [
-  {
-    value: "all",
-    label: "All",
-    icon: <Layers className="w-4 h-4" />,
-  },
-  {
-    value: "class",
-    label: "Classes",
-    icon: <GraduationCap className="w-4 h-4" />,
-  },
-  {
-    value: "webinar",
-    label: "Webinars",
-    icon: <Video className="w-4 h-4" />,
-  },
-];
+/**
+ * Now `SegmentedControl`.
+ *
+ * This was the worst of the four hand-rolled segmented controls in the app: it
+ * looked like a tablist and announced as **nothing at all** — no
+ * `role`, no `aria-pressed`, just `isActive` driving a background colour. A
+ * screen-reader user had no way to know which of Classes / Webinars / All was
+ * currently applied.
+ *
+ * It is still deliberately NOT a `role="tablist"`. These filter the results
+ * list in place; they do not own `tabpanel`s, and `tablist` promises an
+ * arrow-key roving-focus contract that a filter toggle does not implement.
+ * `role="group"` + `aria-pressed` is the accurate signal.
+ */
+export default function ProgramTabs({
+  activeTab,
+  onTabChange,
+  counts,
+}: {
+  activeTab: ProgramTypeTab;
+  onTabChange: (tab: ProgramTypeTab) => void;
+  /** Optional per-tab result counts, announced but not rendered. */
+  counts?: Partial<Record<ProgramTypeTab, number>>;
+}) {
+  const options: { value: ProgramTypeTab; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "class", label: "Classes" },
+    { value: "webinar", label: "Webinars" },
+  ];
 
-function ProgramTabsImpl({ activeTab, onTabChange }: ProgramTabsProps) {
   return (
-    <div className="flex items-center gap-2 p-1.5 bg-muted rounded-xl w-fit">
-      {tabs.map((tab) => {
-        const isActive = activeTab === tab.value;
-        return (
-          <button
-            key={tab.value}
-            onClick={() => onTabChange(tab.value)}
-            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-              isActive
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted-foreground/10"
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      label="Program type"
+      value={activeTab}
+      onChange={onTabChange}
+      options={options.map((o) => ({
+        ...o,
+        srSuffix:
+          typeof counts?.[o.value] === "number"
+            ? `, ${counts[o.value]} available`
+            : undefined,
+      }))}
+    />
   );
 }
-
-const ProgramTabs = memo(ProgramTabsImpl);
-export default ProgramTabs;

@@ -277,7 +277,7 @@ export default function SubscriptionPricingToggle({
 
   if (subscriptionOptions.length === 0) {
     return (
-      <div className="w-full p-8 text-center text-zinc-400">
+      <div className="w-full py-8 text-center text-sm text-muted-foreground">
         <p>No subscription plans available at the moment.</p>
       </div>
     );
@@ -289,10 +289,10 @@ export default function SubscriptionPricingToggle({
   ) {
     return (
       <div className="w-full p-8 text-center space-y-3">
-        <h3 className="text-2xl font-medium tracking-tight text-zinc-300">
+        <h3 className="font-display text-lg font-semibold tracking-tight text-foreground">
           Consultee Access Required
         </h3>
-        <p className="text-zinc-500">
+        <p className="text-neutral-400">
           To subscribe to services, please sign in with a consultee account.
         </p>
       </div>
@@ -306,19 +306,19 @@ export default function SubscriptionPricingToggle({
       className="w-full space-y-5"
     >
       {/* Segmented pill duration toggle */}
-      <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
+      <TabsList className="mb-5 h-auto w-full gap-1 rounded-control border border-border bg-muted p-1">
         {subscriptionOptions.map((option) => {
           const isActive = activeSubscriptionOption === option.id;
           return (
             <TabsTrigger
               key={option.id}
               value={option.id}
-              className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
+              className="h-8 flex-1 whitespace-nowrap rounded-[0.3125rem] px-3 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-elevation-1 data-[state=active]:shadow-edge"
             >
               {isActive && (
                 <motion.div
                   layoutId="subscription-duration-pill"
-                  className="absolute inset-0 bg-white rounded-xl shadow-sm"
+                  className="absolute inset-0 bg-white rounded-control shadow-sm"
                   transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
                 />
               )}
@@ -345,7 +345,7 @@ export default function SubscriptionPricingToggle({
               {/* Pricing content — lives directly in glass parent */}
               <div className="space-y-1">
                 <h3 className="text-lg font-bold text-white">{option.title}</h3>
-                <p className="text-xs text-zinc-500">{option.description}</p>
+                <p className="text-sm text-muted-foreground">{option.description}</p>
               </div>
 
               <div className="flex items-end gap-2 my-5">
@@ -355,27 +355,27 @@ export default function SubscriptionPricingToggle({
                   `formatPrice` took INR paise and applied the viewer's FX rate,
                   which relabelled the plan and disagreed with the trial line
                   two elements away. */}
-                <span className="text-5xl font-bold tracking-tight text-white">
+                <span className="tnum font-display text-3xl font-bold tracking-tight text-foreground">
                   {formatCurrencyAmount(
                     option.price,
                     option.priceCurrency || "INR",
                   )}
                 </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
+                <span className="text-neutral-400 text-sm mb-1.5">/ month</span>
               </div>
 
               {option.features && option.features.length > 0 && (
                 <>
-                  <div className="border-t border-white/[0.06] mb-4" />
+                  <div className="mb-4 border-t border-border-subtle" />
                   <div className="space-y-2 mb-5">
-                    <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       Includes
                     </p>
                     <ul className="space-y-2">
                       {option.features?.map((feature, index) => (
                         <li
                           key={`feature-${index}`}
-                          className="text-zinc-200 flex items-center text-sm"
+                          className="flex items-center text-sm text-foreground"
                         >
                           <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
                           {feature}
@@ -391,10 +391,10 @@ export default function SubscriptionPricingToggle({
                 {/* Trial Button */}
                 {selectedPlanDetails?.trialEnabled && (
                   <Button
-                    className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
+                    className={`w-full font-semibold rounded-control h-12 text-sm transition-all duration-200 ${
                       trialEligibility.isEligible && !trialEligibility.isLoading
                         ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
-                        : "bg-zinc-700/50 text-zinc-500 cursor-not-allowed"
+                        : "bg-white/[0.12]/50 text-neutral-400 cursor-not-allowed"
                     }`}
                     disabled={
                       !trialEligibility.isEligible || trialEligibility.isLoading
@@ -440,7 +440,7 @@ export default function SubscriptionPricingToggle({
                   <Button
                     asChild
                     variant="outline"
-                    className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
+                    className="w-full bg-white/[0.05] border border-white/[0.12] text-neutral-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-control h-11 text-sm transition-all duration-200"
                   >
                     <Link
                       href={`/explore/programs/plans/subscriptions/${selectedPlanDetails.id}`}
@@ -453,7 +453,7 @@ export default function SubscriptionPricingToggle({
 
                 {/* Primary CTA */}
                 <Button
-                  className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                  className="w-full bg-white text-neutral-950 hover:bg-neutral-200 font-semibold rounded-control h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                   onClick={handleChoosePlan}
                 >
                   Subscribe
@@ -466,12 +466,12 @@ export default function SubscriptionPricingToggle({
 
       {/* Start-date dialog (#1766) */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
-          <DialogHeader className="p-6 border-b border-zinc-800">
+        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-neutral-900 text-white p-0 border border-white/10 rounded-card shadow-2xl z-[1002] scrollbar-hide">
+          <DialogHeader className="p-6 border-b border-white/10">
             <DialogTitle className="text-xl font-semibold">
               When do you want to start?
             </DialogTitle>
-            <DialogDescription className="text-zinc-400">
+            <DialogDescription className="text-neutral-400">
               Your consultant schedules one cycle at a time; the first cycle
               starts on the date you pick.
             </DialogDescription>
@@ -480,7 +480,7 @@ export default function SubscriptionPricingToggle({
           <div className="p-8 space-y-6">
             {/* Start Date */}
             <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
+              <label className="text-sm font-medium flex items-center gap-2 text-neutral-400">
                 <CalendarIcon className="h-4 w-4" />
                 Start Date
               </label>
@@ -500,20 +500,20 @@ export default function SubscriptionPricingToggle({
                   );
                 }}
                 min={format(new Date(), "yyyy-MM-dd")}
-                className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
+                className="w-full cursor-pointer rounded-control border-2 border-white/15 bg-white/[0.06] px-5 py-3.5 text-base font-medium text-white transition-all hover:border-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
                 style={{ colorScheme: "dark" }}
               />
             </div>
 
             {/* First-cycle summary */}
             {schedulingStartDate && firstCycle && selectedOption && (
-              <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
+              <div className="p-4 bg-white/[0.06]/50 rounded-control border border-white/10/50">
+                <p className="text-sm text-neutral-400 mb-1">First cycle:</p>
                 <p className="text-white font-semibold text-lg">
                   {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
                   {format(firstCycle.end, "MMM dd, yyyy")}
                 </p>
-                <p className="text-sm text-zinc-500 mt-1">
+                <p className="text-sm text-neutral-400 mt-1">
                   {selectedOption.sessionsPerWeek ?? 1} session
                   {(selectedOption.sessionsPerWeek ?? 1) === 1 ? "" : "s"} per
                   cycle · {selectedOption.totalSessions ?? "—"} in the plan
@@ -523,24 +523,24 @@ export default function SubscriptionPricingToggle({
 
             {/* Validation Message */}
             {!validation.valid && validation.message && (
-              <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+              <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-control">
                 <p className="text-sm text-red-400">{validation.message}</p>
               </div>
             )}
 
             {/* Timezone Info */}
-            <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
-              <p className="text-sm text-zinc-400">
+            <div className="p-4 bg-white/[0.06]/40 border border-white/10/50 rounded-control">
+              <p className="text-sm text-neutral-400">
                 💡 Timezone: {timezone} (Your local time)
               </p>
             </div>
           </div>
 
-          <div className="bg-zinc-800/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
+          <div className="bg-white/[0.06]/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-white/10">
             <Button
               onClick={handleContinueToCheckout}
               disabled={!validation.valid}
-              className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+              className="bg-white text-neutral-950 hover:bg-neutral-200 font-medium px-6"
             >
               Continue to Checkout
             </Button>
