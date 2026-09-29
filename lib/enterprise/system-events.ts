@@ -78,7 +78,14 @@ export interface RecordSystemEventParams {
  * persisted trail at all. Those callers need the failure, not the console line.
  */
 export async function recordSystemEvent(
-  params: RecordSystemEventParams,
+  params: RecordSystemEventParams & {
+    /**
+     * Internal. Set by the `*Safe` wrappers so a swallowed insert failure is
+     * re-thrown to *them* — and to nobody else, which is what keeps every
+     * existing caller's never-reject contract intact.
+     */
+    __reportInsertFailureToCaller?: boolean;
+  },
 ): Promise<void> {
   const severity = params.severity ?? "INFO";
   const db = params.db ?? prisma;
@@ -100,7 +107,7 @@ export async function recordSystemEvent(
     // The system_events insert itself failed — log and move on. An
     // outage of this table must not cascade into the calling worker.
     console.error("[recordSystemEvent] insert failed:", err);
-    if (params.strict) throw err;
+    if (params.strict || params.__reportInsertFailureToCaller) throw err;
   }
 
   // Fire-and-forget telemetry sink (#776 §K). The DB row above is the source
@@ -136,6 +143,8 @@ export async function recordSystemError(params: {
   correlationId?: string | null;
   /** #1582 B-P1-02 — see RecordSystemEventParams.db. */
   db?: Tx | typeof prisma;
+  /** Internal — see RecordSystemEvent's flag of the same name. */
+  __reportInsertFailureToCaller?: boolean;
 }): Promise<void> {
   const errorMessage =
     params.err instanceof Error ? params.err.message : String(params.err);
@@ -153,6 +162,7 @@ export async function recordSystemError(params: {
     },
     correlationId: params.correlationId,
     db: params.db,
+    __reportInsertFailureToCaller: params.__reportInsertFailureToCaller,
   });
 
   // Escalate to Sentry so engineers see it without querying the DB.
@@ -182,7 +192,10 @@ export async function recordSystemError(params: {
 export function recordSystemErrorSafe(
   params: Parameters<typeof recordSystemError>[0],
 ): Promise<void> {
-  return recordSystemError(params).catch((err) => {
+  return recordSystemError({
+    ...params,
+    __reportInsertFailureToCaller: true,
+  }).catch((err) => {
     console.error("[system-events] recordSystemError threw:", err);
     reportSystemEventWriteFailure("recordSystemError", err);
   });
@@ -221,17 +234,29 @@ function reportSystemEventWriteFailure(
   err: unknown,
 ): void {
   try {
-    const detail = err instanceof Error ? err.message : String(err);
+    // The thrown value may be a Prisma error whose `message` and `meta` carry
+    // constraint text, column values, or a connection string. Report the
+    // operation and a coarse class only; the original object is deliberately
+    // NOT forwarded as `cause` or `extra`, because anything handed to
+    // captureException is subject to transport and retention, and we have not
+    // audited which fields in it are safe. The message stays in the local log
+    // above, which is not shipped anywhere.
+    const errorClass =
+      err instanceof Error
+        ? err.name || "Error"
+        : typeof err === "object" && err !== null
+          ? ((err as { constructor?: { name?: string } }).constructor?.name ??
+            "object")
+          : typeof err;
     reportSentryError(
       new Error(
-        `${SYSTEM_EVENT_WRITE_FAILURE_MARKER}: ${operation} — ${detail}`,
-        { cause: err },
+        `${SYSTEM_EVENT_WRITE_FAILURE_MARKER}: ${operation} failed (${errorClass})`,
       ),
       {
         subsystem: "observability",
         op: "system-event-write-failed",
         expected: true,
-        extra: { operation, thrown: err },
+        extra: { operation, errorClass },
       },
     );
   } catch {
@@ -257,7 +282,10 @@ function reportSystemEventWriteFailure(
 export function recordSystemEventSafe(
   params: Parameters<typeof recordSystemEvent>[0],
 ): Promise<void> {
-  return recordSystemEvent(params).catch((err) => {
+  return recordSystemEvent({
+    ...params,
+    __reportInsertFailureToCaller: true,
+  }).catch((err) => {
     console.error("[system-events] recordSystemEvent threw:", err);
     reportSystemEventWriteFailure("recordSystemEvent", err);
   });

@@ -55,10 +55,6 @@ function rowsFor(r: IngestProbeResult): [string, string][] {
   ];
 }
 
-const REMEDY_RECHECK =
-  "  - Then re-check: POST /api/cleanup/sentry-ingest-canary with the\n" +
-  "    CRON_SECRET bearer. A healthy:true body means ingest is back.";
-
 /**
  * The remedy is chosen per verdict, because the one thing an operator must
  * never be told is the wrong action. A `rate-limited` alert that said "fix
@@ -156,6 +152,34 @@ function headlineFor(r: IngestProbeResult): { subject: string; html: string } {
 }
 
 /** Exported for the test to assert on, rather than matching a live send. */
+/**
+ * Render a remedy string as HTML. Its action lines are markdown-style bullets,
+ * so they become list items; the rest become paragraphs. Keeping this derived
+ * from `remedyFor` is the point — a separately maintained HTML copy of the
+ * remedy is exactly what drifted out of sync with the text body before.
+ */
+function remedyToHtml(remedy: string): string[] {
+  return remedy
+    .split("\n\n")
+    .filter((para) => para.trim() !== "")
+    .map((para) => {
+      const bullets = para
+        .split("\n")
+        .map((line) => (line.startsWith("  - ") ? line.slice(4) : null))
+        .filter((line): line is string => line !== null);
+      if (bullets.length > 0) {
+        return (
+          `<ul style="margin:8px 0 0;padding-left:20px">` +
+          bullets
+            .map((b) => `<li style="margin:4px 0">${escapeHtml(b)}</li>`)
+            .join("") +
+          `</ul>`
+        );
+      }
+      return `<p style="margin:12px 0 0">${escapeHtml(para.replace(/\n\s*/g, " "))}</p>`;
+    });
+}
+
 export function buildAlertEmail(r: IngestProbeResult): {
   subject: string;
   text: string;
@@ -186,8 +210,12 @@ export function buildAlertEmail(r: IngestProbeResult): {
         `<td style="border:1px solid #ddd"><code>${escapeHtml(v)}</code></td></tr>`,
     ),
     `</table>`,
-    `<p style="margin:12px 0 0">${escapeHtml(remedy.split("\n\n")[0])}</p>`,
-    `<p style="margin:12px 0 0">If the rate-limit header names <code>error_usage_exceeded</code>, the billing period's error allowance is spent. Upgrading the plan raises the ceiling immediately — it does not have to wait for the period to roll over.</p>`,
+    // The per-verdict remedy, rendered in full rather than only its first
+    // paragraph. This used to be followed by an unconditional billing
+    // paragraph, which told an operator to upgrade the plan when the real
+    // cause was a missing DSN or a rejected auth token — precisely the
+    // wrong-action outcome remedyFor exists to prevent.
+    ...remedyToHtml(remedy),
   ].join("");
 
   return {

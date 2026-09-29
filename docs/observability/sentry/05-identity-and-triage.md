@@ -361,11 +361,15 @@ terminal, a ticket or a commit.
 # $NEXT_PUBLIC_SENTRY_DSN looks like https://<publicKey>@<host>/<projectId>
 dsn="${NEXT_PUBLIC_SENTRY_DSN:?set NEXT_PUBLIC_SENTRY_DSN first}"
 read -r key host path <<<"$(printf '%s' "$dsn" | sed -E 's#^https://([^@]+)@([^/]+)/(.+)$#\1 \2 \3#')"
+# Bind the id once and reuse it. Relay validates the event_id in the item header
+# too, so a placeholder there is rejected even when the envelope header is
+# well-formed — the probe would report failure while ingest is healthy.
+event_id="$(head -c 16 /dev/urandom | xxd -p)"
 
 curl -sS -D - -o /dev/null -X POST \
   "https://${host}/api/${path}/envelope/?sentry_version=7&sentry_key=${key}" \
   -H 'content-type: application/x-sentry-envelope' \
-  --data-binary $'{"event_id":"'"$(head -c 16 /dev/urandom | xxd -p)"'"}\n{"type":"event"}\n{"event_id":"…","level":"error","platform":"javascript","logger":"manual-check"}\n'
+  --data-binary $'{"event_id":"'"$event_id"'"}\n{"type":"event"}\n{"event_id":"'"$event_id"'","level":"error","platform":"javascript","logger":"manual-check"}\n'
 ```
 
 Look at the status code, and at `x-sentry-rate-limits`. A `429` naming

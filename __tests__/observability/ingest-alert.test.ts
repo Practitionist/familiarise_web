@@ -141,7 +141,7 @@ describe("the remedy and headline are per-verdict", () => {
   });
 
   it("rejected-auth does not get told to upgrade the plan", () => {
-    const { text } = buildAlertEmail({
+    const { text, html } = buildAlertEmail({
       ...base,
       status: 403,
       verdict: "rejected-auth",
@@ -149,5 +149,34 @@ describe("the remedy and headline are per-verdict", () => {
     });
     expect(text).toContain("DSN or public key is wrong");
     expect(text).not.toContain("raises the ceiling immediately");
+    // The HTML body is what most operators actually read. It carried an
+    // unconditional billing paragraph, so a wrong-DSN alert told them to raise
+    // their plan. Assert both surfaces, or the regression returns silently.
+    expect(html).toContain("DSN or public key is wrong");
+    expect(html).not.toContain("raises the ceiling immediately");
+  });
+
+  it("unconfigured does not tell the operator to upgrade the plan", () => {
+    const { text, html } = buildAlertEmail({
+      ...base,
+      status: 0,
+      verdict: "unconfigured",
+      detail: null,
+    });
+    expect(text).not.toContain("raises the ceiling immediately");
+    expect(html).not.toContain("raises the ceiling immediately");
+  });
+
+  it("renders the remedy action lines in the HTML body, not just the first paragraph", () => {
+    const { html } = buildAlertEmail({
+      ...base,
+      status: 429,
+      verdict: "rate-limited",
+      detail: "error_usage_exceeded",
+    });
+    // The re-check step is a later line of the remedy. If only the first
+    // paragraph reached the HTML, the follow-up would silently vanish.
+    expect(html).toContain("Then re-check");
+    expect(html).toContain("<li");
   });
 });
