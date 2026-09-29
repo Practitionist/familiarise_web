@@ -9,15 +9,26 @@ other.
 | 1 | [`01-architecture.md`](./01-architecture.md) | BetterAuth setup, plugin chain, session model, no-JWT rationale, database hooks, customSession hot path. |
 | 2 | [`02-middleware.md`](./02-middleware.md) | Request lifecycle: Edge Runtime, route classification, cookie-only auth check, maintenance mode integration. |
 | 3 | [`03-sessions-and-hooks.md`](./03-sessions-and-hooks.md) | Session lifecycle, the three database hooks, membership bridge, auth-guard vs auth-helper distinction. |
-| 4 | [`04-rate-limiting.md`](./04-rate-limiting.md) | Edge + handler rate limiters, all 15 buckets, fail-open posture, localhost bypass, how to add a new limiter. |
-| 5 | [`05-testing.md`](./05-testing.md) | SSO unit tests, `verify-sso-invariants.sh` static checks, how to write new auth tests. |
-| 6 | [`06-ci-deployment.md`](./06-ci-deployment.md) | GitHub Actions CI pipeline, SSO cert expiry cron, Docker dev/prod, Netlify, env vars, secret rotation. |
-| 7 | [`sso/README.md`](./sso/README.md) | Enterprise SSO in depth — SAML/OIDC, enforcement layers, domain claims, provider schemas, PKCE, cert rotation. |
-| 8 | [`oauth/README.md`](./oauth/README.md) | OAuth providers (Google, GitHub, Facebook), account linking, how to add a new provider. |
-| 9 | [`08-redirects-and-navigation.md`](./08-redirects-and-navigation.md) | **The anti-flicker contract**: auth redirect rules (`replace` not `push`, idempotency refs, force-fresh destination checks, `safeSameOriginPath`, server-side dashboard entry redirects). Read before touching any redirect. |
-| 10 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, the cap, propagation tiers, the staff doors. Read before touching any session row or the Sessions UI. |
+| 4 | [`04-errors.md`](./04-errors.md) | **The error system**: the closed `AuthErrorCode` union and why a new BetterAuth code is a *build failure*, `humanizeAuthError`'s resolution order, the 429/`Retry-After` rewrite, why a 401 from `/api/auth/*` is a deployment rejection, and the tiered-disclosure rule with its threat model. Read before changing anything a user reads. |
+| 5 | [`04-rate-limiting.md`](./04-rate-limiting.md) | The policy table (`RATE_POLICIES` → `POLICY_ROUTES` → `RATE_LIMIT_RULES`), the full budget matrix, fail-open posture, the degraded-store header, and how to add a limiter. |
+| 6 | [`05-testing.md`](./05-testing.md) | SSO unit tests, `verify-sso-invariants.sh` static checks, how to write new auth tests. |
+| 7 | [`06-ci-deployment.md`](./06-ci-deployment.md) | GitHub Actions CI pipeline, SSO cert expiry cron, Docker dev/prod, Netlify, env vars, secret rotation. |
+| 8 | [`sso/README.md`](./sso/README.md) | Enterprise SSO in depth — SAML/OIDC, enforcement layers, domain claims, provider schemas, PKCE, cert rotation. |
+| 9 | [`oauth/README.md`](./oauth/README.md) | OAuth providers (Google, GitHub, Facebook), account linking, how to add a new provider. |
+| 10 | [`07-email-verification.md`](./07-email-verification.md) | Verification links, their TTLs, and the resend paths. |
+| 11 | [`08-redirects-and-navigation.md`](./08-redirects-and-navigation.md) | **The anti-flicker contract**: auth redirect rules (`replace` not `push`, idempotency refs, force-fresh destination checks, `safeSameOriginPath`, server-side dashboard entry redirects). Read before touching any redirect. |
+| 12 | [`08-staff-onboarding.md`](./08-staff-onboarding.md) | **How an admin is bootstrapped and how staff join**: why domain is never the authorisation key, why an admin cannot be self-created, the single-use email-bound token, and why mandatory 2FA is enforced in the guard rather than at session creation. Contract and invariants, not implementation. |
+| 13 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, the cap, propagation tiers, the staff doors. Read before touching any session row or the Sessions UI. |
+| 14 | [`09-failure-modes.md`](./09-failure-modes.md) | **The cross-service failure matrix**: Postgres (and `PG_POOL_MAX=1`), Upstash (outage and quota), Resend, Novu, the gateways, Stream, Sentry, Netlify (cold stall, timeout, env reclaim) and the auth layer itself. What the user sees, what the code does, what it should do, and who owns it. Read before an on-call rotation. |
 
-Authorization (role hierarchy, capability gates, `requireOrgAccess`) lives in [`docs/authorization/`](../../authorization/README.md).
+> **Two `04-` files and two `09-` files.** The numbering predates this pass and the
+> collisions are real; the filenames are load-bearing because other documents
+> link to them. If you renumber, grep first.
+
+Authorization (role hierarchy, capability gates, `requireOrgAccess`, and the
+B2C entitlement ladder) lives in
+[`docs/authorization/`](../../authorization/README.md).
+
 
 ## Companion docs (already in repo, don't duplicate)
 
@@ -56,7 +67,17 @@ don't repeat content.
 6. **Rate limits fail open.** If Redis is unreachable,
    `applyRateLimit()` returns `null` and the request proceeds. Better
    to ship a request during an Upstash outage than to 429 every login.
-   See [`04-rate-limiting.md`](./04-rate-limiting.md).
+   The header `x-rate-limit-degraded` is the missing half: a consumer
+   should *raise the price of a guess* when it is present, not lock the
+   site down. See [`04-rate-limiting.md`](./04-rate-limiting.md) and
+   [`09-failure-modes.md`](./09-failure-modes.md).
+7. **The error vocabulary is closed.** `AUTH_ERROR_COPY` is a
+   `Record<AuthErrorCode, AuthErrorCopy>`, so a new Better Auth code is a
+   **compile error**, not a generic toast. And the client is never the
+   authority on whether an address exists — the specific "no account
+   matches that email" sentence unlocks only when the server says so, on
+   a header. See [`04-errors.md`](./04-errors.md).
+
 
 ## Quick orientation by problem
 
@@ -72,7 +93,34 @@ don't repeat content.
 > If it's POST + abuseable (auth, sign-up, password-reset, invite-accept,
 > SSO domain-check) yes. If it's a public read that hits Postgres
 > (search, availability, eligibility) yes. Otherwise probably no.
-> Wire in `middleware.ts`. See [`04-rate-limiting.md`](./04-rate-limiting.md).
+> For an auth or enterprise surface, declare a row in `RATE_POLICIES`
+> and a `POLICY_ROUTES` entry naming the scope — **not** a number in
+> `middleware.ts`. For anything else, append a `RateRule`. See
+> [`04-rate-limiting.md`](./04-rate-limiting.md).
+
+> "This auth code doesn't compile and the error is about a `Record`."
+>
+> You added a member to `AuthErrorCode` and the catalog has no copy for
+> it. That is the designed outcome. Add the entry to
+> `AUTH_ERROR_COPY` — the union is closed on purpose so a Better Auth
+> upgrade surfaces as a build failure rather than a generic toast. See
+> [`04-errors.md`](./04-errors.md).
+
+> "The customer says they get 'something went wrong on our side'."
+>
+> They should not — that sentence is now only reachable as a true last
+> resort. Get the `code` off the response and the `scope` off the 429,
+> and read [`04-errors.md`](./04-errors.md) and
+> [`09-failure-modes.md`](./09-failure-modes.md) in that order. Row 1 of
+> the failure matrix is Redis, and it is *silent* by design.
+
+> "The app is broken and nothing in Sentry explains it."
+>
+> Check `09-failure-modes.md` first. The likeliest candidates are the
+> `PG_POOL_MAX=1` pool, a Netlify cold-instance stall (a client `status
+> 0`, not a 5xx), and a `trustedOrigins` gap on a deploy preview — all
+> three produce a sentence that looks like the customer's fault and is
+> not.
 
 > "Why is my SSO test failing?"
 >

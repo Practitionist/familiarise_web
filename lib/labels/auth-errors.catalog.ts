@@ -340,6 +340,12 @@ export const AUTH_ERROR_COPY = {
     description: "It was sent to a different email address.",
     action: "contact-support",
   },
+  INVITATION_REVOKED: {
+    title: "This invitation was withdrawn",
+    description:
+      "An administrator withdrew it. Ask them to send a new one if you still need access.",
+    action: "contact-support",
+  },
 
   /* ── Staff / admin setup ─────────────────────────────────────────────── */
 

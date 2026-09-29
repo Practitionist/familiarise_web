@@ -91,6 +91,14 @@ model User {
   members                   Member[] // BetterAuth membership rows
   memberships               Membership[] // Typed enterprise memberships (Arch 4-Modified)
   invitationsSent           Invitation[]               @relation("InvitationsSent")
+  // #1927 — the platform-side operator door (STAFF/ADMIN), DISTINCT from the
+  // org `Invitation` above: no organizationId, and the recipient is bound by
+  // the emailed address rather than by a Membership. Two relations because
+  // both sides are real — who minted the invite, and which User the accepted
+  // token produced. SetNull rather than Cascade: deleting a User must not
+  // delete the audit record that they were ever onboarded here.
+  staffInvitationsSent      StaffInvitation[]          @relation("StaffInvitationsSent")
+  staffInvitationUsed       StaffInvitation?           @relation("StaffInvitationAccepted")
   consentArtifacts          ConsentArtifact[]
   dpdpGrievances            DpdpGrievance[]
 
@@ -7563,4 +7571,124 @@ enum LeadStatus {
   QUALIFIED
   CLOSED_WON
   CLOSED_LOST
+}
+
+////////////////////////////////////////////////////
+//// PLATFORM OPERATOR ONBOARDING (STAFF / ADMIN) ////
+////////////////////////////////////////////////////
+
+/// #1927 — the one-time door that creates a platform operator.
+///
+/// Deliberately a SEPARATE model from the org `Invitation` above rather than
+/// an extra nullable `organizationId` on it. The two invitations have nothing
+/// in common but the word: an org invite is scoped to an organization, is
+/// claimed by an already-signed-in user through a `Membership`, and can be
+/// answered by any account holding the mailed address. A staff invite is
+/// PLATFORM-level, its claim CREATES the `User` (there is no account to sign
+/// in with yet), and its claim writes `User.role`. Overloading one table would
+/// have meant a nullable organizationId, a nullable userId, and a
+/// `role` column whose type differs by row — every reader of `Invitation`
+/// (the accept route, the cleanup cron, the org members tab) would then have
+/// to filter out a shape it does not understand.
+///
+/// ## The email address is a BINDING, never an authorisation key
+///
+/// Staff addresses are a mix of personal `@gmail.com` and
+/// `@familiarisenow.com`. So there is deliberately **no domain allowlist, no
+/// domain-enforced SSO, and no JIT-by-domain** on this surface, and there must
+/// never be one: a maintainer reading every other invite surface in this file
+/// will see domain-based policy everywhere and will be tempted to add it here
+/// too. It would be actively wrong — it would lock out the personal-address
+/// half of the team, and it would be a *convenience* masquerading as a
+/// control. Authorisation for a staff account is exactly one thing: an
+/// existing ADMIN minted this row, and the holder of the emailed address
+/// redeemed its token. Revocation is therefore a per-USER action
+/// (`User.banned` + session revocation via `lib/moderation/side-effects.ts`),
+/// never a per-domain block, and never a bulk "revoke everyone at example.com"
+/// affordance. Domain-enforced SSO remains available for CUSTOMERS via
+/// `SsoProvider` and is unrelated to this model.
+model StaffInvitation {
+  id String @id @default(cuid())
+
+  /// Normalised at write time (`lower(trim(...))` in
+  /// lib/auth/staff-invitations.ts) and again by the partial unique index
+  /// below, because a mixed-case duplicate from any other writer would
+  /// otherwise buy a second pending invite for one person.
+  email String
+
+  /// A column rather than a constant. `STAFF` is the only value this app
+  /// mints, but the FIRST-ADMIN bootstrap (`scripts/bootstrap-admin.ts`) and
+  /// any future operator tier are a DATA change, not a migration. Typed as
+  /// `UserRole` so a bad promotion fails at the enum, not at a sign-in.
+  role UserRole @default(STAFF)
+
+  status StaffInvitationStatus @default(PENDING)
+
+  /// SHA-256 hex of the 32-byte base64url token. The raw token exists only in
+  /// the email body and in the operator's terminal. SHA-256 (not bcrypt) is
+  /// the right primitive here and NOT a shortcut: the token is 256 bits of
+  /// CSPRNG output, so there is no dictionary to slow down, and a
+  /// password-strength hash would only add latency to the accept path that
+  /// must stay inside the Netlify 60s function budget. Same posture as
+  /// `ScimToken.tokenHash`.
+  tokenHash String @unique
+
+  /// 72 hours. Deliberately shorter than the org invite's 14 days: this is a
+  /// platform-privileged account, and 72h is long enough for someone to
+  /// notice their mail and long enough that a link sitting in a shared inbox
+  /// has a small window.
+  expiresAt DateTime @db.Timestamptz
+
+  /// How many times this row has been emailed. Audits a resend loop and
+  /// backs the per-invitation resend budget; without it a "resend" is
+  /// indistinguishable from a first send in the OpsActionLog, and a
+  /// rate-limit keyed on the row is impossible to enforce.
+  sentCount  Int       @default(0)
+  lastSentAt DateTime? @db.Timestamptz
+
+  acceptedAt DateTime? @db.Timestamptz
+  revokedAt  DateTime? @db.Timestamptz
+
+  /// The User this invitation produced. `@unique` so one account is created
+  /// by at most one invitation — a second invite to the same address is a
+  /// resend-or-a-mistake, never a second User.
+  acceptedUserId String? @unique
+  acceptedUser   User?   @relation("StaffInvitationAccepted", fields: [acceptedUserId], references: [id], onDelete: SetNull)
+
+  /// Null rather than required: a token minted by `scripts/bootstrap-admin.ts`
+  /// on a machine with no signed-in admin has no actor, and refusing to record
+  /// it would mean the first admin in a fresh environment could not be
+  /// created at all. SetNull on delete so losing the inviting admin does not
+  /// delete the invitation history.
+  invitedByUserId String?
+  invitedBy       User?   @relation("StaffInvitationsSent", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Prisma's `partialIndexes` is still preview at 7.7.0 (prisma/prisma#29263,
+  // #29415), so "at most one PENDING invite per address" is DB-enforced by the
+  // sidecar partial unique index `staff_invitations_email_pending_key` in
+  // prisma/sql/check-constraints.sql — the same shape as
+  // `invitations_org_email_pending_key`. `npm run db:assert-sidecars` fails
+  // when the index is absent and `scripts/ci/check-db-drift.ts` fails on drift
+  // not listed in prisma/sql/known-drift.json, so the invariant cannot be lost
+  // silently. The handler's own findFirst is the first line, this is the floor.
+  @@index([email, status])
+  // Drives the expiry sweep: "PENDING rows past expiresAt" with no expiry
+  // filter to hunt for.
+  @@index([status, expiresAt])
+  @@index([invitedByUserId])
+  @@map("staff_invitations")
+}
+
+enum StaffInvitationStatus {
+  PENDING
+  ACCEPTED
+  /// An admin pulled the invite. Terminal; the row stays so the Team page can
+  /// show "revoked by <admin>, <when>" rather than silently dropping it.
+  REVOKED
+  /// Past `expiresAt`, flipped by the sweep or lazily at accept time. Kept
+  /// distinct from REVOKED because nobody chose it.
+  EXPIRED
 }

@@ -64,10 +64,16 @@ const CSP_REPORT_ENDPOINT = RESOLVED_APP_URL
   : undefined;
 
 /**
- * Content Security Policy — report-only by default, and the default is on
- * purpose. See the enforcement note further down.
+ * Content Security Policy.
  *
- * Why report-only is the default
+ * Enforced by default; the escape hatch is an explicit
+ * `ENABLE_CSP_ENFORCE=false`, and a production build without it prints a
+ * banner. See the enforcement note further down — and note that the decision is
+ * baked in at config-evaluation time, so changing the variable requires a
+ * REDEPLOY, not a restart.
+ *
+ * Why the report-only window still exists as a decision, even though it is no
+ * longer the default
  * ------------------------------
  * A strict CSP can silently break Stream.io's call-widget script injection
  * or a Razorpay popup if any allow-list entry drifts, and this allow-list has

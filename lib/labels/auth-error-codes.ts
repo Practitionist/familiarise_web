@@ -168,6 +168,11 @@ export type AppAuthErrorCode =
   | "INVITATION_EXPIRED"
   | "INVITATION_ALREADY_ACCEPTED"
   | "INVITATION_NOT_FOR_YOU"
+  /* lib/auth/staff-invitations.ts — a staff invite somebody withdrew. Kept
+     distinct from EXPIRED because nobody chose it, and from NOT_FOUND because
+     saying "not found" about a link a customer holds is how they learn the
+     difference between a typo and a revocation. */
+  | "INVITATION_REVOKED"
   | "SETUP_TOKEN_INVALID"
   | "SETUP_TOKEN_EXPIRED"
   | "SETUP_TOKEN_ALREADY_USED"
@@ -276,6 +281,7 @@ export const AUTH_ERROR_CODES = {
   INVITATION_EXPIRED: "INVITATION_EXPIRED",
   INVITATION_ALREADY_ACCEPTED: "INVITATION_ALREADY_ACCEPTED",
   INVITATION_NOT_FOR_YOU: "INVITATION_NOT_FOR_YOU",
+  INVITATION_REVOKED: "INVITATION_REVOKED",
   SETUP_TOKEN_INVALID: "SETUP_TOKEN_INVALID",
   SETUP_TOKEN_EXPIRED: "SETUP_TOKEN_EXPIRED",
   SETUP_TOKEN_ALREADY_USED: "SETUP_TOKEN_ALREADY_USED",

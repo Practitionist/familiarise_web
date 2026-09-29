@@ -9,7 +9,7 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth, assertNotImpersonated } from "@/lib/auth-helpers";
 import {
   EventCheckoutLockUnavailableError,
   BookingLockUnavailableError,
@@ -40,6 +40,15 @@ export async function POST(req: NextRequest) {
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const session = authResult.session!;
+    // #1927 — checkout is a money-mutating door that is not an ops surface, so
+    // it does not pass through `requireBackofficeSurface` and therefore is not
+    // covered by the impersonation check that guards the back-office tools. It
+    // needs its own: an operator impersonating a customer must be able to see
+    // the page, but not to spend the company's or the customer's money while
+    // doing it. `replayUserId` is assigned after this so a refusal cannot leave
+    // a half-initialised replay record behind.
+    const impersonationBlocked = assertNotImpersonated(session);
+    if (impersonationBlocked) return impersonationBlocked;
     replayUserId = session.user.id;
 
     // Rate limit: 5 checkouts per minute per user

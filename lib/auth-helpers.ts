@@ -1,5 +1,6 @@
 import { lookupSession } from "@/lib/auth-session-lookup";
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -77,13 +78,238 @@ export function sessionLookupFailedResponse(): NextResponse {
 }
 
 /**
- * Checks if a user has privileged access (ADMIN or STAFF role).
+ * Checks if the user has privileged access (ADMIN or STAFF role).
  *
  * Prefer the typed helpers below in API handlers — this is here for
  * places that just need a boolean branch (e.g., conditional DB queries).
  */
 export function isPrivileged(role: string | undefined | null): boolean {
   return role === "ADMIN" || role === "STAFF";
+}
+
+// ============================================================================
+// #1927 — OPERATOR PRECONDITIONS: mandatory 2FA, and no money under
+// impersonation. Applied by every privileged helper below.
+// ============================================================================
+
+/**
+ * Paths that answer the `TWO_FACTOR_REQUIRED` refusal, or that are part of
+ * answering it. Enumerated exhaustively, with an owner per entry, because the
+ * failure mode of getting this wrong is silent and total: the gate refuses a
+ * staff session, the refusal points at `enroll-2fa`, and the target is
+ * unreachable — so nobody can ever hold a privileged account again. That is a
+ * self-inflicted permanent outage, and it would be introduced by a security
+ * change, which is the worst possible time to find it.
+ *
+ * Matching is by exact path or by directory prefix (an entry ending in `/`
+ * covers everything beneath it), against the `x-pathname` header the
+ * middleware forwards on protected routes. It is checked, not merely
+ * documented: the BetterAuth two-factor endpoints are served by
+ * `app/api/auth/[...all]/route.ts` and never reach the helpers in this file, so
+ * today the list is the thing that guarantees the day someone moves this gate
+ * into middleware the enrolment endpoints are not caught by it.
+ *
+ * Deliberately NOT exempt, and this is the point of the exercise:
+ *  - `/dashboard/{admin,staff}/**` — the console itself. An unenrolled admin
+ *    sees a 428 from every API, not a console.
+ *  - `app/api/admin/staff-invitations` — inviting the SECOND admin. It is not
+ *    exempt because the first admin can reach `/dashboard/admin/settings`
+ *    (below) and enrol first; exempting the door that mints privileged
+ *    accounts from the very control that makes an account privileged would
+ *    hand the gate its own bypass.
+ */
+export const TWO_FACTOR_EXEMPT_PATHS: readonly string[] = [
+  // BetterAuth's two-factor plugin (better-auth 1.6.5,
+  // dist/plugins/two-factor/client.mjs:14-21). The complete set — enable,
+  // disable, send-otp, generate-backup-codes, get-totp-uri, and all three
+  // verify legs. `enable` and the verifications are the enrolment; the rest
+  // are recovery, and a locked-out operator must be able to rotate them.
+  "/api/auth/two-factor/enable",
+  "/api/auth/two-factor/verify-totp",
+  "/api/auth/two-factor/verify-otp",
+  "/api/auth/two-factor/verify-backup-code",
+  "/api/auth/two-factor/send-otp",
+  "/api/auth/two-factor/generate-backup-codes",
+  "/api/auth/two-factor/get-totp-uri",
+  "/api/auth/two-factor/disable",
+  // The operator's own account surface, where the enrolment UI mounts. Two
+  // entries because the back-office tree is addressed by tree segment and the
+  // staff tree must reach it too (requireBackofficePage gates these on
+  // `users.read`, which every operator holds — see the page in
+  // app/dashboard/(backoffice)/[tree]/settings).
+  "/dashboard/admin/settings",
+  "/dashboard/staff/settings",
+  // The sign-in / invite / bootstrap pages themselves. An operator arriving
+  // from a setup link has no 2FA and no session at all, so these are not
+  // privileged routes — but they are listed so a future widening of this gate
+  // to "any authenticated user" cannot catch the one screen a brand-new
+  // operator is shown.
+  "/auth/setup-admin",
+  "/auth/staff-invite",
+];
+
+/** Exact match, or a `/`-terminated prefix (a directory covers its subtree). */
+export function isTwoFactorExemptPath(path: string): boolean {
+  return TWO_FACTOR_EXEMPT_PATHS.some(
+    (exempt) =>
+      path === exempt || (exempt.endsWith("/") && path.startsWith(exempt)),
+  );
+}
+
+/**
+ * The path middleware forwarded, or null.
+ *
+ * Read through a try/catch because `headers()` throws outside a request scope
+ * (a cron, a bare test), and this file's helpers are called from both. An
+ * absent path is NOT treated as an exemption: the safe answer to "I cannot
+ * tell where this came from" is to enforce, and the API routes that matter
+ * pass the opt-out explicitly.
+ */
+async function forwardedPathname(): Promise<string | null> {
+  try {
+    const raw = (await headers()).get("x-pathname");
+    return raw ? raw.split("?")[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Surfaces that MOVE MONEY, or destroy an account irrecoverably.
+ *
+ * This is the impersonation deny-list, and it is derived from the capability
+ * matrix rather than from a route list so it cannot drift as doors are added:
+ * a new money door arrives by naming a money surface, and naming a money
+ * surface is what puts it here. Read-only siblings (`refunds.read`,
+ * `payouts.read`, …) are deliberately absent — the catalog's stated policy is
+ * that staff READ every money surface so a billing ticket is resolvable
+ * without an escalation, and impersonation is a support tool, so blocking the
+ * read would break the support workflow the impersonation exists to serve.
+ *
+ * `classSeries.money` is in and `classSeries.support` is out for the same
+ * reason as the `.read`/`.manage` split: cancelling one session for a host is
+ * a support act; sweeping a whole series refunds people.
+ */
+const IMPERSONATION_DENIED_SURFACES: ReadonlySet<BackofficeSurface> =
+  new Set<BackofficeSurface>([
+    "payments.manage",
+    "refunds.manage",
+    "disputes.manage",
+    "invoices.manage",
+    "subscriptions.manage",
+    "payouts.manage",
+    "approvalPayments.manage",
+    "classSeries.money",
+    "users.moderate",
+  ]);
+
+/** The admin whose session this one is acting as, or null. */
+export function impersonatedBy(session: Session): string | null {
+  // Narrow rather than trust: the column exists on the Session row and the
+  // admin plugin's inferred session type declares it optional, but a custom
+  // session callback that re-spreads the session (or a test double) can leave
+  // it absent entirely, and "absent" must not read as "impersonated".
+  const value = (session as { impersonatedBy?: string | null }).impersonatedBy;
+  return value ? value : null;
+}
+
+export interface OperatorGateOptions {
+  /**
+   * Which capability is being exercised. Only `requireBackofficeSurface`
+   * passes it, and only it consults {@link IMPERSONATION_DENIED_SURFACES}.
+   */
+  surface?: BackofficeSurface;
+  /**
+   * Skip the second-factor precondition. ONLY a route that is itself part of
+   * answering `TWO_FACTOR_REQUIRED` may set this, and it must say in a comment
+   * which of {@link TWO_FACTOR_EXEMPT_PATHS} it is. There is no way to set it
+   * by configuration, so granting an exemption is a reviewed code change —
+   * the same posture {@link requireApiAuth} takes with its (absent) cache
+   * opt-out.
+   */
+  twoFactorExempt?: boolean;
+}
+
+/**
+ * The shared body of every privileged guard: no money under impersonation,
+ * then a second factor for a staff-or-admin session.
+ *
+ * Order matters and is not arbitrary. Impersonation is decided from the
+ * session payload — free, no query — and it is the more dangerous of the two,
+ * because a support agent holding someone's session is exactly the situation
+ * where "I am an admin, I may issue refunds" reads true. The 2FA check costs
+ * one indexed read and only runs for staff-or-admin, so a customer's session
+ * pays nothing.
+ */
+async function enforceOperatorPreconditions(
+  session: Session,
+  opts: OperatorGateOptions = {},
+): Promise<NextResponse | null> {
+  if (opts.surface && impersonatedBy(session)) {
+    if (IMPERSONATION_DENIED_SURFACES.has(opts.surface)) {
+      return NextResponse.json(
+        {
+          error:
+            "This action changes real money or data, so it cannot be taken while viewing another account.",
+          code: "IMPERSONATION_BLOCKED",
+        },
+        { status: 403 },
+      );
+    }
+  }
+
+  if (!isPrivileged(session.user.role)) return null;
+  if (opts.twoFactorExempt) return null;
+  if (isTwoFactorExemptPath((await forwardedPathname()) ?? "")) return null;
+
+  // `twoFactorEnabled` is NOT in the session payload (it is not one of the
+  // `user.additionalFields` in lib/auth.ts, and adding it would put it in
+  // every cached cookie payload for every user including customers). So this
+  // is a targeted column read. It is the price of not making a second factor
+  // a client-side claim — a payload boolean is whatever the cookie said when
+  // it was signed, which is precisely the thing a stolen cookie carries.
+  const row = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { twoFactorEnabled: true },
+  });
+  // A user row that no longer exists cannot be authorised to do anything; the
+  // session is stale. Fail closed rather than open.
+  if (row?.twoFactorEnabled === true) return null;
+
+  // 428, not 403. The request is not forbidden, it is unready: the operator
+  // is allowed to do this, and must first satisfy a precondition. 403 tells a
+  // client the door is shut forever and sends an operator to support instead
+  // of to the enrolment page named in the catalog's `enroll-2fa` action.
+  return NextResponse.json(
+    {
+      error: "Set up two-factor authentication before using the back office.",
+      code: "TWO_FACTOR_REQUIRED",
+    },
+    {
+      status: 428,
+      headers: { "X-Auth-Action": "enroll-2fa" },
+    },
+  );
+}
+
+/**
+ * Standalone impersonation check for money doors that do not go through a
+ * back-office surface — the shape `requireApiAuth` + a hand-rolled role check
+ * leaves behind, and the one door of that shape that matters today is
+ * `app/api/checkout/route.ts`. Returns a response to return, or null to
+ * proceed. Exported so that call site is a one-liner rather than a re-derivation
+ * of the deny-list.
+ */
+export function assertNotImpersonated(session: Session): NextResponse | null {
+  if (!impersonatedBy(session)) return null;
+  return NextResponse.json(
+    {
+      error:
+        "This action changes real money or data, so it cannot be taken while viewing another account.",
+      code: "IMPERSONATION_BLOCKED",
+    },
+    { status: 403 },
+  );
 }
 
 /**
@@ -94,7 +320,9 @@ export function isPrivileged(role: string | undefined | null): boolean {
  *
  * @see docs/api/auth-helpers.md for the decision matrix.
  */
-export async function requireAdminAuth(): Promise<
+export async function requireAdminAuth(
+  opts: OperatorGateOptions = {},
+): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
@@ -107,6 +335,8 @@ export async function requireAdminAuth(): Promise<
       ),
     };
   }
+  const refused = await enforceOperatorPreconditions(auth.session, opts);
+  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
@@ -120,7 +350,9 @@ export async function requireAdminAuth(): Promise<
  * flavor below. If you're refactoring a route that previously allowed
  * both ADMIN and STAFF, use `requirePrivilegedAuth` instead.
  */
-export async function requireStaffAuth(): Promise<
+export async function requireStaffAuth(
+  opts: OperatorGateOptions = {},
+): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
@@ -133,6 +365,8 @@ export async function requireStaffAuth(): Promise<
       ),
     };
   }
+  const refused = await enforceOperatorPreconditions(auth.session, opts);
+  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
@@ -144,7 +378,9 @@ export async function requireStaffAuth(): Promise<
  *
  * @see docs/api/auth-helpers.md for the decision matrix.
  */
-export async function requirePrivilegedAuth(): Promise<
+export async function requirePrivilegedAuth(
+  opts: OperatorGateOptions = {},
+): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
@@ -157,6 +393,8 @@ export async function requirePrivilegedAuth(): Promise<
       ),
     };
   }
+  const refused = await enforceOperatorPreconditions(auth.session, opts);
+  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
@@ -172,9 +410,15 @@ export async function requirePrivilegedAuth(): Promise<
  * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
  *
  * @see lib/auth/backoffice-permissions.ts for the matrix and its rationale.
+ *
+ * This is also where the impersonation deny-list bites (see
+ * {@link IMPERSONATION_DENIED_SURFACES}): every ops door in the app funnels
+ * through here — `withOpsAction` in lib/backoffice/ops-action-log.ts calls
+ * nothing else — so a money door cannot forget the check.
  */
 export async function requireBackofficeSurface(
   surface: BackofficeSurface,
+  opts: OperatorGateOptions = {},
 ): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
@@ -190,6 +434,11 @@ export async function requireBackofficeSurface(
       ),
     };
   }
+  const refused = await enforceOperatorPreconditions(auth.session, {
+    ...opts,
+    surface,
+  });
+  if (refused) return { error: refused };
   return { session: auth.session };
 }
 

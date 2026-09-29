@@ -90,6 +90,11 @@ export const RATE_SCOPE = {
   AUTH_CHANGE_PASSWORD: "auth.change-password",
   SSO_DOMAIN_CHECK: "enterprise.sso-domain-check",
   INVITE_ACCEPT: "enterprise.invite-accept",
+  // #1927 — platform operator onboarding. Two surfaces, not one: minting a
+  // privileged account is an authenticated, attributable act; redeeming one is
+  // an unauthenticated act on a bearer token, so it is budgeted per token.
+  STAFF_INVITE_CREATE: "platform.staff-invite-create",
+  STAFF_INVITATION_ACCEPT: "platform.staff-invitation-accept",
 } as const;
 
 export type RateScope = (typeof RATE_SCOPE)[keyof typeof RATE_SCOPE];
@@ -342,6 +347,45 @@ export const RATE_POLICIES = {
       "scraped id list useless while a real invitee — who may retry a couple of " +
       "times on a failed upload — never notices.",
   },
+
+  /* ---------------------------------------------------------------------- */
+  /* Platform operator onboarding (#1927)                                   */
+  /* ---------------------------------------------------------------------- */
+
+  [RATE_SCOPE.STAFF_INVITE_CREATE]: {
+    scope: RATE_SCOPE.STAFF_INVITE_CREATE,
+    window: "1 h",
+    dimensions: { account: 20 },
+    description:
+      "POST /api/admin/staff-invitations. Account-keyed on the ADMIN who is " +
+      "doing the inviting, never on the invited address and never on the IP. " +
+      "Keying on the invitee would be a foot-gun in the wrong direction (one " +
+      "admin could exhaust a colleague's budget) and keying on the IP would " +
+      "punish a whole office NAT for one person's mistake. Twenty an hour is " +
+      "well above a real onboarding session — a first-admin hire, then a " +
+      "batch of hires on a quiet afternoon — and low enough that a hijacked " +
+      "admin session cannot mint a hundred privileged accounts before anyone " +
+      "sees the OpsActionLog rows. The throttle is deliberately NOT the " +
+      "moneyOpsLimiter: onboarding is not a money act, and sharing a bucket " +
+      "would let a refunds burst lock the team out of hiring.",
+  },
+
+  [RATE_SCOPE.STAFF_INVITATION_ACCEPT]: {
+    scope: RATE_SCOPE.STAFF_INVITATION_ACCEPT,
+    window: "1 h",
+    dimensions: { ip: 30, token: 10 },
+    description:
+      "POST /api/auth/staff-invitation/accept. Unauthenticated and token-" +
+      "bearing, so it gets both dimensions: IP 30/hr stops a sweep of guessed " +
+      "tokens from one host, and the per-token bucket is the one that " +
+      "matters — a leaked setup link is a platform-privileged credential, and " +
+      "ten redemption attempts an hour turns it from a takeover into a " +
+      "statistic. Deliberately TIGHTER than the org invite's 60/20: an org " +
+      "member's worst outcome is a membership, an operator's is `refunds." +
+      "manage`. A real invitee opens one link and submits once, and the " +
+      "password-strength check runs before the accept body is written, so a " +
+      "typo costs one of the ten rather than the whole budget.",
+  },
 } as const satisfies Record<RateScope, RatePolicy>;
 
 /* -------------------------------------------------------------------------- */
@@ -393,6 +437,36 @@ export function limiterFor(
   limiterCache.set(cacheKey, limiter);
   return limiter;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Named limiters                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Pre-resolved limiters for the surfaces that are not edge-enforced.
+ *
+ * They are derived HERE rather than declared as `makeLimiter` calls in
+ * `lib/rate-limit.ts` on purpose. That file is the module `policies.ts`
+ * imports `makeLimiter` from, so re-exporting from it would close a cycle;
+ * and a fresh `makeLimiter` call would re-introduce exactly the problem this
+ * table exists to prevent — a number living in two places, free to drift from
+ * the rationale that justifies it. A caller that wants a budget for a
+ * non-edge surface asks the table for it.
+ */
+export const staffInviteCreateLimiter = limiterFor(
+  RATE_SCOPE.STAFF_INVITE_CREATE,
+  "account",
+);
+
+export const staffInvitationAcceptIpLimiter = limiterFor(
+  RATE_SCOPE.STAFF_INVITATION_ACCEPT,
+  "ip",
+);
+
+export const staffInvitationAcceptTokenLimiter = limiterFor(
+  RATE_SCOPE.STAFF_INVITATION_ACCEPT,
+  "token",
+);
 
 /* -------------------------------------------------------------------------- */
 /* Key derivation                                                             */

@@ -3,7 +3,7 @@ title: SSO and authentication
 band: 20-iam-and-security
 audience: sde3
 status: partial
-last-reviewed: 2026-06-05
+last-reviewed: 2026-09-29
 ---
 
 # SSO and authentication
@@ -233,6 +233,73 @@ slug for `/api/auth/sso/.../{providerId}/...`); the `(organizationId,
 domain)` composite makes "one provider per domain per org" load-bearing
 at the DB layer even if a migration bypasses the route.
 
+### The stored config shape, and why it must not be simplified
+
+`oidcConfig` / `samlConfig` are `String` columns holding JSON. What is in
+that JSON is **not** the admin's form input, and getting it wrong does
+not produce a validation error — it produces a `TypeError` deep inside
+the plugin on the first real sign-in.
+
+**SAML was broken for every provider this app had ever registered.**
+The create route wrote `{issuer, entryPoint, cert}`. Better Auth 1.6.5
+dereferences `spMetadata.metadata` with no optional chaining on both
+read paths:
+
+- `dist/index.mjs:2447` (sign-in) — `let metadata = parsedSamlConfig.spMetadata.metadata;`
+- `dist/index.mjs:1851` (SP metadata) — `const sp = parsedSamlConfig.spMetadata.metadata ? … }`
+
+A config without `spMetadata` therefore throws
+`TypeError: Cannot read properties of undefined (reading 'metadata')`
+and the request dies as a **500 with an empty body** — the exact symptom
+audit Phase A.2 describes, arrived at by a completely different route
+than the bad-certificate bug that section is usually read as being about.
+The admin's certificate was never the problem. Commit `3585f1bc9`.
+
+The canonical shape is now built by
+[`buildStoredSamlConfig`](../../../lib/sso/stored-config.ts), and two
+parts of it are load-bearing:
+
+| Field | Value | Why |
+|---|---|---|
+| `spMetadata` | `{}` | Every field is optional, so `{}` takes the `saml.SPMetadata(…)` branch — the branch where BetterAuth **derives** the ACS location and entity ID from the provider slug rather than accepting ours. Without the key at all, both read paths throw. |
+| `callbackUrl` | `""` | Falsy on purpose. The ACS location is read as `parsedSamlConfig.callbackUrl \|\| \`${baseURL}/sso/saml2/sp/acs/${providerId}\`` at both `:1851` and `:2451`, so an empty string always falls through to the derived URL — there is no value here that *can* drift from it, because there is no value. It is also the post-login redirect (`:1740`, `:1624`), where writing a real URL would bounce an IdP-initiated login straight back into a POST-only endpoint. |
+
+`samlConfigSchema` in `lib/sso/provider-schemas.ts` deliberately refuses a
+client-supplied `callbackUrl`, and `verify-sso-invariants.sh` Check 3
+enforces it. The empty string is the only value that satisfies
+BetterAuth's own body schema — which types the key as required — without
+reintroducing the risk of a typed-in URL drifting from the derived one.
+
+For OIDC the equivalent work is
+[`lib/sso/oidc-discovery.ts`](../../../lib/sso/oidc-discovery.ts):
+`authorization_endpoint`, `token_endpoint` and `jwks_uri` are resolved
+**at registration** and persisted, so BetterAuth's `needsRuntimeDiscovery`
+is false on the sign-in path and a typo in `discoveryEndpoint` is
+rejected while the admin is still looking at the form rather than
+minutes later at a customer's failed sign-in. Every discovered endpoint
+is passed through the same `assertPublicUrl` SSRF guard customer
+webhooks use, before and after the call — the shape predicate handed to
+`discoverOIDCConfig` exists only to satisfy its contract, and it never
+authorises a fetch that has not already been checked.
+
+The read side of both columns goes through `decryptSecretPayload` on a
+Prisma client extension (`lib/prisma-sso-secret-extension.ts`), so the
+customer's OIDC client secret and any SAML `privateKey` are
+AES-256-GCM encrypted at rest under `AUTH_CONFIG_ENCRYPTION_KEY` and
+*every* reader is covered — BetterAuth's plugin, the admin settings GET,
+the pre-auth `domain-check`, the cert-expiry cron. See
+[`lib/sso/secret-crypto.ts`](../../../lib/sso/secret-crypto.ts) for
+the envelope, the plaintext-passthrough migration path, and why the
+*write* is still behind `SSO_CONFIG_ENCRYPTION_ENABLED` (rollback safety,
+not read safety).
+
+`readStoredOidcConfig` / `readStoredSamlConfig` are the narrowing step
+and are deliberately per-field: a field whose stored type does not match
+is dropped rather than coerced, and a field the shape does not declare
+is dropped, so a `Partial<OIDCConfig>` cannot be obtained by asserting a
+`Record` into one. A legacy row with `cert: 42` must fail the
+certificate check loudly, not reach `new X509Certificate(42)`.
+
 ## `OrgDomainClaim`
 
 ```prisma
@@ -353,6 +420,15 @@ recorded for audit but never honored by `lookupEnforcedOrg`.
   time* and fails closed with a copy-paste-able error. The same helper is
   reused by the pre-auth `domain-check` probe and the expiry cron, so a
   legacy row that predates the validator still gets caught.
+- **Every SAML provider unable to sign anyone in (commit `3585f1bc9`).** The
+  stored `samlConfig` was missing `spMetadata`, which Better Auth
+  dereferences without optional chaining on both the sign-in path and the
+  SP-metadata path — so the request died as an empty-bodied 500 the first
+  time a real user clicked "Sign in with SSO". It is not a certificate
+  problem and `validateSamlCert` could never have caught it. The shape is
+  now built by `buildStoredSamlConfig`, with `spMetadata: {}` and
+  `callbackUrl: ""` both load-bearing; see *The stored config shape* above.
+  **Do not simplify that shape back to the admin's form input.**
 - **Silent cert expiry (`scripts/cleanup/sso-cert-expiry-alert.ts`).**
   Most "SSO suddenly broke" pages are an expired signing cert nobody was
   watching. The daily cron parses each SAML provider's `notAfter` and

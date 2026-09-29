@@ -747,11 +747,30 @@ the error was captured in the structured-log output. Any other exit
 code indicates the script crashed before completing — check the
 last log line for a stack trace.
 
-## 🗓️ Flipping the CSP from report-only to enforce
+## 🗓️ Re-opening the CSP report-only window (rollback)
 
-The CSP shipped in PR #655 is `Content-Security-Policy-Report-Only`
-by default. Receiver violations stream to `/api/csp-report` and
-surface as `event: "csp_violation"` lines in the structured log.
+**The CSP is now ENFORCING by default.** `ENABLE_CSP_ENFORCE` is
+opt-**out**: `const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE !== "false"`
+(`next.config.mjs`). Unset means enforce, and only an explicit `false`
+ships `Content-Security-Policy-Report-Only`. The previous opt-in
+behaviour — where unset meant report-only, which is what production
+always had — is gone, because a flag that is off unless switched on is
+off in every deployment that forgets, and forgetting is the normal
+case. That is how the observation window was never closed.
+
+Violations still stream to `/api/csp-report` in both modes and surface
+as `event: "csp_violation"` lines in the structured log; after
+enforcement they are attached to a *blocked* request rather than an
+allowed one. `Reporting-Endpoints: csp-endpoint="<app-url>/api/csp-report"`
+carries the absolute endpoint the Reporting API needs, alongside the
+legacy `report-uri`.
+
+> ⚠️ **A rollback is a REDEPLOY, not a config push.** The flag is read
+> at config-evaluation time and lands in the `headers()` output, so a
+> production env change does not take effect until the next deploy.
+> An earlier revision of this runbook said "no restart required" —
+> that was **wrong**, and it understated the rollback window by a full
+> deploy.
 
 **Cutover protocol** — do not flip before completing this:
 
@@ -777,20 +796,25 @@ surface as `event: "csp_violation"` lines in the structured log.
      malicious (e.g. `data:` URI with base64 payload)? If yes →
      leave it blocked AND flip enforce; the report-only window
      surfaced an attack.
-3. **Day 7 — flip.** Set `ENABLE_CSP_ENFORCE=true` in the production
-   env. The header key changes from `Content-Security-Policy-Report-Only`
-   to `Content-Security-Policy`. Same allow-list, same report
-   destination — but browsers now BLOCK violations instead of
-   allowing-but-flagging.
+3. **Day 7 — close the window (already done).** Enforcement is the
+   default and the header key is `Content-Security-Policy`. Same
+   allow-list, same report destination.
 4. **Day 7 + 24h (smoke).** Curl-fetch `/`, `/auth/signin`,
    `/dashboard/organization/[orgId]/billing` for an active customer
    org and verify the dashboard still loads end-to-end. Razorpay
    checkout popup is the highest-risk path — a missing entry in
-   `frame-src` or `script-src` here will break payments.
-5. **Rollback path.** If enforce breaks anything, flip
-   `ENABLE_CSP_ENFORCE` back to `false` (or unset). The header
-   immediately reverts to report-only on the next request. No
-   restart required; no other change needed.
+   `frame-src` or `script-src` here will break payments. Cloudflare
+   Turnstile is the second (sign-up / sign-in / password-reset), and
+   it is the one whose absence is silent: the widget renders nothing
+   when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset.
+5. **Rollback path.** If enforce breaks anything: set
+   `ENABLE_CSP_ENFORCE=false` in the production Netlify context,
+   then **redeploy**. The build prints a loud `CSP IS ADVISORY` banner
+   in `console.warn` on every production build while the flag is off —
+   `compiler.removeConsole` does not strip `warn`, so read the deploy
+   log. Put the flag back and redeploy forward in the same change that
+   fixes the allow-list; the flag is meant to be a deliberate,
+   temporary step and not a resting state.
 
 **What NEVER goes in the directive list:** `*`, `'unsafe-eval'` in
 `connect-src`, `data:` in `script-src`. Each of these defeats the
@@ -799,7 +823,18 @@ purpose. The current allow-list is documented in
 directive.
 
 **Reporter URL note.** `/api/csp-report` is unauthenticated by
-design — the browser is the originator, not the user. It's
-rate-limited via `spamLimiter` on IP. Watch for the rate-limit
-hitting (429s in the log) if a single client misconfigures + spams
-violations; that's the signal to widen the spam budget.
+design — the browser is the originator, not the user. It is
+rate-limited by `cspReportLimiter` (120/min on IP), **not**
+`spamLimiter`: a browser emits one report per violated directive per
+navigation, so a single person opening a few dashboard pages exhausted
+the old 5/hour budget and every subsequent report was 429'd — which
+made the rollout blind in exactly the situation it existed to observe.
+Size any future report sink's limiter by who generates the traffic,
+not by how much you want to receive.
+
+**Full reference.**
+[`docs/enterprise/20-iam-and-security/05-security-headers.md`](../20-iam-and-security/05-security-headers.md)
+carries the complete directive list with per-directive rationale,
+including the three added without a compatibility cost
+(`object-src 'none'`, `base-uri 'self'`, `form-action 'self'`) and the
+`challenges.cloudflare.com` entries in `script-src` and `frame-src`.

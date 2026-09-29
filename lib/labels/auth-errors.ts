@@ -300,6 +300,15 @@ function copyForStatus(
   }
   if (status === 0 || status >= 500) return UNREACHABLE;
   if (status === 401 || status === 403) return AUTH_ERROR_COPY.REQUEST_REJECTED;
+  if (status === 428) {
+    // "Precondition required" is what the mandatory-2FA gate answers. It is not
+    // currently reachable — the gate always sends `TWO_FACTOR_REQUIRED`, which
+    // the code table catches first — so this is one line of defence against a
+    // future 428 arriving from a route that forgets to set a code. Answering it
+    // as "something went wrong on our side" would be actively misleading: the
+    // request was refused on purpose and the customer has something to do.
+    return AUTH_ERROR_COPY.TWO_FACTOR_REQUIRED;
+  }
   if (status === 410) {
     return {
       title: "This link is no longer available",

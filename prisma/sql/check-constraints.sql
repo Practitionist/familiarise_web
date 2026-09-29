@@ -742,3 +742,24 @@ ALTER TABLE "Appointment" ADD CONSTRAINT "appointment_parent_matches_type"
     WHEN 'CLASS'        THEN "classId" IS NOT NULL        AND num_nonnulls("consultationId","subscriptionId","webinarId") = 0
     WHEN 'TRIAL'        THEN num_nonnulls("consultationId","subscriptionId","webinarId","classId") = 0
     ELSE FALSE END);
+-- SPLIT
+-- #1927 — DB-enforced "at most one PENDING staff invitation per address".
+-- The same shape as `invitations_org_email_pending_key` above, and for the
+-- same two reasons: Prisma's `partialIndexes` is still preview at 7.7.0, and
+-- the accept path's findFirst is only a courtesy — two admins clicking
+-- "invite" on the same address in the same second both pass it, and the
+-- second one must lose at the database rather than mint a second operator.
+-- lower(email): the handler normalises before write, and the index must not
+-- admit a mixed-case duplicate from any other writer (or from a future
+-- backfill that forgets).
+-- PARTIAL on status = 'PENDING' so a history of accepted and revoked
+-- invitations for one person is not a uniqueness problem — a re-invite after
+-- a revocation is a legitimate second row.
+-- Enforced by `npm run db:assert-sidecars` (fails when the index is absent
+-- from the live database) and `scripts/ci/check-db-drift.ts` (fails on schema
+-- drift not listed in prisma/sql/known-drift.json).
+DROP INDEX IF EXISTS "staff_invitations_email_pending_key";
+-- SPLIT
+CREATE UNIQUE INDEX "staff_invitations_email_pending_key"
+  ON "staff_invitations" (lower("email"))
+  WHERE "status" = 'PENDING';

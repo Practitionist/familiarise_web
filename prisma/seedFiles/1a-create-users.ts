@@ -30,9 +30,23 @@ import {
   generateCity,
   generateCompanyName,
 } from "./utils";
-import { config } from "./config";
+import {
+  config,
+  assertSeedPasswordSafeForEnv,
+  assertStaffSeedAllowed,
+} from "./config";
 
-const SEED_PASSWORD = process.env.SEED_PASSWORD || "SeedPass123!";
+/**
+ * #1927 — the default password is a published secret, so it may never be the
+ * one used on a live database.
+ *
+ * Kept as a named default because local seeding wants a memorable value and
+ * every seeded consultant/consumer shares it, which is the point of a fixture.
+ * The refusal is in `assertSeedPasswordSafeForEnv` and runs before any row is
+ * written; the privileged half of the same story is `config.withStaff`.
+ */
+const DEFAULT_SEED_PASSWORD = "SeedPass123!";
+const SEED_PASSWORD = process.env.SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -41,11 +55,18 @@ export type UserWithProfiles = User & {
   adminProfile?: AdminProfile | null;
 };
 
-// User distribution - configurable via SEED_MODE environment variable
+// User distribution - configurable via SEED_MODE environment variable.
+//
+// #1927 — the staff and admin counts collapse to zero unless
+// `SEED_WITH_STAFF=true`. Previously every run created 4 STAFF and 3 ADMIN
+// faker accounts, every one of them holding `refunds.manage` /
+// `payouts.manage`, every one of them on `SeedPass123!` — a value committed to
+// this repository. See getSeedWithStaff() in ./config for the reasoning, and
+// scripts/bootstrap-admin.ts for the front door that replaced it.
 const NUM_CONSULTANTS = config.volumes.users.consultants;
 const NUM_CONSULTEES = config.volumes.users.consultees;
-const NUM_STAFF = config.volumes.users.staff;
-const NUM_ADMINS = config.volumes.users.admins;
+const NUM_STAFF = config.withStaff ? config.volumes.users.staff : 0;
+const NUM_ADMINS = config.withStaff ? config.volumes.users.admins : 0;
 const NUM_USERS = NUM_CONSULTANTS + NUM_CONSULTEES + NUM_STAFF + NUM_ADMINS;
 /** Per role, how many of the first seeded users are always onboarded. */
 const QA_ACCOUNTS_PER_ROLE = 3;
@@ -505,6 +526,15 @@ function createAdminProfileData(_adminIndex: number): {
 }
 
 export async function createUsers(): Promise<UserWithProfiles[]> {
+  // #1927 — both refusals run BEFORE the first write, so a rejected run leaves
+  // the database byte-for-byte as it found it. Two independent reasons, either
+  // sufficient; see ./config for the full argument.
+  assertSeedPasswordSafeForEnv(
+    process.env.SEED_PASSWORD,
+    SEED_PASSWORD === DEFAULT_SEED_PASSWORD,
+  );
+  assertStaffSeedAllowed(config.withStaff);
+
   await createDomainsSubdomainsTags();
 
   const users: UserWithProfiles[] = [];
@@ -521,9 +551,27 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   console.log(`  - ${NUM_CONSULTEES} consultees`);
   console.log(`  - ${NUM_STAFF} staff members`);
   console.log(`  - ${NUM_ADMINS} admins`);
+  if (NUM_ADMINS === 0) {
+    // Loud, because "I signed in as an admin and there is none" is a much
+    // better twenty seconds than a silent zero-row seed.
+    console.log(
+      "  ! No privileged accounts were created. For a real one, run:",
+    );
+    console.log(
+      "    npx tsx -r dotenv/config scripts/bootstrap-admin.ts --email you@localhost --print",
+    );
+  }
 
   for (let i = 0; i < NUM_USERS; i++) {
-    // Determine user role based on index
+    // Determine user role based on index.
+    //
+    // #1927 — the ADMIN arm is now an explicit throw rather than the
+    // `else`. It used to be the fallback, which meant the "no privileged
+    // accounts" case depended on `NUM_USERS` staying exactly equal to the sum
+    // of the other three: change that arithmetic by one and the seed quietly
+    // started minting admins again with a password from this file. Now the
+    // fallback cannot be reached without the loop overrunning its own budget,
+    // and if it somehow is, it says so instead of writing a role.
     let userRole: UserRole;
     if (consultantIndex < NUM_CONSULTANTS) {
       userRole = "CONSULTANT";
@@ -534,9 +582,15 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
     } else if (staffIndex < NUM_STAFF) {
       userRole = "STAFF";
       staffIndex++;
-    } else {
+    } else if (adminIndex < NUM_ADMINS) {
       userRole = "ADMIN";
       adminIndex++;
+    } else {
+      throw new Error(
+        `Seed user ${i} has no role budget left — NUM_USERS (${NUM_USERS}) exceeds ` +
+          `the sum of the per-role counts. Fix NUM_USERS rather than letting this ` +
+          "fall through to a privileged role.",
+      );
     }
 
     const roleOrdinal = {

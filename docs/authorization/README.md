@@ -4,9 +4,9 @@
 |---|---|
 | Status | Stable |
 | Audience | All engineers |
-| Last reviewed | 2026-08-30 |
+| Last reviewed | 2026-09-29 |
 | Sibling folder | [`docs/authentication/`](../authentication/) for "who is this user" |
-| Source files | `lib/auth-helpers.ts`, `lib/auth-guard.ts`, `lib/auth/backoffice-permissions.ts`, `lib/auth/org-permissions.ts` |
+| Source files | `lib/auth-helpers.ts`, `lib/auth-guard.ts`, `lib/auth/backoffice-permissions.ts`, `lib/auth/org-permissions.ts`, `lib/auth/role-ranks.ts`, `lib/entitlements/plan-entitlements.ts` |
 
 ## 1. Background
 
@@ -14,26 +14,32 @@ This folder documents the **authorization** subsystem — every code path that a
 
 Authorization is **our code**, not BetterAuth's. The helpers in `lib/auth-helpers.ts` are thin wrappers around session reads and Prisma queries, returning standardized error responses.
 
+> **Read [`01-authorization-matrices.md`](./01-authorization-matrices.md) first if you have not.** There are four authorization matrices in this codebase and this README describes three of them. The fourth — the B2C entitlement ladder, which answers *"what has this customer paid for"* rather than *"who is this person"* — is in [`02-b2c-entitlements.md`](./02-b2c-entitlements.md). The document that explains why there are four, what each one authorises, where it is enforced, and why merging any two of them is the wrong move is the first entry in the table below.
+
 ## 2. Scope
 
 | In scope | Out of scope |
 |---|---|
 | API route auth helpers (`requireApiAuth`, `requireOrgAccess`, etc.) | BetterAuth setup — see `authentication/betterauth/` |
 | Platform role hierarchy (ADMIN > STAFF > others) | Session lifecycle, hooks |
-| Back-office surface matrix (`BACKOFFICE_PERMISSIONS`) | Novu notification targeting |
-| Org role hierarchy (OWNER > MAINTAINER > … > LEARNER) | SSO enforcement |
-| Capability gates (canSponsor, canHost, fundingSource) | Rate limiting |
-| Error conventions (401 vs 403 vs 404 vs 409) | OAuth/SSO provider config |
+| Back-office surface matrix (`BACKOFFICE_PERMISSIONS`, 37 surfaces) | Novu notification targeting |
+| Org permission matrix (`ORG_PERMISSIONS`, 7 × 57) | SSO enforcement |
+| B2C plan entitlements (4 × 14) | Rate limiting |
+| Capability gates (canSponsor, canHost, fundingSource) | OAuth/SSO provider config |
+| Error conventions (401 vs 403 vs 404 vs 409) | |
 
 ## 3. Where to Start
 
 | # | Section | Reading time |
 |---|---|---|
-| 1 | [Platform Roles](#4-platform-roles) | 3 min |
-| 2 | [Org Roles](#5-org-role-hierarchy) | 5 min |
-| 3 | [API Helpers Inventory](#6-api-helpers-inventory) | 10 min |
-| 4 | [Capability Gates](#7-capability-gates) | 5 min |
-| 5 | [Error Conventions](#8-error-conventions) | 5 min |
+| 1 | [The four matrices](./01-authorization-matrices.md) — the four axes, and why they are not merged | 10 min |
+| 2 | [B2C entitlements](./02-b2c-entitlements.md) — what a customer paid for | 10 min |
+| 3 | [Platform Roles](#4-platform-roles) | 3 min |
+| 4 | [Org Roles](#5-org-role-hierarchy) | 5 min |
+| 5 | [API Helpers Inventory](#6-api-helpers-inventory) | 10 min |
+| 6 | [Capability Gates](#7-capability-gates) | 5 min |
+| 7 | [Error Conventions](#8-error-conventions) | 5 min |
+
 
 ## 4. Platform Roles
 
@@ -70,26 +76,41 @@ A bare `isPrivileged(session.user.role)` in a route is not merely coarse; it mak
 
 ## 5. Org Role Hierarchy
 
-Six org-level roles with numeric rank (`ORG_ROLE_RANK`):
+**Seven** org-level roles, resolved by the matrix in [`lib/auth/org-permissions.ts`](../../lib/auth/org-permissions.ts) — 7 × 57 — and *not* by a rank ladder:
 
-| Role | Rank | Typical use |
+| Role | `ORG_ROLE_RANK` | Typical use |
 |---|---|---|
 | `OWNER` | 100 | Org creator, billing, SSO config, member management |
 | `MAINTAINER` | 80 | Day-to-day ops, can manage most settings |
+| `BILLING_ADMIN` | 70 | Finance-team operator. Invoices, POs, payouts, rate cards, wallet top-ups, outbound webhooks. **Operator-blind** |
 | `MANAGER` | 60 | Department leads, program management |
 | `EXPERT` | 40 | Consultants hosted by the org |
 | `SUPPORT` | 30 | Read-only support staff |
 | `LEARNER` | 20 | Employees/consumers using org-sponsored services |
 
-**Role comparison** uses `orgRoleSatisfies(actual, minimum)`:
+> [!IMPORTANT]
+> The rank column is **display order only** and has been since #1851. It is not
+> an authorization input: `BILLING_ADMIN` (70) outranks `MANAGER` (60) yet must
+> see *fewer* operational things, and `SUPPORT` (30) sees *more* than `EXPERT`
+> (40) on operations surfaces. A rank comparison cannot express either, so a jest
+> pin fails on a rank check under `app/api/organizations`. The two remaining
+> readers of the numbers — picking the most operator-like org to land on, and
+> choosing one role when a SCIM user sits in several mapped groups — are ordering
+> questions, not permission ones. See
+> [`01-authorization-matrices.md`](./01-authorization-matrices.md#7-why-four-and-why-not-merged).
+
+**Role comparison** uses `hasOrgPermission(role, surface)`:
 
 ```typescript
-orgRoleSatisfies("MAINTAINER", "MANAGER"); // true — 80 >= 60
-orgRoleSatisfies("LEARNER", "MANAGER");    // false — 20 < 60
+hasOrgPermission("MAINTAINER", "programs.manage");  // true  — governance track
+hasOrgPermission("BILLING_ADMIN", "billing.manage"); // true  — finance track
+hasOrgPermission("BILLING_ADMIN", "activity.read");  // false — operator-blind, and rank 70 would have said true
+hasOrgPermission("LEARNER", "operations.read");      // false
 ```
 
 > [!IMPORTANT]
-> Platform `ADMIN` bypasses org membership entirely. When a platform admin accesses an org endpoint, `requireOrgAccess` synthesizes a stub `Membership` with role `OWNER`. Capability gates (canSponsor, canHost, fundingSource) still apply — an admin hitting a WALLET-only endpoint on an INVOICE org gets a 404.
+> Platform `ADMIN` bypasses org membership entirely. When a platform admin accesses an org endpoint, `requireOrgAccess` synthesizes a stub `Membership` with role `OWNER`. Capability gates (canSponsor, canHost, fundingSource) still apply — an admin hitting a WALLET-only endpoint on an INVOICE org gets a 404. Authority to look is not authority to call a route that does not apply.
+
 
 ## 6. API Helpers Inventory
 
@@ -212,14 +233,28 @@ export async function POST(req) {
 
 ## 10. Edge Cases & Foot-Guns
 
-1. **Never inline role comparisons.** Use `orgRoleSatisfies()` or the `requireOrgAccess` helpers. Inline `=== "OWNER"` comparisons miss the rank hierarchy.
+1. **Never inline role comparisons, and never compare ranks.** Ask the matrix:
+   `hasOrgPermission(role, surface)` for a decision, or `requireOrgAccess` /
+   `requireBackofficeSurface` for a guard. An inline `=== "OWNER"` misses the
+   grants; an inline `ORG_ROLE_RANK[a] >= ORG_ROLE_RANK[b]` misses the
+   *refusals*, which is the half the ladder cannot express — `BILLING_ADMIN`
+   outranks `MANAGER` and must see less. A jest pin fails on a rank check
+   under `app/api/organizations` (#1851).
 2. **ADMIN bypass includes capability gates.** An admin calling a WALLET endpoint on an INVOICE org still gets 404. Capability gates are structural (the feature doesn't exist), not authorization (you're not allowed).
 3. **Deactivated orgs.** `requireOrgAccess` returns 403 for `DEACTIVATED` orgs regardless of the user's role.
 4. **Unique constraint on `userId_organizationId`.** A user can only have one `Membership` per org. The `findUnique` on this composite key is the membership lookup.
+5. **A B2C session cap is not a plan rung.** "How many sessions are left" has exactly one home, `subscriptionEntitlement()` in `lib/booking/entitlement.ts` (#1766). Adding a second counter is how an allocator oversells a subscription. See [`02-b2c-entitlements.md`](./02-b2c-entitlements.md#8-numeric-limits).
+6. **Don't put a third-party authorisation library on a security guard.** BetterAuth's `hasPermission` has a live defect (#7822) that skips the dynamic roles map for built-in role names. None of the four matrices uses it, and a pin asserting that would keep it that way.
+
 
 ## 11. Related Docs
 
+- [`01-authorization-matrices.md`](./01-authorization-matrices.md) — the four matrices, what each authorises, where each is enforced, and why they are not merged (including why BetterAuth's `ac` / `hasPermission` is the wrong home, and #7822)
+- [`02-b2c-entitlements.md`](./02-b2c-entitlements.md) — the B2C plan ladder, its capability matrix, and the deliberate decision that a session cap is **not** a plan rung
 - [`docs/authentication/betterauth/`](../authentication/betterauth/) — BetterAuth setup, session model
 - [`docs/authentication/betterauth/03-sessions-and-hooks.md`](../authentication/betterauth/03-sessions-and-hooks.md) — Auth guard functions (page-level)
+- [`docs/authentication/betterauth/09-failure-modes.md`](../authentication/betterauth/09-failure-modes.md) — what a user sees when Postgres, Redis or the platform is the thing that failed
+- [`docs/errors/01-refusals.md`](../errors/01-refusals.md) — the `Refusal` rail the entitlement gates hand their answers to
 - [`docs/api/`](../api/) — General API conventions
 - [`docs/stream/13-recording-webhooks.md`](../stream/13-recording-webhooks.md#access-control-matrix) — how the recording surfaces apply the back-office matrix, and what a privileged read writes to the audit trail
+

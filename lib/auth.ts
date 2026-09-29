@@ -42,6 +42,7 @@ import {
   signInAttemptAfterHook,
   signInAttemptBeforeHook,
 } from "@/lib/auth/sign-in-attempt-hooks";
+import { hashStaffPassword } from "@/lib/auth/staff-invitations";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
 // AC). Shares defaultAc so statements line up.
@@ -146,9 +147,13 @@ export const auth = betterAuth({
     // OAuth/SSO are unaffected — the IdP already asserts a verified email.
     requireEmailVerification: true,
     password: {
-      hash: async (password) => {
-        return bcrypt.hash(password, 12);
-      },
+      // Single-sourced with the staff-invitation accept path. `bcrypt.hash(x,
+      // 12)` used to be written here AND in `app/api/user/staff/route.ts`,
+      // and the second copy bypassed BetterAuth entirely — so "the cost factor
+      // is 12" was a fact about two files that could disagree, and one of them
+      // was unreachable from sign-in if it drifted. BetterAuth is the owner;
+      // the staff module borrows. One literal `12` in the codebase.
+      hash: (password) => hashStaffPassword(password),
       verify: async ({ password, hash }) => {
         return bcrypt.compare(password, hash);
       },

@@ -3,7 +3,7 @@ title: Rate limiting
 band: 20-iam-and-security
 audience: sde2
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-09-29
 ---
 
 # Rate limiting
@@ -17,27 +17,37 @@ and webhook endpoints.
 
 ---
 
-## §0 — Two enforcement layers
+## §0 — Three enforcement layers
 
-Rate limits live in **two** places, and the matrix in §2 marks which is
-which. Don't assume a route is limited just because middleware exists:
+Rate limits live in **three** places, and the matrix in §2 marks which is
+which. Don't assume a route is limited just because middleware exists: the
+policy table *declares* budgets and the handler *spends* them, and a dimension
+the edge cannot read stays declared-but-unspent on purpose.
 
 1. **Edge middleware** (`middleware.ts`, `RATE_LIMIT_RULES` table) — runs
    *before* any serverless function is invoked, so it stops cost
    amplification under DDoS. It's a small, explicit allow-list of
    high-risk public/auth routes. Adding a limit = appending a `RateRule`
    object to the `RATE_LIMIT_RULES` array (each rule is
-   `{ label, match, limiter, key?, skipLocalhost }`). The first matching
-   rule fires; rules match disjoint paths. **Do not** cite middleware
-   line numbers — the table is reorderable and the line-numbered `if`
-   chain it replaced is long gone.
-2. **Route-handler level** (`applyRateLimit(limiter, key)` called inside
+   `{ label, match, limiter, key?, scope?, skipLocalhost }`). The first
+   matched rule that actually 429s ends the request. **Do not** cite
+   middleware line numbers — the table is reorderable and the
+   line-numbered `if` chain it replaced is long gone.
+2. **The policy table** (`lib/rate-limit/policies.ts`) — for every auth
+   and enterprise surface, a single declaration of the scope string,
+   the window, every participating budget and the rationale.
+   `POLICY_ROUTES` in `middleware.ts` builds `RATE_LIMIT_RULES` from
+   it, and a `PolicyRoute` can name a **scope but not a number**. This
+   is where a new auth/SSO limit goes; the hand-written `RateRule` is
+   for everything else.
+3. **Route-handler level** (`applyRateLimit(limiter, key, scope)` called inside
    the handler) — for authenticated org-scoped writes where the key
    (e.g. `org:${orgId}` or a SCIM `tokenHash`) isn't cheaply parseable
    at the edge, or where the limit is conceptually part of the
    handler's contract. `orgWebhookLimiter`, `orgInviteLimiter`,
    `orgDataExportLimiter`, and the SCIM `scimLimiter` are all enforced
    here, NOT in middleware.
+
 
 All limiters are defined in `lib/rate-limit.ts` via the shared
 `makeLimiter(count, window, prefix)` helper (Upstash sliding window).
@@ -129,7 +139,7 @@ having that cross-tenant blast radius.
 
 ## §2 — Coverage matrix
 
-Two layers (see §0), split into the two tables below: **edge** = a
+Three layers (see §0), split into the two tables below: **edge** = a
 `RATE_LIMIT_RULES` entry in `middleware.ts`; **handler** = an
 `applyRateLimit(...)` call inside the route (or, for SCIM, inside
 `requireScimAuth`). A third table lists v2 routes that are gated but
@@ -138,26 +148,62 @@ exports — cite those names, not middleware line numbers.
 
 ### Edge-enforced (`middleware.ts` → `RATE_LIMIT_RULES`)
 
-Middleware rules apply before any route handler executes and key exclusively on IP, making them the first line of defence for auth, SSO, and wallet endpoints against credential-stuffing and high-frequency abuse.
+Middleware rules apply before any route handler executes and key primarily on IP, making them the first line of defence for auth, SSO, and wallet endpoints against credential-stuffing and high-frequency abuse.
 
-| Surface | Limiter | Window | Key | Skip localhost |
+> **The auth and enterprise rules are generated, not hand-written.** The rows
+> below are derived from `RATE_POLICIES` in
+> [`lib/rate-limit/policies.ts`](../../../lib/rate-limit/policies.ts) by
+> `POLICY_ROUTES` in `middleware.ts`, which can name a **scope** but no longer a
+> number. Cite the scope, not a number read from here — the table is the source
+> and it carries the per-policy rationale in its `description` field. The full
+> window/dimension matrix is
+> [`docs/authentication/betterauth/04-rate-limiting.md`](../../authentication/betterauth/04-rate-limiting.md#22-the-policy-table--why-the-auth-rules-are-generated).
+
+| Surface | Scope | Window | Key | Skip localhost |
 |---|---|---|---|---|
-| `POST /api/auth/sign-in*` | `authLimiter` | 10 / 15 min | IP | yes |
-| `POST /api/auth/sign-up*` | `authLimiter` | 10 / 15 min | IP | yes |
-| `POST /api/auth/forget-password*` | `authLimiter` | 10 / 15 min | IP | yes |
-| `GET /api/auth/sso/domain-check` | `ssoDomainCheckLimiter` | 60 / hour | IP | yes |
-| `POST /api/organizations/invitations/accept` | `orgInviteAcceptLimiter` | 30 / hour | IP | yes |
-| `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `orgWalletTopUpLimiter` | 20 / hour | `org:${orgId}` | yes |
+| `POST /api/auth/sign-in/email` | `auth.sign-in` | 30 ip / 10 account per 15 min | IP + account | yes |
+| `POST /api/auth/sign-up/email` | `auth.sign-up` | 10 ip / 3 account per 1 h | IP + account | yes |
+| `POST /api/auth/change-password` | `auth.change-password` | 5 ip / 5 account per 15 min | IP + account | yes |
+| `POST /api/auth/request-password-reset` | `auth.password-reset-request` | 5 ip / 3 account per 1 h | IP + account | yes |
+| `POST /api/auth/reset-password` | `auth.password-reset-submit` | 20 ip per 1 h | IP | yes |
+| `GET /api/auth/reset-password/:token` | `auth.password-reset-submit` | 10 token per 1 h | `tokenKey(token)` | yes |
+| `POST /api/auth/send-verification-email` | `auth.send-verification` | 10 ip / 3 account per 1 h | IP + account | yes |
+| `GET /api/auth/verify-email?token=…` | `auth.verify-email` | 30 ip per 1 h | IP | yes |
+| `POST /api/auth/sign-in/social`, `GET /api/auth/callback/:id` | `auth.social` | 30 ip per 15 min | IP | yes |
+| `POST /api/auth/sign-in/sso` | `auth.sso-start` | 20 ip / 10 account per 15 min | IP + account | yes |
+| `GET /api/auth/sso/callback[/:providerId]`, `POST /api/auth/sso/saml2/sp/acs[/:providerId]` | `auth.sso-callback` | 30 ip per 15 min | IP | yes |
+| `GET /api/auth/sso/domain-check` | `enterprise.sso-domain-check` | 120 ip per 1 h | IP | yes |
+| `POST /api/organizations/invitations/accept` | `enterprise.invite-accept` | 60 ip / 20 token per 1 h | IP + token | yes |
+| `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | *(hand-written)* | 20 per 1 h | `org:${orgId}` | yes |
+| `/scim/v2/**` (all verbs) | *(handler — see below)* | 60 per 1 min | `scim:${tokenHash}` | no |
 
-> The edge auth rule matches `sign-in` / `sign-up` / `forget-password`
-> by `startsWith`. **`reset-password` is NOT in the table** and
-> BetterAuth's own limiter is off (§1), so `POST /api/auth/reset-password`
-> is not rate-limited in code today — the reset *token* is the gate
-> (single-use, 30-min TTL via `resetPasswordTokenExpiresIn`). If you
-> want a limit there, add a rule keyed on IP. (Public read endpoints —
-> consultant search, trial-eligibility, newsletter, booking
-> availability — also live in this table but aren't enterprise surfaces;
-> they're documented in the global rate-limit notes, not here.)
+> **The `/forget-password` prefix that used to be in this table was a route that
+> never existed.** The middleware named `/api/auth/forget-password`; the real
+> BetterAuth route is `/api/auth/request-password-reset`
+> (`password.mjs:20`). The prefix never matched, so the entire forgot-password
+> flow — the endpoint that mails an attacker unlimited reset links and turns its
+> response into a batch oracle for which addresses hold accounts — ran
+> **unthrottled** for the life of the app. It is now `5 ip / 3 account per 1 h`.
+>
+> `POST /api/auth/reset-password` **is** in the table (it is not, as an earlier
+> revision of this document claimed), and the two halves of the token flow are
+> budgeted separately: the body form on IP, because the edge cannot read the
+> body, and the path form on the token itself — which is the number that
+> matters, because a reset token is a bearer credential and ten uses an hour
+> turns a leaked link from a takeover into a statistic.
+>
+> The lesson is structural, not a to-do item: **a limiter's identity, its paths
+> and the scope it reports must be one declaration.** The bug was invisible
+> because those were three unrelated pieces of text. They are now one row, and a
+> policy declared but never matched at the edge logs an error at boot.
+
+> **`sso-domain-check` and `invite-accept` were both raised for shared NATs** —
+> 60 → 120/hr and 30 → 60/hr respectively. Both sit on the critical path of a
+> corporate sign-in or a member's first sign-up, and one office floor is a single
+> IP. The `redisPrefix` override in the policy table exists so widening them
+> extended the *existing* windows rather than opening a fresh hour of quota
+> alongside them.
+
 
 ### Handler-enforced (`applyRateLimit(...)` inside the route)
 
@@ -244,10 +290,17 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
    Pick a **unique `rl:` prefix** so its bucket can't collide with
    another limiter's keyspace.
 2. Choose the layer:
-   - **Edge** (public/auth, cheap key): append a `RateRule` to
-     `RATE_LIMIT_RULES` in `middleware.ts` — `{ label, match, limiter,
-     key?, skipLocalhost }`. Omit `key` to default to client IP; return
-     `null` from `key` to skip when the identifier can't be parsed.
+   - **Auth or enterprise surface** — declare a row in `RATE_POLICIES`
+     (scope, window, dimensions, `description`) and a `POLICY_ROUTES`
+     entry in `middleware.ts` naming the scope. A `PolicyRoute` cannot
+     name a number, only a scope, so the budget and the path list cannot
+     drift apart. Verify with the boot-time `UNWIRED_SCOPES` error: a
+     declared-but-unmatched policy is an under-enforcement, not an outage.
+   - **Edge, anything else** (public reads, cheap key): append a
+     `RateRule` to `RATE_LIMIT_RULES` in `middleware.ts` — `{ label,
+     match, limiter, key?, scope?, skipLocalhost }`. Omit `key` to
+     default to client IP; return `null` from `key` to skip when the
+     identifier can't be parsed.
    - **Handler** (authed org-scoped write, key needs the resolved
      `orgId` / `tokenHash`): call
      `const rl = await applyRateLimit(myLimiter, key); if (rl) return rl;`
@@ -268,9 +321,21 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
   `unknown_ip` from behind a corporate NAT will punish the whole
   company.
 - **Don't put auth-mutation rate limits behind the auth gate.** If you
-  apply `authLimiter` only after `requireApiAuth`, a brute-force
-  attacker on the signin endpoint is never gated — the limiter must
-  run BEFORE the session check.
+  spend `auth.sign-in`'s budget only after `requireApiAuth`, a
+  brute-force attacker on the signin endpoint is never gated — the
+  limiter must run BEFORE the session check.
+- **Don't name a route that does not exist.** The auth rule once named
+  `/api/auth/forget-password`; BetterAuth has no such endpoint, so the
+  prefix matched nothing and the whole forgot-password flow ran
+  unthrottled. The policy table exists so this is structurally
+  impossible: it is one declaration, and a scope with no `POLICY_ROUTES`
+  entry logs at boot.
+- **Don't put a plaintext address in a Redis key.** Upstash keys are
+  plaintext at rest and visible in `MONITOR`. Use `accountKey(email)` or
+  `tokenKey(token)` from the policy table.
+- **Don't throttle a provider's webhook endpoint.** A 429 on a Stream
+  delivery is not a deferral — Stream retries inside a fifteen-second
+  budget and then drops the event permanently.
 - **Don't conflate idempotency with rate limiting.** A wallet top-up
   retry of the same `clientIdempotencyKey` is legitimate and should
   not count against the limiter (or should at least be deduped before
