@@ -495,11 +495,25 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
       // No consultant side — org-collaborator-only settlement.
       earnings: [],
     });
-    const orgEarningUpdates: Array<{ data: Record<string, unknown> }> = [];
-    tx.organizationEarnings.update.mockImplementation(
-      async ({ data }: { data: Record<string, unknown> }) => {
-        orgEarningUpdates.push({ data });
-        return {};
+    // The org rail writes through the shared CAS primitive, which uses
+    // `updateMany` with the status set AND the prior amount repeated in the
+    // WHERE — a plain `update({ where: { id } })` would let two concurrent
+    // writers both land. Capture the whole call so the predicate is asserted,
+    // not just the write.
+    const orgEarningUpdates: Array<{
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }> = [];
+    tx.organizationEarnings.updateMany.mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        orgEarningUpdates.push({ where, data });
+        return { count: 1 };
       },
     );
 
@@ -511,7 +525,15 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     // Org share flips to REFUNDED with the full proration.
     expect(orgEarningUpdates[0]?.data).toMatchObject({
       status: "REFUNDED",
-      refundedAmountPaise: 20_000, // cumulative-set
+      refundedAmountPaise: 20_000, // absolute set, not an increment
+    });
+    // …and only for a row that is still a refundable source carrying the
+    // amount we read. Without the pinned amount in the WHERE a concurrent
+    // refund would let this write double-apply on top of it.
+    expect(orgEarningUpdates[0]?.where).toMatchObject({
+      id: "oe-1",
+      refundedAmountPaise: 0,
+      status: { in: expect.arrayContaining(["READY", "PAID"]) },
     });
     // Clawback recorded on the COMPLETED payout — exactly once stamped.
     const clawback = tx.organizationPayout.update.mock.calls.find(

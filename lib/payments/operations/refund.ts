@@ -43,7 +43,6 @@ import {
 } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
-  EarningStatus,
   type LedgerAccountKind,
   PaymentStatus,
   Prisma,
@@ -65,7 +64,6 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -87,7 +85,10 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
-import { applyCappedEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 // ============================================================================
 // Public types
@@ -1282,6 +1283,9 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
   let clawbackInitiated = false;
+  // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
+  // `appliedByEarning` above, for the identical reason.
+  const appliedByOrgEarning = new Map<string, number>();
 
   for (const orgEarn of payment.organizationEarnings) {
     // #776 — `refundedAmountPaise` tracks the ORG-SHARE portion only. The
@@ -1300,32 +1304,42 @@ export async function applyRefundCascade(
     // followed by a lost-dispute chargeback that mints a fresh Refund) would
     // otherwise inflate refundedAmountPaise past orgSharePaise and drive the
     // payout readyAmount negative, blocking the whole batch.
-    const newRefunded = Math.min(
-      orgEarn.orgSharePaise,
-      orgEarn.refundedAmountPaise + orgShareRev,
+    //
+    // #CASC — that cap and the legal-source predicate now live in the WHERE as
+    // well, in the SAME shared writer the consultant rows above use (the org
+    // twin differs only in column names). A bare `update({ where: { id } })`
+    // plus the advisory `assertEarningStatusTransitionLegal` let two concurrent
+    // org reversals both read READY and both write.
+    //
+    // No `assertEarningStatusTransitionLegal` here any more: the helper asserts
+    // the same transition itself, unconditionally and BEFORE the write, on every
+    // attempt including the first — so a shared primitive reached without a
+    // caller guard cannot slip an unguarded PAID → REFUNDED through.
+    const orgReversal = await applyCappedOrgEarningReversal(
+      tx,
+      orgEarn,
+      orgShareRev,
     );
-    // Fully refunded when the org share is exhausted — its sole refundable
-    // portion (platform fee + consultant share are not org receivables).
-    const fully = newRefunded >= orgEarn.orgSharePaise;
-
-    let nextStatus = orgEarn.status;
-    if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        orgEarn.id,
-        orgEarn.status,
-        EarningStatus.REFUNDED,
+    if (orgReversal.lostRace) {
+      // Someone else owns this row's reversal now (or we only got the residual
+      // after a re-read). Report it — and do NOT count the row as reversed by
+      // this cascade unless this call actually moved paise.
+      console.warn(
+        `Org earnings ${orgEarn.id}: refund cascade CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgShareRev} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarn.orgSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-
-    await tx.organizationEarnings.update({
-      where: { id: orgEarn.id },
-      data: {
-        refundedAmountPaise: newRefunded,
-        status: nextStatus,
-      },
-    });
-    organizationEarningsReversed++;
+    // What this row ACTUALLY absorbed. Everything below — the counter on the
+    // row, the payout clawback increment, the audit figure and the clawback
+    // journal — reads this, never `orgShareRev`: the request can exceed the
+    // write (cap, or a residual after a lost race), and claiming the request
+    // would diverge the clawback counter from refundedAmountPaise and over-book
+    // the journal. 0 means "post nothing" — `postLedgerTxn` THROWS on a
+    // non-positive posting, so a zero must never reach it.
+    const orgApplied = orgReversal.reversedPaise;
+    appliedByOrgEarning.set(orgEarn.id, orgApplied);
+    if (orgApplied > 0) organizationEarningsReversed++;
 
     // Clawback: if this earnings row was already rolled into a payout
     // and that payout is COMPLETED (bank wire left), record the
@@ -1333,12 +1347,12 @@ export async function applyRefundCascade(
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
-      orgShareRev > 0
+      orgApplied > 0
     ) {
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgShareRev },
+          clawbackAmountPaise: { increment: orgApplied },
           // Only stamp on the FIRST clawback — preserves the
           // earliest-clawback timestamp across multiple partial
           // refunds against the same payout.
@@ -1354,14 +1368,14 @@ export async function applyRefundCascade(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Refund clawback initiated: ${orgShareRev} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Refund clawback initiated: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: payment.id,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
             amountPaise: input.amountPaise,
-            clawbackAmountPaise: orgShareRev,
+            clawbackAmountPaise: orgApplied,
             initiatedByUserId: input.initiatedByUserId ?? null,
           } as Prisma.InputJsonValue,
         },
@@ -1373,7 +1387,7 @@ export async function applyRefundCascade(
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgShareRev,
+        amountPaise: orgApplied,
         organizationId: orgEarn.organizationId,
       });
 
@@ -1602,8 +1616,12 @@ export async function applyRefundCascade(
         (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
         0,
       );
+      // APPLIED (Step 7's `appliedByOrgEarning`), not the requested proportion —
+      // same reason as `consRev` above, and the same reason the clawback counter
+      // reads it: booking a payable debit for paise the row never gave up is the
+      // EARNINGS_LEDGER_DRIFT `reconcile-ledgers` raises.
       const orgRev = payment.organizationEarnings.reduce(
-        (s, o) => s + proportion(o.orgSharePaise),
+        (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
         0,
       );
       // #812 — default a missing taxAmount to 0. A `null`/`undefined` here would

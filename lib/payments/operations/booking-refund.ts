@@ -33,12 +33,7 @@
  * SUCCEEDED payment through.
  */
 
-import {
-  EarningStatus,
-  Prisma,
-  PaymentStatus,
-  RefundStatus,
-} from "@prisma/client";
+import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
 
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
@@ -64,7 +59,6 @@ import {
 } from "@/lib/referrals/service";
 import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
-import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -93,7 +87,10 @@ import {
   refundPayment,
 } from "./refund";
 
-import { applyCappedEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 /**
  * #1589 N-P0-01 — the payer's notice for a refund that never touches the
@@ -785,36 +782,46 @@ async function reverseFreeCreditSettlement(
   // Org earnings (the consultant's host org / collaborator orgs — not a
   // sponsor; referral credits never fund org-sponsored checkouts). Mirrors
   // cascade Step 7 including the COMPLETED-payout clawback record.
+  //
+  // `appliedByOrgEarning` is the org twin of `appliedByEarning` above and is
+  // read by both the clawback counter below and the ORG_PAYABLE debit further
+  // down: the helper clamps to `orgSharePaise - refundedAmountPaise` and, on a
+  // lost race, takes only the residual, so the request can exceed the write.
+  const appliedByOrgEarning = new Map<string, number>();
   for (const orgEarn of payment.organizationEarnings) {
     const orgDelta = part(orgEarn.orgSharePaise);
-    const newRefunded = Math.min(
-      orgEarn.orgSharePaise,
-      orgEarn.refundedAmountPaise + orgDelta,
+    // #CASC — the same shared CAS writer the consultant rows above use: the cap
+    // and the legal-source predicate are repeated in the WHERE, so a concurrent
+    // gateway refund that already took this row wins the race here instead of
+    // both writers landing. The org twin differs only in column names.
+    //
+    // No `assertEarningStatusTransitionLegal` here any more: the helper asserts
+    // the same transition itself, unconditionally and before the write, on
+    // every attempt including the first.
+    const orgReversal = await applyCappedOrgEarningReversal(
+      tx,
+      orgEarn,
+      orgDelta,
     );
-    const fully = newRefunded >= orgEarn.orgSharePaise;
-    let nextStatus = orgEarn.status;
-    if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        orgEarn.id,
-        orgEarn.status,
-        EarningStatus.REFUNDED,
+    appliedByOrgEarning.set(orgEarn.id, orgReversal.reversedPaise);
+    if (orgReversal.lostRace) {
+      console.warn(
+        `Org earnings ${orgEarn.id}: credit-funded cancel CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgDelta} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarn.orgSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-    await tx.organizationEarnings.update({
-      where: { id: orgEarn.id },
-      data: { refundedAmountPaise: newRefunded, status: nextStatus },
-    });
+    const orgApplied = orgReversal.reversedPaise;
 
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
-      orgDelta > 0
+      orgApplied > 0
     ) {
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgDelta },
+          clawbackAmountPaise: { increment: orgApplied },
           clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
             ? undefined
             : new Date(),
@@ -826,22 +833,25 @@ async function reverseFreeCreditSettlement(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${orgDelta} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Credit-funded cancellation clawback: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: input.paymentId,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: orgDelta,
+            amountPaise: orgApplied,
             initiatedByUserId: input.initiatedByUserId,
           } as Prisma.InputJsonValue,
         },
       });
       // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
+      // Gated on the APPLIED figure, never the request: a zero (refused CAS, or
+      // a cap that leaves nothing) must post NOTHING, because `postLedgerTxn`
+      // THROWS on a non-positive amount.
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgDelta,
+        amountPaise: orgApplied,
         organizationId: orgEarn.organizationId,
       });
     }
@@ -880,16 +890,16 @@ async function reverseFreeCreditSettlement(
   }
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
-  // APPLIED, not requested (see `appliedByEarning`). `platformPlug` is the
-  // residual that keeps this transaction balanced, so a smaller `consRev` puts
-  // the un-clawed-back remainder on PLATFORM_FEE rather than over-debiting the
-  // consultant payable.
+  // APPLIED, not requested (see `appliedByEarning` / `appliedByOrgEarning`).
+  // `platformPlug` is the residual that keeps this transaction balanced, so a
+  // smaller `consRev`/`orgRev` puts the un-clawed-back remainder on
+  // PLATFORM_FEE rather than over-debiting the payables.
   const consRev = payment.earnings.reduce(
     (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
     0,
   );
   const orgRev = payment.organizationEarnings.reduce(
-    (s, o) => s + part(o.orgSharePaise),
+    (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
     0,
   );
   const gstRev = part(payment.taxAmount ?? 0);
@@ -916,7 +926,10 @@ async function reverseFreeCreditSettlement(
     }
   }
   for (const orgEarn of payment.organizationEarnings) {
-    const orgDelta = part(orgEarn.orgSharePaise);
+    // APPLIED paise, not `part(orgSharePaise)` (the request) — debiting the
+    // payable for paise the CAS never applied is the ledger-vs-earnings
+    // divergence `reconcile-ledgers` raises as EARNINGS_LEDGER_DRIFT.
+    const orgDelta = appliedByOrgEarning.get(orgEarn.id) ?? 0;
     if (orgDelta > 0) {
       debits.push({
         account: {

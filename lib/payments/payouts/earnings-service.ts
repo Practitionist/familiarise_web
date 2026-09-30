@@ -144,7 +144,10 @@ import {
   type SubscriptionTranches,
 } from "@/lib/booking/entitlement";
 
-import { applyCappedEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 /**
  * #1766 — the cycle shape a subscription's earnings are split into: one
@@ -1565,19 +1568,32 @@ export async function refundEarnings(
 
     if (orgRefundAmount <= 0) continue;
 
-    const isOrgFullyRefunded =
-      alreadyRefunded + orgRefundAmount >= orgEarning.orgSharePaise;
+    // #CASC — the org row goes through the same shared CAS writer the
+    // consultant rows use. It was an `update({ where: { id } })` carrying an
+    // `increment`, which is the worst of both: the cap above was derived from
+    // a pre-read, and an `increment` re-adds that delta, so two concurrent
+    // `refundEarnings` (an app refund racing a webhook, or two cascades) both
+    // read `alreadyRefunded = 0`, both pass, and both increment — summing past
+    // the share and driving the org payout's readyAmount negative. The helper
+    // repeats the legal-source set AND the prior amount in the WHERE and writes
+    // an absolute value, so concurrent writers can only compose into
+    // `min(share, a + b)`.
+    const orgReversal = await applyCappedOrgEarningReversal(
+      db,
+      orgEarning,
+      orgRefundAmount,
+    );
 
-    await db.organizationEarnings.update({
-      where: { id: orgEarning.id },
-      data: {
-        refundedAmountPaise: { increment: orgRefundAmount },
-        ...(isOrgFullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
+    if (orgReversal.lostRace) {
+      console.warn(
+        `Org earnings ${orgEarning.id}: refundEarnings CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgRefundAmount} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarning.orgSharePaise}).`,
+      );
+    }
 
     console.log(
-      `Org earnings ${orgEarning.id} refunded: ${orgRefundAmount} paise (${isOrgFullyRefunded ? "full" : "partial"})`,
+      `Org earnings ${orgEarning.id} refunded: ${orgReversal.reversedPaise} paise (${orgReversal.fullyRefunded ? "full" : "partial"})`,
     );
   }
 

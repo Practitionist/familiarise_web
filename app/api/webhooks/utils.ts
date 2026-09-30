@@ -12,6 +12,7 @@ import { getStripeClient } from "@/lib/payments/core/stripe";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
+import { applyCappedOrgEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -1900,24 +1901,44 @@ export async function handleDisputeUpdated(
           for (const oe of lostOrgEarnings) {
             const alreadyRefunded = oe.refundedAmountPaise ?? 0;
             const remaining = Math.max(oe.orgSharePaise - alreadyRefunded, 0);
-            const reversalNow = Math.min(
+            const requested = Math.min(
               Math.floor(oe.orgSharePaise * prorationFactor),
               remaining,
             );
-            await tx.organizationEarnings.update({
-              where: { id: oe.id },
-              data: {
-                status: "REFUNDED",
-                preDisputeStatus: null,
-                ...(reversalNow > 0
-                  ? { refundedAmountPaise: { increment: reversalNow } }
-                  : {}),
-              },
-            });
+
+            // #CASC — the capped amount now comes from the shared CAS writer.
+            // This was `update({ where: { id } })` + `increment` of a pre-read
+            // delta, so two disputes on ONE payment (a chargeback plus a
+            // separate refund, both resolving LOST) each read
+            // `alreadyRefunded = 0`, each incremented, and each posted its own
+            // full clawback to the reversal engine — over-recovering the host
+            // org. The helper pins the prior amount in the WHERE and writes an
+            // absolute value, so the two writers can only compose into
+            // `min(share, a + b)`.
+            const orgApplied = (
+              await applyCappedOrgEarningReversal(tx, oe, requested)
+            ).reversedPaise;
+
+            // Terminalisation is NOT this loop's job and deliberately does not
+            // go through the helper: a lost dispute beats the host, so the row
+            // must become terminal even when the proration recovers less than
+            // the whole share (the helper would leave it non-terminal). The
+            // status predicate makes exactly one writer win and the loser a
+            // no-op, so "force terminal" can never be applied twice.
+            if (requested > 0) {
+              await tx.organizationEarnings.updateMany({
+                where: { id: oe.id, status: { in: ["HELD", "PAID"] } },
+                data: { status: "REFUNDED", preDisputeStatus: null },
+              });
+            }
+
+            // #1906 — the journal takes the APPLIED amount. Before, a capped or
+            // lost-race reversal posted its full request, so the books recorded
+            // a clawback larger than the share reduction it accompanied.
             if (
               oe.orgPayoutId &&
               oe.orgPayout?.status === "COMPLETED" &&
-              reversalNow > 0
+              orgApplied > 0
             ) {
               await applyReversal(tx, {
                 source: {
@@ -1925,7 +1946,7 @@ export async function handleDisputeUpdated(
                   orgPayoutId: oe.orgPayoutId,
                   organizationId: oe.organizationId,
                 },
-                amountPaise: reversalNow,
+                amountPaise: orgApplied,
                 reason: `chargeback lost (dispute ${disputeId})`,
                 refundId: `dispute:${dispute.id}`,
               });
