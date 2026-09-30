@@ -69,6 +69,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
+import { requireNamedTargetApp } from "./target-guard";
 
 interface BackfillResult {
   scanned: number;
@@ -87,6 +88,11 @@ interface BackfillOptions {
    * Stream's rate limit, not our DB pagination.
    */
   pageSize?: number;
+  /**
+   * Raw argv, so `--target-app` is honoured alongside the env var. See
+   * target-guard.ts.
+   */
+  argv?: readonly string[];
 }
 
 type ChannelTarget = {
@@ -202,6 +208,22 @@ export async function backfillChannelOrg(
     channelMissing: 0,
     errors: 0,
   };
+
+  // `updatePartial` is a per-channel write against the shared Stream app, and
+  // the credentials do not say which app they point at. Gated like every other
+  // writer in this folder. `errors` rather than a throw, because this function's
+  // contract is a summary and a refusal is a summary too — the caller prints it
+  // and exits non-zero.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/backfill-channel-org.ts",
+      writes: !dryRun,
+      argv: opts.argv,
+    })
+  ) {
+    result.errors = 1;
+    return result;
+  }
 
   const client = getStreamChatClient();
 
@@ -362,7 +384,10 @@ async function main() {
   console.log(
     `Starting Stream channel org backfill (${dryRun ? "DRY RUN — pass --apply to write" : "LIVE"})...`,
   );
-  const result = await backfillChannelOrg({ dryRun });
+  const result = await backfillChannelOrg({
+    dryRun,
+    argv: process.argv.slice(2),
+  });
   console.log("Backfill complete:", result);
   // Exit cleanly so npx tsx returns 0
   process.exit(result.errors > 0 ? 1 : 0);

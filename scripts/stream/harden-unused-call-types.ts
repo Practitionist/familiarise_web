@@ -26,13 +26,25 @@
  * calls have ever existed on any of the three, verified two ways with a
  * `default` control query.
  *
+ * `livestream` is in the list, and it STAYS in the list. Removing it would be a
+ * migration decision — deciding this app resolves webinar calls against it —
+ * and not a hardening one. What changed alongside this script is that
+ * `ensure-call-type-settings.ts` now drives `livestream` to a safe posture
+ * anyway, so whichever way that migration goes the type is not billing anything
+ * nobody asked for and is not the reason a participant could have started a
+ * $15/1k-minute RTMP ingest. Stripping reach from a type we might migrate onto
+ * is irreversible in the same way a deleted call is: see below.
+ *
  *   npx tsx scripts/stream/harden-unused-call-types.ts
  *   npx tsx scripts/stream/harden-unused-call-types.ts --apply
+ *
+ * `--apply` must name the target app — see target-guard.ts.
  */
 import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { getStreamVideoClient } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import { requireNamedTargetApp } from "./target-guard";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -93,10 +105,12 @@ const STRIP = new Set([...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS]);
 
 interface Options {
   apply: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 function parseArgs(argv: string[]): Options {
-  return { apply: argv.includes("--apply") };
+  return { apply: argv.includes("--apply"), argv };
 }
 
 /**
@@ -165,6 +179,17 @@ async function hardenOne(
 
 async function main(): Promise<number> {
   const opts = parseArgs(process.argv.slice(2));
+
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/harden-unused-call-types.ts",
+      writes: opts.apply,
+      argv: opts.argv,
+    })
+  ) {
+    return 1;
+  }
+
   const client = getStreamVideoClient();
 
   if ((UNUSED_TYPES as readonly string[]).includes(STREAM_CALL_TYPE)) {

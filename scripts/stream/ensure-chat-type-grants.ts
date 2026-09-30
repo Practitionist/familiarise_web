@@ -41,7 +41,8 @@
  *   npx tsx scripts/stream/ensure-chat-type-grants.ts --apply --rebaseline
  *
  * NOTE: dev, preview and production share one Stream app. A dry run here reads
- * production. An apply writes it.
+ * production. An apply writes it, and must name the target app — see
+ * target-guard.ts.
  */
 import "dotenv/config";
 import {
@@ -57,6 +58,7 @@ import {
   getStreamChatClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
+import { requireNamedTargetApp } from "./target-guard";
 
 /** The two built-in channel types this app uses. Nothing else is in play. */
 const CHANNEL_TYPES = ["messaging", "team"] as const;
@@ -104,6 +106,8 @@ interface Options {
   deployConfirmed: boolean;
   /** Overwrite an existing pre-image with the CURRENT live state. */
   rebaseline: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 function parseArgs(argv: string[]): Options {
@@ -112,6 +116,7 @@ function parseArgs(argv: string[]): Options {
     restore: argv.includes("--restore-user-create"),
     deployConfirmed: argv.includes("--open-route-is-deployed"),
     rebaseline: argv.includes("--rebaseline"),
+    argv,
   };
 }
 
@@ -309,6 +314,21 @@ async function syncUserSearchSetting(
 export async function ensureChatTypeGrants(opts: Options): Promise<number> {
   // Before the read — a refusal should not depend on Stream being reachable.
   if (!requireDeployConfirmation(opts)) return 1;
+
+  // And before the credential check, because "which app" is the more dangerous
+  // question and answering "Stream is not configured" first sends the operator
+  // looking in the wrong place. `--restore-user-create` is a write and is gated
+  // like one: it hands `create-channel` BACK, so getting it onto the wrong
+  // account is worse than not fixing the right one.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/ensure-chat-type-grants.ts",
+      writes: opts.apply,
+      argv: opts.argv,
+    })
+  ) {
+    return 1;
+  }
 
   if (!isStreamConfigured()) {
     console.error(

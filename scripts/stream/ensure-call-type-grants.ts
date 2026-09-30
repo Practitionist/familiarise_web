@@ -29,11 +29,27 @@
  * the grants buy nothing legitimate and let any attendee end a paid session or
  * defeat the pre-join recording-consent gate.
  *
+ * And it revokes the BILLABLE grants the first round of this fix never reached:
+ * transcription, closed captions, broadcasting, and
+ * `enable-noise-cancellation-any-team`. That last one is metered per
+ * PARTICIPANT-minute, so a self-serve grant on the role every participant holds
+ * is not a permissions oversight, it is a meter anybody in the room can turn on.
+ * See BILLABLE_CALL_PERMISSIONS.
+ *
+ * `--check` is the CI mode: it never writes, annotates each finding, and exits
+ * 2 on drift. Run daily by `.github/workflows/stream-calltype-drift.yml`. A
+ * grants map configured in the Stream dashboard leaves no commit and no failing
+ * test, so nothing else would notice it being reopened.
+ *
+ * `--apply` additionally requires the target app to be named — see
+ * `target-guard.ts`. Dev, preview and production share one Stream app and there
+ * is no way to tell from the credentials which one they point at.
+ *
  * Idempotent and reversible. Dry-run is the default — pass `--apply` to write.
  * Reverting is the same script with `--restore-user-join`.
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
- *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply
+ *   npx tsx scripts/stream/ensure-call-type-grants.ts --check
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join
  */
@@ -46,6 +62,7 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import { requireNamedTargetApp } from "./target-guard";
 // One implementation of the drift comparison, not three. This file,
 // ensure-call-type-settings.ts and ensure-app-settings.ts each had their own;
 // they must agree, because this is the check that decides whether an operator
@@ -91,6 +108,80 @@ const JOIN_REVOKED_ROLES = ["user", "guest"];
 const RECORDING_PERMISSIONS = ["start-recording", "stop-recording"];
 
 /**
+ * The rest of the billable grants, which the first round of this fix never
+ * reached.
+ *
+ * Verified against the LIVE `default` type on 2026-09-29 rather than against
+ * Stream's documentation, because documentation is what made the first round
+ * incomplete: it lists five built-in roles including `host` and `moderator` and
+ * spells the member role `call-member`, while the live grants map has exactly
+ * six keys — `admin, call_member, global_admin, global_read_only, guest, user` —
+ * with no `host`, no `moderator`, and an underscore. Reading the docs is how a
+ * list ends up naming permissions nobody holds and omitting the ones everybody
+ * does.
+ *
+ * What the live type actually grants `call_member` and `user`:
+ *
+ *   enable-noise-cancellation-any-team
+ *     Self-serve, and METERED PER PARTICIPANT-MINUTE. This is the expensive
+ *     one: an eleven-tile gallery that has noise cancellation on bills eleven
+ *     times what the same call bills with it off, and the participant who turned
+ *     it on does not know they spent anyone's money. Nothing in the app uses
+ *     `@stream-io/audio-filters-web`, so the grant has no legitimate holder —
+ *     and it sits on `guest` too, which the app's
+ *     `guest_user_creation_disabled: true` now makes unmintable, so this is the
+ *     third lock on the same door rather than the first.
+ *
+ *   start-transcription / stop-transcription
+ *     Billed per CALL-MINUTE at roughly ten times a video minute, and
+ *     transcription produces a durable artefact (a transcript of a private
+ *     consultation) that no one asked to create. We disable the setting on the
+ *     type as well (`ensure-call-type-settings.ts`), so this grant is a second
+ *     lock — deliberately: the setting can be re-enabled in the dashboard by
+ *     anyone with the app open, and the grant is what decides who may start it.
+ *
+ *   start-closed-captions / stop-closed-captions
+ *     Real-time captions are an ACCESSIBILITY feature, so the capability stays
+ *     reachable — through the server, through the `livestream` posture, and
+ *     through a client that holds the grant deliberately. What does not stay is
+ *     self-serve: a participant starting captions on a paid call is a cost the
+ *     host did not agree to. So this is revoked from the ordinary roles here and
+ *     `closed_caption_mode` is pinned to `available` on `livestream` rather than
+ *     off — see `ensure-call-type-settings.ts`.
+ *
+ *   start-broadcasting / stop-broadcasting
+ *     `broadcasting.enabled` is already `false` on `default` (verified live
+ *     2026-09-29), so the setting stops the meter today. The grant is still
+ *     wrong to leave in place: `start-broadcast-call` was never revoked either
+ *     (#1160 recorded the same complaint about the permission), and a dashboard
+ *     change that flips one boolean would re-arm every participant at once. A
+ *     permission nobody holds costs nothing to remove and cannot be forgotten.
+ *
+ * `anonymous` is in the revoked-roles list below even though this call type has
+ * no such key: `livestream` does, and the same filter is the one that has to be
+ * right for both. Filtering a role that is absent is a no-op (the script checks
+ * for the key before touching it), so listing it here costs nothing and removes
+ * a reason for the two call types to need different lists.
+ */
+const BILLABLE_CALL_PERMISSIONS = [
+  "start-transcription",
+  "stop-transcription",
+  "start-closed-captions",
+  "stop-closed-captions",
+  "start-broadcasting",
+  "stop-broadcasting",
+  "enable-noise-cancellation-any-team",
+];
+
+/**
+ * Roles that lose the billable grants. `call_member` is the one that matters and
+ * it is the one a first pass forgets: `/api/meetings/[meetingId]/join` hands
+ * `call_member` to EVERY participant, so revoking from `user` and `guest` alone
+ * removes permissions from nobody at all while reading exactly like a fix.
+ */
+const BILLABLE_REVOKED_ROLES = ["user", "guest", "anonymous", MEMBER_ROLE];
+
+/**
  * `end-call` is now revoked from `call_member` too. This is the deploy the
  * previous revision of this comment was waiting for.
  *
@@ -129,10 +220,76 @@ const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, MEMBER_ROLE];
  */
 const END_CALL_REVOKED_ROLES = RECORDING_REVOKED_ROLES;
 
+/**
+ * `livestream` — the other type this repository may resolve calls against, and
+ * one nothing in this folder had hardened until #1301.
+ *
+ * It is ALSO in `harden-unused-call-types.ts`'s `UNUSED_TYPES`, and that list
+ * deliberately still contains it: whether this app resolves webinar calls against
+ * `livestream` is a migration decision, not a hardening one, and the hardening
+ * list must not quietly pre-empt it either way. What this plan does is make the
+ * type safe in BOTH futures — unusable as a cost centre if we never migrate to
+ * it, not a privilege escalation if we do.
+ */
+const LIVESTREAM_CALL_TYPE = "livestream";
+
+/**
+ * The owner-suffixed destructive grants `call_member` and `user` hold there.
+ *
+ * Read off the live `livestream` type on 2026-09-29. `-owner` means "on a call
+ * you own", and the point of that scope is that the OWNER is the host. Stream has
+ * no concept of a host on this type — `host` is a role key this app never
+ * assigns, and host-ness in the app is `custom.consultantUserId`, which Stream
+ * knows nothing about — so `call_member` is handed to every participant and
+ * `call_member` is holding `end-call-owner`.
+ *
+ * Which means any attendee of a webinar can end the broadcast, remove other
+ * participants, promote them, and start and stop a paid recording. The first is
+ * the availability incident; the rest are the integrity ones.
+ *
+ * The two roles are named together because on this type they are near-identical
+ * maps — `user` and `call_member` hold the same list, differing only in
+ * `join-call`-family entries — so a revocation applied to one and not the other
+ * would leave the same capability reachable under the other name.
+ */
+const OWNER_DESTRUCTIVE_PERMISSIONS = [
+  "end-call-owner",
+  "join-backstage-owner",
+  "start-recording-owner",
+  "stop-recording-owner",
+  "remove-call-member-owner",
+  "update-call-member-role-owner",
+  // The two `-owner` forms of the broadcasting starters, which is the same hole as
+  // `start-broadcasting-owner`'s plain sibling in a different suit: an attendee
+  // pushing an RTMP or HLS broadcast off a paid call is the capability #1160
+  // complained about, and on this type `broadcasting.enabled` is `true` — the one
+  // setting the settings script deliberately does NOT pin here, because a
+  // broadcast is the entire point of the type. So the grant is the only thing
+  // between an audience member and the bill.
+  "start-broadcasting-owner",
+  "stop-broadcasting-owner",
+];
+
+/**
+ * Who loses them. `host` and `admin` are absent on purpose: they are the roles
+ * that are SUPPOSED to own a call, and an operator has to be able to inspect and
+ * end one. `global_admin` is platform staff. This is the mirror of
+ * `BILLABLE_REVOKED_ROLES` — strip from the roles an end user can hold, and only
+ * from those.
+ */
+const OWNER_DESTRUCTIVE_ROLES = ["call_member", "user", "guest", "anonymous"];
+
 interface Options {
   apply: boolean;
   restore: boolean;
   deployConfirmed: boolean;
+  /**
+   * CI mode: report the diff, annotate it, and exit non-zero on drift without
+   * writing. See {@link DRIFT_EXIT_CODE}.
+   */
+  check: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 function parseArgs(argv: string[]): Options {
@@ -153,7 +310,28 @@ function parseArgs(argv: string[]): Options {
     deployConfirmed:
       argv.includes("--routes-are-deployed") ||
       argv.includes("--join-route-is-deployed"),
+    check: argv.includes("--check"),
+    argv,
   };
+}
+
+/**
+ * Distinct from 1 on purpose, and for exactly the reason
+ * `ensure-webhook-subscription.ts` says it: 1 means the script could not
+ * evaluate drift at all (Stream unconfigured, or unreachable), which is a
+ * failure of the RUNNER, while 2 means it evaluated the live call type and there
+ * really is drift. Both fail the scheduled job, and a log reader should not have
+ * to guess which happened — a missing credential on the runner and a dashboard
+ * edit that re-granted `enable-noise-cancellation-any-team` need completely
+ * different responses.
+ */
+export const DRIFT_EXIT_CODE = 2;
+
+/** GitHub Actions annotation; a plain line anywhere else. */
+function annotate(message: string): void {
+  console.error(
+    process.env.GITHUB_ACTIONS ? `::error::${message}` : `ERROR: ${message}`,
+  );
 }
 
 /**
@@ -275,54 +453,100 @@ async function requireSomeoneHoldsMemberRole(
   return false;
 }
 
-export async function ensureCallTypeGrants(opts: Options): Promise<number> {
-  // Before anything else, including the read — a refusal should not depend on
-  // Stream being reachable.
-  if (!requireDeployConfirmation(opts)) return 1;
+/**
+ * One call type: read, transform, report, write, verify.
+ *
+ * The transform, the report and the post-write assertion are all supplied by the
+ * plan rather than shared, because the two call types have almost nothing in
+ * common: `default` is a consultation type where `call_member` is load-bearing
+ * and `join-call` has to be proven still present, and `livestream` is a broadcast
+ * type where nothing is load-bearing and the whole job is taking away the
+ * owner's powers. Sharing the write, the pre-image and the settings-drift check
+ * is the part that is genuinely the same and the part that has to be identical —
+ * that check is what tells an operator their recording layout was just discarded.
+ */
+interface GrantsPlan {
+  /** The call type's name in Stream. */
+  name: string;
+  /** Why this type is being touched, printed above the diff. */
+  rationale: string;
+  /** Whether `--restore-user-join` applies to this type at all. */
+  restorable: boolean;
+  /**
+   * Pre-write gate, `--apply` only. The answer the grants transform cannot
+   * compute for itself.
+   */
+  preflight?: (client: StreamVideoClient) => Promise<boolean>;
+  build: (
+    grants: Record<string, string[]>,
+    existing: Record<string, string[]>,
+    opts: Options,
+  ) => Record<string, string[]>;
+  /** One line per change, for the operator. */
+  report: (
+    existing: Record<string, string[]>,
+    next: Record<string, string[]>,
+  ) => string[];
+  /**
+   * Post-write assertion against what Stream STORED, not against intent.
+   * Returns the reason to fail, or null.
+   */
+  assert: (
+    verify: Record<string, string[]>,
+    intended: Record<string, string[]>,
+    opts: Options,
+  ) => string | null;
+}
 
-  if (!isStreamConfigured()) {
-    console.error(
-      "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
-    );
-    return 1;
-  }
+type StreamVideoClient = ReturnType<typeof getStreamVideoClient>;
 
-  const client = getStreamVideoClient();
+/** The `default` plan: every revocation #1134 and #1301 landed. */
+const DEFAULT_PLAN: GrantsPlan = {
+  name: STREAM_CALL_TYPE,
+  rationale:
+    "the type every consultation resolves against — join, end-call and the billable grants are all server-side now",
+  restorable: true,
+  preflight: (client) =>
+    requireSomeoneHoldsMemberRole(client, {
+      apply: true,
+      restore: false,
+      deployConfirmed: true,
+      check: false,
+      argv: [],
+    }),
 
-  if (!(await requireSomeoneHoldsMemberRole(client, opts))) return 1;
-  const existing = await client.video.getCallType({ name: STREAM_CALL_TYPE });
+  build: (grants, existing, opts) => {
+    const next: Record<string, string[]> = { ...grants };
 
-  const grants: Record<string, string[]> = { ...existing.grants };
-
-  const before = JSON.stringify(grants, null, 2);
-
-  if (opts.restore) {
-    for (const role of JOIN_REVOKED_ROLES) {
-      const roleGrants = grants[role];
-      if (roleGrants && !roleGrants.includes(JOIN_CALL)) {
-        grants[role] = [...roleGrants, JOIN_CALL];
+    if (opts.restore) {
+      for (const role of JOIN_REVOKED_ROLES) {
+        const roleGrants = next[role];
+        if (roleGrants && !roleGrants.includes(JOIN_CALL)) {
+          next[role] = [...roleGrants, JOIN_CALL];
+        }
       }
-    }
-    // `call_member` gets `end-call` back as well, because this rollback exists
-    // for one situation — the end route is not actually serving traffic — and in
-    // that situation the host has no way to end a call at all. Restoring join
-    // without it would fix the lockout and leave every host stranded in a room
-    // they cannot close.
-    const restoreMember = grants[MEMBER_ROLE];
-    if (restoreMember && !restoreMember.includes(END_CALL)) {
-      grants[MEMBER_ROLE] = [...restoreMember, END_CALL];
+      // `call_member` gets `end-call` back as well, because this rollback exists
+      // for one situation — the end route is not actually serving traffic — and
+      // in that situation the host has no way to end a call at all. Restoring
+      // join without it would fix the lockout and leave every host stranded in a
+      // room they cannot close.
+      const restoreMember = next[MEMBER_ROLE];
+      if (restoreMember && !restoreMember.includes(END_CALL)) {
+        next[MEMBER_ROLE] = [...restoreMember, END_CALL];
+      }
+
+      // Recording control is NOT restored, and `user`/`guest` get nothing back
+      // beyond `join-call`. Those revocations carry no availability risk — there
+      // is no client-side `call.startRecording()` in the tree to break — so
+      // undoing them would only re-open holes this script closed.
+      return next;
     }
 
-    // Recording control is NOT restored, and `user`/`guest` get nothing back
-    // beyond `join-call`. Those revocations carry no availability risk — there
-    // is no client-side `call.startRecording()` in the tree to break — so
-    // undoing them would only re-open holes this script closed.
-  } else {
     // `user` and `guest` lose the lot — they should not be joining at all.
     for (const role of JOIN_REVOKED_ROLES) {
-      const roleGrants = grants[role];
+      const roleGrants = next[role];
       if (roleGrants) {
-        grants[role] = roleGrants.filter(
+        next[role] = roleGrants.filter(
           (g) =>
             g !== JOIN_CALL &&
             g !== END_CALL &&
@@ -336,18 +560,30 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     // Both are server-side now: /api/stream/recordings/{start,stop} and
     // /api/meetings/[meetingId]/end.
     for (const role of RECORDING_REVOKED_ROLES) {
-      const roleGrants = grants[role];
+      const roleGrants = next[role];
       if (roleGrants) {
-        grants[role] = roleGrants.filter(
+        next[role] = roleGrants.filter(
           (g) => !RECORDING_PERMISSIONS.includes(g),
         );
       }
     }
 
-    for (const role of END_CALL_REVOKED_ROLES) {
-      const roleGrants = grants[role];
+    // The billable remainder: transcription, closed captions, broadcasting and
+    // the per-participant-minute noise-cancellation grant. `call_member` is in
+    // this list and it is the role that matters — see BILLABLE_CALL_PERMISSIONS.
+    for (const role of BILLABLE_REVOKED_ROLES) {
+      const roleGrants = next[role];
       if (roleGrants) {
-        grants[role] = roleGrants.filter((g) => g !== END_CALL);
+        next[role] = roleGrants.filter(
+          (g) => !BILLABLE_CALL_PERMISSIONS.includes(g),
+        );
+      }
+    }
+
+    for (const role of END_CALL_REVOKED_ROLES) {
+      const roleGrants = next[role];
+      if (roleGrants) {
+        next[role] = roleGrants.filter((g) => g !== END_CALL);
       }
     }
 
@@ -355,42 +591,259 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     // keep join-call. It already holds it on the live type; assert rather than
     // assume, because getting this wrong locks every paying user out of every
     // call.
-    const memberGrants = grants[MEMBER_ROLE] ?? [];
+    const memberGrants = next[MEMBER_ROLE] ?? [];
     if (!memberGrants.includes(JOIN_CALL)) {
-      grants[MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
+      next[MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
     }
-  }
+    return next;
+  },
 
+  report: (existing, next) => {
+    const lines: string[] = [];
+    for (const role of [...JOIN_REVOKED_ROLES, MEMBER_ROLE, "admin"]) {
+      const had = (existing[role] ?? []).includes(JOIN_CALL);
+      const now = (next[role] ?? []).includes(JOIN_CALL);
+      lines.push(
+        `  ${role.padEnd(12)} join-call: ${had} → ${now}` +
+          (next[role] ? "" : "   (role absent on this call type)"),
+      );
+    }
+    for (const role of RECORDING_REVOKED_ROLES) {
+      for (const perm of [...RECORDING_PERMISSIONS, END_CALL]) {
+        const had = (existing[role] ?? []).includes(perm);
+        const now = (next[role] ?? []).includes(perm);
+        if (had === now && !had) continue;
+        lines.push(
+          `  ${role.padEnd(12)} ${perm.padEnd(16)}: ${had} → ${now}` +
+            (perm === END_CALL && role === MEMBER_ROLE
+              ? "   (server-side now — POST /api/meetings/[meetingId]/end)"
+              : ""),
+        );
+      }
+    }
+    // Printed on their own loop rather than folded into the one above, because
+    // the reasons differ and the reasons are what an operator reads when
+    // deciding whether to type the next command.
+    // `enable-noise-cancellation-any-team` is the one to read twice: it is the
+    // only grant on this call type that costs money per participant-minute, so an
+    // eleven-tile gallery with it on bills eleven times what the same call bills
+    // with it off.
+    lines.push(
+      ...revocationLines(
+        existing,
+        next,
+        BILLABLE_REVOKED_ROLES,
+        BILLABLE_CALL_PERMISSIONS,
+      ),
+    );
+    return lines;
+  },
+
+  assert: (verify, intended, opts) => {
+    // The one invariant worth checking against real returned data rather than
+    // against our own intent: the join route assigns `call_member`, so if Stream
+    // did not store join-call on that role, every participant is locked out of
+    // every call. Checked after the write, where it can genuinely fail.
+    if (!opts.restore && !(verify[MEMBER_ROLE] ?? []).includes(JOIN_CALL)) {
+      return (
+        `${MEMBER_ROLE} does NOT hold ${JOIN_CALL} on Stream after this write. ` +
+        `Every participant is locked out of every call. Roll back NOW: ` +
+        `npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join`
+      );
+    }
+
+    // The mirror of the check above. Asserting an ABSENCE against returned data
+    // matters as much as asserting the presence: a silently-ignored revocation
+    // would leave every attendee able to end a paid consultation while this
+    // script printed a green tick.
+    if (!opts.restore && (verify[MEMBER_ROLE] ?? []).includes(END_CALL)) {
+      return (
+        `${MEMBER_ROLE} still holds ${END_CALL} on Stream after this write. ` +
+        `Every attendee can still end a consultation for both sides. The grants ` +
+        `write did not take effect as sent — re-read the call type and do not ` +
+        `report this run as successful.`
+      );
+    }
+
+    // The same argument, generalised to the whole billable list rather than one
+    // permission. This is the check the #1301 half-landed fix never had: the run
+    // that stripped `start-recording` printed a green tick while every attendee
+    // still held `enable-noise-cancellation-any-team`, so a reader had no way to
+    // tell the applied change from the ignored one. An absent value has to be
+    // read back, not inferred from a write that returned 200.
+    if (!opts.restore) {
+      const stillGranted = BILLABLE_REVOKED_ROLES.flatMap((role) =>
+        BILLABLE_CALL_PERMISSIONS.filter((perm) =>
+          (verify[role] ?? []).includes(perm),
+        ).map((perm) => `${role}:${perm}`),
+      );
+      if (stillGranted.length > 0) {
+        return (
+          `${stillGranted.length} billable grant(s) survived this write on ` +
+          `Stream: ${stillGranted.join(", ")}. The grants write did not take ` +
+          `effect as sent for everything it carried. Re-read the call type and ` +
+          `do not report this run as successful.`
+        );
+      }
+    }
+
+    // The rollback needs verifying too, and used to get none: BOTH post-write
+    // grant checks are gated on `!opts.restore`, so `--restore-user-join`
+    // reached the settings comparison, found nothing moved, and returned 0 —
+    // reporting success without ever asking whether the restoration landed.
+    //
+    // That is backwards. The rollback is the emergency path: it is reached when
+    // the revocation has already locked people out, and "it worked" is the one
+    // thing the operator cannot afford to be told wrongly. Only asserted when
+    // this run actually intended to restore the grant, so a rollback of a call
+    // type that never had it does not fail on a no-op.
+    if (
+      opts.restore &&
+      (intended[MEMBER_ROLE] ?? []).includes(END_CALL) &&
+      !(verify[MEMBER_ROLE] ?? []).includes(END_CALL)
+    ) {
+      return (
+        `${MEMBER_ROLE} still lacks ${END_CALL} on Stream after the rollback. ` +
+        `Hosts cannot end a call, which is the state this rollback exists to ` +
+        `undo. Do NOT report this run as successful.`
+      );
+    }
+    return null;
+  },
+};
+
+/** The `livestream` plan: strip the owner's powers from every end-user role. */
+const LIVESTREAM_PLAN: GrantsPlan = {
+  name: LIVESTREAM_CALL_TYPE,
+  rationale:
+    "a broadcast type where `call_member` is handed to every participant and Stream has no host concept — the owner's powers are the attendee's powers",
+  // `--restore-user-join` is a rollback for the `default` lockout. There is
+  // nothing here to roll back: these revocations carry no availability risk on a
+  // type this app does not yet resolve calls against, and a rollback that handed
+  // them back would re-open a hole rather than fix an outage.
+  restorable: false,
+
+  build: (grants) => {
+    const next: Record<string, string[]> = { ...grants };
+    for (const role of OWNER_DESTRUCTIVE_ROLES) {
+      const roleGrants = next[role];
+      if (roleGrants) {
+        next[role] = roleGrants.filter(
+          (g) => !OWNER_DESTRUCTIVE_PERMISSIONS.includes(g),
+        );
+      }
+    }
+    // The billable list too, on the same reasoning and by the same code: noise
+    // cancellation is metered per participant-minute, and `harden-unused-call-types.ts`
+    // strips the billable STARTERS from this type but never the noise-cancellation
+    // grant or any of the `stop-` half. Two scripts removing overlapping sets is
+    // fine — they only ever remove — and one of them being the sole remover of
+    // a metered grant is not.
+    for (const role of BILLABLE_REVOKED_ROLES) {
+      const roleGrants = next[role];
+      if (roleGrants) {
+        next[role] = roleGrants.filter(
+          (g) => !BILLABLE_CALL_PERMISSIONS.includes(g),
+        );
+      }
+    }
+    return next;
+  },
+
+  report: (existing, next) =>
+    revocationLines(
+      existing,
+      next,
+      [...OWNER_DESTRUCTIVE_ROLES, ...BILLABLE_REVOKED_ROLES],
+      [...OWNER_DESTRUCTIVE_PERMISSIONS, ...BILLABLE_CALL_PERMISSIONS],
+    ),
+
+  assert: (verify) => {
+    const survived = [
+      ...OWNER_DESTRUCTIVE_ROLES,
+      ...BILLABLE_REVOKED_ROLES,
+    ].flatMap((role) =>
+      [...OWNER_DESTRUCTIVE_PERMISSIONS, ...BILLABLE_CALL_PERMISSIONS]
+        .filter((perm) => (verify[role] ?? []).includes(perm))
+        .map((perm) => `${role}:${perm}`),
+    );
+    if (survived.length > 0) {
+      return (
+        `${survived.length} destructive or billable grant(s) survived this ` +
+        `write on ${LIVESTREAM_CALL_TYPE}: ${survived.join(", ")}. Re-read the ` +
+        `call type and do not report this run as successful.`
+      );
+    }
+    return null;
+  },
+};
+
+/**
+ * One report line per permission actually being taken away, and nothing for the
+ * ones that were never there. Printing 6 roles x 13 permissions with `false →
+ * false` on every run is how a diff list stops being read, and the entries that
+ * matter — the metered one, the ones that end a broadcast — are exactly the ones
+ * a wall of no-ops buries.
+ */
+function revocationLines(
+  existing: Record<string, string[]>,
+  next: Record<string, string[]>,
+  roles: readonly string[],
+  permissions: readonly string[],
+): string[] {
+  return roles.flatMap((role) =>
+    permissions
+      .filter(
+        (perm) =>
+          (existing[role] ?? []).includes(perm) &&
+          !(next[role] ?? []).includes(perm),
+      )
+      .map(
+        (perm) =>
+          `  ${role.padEnd(12)} ${perm.padEnd(40)}: true → false` +
+          (perm === "enable-noise-cancellation-any-team"
+            ? "   (metered PER PARTICIPANT-MINUTE)"
+            : perm === "end-call-owner"
+              ? "   (any attendee could end the broadcast)"
+              : ""),
+      ),
+  );
+}
+
+async function applyPlanTo(
+  client: StreamVideoClient,
+  plan: GrantsPlan,
+  opts: Options,
+): Promise<number> {
+  const existing = await client.video.getCallType({ name: plan.name });
+  const grants = plan.build({ ...existing.grants }, existing.grants, opts);
+  const before = JSON.stringify(existing.grants, null, 2);
   const after = JSON.stringify(grants, null, 2);
 
   if (before === after) {
     console.log(
-      `✅ call type "${STREAM_CALL_TYPE}" already has the desired grants — no change`,
+      `✅ call type "${plan.name}" already has the desired grants — no change`,
     );
     return 0;
   }
 
-  console.log(`Call type: ${STREAM_CALL_TYPE}`);
-  for (const role of [...JOIN_REVOKED_ROLES, MEMBER_ROLE, "admin"]) {
-    const had = (existing.grants[role] ?? []).includes(JOIN_CALL);
-    const now = (grants[role] ?? []).includes(JOIN_CALL);
-    console.log(
-      `  ${role.padEnd(12)} join-call: ${had} → ${now}` +
-        (grants[role] ? "" : "   (role absent on this call type)"),
+  console.log(`\nCall type: ${plan.name} — ${plan.rationale}`);
+  const lines = plan.report(existing.grants, grants);
+  for (const line of lines) console.log(line);
+
+  if (opts.check) {
+    // One annotation per call type rather than one per permission. A drift
+    // annotation is a line in the Actions log that somebody has to read and act
+    // on, and fourteen of them for one call type is a way of ensuring none are.
+    // The `--apply --routes-are-deployed` in the message is deliberate: the
+    // operator is told the whole command rather than left to construct one that
+    // silently skips the deploy assertion.
+    annotate(
+      `Stream call-type grants drift on \`${plan.name}\`: ${lines.length} ` +
+        `change(s) pending, including revocations an ordinary role should not ` +
+        `hold. Run: npx tsx scripts/stream/ensure-call-type-grants.ts --apply ` +
+        `--routes-are-deployed`,
     );
-  }
-  for (const role of RECORDING_REVOKED_ROLES) {
-    for (const perm of [...RECORDING_PERMISSIONS, END_CALL]) {
-      const had = (existing.grants[role] ?? []).includes(perm);
-      const now = (grants[role] ?? []).includes(perm);
-      if (had === now && !had) continue;
-      console.log(
-        `  ${role.padEnd(12)} ${perm.padEnd(16)}: ${had} → ${now}` +
-          (perm === END_CALL && role === MEMBER_ROLE
-            ? "   (server-side now — POST /api/meetings/[meetingId]/end)"
-            : ""),
-      );
-    }
   }
 
   // There used to be a guard here refusing to write a config where call_member
@@ -402,6 +855,15 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   // actually stored, and it lives in the verification below.
 
   if (!opts.apply) {
+    if (opts.check) {
+      // Drift found and nothing written: a scheduled/CI consumer has to be able
+      // to tell "in sync" from "drift" by exit status alone, or the job it is
+      // wired into cannot fail. A detector that always exits green detects
+      // nothing, which is how `ensure-webhook-subscription.ts` went unused for
+      // as long as it did.
+      console.log(`\n(dry run — re-run with --apply to write this to Stream)`);
+      return DRIFT_EXIT_CODE;
+    }
     console.log("\n(dry run — re-run with --apply to write this to Stream)");
     return 0;
   }
@@ -423,62 +885,15 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   const settingsBefore = canonical(existing.settings);
   const notificationsBefore = canonical(existing.notification_settings);
 
-  await client.video.updateCallType({ name: STREAM_CALL_TYPE, grants });
+  await client.video.updateCallType({ name: plan.name, grants });
 
-  const verify = await client.video.getCallType({ name: STREAM_CALL_TYPE });
+  const verify = await client.video.getCallType({ name: plan.name });
   const settingsAfter = canonical(verify.settings);
   const notificationsAfter = canonical(verify.notification_settings);
 
-  // The one invariant worth checking against real returned data rather than
-  // against our own intent: the join route assigns `call_member`, so if Stream
-  // did not store join-call on that role, every participant is locked out of
-  // every call. Checked here, after the write, where it can genuinely fail.
-  if (
-    !opts.restore &&
-    !(verify.grants[MEMBER_ROLE] ?? []).includes(JOIN_CALL)
-  ) {
-    console.error(
-      `\n🚨 ${MEMBER_ROLE} does NOT hold ${JOIN_CALL} on Stream after this write.` +
-        `\n   Every participant is locked out of every call. Roll back NOW:` +
-        `\n     npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join`,
-    );
-    return 1;
-  }
-
-  // The mirror of the check above, for the change this revision adds. Asserting
-  // an ABSENCE against returned data matters as much as asserting the presence:
-  // a silently-ignored revocation would leave every attendee able to end a paid
-  // consultation while this script printed a green tick.
-  if (!opts.restore && (verify.grants[MEMBER_ROLE] ?? []).includes(END_CALL)) {
-    console.error(
-      `\n🚨 ${MEMBER_ROLE} still holds ${END_CALL} on Stream after this write.` +
-        `\n   Every attendee can still end a consultation for both sides.` +
-        `\n   The grants write did not take effect as sent — re-read the call type` +
-        `\n   and do not report this run as successful.`,
-    );
-    return 1;
-  }
-
-  // The rollback needs verifying too, and used to get none: BOTH post-write
-  // grant checks are gated on `!opts.restore`, so `--restore-user-join` reached
-  // the settings comparison, found nothing moved, and returned 0 — reporting
-  // success without ever asking whether the restoration landed.
-  //
-  // That is backwards. The rollback is the emergency path: it is reached when
-  // the revocation has already locked people out, and "it worked" is the one
-  // thing the operator cannot afford to be told wrongly. Only asserted when
-  // this run actually intended to restore the grant, so a rollback of a call
-  // type that never had it does not fail on a no-op.
-  if (
-    opts.restore &&
-    (grants[MEMBER_ROLE] ?? []).includes(END_CALL) &&
-    !(verify.grants[MEMBER_ROLE] ?? []).includes(END_CALL)
-  ) {
-    console.error(
-      `\n🚨 ${MEMBER_ROLE} still lacks ${END_CALL} on Stream after the rollback.` +
-        `\n   Hosts cannot end a call, which is the state this rollback exists to` +
-        `\n   undo. Do NOT report this run as successful.`,
-    );
+  const fault = plan.assert(verify.grants, grants, opts);
+  if (fault) {
+    console.error(`\n🚨 ${fault}`);
     return 1;
   }
 
@@ -490,15 +905,16 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     // Stream just discarded, the `settings` block is a couple of kilobytes of
     // recording layout, and an operator who scrolls away or closes the terminal
     // has lost the one thing that can undo this. Sentry is not the answer here:
-    // nothing in .github/workflows runs this script, so it is always a human at
-    // a laptop, where initJobSentry deliberately disables reporting (#901).
+    // applying is always a human at a laptop, where initJobSentry deliberately
+    // disables reporting (#901) — and the daily job that exists to catch this
+    // runs `--check` and never reaches this branch.
     const preImagePath = join(
       tmpdir(),
-      `stream-call-type-${STREAM_CALL_TYPE}-preimage.json`,
+      `stream-call-type-${plan.name}-preimage.json`,
     );
     const preImage = JSON.stringify(
       {
-        callType: STREAM_CALL_TYPE,
+        callType: plan.name,
         settings: existing.settings,
         notification_settings: existing.notification_settings,
       },
@@ -530,8 +946,67 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   console.log(
     `\n✅ applied — settings and notification_settings verified unchanged.`,
   );
-  console.log(`   Revert the grants with: --apply --restore-user-join`);
+  if (plan.restorable) {
+    console.log(`   Revert the grants with: --apply --restore-user-join`);
+  }
   return 0;
+}
+
+/**
+ * `default` first, then `livestream`.
+ *
+ * If a run is abandoned partway it must be abandoned having fixed the type every
+ * live consultation is sitting on. A per-type failure stops the run, because a
+ * `--apply` that reported success for one type and quietly skipped the other
+ * would leave the operator believing both were hardened.
+ */
+const PLANS: readonly GrantsPlan[] = [DEFAULT_PLAN, LIVESTREAM_PLAN];
+
+export async function ensureCallTypeGrants(opts: Options): Promise<number> {
+  // Before anything else, including the read — a refusal should not depend on
+  // Stream being reachable.
+  if (!requireDeployConfirmation(opts)) return 1;
+
+  // And before the credential check, because a wrong app is the more dangerous
+  // of the two and saying "Stream is not configured" first would send the
+  // operator looking in the wrong place. `--restore-user-join` is a write and is
+  // gated like one: the rollback for a total video outage is not a moment to
+  // relax the one check that says which account is being written to.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/ensure-call-type-grants.ts",
+      writes: opts.apply,
+      argv: opts.argv,
+    })
+  ) {
+    return 1;
+  }
+
+  if (!isStreamConfigured()) {
+    console.error(
+      "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
+    );
+    return 1;
+  }
+
+  const client = getStreamVideoClient();
+
+  // The pre-flight, once and only for the type it is about: it asks whether
+  // anybody HOLDS `call_member` on `default`, and `livestream` has no such role
+  // to hold. `preflight` returns true for a dry run, a rollback and a check —
+  // only a real `--apply` is refused, and only for the plan that can be locked
+  // out by its own write.
+  if (opts.apply && !opts.restore && DEFAULT_PLAN.preflight) {
+    if (!(await DEFAULT_PLAN.preflight(client))) return 1;
+  }
+
+  let worst = 0;
+  for (const plan of PLANS) {
+    const code = await applyPlanTo(client, plan, opts);
+    if (code === 1) return 1;
+    if (code === DRIFT_EXIT_CODE) worst = DRIFT_EXIT_CODE;
+  }
+  return worst;
 }
 
 if (require.main === module) {

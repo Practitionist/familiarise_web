@@ -45,7 +45,8 @@
  *   npx tsx scripts/stream/purge-memberless-dms.ts --apply
  *   npx tsx scripts/stream/purge-memberless-dms.ts --apply --purge-with-messages
  *
- * NOTE: a dry run READS production. An apply DELETES from production.
+ * NOTE: a dry run READS production. An apply DELETES from production, hard, and
+ * must name the target app — see target-guard.ts.
  */
 import "dotenv/config";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -56,6 +57,7 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { isDMChannel } from "../../lib/stream-channel-ids";
+import { requireNamedTargetApp } from "./target-guard";
 
 type StreamChatClient = ReturnType<typeof getStreamChatClient>;
 
@@ -81,6 +83,8 @@ interface Options {
   apply: boolean;
   /** Skip channels that hold messages, however broken they look. */
   purgeWithMessages: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 interface Candidate {
@@ -96,6 +100,7 @@ function parseArgs(argv: string[]): Options {
   return {
     apply: argv.includes("--apply"),
     purgeWithMessages: argv.includes("--purge-with-messages"),
+    argv,
   };
 }
 
@@ -243,6 +248,19 @@ export async function purgeMemberlessDms(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
     // A failed cleanup must not read as a completed no-op to CI or an operator.
+    return { scanned: 0, candidates: 0, deleted: 0, ok: false };
+  }
+
+  // `deleteChannels({ hard_delete: true })` is irreversible and Stream keeps no
+  // copy. Gated like every other writer here — the credentials do not say which
+  // app they point at.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/purge-memberless-dms.ts",
+      writes: opts.apply,
+      argv: opts.argv,
+    })
+  ) {
     return { scanned: 0, candidates: 0, deleted: 0, ok: false };
   }
 

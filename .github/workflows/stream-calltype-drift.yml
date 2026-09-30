@@ -1,0 +1,150 @@
+name: Stream Call-Type Drift
+
+# #1301 — the detector for the drift the September 2026 audit found, where the
+# grants hardening had half-landed and `livestream` had never been hardened at
+# all.
+#
+# Read off the LIVE app with `video_get_call_type` on 2026-09-29:
+#
+#   * `call_member` and `user` both still held `enable-noise-cancellation-any-team`
+#     — metered PER PARTICIPANT-MINUTE, and self-serve by the role the join
+#     route hands to every participant. An eleven-tile gallery with it on bills
+#     eleven times what the same call bills with it off.
+#   * transcription, closed captions and broadcasting were still self-serve on the
+#     same two roles, while `ensure-call-type-grants.ts` had been revoking only
+#     `start-recording`/`stop-recording` and reporting success.
+#   * `livestream` was Stream's shipped default throughout: `auto-on` noise
+#     cancellation, a thirty-second inactivity timeout, three `available`
+#     recording families, `ingress.enabled: true` at ~15x a video call-minute,
+#     1080p at 3 Mbps where `default` is 720p at 1.5, and `max_participants: null`
+#     on both types.
+#
+# What makes this class of drift invisible is WHERE the state lives: a call type
+# is configured in the Stream dashboard, so widening a grant, setting a
+# `max_participants` back to null or flipping a recording family leaves no commit,
+# no diff and no failing test. `ensure-webhook-subscription.ts` has been able to
+# detect its half of this since #1134 and is run daily by
+# `.github/workflows/stream-webhook-drift.yml`; `ensure-call-type-settings.ts` was
+# run by NO workflow at all, which is why the settings above survived the first
+# rollout unremarked.
+#
+# This job asks daily, and again on any pull request that changes a call-type
+# script or the recording family the scripts are pinned to. It runs every script
+# in `--check` mode, which never writes. Applying is deliberately left to a human:
+# `--apply` calls `updateCallType` / `updateAppSettings` on a shared production
+# Stream app that has no rehearsal environment, and that is more authority than a
+# scheduled job should hold. The grants script additionally demands
+# `--routes-are-deployed`, an assertion about this repository's deploy that a job
+# cannot make on anyone's behalf.
+#
+# cron-runtime-minutes: 1
+
+on:
+  schedule:
+    # 06:40 UTC daily (12:10 IST). Hour 6 carries no other scheduled job, so this
+    # never co-starts with anything — see scripts/ci/check-workflow-hygiene.ts.
+    - cron: "40 6 * * *"
+  pull_request:
+    branches: [dev, staging, prod]
+    paths:
+      # The files that can make the code and the LIVE call type disagree from THIS
+      # side. Dashboard-side drift is what the daily schedule catches.
+      - "scripts/stream/ensure-call-type-grants.ts"
+      - "scripts/stream/ensure-call-type-settings.ts"
+      - "scripts/stream/ensure-webhook-subscription.ts"
+      - "scripts/stream/target-guard.ts"
+      - "lib/stream/call-cid.ts"
+      - "lib/stream/webhook-events.ts"
+      # The recording family the settings script must never make unusable. It is
+      # module-private there, so the settings script restates it and a change to
+      # the real one has to be able to fail a pull request.
+      - "lib/stream/recording-service.ts"
+      - ".github/workflows/stream-calltype-drift.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+  # A second workflow_dispatch while one is already pending would replace it
+  # under the default single-pending-run policy; queue: max keeps every
+  # trigger instead of silently dropping one.
+  queue: max
+
+# Read-only: --check makes no Stream write and no repository write.
+permissions:
+  contents: read
+
+jobs:
+  check-calltype-drift:
+    name: Check call-type drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A pull request from a fork gets no secrets, so `isStreamConfigured()` would
+    # be false and the scripts would exit 1 — a red check that says nothing about
+    # the code under review. Skip those rather than teach the scripts to treat a
+    # missing credential as success, which is the exact silent-degradation shape
+    # the secrets manifest exists to prevent.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    env:
+      STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+      NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
+      # `lib/stream-client` pulls in `lib/redis`, which throws at module scope
+      # without Upstash credentials — the same import-time crash class, here
+      # reintroduced by its own new workflow. A read-only drift check takes no
+      # lock and stores nothing, so the in-memory stub is the right answer rather
+      # than handing production Redis credentials to a job that has no use for
+      # them. Same posture as stream-webhook-drift.yml.
+      USE_MOCK_REDIS: "true"
+      # Deliberately NOT set. The target-app guard only gates writes, and this
+      # job makes none — a runner that had to name a Stream app in order to ask
+      # whether the app is configured would be a ceremony with no meaning behind
+      # it. See scripts/stream/target-guard.ts.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        # The runner holds a Stream admin secret, so a compromised transitive
+        # dependency's postinstall would run with it. Nothing here needs
+        # lifecycle scripts. Same posture as stream-webhook-drift.yml.
+        run: npm ci --ignore-scripts
+
+      - name: Check call-type settings against the live types
+        # Exit 2 means real drift, exit 1 means the check could not run at all
+        # (missing credential). Both fail the job; the log says which.
+        run: node_modules/.bin/tsx scripts/stream/ensure-call-type-settings.ts --check
+
+      - name: Check call-type grants against the live types
+        run: node_modules/.bin/tsx scripts/stream/ensure-call-type-grants.ts --check
+
+      - name: Check the webhook subscription
+        # The third of the three dashboard-configured documents, kept here so one
+        # job answers "is the Stream config what this repository believes it is?"
+        # rather than making that question depend on which workflow an operator
+        # remembers. It is also still run on its own schedule.
+        run: node_modules/.bin/tsx scripts/stream/ensure-webhook-subscription.ts --check
+
+      - name: Notify on failure
+        # Only on the scheduled leg: a pull-request failure is already visible to
+        # the author in the checks list, and paging ops for it is noise.
+        if: failure() && github.event_name == 'schedule'
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Non-secret identifier the guard compares SENTRY_DSN against.
+          # vars.* is NOT auto-injected into a step env; it must be mapped here.
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
+        run: bash scripts/ci/notify-ops-failure.sh "stream-calltype-drift"

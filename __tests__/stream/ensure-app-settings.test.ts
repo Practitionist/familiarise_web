@@ -38,6 +38,27 @@ jest.mock("../../lib/stream-client", () => ({
 }));
 
 import { ensureAppSettings } from "../../scripts/stream/ensure-app-settings";
+import { PRODUCTION_APP_NAME } from "../../scripts/stream/target-guard";
+
+/**
+ * The script's flag object, defaulted.
+ *
+ * `--apply` now has to name the target Stream app (target-guard.ts) because
+ * this script writes the document holding `event_hooks`. The default is a dry
+ * run that names nothing, so a case that means to write opts in explicitly.
+ * `argv: []` passed explicitly means "names no target", which the guard cases
+ * need — hence the fallback rather than a spread that would overwrite it.
+ */
+function opts(
+  o: Partial<Parameters<typeof ensureAppSettings>[0]> = {},
+): Parameters<typeof ensureAppSettings>[0] {
+  const { argv, ...rest } = o;
+  return {
+    apply: false,
+    ...rest,
+    argv: argv ?? (rest.apply ? ["--target-app", PRODUCTION_APP_NAME] : []),
+  };
+}
 
 /** The live event hook, trimmed. Losing this is the disaster being guarded. */
 const LIVE_HOOK = () => [
@@ -88,7 +109,7 @@ describe("ensure-app-settings", () => {
   it("does not write at all when the guest door is already shut", async () => {
     mockGetApp.mockResolvedValue(HARDENED_APP());
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     expect(code).toBe(0);
     // The compression pin cannot be read back, so re-sending it on every run
@@ -100,7 +121,7 @@ describe("ensure-app-settings", () => {
   it("writes nothing on a dry run", async () => {
     mockGetApp.mockResolvedValue(LIVE_APP());
 
-    const code = await ensureAppSettings({ apply: false });
+    const code = await ensureAppSettings(opts({ apply: false }));
 
     expect(code).toBe(0);
     expect(mockUpdateApp).not.toHaveBeenCalled();
@@ -113,7 +134,7 @@ describe("ensure-app-settings", () => {
       .mockResolvedValueOnce(LIVE_APP()) // post-probe read: unchanged
       .mockResolvedValueOnce(HARDENED_APP()); // post-write read
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     expect(code).toBe(0);
     expect(mockUpdateApp).toHaveBeenCalledTimes(2);
@@ -136,7 +157,7 @@ describe("ensure-app-settings", () => {
       .mockResolvedValueOnce(LIVE_APP())
       .mockResolvedValueOnce(LIVE_APP({ event_hooks: [] })); // wiped by a no-op
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     expect(code).toBe(1);
     // Exactly one call: the probe. The real write must NOT follow.
@@ -152,7 +173,7 @@ describe("ensure-app-settings", () => {
       .mockResolvedValueOnce(LIVE_APP())
       .mockResolvedValueOnce(HARDENED_APP());
 
-    await ensureAppSettings({ apply: true });
+    await ensureAppSettings(opts({ apply: true }));
 
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
     const [path, payload] = mockWriteFileSync.mock.calls[0] as [string, string];
@@ -168,7 +189,7 @@ describe("ensure-app-settings", () => {
       .mockResolvedValueOnce(LIVE_APP())
       .mockResolvedValueOnce(LIVE_APP()); // still false after the write
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     expect(code).toBe(1);
   });
@@ -181,7 +202,7 @@ describe("ensure-app-settings", () => {
         LIVE_APP({ guest_user_creation_disabled: true, event_hooks: [] }),
       );
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     // The intended change landed, and it still fails — because the webhook
     // subscription went with it, and a green tick here would hide that.
@@ -199,7 +220,7 @@ describe("ensure-app-settings", () => {
       LIVE_APP({ moderation_enabled: undefined as unknown as boolean }),
     );
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     expect(code).toBe(1);
     expect(mockUpdateApp).not.toHaveBeenCalled();
@@ -227,7 +248,7 @@ describe("ensure-app-settings", () => {
       .mockResolvedValueOnce(reordered)
       .mockResolvedValueOnce(HARDENED_APP());
 
-    const code = await ensureAppSettings({ apply: true });
+    const code = await ensureAppSettings(opts({ apply: true }));
 
     expect(code).toBe(0);
     expect(mockUpdateApp).toHaveBeenCalledTimes(2);

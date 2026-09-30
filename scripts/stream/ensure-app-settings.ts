@@ -55,12 +55,17 @@
  *
  *   npx tsx scripts/stream/ensure-app-settings.ts
  *   npx tsx scripts/stream/ensure-app-settings.ts --apply
+ *
+ * `--apply` must name the target app — see target-guard.ts. This is the one
+ * script in the folder whose write touches the document holding `event_hooks`,
+ * and the credentials in play do not say which Stream app they belong to.
  */
 import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import type { AppResponseFields } from "@stream-io/node-sdk";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
 import { canonical, diffFingerprints } from "@/lib/stream/config-fingerprint";
+import { requireNamedTargetApp } from "./target-guard";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -71,10 +76,12 @@ const TARGET = {
 
 interface Options {
   apply: boolean;
+  /** Raw argv, so `--target-app` is honoured alongside the env var. */
+  argv: readonly string[];
 }
 
 function parseArgs(argv: string[]): Options {
-  return { apply: argv.includes("--apply") };
+  return { apply: argv.includes("--apply"), argv };
 }
 
 /**
@@ -113,6 +120,20 @@ export async function ensureAppSettings(opts: Options): Promise<number> {
 
   const client = getStreamVideoClient();
   const before = (await client.getApp()).app;
+
+  // The read above is free, so hand the guard the app name these credentials
+  // actually resolve to. This script writes the document holding `event_hooks`,
+  // and a correct declaration cannot save a wrong credential.
+  if (
+    !requireNamedTargetApp({
+      script: "scripts/stream/ensure-app-settings.ts",
+      writes: opts.apply,
+      argv: opts.argv,
+      liveAppName: before.name,
+    })
+  ) {
+    return 1;
+  }
 
   console.log("App settings — current:");
   console.log(
