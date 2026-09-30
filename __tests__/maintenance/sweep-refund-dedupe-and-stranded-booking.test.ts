@@ -461,7 +461,9 @@ describe("P0-3 — the 48 h arm refuses a booking parked by a reschedule", () =>
       .map(([args]) => args.where as Record<string, unknown>)
       .find(isPaidUnallocatedCohort);
     expect(cohort).toBeDefined();
-    expect(cohort.AND).toEqual(expect.arrayContaining([RELEASED_SLOT]));
+    // Optional-chained: `toBeDefined()` does not narrow, and a cohort that was
+    // never read must fail the assertion rather than throw on `undefined`.
+    expect(cohort?.AND).toEqual(expect.arrayContaining([RELEASED_SLOT]));
   });
 
   // The window this closes: the cohort read and the write are two statements.
@@ -483,7 +485,7 @@ describe("P0-3 — the 48 h arm refuses a booking parked by a reschedule", () =>
       .map(([args]) => args.where as Record<string, unknown>)
       .find((where) => where.id === "sub-stranded");
     expect(cas).toBeDefined();
-    expect(cas.AND).toEqual(expect.arrayContaining([RELEASED_SLOT]));
+    expect(cas?.AND).toEqual(expect.arrayContaining([RELEASED_SLOT]));
     // The lost race moves no money and reports nothing expired.
     expect(refundBookingPayment).not.toHaveBeenCalled();
     expect(result.refundsIssued).toBe(0);

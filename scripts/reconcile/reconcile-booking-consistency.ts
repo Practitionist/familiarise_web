@@ -136,9 +136,18 @@ const CHARGED: Prisma.PaymentWhereInput = {
   deletedAt: null,
 };
 
-/** A refund that moved money. FAILED/CANCELLED rows never did. */
+/**
+ * A refund that will have given the money back, or is on its way to.
+ * FAILED/CANCELLED rows never will; PENDING counts deliberately, because a
+ * customer whose refund is still in flight at the gateway is not an
+ * unreconciled capture, and reporting one would page an operator on every
+ * in-flight refund in the system. `deletedAt` for the same reason `CHARGED`
+ * carries it: a tombstoned refund is a row under investigation, not one that
+ * settled.
+ */
 const EFFECTIVE_REFUND: Prisma.RefundWhereInput = {
   status: { notIn: ["FAILED", "CANCELLED"] },
+  deletedAt: null,
 };
 
 /**
@@ -201,6 +210,10 @@ async function detectPaidWithoutLiveSeat(windowStart: Date): Promise<{
       amount: true,
       userId: true,
       appointmentId: true,
+      // Surfaces in the finding as `capturedAt`. Listed explicitly because a
+      // `select` DROPS an unlisted field from the result type rather than
+      // leaving it readable — there is no implicit fallback.
+      createdAt: true,
       appointment: {
         select: {
           id: true,
@@ -211,7 +224,13 @@ async function detectPaidWithoutLiveSeat(windowStart: Date): Promise<{
       },
       refunds: {
         where: EFFECTIVE_REFUND,
-        select: { amount: true },
+        // `amountPaise`, not `amount` — Refund carries the unit in the column
+        // name (Payment is the one with a bare `amount`). Naming it wrong fails
+        // the whole `findMany` argument, and Prisma then infers the
+        // un-`select`ed Payment payload for the loop below, which surfaces as a
+        // pile of unrelated "appointment / refunds does not exist" errors rather
+        // than one honest complaint about this line.
+        select: { amountPaise: true },
       },
     },
     // Newest first: a recent capture is the one most likely still to be
@@ -233,7 +252,7 @@ async function detectPaidWithoutLiveSeat(windowStart: Date): Promise<{
     // A full refund closes the question: the customer has their money back and
     // holds no seat, which is correct rather than drift.
     const refunded = payment.refunds.reduce(
-      (sum, r) => sum + Number(r.amount),
+      (sum, r) => sum + Number(r.amountPaise),
       0,
     );
     const outstanding = Number(payment.amount) - refunded;

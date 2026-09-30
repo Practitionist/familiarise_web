@@ -279,6 +279,8 @@ export interface UseCalendarDataReturn extends CalendarData {
     date: Date,
   ) => SlotStatusResult;
   slotStatusMap: Map<string, SlotStatusResult>;
+  /** #1863 — age of the cells on screen. Informational only; see the badge. */
+  availabilityFreshness: ReturnType<typeof availabilityFreshness>;
 }
 
 /**

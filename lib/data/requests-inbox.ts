@@ -112,7 +112,7 @@ const INBOX_APPOINTMENT_SELECT = {
       select: { fromStatus: true, toStatus: true, reason: true },
     },
   },
-} as const;
+};
 
 const CONSULTATION_SELECT = {
   id: true,

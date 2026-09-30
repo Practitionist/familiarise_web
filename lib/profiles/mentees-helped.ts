@@ -57,7 +57,11 @@
  * has to be right on day one.
  */
 
-import type { OccurrenceCompletionStatus } from "@prisma/client";
+import type {
+  OccurrenceCompletionStatus,
+  ParticipantRole,
+  Prisma,
+} from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
@@ -118,6 +122,16 @@ function deliveredOccurrence(now: Date): {
 }
 
 /**
+ * The roles a live seat can hold that still count as somebody being served.
+ *
+ * Typed rather than inlined, because an array literal with no annotation
+ * widens to `string[]` and `EnumParticipantRoleFilter.in` only takes
+ * `ParticipantRole[]` — the same reason `LIVE_PARTICIPANT_STATUSES` is a typed
+ * const next door in `lib/booking/participants.ts`.
+ */
+const ATTENDEE_SEAT_ROLES: ParticipantRole[] = ["CONSULTEE", "COLLABORATOR"];
+
+/**
  * A live seat held by somebody who was actually served.
  *
  * `hostSideUserIds` carries the consultant and every ACCEPTED collaborator on
@@ -128,12 +142,18 @@ function deliveredOccurrence(now: Date): {
  * RATING the host as a consultee of their own event; the same reasoning applies
  * to a public count of people served, or a consultant could raise their own
  * figure by adding collaborators to a roster.
+ *
+ * The return type is declared rather than inferred: Prisma's `Exact<>` around
+ * the `participants` filter rejects an inferred anonymous object whose `AND`
+ * members are not each a `Prisma.AppointmentParticipantWhereInput`.
  */
-function attendeeSeat(hostSideUserIds: string[]) {
+function attendeeSeat(
+  hostSideUserIds: string[],
+): Prisma.AppointmentParticipantWhereInput {
   return {
     AND: [
       liveParticipant(),
-      { role: { in: ["CONSULTEE", "COLLABORATOR"] } },
+      { role: { in: ATTENDEE_SEAT_ROLES } },
       { userId: { notIn: hostSideUserIds } },
     ],
   };

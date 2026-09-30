@@ -720,9 +720,19 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       const tx = reverseTx();
       tx.programAssignment.updateMany.mockResolvedValue({ count: 0 });
 
+      // `then` with a throwing fulfilment handler rather than `.catch(...)`:
+      // `.catch` returns `T | E`, so every property read below would be a union
+      // access and the compiler would (correctly) refuse.
       const err = await reverseBookingUtilization(tx as never, {
         paymentId: "pay-drift",
-      }).catch((e) => e as InstanceType<typeof ProgramAssignmentUnderflowError>);
+      }).then(
+        () => {
+          throw new Error(
+            "expected the reversal to be refused, but it resolved",
+          );
+        },
+        (e: unknown) => e as InstanceType<typeof ProgramAssignmentUnderflowError>,
+      );
 
       expect(err.programAssignmentId).toBe("asg-1");
       expect(err.engagementsToReverse).toBe(8);

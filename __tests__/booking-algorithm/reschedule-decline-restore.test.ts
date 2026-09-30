@@ -205,7 +205,14 @@ const mockPrisma = {
     findUnique: jest.fn(async (): Promise<unknown> => null),
   },
   appointmentOccurrence: {
-    findFirst: jest.fn(async (): Promise<unknown> => null),
+    // Declared with its argument, not as `(): Promise<unknown>`: the tests
+    // below swap in a real matcher via mockImplementation, and a zero-arg
+    // signature rejects that at compile time.
+    findFirst: jest.fn(
+      async (_args: {
+        where: { id: { in: string[] }; completionStatus?: string };
+      }): Promise<unknown> => null,
+    ),
   },
   $transaction: jest.fn((fn: (t: unknown) => unknown) => runTransaction(fn)),
 };

@@ -905,7 +905,11 @@ export class SchedulingService {
    * "released" concept (isReschedule, top-up gating, requiredSlots).
    */
   private static isCarriedTentativeOccurrence(
-    occurrence: AppointmentWithSlots["occurrences"][number],
+    // Structural, and only the two fields the body reads. Typed against the
+    // whole `AppointmentOccurrence` this predicate could not be passed to a
+    // caller that selects a narrower occurrence shape — the in-transaction
+    // re-read picks four columns, not forty.
+    occurrence: { isTentative: boolean | null; deletedAt: Date | null },
   ): boolean {
     return !!occurrence.isTentative && !occurrence.deletedAt;
   }

@@ -365,7 +365,7 @@ export function getErrorToast(
   const description =
     entry.description ??
     serverMessage ??
-    FALLBACK_DESCRIPTIONS[typedCode ?? (errorType as ErrorType)] ??
+    FALLBACK_DESCRIPTIONS[(typedCode ?? errorType) as ErrorType] ??
     FALLBACK_DESCRIPTIONS[ErrorTypes.UNKNOWN]!;
 
   return { title: entry.title, description };

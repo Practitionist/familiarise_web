@@ -1,5 +1,5 @@
 import prisma, { type Tx } from "@/lib/prisma";
-import type { MemberRole } from "@prisma/client";
+import type { MemberRole, PaymentStatus } from "@prisma/client";
 
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -13,8 +13,12 @@ export type OrgActorAction = "reschedule" | "cancel";
  * funding gate. Named rather than inlined so the test can pin the exact set and
  * a future rail change has one place to be argued about. See the note on
  * `isOrgFundedByOrg` for why `PENDING` is in the union and `FAILED` is not.
+ *
+ * Typed `PaymentStatus[]` rather than `as const`: Prisma's `in` filter takes a
+ * mutable array, and a `readonly` tuple is not assignable to one. The element
+ * type still comes from the enum, so a typo here is still a compile error.
  */
-const ORG_FUNDING_PAYMENT_STATUSES = ["SUCCEEDED", "PENDING"] as const;
+const ORG_FUNDING_PAYMENT_STATUSES: PaymentStatus[] = ["SUCCEEDED", "PENDING"];
 
 // #1527 decision 8 — MANAGER may reschedule an org-funded booking; cancel
 // refunds, so it stays OWNER/MAINTAINER. The matrix is the single source.
