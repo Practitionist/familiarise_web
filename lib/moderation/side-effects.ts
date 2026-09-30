@@ -204,6 +204,17 @@ async function banOrSuspendUser(
 // skipped by the release-earnings cron. PAID/REFUNDED rows are untouchable by
 // doctrine — the guard below enforces it per row. Returns undefined when the
 // target has no consultant profile (earningsHeld stays unset, as before).
+//
+// #1020-1 — a ban is a freeze like any other, so it records the row's PRIOR
+// status in preDisputeStatus exactly as the dispute hold does: three CAS groups
+// (one per source status, mirroring app/api/webhooks/utils.ts) instead of one
+// blind updateMany, so an operator release can put a PENDING_TRUST row back in
+// PENDING_TRUST rather than force-maturing it to READY and paying out a
+// consultant whose sponsoring org has never been verified or paid. Every hold
+// in the codebase transitions FROM a non-HELD status and excludes HELD in its
+// WHERE, so the first freeze to land owns the column and no second one — a
+// dispute landing on a ban-held row, or a ban on a dispute-held row — can
+// clobber the recorded prior.
 async function holdBannedConsultantEarnings(
   tx: Tx,
   targetUserId: string,
@@ -224,14 +235,26 @@ async function holdBannedConsultantEarnings(
   for (const row of holdable) {
     assertEarningStatusTransitionLegal(row.id, row.status, EarningStatus.HELD);
   }
-  const held = await tx.consultantEarnings.updateMany({
-    where: {
-      id: { in: holdable.map((r) => r.id) },
-      status: { in: HOLDABLE },
-    },
-    data: { status: EarningStatus.HELD },
+  const ids = holdable.map((r) => r.id);
+  const heldReady = await tx.consultantEarnings.updateMany({
+    where: { id: { in: ids }, status: EarningStatus.READY },
+    data: { status: EarningStatus.HELD, preDisputeStatus: EarningStatus.READY },
   });
-  return held.count;
+  const heldPending = await tx.consultantEarnings.updateMany({
+    where: { id: { in: ids }, status: EarningStatus.PENDING },
+    data: {
+      status: EarningStatus.HELD,
+      preDisputeStatus: EarningStatus.PENDING,
+    },
+  });
+  const heldTrust = await tx.consultantEarnings.updateMany({
+    where: { id: { in: ids }, status: EarningStatus.PENDING_TRUST },
+    data: {
+      status: EarningStatus.HELD,
+      preDisputeStatus: EarningStatus.PENDING_TRUST,
+    },
+  });
+  return heldReady.count + heldPending.count + heldTrust.count;
 }
 
 async function unverifyProfiles(

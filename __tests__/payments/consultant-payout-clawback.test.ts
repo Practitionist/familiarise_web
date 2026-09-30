@@ -100,6 +100,14 @@ function makeTx(overrides: { alreadyPosted?: boolean; payout?: unknown } = {}) {
 /** The stub's own shape, so tests can read `tx.consultantPayout.update`. */
 type TxStub = ReturnType<typeof makeTx>;
 
+/**
+ * A hand-rolled prisma stub cannot structurally satisfy the full `Tx` type.
+ * Cast once here — at the boundary — instead of typing `makeTx` as `never`,
+ * which also made `tx.consultantPayout.update` unreadable for the counter
+ * assertions below.
+ */
+const asTx = (tx: TxStub) => tx as unknown as Parameters<typeof applyReversal>[0];
+
 const SOURCE = {
   kind: "CONSULTANT_CLAWBACK",
   consultantPayoutId: "cpay-1",
@@ -115,7 +123,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
   it("books the recovery as a consultant-scoped receivable, not a CASH debit", async () => {
     const tx = makeTx();
 
-    const res = await applyReversal(tx, {
+    const res = await applyReversal(asTx(tx), {
       source: SOURCE,
       amountPaise: 50_000,
       reason: "chargeback lost (dispute disp_1)",
@@ -163,7 +171,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
     // before this point — see the net-of-TDS cases in
     // dispute-consultant-clawback.test.ts. Here the input is simply honoured.)
     const tx = makeTx();
-    await applyReversal(tx, {
+    await applyReversal(asTx(tx), {
       source: SOURCE,
       amountPaise: 33_333,
       reason: "r",
@@ -175,7 +183,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
 
   it("increments the payout's clawback counter and stamps it once", async () => {
     const tx = makeTx();
-    await applyReversal(tx, {
+    await applyReversal(asTx(tx), {
       source: SOURCE,
       amountPaise: 50_000,
       reason: "r",
@@ -195,7 +203,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
     // without moving the "recovery first became owed" timestamp — `undefined`
     // is Prisma's "leave this column alone".
     const tx = makeTx({ payout: { id: "cpay-1", clawbackInitiatedAt: new Date(0) } });
-    await applyReversal(tx, {
+    await applyReversal(asTx(tx), {
       source: SOURCE,
       amountPaise: 1_000,
       reason: "r",
@@ -210,7 +218,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
     // Replay: the idempotency probe short-circuits, so neither the journal nor
     // the counter may move — a replay must not double-count the receivable.
     const tx = makeTx({ alreadyPosted: true });
-    const res = await applyReversal(tx, {
+    const res = await applyReversal(asTx(tx), {
       source: SOURCE,
       amountPaise: 50_000,
       reason: "r",
@@ -224,19 +232,19 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
 
 describe("applyReversal — CONSULTANT_CLAWBACK: the idempotency key", () => {
   it("is deterministic and unique per (refund, payout)", async () => {
-    await applyReversal(makeTx(), {
+    await applyReversal(asTx(makeTx()), {
       source: SOURCE,
       amountPaise: 1,
       reason: "r",
       refundId: "dispute:disp_1",
     });
-    await applyReversal(makeTx(), {
+    await applyReversal(asTx(makeTx()), {
       source: { ...SOURCE, consultantPayoutId: "cpay-2" },
       amountPaise: 1,
       reason: "r",
       refundId: "dispute:disp_1",
     });
-    await applyReversal(makeTx(), {
+    await applyReversal(asTx(makeTx()), {
       source: SOURCE,
       amountPaise: 1,
       reason: "r",
@@ -256,7 +264,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the idempotency key", () => {
   });
 
   it("posts nothing on a redelivery of the same (refund, payout)", async () => {
-    const res = await applyReversal(makeTx({ alreadyPosted: true }), {
+    const res = await applyReversal(asTx(makeTx({ alreadyPosted: true })), {
       source: SOURCE,
       amountPaise: 50_000,
       reason: "r",
@@ -268,7 +276,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the idempotency key", () => {
 
   it("posts nothing for a zero or negative amount", async () => {
     for (const amountPaise of [0, -1]) {
-      const res = await applyReversal(makeTx(), {
+      const res = await applyReversal(asTx(makeTx()), {
         source: SOURCE,
         amountPaise,
         reason: "r",
@@ -289,7 +297,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: failure handling", () => {
     mockedPost.mockRejectedValueOnce(new Error("journal unbalanced"));
 
     await expect(
-      applyReversal(makeTx(), {
+      applyReversal(asTx(makeTx()), {
         source: SOURCE,
         amountPaise: 50_000,
         reason: "r",
@@ -313,7 +321,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: failure handling", () => {
   });
 
   it("no-ops (without posting) when the ConsultantPayout cannot be resolved", async () => {
-    const res = await applyReversal(makeTx({ payout: null }), {
+    const res = await applyReversal(asTx(makeTx({ payout: null })), {
       source: SOURCE,
       amountPaise: 50_000,
       reason: "r",

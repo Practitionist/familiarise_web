@@ -14,7 +14,7 @@
  */
 import { EarningStatus } from "@prisma/client";
 
-import type { PrismaLike } from "@/lib/payments/ledger/post";
+import type { PrismaLike } from "@/lib/prisma";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 
 /**

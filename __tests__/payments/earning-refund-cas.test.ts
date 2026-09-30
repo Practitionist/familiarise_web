@@ -31,7 +31,7 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryException: jest.fn(),
 }));
 
-const mockRecordTdsReversal = jest.fn();
+const mockRecordTdsReversal = jest.fn((..._a: unknown[]): unknown => undefined);
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   recordTdsReversal: (...a: unknown[]) => mockRecordTdsReversal(...a),
 }));

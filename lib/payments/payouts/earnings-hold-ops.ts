@@ -1,11 +1,13 @@
 /**
  * #1771 K-3 — an operator's hold and release of consultant earnings.
  *
- * Hold: PENDING|READY → HELD. Release: HELD → READY when the hold has
- * matured, else back to PENDING for the release cron; never while the payment
- * has an open refund or dispute (the cascade still has to size itself). Both
- * are one CAS each, the predicates repeated in the WHERE, and a count that
- * falls short rolls the caller's transaction back as a 409.
+ * Hold: PENDING|READY → HELD. Release: HELD → the row's recorded
+ * preDisputeStatus when one exists (#1020-1 — so a PENDING_TRUST freeze goes
+ * back to PENDING_TRUST, not READY), else READY once the hold has matured and
+ * PENDING until then for the release cron; never while the payment has an open
+ * refund or dispute (the cascade still has to size itself). Both are one CAS per
+ * status group, the predicates repeated in the WHERE, and a count that falls
+ * short rolls the caller's transaction back as a 409.
  */
 
 import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
@@ -47,6 +49,7 @@ async function readRows(db: EarningsDb, ids: string[]) {
       id: true,
       status: true,
       holdUntil: true,
+      preDisputeStatus: true,
       payment: {
         select: {
           refunds: {
@@ -105,7 +108,7 @@ export async function releaseHeldEarnings(
   ids: string[],
   reason: string,
   now = new Date(),
-): Promise<{ ready: string[]; pending: string[] }> {
+): Promise<{ ready: string[]; pending: string[]; trust: string[] }> {
   requireReason(reason);
   const rows = await readRows(db, ids);
   if (rows.some((r) => r.status !== EarningStatus.HELD)) {
@@ -122,40 +125,84 @@ export async function releaseHeldEarnings(
       "This payment has a refund or dispute still open — release once it settles.",
     );
   }
-  const ready = rows
-    .filter((r) => r.holdUntil && r.holdUntil <= now)
-    .map((r) => r.id);
-  const pending = rows.filter((r) => !ready.includes(r.id)).map((r) => r.id);
+
+  // #1020-1 — the recorded prior wins over the hold-window heuristic. A row
+  // frozen from PENDING_TRUST returns to PENDING_TRUST: releasing it to READY is
+  // the invoice-fraud bypass (#687's park would never see that row again), so
+  // the fraud gate has to resume owning the release decision exactly as the
+  // dispute's WON/CLOSED branch does in app/api/webhooks/utils.ts.
+  const trust: string[] = [];
+  const priorPending: string[] = [];
+  const priorReady: string[] = [];
+  const blankReady: string[] = [];
+  const blankPending: string[] = [];
+  for (const r of rows) {
+    switch (r.preDisputeStatus) {
+      case EarningStatus.PENDING_TRUST:
+        trust.push(r.id);
+        break;
+      case EarningStatus.PENDING:
+        priorPending.push(r.id);
+        break;
+      case EarningStatus.READY:
+        priorReady.push(r.id);
+        break;
+      default: {
+        // No recorded prior (and any value no hold could have written): a
+        // dispute hold always records one, so this is an operator hold or a
+        // freeze from before #1020. Fall back to the hold-window rule the
+        // release has always used — READY once holdUntil has passed, PENDING
+        // until then. Flattening these to PENDING would buy nothing (the release
+        // cron READYs a matured PENDING row on its next pass) and flattening to
+        // READY would mature a row ahead of its own hold window.
+        const matured = Boolean(r.holdUntil && r.holdUntil <= now);
+        (matured ? blankReady : blankPending).push(r.id);
+      }
+    }
+  }
+
+  // One CAS per group, with that group's own predicate repeated in the WHERE —
+  // a row the dispute release moved out from under us matches nothing and the
+  // count falls short of rows.length, which is the 409 below.
   let moved = 0;
-  if (ready.length > 0) {
-    for (const id of ready)
-      assertEarningStatusTransitionLegal(
-        id,
-        EarningStatus.HELD,
-        EarningStatus.READY,
-      );
+  const restore = async (
+    group: string[],
+    to: EarningStatus,
+    prior: EarningStatus | null,
+    maturedOnly = false,
+  ) => {
+    if (group.length === 0) return;
+    for (const id of group)
+      assertEarningStatusTransitionLegal(id, EarningStatus.HELD, to);
     const r = await db.consultantEarnings.updateMany({
       where: {
-        id: { in: ready },
+        id: { in: group },
         status: EarningStatus.HELD,
-        holdUntil: { lte: now },
+        preDisputeStatus: prior,
+        ...(maturedOnly ? { holdUntil: { lte: now } } : {}),
         ...NO_OPEN_CLAIM,
       },
-      data: { status: EarningStatus.READY },
+      // Cleared on every group, as the dispute release does: a marker left set
+      // would be read as the next hold's intent.
+      data: { status: to, preDisputeStatus: null },
     });
     moved += r.count;
-  }
-  if (pending.length > 0) {
-    const p = await db.consultantEarnings.updateMany({
-      where: {
-        id: { in: pending },
-        status: EarningStatus.HELD,
-        ...NO_OPEN_CLAIM,
-      },
-      data: { status: EarningStatus.PENDING },
-    });
-    moved += p.count;
-  }
+  };
+
+  await restore(
+    trust,
+    EarningStatus.PENDING_TRUST,
+    EarningStatus.PENDING_TRUST,
+  );
+  await restore(priorPending, EarningStatus.PENDING, EarningStatus.PENDING);
+  await restore(priorReady, EarningStatus.READY, EarningStatus.READY);
+  await restore(blankReady, EarningStatus.READY, null, true);
+  await restore(blankPending, EarningStatus.PENDING, null);
+
   if (moved !== rows.length) throw raced();
-  return { ready, pending };
+  return {
+    ready: [...priorReady, ...blankReady],
+    pending: [...priorPending, ...blankPending],
+    trust,
+  };
 }

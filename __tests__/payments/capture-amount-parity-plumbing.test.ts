@@ -26,8 +26,8 @@
  * still bypassed, which is exactly the bug being pinned.
  */
 
-const captureException = jest.fn();
-const captureMessage = jest.fn();
+const captureException = jest.fn((..._a: unknown[]): unknown => undefined);
+const captureMessage = jest.fn((..._a: unknown[]): unknown => undefined);
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   setTag: jest.fn(),
@@ -62,11 +62,11 @@ const paymentUpdateMany = jest.fn(
     };
   }) => ({ count: 1 }),
 );
-const paymentFindUnique = jest.fn((..._a: unknown[]) => undefined);
-const appointmentFindUnique = jest.fn((..._a: unknown[]) => undefined);
+const paymentFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
+const appointmentFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
 const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
-const trialFindUnique = jest.fn((..._a: unknown[]) => undefined);
+const trialFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
 const occurrenceFindMany = jest.fn();
 const txStub = {
   payment: {
@@ -98,11 +98,11 @@ jest.mock("../../lib/payments/payouts", () => ({
   createEarningsFromPayment: (...a: unknown[]) =>
     createEarningsFromPayment(...a),
 }));
-const refundPayment = jest.fn();
+const refundPayment = jest.fn((..._a: unknown[]): unknown => undefined);
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => refundPayment(...a),
 }));
-const refundBookingPayment = jest.fn();
+const refundBookingPayment = jest.fn((..._a: unknown[]): unknown => undefined);
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
 }));
@@ -136,7 +136,7 @@ jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEventSafe: (...a: unknown[]) =>
     recordSystemEvent(...(a as [never])),
 }));
-const validateWebhookMetadata = jest.fn();
+const validateWebhookMetadata = jest.fn((..._a: unknown[]): unknown => undefined);
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),

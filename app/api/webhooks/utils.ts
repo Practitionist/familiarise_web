@@ -1593,13 +1593,29 @@ export async function handleDisputeUpdated(
             },
             data: { status: "PENDING", preDisputeStatus: null },
           });
+          // W1e — a HELD row whose prior was PENDING_TRUST goes BACK to
+          // PENDING_TRUST, never to READY. Without this group the catch-all
+          // below force-readies it, and a moderation-held trust-parked earning
+          // (an org that has never been verified and never paid an invoice)
+          // would be released to the consultant the moment a dispute resolved
+          // in our favour — walking straight through the invoice-fraud gate.
+          // The dispute hold deliberately skips PENDING_TRUST, so such a row is
+          // only ever held by moderation; this is the group that respects it.
+          const relTrust = await tx.consultantEarnings.updateMany({
+            where: {
+              paymentId: dispute.paymentId,
+              status: "HELD",
+              preDisputeStatus: "PENDING_TRUST",
+            },
+            data: { status: "PENDING_TRUST", preDisputeStatus: null },
+          });
           const released = await tx.consultantEarnings.updateMany({
             where: { paymentId: dispute.paymentId, status: "HELD" },
             data: { status: "READY", preDisputeStatus: null },
           });
-          if (relPending.count + released.count > 0) {
+          if (relPending.count + released.count + relTrust.count > 0) {
             console.log(
-              `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING) — dispute ${disputeId} won`,
+              `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING, +${relTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
             );
           }
           // #1008 — release the org's held earnings too. No-op exactly when a
@@ -1688,22 +1704,37 @@ export async function handleDisputeUpdated(
             );
             const reversalNow = Math.min(proratedReversal, remainingRefundable);
 
-            await tx.consultantEarnings.update({
-              where: { id: earning.id },
-              data: {
-                status: "REFUNDED",
-                preDisputeStatus: null,
-                ...(reversalNow > 0
-                  ? { refundedShareAmount: { increment: reversalNow } }
-                  : {}),
-              },
-            });
+            // W1c — CAS-in-WHERE, matching the doctrine the other three
+            // REFUNDED writers now follow. The WHERE repeats the money
+            // predicate (source status) AND pins `refundedShareAmount` to the
+            // pre-read; the write is an ABSOLUTE value, not an `increment`.
+            // An `increment` here, capped in JS from a pre-read, is exactly the
+            // shape that let two concurrent reversals sum past the share.
+            //
+            // `count === 0` is a lost race and is treated as one below: the TDS
+            // reversal and the manual-recovery page are gated on the write
+            // having actually landed, or a concurrent reversal double-pages
+            // ops and double-reverses the withholding.
+            const { count: consultantReversalCount } =
+              await tx.consultantEarnings.updateMany({
+                where: {
+                  id: earning.id,
+                  status: { in: ["HELD", "PAID"] },
+                  refundedShareAmount: alreadyRefunded,
+                },
+                data: {
+                  status: "REFUNDED",
+                  preDisputeStatus: null,
+                  refundedShareAmount: alreadyRefunded + reversalNow,
+                },
+              });
+            const consultantReversalApplied = consultantReversalCount === 1;
 
             // #738-B — statutory parity with the refund path: withholding that
             // was deposited against a now-charged-back sale must net out of the
             // next quarter's return. The shared helper's dedup cap prevents a
             // double reversal when an app refund preceded the chargeback.
-            if (earning.payoutId) {
+            if (earning.payoutId && consultantReversalApplied) {
               await recordTdsReversal(tx, {
                 payoutId: earning.payoutId,
                 consultantProfileId: earning.consultantProfileId,
@@ -1722,13 +1753,31 @@ export async function handleDisputeUpdated(
             // is the only thing that names the earnings and the disputed total
             // an operator has to go and collect — see the staged page below.
             if (earning.status === "PAID" && reversalNow > 0) {
-              consultantManualRecoveryPaise += reversalNow;
-              consultantManualRecoveryCount++;
+              // W1c — only count and page for a reversal THIS call actually
+              // wrote. Gating on the CAS result is what stops a concurrent
+              // reversal from double-paging ops for one lost dispute, and from
+              // raising a clawback against a share another writer already
+              // reversed (the clawback's own idempotency key would collapse the
+              // journal, but the page and the counter would not).
+              if (consultantReversalApplied) {
+                consultantManualRecoveryPaise += reversalNow;
+                consultantManualRecoveryCount++;
+              } else {
+                console.warn(
+                  `⚠️ Earnings ${earning.id}: dispute ${disputeId} LOST reversal lost the CAS (status or refundedShareAmount moved) — skipping the recovery page and clawback for this writer`,
+                );
+              }
               // Only a COMPLETED payout moved cash; a BATCHED/PENDING one has
               // nothing out, and the earnings reversal above has already
               // returned the share to the pool. Mirrors the org loop's
-              // `orgPayout.status === "COMPLETED"` gate below.
-              if (earning.payoutId && earning.payout?.status === "COMPLETED") {
+              // `orgPayout.status === "COMPLETED"` gate below. Also gated on the
+              // CAS, so a lost race raises no clawback for a share another
+              // writer already reversed.
+              if (
+                consultantReversalApplied &&
+                earning.payoutId &&
+                earning.payout?.status === "COMPLETED"
+              ) {
                 // GROSS vs NET, deliberately two different numbers.
                 //
                 // `reversalNow` is the GROSS share the consultant no longer
@@ -1741,15 +1790,15 @@ export async function handleDisputeUpdated(
                 // belongs to the government and is already handled separately
                 // by `recordTdsReversal` above.
                 //
-              // So the receivable is the pro-rata net: this earning's share
-              // of the gross, scaled by the fraction the consultant actually
-              // received. `ConsultantPayout.amount` is the gross and
-              // `tdsDeducted` the withholding, so `amount - tdsDeducted` is
-              // the figure that left. Derived rather than read from the
-              // nullable `netAmount`, which is staged pre-gateway and so is
-              // not guaranteed present on every row. `tdsDeducted` is 0 for a
-              // payout with no withholding, which makes the scale exactly 1 —
-              // so a TDS-free payout claws back the gross, unchanged.
+                // So the receivable is the pro-rata net: this earning's share
+                // of the gross, scaled by the fraction the consultant actually
+                // received. `ConsultantPayout.amount` is the gross and
+                // `tdsDeducted` the withholding, so `amount - tdsDeducted` is
+                // the figure that left. Derived rather than read from the
+                // nullable `netAmount`, which is staged pre-gateway and so is
+                // not guaranteed present on every row. `tdsDeducted` is 0 for a
+                // payout with no withholding, which makes the scale exactly 1 —
+                // so a TDS-free payout claws back the gross, unchanged.
                 const payoutGross = Number(earning.payout?.amount ?? 0);
                 const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
                 const netFraction =
