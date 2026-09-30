@@ -93,6 +93,8 @@ import {
   refundPayment,
 } from "./refund";
 
+import { applyCappedEarningReversal } from "@/lib/payments/payouts/earning-reversal-cas";
+
 /**
  * #1589 N-P0-01 — the payer's notice for a refund that never touches the
  * gateway. Gateway refunds are told by the `refund.processed` webhook; the
@@ -657,143 +659,6 @@ function assertReturnable(
   }
 }
 
-/**
- * #CASC — the statuses an earning may legally be moved OUT OF on the way to
- * REFUNDED. Every one is accepted because `assertEarningStatusTransitionLegal`
- * only forbids PAID → (anything but REFUNDED); REFUNDED is deliberately ABSENT
- * because it is terminal, so a row another writer already reversed is never a
- * legal source. This array is the WHERE clause, not a hint.
- *
- * Canonical copy of the helper + rationale lives in payouts/earnings-service.ts.
- */
-const REFUNDABLE_EARNING_SOURCE: EarningStatus[] = [
-  EarningStatus.PENDING,
-  EarningStatus.PENDING_TRUST,
-  EarningStatus.HELD,
-  EarningStatus.READY,
-  EarningStatus.BATCHED,
-  EarningStatus.PAID,
-];
-
-/**
- * CAS-in-WHERE writer for a fully-credit-funded cancellation. The legal-
- * transition assertion runs on a value read into JS, so it cannot stop two
- * concurrent refund paths (a credit-funded cancel racing a gateway refund of
- * the same row) from both reading READY, both passing it, and both writing. The
- * conditional write repeats the guard in the database:
- *
- *   status: { in: REFUNDABLE_EARNING_SOURCE }  — legal sources; an already
- *     REFUNDED (terminal) row is refused outright.
- *   refundedShareAmount: <pre-read>             — keeps the cap sound: the value
- *     written is an ABSOLUTE `min(share, preRead + request)`, never an
- *     `increment`, so two writers can only compose into `min(share, a + b)` —
- *     however they interleave, the column never passes consultantSharePaise.
- *
- * `count === 0` is a lost race, never "assume it worked": re-read once and take
- * whatever the cap still allows, so the net converges instead of dropping this
- * cancellation's request. A second refusal, or a row another writer has taken to
- * REFUNDED, is left to the winner.
- */
-async function applyCappedEarningReversal(
-  tx: Tx,
-  row: {
-    id: string;
-    consultantSharePaise: number;
-    refundedShareAmount: number;
-    status: EarningStatus;
-  },
-  requestPaise: number,
-): Promise<{
-  reversedPaise: number;
-  refundedShareAmount: number;
-  fullyRefunded: boolean;
-  lostRace: boolean;
-}> {
-  let current = row;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const alreadyRefunded = current.refundedShareAmount ?? 0;
-    const take = Math.min(
-      requestPaise,
-      Math.max(0, current.consultantSharePaise - alreadyRefunded),
-    );
-
-    if (take <= 0) {
-      return {
-        reversedPaise: 0,
-        refundedShareAmount: alreadyRefunded,
-        fullyRefunded:
-          alreadyRefunded >= current.consultantSharePaise ||
-          current.status === EarningStatus.REFUNDED,
-        lostRace: attempt > 0,
-      };
-    }
-
-    const nextRefundedShare = alreadyRefunded + take;
-    const fullyRefunded = nextRefundedShare >= current.consultantSharePaise;
-    if (fullyRefunded && attempt > 0) {
-      // The retry is driven by a re-read, so the caller's own assertion (made
-      // on its pre-read) no longer covers this transition — re-assert here.
-      assertEarningStatusTransitionLegal(
-        current.id,
-        current.status,
-        EarningStatus.REFUNDED,
-      );
-    }
-
-    const { count } = await tx.consultantEarnings.updateMany({
-      where: {
-        id: current.id,
-        status: { in: REFUNDABLE_EARNING_SOURCE },
-        refundedShareAmount: alreadyRefunded,
-      },
-      data: {
-        refundedShareAmount: nextRefundedShare,
-        ...(fullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
-
-    if (count > 0) {
-      return {
-        reversedPaise: take,
-        refundedShareAmount: nextRefundedShare,
-        fullyRefunded,
-        // attempt > 0 => the first CAS was refused and this is the residual.
-        lostRace: attempt > 0,
-      };
-    }
-
-    const fresh = await tx.consultantEarnings.findUnique({
-      where: { id: current.id },
-      select: { status: true, refundedShareAmount: true },
-    });
-    if (!fresh) {
-      return {
-        reversedPaise: 0,
-        refundedShareAmount: alreadyRefunded,
-        fullyRefunded: false,
-        lostRace: true,
-      };
-    }
-    current = {
-      id: current.id,
-      consultantSharePaise: current.consultantSharePaise,
-      refundedShareAmount: fresh.refundedShareAmount ?? 0,
-      status: fresh.status,
-    };
-  }
-
-  console.warn(
-    `Earnings ${row.id}: capped reversal CAS refused twice, leaving ` +
-      `${requestPaise} paise unapplied (share ${row.consultantSharePaise}, ` +
-      `refunded ${row.refundedShareAmount}).`,
-  );
-  return {
-    reversedPaise: 0,
-    refundedShareAmount: row.refundedShareAmount ?? 0,
-    fullyRefunded: false,
-    lostRace: true,
-  };
-}
 
 /**
  * In-ledger settlement of a fully-credit-funded cancellation (#1161).

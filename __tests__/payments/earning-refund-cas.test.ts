@@ -40,10 +40,8 @@ jest.mock("../../lib/db/serializable-retry", () => ({
   withSerializableRetry: (fn: () => unknown) => fn(),
 }));
 
-import {
-  applyCappedEarningReversal,
-  refundEarnings,
-} from "../../lib/payments/payouts/earnings-service";
+import { applyCappedEarningReversal } from "../../lib/payments/payouts/earning-reversal-cas";
+import { refundEarnings } from "../../lib/payments/payouts/earnings-service";
 import { EarningStatus } from "@prisma/client";
 
 type Row = {
