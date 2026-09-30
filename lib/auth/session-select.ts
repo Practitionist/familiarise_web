@@ -23,8 +23,6 @@ export const SESSION_PUBLIC_SELECT = {
   expiresAt: true,
   ipAddress: true,
   userAgent: true,
-  deviceLabel: true,
-  lastSeenAt: true,
   impersonatedBy: true,
 } as const;
 
@@ -34,15 +32,14 @@ export type SessionPublicRow = Prisma.SessionGetPayload<{
 
 export interface PublicSession {
   id: string;
-  /** Human label: persisted `deviceLabel`, else derived from `userAgent`. */
+  /** Human label derived from `userAgent` ("Chrome on macOS"). */
   label: string;
   ipAddress: string | null;
   createdAt: Date;
   /**
-   * Last server-validated activity, ±5 min. Falls back to `updatedAt`
-   * for rows written before the deploy (refresh-driven, coarser) until
-   * the first throttled touch lands. Never true "last active" — the UI
-   * copy must say "last seen", never "active now".
+   * Last time BetterAuth refreshed this session (`updatedAt`). With
+   * `updateAge` at one day this is coarse — the UI says "last active",
+   * never "active now".
    */
   lastSeenAt: Date;
   expiresAt: Date;
@@ -58,17 +55,15 @@ export function toPublicSession(
 ): PublicSession {
   return {
     id: row.id,
-    // Empty string is not a label (possible via direct Prisma writes
-    // that skip the creation hook) — fall back to derivation rather
-    // than rendering a blank device row.
-    label: row.deviceLabel || deriveDeviceLabel(row.userAgent),
+    label: deriveDeviceLabel(row.userAgent),
     ipAddress: row.ipAddress,
     createdAt: row.createdAt,
-    lastSeenAt: row.lastSeenAt ?? row.updatedAt,
+    lastSeenAt: row.updatedAt,
     expiresAt: row.expiresAt,
     isCurrent: currentSessionId !== undefined && row.id === currentSessionId,
-    // Loose check: `undefined` (mocks, future select drift) must not
-    // read as an impersonation the way `!== null` would.
-    isImpersonated: row.impersonatedBy != null,
+    // `undefined` (mocks, future select drift) must not read as an
+    // impersonation the way a bare `!== null` would.
+    isImpersonated:
+      row.impersonatedBy !== null && row.impersonatedBy !== undefined,
   };
 }

@@ -22,7 +22,7 @@
  * - onboardingSubmitLimiter: 10/min per user  — updateOnboardingInformationAction + PATCH /api/form/onboarding/[id] (heavy multi-table tx)
  * - onboardingDraftLimiter:  30/min per user  — saveOnboardingDraftAction (800ms-debounced autosave + pagehide flush)
  * - verificationSubmitLimiter: 10/hr per user — POST /api/verification/submit + /resubmit (review-queue writes + admin notify)
- * - sessionMgmtLimiter:     120/15min per IP  — /api/user/sessions* except the signal poll (see below)
+ * - sessionMgmtLimiter:     120/15min per IP  — /api/user/sessions* except the liveness probe (see middleware)
  * - sessionMgmtUserLimiter: 60/15min per user — same three routes, keyed past requireApiAuth (the precise gate)
  */
 
@@ -348,31 +348,6 @@ export const adminSessionAccessLimiter = makeLimiter(
   120,
   "15 m",
   "rl:admin-session-access",
-);
-
-/**
- * 30 per 15 minutes per USER — `GET /api/user/sessions/revocation-signal`.
- *
- * #1856 exempted this endpoint from the EDGE `sessionMgmtLimiter` with a
- * sound reason (a 30s poll is exactly 30 requests per 15-minute window,
- * so two tabs behind one NAT would 429 the device list). That exemption
- * is correct but it left the endpoint's ONLY rate limit living in a
- * `startsWith` negation in `middleware.ts` — a single point of failure
- * that is invisible from the handler and disappears the moment the
- * predicate is edited.
- *
- * This per-user budget makes the guarantee structural instead of
- * incidental, and it does not fight the poll: the counter is 30 per
- * 15 minutes, so the documented 30s poll (30 per 15 min) still fits
- * exactly once over. A 15s poll is 60 per 15 min and would now be
- * refused, which is the intended pressure to use a sane interval.
- *
- * The route stays off the edge limiter; this is the backstop.
- */
-export const revocationSignalUserLimiter = makeLimiter(
-  30,
-  "15 m",
-  "rl:revocation-signal-user",
 );
 
 /** 20 per hour per org — POST /api/organizations/[orgId]/billing-account/wallet/top-ups (orgId-keyed; blocks a single org from minting hundreds of Razorpay orders) */

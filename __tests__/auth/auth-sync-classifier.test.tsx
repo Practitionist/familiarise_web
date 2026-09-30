@@ -100,8 +100,7 @@ describe("AuthSyncProvider revocation classifier", () => {
   it.each([
     ["a 503 (lookup failed)", () => ({ ok: false, status: 503 })],
     ["a 500", () => ({ ok: false, status: 500 })],
-    ["a 200 (still active)", () => ({ ok: true, status: 200 })],
-  ])("does not sign out on %s", async (_label, response) => {
+  ])("does not sign out on %s, and refetches", async (_label, response) => {
     fetchMock.mockResolvedValue(response());
     await mountAndFocus();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -110,6 +109,17 @@ describe("AuthSyncProvider revocation classifier", () => {
     );
     expect(mockSignOutEverywhere).not.toHaveBeenCalled();
     expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it("does nothing on a 200 from a focus check", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    await mountAndFocus();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/user/sessions/current",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(mockSignOutEverywhere).not.toHaveBeenCalled();
+    expect(mockRefetch).not.toHaveBeenCalled();
   });
 
   it("does not sign out on a network error", async () => {

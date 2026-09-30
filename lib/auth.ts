@@ -25,12 +25,6 @@ import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
-import {
-  enforceSessionCapForUser,
-  MAX_CONCURRENT_SESSIONS,
-} from "@/lib/auth/session-cap";
-import { stampSessionDeviceMetadata } from "@/lib/auth/session-stamp";
-import { signalRevocation } from "@/lib/auth/session-revoke";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 
 // STAFF = moderator: read users + session control (a subset of the full admin
@@ -131,18 +125,10 @@ export const auth = betterAuth({
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
-    // #1856 — a reset must end EVERY session (a thief's included): the
-    // resetting browser holds no session, so nothing there needs
-    // preserving — unlike changePassword, which keeps the current one
-    // via the client sweep (tri-state toast + ping) in
-    // SignInSecuritySection. The counter ping wakes the victim's other
-    // tabs; they classify via the usual tick/visibility paths.
+    // A reset ends EVERY session, a thief's included. The resetting browser
+    // holds no session, so nothing needs preserving. (changePassword keeps
+    // the current session via `revokeOtherSessions: true` instead.)
     revokeSessionsOnPasswordReset: true,
-    onPasswordReset: async ({ user }) => {
-      // Awaited: signalRevocation swallows its own errors, and a floating
-      // promise can die with the serverless freeze (same class as #1298).
-      await signalRevocation(user.id);
-    },
   },
 
   emailVerification: {
@@ -440,51 +426,6 @@ export const auth = betterAuth({
                 "This email domain requires SSO sign-in. Please use your organization's SSO provider at /auth/signin.",
               code: "SSO_REQUIRED",
             });
-          }
-
-          // NOTE (#1856): device metadata is stamped in `create.after`,
-          // NOT by returning `{ data }` here. Merging the columns into
-          // the insert made the stamp load-bearing for auth — a missing
-          // column bricked ALL sign-ins pre-push. This hook stays a pure
-          // veto: reject, or fall through to the insert untouched.
-          //
-          // Push-before-traffic is still mandatory and no hook placement
-          // avoids it: the regenerated Prisma client selects all model
-          // fields by default, so the session INSERT needs the pushed
-          // columns before ANY build of this code serves sign-in traffic.
-          // `npm run db:push` runs once, at merge, by the orchestrator.
-        },
-        after: async (session) => {
-          // Device metadata (#1856) — awaited (one PK update on a rare
-          // path) so a serverless freeze cannot drop it; failures are
-          // caught inside and never fail sign-in. See
-          // `lib/auth/session-stamp.ts` for why this is an update and
-          // not an insert merge.
-          await stampSessionDeviceMetadata(session.id, session.userAgent);
-          // Concurrent-session cap (#1856) — AWAITED, not fire-and-forget:
-          // a floating promise dies with the serverless freeze after the
-          // response, and with no later sign-in the "eventual" convergence
-          // never comes (proven live: 13 sessions, zero evictions). One
-          // bounded pass costs a single indexed findMany on the rare
-          // sign-in path; failures are caught so sign-in never fails.
-          // The just-created session is reserved from eviction (never the
-          // delete target, even under clock skew or same-ms id ties);
-          // see `lib/auth/session-cap.ts`.
-          try {
-            const { evicted } = await enforceSessionCapForUser(
-              session.userId,
-              MAX_CONCURRENT_SESSIONS,
-              session.id,
-            );
-            // An eviction bumps the cross-device counter so opted-in tabs
-            // learn promptly (the ban path does the same post-commit).
-            // Awaited — the freeze must not drop it; it cannot throw.
-            if (evicted > 0) await signalRevocation(session.userId);
-          } catch (err) {
-            Sentry.captureException(
-              err instanceof Error ? err : new Error(String(err)),
-              { tags: { subsystem: "auth" }, level: "warning" },
-            );
           }
         },
       },

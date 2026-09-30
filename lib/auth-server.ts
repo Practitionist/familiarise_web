@@ -1,7 +1,6 @@
 import { cache } from "react";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { touchSessionLastSeen } from "@/lib/auth/last-seen";
 
 /**
  * Render-memoized session read. Nested layouts that call requireOnboarded /
@@ -33,17 +32,11 @@ type SessionReader = (
   disableCookieCache: boolean,
 ) => ReturnType<typeof auth.api.getSession>;
 
-const readSession: SessionReader = async (disableCookieCache) => {
-  const session = await auth.api.getSession({
+const readSession: SessionReader = async (disableCookieCache) =>
+  auth.api.getSession({
     headers: await headers(),
     ...(disableCookieCache && { query: { disableCookieCache: true } }),
   });
-  // Advance the device list's "last seen" marker (#1856). Fire-and-forget
-  // WITHOUT await: the touch is throttled, best-effort, and never throws,
-  // so it must not gate the session read it annotates.
-  if (session?.session?.id) touchSessionLastSeen(session.session.id);
-  return session;
-};
 
 /**
  * #1275 — built on FIRST CALL, not at module scope, and only when `cache` is
