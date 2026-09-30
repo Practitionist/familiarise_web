@@ -32,6 +32,8 @@ import type { Tx } from "@/lib/prisma";
  *                         which this engine never calls (reverseClassMulti marks
  *                         its child refunds SUCCEEDED with no gateway leg).
  *   - PAYOUT_CLAWBACK   — the dispute-lost branch of handleDisputeUpdated.
+ *   - CONSULTANT_CLAWBACK — the same branch's consultant rail: a lost dispute on
+ *                         an earning a COMPLETED ConsultantPayout already paid.
  *   - BOOKING / OVERAGE — single-payment reversals still flow through
  *                         `refundPayment` (it owns the gateway phases); nothing
  *                         calls applyReversal for those from a route.
@@ -61,6 +63,16 @@ type ReversalSource =
   | { kind: "OVERAGE"; overagePaymentId: string }
   // Gateway-side payout clawback (e.g. a lost dispute on an org-funded booking).
   | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
+  // The consultant mirror of PAYOUT_CLAWBACK: a lost dispute on an earning a
+  // COMPLETED ConsultantPayout already paid out. Same idempotency-key
+  // convention, same audit discipline, same append-only counter-transaction —
+  // but the cash CANNOT be pulled on this rail, so the recovery is booked as a
+  // receivable rather than a CASH debit. See {@link postConsultantPayoutClawback}.
+  | {
+      kind: "CONSULTANT_CLAWBACK";
+      consultantPayoutId: string;
+      consultantProfileId: string;
+    }
   // A consolidated CLASS purchase: many child payments, no single paymentId.
   | { kind: "CLASS_MULTI"; paymentIds: string[] };
 
@@ -149,6 +161,21 @@ export async function applyReversal(
       );
       return {
         kind: "PAYOUT_CLAWBACK",
+        cascades: [],
+        childRefundIds: [],
+        clawbackPosted: posted,
+      };
+    }
+
+    case "CONSULTANT_CLAWBACK": {
+      const posted = await reverseConsultantPayoutClawback(
+        tx,
+        input,
+        input.source.consultantPayoutId,
+        input.source.consultantProfileId,
+      );
+      return {
+        kind: "CONSULTANT_CLAWBACK",
         cascades: [],
         childRefundIds: [],
         clawbackPosted: posted,
@@ -433,6 +460,201 @@ export async function postPayoutClawback(
       summary: `Payout clawback ledger posting failed for payout ${payoutId}`,
       err,
       context: { orgPayoutId: payoutId, refundId },
+    });
+    throw err;
+  }
+}
+
+/**
+ * The idempotency key for a consultant payout clawback. Same convention as the
+ * org clawback, so `reconcile-ledgers`' `clawback:*` prefix query and a future
+ * `ConsultantPayout.clawbackAmountPaise` counter read the same shape.
+ *
+ * Unique per (refund, payout): `refundId` is the driver's id — the dispute path
+ * passes `dispute:<disputeId>` — so one lost dispute recovers from a given
+ * payout at most once no matter how many deliveries arrive, while two different
+ * disputes against the same payout post twice, which is correct because each
+ * reversed earnings of its own.
+ */
+export function consultantClawbackKey(
+  refundId: string,
+  consultantPayoutId: string,
+): string {
+  return `clawback:${refundId}:${consultantPayoutId}`;
+}
+
+/**
+ * SEAM — the automatic consultant equivalent of the org clawback, for a
+ * ConsultantPayout whose cash already left.
+ *
+ * Shape mirrors `reversePayoutClawback` (idempotent ledger counter-post keyed
+ * `clawback:<refundId>:<payoutId>`, durable audit row on failure, one
+ * append-only journal entry) with ONE economic difference, forced by the two
+ * rails behaving differently:
+ *
+ *   - the ORG rail can reverse-transfer, so its clawback is `Dr CASH /
+ *     Cr ORG_PAYABLE` and the cash genuinely comes back;
+ *   - the CONSULTANT rail has no reverse-transfer mechanism at all (the R-06 /
+ *     E-05 posture), so debiting CASH here would assert money the platform does
+ *     not hold and would leave the recovery unreconcilable against anything real.
+ *
+ * So the recovery lands as an explicit receivable instead:
+ *
+ *   Dr CONSULTANT_RECEIVABLE(consultant)  the clawback owed to the platform
+ *      Cr PLATFORM_FEE                    the platform's take, given back
+ *
+ * CONSULTANT_RECEIVABLE is its own account kind, consultant-scoped by
+ * construction (the deterministic id is
+ * `CONSULTANT_RECEIVABLE|_|<profileId>|INR`). An earlier draft parked this on
+ * ORG_RECEIVABLE with a `consultantProfileId` scope; that was rejected — the
+ * chart of accounts defines ORG_RECEIVABLE as *an INVOICE-funded org owes us*,
+ * so a consultant balance in an org-scoped kind misreports both the org
+ * receivables query and the chart itself, and the isolation from
+ * `getOrgReceivables` was an accident of id shape rather than a design. The
+ * kind was added rather than borrowed. PLATFORM_FEE takes the credit because
+ * it is the only credit-normal account that already carries this loss as the
+ * platform's take, and it is already the house residual plug in `refund.ts`
+ * and `applyB2cChargebackReversal`.
+ *
+ * The amount is NET of TDS. The transfer was net (`netAmount` on the payout),
+ * `recordTdsReversal` owns the tax leg separately, and clawing back the gross
+ * share would recover the withheld tax the platform never disbursed — that
+ * money belongs to the government, not to us.
+ *
+ * `ConsultantPayout.clawbackAmountPaise` / `.clawbackInitiatedAt` are the
+ * counter, mirroring `OrganizationPayout`, and the increment below is what
+ * keeps them in step with the journal — the same discipline as
+ * `reversePayoutClawback`. Without the pair the outstanding recovery would be
+ * observable only as a ledger balance, with no counter for the reconciler's
+ * dual-write check to compare the journal against.
+ */
+async function reverseConsultantPayoutClawback(
+  tx: Tx,
+  input: ApplyReversalInput,
+  consultantPayoutId: string,
+  consultantProfileId: string,
+): Promise<boolean> {
+  if (input.amountPaise <= 0) return false;
+
+  // Idempotency is asserted here, not merely inherited from `postLedgerTxn`'s
+  // unique key: a driver may present several earnings against one payout for a
+  // single dispute, and this is the one place that can tell a first, genuine
+  // clawback from a replay of the same (dispute, payout) pair.
+  const alreadyPosted = await tx.ledgerTransaction.findUnique({
+    where: {
+      idempotencyKey: consultantClawbackKey(
+        input.refundId,
+        consultantPayoutId,
+      ),
+    },
+    select: { id: true },
+  });
+  if (alreadyPosted) return false;
+
+  const payout = await tx.consultantPayout.findUnique({
+    where: { id: consultantPayoutId },
+    select: { id: true, clawbackInitiatedAt: true },
+  });
+  if (!payout) {
+    reportSentryMessage(
+      "reverseConsultantPayoutClawback: target ConsultantPayout not found",
+      {
+        subsystem: "payments",
+        level: "warning",
+        extra: { consultantPayoutId, refundId: input.refundId },
+      },
+    );
+    return false;
+  }
+
+  // Counter, kept in step with the journal exactly as `reversePayoutClawback`
+  // does for the org pair. `clawbackInitiatedAt` is stamped once (`undefined`
+  // on a repeat) so it records when recovery of this payout was FIRST owed.
+  //
+  // Deliberately NOT done: `markConsultantPayoutReversed` already owns the
+  // payout's status flip, and flipping it here would re-open the earnings
+  // (`PAID → READY`) for a future batch to re-pay money the consultant still
+  // holds — paying twice for one reversed share.
+  await tx.consultantPayout.update({
+    where: { id: consultantPayoutId },
+    data: {
+      clawbackAmountPaise: { increment: input.amountPaise },
+      clawbackInitiatedAt: payout.clawbackInitiatedAt ? undefined : new Date(),
+    },
+  });
+
+  await postConsultantPayoutClawback(tx, {
+    refundId: input.refundId,
+    consultantPayoutId,
+    consultantProfileId,
+    amountPaise: input.amountPaise,
+    reason: input.reason,
+  });
+
+  return true;
+}
+
+/**
+ * The clawback journal for a consultant payout: `Dr CONSULTANT_RECEIVABLE
+ * / Cr PLATFORM_FEE`, idempotent on `clawback:<refundId>:<payoutId>`. See
+ * {@link reverseConsultantPayoutClawback} for why this is a receivable rather
+ * than the org rail's `Dr CASH / Cr ORG_PAYABLE`. INR-only, so the ledger
+ * account currency is left unset as post.ts documents.
+ */
+export async function postConsultantPayoutClawback(
+  tx: Tx,
+  input: {
+    refundId: string;
+    consultantPayoutId: string;
+    consultantProfileId: string;
+    amountPaise: number;
+    reason: string;
+  },
+): Promise<void> {
+  const { consultantPayoutId, consultantProfileId, amountPaise } = input;
+  // The counter-post is part of the reversal, not a side effect: report, then
+  // rethrow so the enclosing tx rolls back — an unbalanced journal never commits
+  // (#1583 C-P1-09), which is what keeps the earnings reversal and this clawback
+  // atomic and therefore agreeing on the amount.
+  try {
+    await postLedgerTxn(tx, {
+      idempotencyKey: consultantClawbackKey(
+        input.refundId,
+        consultantPayoutId,
+      ),
+      // `PAYOUT`, not `ORG_PAYOUT`: this counters a `payout:<payoutId>` txn
+      // (doc §4.4), and the soft-linked `payoutId` is a ConsultantPayout cuid, so
+      // reconcile's `clawback:*` scan over OrganizationPayout ids never sees it.
+      kind: "PAYOUT",
+      payoutId: consultantPayoutId,
+      description: `Consultant payout clawback: ${amountPaise} paise from payout ${consultantPayoutId} (${input.reason})`,
+      postings: [
+        {
+          account: { kind: "CONSULTANT_RECEIVABLE", consultantProfileId },
+          direction: "DEBIT",
+          amountPaise,
+        },
+        {
+          account: { kind: "PLATFORM_FEE" },
+          direction: "CREDIT",
+          amountPaise,
+        },
+      ],
+    });
+  } catch (err) {
+    reportSentryError(err, { subsystem: "payments", level: "fatal" });
+    console.error(
+      `[ledger] consultant payout clawback posting FAILED for payout ${consultantPayoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    void recordSystemErrorSafe({
+      // No org to attribute this to — the counterparty is a consultant. The
+      // SystemEvent is the consultant rail's only audit-log surface, which is
+      // exactly why the caller keeps paging CONSULTANT_PAID_EARNING_CLAWBACK.
+      organizationId: null,
+      category: "LEDGER",
+      summary: `Consultant payout clawback ledger posting failed for payout ${consultantPayoutId}`,
+      err,
+      context: { consultantPayoutId, consultantProfileId, refundId: input.refundId },
     });
     throw err;
   }

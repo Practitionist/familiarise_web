@@ -40,7 +40,10 @@ import {
   mintRefundCreditNote,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
-import { applyReversal } from "@/lib/payments/operations/reversal-engine";
+import {
+  applyReversal,
+  consultantClawbackKey,
+} from "@/lib/payments/operations/reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -1484,6 +1487,13 @@ export async function handleDisputeUpdated(
     paymentId: string;
     amountPaise: number;
     earnings: number;
+    /**
+     * Ledger idempotency keys of the automatic clawbacks posted for this
+     * dispute, so ops can tie the manual-recovery worklist back to the journal
+     * instead of reconciling two sets of numbers by eye. Empty when nothing was
+     * auto-clawed back (no COMPLETED payout on any affected earning).
+     */
+    clawbackKeys: string[];
   } | null = null;
   // #1654 — the bell is staged inside the tx and sent only after COMMIT.
   let stagedNotification: StagedTrigger | null = null;
@@ -1638,10 +1648,34 @@ export async function handleDisputeUpdated(
               consultantProfileId: true,
               payoutId: true,
               status: true,
+              // #R-06 — whether the cash actually left. Only a COMPLETED payout
+              // has anything to claw back. `amountPaise` + `tdsDeducted` are
+              // here for the GROSS→NET scale: the clawback recovers the net the
+              // consultant actually received, never the withheld tax (W1a).
+              payout: {
+                select: {
+                  status: true,
+                  amountPaise: true,
+                  tdsDeducted: true,
+                },
+              },
             },
           });
           let consultantManualRecoveryPaise = 0;
           let consultantManualRecoveryCount = 0;
+          /**
+           * Automatic clawback of money a COMPLETED ConsultantPayout already
+           * sent, accumulated per payout and posted ONCE per (dispute, payout)
+           * after the loop. Posting inside the loop would not work: one batch
+           * payout covers many earnings of the same payment, so the second
+           * earning would re-derive the first's `clawback:<dispute>:<payoutId>`
+           * key and be silently dropped as a replay.
+           */
+          const consultantClawbacks = new Map<
+            string,
+            { consultantProfileId: string; amountPaise: number }
+          >();
+          const consultantClawbackKeys: string[] = [];
           for (const earning of lostConsultantEarnings) {
             const alreadyRefunded = earning.refundedShareAmount ?? 0;
             const remainingRefundable = Math.max(
@@ -1679,29 +1713,102 @@ export async function handleDisputeUpdated(
             }
 
             // #1020-2 — a PAID consultant share means the cash already left in
-            // a COMPLETED payout, and the consultant rail has no automatic
-            // clawback mechanism (the documented R-06/E-05 posture is manual
-            // recovery). The STATE is now truthful (REFUNDED + TDS reversed);
-            // page ops once per dispute with the total to recover by hand.
+            // a COMPLETED payout. The STATE is now truthful (REFUNDED + TDS
+            // reversed) and the recovery is now AUTOMATIC: the clawback is
+            // booked as a receivable on the consultant's ledger
+            // (`Dr CONSULTANT_RECEIVABLE / Cr PLATFORM_FEE`) rather than
+            // vanishing. Ops are still paged once per dispute, because the page
+            // is the only thing that names the earnings and the disputed total
+            // an operator has to go and collect — see the staged page below.
             if (earning.status === "PAID" && reversalNow > 0) {
               consultantManualRecoveryPaise += reversalNow;
               consultantManualRecoveryCount++;
+              // Only a COMPLETED payout moved cash; a BATCHED/PENDING one has
+              // nothing out, and the earnings reversal above has already
+              // returned the share to the pool. Mirrors the org loop's
+              // `orgPayout.status === "COMPLETED"` gate below.
+              if (earning.payoutId && earning.payout?.status === "COMPLETED") {
+                // GROSS vs NET, deliberately two different numbers.
+                //
+                // `reversalNow` is the GROSS share the consultant no longer
+                // earned, and it is the right figure for
+                // `refundedShareAmount` — that column measures earnings, not
+                // cash. But the CASH that left was the payout's NET: TDS was
+                // withheld at source and never transferred. Clawing back the
+                // gross would demand from the consultant money the platform
+                // never sent them — and specifically the withheld tax, which
+                // belongs to the government and is already handled separately
+                // by `recordTdsReversal` above.
+                //
+                // So the receivable is the pro-rata net: this earning's share
+                // of the gross, scaled by the fraction the consultant
+                // actually received. `tdsDeducted` is 0 for a payout with no
+                // withholding, which makes the scale exactly 1 — so a
+                // TDS-free payout claws back the gross, unchanged.
+                const payoutAmount = Number(earning.payout?.amountPaise ?? 0);
+                const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
+                const netFraction =
+                  payoutAmount > 0
+                    ? Math.max(0, 1 - payoutTds / payoutAmount)
+                    : 1;
+                const netClawbackPaise = Math.floor(
+                  reversalNow * netFraction,
+                );
+
+                if (netClawbackPaise > 0) {
+                  const prior = consultantClawbacks.get(earning.payoutId);
+                  if (prior) {
+                    prior.amountPaise += netClawbackPaise;
+                  } else {
+                    consultantClawbacks.set(earning.payoutId, {
+                      consultantProfileId: earning.consultantProfileId,
+                      amountPaise: netClawbackPaise,
+                    });
+                  }
+                }
+              }
             }
 
             console.log(
               `💸 Earnings ${earning.id} refunded (${reversalNow} paise) — dispute ${disputeId} lost`,
             );
           }
+          // One clawback per (dispute, payout), mirroring the org earnings loop
+          // below — the org rail recovers cash (`Dr CASH / Cr ORG_PAYABLE`);
+          // this one books the receivable, because the consultant rail has no
+          // reverse-transfer to pull the money back through.
+          const clawbackRefundId = `dispute:${dispute.id}`;
+          for (const [consultantPayoutId, claw] of consultantClawbacks) {
+            await applyReversal(tx, {
+              source: {
+                kind: "CONSULTANT_CLAWBACK",
+                consultantPayoutId,
+                consultantProfileId: claw.consultantProfileId,
+              },
+              amountPaise: claw.amountPaise,
+              reason: `chargeback lost (dispute ${disputeId})`,
+              refundId: clawbackRefundId,
+            });
+            consultantClawbackKeys.push(
+              consultantClawbackKey(clawbackRefundId, consultantPayoutId),
+            );
+          }
+
           if (consultantManualRecoveryCount > 0) {
             // Staged for POST-COMMIT dispatch (see consultantClawbackPage):
             // paging from inside the tx meant an SSI abort reached ops with a
             // reversal total that was never persisted, and the gateway
-            // redelivery would double-page.
+            // redelivery would double-page. The page SURVIVES the clawback on
+            // purpose — the journal says what we are owed, the page says which
+            // earnings and which dispute an operator has to go and collect, and
+            // a PAID earning whose payout cannot be resolved posts no journal at
+            // all and would otherwise leave no trace whatsoever.
             consultantClawbackPage = {
               disputeId,
               paymentId: dispute.paymentId,
               amountPaise: consultantManualRecoveryPaise,
               earnings: consultantManualRecoveryCount,
+              clawbackKeys: consultantClawbackKeys,
             };
           }
 
@@ -1889,12 +1996,13 @@ export async function handleDisputeUpdated(
     paymentId: string;
     amountPaise: number;
     earnings: number;
+    clawbackKeys: string[];
   } | null;
   if (stagedClawbackPage) {
     void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYOUT",
-      summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) totalling ${stagedClawbackPage.amountPaise} paise on dispute ${stagedClawbackPage.disputeId}`,
+      summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) totalling ${stagedClawbackPage.amountPaise} paise on dispute ${stagedClawbackPage.disputeId} (${stagedClawbackPage.clawbackKeys.length} receivable(s) auto-booked: ${stagedClawbackPage.clawbackKeys.join(", ") || "none — collect by hand"})`,
       err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
       context: { ...stagedClawbackPage },
     });
