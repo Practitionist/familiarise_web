@@ -357,15 +357,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Handle status transitions
     if (status) {
-      // State machine:
+      // State machine, post-#1775:
       //   free trial   PENDING → SCHEDULED → COMPLETED → CONVERTED
-      //   paid trial   PENDING → AWAITING_PAYMENT → SCHEDULED → …
+      //   paid trial   PENDING → SCHEDULED → …   (paid at REQUEST, so accept
+      //                                              schedules it directly)
       // REJECTED = consultant declines, CANCELLED = consultee cancels or the
-      // pay-link lapses past paymentDueAt.
+      // pay-link lapses past paymentDueAt. `AWAITING_PAYMENT` survives in the
+      // map below as a legal source state for rows written under the old
+      // accept-then-pay flow; nothing writes it any more.
       const validTransitions: Record<TrialStatus, TrialStatus[]> = {
+        // `AWAITING_PAYMENT` is listed as a legal TARGET for the same reason it
+        // is listed in TRIAL_ALLOWED_FROM: a row written under the old
+        // accept-then-pay flow must still be able to be cancelled below. No
+        // code path selects it.
         PENDING: ["AWAITING_PAYMENT", "SCHEDULED", "CANCELLED", "REJECTED"],
-        // Only the webhook moves this to SCHEDULED (on payment capture); the
-        // expiry job and the consultee move it to CANCELLED.
+        // Pre-#1775 shape: the capture webhook moved this to SCHEDULED. That arm
+        // is now unreachable (the accept handler schedules a paid trial
+        // directly), so nothing produces this edge today; it is kept so a legacy
+        // row is not trapped in a state the map cannot leave.
         AWAITING_PAYMENT: ["SCHEDULED", "CANCELLED"],
         SCHEDULED: ["COMPLETED", "CANCELLED"],
         COMPLETED: ["CONVERTED"],
@@ -583,8 +592,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   trialOccurrence,
                 );
 
-            // Update trial with appointment link and the resulting status —
-            // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
+            // Update trial with appointment link and the resulting status.
+            // SCHEDULED for BOTH rails: since #1775 a paid trial was paid at
+            // request, so accept schedules it rather than parking it in
+            // AWAITING_PAYMENT (the sentence this comment used to carry).
             // CAS (#1319): fromIn narrows the allowed-from map to the exact
             // status this request read outside the transaction. Two accepts
             // that both saw PENDING pick DIFFERENT slots, so neither trips the

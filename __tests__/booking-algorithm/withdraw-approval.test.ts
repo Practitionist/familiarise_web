@@ -51,11 +51,21 @@ jest.mock("../../lib/prisma", () => {
 });
 
 const lockCalls: string[] = [];
+const lockRenewals: unknown[] = [];
 jest.mock("../../utils/appointmentlock", () => ({
-  withAppointmentLock: async (id: string, fn: () => unknown) => {
+  withAppointmentLock: async (
+    id: string,
+    fn: (lock?: unknown) => unknown,
+  ) => {
     lockCalls.push(id);
-    return fn();
+    return fn({ key: `appointment-lock:${id}` });
   },
+  // #1319 — the withdraw's retry loop re-grants the appointment lock per
+  // attempt; the route passes this in beside the lock itself.
+  renewAppointmentLock: jest.fn(async (lock: unknown) => {
+    lockRenewals.push(lock);
+    return true;
+  }),
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
 }));
@@ -132,6 +142,7 @@ const consultationRow = (status: string) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   lockCalls.length = 0;
+  lockRenewals.length = 0;
   session.user = {
     id: "u-consultant",
     role: "CONSULTANT",
@@ -225,6 +236,8 @@ describe("POST …/withdraw-approval (B-2)", () => {
     // The route answers the word it wrote, not the word the sweeps use.
     expect(await res.json()).toEqual({ status: "CANCELLED" });
     expect(lockCalls).toEqual(["a-1"]);
+    // #1319 — one renewal per attempt, with the grant the lock handed over.
+    expect(lockRenewals).toEqual([{ key: "appointment-lock:a-1" }]);
     expect(db.subscription.updateMany.mock.calls[0][0].data.status).toBe(
       "CANCELLED",
     );

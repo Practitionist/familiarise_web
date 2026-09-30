@@ -51,6 +51,26 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 export type RespondOutcome = { done: true } | { done: false; reason: string };
 
+/**
+ * A decline's own answer, and the one the route is obliged to believe.
+ *
+ * `restoredFully` is the restore's MATCHED COUNT, read inside the locked
+ * transaction that did the restoring. It was previously re-derived by the route
+ * with a `count` AFTER the lock was released, which made the DECLINED/RELEASED
+ * code a second, racy opinion about a write that had already committed: another
+ * writer landing between the commit and the count could move a slot out from
+ * under the sentence, so the toast could announce "your original times have
+ * been put back" for a booking whose slots a concurrent cancel had just taken.
+ * Two readers of one decision is the defect; there is now one reader, and it is
+ * the writer.
+ *
+ * The `done: false` arm is unchanged: it carries no restore, so it has no
+ * `restoredFully` to report and callers branch on `done` first.
+ */
+export type DeclineOutcome =
+  | { done: true; restoredFully: boolean }
+  | { done: false; reason: string };
+
 export async function acceptProposal(args: {
   rescheduleRequestId: string;
   eventType: EventType;
@@ -272,7 +292,7 @@ const DECLINE_SELECT = {
 export async function declineProposal(args: {
   rescheduleRequestId: string;
   resolvedById: string;
-}): Promise<RespondOutcome> {
+}): Promise<DeclineOutcome> {
   const { rescheduleRequestId, resolvedById } = args;
 
   const request = await prisma.rescheduleRequest.findUnique({
@@ -285,40 +305,123 @@ export async function declineProposal(args: {
   // the appointment atom like withdraw does; the transaction opens inside. The
   // respond route takes this lock for accept only, so there is no nesting, and
   // the lock order is unchanged (the appointment atom is the coarsest).
+  //
+  // ONE GRANT COVERS THE WHOLE DECLINE, including the restore-miss fallback. It
+  // used to cover only the first transaction: the miss propagated out of
+  // `withAppointmentLock`, whose `finally` released the atom, and the terminal
+  // DECLINED plus the park then ran UNLOCKED in the gap. That gap is the window
+  // this closes — a concurrent cancel or reschedule could take the appointment
+  // between the rollback and the park, so the park's CAS matched nothing and
+  // the booking was left PENDING with released sessions: precisely the shape
+  // `expireUnallocatedPaidSubscriptions` refunds in full, arrived at by a race
+  // rather than by a decision. The fallback is the RARE path, so holding the
+  // atom across it costs contention nothing anyone will feel.
+  //
+  // What did NOT move: the fallback's two writes stay in SEPARATE transactions.
+  // The park is bookkeeping and must never be able to veto a human's answer
+  // (see the note at the park below) — that argument is about the transaction
+  // boundary, not the lock, and one grant can hold two transactions perfectly
+  // well. Only the lock is now wider.
   let restored = 0;
   /** Set when the restore could not land, so the decline still has to commit. */
   let restoreMiss: unknown = null;
   let parkedStatus: string | null = null;
+  /** Set when another party had already answered this proposal. */
+  let answerLost = false;
 
   try {
-    await withAppointmentLock(request.appointmentId, () =>
-      prisma.$transaction(async (tx) => {
-        // The CAS is the guard: a concurrent accept or expiry answers first and
-        // this matches zero rows, so nothing is restored out from under it.
-        await transitionRescheduleRequest(tx, {
-          where: { id: request.id },
-          to: "DECLINED",
-          data: { resolvedById },
-        });
-
-        try {
-          restored = await restoreRescheduledBooking(tx, request, {
-            actorUserId: resolvedById,
-            reason: "reschedule declined",
-            op: "reschedule-decline",
+    await withAppointmentLock(request.appointmentId, async () => {
+      // The body below takes no Redis lock of its own — every write here is a
+      // `tx` call — so it cannot raise a typed lock error, and those rethrown
+      // by the OUTER catch below are the atom's own acquisition failures.
+      try {
+        await prisma.$transaction(async (tx) => {
+          // The CAS is the guard: a concurrent accept or expiry answers first and
+          // this matches zero rows, so nothing is restored out from under it.
+          await transitionRescheduleRequest(tx, {
+            where: { id: request.id },
+            to: "DECLINED",
+            data: { resolvedById },
           });
-        } catch (err) {
-          if (!isRestoreMiss(err)) throw err;
-          // The consultant's original time was taken while the proposal was
-          // open, so the booking cannot go back to it. Recorded, then
-          // rethrown: this transaction rolls back whole — the proposal stays
-          // open and nothing moved — and the fallback below commits the
-          // DECLINED on its own. Mirrors the expiry sweep's own two-step.
-          restoreMiss = err;
+
+          try {
+            restored = await restoreRescheduledBooking(tx, request, {
+              actorUserId: resolvedById,
+              reason: "reschedule declined",
+              op: "reschedule-decline",
+            });
+          } catch (err) {
+            if (!isRestoreMiss(err)) throw err;
+            // The consultant's original time was taken while the proposal was
+            // open, so the booking cannot go back to it. Recorded, then
+            // rethrown: this transaction rolls back whole — the proposal stays
+            // open and nothing moved — and the fallback below commits the
+            // DECLINED on its own. Mirrors the expiry sweep's own two-step.
+            restoreMiss = err;
+            throw err;
+          }
+        });
+        return;
+      } catch (err) {
+        // A null `restoreMiss` means the restore never got far enough to be the
+        // problem: the proposal's own CAS missed, so another party answered it
+        // and that answer wins. Distinguished from a restore miss on purpose —
+        // here nothing happened, there the decline has to commit anyway.
+        if (restoreMiss === null) {
+          if (err instanceof IllegalTransitionError) {
+            answerLost = true;
+            return;
+          }
           throw err;
         }
-      }),
-    );
+
+        // #1846 SM-B15, on the decline edge: the DECLINED stands even though the
+        // sessions cannot be restored. Someone decided, and re-offering the
+        // proposal because their old time is gone would be asking them the same
+        // question again. Committed on its own, exactly as the expiry sweep
+        // re-runs its terminal edge once the restore has proved it cannot land.
+        try {
+          await prisma.$transaction(async (tx) => {
+            await transitionRescheduleRequest(tx, {
+              where: { id: request.id },
+              to: "DECLINED",
+              data: { resolvedById },
+            });
+          });
+        } catch (declineErr) {
+          if (declineErr instanceof IllegalTransitionError) {
+            answerLost = true;
+            return;
+          }
+          throw declineErr;
+        }
+        restored = 0;
+
+        // The parent leaves the refunded-sweeps cohort in a SEPARATE
+        // transaction, after the decision is committed — still under the same
+        // grant, but still its own transaction. Folding it into the decision's
+        // would let a missed parent CAS veto a decline a consultant had already
+        // made: the decision is the load-bearing write and the parking is
+        // bookkeeping, and bookkeeping must never roll back a human's answer.
+        // The park's own CAS is the authority on whether it landed, and a park
+        // that loses reports loudly.
+        try {
+          parkedStatus = await prisma.$transaction((tx) =>
+            parkParentForUnrestoredEnding(tx, request, {
+              actorUserId: resolvedById,
+              reason: "reschedule declined; original time no longer available",
+              op: "reschedule-decline-park",
+            }),
+          );
+        } catch (parkErr) {
+          reportSentryError(parkErr, {
+            subsystem: "bookings",
+            op: "reschedule-decline-park",
+            extra: { rescheduleRequestId, restoreMiss: String(restoreMiss) },
+          });
+        }
+      }
+    });
   } catch (err) {
     // A held lock and an unreachable lock service are the route's answers
     // (423 / 503), not this module's to translate, and not a fault to report.
@@ -328,72 +431,21 @@ export async function declineProposal(args: {
     ) {
       throw err;
     }
-    // A null `restoreMiss` means the restore never got far enough to be the
-    // problem: the proposal's own CAS missed, so another party answered it and
-    // that answer wins. Distinguished from a restore miss on purpose — here
-    // nothing happened, there the decline has to commit anyway.
-    if (restoreMiss === null) {
-      if (err instanceof IllegalTransitionError) {
-        return { done: false, reason: "PROPOSAL_NOT_OPEN" };
-      }
-      reportSentryError(err, {
-        subsystem: "bookings",
-        op: "reschedule-decline",
-        extra: { rescheduleRequestId },
-      });
-      throw err;
-    }
-
-    // #1846 SM-B15, on the decline edge: the DECLINED stands even though the
-    // sessions cannot be restored. Someone decided, and re-offering the proposal
-    // because their old time is gone would be asking them the same question
-    // again. Committed on its own, exactly as the expiry sweep re-runs its
-    // terminal edge once the restore has proved it cannot land.
-    try {
-      await prisma.$transaction(async (tx) => {
-        await transitionRescheduleRequest(tx, {
-          where: { id: request.id },
-          to: "DECLINED",
-          data: { resolvedById },
-        });
-      });
-    } catch (declineErr) {
-      if (declineErr instanceof IllegalTransitionError) {
-        return { done: false, reason: "PROPOSAL_NOT_OPEN" };
-      }
-      reportSentryError(declineErr, {
-        subsystem: "bookings",
-        op: "reschedule-decline",
-        extra: { rescheduleRequestId, restoreMiss: String(restoreMiss) },
-      });
-      throw declineErr;
-    }
-    restored = 0;
-
-    // The parent leaves the refunded-sweeps cohort in a SEPARATE transaction,
-    // after the decision is committed. Folding it into the same one would let
-    // a missed parent CAS veto a decline a consultant had already made — the
-    // decision is the load-bearing write and the parking is bookkeeping, and
-    // bookkeeping must never roll back a human's answer. The cost is a window
-    // of one transaction between the DECLINED and the park, in which the
-    // booking briefly matches the 48-hour cohort; the park's own CAS is what
-    // closes it, and a park that loses reports loudly.
-    try {
-      parkedStatus = await prisma.$transaction((tx) =>
-        parkParentForUnrestoredEnding(tx, request, {
-          actorUserId: resolvedById,
-          reason: "reschedule declined; original time no longer available",
-          op: "reschedule-decline-park",
-        }),
-      );
-    } catch (parkErr) {
-      reportSentryError(parkErr, {
-        subsystem: "bookings",
-        op: "reschedule-decline-park",
-        extra: { rescheduleRequestId, restoreMiss: String(restoreMiss) },
-      });
-    }
+    reportSentryError(err, {
+      subsystem: "bookings",
+      op: "reschedule-decline",
+      // Carries the restore miss when there was one, so a fault raised by the
+      // fallback's own commit is still attributable to the original time being
+      // gone rather than reading as a bare decline failure.
+      extra: {
+        rescheduleRequestId,
+        ...(restoreMiss === null ? {} : { restoreMiss: String(restoreMiss) }),
+      },
+    });
+    throw err;
   }
+
+  if (answerLost) return { done: false, reason: "PROPOSAL_NOT_OPEN" };
 
   // Anything short of every released session is a booking that still owes
   // somebody a time, and that is the case an operator has to see: DECLINED's
@@ -402,6 +454,12 @@ export async function declineProposal(args: {
   // shape the refunding sweeps select. The `SystemEvent` row is the durable
   // half — `reportSentryError` alone evaporates, and this is the only trace
   // that the buyer is still owed sessions.
+  //
+  // `restored` is the restore helper's own MATCHED COUNT, assigned from inside
+  // the locked transaction above, so this is the writer's answer rather than a
+  // re-read of its effect. That distinction is the point: the route used to
+  // recount the rows after the lock was released, and a booking whose slots
+  // changed in between got a code describing somebody else's write.
   const restoredFully = restored === request.releasedOccurrenceIds.length;
 
   if (restoreMiss === null) {
@@ -560,5 +618,10 @@ export async function declineProposal(args: {
     );
   }
 
-  return { done: true };
+  // The route's DECLINED/RELEASED code and the notification above are both
+  // driven by this one `restoredFully`, so the toast the counterparty reads and
+  // the toast the initiator gets cannot describe one decline two different ways.
+  // Reporting it is also what lets the route stop re-reading the rows: the
+  // writer is the authority on what it wrote.
+  return { done: true, restoredFully };
 }

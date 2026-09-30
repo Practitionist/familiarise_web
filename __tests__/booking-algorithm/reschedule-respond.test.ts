@@ -27,8 +27,11 @@ const mockRequestFindFirst = jest.fn();
 const mockAllocate = jest.fn();
 const mockGetSession = jest.fn();
 const mockHasActiveDispute = jest.fn();
-// #1846 — the decline's own notify read, and the route's read-back of what the
-// restore actually left behind.
+// #1846 — the decline's own notify read.
+// `mockOccurrenceCount` is no longer on this path: the route used to recount the
+// restored rows to pick its outcome code, and the module now reports
+// `restoredFully` instead. The stub keeps `count` so it still mirrors the real
+// client, and a test that sets it is asserting nothing.
 const mockOccurrenceFindFirst = jest.fn();
 const mockOccurrenceCount = jest.fn();
 // #1166 ORG-9 — what isOrgAdminOfAppointment reads to tell a payer admin's
@@ -291,7 +294,10 @@ beforeEach(() => {
   mockOccurrenceFindFirst.mockResolvedValue({
     startsAt: new Date("2026-09-01T10:00:00.000Z"),
   });
-  // The route's read-back of the restore: the same count the write returned.
+  // The route no longer recounts what the restore left behind — `declineProposal`
+  // reports `restoredFully` from its own matched count — so this only keeps the
+  // stub aligned with the client. The decline's outcome is driven entirely by the
+  // `updateManyAndReturn` above.
   mockOccurrenceCount.mockResolvedValue(RELEASED_IDS.length);
   mockAllocate.mockResolvedValue({ success: true });
   mockHasActiveDispute.mockResolvedValue(false);
@@ -367,8 +373,9 @@ describe("accept re-validates through the allocator before anything is written",
     ];
     expect(args.where.id).toBe(REQ);
     expect(args.where.status.in).toEqual(
-      expect.arrayContaining(["PENDING_REVIEW", "COUNTERED"]),
+      expect.arrayContaining(["PENDING_REVIEW"]),
     );
+    expect(args.where.status.in).not.toContain("COUNTERED");
     // An already-expired row must not be reachable from the accept edge.
     expect(args.where.status.in).not.toContain("EXPIRED");
     expect(args.data).toMatchObject({
@@ -542,7 +549,10 @@ describe("decline ends the request and restores what it released", () => {
   it("transitions to DECLINED and puts every released session back", async () => {
     useDeclineRow();
 
-    expect(await decline()).toEqual({ done: true });
+    // `restoredFully` is the new contract: the route reads it instead of
+    // recounting the rows, so the decline's own answer is asserted here rather
+    // than a read-back that could disagree with it.
+    expect(await decline()).toEqual({ done: true, restoredFully: true });
 
     const [args] = txStub.rescheduleRequest.updateMany.mock.calls[0] as [
       { where: { id: string; status: { in: string[] } }; data: Record<string, unknown> },
@@ -616,7 +626,11 @@ describe("decline ends the request and restores what it released", () => {
     );
     mockOccurrenceCount.mockResolvedValue(1);
 
-    expect(await decline()).toEqual({ done: true });
+    // One of two came back, so the module reports the short restore ITSELF.
+    // Before this contract the route had to re-derive that from a `count`; the
+    // number under test now comes from the same `restored` value the durable
+    // SystemEvent below carries, so the two cannot disagree.
+    expect(await decline()).toEqual({ done: true, restoredFully: false });
 
     expect(reportedOps()).toContain("reschedule-decline-partial");
     // The durable half: `reportSentryError` alone evaporates, and this is the
@@ -654,7 +668,7 @@ describe("decline ends the request and restores what it released", () => {
     useDeclineRow();
     txStub.consultation.updateMany.mockResolvedValue({ count: 0 });
 
-    expect(await decline()).toEqual({ done: true });
+    expect(await decline()).toEqual({ done: true, restoredFully: false });
 
     // Twice: once in the transaction the parent CAS rolled back, once in the
     // fallback that commits the answer alone.

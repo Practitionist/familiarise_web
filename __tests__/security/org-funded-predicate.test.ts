@@ -118,16 +118,45 @@ describe("isOrgFundedByOrg — the act-for-org gate", () => {
     // The query is the gate: pinned to the appointment (so a payment for a
     // different booking can never stand in) and to the org (so org B cannot
     // fund org A's booking by pointing its wallet at it).
+    //
+    // `objectContaining` on the pair, with the status and retirement filters
+    // asserted in their own right below — the previous exact-`toEqual` on the
+    // whole `where` meant any added filter failed here, which is how a gate
+    // that had to name `paymentStatus` and `deletedAt` came to name neither.
     m.payment.findFirst.mockResolvedValue({ paymentMethod: "WALLET" });
     await isOrgFundedByOrg(TARGET, "org-1");
 
-    expect(m.payment.findFirst).toHaveBeenCalledWith({
-      where: {
-        appointment: { consultationId: "cons-1" },
-        organizationId: "org-1",
-      },
-      select: { paymentMethod: true },
-    });
+    expect(m.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appointment: { consultationId: "cons-1" },
+          organizationId: "org-1",
+        }),
+        select: { paymentMethod: true },
+      }),
+    );
+  });
+
+  it("counts the org's money as paid on SUCCEEDED and PENDING, and only those", async () => {
+    // The union is the whole argument: an org rail is SUCCEEDED at creation with
+    // no gateway phase, so PENDING is unreachable today and admitting it changes
+    // nothing. It is admitted anyway so that the day an org rail gains a
+    // two-phase settle, the org has not silently lost authority over its own
+    // booking at a gate whose code did not change.
+    //
+    // FAILED/EXPIRED is the exclusion that matters: the org's money demonstrably
+    // did not pay, so admitting it would let an org owner cancel a booking and
+    // push the refund onto the member's card.
+    m.payment.findFirst.mockResolvedValue({ paymentMethod: "WALLET" });
+    await isOrgFundedByOrg(TARGET, "org-1");
+
+    const { where } = m.payment.findFirst.mock.calls[0]![0] as {
+      where: { paymentStatus: { in: string[] }; deletedAt: string | null };
+    };
+    expect(where.paymentStatus).toEqual({ in: ["SUCCEEDED", "PENDING"] });
+    // Retired rows are not live funding records — the house clause, and the one
+    // thing this gate must never be the last word on.
+    expect(where.deletedAt).toBeNull();
   });
 
   it("uses the subscription key for a subscription booking", async () => {

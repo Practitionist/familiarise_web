@@ -587,7 +587,10 @@ describe("a decline restores the booking it declined to move", () => {
   it("puts every released session back and the parent back to its origin", async () => {
     seed();
 
-    expect(await decline()).toEqual({ done: true });
+    // `restoredFully` rides the success arm: the route reads the module's own
+    // answer instead of recounting rows after the lock, so the value is pinned
+    // here at the source that produces it.
+    expect(await decline()).toEqual({ done: true, restoredFully: true });
     // The released rows carry their original times, so restoring is two flags.
     expect(state.slots).toEqual([
       expect.objectContaining({
@@ -617,7 +620,7 @@ describe("a decline restores the booking it declined to move", () => {
       slots: [session("s1", 2), session("s2", 1, "2026-10-08T09:00:00.000Z")],
     });
 
-    expect(await decline()).toEqual({ done: true });
+    expect(await decline()).toEqual({ done: true, restoredFully: true });
     expect(state.slots.map((s) => s.completionStatus)).toEqual([
       "SCHEDULED",
       "SCHEDULED",
@@ -687,7 +690,7 @@ describe("a decline whose original time is gone parks instead of failing", () =>
   it("still ends the request DECLINED", async () => {
     await seedWithOverlappingClaim();
 
-    expect(await decline()).toEqual({ done: true });
+    expect(await decline()).toEqual({ done: true, restoredFully: false });
     expect(state.request.status).toBe("DECLINED");
     // The restore rolled back with its transaction, so the sessions really are
     // still released — this is the stranded case, not a clean decline.

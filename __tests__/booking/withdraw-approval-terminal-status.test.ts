@@ -50,10 +50,16 @@ jest.mock("../../lib/prisma", () => {
 
 const lockCalls: string[] = [];
 jest.mock("../../utils/appointmentlock", () => ({
-  withAppointmentLock: async (id: string, fn: () => unknown) => {
+  withAppointmentLock: async (
+    id: string,
+    fn: (lock?: unknown) => unknown,
+  ) => {
     lockCalls.push(id);
-    return fn();
+    return fn({ key: `appointment-lock:${id}` });
   },
+  // #1319 — the route hands the renewal in beside the lock, because the
+  // withdraw's retry loop outlives the fixed grant.
+  renewAppointmentLock: jest.fn(async () => true),
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
 }));

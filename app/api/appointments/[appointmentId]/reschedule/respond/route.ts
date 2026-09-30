@@ -68,25 +68,6 @@ const DECLINE_OUTCOME_COPY: Record<RescheduleRespondCode, string> = {
 };
 
 /**
- * How many of a proposal's released occurrences are back at SCHEDULED — the
- * state `restoreRescheduledBooking` puts them in.
- *
- * Read back instead of taken from `declineProposal`, which answers `{done:true}`
- * for a full restore and for a stranded booking alike and so cannot tell this
- * route which one it got: the fixed sentence this route used to return named
- * the stranded case for both. The rows are the authority here in any case —
- * this is the same state the appointment screen renders from — so it is a read
- * of the outcome, not a second copy of the decision that produced it. Drop this
- * for the module's own answer the moment it reports one.
- */
-async function countRestoredOccurrences(ids: string[]): Promise<number> {
-  if (ids.length === 0) return 0;
-  return prisma.appointmentOccurrence.count({
-    where: { id: { in: ids }, completionStatus: "SCHEDULED", deletedAt: null },
-  });
-}
-
-/**
  * POST /api/appointments/[appointmentId]/reschedule/respond
  *
  * The counterparty answers the open proposal (#1163). Accept re-validates the
@@ -122,10 +103,10 @@ export async function POST(
       select: {
         id: true,
         initiatedById: true,
-        // #1846 — decline restores the released rows, and this route reports
-        // which of the two outcomes it got. Read with the request because the
-        // answer is about these rows.
-        releasedOccurrenceIds: true,
+        // #1846 — the released rows are NOT read here. This route used to
+        // recount them to decide the outcome code, which made it a second reader
+        // of a decision the module had already committed; the module now reports
+        // `restoredFully` and the route only words it.
         appointment: {
           select: {
             consultationId: true,
@@ -237,13 +218,17 @@ export async function POST(
       // A partial restore is reported as RELEASED, like the module's own
       // notification does: a session still owing a time is the stranded
       // problem, and it is the arm that tells the counterparty so.
-      const restoredCount = await countRestoredOccurrences(
-        open.releasedOccurrenceIds,
-      );
-      const outcome: RescheduleRespondCode =
-        restoredCount === open.releasedOccurrenceIds.length
-          ? "DECLINED"
-          : "RELEASED";
+      //
+      // `result.restoredFully` is the restore's matched count as read inside the
+      // transaction that did the restoring. This route used to recount the rows
+      // itself, AFTER the lock was released — a second reader of a decision
+      // already committed, free to disagree with it: a slot cancelled in the
+      // gap turned a completed restore into "we could not put your times back"
+      // and told a consultant their sessions were gone when they were not. The
+      // module reports the outcome; this route words it.
+      const outcome: RescheduleRespondCode = result.restoredFully
+        ? "DECLINED"
+        : "RELEASED";
       return NextResponse.json({
         declined: true,
         // #1846 — the released slots are restored by this decline, so the one

@@ -260,7 +260,21 @@ export async function POST(req: NextRequest) {
           eventId,
           `admin whole-event refund: ${body.reason}`,
           initiatedByUserId,
-          { ledgers: ledgers ?? undefined },
+          {
+            ledgers: ledgers ?? undefined,
+            // This door's OWN idempotency scope, not the shared `series-cancel`
+            // the cancel paths use. Sharing one key across two doors meant a
+            // class cancelled and then refunded from here collided: the gateway
+            // rail's key is `${prefix}:${paymentId}`, `refundPayment` answers a
+            // known key from the prior Refund row before it checks any balance,
+            // and the second door was handed the first door's refund — which
+            // `refundsIssued` then counted, so this door reported seats it had
+            // not refunded. A distinct prefix means the two operations are
+            // separately at-most-once, and a retry of THIS one reuses its own
+            // key. An operator who genuinely needs a second, different refund on
+            // a seat still has the single-payment door above.
+            dedupeKeyPrefix: "admin-event-refund",
+          },
         );
         // #1583 C-P0-03 — a repeat is idempotent because every rail clamps to
         // the refundable balance, so no parent CAS is needed: answer 200, never

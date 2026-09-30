@@ -241,25 +241,36 @@ export async function DELETE(
     // Restrict-delete through it), not on Payment — a consultant with payout
     // history but no payer-side rows must also take the scrub path, or the
     // hard delete 500s on the first Restrict (#1205-triage).
-    const [paymentCount, referralCreditCount, profile] = await Promise.all([
-      prisma.payment.count({ where: { userId: id } }),
-      prisma.referralCredit.count({ where: { userId: id } }),
-      prisma.consultantProfile.findFirst({
-        where: { userId: id },
-        select: {
-          _count: { select: { earnings: true, payouts: true, tdsRecords: true } },
-        },
-      }),
-    ]);
+    //
+    // A HELD SEAT counts for the same reason. `AppointmentParticipant.user` is
+    // Restrict (#1877), so hard-deleting someone who took one free trial, was
+    // comped onto a webinar, or requested a consultation that never reached
+    // payment would 500 the route — on the user's own right to delete. The
+    // delivery record is worth exactly as much as the payment record: it is
+    // what proves the consultant served somebody, and what the capacity and
+    // attendance reads are built on. So it routes to the scrub path, which
+    // keeps the row against a pseudonymised user.
+    const [paymentCount, referralCreditCount, seatCount, profile] =
+      await Promise.all([
+        prisma.payment.count({ where: { userId: id } }),
+        prisma.referralCredit.count({ where: { userId: id } }),
+        prisma.appointmentParticipant.count({ where: { userId: id } }),
+        prisma.consultantProfile.findFirst({
+          where: { userId: id },
+          select: {
+            _count: { select: { earnings: true, payouts: true, tdsRecords: true } },
+          },
+        }),
+      ]);
     const consultantMoneyCount = profile
       ? profile._count.earnings +
         profile._count.payouts +
         profile._count.tdsRecords
       : 0;
-    const hasMoneyHistory =
-      paymentCount + referralCreditCount + consultantMoneyCount > 0;
+    const hasRetainedHistory =
+      paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0;
 
-    if (hasMoneyHistory) {
+    if (hasRetainedHistory) {
       await scrubUser(prisma, id);
       // Erasure propagates to Novu (never throws; Sentry-reported). The local
       // scrub is committed either way; an unacknowledged vendor delete is

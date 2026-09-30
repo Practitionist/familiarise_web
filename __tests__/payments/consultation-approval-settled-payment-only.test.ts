@@ -39,6 +39,27 @@ function helperBody(): string {
   return source.slice(start, end);
 }
 
+/**
+ * The index of the `}` that closes the block opened at `from`.
+ *
+ * `from` must name a line that OPENS a block, and the text between the braces
+ * carries no literal or comment braces — true of every block this file slices,
+ * and asserted by the caller so a future edit that breaks it fails here rather
+ * than silently narrowing the window.
+ */
+function indexOfClosingBrace(text: string, from: number): number {
+  const open = text.indexOf("{", from);
+  expect(open).toBeGreaterThan(from);
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return i;
+  }
+  // Unbalanced source: fail rather than hand back a window that reaches the end
+  // of the file, which would assert against code outside the arm entirely.
+  return -1;
+}
+
 describe("the consultation approval route admits only a settled payment", () => {
   it("never lists PENDING as a payment", () => {
     // The regression in one assertion. `in: [SUCCEEDED, PENDING]` is gone.
@@ -89,10 +110,19 @@ describe("the unpaid arm is reachable again", () => {
   it("still confirms the hold only on the settled branch", () => {
     // `isTentative: false` is the write that made the stranded shape. It must
     // stay inside the `if (hasPayment)` arm, not beside it.
-    const settledBranch = source.slice(
-      source.indexOf("if (hasPayment) {"),
-      source.indexOf("} else {"),
-    );
+    //
+    // The arm's own `} else {` is NOT the first one after it: the settled
+    // branch contains a nested `if (consultation.appointment) { … } else {`, so
+    // slicing to the first match stopped the window INSIDE the arm. The
+    // assertion passed only because the write happens to sit above that nested
+    // else — move it anywhere below and the pin fires on a line that is still
+    // inside the arm it is supposed to be protecting. Brace-match to the arm's
+    // real boundary instead.
+    const start = source.indexOf("if (hasPayment) {");
+    expect(start).toBeGreaterThan(-1);
+    const end = indexOfClosingBrace(source, start);
+    expect(end).toBeGreaterThan(start);
+    const settledBranch = source.slice(start, end);
     expect(settledBranch).toMatch(/isTentative: false/);
   });
 });

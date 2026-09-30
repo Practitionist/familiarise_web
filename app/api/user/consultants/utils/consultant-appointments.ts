@@ -1,4 +1,5 @@
 import prisma, { type Tx } from "@/lib/prisma";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 
 /**
  * Result of checking active appointments for a consultant
@@ -42,7 +43,7 @@ type ActiveAppointmentsDb = Pick<
  * - Trials with status: SCHEDULED, AWAITING_PAYMENT (occupancyPolicy treats
  *   both as occupying a slot; they were missing here, so a consultant with an
  *   accepted trial could switch schedule type underneath it)
- * - Reschedule requests still open (PENDING_REVIEW, COUNTERED)
+ * - Reschedule requests still open (RESCHEDULE_OPEN_STATUSES)
  *
  * Takes `db` so the settings PUT can re-run the check inside the transaction
  * that flips scheduleType; the standalone read is a pre-flight only.
@@ -103,7 +104,7 @@ export async function checkActiveAppointments(
     }),
     db.rescheduleRequest.count({
       where: {
-        status: { in: ["PENDING_REVIEW", "COUNTERED"] },
+        status: { in: RESCHEDULE_OPEN_STATUSES },
         appointment: {
           deletedAt: null,
           occurrences: { some: { consultantProfileId: consultantId } },

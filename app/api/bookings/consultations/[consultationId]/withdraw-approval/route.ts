@@ -3,7 +3,10 @@ import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import { apiError } from "@/lib/errors";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  renewAppointmentLock,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 import { withdrawApproval } from "@/lib/booking/lapse-approved-request";
 
 /**
@@ -40,6 +43,9 @@ export async function POST(
         privileged: isPrivileged(auth.session.user.role),
       },
       lock: withAppointmentLock,
+      // The retry loop outlives the appointment lock's fixed grant, so each
+      // attempt re-grants it — see withdrawApproval.
+      renewLock: renewAppointmentLock,
     });
     return NextResponse.json(body, {
       headers: { "Cache-Control": "no-store" },

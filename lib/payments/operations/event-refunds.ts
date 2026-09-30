@@ -16,7 +16,11 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { applyReversal, readRefundableBalances } from "./reversal-engine";
-import { refundPayment, RefundValidationError } from "./refund";
+import {
+  findDedupedRefund,
+  refundPayment,
+  RefundValidationError,
+} from "./refund";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
@@ -89,9 +93,25 @@ export async function refundWholeEventPayments(
    * #1780 D-5 — per-seat class ledgers read BEFORE the cancel tombstoned the
    * sessions (classSeriesLedgers); each seat then refunds only what was not
    * delivered. Absent (a webinar, a moderation sweep) → every seat in full.
+   *
+   * #1854 — `dedupeKeyPrefix` scopes the gateway rail's idempotency key to the
+   * CALLER. The key is `${prefix}:${paymentId}`, and it used to be a single
+   * hardcoded `series-cancel` shared by every door, which was a latent
+   * collision rather than a safe default: `refundPayment` answers a known
+   * `dedupeKey` from the prior Refund row BEFORE any balance check
+   * (`findDedupedRefund`), so a second door refunding the same seat was handed
+   * the first door's refund and — worse — counted it, reporting money this call
+   * never moved. A door that is genuinely a different operation needs its own
+   * key, and a retry of THAT operation reuses it, so at-most-once still holds
+   * per operation. Defaults to the historical prefix, so every existing caller
+   * is byte-for-byte unchanged.
    */
-  opts: { ledgers?: ReadonlyMap<string, SeriesSeat> } = {},
+  opts: {
+    ledgers?: ReadonlyMap<string, SeriesSeat>;
+    dedupeKeyPrefix?: string;
+  } = {},
 ): Promise<WholeEventRefundSummary> {
+  const dedupeKeyPrefix = opts.dedupeKeyPrefix ?? "series-cancel";
   const summary: WholeEventRefundSummary = {
     refundsIssued: 0,
     refundedPaise: 0,
@@ -205,19 +225,37 @@ export async function refundWholeEventPayments(
         summary.skippedAlreadyRefunded += 1;
         continue;
       }
+      // Only a pro-rata seat carries a dedupe key; a full-balance one has no
+      // amount to pin and relies on the balance clamp alone, exactly as before.
+      const dedupeKey =
+        owed === undefined ? undefined : `${dedupeKeyPrefix}:${p.id}`;
+      // A seat whose key already carries a refund was returned by an earlier
+      // call — a previous run of THIS door, or (under a shared prefix) a
+      // different door entirely. `refundPayment` would answer from that row
+      // before it ever looked at the balance, and this loop would add the prior
+      // refund to `refundsIssued` and its amount to `refundedPaise`: a report of
+      // money that did not move, on the one number an operator reads to decide
+      // whether a class is settled. Nothing was issued, so it is a skip.
+      if (dedupeKey && (await findDedupedRefund(dedupeKey))) {
+        summary.skippedAlreadyRefunded += 1;
+        continue;
+      }
+      // The complementary case: no key on this rail, or a key with no row, but
+      // the money is already gone. `Math.min` would hand `refundPayment` an
+      // amount of 0, which is not a refundable amount — the seat is settled.
+      const amountPaise =
+        owed === undefined
+          ? undefined
+          : Math.min(owed, await gatewayBalance(p.id, Number(p.amount)));
+      if (amountPaise !== undefined && amountPaise <= 0) {
+        summary.skippedAlreadyRefunded += 1;
+        continue;
+      }
       const r = await refundPayment({
         paymentId: p.id,
         reason,
         initiatedByUserId,
-        ...(owed === undefined
-          ? {}
-          : {
-              amountPaise: Math.min(
-                owed,
-                await gatewayBalance(p.id, Number(p.amount)),
-              ),
-              dedupeKey: `series-cancel:${p.id}`,
-            }),
+        ...(amountPaise === undefined ? {} : { amountPaise, dedupeKey }),
       });
       summary.refundsIssued += 1;
       summary.refundedPaise += r.amountRefundedPaise;
@@ -468,6 +506,26 @@ export async function refundRemovedAttendeeSeat(args: {
   amountPaise?: number;
   /** #1780 — the seat's key; the payment id is appended (a re-bought seat is a new sale). */
   dedupeKey?: string;
+  /**
+   * The sale this refund is for, when the caller already knows it.
+   *
+   * Absent, the payment is re-derived below — which is the right answer for the
+   * roster doors, where the actor names a SEAT and the rule is deliberately
+   * "the one they bought first". It is the wrong answer for a capture that has
+   * already landed on a known Payment: the capture's own seat is the NEWEST
+   * participant row (pre-#1319 data holds one row per session appointment, so
+   * `confirmSeatAfterCapture` re-reads newest-first), and on a class whose
+   * legacy rows still carry a session payment apiece the re-derivation answers
+   * with a DIFFERENT payment — refunding money the capture never took and
+   * leaving the captured money with the buyer, on a seat that is not there.
+   *
+   * Addressing the payment by id keeps every rail decision below intact (credit
+   * restoration, the org wallet/invoice/licence reversal, the gateway phases and
+   * the attendee notice) — only the SELECT changes. It is still scoped to the
+   * event and the buyer, so a payment for some other seat cannot be reached
+   * through it.
+   */
+  paymentId?: string;
 }): Promise<{
   amountRefundedPaise: number;
   refundPct: number;
@@ -493,9 +551,12 @@ export async function refundRemovedAttendeeSeat(args: {
 
   try {
     const payment = await prisma.payment.findFirst({
-      // Deterministic: the seat they bought first is the one being released.
-      orderBy: { createdAt: "asc" },
+      // Deterministic: the seat they bought first is the one being released —
+      // unless the caller named the sale, which is the only way this door can
+      // be sure it is refunding the payment in front of it.
+      ...(args.paymentId ? {} : { orderBy: { createdAt: "asc" } }),
       where: {
+        ...(args.paymentId ? { id: args.paymentId } : {}),
         userId: args.attendeeUserId,
         appointment: eventFilter,
         paymentStatus: "SUCCEEDED",
