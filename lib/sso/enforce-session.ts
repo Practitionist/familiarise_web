@@ -9,12 +9,11 @@ import type { PrismaLike } from "@/lib/prisma";
  *
  * See issue #673 for the specific bypass this closes.
  *
- * Fails OPEN in one case: the org has `enforceSSO=true` but has not yet
- * registered any `ssoProvider` rows. Locking everyone out mid-setup would
- * trap the org owner after they flip the switch but before they finish
- * adding an IdP.
+ * Fails OPEN in one case: the org has `enforceSSO=true` but has no
+ * staff-approved (`domainVerified`) `ssoProvider` rows yet. Locking everyone
+ * out mid-setup would trap the org owner after they flip the switch but
+ * before their IdP is registered and approved.
  */
-
 
 export type EnforceDecision =
   | { reject: false }
@@ -101,8 +100,11 @@ export async function lookupEnforcedOrg(
     return null;
   }
 
+  // Only staff-approved providers count. The sso() plugin refuses sign-in
+  // through an unapproved one, so enforcing against it would lock the org
+  // out; until approval the org fails open like it has no provider.
   const rows = await prisma.ssoProvider.findMany({
-    where: { organizationId: claim.organizationId },
+    where: { organizationId: claim.organizationId, domainVerified: true },
     select: { providerId: true },
   });
 

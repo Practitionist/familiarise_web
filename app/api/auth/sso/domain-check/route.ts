@@ -63,8 +63,15 @@ export async function GET(req: NextRequest) {
   //
   // Only `providerId` is selected, so the encrypted config column is never
   // decrypted on this pre-auth path.
+  //
+  // `domainVerified: true` — an unapproved provider would only send the user
+  // to a sign-in the sso() plugin refuses, so it is treated as absent.
   const provider = await prisma.ssoProvider.findFirst({
-    where: { domain, organizationId: enforced.organizationId },
+    where: {
+      domain,
+      organizationId: enforced.organizationId,
+      domainVerified: true,
+    },
     select: { providerId: true },
   });
   if (!provider) {

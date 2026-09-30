@@ -12,14 +12,13 @@
  *      logical failure — it resolves with an `error` field. An inline
  *      `await signIn.sso(...)` happily continues even when SSO failed.
  *
- *   2. **Server-side 500 with empty body.** When the SAML adapter
- *      crashes (e.g. a malformed X.509 cert sneaking past the schema
- *      check — see audit Phase A.2), the response is `500` with `0`
- *      bytes. The SDK swallows this and resolves with `error: null`
- *      AND no redirect. From the UI's perspective, nothing happened.
+ *   2. **Server-side 500 with empty body.** When the plugin crashes
+ *      building the request, the response is `500` with `0` bytes. The
+ *      SDK swallows this and resolves with `error: null` AND no
+ *      redirect. From the UI's perspective, nothing happened.
  *
  *   3. **No redirect within reasonable time.** Even when BetterAuth
- *      builds the SAML AuthnRequest successfully, the browser may
+ *      builds the OIDC authorization URL successfully, the browser may
  *      fail to follow the redirect (corporate proxy, blocked IdP
  *      host, CSP misconfig). Without a watchdog, the page sits
  *      indefinitely with a spinner.
@@ -38,10 +37,7 @@
  */
 
 import { signIn } from "@/lib/auth-client";
-import type {
-  AuthErrorAction,
-  AuthErrorCopy,
-} from "@/lib/labels/auth-errors";
+import type { AuthErrorAction, AuthErrorCopy } from "@/lib/labels/auth-errors";
 import { AUTH_ERROR_COPY } from "@/lib/labels/auth-errors";
 import {
   isAuthErrorCode,
@@ -73,7 +69,7 @@ export interface SsoSigninResult {
 
 /**
  * Redirect-watchdog timeout. Tuned for the 99th-percentile case where
- * BetterAuth builds the SAML AuthnRequest in <500ms and the browser
+ * BetterAuth builds the OIDC authorization URL in <500ms and the browser
  * navigates immediately after. 2 seconds gives a comfortable margin
  * without making the user wait on a definitely-broken flow.
  */
@@ -110,10 +106,9 @@ const UNEXPECTED_COPY: AuthErrorCopy = {
  * we are refusing to show.
  *
  * BetterAuth's SSO endpoints raise `APIError`s whose `message` is the
- * library's own prose, and a crash inside the SAML adapter surfaces as a
- * plain `TypeError`. Those messages are written for an operator reading a
- * server log — they name internal fields, node-saml's config object and
- * BetterAuth's endpoint paths, none of which mean anything to the person
+ * library's own prose, and a crash inside the plugin surfaces as a plain
+ * `TypeError`. Those messages are written for an operator reading a
+ * server log — they name internal fields and BetterAuth's endpoint paths, none of which mean anything to the person
  * clicking "Sign in with SSO", and all of which tell an attacker which IdP
  * software and version the target runs. So the message is used only to pick
  * catalog copy, then discarded.
@@ -124,9 +119,9 @@ const UNEXPECTED_COPY: AuthErrorCopy = {
 const MESSAGE_PATTERNS: ReadonlyArray<readonly [RegExp, AuthErrorCopy]> = [
   [
     // "Invalid OIDC configuration", "No provider found for the issuer",
-    // "OIDC provider is not configured", "SAML configuration requires …",
-    // and the `parsedSamlConfig.spMetadata.metadata` TypeError.
-    /\b(?:invalid|missing|no)\s+(?:oidc|saml)\s+config|spmetadata|provider not found|is not configured|entrypoint/i,
+    // "OIDC provider is not configured", and "Provider domain has not been
+    // verified" (a provider still awaiting platform approval).
+    /\b(?:invalid|missing|no)\s+oidc\s+config|provider not found|is not configured|has not been verified/i,
     AUTH_ERROR_COPY.SSO_PROVIDER_MISCONFIGURED,
   ],
   [
@@ -178,7 +173,8 @@ function ok(): SsoSigninResult {
  * then we return catalog copy, never the message itself.
  */
 function extractBetterAuthError(result: unknown): SsoSigninResult {
-  if (!result || typeof result !== "object" || !("error" in result)) return ok();
+  if (!result || typeof result !== "object" || !("error" in result))
+    return ok();
 
   const err = (result as { error: unknown }).error;
   if (!err) return ok();
@@ -220,7 +216,10 @@ async function callSignInSso(
 /** Resolves after `ms` with the "redirect didn't happen" result. */
 function watchdogTimer(ms: number): Promise<SsoSigninResult> {
   return new Promise((resolve) => {
-    setTimeout(() => resolve(toResult(TIMEOUT_COPY, "SSO_PROVIDER_UNREACHABLE")), ms);
+    setTimeout(
+      () => resolve(toResult(TIMEOUT_COPY, "SSO_PROVIDER_UNREACHABLE")),
+      ms,
+    );
   });
 }
 

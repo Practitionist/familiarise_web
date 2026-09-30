@@ -6984,6 +6984,11 @@ model SsoProvider {
   providerId     String
   organizationId String?
   domain         String
+  // Read by the sso() plugin (domainVerification.enabled): sign-in and the
+  // OIDC callback refuse a provider until this is true. Only the ADMIN door
+  // app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval
+  // sets it, after re-checking the org's verified OrgDomainClaim.
+  domainVerified Boolean @default(false)
 
   // `providerId` is globally unique (BetterAuth uses it as the URL
   // slug for /api/auth/sso/.../{providerId}/...). The composite below

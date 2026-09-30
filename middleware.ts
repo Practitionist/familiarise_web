@@ -418,25 +418,14 @@ const POLICY_ROUTES: PolicyRoute[] = [
     match: (p, m) => m === "POST" && p.startsWith("/api/auth/sign-in/sso"),
   },
   {
-    // @better-auth/sso — both callback halves. SSO is OIDC-only, but `sso()`
-    // (lib/auth.ts) still mounts the SAML ACS endpoint, so it stays on budget
-    // rather than being left as an unthrottled public POST:
-    //   GET  /api/auth/sso/callback[/:providerId]   — OIDC redirect landing
-    //   POST /api/auth/sso/saml2/sp/acs[/:providerId] — SAML HTTP-POST binding
-    // IP-keyed because both are the *user's browser* arriving from their IdP, so
+    // @better-auth/sso — the OIDC redirect landing,
+    //   GET /api/auth/sso/callback[/:providerId]
+    // IP-keyed because it is the *user's browser* arriving from their IdP, so
     // the address is the person's, not the provider's — the same shape as the
-    // OIDC sign-in that has always been keyed this way.
-    //
-    // EXCLUDED on purpose: `/sso/saml2/sp/metadata` and `/sso/saml2/sp/slo` /
-    // `/sso/saml2/logout`. Those are fetched by the *IdP*, from its own shared
-    // infrastructure, and one egress address serves a whole tenant. A per-IP
-    // bucket there would be a single corporate NAT throttling every employee in
-    // the building, and the traffic is machine cadence anyway — the abuse
-    // surface is nil, since the ACS signature is the actual gate.
+    // OIDC sign-in that has always been keyed this way. SSO is OIDC-only; the
+    // plugin's SAML endpoints are 404'd by `hooks.before` in lib/auth.ts.
     scope: RATE_SCOPE.AUTH_SSO_CALLBACK,
-    match: (p, m) =>
-      (m === "GET" && p.startsWith("/api/auth/sso/callback")) ||
-      (m === "POST" && p.startsWith("/api/auth/sso/saml2/sp/acs")),
+    match: (p, m) => m === "GET" && p.startsWith("/api/auth/sso/callback"),
   },
   {
     // account.mjs — `method: "POST"`, session-bound and gated on the CURRENT

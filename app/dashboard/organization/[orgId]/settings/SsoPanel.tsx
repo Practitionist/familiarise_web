@@ -65,6 +65,16 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
     cell: (p) => p.domain,
   },
   {
+    key: "status",
+    header: "Status",
+    cell: (p) =>
+      p.domainVerified ? (
+        <Badge variant="secondary">Active</Badge>
+      ) : (
+        <Badge variant="outline">Awaiting platform approval</Badge>
+      ),
+  },
+  {
     key: "idpUrls",
     header: "IdP setup URLs",
     className: "space-y-1.5 py-3",
@@ -234,7 +244,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
   });
 
   const [showAdd, setShowAdd] = useState(false);
-  const [providerId, setProviderId] = useState("");
   const [domain, setDomain] = useState("");
   const [issuer, setIssuer] = useState("");
   const [oidcClientId, setOidcClientId] = useState("");
@@ -245,7 +254,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
   const createProviderMutation = useMutation({
     mutationFn: () => {
       const payload: CreateSsoProviderPayload = {
-        providerId: providerId.trim(),
         domain: domain.trim(),
         issuer: issuer.trim(),
         providerType: "oidc",
@@ -262,7 +270,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] });
       setShowAdd(false);
-      setProviderId("");
       setDomain("");
       setIssuer("");
       setOidcClientId("");
@@ -394,7 +401,9 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                     tone="destructive"
                     requireTyped={p.providerId}
                     onConfirm={async () => {
-                      await deleteProviderMutation.mutateAsync(p.id);
+                      // The DELETE route is keyed on the providerId slug,
+                      // not the row uuid.
+                      await deleteProviderMutation.mutateAsync(p.providerId);
                     }}
                     trigger={
                       <Button
@@ -423,19 +432,12 @@ export function SsoPanel({ orgId }: { orgId: string }) {
           <DialogHeader>
             <DialogTitle>Add SSO provider</DialogTitle>
             <DialogDescription>
-              Configure an OIDC identity provider for this organization.
+              Configure an OIDC identity provider for this organization. Once
+              added, copy its Redirect URI from the providers table into your
+              IdP. Sign-in through it starts after platform staff approve it.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="prov-id">Provider ID</Label>
-              <Input
-                id="prov-id"
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value)}
-                placeholder="acme-okta"
-              />
-            </div>
             <div className="space-y-2">
               <Label htmlFor="prov-domain">Domain</Label>
               <Input
@@ -453,20 +455,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 onChange={(e) => setIssuer(e.target.value)}
                 placeholder="https://idp.acme.com"
               />
-            </div>
-            <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 space-y-3">
-              <p className="text-sm font-medium text-zinc-700">
-                Configure these values in your IdP
-              </p>
-              <CopyableUrl
-                label="Redirect URI"
-                value={deriveCallbackUrl(providerId)}
-              />
-              <p className="text-xs text-zinc-500">
-                Paste this into your IdP app configuration (Okta, Auth0, Azure
-                AD, Google Workspace). The URI updates when you change the
-                Provider ID above.
-              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="oidc-client-id">Client ID</Label>

@@ -118,11 +118,20 @@ Rate limited at 60/hr per IP to prevent org-existence enumeration.
 [`POST /api/organizations/[orgId]/sso/providers`](../../../../app/api/organizations/%5BorgId%5D/sso/providers/route.ts) — Owner-only. Creates a `SsoProvider` row:
 
 - Validates via `createProviderSchema` (Zod)
-- `providerId` must be alphanumeric (prevents path injection in derived URLs)
-- Duplicate `providerId` → 409
+- Requires a verified `OrgDomainClaim` (DNS TXT) for the domain → else 422
+- `providerId` is **server-generated** (`oidc-<16 hex>`); any client value is ignored. The DB CHECK `sso_provider_id_not_reserved` backs this up.
 - Duplicate domain within same org → 409
 - **`userId` is always null** (prevents FK cascade on owner deletion)
-- Creates audit log entry
+- Written with `domainVerified: false`; creates audit log entry
+
+> [!IMPORTANT]
+> A new provider cannot sign anyone in until platform staff approve it:
+> `POST /api/admin/organizations/[orgId]/sso-providers/[providerId]/approval`
+> with `{ approve, reason }` (ADMIN only, OpsActionLog row). Approval
+> re-checks the verified domain claim and sets `domainVerified`, which the
+> `sso()` plugin (`domainVerification.enabled`) requires at sign-in and
+> callback. The plugin's own `/sso/register`, `/sso/verify-domain` and other
+> provider endpoints are in `disabledPaths`, and `/sso/saml2/*` returns 404.
 
 ### 3.6 URL Derivation
 
@@ -143,11 +152,11 @@ Rate limited at 60/hr per IP to prevent org-existence enumeration.
 
 - `samlConfigSchema`: `issuer` (string), `entryPoint` (URL), `cert` (string). **No `callbackUrl`** — BetterAuth derives it.
 - `oidcConfigSchema`: `issuer` (URL), `clientId`, `clientSecret`, `discoveryEndpoint` (URL), `pkce` (defaults to `true`).
-- `createProviderSchema`: Wraps both with `providerId` (alphanumeric regex), `domain`, `providerType` (`saml` | `oidc`).
+- `createProviderSchema`: `domain`, `issuer`, `providerType` (`oidc` only) and `oidcConfig`. No `providerId`; see `generateProviderId`.
 
 ### 3.8 Member-to-Membership Bridge
 
-When an SSO user auto-joins, BetterAuth creates a `Member` row. Our typed `Membership` row is created by `customSession()` on the first session read:
+When an SSO user signs in, the `provisionUser` bridge in `lib/auth.ts` upserts a BetterAuth `Member` row (temporary until the org plugin is removed; the plugin's own `organizationProvisioning` is disabled). Our typed `Membership` row is created by `customSession()` on the first session read:
 
 ```
 SSO auto-join → BetterAuth creates Member → customSession() finds

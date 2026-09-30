@@ -8,23 +8,27 @@
  * row holds its config as a JSON string in `oidcConfig` so BetterAuth can
  * parse it on login attempts.
  *
- * The OIDC redirect URI is DERIVED from providerId (see
- * lib/sso/derive-urls.ts) — never accepted from the client — so IdP-side
- * setup instructions stay aligned with what BetterAuth actually mounts.
+ * `providerId` is generated here (`generateProviderId`), never accepted from
+ * the client, so a tenant cannot claim a slug that shadows another sign-in
+ * method. The OIDC redirect URI is DERIVED from it (lib/sso/derive-urls.ts),
+ * so IdP-side setup instructions stay aligned with what BetterAuth mounts.
+ *
+ * A new provider is written with `domainVerified: false`, and the sso()
+ * plugin refuses sign-in through it until platform staff approve it via
+ * app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval.
  *
  * ## Why POST does not call `auth.api.registerSSOProvider`
  *
  * `registerSSOProvider` (BetterAuth's own `POST /sso/register`) is the
  * endpoint that performs registration-time OIDC discovery and writes the
  * canonical `oidcConfig` shape. It is unusable for an
- * org-scoped provider at the pinned `@better-auth/sso@1.6.5`, for two
- * independent reasons. Both were read out of the installed package, not
- * inferred:
+ * org-scoped provider, for two independent reasons. Both were read out of
+ * the installed package (first at 1.6.5, re-checked at 1.7.6), not inferred:
  *
  *   1. **It stamps the creating user, and the FK cascades.**
- *      `dist/index.mjs:2243` writes `userId: ctx.context.session.user.id`
- *      unconditionally; `ssoProviderBodySchema` (`:1865-1939`) has no field
- *      to override it. `SsoProvider.userId` is an FK with `onDelete:
+ *      `dist/index.mjs:3507` (1.7.6) writes
+ *      `userId: ctx.context.session.user.id` unconditionally, and the body
+ *      schema has no field to override it. `SsoProvider.userId` is an FK with `onDelete:
  *      Cascade` (`prisma/schema.prisma`), so the org's SSO would be deleted
  *      the moment the admin who registered it was removed from the user
  *      table. `scripts/verify-sso-invariants.sh` Check 3 exists specifically
@@ -33,7 +37,7 @@
  *
  *   2. **Its discovery step is gated on our own `trustedOrigins`.**
  *      `discoverOIDCConfig` calls `isTrustedOrigin` on the discovery URL
- *      (`:1090-1092`) and on every endpoint it normalizes (`:1176-1184`).
+ *      (`validateDiscoveryUrl`, `dist/index.mjs:393-395` at 1.7.6).
  *      BetterAuth resolves that predicate to
  *      `this.trustedOrigins.some(...)`
  *      (`better-auth/dist/context/create-context.mjs:139-141`) — i.e. our own
@@ -54,11 +58,10 @@
  * `needsRuntimeDiscovery` returns false on the sign-in path, so no discovery
  * fetch happens while a user is waiting to log in.
  *
- * On the 1.7 upgrade: re-check whether `registerSSOProvider` gains (a) a way
- * to leave `userId` null for org-scoped providers and (b) a tenant-scoped
- * trust predicate for discovery. If both land, this handler collapses to a
- * single `auth.api.registerSSOProvider` call and `lib/sso/oidc-discovery.ts`
- * is deleted. If only (a) lands, discovery still has to stay here.
+ * Neither changed in 1.7.6, and `/sso/register` is now in `disabledPaths`
+ * (`lib/auth.ts`). On each bump, re-check whether `registerSSOProvider` gains
+ * (a) a way to leave `userId` null and (b) a tenant-scoped trust predicate
+ * for discovery; only with both could this handler collapse into it.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -69,6 +72,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   createProviderSchema,
+  generateProviderId,
   isReservedProviderId,
 } from "@/lib/sso/provider-schemas";
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
@@ -100,6 +104,7 @@ export async function GET(
       providerId: true,
       issuer: true,
       domain: true,
+      domainVerified: true,
     },
   });
 
@@ -126,32 +131,19 @@ export async function POST(
   const raw = await req.json().catch(() => null);
   const parsed = createProviderSchema.safeParse(raw);
   if (!parsed.success) {
-    // A reserved-slug rejection is a 422, not a 400: the body is well-formed
-    // and the operator can fix it by choosing a different name, which is the
-    // same class of "this conflicts with something that already exists"
-    // answer the domain gates below give. The flag lives on the raw body
-    // because `safeParse` discards input on failure — re-reading it here
-    // keeps the 422/400 decision in one place instead of duplicating the
-    // reserved-id set in this route.
-    // `typeof … === "string"` rather than `String(…)`. `String({})` is
-    // `"[object Object]"`, which is a *truthy* string — so a client posting
-    // `{"providerId": {"$ne": null}}` used to produce a provider id that
-    // looked well-formed, sailed past `isReservedProviderId`, and reached the
-    // uniqueness check as a literal nonsense value instead of a 400.
-    const rawProviderId = (raw as { providerId?: unknown } | null)?.providerId;
-    const submittedProviderId =
-      typeof rawProviderId === "string" ? rawProviderId : "";
-    const status = isReservedProviderId(submittedProviderId) ? 422 : 400;
     return NextResponse.json(
-      {
-        error: "Invalid body",
-        detail: parsed.error.flatten(),
-        ...(status === 422 ? { code: "PROVIDER_ID_RESERVED" } : {}),
-      },
-      { status },
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
     );
   }
   const body = parsed.data;
+  // Any `providerId` in the request body is ignored (zod strips it).
+  const providerId = generateProviderId();
+  if (isReservedProviderId(providerId)) {
+    // Unreachable with the `oidc-` prefix; kept so a future change to the
+    // generator cannot silently mint a slug that shadows a sign-in method.
+    throw new Error(`generateProviderId produced reserved id ${providerId}`);
+  }
 
   const normalizedDomain = body.domain.toLowerCase();
 
@@ -174,13 +166,12 @@ export async function POST(
   //
   // Splitting the checks from the write does open a TOCTOU window between
   // "no duplicate" and "insert". That is acceptable and is what the schema
-  // is for: `SsoProvider` carries `@@unique([providerId])` and
-  // `@@unique([organizationId, domain])` (see the comment on the model in
+  // is for: `SsoProvider` carries `@@unique([organizationId, domain])` (see the comment on the model in
   // `prisma/schema.prisma`), so the database refuses the racing insert and
   // the operator still gets a 409-shaped failure. These checks are the fast,
   // explanatory path; the constraints are the load-bearing one.
   try {
-    // Domain ownership gate — must come BEFORE the dup-providerId
+    // Domain ownership gate — must come BEFORE the duplicate-domain
     // check, because a 422 "domain not owned" is the more
     // actionable error to surface for an operator who pasted the
     // wrong domain.
@@ -219,19 +210,6 @@ export async function POST(
       );
     }
 
-    const dupProviderId = await prisma.ssoProvider.findUnique({
-      where: { providerId: body.providerId },
-      select: { id: true },
-    });
-    if (dupProviderId) {
-      throw Object.assign(
-        new Error(
-          `providerId '${body.providerId}' is already in use. Pick a globally-unique slug.`,
-        ),
-        { httpStatus: 409 },
-      );
-    }
-
     const dupDomain = await prisma.ssoProvider.findFirst({
       where: { organizationId: orgId, domain: normalizedDomain },
       select: { id: true },
@@ -252,7 +230,10 @@ export async function POST(
     // type the handler as `NextResponse | null`, which Next.js rejects at build
     // time, and silently swallow the error at runtime by returning `null` from
     // a route that has already begun writing headers.
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 
@@ -266,13 +247,20 @@ export async function POST(
   } catch (err) {
     if (err instanceof OidcDiscoveryError) {
       return NextResponse.json(
-        { error: err.message, code: "OIDC_DISCOVERY_FAILED", reason: err.failure },
+        {
+          error: err.message,
+          code: "OIDC_DISCOVERY_FAILED",
+          reason: err.failure,
+        },
         { status: 422 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-      tags: { subsystem: "enterprise", op: "sso-oidc-discovery" },
-    });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      {
+        tags: { subsystem: "enterprise", op: "sso-oidc-discovery" },
+      },
+    );
     throw err;
   }
 
@@ -307,10 +295,13 @@ export async function POST(
       const created = await tx.ssoProvider.create({
         data: {
           id: randomUUID(),
-          providerId: body.providerId,
+          providerId,
           issuer: body.issuer,
           domain: body.domain.toLowerCase(),
           organizationId: orgId,
+          // Stays false until platform staff approve the provider; the
+          // sso() plugin refuses sign-in through it until then.
+          domainVerified: false,
           // Deliberately NO `userId`. See the module header: the FK cascades
           // on user delete, so binding this row to the registering admin
           // would delete the org's SSO when that person is removed.
@@ -325,9 +316,9 @@ export async function POST(
           actorMembershipId: access.member.id,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.SSO_ENABLED,
-          description: `SSO provider '${body.providerId}' (${body.providerType}) registered for domain ${body.domain}`,
+          description: `SSO provider '${providerId}' (${body.providerType}) registered for domain ${body.domain}, awaiting platform approval`,
           details: {
-            providerId: body.providerId,
+            providerId,
             providerType: body.providerType,
             domain: body.domain,
             issuer: body.issuer,
@@ -345,6 +336,7 @@ export async function POST(
           providerId: provider.providerId,
           issuer: provider.issuer,
           domain: provider.domain,
+          domainVerified: provider.domainVerified,
           callbackUrl: deriveCallbackUrl(provider.providerId),
         },
       },
@@ -353,7 +345,10 @@ export async function POST(
   } catch (err) {
     const response = gateErrorResponse(err);
     if (response) return response;
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }
@@ -370,7 +365,8 @@ export async function POST(
 function gateErrorResponse(err: unknown): NextResponse | null {
   if (!(err instanceof Error) || !("httpStatus" in err)) return null;
   const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-  const code = "code" in err && typeof err.code === "string" ? err.code : undefined;
+  const code =
+    "code" in err && typeof err.code === "string" ? err.code : undefined;
   return NextResponse.json(
     code ? { error: err.message, code } : { error: err.message },
     { status },

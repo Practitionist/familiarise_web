@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import {
@@ -76,7 +76,34 @@ export const auth = betterAuth({
     "/admin/list-user-sessions",
     "/admin/revoke-user-session",
     "/admin/revoke-user-sessions",
+    // SSO provider lifecycle. Registration, edits and deletes go through
+    // app/api/organizations/[orgId]/sso/providers (org-scoped, audited,
+    // server-generated providerId), and approval through the ADMIN door
+    // under app/api/admin/organizations. The plugin's own endpoints
+    // authorize on org-plugin Member rank or `provider.userId`, which our
+    // org-scoped rows leave null, and its verify-domain endpoint would flip
+    // `domainVerified` without staff approval.
+    "/sso/register",
+    "/sso/providers",
+    "/sso/get-provider",
+    "/sso/update-provider",
+    "/sso/delete-provider",
+    "/sso/request-domain-verification",
+    "/sso/verify-domain",
+    "/sso/saml2/sp/metadata",
   ],
+
+  // SSO is OIDC-only, but @better-auth/sso 1.7.6 has no switch to leave the
+  // SAML endpoints unmounted, and `disabledPaths` matches concrete paths so
+  // it cannot cover the `:providerId` ones. `ctx.path` here is the route
+  // template, so one prefix check 404s the whole SAML surface.
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path?.startsWith("/sso/saml2")) {
+        throw new APIError("NOT_FOUND");
+      }
+    }),
+  },
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
@@ -456,8 +483,8 @@ export const auth = betterAuth({
     // Legitimate first-time SSO users are allowed because the SSO plugin
     // creates the `account` row with `providerId = ssoProvider.providerId`
     // BEFORE the session is created; returning SSO users already have that
-    // account. The hook fails open when the enforcing org has not yet
-    // registered any `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
+    // account. The hook fails open when the enforcing org has no
+    // staff-approved `ssoProvider` rows yet — see `lib/sso/enforce-session.ts`.
     session: {
       create: {
         before: async (session) => {
@@ -596,11 +623,46 @@ export const auth = betterAuth({
     }),
 
     // Enterprise: SSO plugin (OIDC).
-    // Auto-generates the `ssoProvider` table. Per-org providers are linked
-    // via `organizationId` on the row. See lib/auth-helpers.ts and the
-    // OrganizationSSOSettings model in prisma/schema.prisma for the policy
-    // layer (allowedEmailDomains, enforceSSO).
-    sso(),
+    // Per-org providers are linked via `organizationId` on the row. See
+    // lib/auth-helpers.ts and the OrganizationSSOSettings model in
+    // prisma/schema.prisma for the policy layer (allowedEmailDomains,
+    // enforceSSO).
+    sso({
+      // D10b: sign-in and the OIDC callback refuse any provider whose
+      // `domainVerified` is false. The org proves the domain with the app's
+      // own DNS TXT claim (OrgDomainClaim.verifiedAt, required at create),
+      // and only the ADMIN approval door flips the flag. The plugin's own
+      // verify-domain endpoints are in `disabledPaths` above.
+      domainVerification: { enabled: true },
+      // Belt to `/sso/register` being disabled: no user may own a provider.
+      providersLimit: 0,
+      // The plugin's provisioning assigns org-plugin roles by email domain
+      // match and would skip our lifecycle and seat gates.
+      organizationProvisioning: { disabled: true },
+      // TEMPORARY bridge until the org plugin is removed (phase C). With
+      // provisioning disabled nothing creates the bare Member row that the
+      // customSession JIT loop below turns into a gated Membership, so
+      // create it here. Idempotent, hence safe on every login; the gates
+      // (org status, seat cap, LEARNER role) still run in customSession.
+      provisionUserOnEveryLogin: true,
+      provisionUser: async ({ user, provider }) => {
+        if (!provider.organizationId) return;
+        await prisma.member.upsert({
+          where: {
+            organizationId_userId: {
+              organizationId: provider.organizationId,
+              userId: user.id,
+            },
+          },
+          create: {
+            organizationId: provider.organizationId,
+            userId: user.id,
+            role: "member",
+          },
+          update: {},
+        });
+      },
+    }),
 
     customSession(async ({ user: baseUser, session }) => {
       // Cast to include additionalFields (available at runtime via BetterAuth,
@@ -650,7 +712,7 @@ export const auth = betterAuth({
           // must still resolve as banned.
           banned: true,
           banExpires: true,
-          // SSO membership sync: BetterAuth auto-provisioning creates a
+          // SSO membership sync: the sso() provisionUser bridge creates a
           // BetterAuth Member row; we need a typed Membership sibling. Pull the
           // unrepaired ones (no Membership yet) so the loop below auto-creates
           // them and SSO-provisioned users get access on first session load.

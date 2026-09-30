@@ -333,6 +333,9 @@ export const SsoProviderRowSchema = z.object({
   // Server occasionally hands back null when the provider was registered
   // before the type column existed; tolerate it so the table renders.
   providerType: z.literal("oidc").nullable(),
+  // False until platform staff approve the provider; sign-in through it is
+  // refused until then.
+  domainVerified: z.boolean(),
 });
 
 export const SsoSettingsResponseSchema = z.object({
@@ -370,8 +373,8 @@ const OidcConfigSchema = z.object({
   discoveryEndpoint: z.string().url(),
   pkce: z.boolean(),
 });
+// No providerId: the server generates it.
 export const CreateSsoProviderPayloadSchema = z.object({
-  providerId: z.string().min(1),
   domain: z.string().min(1),
   issuer: z.string().min(1),
   providerType: z.literal("oidc"),

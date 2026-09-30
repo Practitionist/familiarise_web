@@ -755,3 +755,16 @@ DROP INDEX IF EXISTS "staff_invitations_email_pending_key";
 CREATE UNIQUE INDEX "staff_invitations_email_pending_key"
   ON "staff_invitations" (lower("email"))
   WHERE "status" = 'PENDING';
+-- SPLIT
+-- An SSO providerId is the slug in /api/auth/sso/callback/{providerId} and
+-- shares a namespace with Account.providerId. A provider named after a
+-- social or credential id would shadow that sign-in method and make
+-- enforceSSO's "has an account with this provider" check trivially true.
+-- The create route now generates ids itself (`oidc-<hex>`) and still
+-- refuses these, so this is the backstop for any other writer. Keep the list
+-- equal to RESERVED_PROVIDER_IDS in lib/sso/provider-schemas.ts;
+-- __tests__/sso/provider-schemas.test.ts pins the two together.
+ALTER TABLE "ssoProvider" DROP CONSTRAINT IF EXISTS "sso_provider_id_not_reserved";
+-- SPLIT
+ALTER TABLE "ssoProvider" ADD CONSTRAINT "sso_provider_id_not_reserved"
+  CHECK (lower(btrim("providerId")) NOT IN ('credential', 'facebook', 'github', 'google', 'sso'));

@@ -66,7 +66,12 @@ describe("GET /api/auth/sso/domain-check", () => {
       callbackURL: expect.stringContaining("/auth/signin"),
     });
     expect(mockedPrisma.ssoProvider.findFirst).toHaveBeenCalledWith({
-      where: { domain: "acme.com", organizationId: "org-1" },
+      // Unapproved providers are invisible: the plugin would refuse them.
+      where: {
+        domain: "acme.com",
+        organizationId: "org-1",
+        domainVerified: true,
+      },
       select: { providerId: true },
     });
   });

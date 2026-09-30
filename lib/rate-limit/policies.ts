@@ -278,18 +278,13 @@ export const RATE_POLICIES = {
     window: "15 m",
     dimensions: { ip: 30 },
     description:
-      "GET /api/auth/sso/callback[/:providerId] and POST " +
-      "/api/auth/sso/saml2/sp/acs[/:providerId] — the OIDC redirect landing " +
-      "and the SAML HTTP-POST binding, i.e. both callback halves. SSO is " +
-      "OIDC-only, but the sso() plugin still mounts the SAML ACS endpoint, so " +
-      "it stays on budget. Was unthrottled. The budget is on the IP because " +
-      "both arrive from the *user's* browser, not from the IdP, so the address " +
-      "is the person's; thirty is set by the provider's own retry behaviour " +
-      "rather than by ours — exceeding it locks a corporate user out of their " +
-      "own IdP, so the ceiling is high and the abuse it still bounds is " +
-      "callback stuffing. The IdP-originated SAML endpoints (metadata, SLO, " +
-      "logout) are deliberately excluded: they come from the provider's shared " +
-      "egress, where one address serves a whole tenant.",
+      "GET /api/auth/sso/callback[/:providerId] — the OIDC redirect landing. " +
+      "Was unthrottled. The budget is on the IP because it arrives from the " +
+      "*user's* browser, not from the IdP, so the address is the person's; " +
+      "thirty is set by the provider's own retry behaviour rather than by " +
+      "ours — exceeding it locks a corporate user out of their own IdP, so " +
+      "the ceiling is high and the abuse it still bounds is callback " +
+      "stuffing. SSO is OIDC-only; the SAML endpoints are 404'd in lib/auth.ts.",
   },
 
   /* ---------------------------------------------------------------------- */
