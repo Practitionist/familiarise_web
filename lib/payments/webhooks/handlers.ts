@@ -247,16 +247,20 @@ type StagedOutboxEmail = { staged: StagedEmail; message: RenderedEmail };
 
 /**
  * A capture that landed on a webinar/class seat which is no longer there. The
- * seat is the refund's subject, so Phase 2 addresses it by the same triple the
- * seat front door takes (`kind`, `eventId`, buyer) instead of by payment id —
- * and the `participantId` is what keys the refund, exactly as the seat-leave
- * rule keyed its own (a later leave of the same sale must find this refund, not
- * pay a second time). Null only when the row is missing entirely.
+ * seat is the refund's subject, so Phase 2 gives the money back through the SEAT
+ * front door, which is the only one of the three that knows the org wallet /
+ * credit rails — and it names the payment to refund, so the seat door does not
+ * have to guess which of the buyer's sales on this event the capture was. The
+ * `participantId` is what keys the refund, exactly as the seat-leave rule keyed
+ * its own (a later leave of the same sale must find this refund, not pay a
+ * second time).
  */
 type ReleasedSeatRefund = {
   kind: "class" | "webinar";
   eventId: string;
   participantId: string | null;
+  /** The seat's own funding Payment; null only when the row is missing. */
+  paymentId: string | null;
 };
 
 /**
@@ -766,10 +770,19 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             throw new Error("Failed to create or find appointment");
           }
 
-          // TRIAL: the session is AWAITING_PAYMENT with its slot already held, so
-          // capture is what schedules it. Scoped to AWAITING_PAYMENT via
-          // updateMany so a re-delivered webhook is a no-op rather than
-          // resurrecting a trial the learner cancelled or the expiry job closed.
+          // TRIAL, pre-#1775 shape only. This arm expects the session to be
+          // AWAITING_PAYMENT with its slot already held, so capture is what
+          // schedules it, scoped via updateMany so a re-delivered webhook is a
+          // no-op rather than resurrecting a trial the learner cancelled or the
+          // expiry job closed.
+          //
+          // Since #1775 the trial rail is payment-before-approval: the accept
+          // handler writes SCHEDULED for a paid trial too, so this CAS
+          // CANNOT match and control falls through to the #1775 C-8 arm below,
+          // which stamps `paymentId` on a still-PENDING trial. The arm is kept
+          // rather than deleted because it is the correct handler for any row
+          // written before that flip, and it costs one zero-row match.
+          //
           // #1695 — runs BEFORE the slot confirmation: a trial the unpaid-trial
           // sweep already cancelled must not get confirmed occurrences and
           // kept money. A miss on a non-SCHEDULED trial is a released hold —
@@ -1126,22 +1139,32 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // its refund resolved nothing), and the dedupe key is that rule's own
         // key, so a later leave of the same sale finds this refund rather than
         // paying a second time.
+        //
+        // `paymentId` is the seat's own funding row, so the door refunds THIS
+        // capture and not the oldest payment it can find for the buyer on this
+        // event. The two orders disagree — the seat re-read above is newest-first
+        // (the capture's seat) and the door's own re-derivation is oldest-first —
+        // and a class whose legacy rows still carry a session payment apiece is
+        // exactly where that returns someone else's money. Undefined only for a
+        // seat with no row at all, where the capture's own payment is the address.
         const seatRefund = await refundRemovedAttendeeSeat({
           kind: txResult.seatRefund.kind,
           eventId: txResult.seatRefund.eventId,
           attendeeUserId: txResult.userId,
           initiatedByUserId: null,
           mode: "full",
+          ...(txResult.seatRefund.paymentId
+            ? { paymentId: txResult.seatRefund.paymentId }
+            : {}),
           dedupeKey: txResult.seatRefund.participantId
             ? `seat-leave:${txResult.seatRefund.participantId}`
             : `capture-no-seat:${txResult.appointmentId}`,
         });
         if (!seatRefund) {
-          // The seat door resolves its payment by (event, buyer, SUCCEEDED), so
-          // a null means this capture is not linked to the event and settling
-          // the marker here would keep the buyer's money with nothing to show
-          // for it. The booking door addresses the payment by id and picks the
-          // same rail from the intent, so the money still comes back.
+          // The seat door found no SUCCEEDED payment for this seat on this
+          // event, so the money still has to come back through the booking door,
+          // which addresses the payment by id and picks the same rail from the
+          // intent.
           await refundBookingPayment({
             paymentId: txResult.paymentId,
             reason: "capture after seat release",
@@ -2278,7 +2301,7 @@ const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
 type SeatCaptureOutcome =
   | { kind: "confirmed" }
   | { kind: "duplicate" }
-  | { kind: "released"; participantId: string }
+  | { kind: "released"; participantId: string; paymentId: string | null }
   | { kind: "missing" };
 
 /**
@@ -2354,6 +2377,12 @@ async function confirmSeatAfterCapture(
   return {
     kind: "released",
     participantId: fresh.id,
+    // The sale the seat was bought with. The refund arm addresses the payment by
+    // this id: the re-read above is newest-first (the capture's own seat), and
+    // the seat door's own re-derivation is oldest-first, so on legacy class rows
+    // — one session appointment each, hence one payment each — they answer with
+    // different payments and the capture's money is the one left behind.
+    paymentId: fresh.paymentId,
   };
 }
 
@@ -2806,6 +2835,7 @@ export async function confirmExistingAppointment(
           kind: "class",
           eventId: classId,
           participantId: seat.kind === "released" ? seat.participantId : null,
+          paymentId: seat.kind === "released" ? seat.paymentId : null,
         },
       };
     }
@@ -2861,6 +2891,7 @@ export async function confirmExistingAppointment(
           kind: "webinar",
           eventId: webinarId,
           participantId: seat.kind === "released" ? seat.participantId : null,
+          paymentId: seat.kind === "released" ? seat.paymentId : null,
         },
       };
     }

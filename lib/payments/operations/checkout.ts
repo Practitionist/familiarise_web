@@ -2075,6 +2075,18 @@ async function assertConsulteeHasNoOverlappingSession(
               AND: [
                 { startsAt: { lt: new Date(window.endsAt) } },
                 { endsAt: { gt: new Date(window.startsAt) } },
+                // Defense-in-depth, and parity with the two twins of this
+                // predicate (ScheduleValidationService.validate and
+                // buildConsultantOccupancyWhere): a tombstoned slot is not a
+                // booking, and this check has to answer exactly what they answer
+                // — the whole point of it is that the buyer's own calendar is
+                // arbitrated by the same rule as the consultant's. No
+                // completionStatus filter, for the reason they give: a RESCHEDULED
+                // row is a pending reschedule's live hold and must still block,
+                // or the buyer books over the session they are moving. CANCELLED
+                // needs no clause of its own — every writer of it stamps
+                // `deletedAt` in the same update.
+                { deletedAt: null },
               ],
             },
           },
