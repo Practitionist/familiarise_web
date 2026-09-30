@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import {
   handlePaymentFailure,
-  handlePaymentSuccess,
   handleRefundCreated,
   handleDisputeCreated,
   handleDisputeUpdated,
@@ -13,6 +12,7 @@ import {
   handleStripePayoutWebhook,
   isDbHealthy,
 } from "../utils";
+import { routeCapturedPayment } from "../razorpay-dispatch";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import { MAX_WEBHOOK_BODY_BYTES } from "@/lib/webhooks/read-body";
 import {
@@ -22,6 +22,56 @@ import {
   stripeCheckoutSessionCompletedEventSchema,
   stripeCheckoutSessionExpiredEventSchema,
 } from "../../../../schemas/webhooks/stripe";
+
+/**
+ * Read a captured-amount figure off the RAW event object, in the currency's
+ * smallest unit, or `undefined` when the field is absent or not an integer.
+ *
+ * The RAW object is deliberate: `stripePaymentIntentSucceededEventSchema` and
+ * `stripeCheckoutSessionCompletedEventSchema` model only the fields this route
+ * consumes, and zod strips everything else, so `amount_received` does not
+ * survive the parse. The figure is never taken from `metadata` either —
+ * metadata is written before the capture, so it can only restate the order
+ * total, and feeding that into the parity check compares the gateway against
+ * itself.
+ *
+ * No currency conversion is needed: `createStripeCheckoutSession` runs
+ * `assertInrSettlement` as its first statement and prices `unit_amount` from
+ * that, so paise is the only unit this rail can produce.
+ */
+function readCapturedAmountPaise(
+  raw: unknown,
+  field: string,
+): number | undefined {
+  const amount = (raw as Record<string, unknown> | null | undefined)?.[field];
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0) {
+    return undefined;
+  }
+  return amount;
+}
+
+/**
+ * Strict variant for the door that owns the gateway truth. `amount_received` is
+ * a required field of a `payment_intent.succeeded` object, so a missing figure
+ * means a payload this route cannot reason about — and a door that cannot state
+ * what was captured must not confirm a booking for it. That argument used to be
+ * optional and omitted here entirely, so an under-captured Stripe order
+ * confirmed a FULL booking with no parity check at all: silent under-collection.
+ * Throwing makes the route 500, which is what makes Stripe redeliver.
+ */
+function requireCapturedAmountPaise(
+  raw: unknown,
+  field: string,
+  source: string,
+): number {
+  const amount = readCapturedAmountPaise(raw, field);
+  if (amount === undefined) {
+    throw new Error(
+      `Stripe ${field} missing or non-integer on ${source}; refusing to confirm a booking without a known captured amount`,
+    );
+  }
+  return amount;
+}
 
 export async function POST(req: NextRequest) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -147,12 +197,46 @@ export async function POST(req: NextRequest) {
         // createStripeCheckoutSession stores session.id (cs_...) in Payment.paymentIntent,
         // so we must handle checkout.session.completed to match by cs_... ID.
         // NOTE: Ensure these events are enabled in the Stripe Dashboard webhook settings.
+        //
+        // #ADR-21 — this door used to call handlePaymentSuccess(session.id,
+        // session.metadata) with no amount and no gateway payment id, so the
+        // capture-amount parity check and the `gatewayPaymentId` write (which
+        // the refund and dispute webhooks resolve against) were both skipped
+        // here. It now goes through the SAME router as `payment.captured`,
+        // `order.paid` and both client-return doors, so notes.type routing and
+        // the parity check cannot drift per-gateway again.
         case "checkout.session.completed": {
           const sessionEvent =
             stripeCheckoutSessionCompletedEventSchema.parse(event);
           const session = sessionEvent.data.object;
-          // Use session.id (cs_...) which matches Payment.paymentIntent
-          await handlePaymentSuccess(session.id, session.metadata || {});
+          // Use session.id (cs_...) which matches Payment.paymentIntent.
+          // `payment_intent` (pi_...) is this rail's `pay_…`: the object the
+          // refund/dispute webhooks can be resolved against.
+          //
+          // A Checkout Session carries no `amount_received` — that is a
+          // PaymentIntent field — so this door's best gateway-side figure is the
+          // session's own `amount_total`. Best-effort, not strict: a null here
+          // means the session told us nothing, not that the capture is a lie,
+          // and withholding the amount SKIPS the parity check (status quo for
+          // this door) rather than 500-looping an endpoint Stripe will eventually
+          // disable. The `payment_intent.succeeded` door below is the one that
+          // refuses without `amount_received`, so a partial capture on this rail
+          // is still caught by whichever door fires.
+          const sessionTotalPaise = readCapturedAmountPaise(
+            event.data.object,
+            "amount_total",
+          );
+          if (sessionTotalPaise === undefined) {
+            console.warn(
+              `⚠️ Stripe checkout.session.completed ${session.id} carries no amount_total; confirming without a capture-amount parity check`,
+            );
+          }
+          await routeCapturedPayment({
+            orderId: session.id,
+            notes: session.metadata || {},
+            amountPaise: sessionTotalPaise,
+            gatewayPaymentId: session.payment_intent ?? undefined,
+          });
           break;
         }
 
@@ -165,14 +249,28 @@ export async function POST(req: NextRequest) {
 
         // Payment Intent events — kept for backward compatibility.
         // If a payment was stored with pi_... (legacy flow), this handler catches it.
-        // Idempotency: handlePaymentSuccess is a no-op if already SUCCEEDED.
+        // Idempotency: routeCapturedPayment is a no-op if already SUCCEEDED
+        // AND the redelivered amount still matches what we booked — a redelivery
+        // whose amount does not match now trips the parity check instead of
+        // being waved through by that short-circuit.
         case "payment_intent.succeeded": {
           const succeededEvent =
             stripePaymentIntentSucceededEventSchema.parse(event);
-          await handlePaymentSuccess(
-            succeededEvent.data.object.id,
-            succeededEvent.data.object.metadata || {},
-          );
+          const intent = succeededEvent.data.object;
+          await routeCapturedPayment({
+            orderId: intent.id,
+            notes: intent.metadata || {},
+            // `amount_received` is what Stripe actually took, which is NOT
+            // `intent.amount` (the authorised figure) on a partial capture.
+            amountPaise: requireCapturedAmountPaise(
+              event.data.object,
+              "amount_received",
+              `payment_intent.succeeded ${intent.id}`,
+            ),
+            // A PaymentIntent is both the order and the charge-bearing object
+            // on this rail, so its id is both keys.
+            gatewayPaymentId: intent.id,
+          });
           break;
         }
 

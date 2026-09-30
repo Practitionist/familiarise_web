@@ -412,22 +412,13 @@ export async function handlePaymentSuccess(
             recovering &&
             payment.paymentStatus === PaymentStatus.SUCCEEDED &&
             payment.appointmentId === null;
-          if (
-            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
-            !recoverable
-          ) {
-            console.log(
-              `Payment ${paymentIntentId} has already been processed.`,
-            );
-            // Idempotency short-circuit — a redelivered webhook. The system
-            // working as designed.
-            reportSentryMessage("Payment webhook idempotency short-circuit", {
-              subsystem: "payments",
-              expected: true,
-              extra: { paymentIntentId },
-            });
-            return null; // Signal: already processed, skip Phase 2
-          }
+          // The SUCCEEDED short-circuit below and the capture-amount parity
+          // check are now mutually exclusive guards, so name the short-circuit's
+          // own predicate once. `recoverable` is excluded on purpose: a recovery
+          // on a SUCCEEDED row with no appointment has NOT been confirmed yet, so
+          // a wrong-amount capture there must still block and refund.
+          const alreadyProcessed =
+            payment.paymentStatus === PaymentStatus.SUCCEEDED && !recoverable;
 
           // #1695 — EXPIRED means the abandoned sweep (or a supersede) already
           // released the hold; FAILED means a `payment.failed` did. Either way
@@ -435,6 +426,11 @@ export async function handlePaymentSuccess(
           // to move it back (#1439 reported it and stopped). Claim the row as
           // SUCCEEDED — gateway truth — so Phase 2 can refund through the
           // front door; the CAS keeps a concurrent writer honest (ADR 21).
+          // Mutually exclusive with `alreadyProcessed` (SUCCEEDED vs
+          // EXPIRED/FAILED), so hoisting the parity check above the
+          // short-circuit did not need to move this one: a capture on an
+          // already-released hold is refused for the stronger reason, and
+          // #1695's own refund front door is what moves the money back.
           if (
             payment.paymentStatus === PaymentStatus.EXPIRED ||
             payment.paymentStatus === PaymentStatus.FAILED
@@ -472,6 +468,17 @@ export async function handlePaymentSuccess(
           // anomaly or our-own bug — never silently confirm a booking for the wrong
           // money. Mark for manual recovery + page (like the metadata-failure path) and
           // skip confirmation; the captured funds are reconciled by hand.
+          //
+          // This check sits ABOVE the SUCCEEDED short-circuit, where it used to sit
+          // below: a redelivered `payment_intent.succeeded` / `payment.captured` /
+          // `order.paid` for an under-captured order therefore returned null before
+          // the comparison was ever evaluated, so a redelivery could never re-validate
+          // and the short-circuit looked like agreement. Comparing first costs nothing
+          // on the happy path and is the only way a replay of a wrong-amount capture is
+          // still recognised as one. The REMEDIATION (stamp + auto-refund) stays
+          // behind `!alreadyProcessed` — a mismatch on a row that is already terminal
+          // was stamped and refunded by the delivery that first saw it, so re-running
+          // it here would issue a second refund.
           if (
             gatewayAmountPaise !== undefined &&
             gatewayAmountPaise !== payment.amount
@@ -488,10 +495,39 @@ export async function handlePaymentSuccess(
                     paymentIntentId,
                     paymentId: payment.id,
                     userId: payment.userId,
+                    redelivery: alreadyProcessed,
                   },
                 },
               },
             );
+            if (alreadyProcessed) {
+              // Redelivery of a wrong-amount capture. The first delivery already
+              // paged, stamped and auto-refunded; this one confirms the row is still
+              // terminal rather than re-opening it, and acknowledges the webhook.
+              console.error(
+                JSON.stringify({
+                  event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH_REDELIVERY",
+                  alert_priority: "P1",
+                  payment_id: payment.id,
+                  payment_intent: paymentIntentId,
+                  user_id: payment.userId,
+                  gateway_amount_paise: gatewayAmountPaise,
+                  expected_amount_paise: payment.amount,
+                  action_required:
+                    "already auto-refunded by the first delivery; re-verify no second refund is owed",
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+              reportSentryMessage(
+                "capture amount mismatch on an already-processed payment",
+                {
+                  subsystem: "payments",
+                  expected: true,
+                  extra: { paymentIntentId, gatewayAmountPaise },
+                },
+              );
+              return null; // Signal: nothing to do, skip Phase 2
+            }
             // #837 — mark SUCCEEDED (gateway truth) + stamp the auto-refund
             // marker. Phase 2 auto-refunds the wrong-amount capture; if that
             // call throws, the marker keeps it in retry-auto-refunds' queue
@@ -546,6 +582,25 @@ export async function handlePaymentSuccess(
               expectedAmount: payment.amount,
             };
           }
+
+          if (alreadyProcessed) {
+            console.log(
+              `Payment ${paymentIntentId} has already been processed.`,
+            );
+            // Idempotency short-circuit — a redelivered webhook. The system
+            // working as designed. The amount has already been compared above,
+            // so reaching here means the redelivery AGREES with what we booked.
+            reportSentryMessage("Payment webhook idempotency short-circuit", {
+              subsystem: "payments",
+              expected: true,
+              extra: { paymentIntentId },
+            });
+            return null; // Signal: already processed, skip Phase 2
+          }
+
+          // The #677 capture-amount parity check and the #1695
+          // released-hold claim both run above this short-circuit; nothing of
+          // either is left down here.
 
           // VALIDATION: Check metadata before processing
           try {
@@ -981,9 +1036,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // #837 — the gateway captured a different amount than we ordered. Auto-refund
   // the whole capture (never confirm a booking for the wrong money) and skip
   // Phase 2. The pending marker stays stamped for retry-auto-refunds if the
-  // refund throws (#1846 N2). Idempotent: on webhook replay the payment is already
-  // SUCCEEDED so the SUCCEEDED early-return fires before this path is reached,
-  // and refundPayment's refundable-balance guard blocks any double-refund.
+  // refund throws (#1846 N2). Idempotent: on webhook replay the row is already
+  // terminal, so the Phase-1 redelivery branch returns null and never reaches
+  // this path, and refundPayment's refundable-balance guard blocks any
+  // double-refund.
   if (txResult.outcome === "amount_mismatch") {
     try {
       await refundPayment({
