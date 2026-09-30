@@ -432,9 +432,9 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
     await refundEarnings("pay-1", { tx: refundEarningsTx });
     expect(r.refundedShareAmount).toBe(8_000);
     // The webhook redelivers, but findMany now hands back the terminal row.
-    (db as any).consultantEarnings.findMany.mockImplementation(async () => [
-      { ...r },
-    ]);
+    (refundEarningsTx as any).consultantEarnings.findMany.mockImplementation(
+      async () => [{ ...r }],
+    );
     await refundEarnings("pay-1", { tx: refundEarningsTx });
 
     expect(updateMany).toHaveBeenCalledTimes(1);
