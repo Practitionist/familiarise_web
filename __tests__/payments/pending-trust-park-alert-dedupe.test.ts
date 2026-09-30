@@ -193,9 +193,12 @@ function seed(args: {
   } = args;
 
   if (parkedReadThrows) {
-    const boom = async () => {
+    // A `jest.fn`, not a bare async fn: the slot is typed as a Mock, and the
+    // assertions below inspect `.mock.calls` on its siblings.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const boom = jest.fn(async (..._a: any[]): Promise<any> => {
       throw new Error("P1001 connection pool timeout");
-    };
+    });
     db.consultantEarnings = {
       findMany: boom,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
