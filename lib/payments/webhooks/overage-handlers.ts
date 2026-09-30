@@ -18,8 +18,14 @@
  * member overage money; the ledger payable is the single realization path.
  * Reconcile asserts every CHARGED member event has its `overage:<sidePaymentId>`
  * txn with Cr ORG_PAYABLE == marginalPaise (OVERAGE_SETTLEMENT_MISMATCH).
+ *
+ * The one exception is the FAILED→CHARGED late capture whose parent had already
+ * rolled onto an org invoice while the base sat restored: `recarveOverageBase`
+ * declines to touch an issued document, so the org already owes the base on that
+ * invoice. See `neutraliseInvoicedOverageBase` for the correction.
  */
 import prisma from "@/lib/prisma";
+import type { Tx } from "@/lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -28,6 +34,7 @@ import {
   restoreOverageBaseCarve,
 } from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -100,6 +107,11 @@ export async function handleOverageMemberSuccess(
     // sweep FAILed it, so it must be carved back out; PENDING/ACCRUED→CHARGED
     // is still carved. A read-then-check would race the sweeps.
     const settledAt = new Date();
+    // Set when the recarve declines because the parent already rolled onto an
+    // org invoice. Held, not acted on inline: the correction must post AFTER
+    // the org-relief journal below, so the journal reads
+    // "credit the full marginal, then reverse the part already invoiced".
+    let invoicedBase: { basePaise: number; invoiceId: string } | null = null;
     let moved = await transitionOverage(
       tx,
       { paymentId: side.id },
@@ -121,16 +133,40 @@ export async function handleOverageMemberSuccess(
         });
         if (recarve === "invoiced") {
           // The org was already invoiced for the restored base while the
-          // charge sat FAILED; the member's capture now over-relieves the org
-          // by basePaise. Money already moved — flag for a manual adjustment
-          // rather than refusing the capture.
-          void recordSystemErrorSafe({
-            organizationId: side.organizationId,
-            category: "OVERAGE",
-            summary: `Late capture of overage side-payment ${side.id} after the parent was invoiced — basePaise double-collected; manual billing adjustment needed`,
-            err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
-            context: { sidePaymentId: side.id, paymentIntentId },
+          // charge sat FAILED. The member's capture is still honoured (the
+          // gateway took the money) — the base is neutralised after the
+          // org-relief posting instead. `recarveOverageBase` returns only the
+          // outcome, so read the two numbers the correction needs: the base
+          // that must not be credited twice, and the invoice it is already on.
+          const ctx = await tx.overageEvent.findFirst({
+            where: { paymentId: side.id },
+            select: {
+              basePaise: true,
+              payment: {
+                select: {
+                  parentPayment: {
+                    select: { billableToOrgInvoiceId: true },
+                  },
+                },
+              },
+            },
           });
+          const invoiceId = ctx?.payment?.parentPayment?.billableToOrgInvoiceId;
+          if (ctx && invoiceId && ctx.basePaise > 0) {
+            invoicedBase = { basePaise: ctx.basePaise, invoiceId };
+          } else {
+            // The event vanished or lost its parent link between the recarve
+            // and this read. Nothing can be neutralised, so say so durably
+            // rather than posting the base credit and moving on.
+            await recordSystemErrorSafe({
+              db: tx,
+              organizationId: side.organizationId,
+              category: "OVERAGE",
+              summary: `Late capture of overage side-payment ${side.id} after the parent was invoiced — the base credit could not be neutralised (no basePaise / invoice link); manual billing adjustment needed`,
+              err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
+              context: { sidePaymentId: side.id, paymentIntentId },
+            });
+          }
         }
       }
     }
@@ -170,6 +206,165 @@ export async function handleOverageMemberSuccess(
         postings,
       });
     }
+
+    if (invoicedBase) {
+      await neutraliseInvoicedOverageBase(tx, {
+        sidePaymentId: side.id,
+        organizationId: side.organizationId,
+        paymentIntentId,
+        ...invoicedBase,
+      });
+    }
+  });
+}
+
+/**
+ * Correct a late member capture whose base the org was ALREADY invoiced for.
+ *
+ * INVARIANT: money already invoiced to the org must never be credited to
+ * ORG_PAYABLE a second time. The org-relief posting above credits the full
+ * marginal (base + surcharge) because that is the design on every normal path
+ * (#775) and the reconcile invariant `overage:<sidePaymentId>` asserts it. On
+ * this path `recarveOverageBase` declined to take the base back out of the
+ * parent (`"invoiced"` — the parent rolled onto an invoice while the charge
+ * sat FAILED, so the invoice already charges the org for the base). Left
+ * uncorrected, the base is collected twice: once as an invoice line the org
+ * pays, once as an ORG_PAYABLE credit the org is paid in cash out of the next
+ * payout batch. The platform keeps the surcharge and nothing else new.
+ *
+ * Two writes, both in the caller's transaction so the money and the statutory
+ * document cannot diverge:
+ *
+ *  1. A counter-transaction keyed `overage-recarve-invoice:<sidePaymentId>`
+ *     moving the base off the payout rail: Dr ORG_PAYABLE / Cr ORG_RECEIVABLE.
+ *     ORG_RECEIVABLE is the org-invoice account ("an INVOICE-funded org owes
+ *     us (accrued, cleared on invoice payment)"), the same account the refund
+ *     cascade credits when it reverses an INVOICE_ACCRUAL leg
+ *     (`operations/refund.ts`). No row is mutated and the journal only ever
+ *     grows, so a retry hits the `@unique` idempotencyKey and applies once.
+ *
+ *  2. A GST credit note (CGST Sec 34) for the base against the invoice the org
+ *     already received, minted by the canonical writer
+ *     `mintInvoiceRefundCreditNote` so the CGST Rule 53 gapless series, the
+ *     cumulative per-invoice cap and the never-credit-a-DRAFT guard all stay in
+ *     one place. The base is a TAX-EXCLUSIVE accrual-leg amount (invoices are
+ *     built tax-exclusive), while that writer's `amountPaise` is tax-INCLUSIVE,
+ *     so the base is grossed up by the invoice's own tax-over-subtotal rate
+ *     before it is handed over.
+ *
+ * Idempotency: every write is keyed on the side-Payment id, which the capture's
+ * CAS above already claimed exactly once, so a webhook redelivery re-derives
+ * the same keys and changes nothing.
+ */
+async function neutraliseInvoicedOverageBase(
+  tx: Tx,
+  args: {
+    sidePaymentId: string;
+    organizationId: string | null;
+    paymentIntentId: string;
+    basePaise: number;
+    invoiceId: string;
+  },
+): Promise<void> {
+  const {
+    sidePaymentId,
+    organizationId,
+    paymentIntentId,
+    basePaise,
+    invoiceId,
+  } = args;
+  // Same key space for the journal and the document: this side-Payment's base
+  // is reversed exactly once, on either rail or both.
+  const key = `overage-recarve-invoice:${sidePaymentId}`;
+
+  if (organizationId) {
+    await postLedgerTxn(tx, {
+      idempotencyKey: key,
+      kind: "OVERAGE_MEMBER",
+      paymentId: sidePaymentId,
+      invoiceId,
+      description: `Overage base already invoiced — reverse the org-relief credit for side-payment ${sidePaymentId}`,
+      postings: [
+        {
+          account: { kind: "ORG_PAYABLE", organizationId },
+          direction: "DEBIT",
+          amountPaise: basePaise,
+        },
+        {
+          account: { kind: "ORG_RECEIVABLE", organizationId },
+          direction: "CREDIT",
+          amountPaise: basePaise,
+        },
+      ],
+    });
+  }
+
+  const invoice = await tx.organizationInvoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      invoiceNumber: true,
+      subtotalPaise: true,
+      igstPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+    },
+  });
+  // Gross the tax-exclusive base up by the invoice's own rate (GST is collected
+  // on the base like any other taxable value), so the note reverses the
+  // taxable value AND the output tax on it. A DRAFT invoice is left to the
+  // canonical writer's own guard: no Sec-34 document may be raised against a
+  // document the org never received.
+  const taxPaise = invoice
+    ? invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise
+    : 0;
+  const grossBasePaise =
+    invoice && invoice.subtotalPaise > 0
+      ? basePaise + Math.round((basePaise * taxPaise) / invoice.subtotalPaise)
+      : basePaise;
+
+  const { creditNoteId, outcome } = await mintInvoiceRefundCreditNote(tx, {
+    invoiceId,
+    // The writer's only unique idempotency key is its refund/dispute trigger,
+    // so a non-refund correction has to borrow it. See the report: CreditNote
+    // needs its own `overageEventId String? @unique` before this stops being a
+    // naming convention rather than a lie in a statutory document.
+    refundId: key,
+    amountPaise: grossBasePaise,
+    reason:
+      `Overage base for side-payment ${sidePaymentId} was paid ` +
+      `directly by the member; credit it back against invoice ` +
+      `${invoice?.invoiceNumber ?? invoiceId}`,
+  });
+
+  // Awaited THROUGH THE TRANSACTION (#1582 B-P1-02): a `void`ed write outside
+  // the tx is lost if this transaction rolls back, and this row is the only
+  // record that an operator ever sees of the correction. `*Safe` keeps the
+  // never-throw contract, so a failing system_events insert cannot cost the
+  // capture itself.
+  const creditNoteLabel = creditNoteId
+    ? `credit note ${creditNoteId}`
+    : outcome === "FULLY_CREDITED"
+      ? "no note issued — the invoice is already credited in full"
+      : "NO credit note (invoice not issued / not found) — manual billing adjustment still needed";
+  await recordSystemErrorSafe({
+    db: tx,
+    organizationId,
+    category: "OVERAGE",
+    summary:
+      `Late capture of overage side-payment ${sidePaymentId} after its ` +
+      `parent was invoiced — base ${basePaise}p pulled off ORG_PAYABLE by ` +
+      `reversal ${key} and credited back on the invoice by ${creditNoteLabel}`,
+    err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
+    context: {
+      sidePaymentId,
+      paymentIntentId,
+      invoiceId,
+      basePaise,
+      grossBasePaise,
+      creditNoteId,
+      creditNoteOutcome: outcome ?? null,
+      ledgerReversalKey: key,
+    },
   });
 }
 
