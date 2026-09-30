@@ -37,8 +37,13 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: { opsActionLog: { create: (a: unknown) => create(a) } },
 }));
-const refundBookingPayment = jest.fn(async () => ({}));
-const restoreClassSeatCredits = jest.fn(async () => ({ restoredPaise: 0 }));
+// Rest-typed so the `jest.mock` facades below can forward a `unknown[]`
+// spread into them (TS2556 otherwise: a spread argument must have a tuple
+// type or be passed to a rest parameter).
+const refundBookingPayment = jest.fn(async (..._args: unknown[]) => ({}));
+const restoreClassSeatCredits = jest.fn(async (..._args: unknown[]) => ({
+  restoredPaise: 0,
+}));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
   restoreClassSeatCredits: (...a: unknown[]) => restoreClassSeatCredits(...a),
