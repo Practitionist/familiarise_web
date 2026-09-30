@@ -25,20 +25,53 @@ The video implementation uses a dual-ID system to link appointments with Stream 
 
 ```prisma
 model Meeting {
-  id                   String              @id @default(cuid())
-  streamCallId         String              @unique
-  platform             Platform            @default(STREAM)
-  slotOfAppointmentId  String              @unique
-  appointmentOccurrence    AppointmentOccurrence   @relation(...)
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  id                       String   @id @default(cuid())
+  streamCallId             String   @unique
+  platform                 Platform @default(STREAM)
+  occurrence               AppointmentOccurrence @relation(
+                             fields: [appointmentOccurrenceId], references: [id],
+                             onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId  String   @unique
+  organizationId           String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 }
 ```
 
+There is **no slot-of-appointment field.** The link to scheduling is
+`appointmentOccurrenceId String @unique` — one `Meeting` per `AppointmentOccurrence` row — plus
+`organizationId`, denormalized from `occurrence.appointment.organizationId` as the canonical tenant
+key so org-scoped call queries can index on `(organizationId, createdAt)` without a three-table
+join. It is nullable, because a personal (non-org) booking has no organization.
+
 **ID Mapping**:
 
-- `slotOfAppointmentId` - Your database's appointment slot ID
-- `streamCallId` - Stream's call ID (format: `{meetingType}_{timestamp}_{random}`)
+- `appointmentOccurrenceId` - your `AppointmentOccurrence` id. This is the **durable** key: it is
+  `@unique`, and it is what survives a room rebuild.
+- `streamCallId` - Stream's call id, and it is **derived, not random**:
+
+  ```text
+  occurrence-<occurrenceId>                    the first room for an occurrence
+  occurrence-<occurrenceId>-r<base36 suffix>   a room rebuilt after a pre-start end (#1607)
+  ```
+
+  Both shapes are built and parsed in one place, `lib/meetings/room-id.ts`
+  (`roomIdForOccurrence`, `rebuiltRoomIdForOccurrence`, `occurrenceIdFromRoomId`), because the id
+  has to be parseable as well as buildable: a URL minted before a rebuild still resolves through
+  `resolveMeetingAccess`, which falls back to `appointmentOccurrenceId`.
+
+  The rebuild suffix exists because **a Stream call's `ended_at` never clears.** Stream refuses to
+  reuse a call id once the call has ended — a participant joining gets the SDK's "ended" screen no
+  matter what local state says — so a room the host closed _before_ the booked start has to be
+  rebuilt under a fresh id. The suffix is `Date.now()` in base36 and needs no coordination: the
+  compare-and-set on `endedReason` in `provisionAppointmentMeeting` decides which of two racing
+  rebuilds owns the row.
+
+  Older material described the format as `slot-<uuid>` or
+  `{meetingType}_{timestamp}_{random}`. **Neither is current.** Live production calls minted before
+  the rename still carry `slot-<uuid>` ids, and nothing backfills them — a room id is a
+  presentation of an occurrence, not the durable key, so the reconcilers keep working on the old
+  shape. Treat `slot-` ids as legacy, not as a second live format.
 
 **Call Types**:
 
@@ -164,31 +197,29 @@ every participant out of every call.
 #### Find Existing Meeting Session
 
 ```typescript
-export const findDbMeetingByOccurrence = async (
+export async function findDbMeetingBySlot(
   slotId: string,
-): Promise<Meeting | null> => {
+): Promise<Meeting | null> {
+  const validatedSlotId = slotIdSchema.parse(slotId);
   try {
+    // The unique column is `appointmentOccurrenceId`, not any slot-of-appointment
+    // field — see the Meeting model above.
     const meeting = await prisma.meeting.findUnique({
-      where: { slotOfAppointmentId: slotId },
+      where: { appointmentOccurrenceId: validatedSlotId },
     });
-
-    if (meeting) {
-      console.log(
-        `Found existing DB meeting session ${meeting.id} for slot ${slotId}`,
-      );
-    } else {
-      console.log(`No existing DB session found for slot ${slotId}`);
-    }
-    return meeting;
+    // ...
   } catch (error) {
-    console.error(
-      `Error finding DB meeting session for slot ${slotId}:`,
-      error,
-    );
-    return null;
+    // ...
   }
-};
+}
 ```
+
+It is deliberately **not** entitlement-gated, unlike the writer below. The only thing it returns
+an attacker would want is `streamCallId`, and that is `occurrence-<occurrenceId>` — derivable from
+the id the caller already had to supply. A gate here would buy no confidentiality while putting a
+hard refusal on the read every join makes: `readSlotForCaller` returns null for a transient
+database failure as well as for a stranger, so a blip would refuse a legitimate participant instead
+of degrading. Entry to the meeting page is gated by `/api/meetings/[id]/validate-access`.
 
 #### Create New Meeting Session
 
@@ -806,15 +837,13 @@ useEffect(() => {
 ### Complete Meeting Flow
 
 ```typescript
-// 1. Server: Create meeting session
-const slot = await prisma.appointmentOccurrence.findUnique({
-  where: { id: slotId },
-});
+// 1. Server: provision the room. The call id is DERIVED from the occurrence,
+// never generated — see `roomIdForOccurrence` in lib/meetings/room-id.ts.
+const streamCallId = roomIdForOccurrence(occurrenceId); // "occurrence-<occurrenceId>"
+await provisionAppointmentMeeting(slot); // writes the Meeting row, then getOrCreate
 
-const streamCallId = `consultation_${Date.now()}_${Math.random()}`;
-await createDbMeeting(slot, streamCallId);
-
-// 2. Client: Join meeting
+// 2. Client: join. The client creates nothing — `useGetCallById` asks
+// POST /api/meetings/[id]/join, which is the only grantor of Stream membership.
 const MeetingFlow = () => {
   const { callId } = useParams();
   const { call, isCallLoading } = useGetCallById(callId);

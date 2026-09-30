@@ -8,11 +8,11 @@ This is intentional: payment webhooks are critical for completing transactions a
 
 ## Webhook Handlers
 
-| Gateway       | Route                         | Signature Verification             | Idempotency                               |
-| ------------- | ----------------------------- | ---------------------------------- | ----------------------------------------- |
-| **Stripe**    | `POST /api/webhooks/stripe`   | `stripe.webhooks.constructEvent()` | `logWebhookEvent()` with gateway event ID |
-| **Razorpay**  | `POST /api/webhooks/razorpay` | HMAC SHA256 signature              | `logWebhookEvent()` with gateway event ID |
-| **Stream.io** | `POST /api/stream/webhooks/`  | HMAC SHA256 (constant-time)        | `logWebhookEvent()` with event ID         |
+| Gateway       | Route                         | Signature Verification                                                     | Idempotency                                                   |
+| ------------- | ----------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **Stripe**    | `POST /api/webhooks/stripe`   | `stripe.webhooks.constructEvent()`                                         | `logWebhookEvent()` with gateway event ID                     |
+| **Razorpay**  | `POST /api/webhooks/razorpay` | HMAC SHA256 signature                                                      | `logWebhookEvent()` with gateway event ID                     |
+| **Stream.io** | `POST /api/stream/webhooks/`  | SDK `verifySignature` over the uncompressed body, using the **API secret** | `sha256(body)`, **not** the `X-Webhook-ID` header (see below) |
 
 ## Stripe Webhook Events Handled
 
@@ -78,6 +78,36 @@ All webhook handlers use `logWebhookEvent()` from `/api/webhooks/utils.ts`:
 - `processingError`: Error message if processing failed
 
 This means even if a webhook is retried (due to temporary failure during maintenance), it will not be processed twice.
+
+### Stream is the exception: the key is the body hash, not the gateway event ID
+
+For Stripe and Razorpay, `eventId` is the gateway's own event identifier, because those gateways
+sign that identifier along with the rest of the payload. **Stream does not.**
+
+Stream signs the **body only**. Its `X-Webhook-ID` header is not covered by the signature, so
+keying on it means one captured `(body, signature)` pair can be replayed under N invented header
+values and mint N distinct keys — N dispatches from a single verified delivery. The Stream route
+therefore keys on `sha256(body)`:
+
+```typescript
+const bodyHash = crypto.createHash("sha256").update(body).digest("hex");
+const eventId = `stream_${baseEvent.type}_${bodyHash}`;
+```
+
+This is a **deliberate deviation** from Stream's own guidance ("deduplicate on the ID rather than
+on event contents"). Byte-identical retries — the property the header was bought for — still
+collapse to one key, and genuinely different events differ somewhere in the body so they are never
+collapsed. The reasoning is in `app/api/stream/webhooks/route.ts:254-274` and is pinned by
+`__tests__/stream/webhook-dedup-and-replay.test.ts`, so the deviation cannot be silently reverted.
+
+Razorpay reaches the same conclusion by a slightly different route, for the same underlying
+reason: it also refuses `x-razorpay-event-id` because the HMAC covers the body only, but it
+prefers a business-entity id from the payload (a refund, dispute, payout, payment or order id) and
+falls back to a truncated body hash (`app/api/webhooks/razorpay/route.ts:169-201`).
+
+The route reaches the same table through `recordStreamEventReceipt()`
+(`lib/stream/webhook-dispatch.ts`), which wraps `logWebhookEvent()` and additionally returns the
+`WebhookClaim` the completion mark is fenced on.
 
 ## What Happens During DB Migration
 

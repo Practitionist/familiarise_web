@@ -15,13 +15,29 @@ Severity roll-up: **3 HIGH · 9 MED-HIGH/MED · 9 LOW/INFO**. All three HIGH fin
 > also moved to `POST /api/meetings/[meetingId]/end`. See
 > `docs/decisions/2026-08-30-server-side-call-creation.md`.
 
+> **Status addendum (2026-09-30, #1829):** three further claims below were found
+> to be wrong against the code and are corrected in place, with the correction
+> marked where it sits:
+>
+> - §2 “Webhook route” — the dedup key is **`sha256(body)`**, not `X-Webhook-ID`
+>   (see the corrected row).
+> - §2 “Circuit breaker” and **F-MED-1** — **resolved**: Stream and Redis now have
+>   separate breakers. Both rows are marked below.
+>
+> §1.3 “Meeting lifecycle” also still names the pre-rename room id
+> `slot-<anchorSlotId>`; the current format is `occurrence-<occurrenceId>` (see
+> `05-video-implementation.md`). The call-type hardening claim in the §2
+> “Video join” row is an **operator action**, not a completed change — see
+> `scripts/stream/ensure-call-type-grants.ts` and
+> `.github/workflows/stream-calltype-drift.yml`.
+
 ---
 
 ## 1. HLD — what the system is
 
-Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video** (participant-minute-billed). Postgres stores *no chat state and no call media* — Stream is the system of record for messages/calls; Postgres (`Meeting`, `MeetingAttendance`, `Recording`) is the system of record for *entitlements, scheduling truth, and recording metadata*. Everything else is projections.
+Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video** (participant-minute-billed). Postgres stores _no chat state and no call media_ — Stream is the system of record for messages/calls; Postgres (`Meeting`, `MeetingAttendance`, `Recording`) is the system of record for _entitlements, scheduling truth, and recording metadata_. Everything else is projections.
 
-```text
+````text
                     ┌──────────────────────────────────────────────┐
   Browser ────WS──▶ │ Stream edge (chat WS + video SFU)            │
     │               │   primary region: ??? ← 253–395ms RTT probe  │
@@ -72,8 +88,8 @@ No room exists at booking. First Join mints deterministically: `slot-<anchorSlot
 
 | Layer | Contract | Notes |
 |---|---|---|
-| Webhook route | HMAC over raw body, constant-time compare, secret = `STREAM_WEBHOOK_SECRET \|\| STREAM_API_SECRET`; persist receipt **before** 200; handler in `after()`; `X-Webhook-ID` idempotency | 10 event types handled; compile-time exhaustive dispatch |
-| Circuit breaker | Shared Redis breaker (5 fails/30s reset/half-open 3); expected errors (404/code16, 429 post-incident) neither trip nor page | One breaker serves BOTH redis-lock ops and Stream ops — see F-MED-1 |
+| Webhook route | SDK `verifySignature` over the **uncompressed** body, secret = `STREAM_WEBHOOK_SECRET \|\| STREAM_API_SECRET`; persist receipt **before** 200; handler in `after()`; dedup on **`sha256(body)`**, not `X-Webhook-ID` (corrected 2026-09-30 — the header is not signature-covered, so a captured `(body, signature)` pair replays under N invented ids and mints N dispatches; `route.ts:254-274`, pinned by `__tests__/stream/webhook-dedup-and-replay.test.ts`) | 10 event types handled; compile-time exhaustive dispatch |
+| Circuit breaker | **RESOLVED 2026-09-30 (#1280).** Stream has its own; Redis's is separate. The shared breaker described here no longer exists. | `lib/stream-client.ts:316-323` — `createCircuitBreaker("stream")`. They were one object, so five Stream failures opened the breaker booking-lock acquisition also went through, and a Redis outage reported as "Video is temporarily unavailable" |
 | Server actions | `upsertUserToStream` cached 5min; creators stamp `organization_id`; `removeUserFromEventChannel` returns `{success:false}` instead of throwing | Several exports have **no session gate** — F-HIGH-1/F-MED-6 |
 | Client store | Module snapshot + `useSyncExternalStore`; stable server snapshot; bail-on-no-op writes | Prevents SSR skip + element-type-change remounts |
 | Video join | Always `call_member` (a `host` role would lock out — zero grants exist); host-ness from `custom.consultantUserId` | Call type hardened: `user` has NO join-call; script refuses `--apply` until join route deployed |
@@ -96,7 +112,7 @@ Two simultaneous first joins both miss `addMembers`, both build roster and call 
 
 ### MED-HIGH / MED
 
-- **F-MED-1 · Cross-subsystem breaker coupling.** One module-level breaker guards both Redis lock ops and all Stream ops; 5 genuine Stream failures open it, making fail-closed crons page `CronLockUnavailableError` misattributing Stream outages to Redis, and fail-open crons silently skip. Separate namespaces or breakers.
+- **F-MED-1 · Cross-subsystem breaker coupling.** — **RESOLVED 2026-09-30 (#1280).** ~~One module-level breaker guards both Redis lock ops and all Stream ops; 5 genuine Stream failures open it, making fail-closed crons page `CronLockUnavailableError` misattributing Stream outages to Redis, and fail-open crons silently skip.~~ They are now separate breakers: `createCircuitBreaker("stream")` in `lib/stream-client.ts:323`, with `getStreamCircuitStatus()` exposed to `/api/health` so the health endpoint reports Stream's own state rather than Redis's. `withCircuitBreaker` remains Redis's and is not to be reused for a new backing service.
 - **F-MED-2 · Lazy-create paths omit `organization_id`** (`event-channel.action.ts:176-186,887-892`) while explicit creators stamp it — the common birth path produces channels invisible to org-scoped queries; also forces the manual backfill script to exist.
 - **F-MED-3 · Batch-of-5 sequential sync at scale** (~40 rounds ≈ 8–20s for a consultant with 200 clients) plus per-user consent N-queries in `upsertUsersToStream`. Backgrounded today (#1134 P1-19) but still serverless wall-clock risk.
 - **F-MED-4 · Unbounded offset pagination** in the sync stale pass (`do…while page===100`) — offset ceiling + memory growth for heavily-connected users.
@@ -125,3 +141,4 @@ Ack-first webhook durability with claim semantics + sweeper; the #1134 P0 series
 1. **This week (small diffs):** gate/delete F-HIGH-1 exports; resurrection filter (F-HIGH-2); duplicate-create adoption (F-HIGH-3); fix `package.json` stream-sync path; stamp `organization_id` in lazy creates (kills the backfill script permanently).
 2. **Next sprint:** split breaker namespaces; cap stale-pass pagination; classify `dmo-`/`dmh-`; session-check `syncUserEventChannels`; add Stream jobs to ops-critical list; refresh docs 02/05/13.
 3. **Ops track (parallel):** Dashboard region check → Stream support conversation (253–395ms RTT dominates everything); schedule `ensure-webhook-subscription` drift detection; startup config validation.
+````

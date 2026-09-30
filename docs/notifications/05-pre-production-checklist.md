@@ -325,7 +325,13 @@ Set these in **Netlify Dashboard → Site → Environment Variables**:
 | `NEXT_PUBLIC_NOVU_APP_ID`            | From Novu dashboard → Settings → API Keys                                                               | Yes                                            |
 | `CRON_SECRET`                        | Generate: `openssl rand -hex 32`                                                                        | Yes                                            |
 | `WAITLIST_HMAC_SECRET`               | Generate: `openssl rand -hex 32`                                                                        | Yes (there is no fallback to `RESEND_API_KEY`) |
-| `STREAM_WEBHOOK_SECRET`              | From Stream.io dashboard                                                                                | Yes (for recording notifications)              |
+
+**There is no Stream webhook secret to set.** Recording and session notifications arrive on
+`/api/stream/webhooks`, and Stream signs them with the **API secret** (`STREAM_API_SECRET`) — its
+dashboard has no separate signing-secret field. `STREAM_WEBHOOK_SECRET` is read only as an optional
+override and is deliberately not in `.env.sample`; requiring it is what caused the 2026-08-12
+outage, in which every delivery was rejected and no attendance, recording or session-end event was
+ever recorded.
 
 **Generate secrets locally:**
 

@@ -26,6 +26,7 @@ Comprehensive documentation for Stream video call recording and webhook handling
 10. [Access Control Matrix](#access-control-matrix)
 11. [Key Implementation Files](#key-implementation-files)
 12. [Configuration](#configuration)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -133,8 +134,8 @@ stateDiagram-v2
 | `RECORDING`    | Recording in progress               | N/A          | No            |
 | `PROCESSING`   | Stream processing video             | Stream S3    | No            |
 | `READY`        | Available on Stream S3              | STREAM_S3    | Yes (14 days) |
-| `TRANSFERRING` | Being transferred to Supabase       | STREAM_S3    | Yes           |
-| `AVAILABLE`    | Permanently stored in Supabase      | SUPABASE     | Yes           |
+| `TRANSFERRING` | Being transferred to our own bucket | STREAM_S3    | Yes           |
+| `AVAILABLE`    | Durably in our own bucket           | PLATFORM     | Yes           |
 | `EXPIRED`      | Stream URL expired, not transferred | STREAM_S3    | No            |
 | `FAILED`       | Recording capture failed            | N/A          | No            |
 
@@ -142,9 +143,23 @@ As of #689 (STR-2/3), a failed _transfer_ no longer lands in `FAILED`. Every tra
 
 ### Storage Type Transitions
 
+```text
+STREAM_S3 (initial) --> PLATFORM (after transfer)
 ```
-STREAM_S3 (initial) --> SUPABASE (after transfer)
-```
+
+`RecordingStorageType` is **`{ STREAM_S3, PLATFORM }`**. It was `{ STREAM_S3, SUPABASE }` until
+`prisma/sql/one-off/2026-08-30-rename-recording-storage-vendor.sql` ran `ALTER TYPE ... RENAME VALUE`,
+which also renamed the sibling plan-level enum `SUPABASE_PERMANENT` to `PERMANENT` and the columns
+`supabaseUrl` → `storageUrl` and `supabasePath` → `storagePath`. Stream can write straight into our
+bucket via `recording_external_storage`, and the bucket behind that is a deployment choice, so
+neither the enum nor the columns name a vendor any more.
+
+The rename was not cosmetic. Postgres has no `ALTER TYPE ... DROP VALUE`, so leaving `SUPABASE` in
+the live type would have made the Prisma client refuse to read **any** column typed by that enum —
+`P2023`, naming neither the enum nor the value — across `Recording.storageType` and the four
+`*Plan.recordingStoragePolicy` columns.
+
+`SUPABASE` is not a value this client can read, and neither is `SUPABASE_PERMANENT`.
 
 ---
 
@@ -157,16 +172,18 @@ model Recording {
   id                  String          @id @default(cuid())
   title               String
   recordingUrl        String          // Stream S3 URL (temporary)
-  supabaseUrl         String?         // Supabase URL (permanent)
-  supabasePath        String?         // Supabase storage path
+  storageUrl          String?         // OUR bucket — the vendor behind it is a
+                                      // deployment choice, so the name does not
+                                      // name one. Renamed from `supabaseUrl`.
+  storagePath         String?         // our storage path. Renamed from `supabasePath`.
   durationInMinutes   Int
   recordedAt          DateTime
-  streamRecordingId   String?         // Stream filename identifier
+  streamRecordingId   String?         @unique  // Stream filename identifier
   streamCallId        String?         // Associated Stream call ID
   storageType         RecordingStorageType @default(STREAM_S3)
   status              RecordingStatus @default(READY)
   streamUrlExpiresAt  DateTime?       // When Stream URL expires
-  transferredAt       DateTime?       // When transferred to Supabase
+  transferredAt       DateTime?       // When transferred to our own storage
   fileSize            BigInt?         // File size in bytes
 
   // #689 (STR-2/3) — transfer reliability tracking
@@ -182,8 +199,8 @@ model Recording {
 }
 
 enum RecordingStorageType {
-  STREAM_S3
-  SUPABASE
+  STREAM_S3 // Stream's own bucket — Stream deletes it after 14 days
+  PLATFORM  // Our bucket, whichever vendor backs it — no expiry
 }
 
 enum RecordingStatus {
@@ -344,7 +361,7 @@ sequenceDiagram
 
 Three rules govern how the two end events write `Meeting.endedAt` and `endedReason`, all from #1607. First, the last end wins: Stream reuses a call id across sessions, so a `call.session_ended` fired by the inactivity timeout after a host's pre-start device check must not be the end of record for the real call an hour later. Both handlers therefore accept an event only when its timestamp is later than the recorded `endedAt`, which also means a replayed or out-of-order older event can never move the column backwards. Second, a `call.ended` that arrives before the booked start is stamped `ended_early` rather than `call_ended`, and the slot is left `SCHEDULED`; `ended_early` is not a deliberate end, so every join gate re-lights and the same room is re-entered for the real session. Third, a `call.session_participant_joined` on a session whose recorded end is not deliberate (`session_timeout`, `ended_early`, or one of the reconciler's guesses) clears `endedAt` and `endedReason`, because a participant joining means Stream has opened a new session on that call id. That clear is compare-and-set on the end the handler read, so a real end committed concurrently is never overwritten. A deliberate end — the host closing the room after the start, or the maintenance drain — is never cleared. `heldOccurrence`'s attendance arm and the maintenance drain both read `endedAt` as "the room is closed", and these rules are what keep that reading true while a call is live.
 
-One more rule sits on the provisioning side rather than in a handler. A Stream call's own `ended_at` never clears, so after a `call.ended` the SDK renders the room as ended even though Stream opens a new session for a re-entrant participant. `provisionAppointmentMeeting` therefore treats an `ended_early` row as the one case in which an existing `Meeting` is not simply handed back: it runs the same entitlement and refusal gates as a first mint, creates a fresh call under `slot-<anchorSlotId>-r<suffix>`, and rebinds the row to it (compare-and-set on the reason, so two concurrent joins share one rebuilt room). The dashboard buckets and the session timeline follow the same reading through `meetingClosedAt`: only a deliberate end is the session's end, so a timed-out or early-ended booking stays under Upcoming with Join offered.
+One more rule sits on the provisioning side rather than in a handler. A Stream call's own `ended_at` never clears, so after a `call.ended` the SDK renders the room as ended even though Stream opens a new session for a re-entrant participant. `provisionAppointmentMeeting` therefore treats an `ended_early` row as the one case in which an existing `Meeting` is not simply handed back: it runs the same entitlement and refusal gates as a first mint, creates a fresh call under `occurrence-<occurrenceId>-r<base36 suffix>`, and rebinds the row to it (compare-and-set on the reason, so two concurrent joins share one rebuilt room). The rebuild id is built by `rebuiltRoomIdForOccurrence` in `lib/meetings/room-id.ts`, and the row's `streamCallId` remains the truth. The dashboard buckets and the session timeline follow the same reading through `meetingClosedAt`: only a deliberate end is the session's end, so a timed-out or early-ended booking stays under Upcoming with Join offered.
 
 ### Per-Attendee Attendance Capture
 
@@ -410,22 +427,63 @@ interface StreamRecordingFailedEvent {
 
 ### Webhook Security
 
-Webhooks are verified using HMAC SHA256 signature:
+Stream signs webhooks with the **API secret** (`STREAM_API_SECRET`). There is **no separate
+"Signing Secret" field in the Stream dashboard** — a section that tells you to copy one into
+`STREAM_WEBHOOK_SECRET` describes a control that does not exist, and following it is what caused
+the 2026-08-12 total webhook outage.
+
+Verification uses the SDK's own helper, not a hand-rolled HMAC
+(`app/api/stream/webhooks/route.ts:127-145`):
 
 ```typescript
-// Signature verification
-const signature = req.headers.get("x-signature");
-const expectedSignature = crypto
-  .createHmac("sha256", STREAM_WEBHOOK_SECRET)
-  .update(body)
-  .digest("hex");
+import { verifySignature } from "stream-chat";
 
-// Constant-time comparison (prevents timing attacks)
-return crypto.timingSafeEqual(
-  Buffer.from(signature),
-  Buffer.from(expectedSignature),
-);
+function verifyStreamSignature(
+  req: NextRequest,
+  body: string,
+  secret: string,
+): boolean {
+  const signature = req.headers.get("x-signature");
+  if (!signature) {
+    streamLogger.warn("No x-signature header found in Stream webhook request");
+    return false;
+  }
+  try {
+    return verifySignature(body, signature, secret);
+  } catch (error) {
+    streamLogger.error("Error verifying Stream webhook signature", error);
+    return false;
+  }
+}
 ```
+
+`body` is the **uncompressed** payload, which is what Stream signs. `readSignedBody`
+(`route.ts:72-95`) reads the raw bytes under the shared body cap, sniffs the gzip magic bytes
+(`0x1f 0x8b`) rather than trusting `Content-Encoding`, and inflates when needed — a signature taken
+over compressed bytes can never match, and Stream treats our 401 as final.
+
+Do **not** substitute `verifyAndParseWebhook` from `stream-chat`. It verifies and parses in one
+call, but it returns only the parsed `Event` and not the uncompressed bytes. The dedup key is
+`sha256` **of those bytes** (see [Deduplication](#deduplication)), and re-deriving it by
+re-serialising the parsed object is unsafe: `JSON.stringify` is not byte-stable across key order or
+number formatting, so two retries of one delivery could hash differently and dispatch twice. The
+SDK verifies; `readSignedBody` keeps the bytes; the two responsibilities stay separate. The
+hand-rolled version is also gone because it compared the header against the expected hex without
+validating the input was hex, so a same-length non-hex header reached `timingSafeEqual` on a
+comparison that could never match but did not say why.
+
+`STREAM_WEBHOOK_SECRET` remains readable as an **optional override** so the value could be rotated
+independently if Stream ever ships a distinct secret, but the API secret is the correct default
+rather than a fatal gap (`route.ts:157-159`):
+
+```typescript
+function getWebhookSecret(): string | undefined {
+  return process.env.STREAM_WEBHOOK_SECRET || process.env.STREAM_API_SECRET;
+}
+```
+
+The variable is deliberately **not** in `.env.sample`: it is not required, and requiring a
+distinct value is what made the route 500 on every delivery while the field existed.
 
 ---
 
@@ -462,13 +520,72 @@ flowchart TD
     U --> S
 ```
 
-### Idempotency Handling
+### Idempotency and Deduplication
 
-Webhooks may be delivered multiple times. The handler uses multiple idempotency strategies:
+Webhooks may be delivered multiple times — Stream retries on 5xx inside a 15-second total budget,
+so a slow handler sees real duplicates. The dedup key is derived **only from signature-covered
+material**.
 
-1. **Event ID tracking** - Log webhook events with unique IDs
-2. **Recording existence check** - Skip if recording already exists for filename
-3. **Safe status updates** - Status updates are idempotent
+#### The key is `sha256(body)`, and that is a deliberate deviation
+
+Stream's own documentation tells integrators to _"deduplicate on the ID rather than on event
+contents"_, i.e. to use the `X-Webhook-ID` header. **This implementation keys on `sha256(body)`
+instead**, and the reasoning is load-bearing rather than incidental
+(`app/api/stream/webhooks/route.ts:254-274`):
+
+```typescript
+const bodyHash = crypto.createHash("sha256").update(body).digest("hex");
+const eventId = `stream_${baseEvent.type}_${bodyHash}`;
+```
+
+The reason is that **Stream signs the body and NOT the header.** `X-Webhook-ID` is convenient
+operationally, but it is not covered by the signature, so one captured `(body, signature)` pair can
+be replayed under N invented header values and mint N distinct dedup keys — N dispatches from a
+single verified delivery.
+
+Razorpay reaches the same conclusion for the same underlying reason — it also refuses
+`x-razorpay-event-id` because the HMAC covers the body only — but it prefers a business-entity id
+from the payload (a refund, dispute, payout, payment or order id) and falls back to a truncated
+body hash (`app/api/webhooks/razorpay/route.ts:169-201`).
+
+Keying on the body hash keeps both properties the header was wanted for:
+
+- **Retries of one delivery** redeliver byte-identical payloads, so they collapse to one key.
+- **Legitimately different events** differ somewhere in the body (participant ids, message ids,
+  timestamps), so they are never collapsed. This also fixes an older hand-rolled key's bug, where
+  two flags in the same second deduped to one and `participant joined/left` dropped the user id
+  entirely.
+
+The deviation is **pinned by a test**, so a future editor "correcting" it back to the vendor's
+guidance has to delete a test that explains why:
+`__tests__/stream/webhook-dedup-and-replay.test.ts` — see _"derives the key from the body, not from
+a header"_, _"collapses a byte-identical replay under N DIFFERENT webhook ids"_ and _"does not
+collapse two genuinely different events"_.
+
+#### The dedup gate, and the replay window
+
+Two further behaviours are load-bearing and were previously untested:
+
+- **The gate.** `recordStreamEventReceipt` returns `{ isNew, claim }`; a delivery with
+  `isNew === false` is answered `200 { duplicate: true }` and **not** re-dispatched
+  (`route.ts:380-391`). Re-dispatch is not theoretical — it re-upserts `MeetingAttendance`,
+  re-creates `Recording` rows against `findFirst`-then-`create` races, and re-stages notification
+  outbox rows.
+- **The replay window.** A correctly-signed body whose `created_at` is outside the accepted window
+  is _recorded and then refused_ (`route.ts:286-321`, `classifyStreamDeliveryAge`), with a
+  `permanent:` reason so the stuck-event sweeper treats it as terminal and never re-drives it. An
+  unparseable `created_at` is a refusal, not a licence to skip the check.
+
+Note that the dedup key is a **collapse mechanism, not a replay defence** — hence the separate age
+check.
+
+#### Handler-level idempotency
+
+Beneath the transport-level gate, the handlers are idempotent on their own terms:
+
+1. **Event ID tracking** — log webhook events with unique IDs
+2. **Recording existence check** — skip if recording already exists for filename
+3. **Safe status updates** — status updates are idempotent
 
 ```typescript
 // Check if recording already exists (idempotency)
@@ -520,7 +637,7 @@ sequenceDiagram
             Supa-->>Transfer: Public URL
 
             Transfer->>DB: Update recording
-            Note over DB: status = AVAILABLE<br/>storageType = SUPABASE<br/>supabaseUrl = URL
+            Note over DB: status = AVAILABLE<br/>storageType = PLATFORM<br/>storageUrl = URL
             Transfer-->>Cron: Success
         end
     end
@@ -680,7 +797,7 @@ A successful response always carries an `access` object so a client can tell "yo
     "durationInMinutes": 45,
     "recordedAt": "2025-01-15T10:00:00Z",
     "status": "AVAILABLE",
-    "storageType": "SUPABASE"
+    "storageType": "PLATFORM"
   },
   "access": { "level": "FULL" }
 }
@@ -699,7 +816,7 @@ A successful response always carries an `access` object so a client can tell "yo
     "durationInMinutes": 45,
     "recordedAt": "2025-01-15T10:00:00Z",
     "status": "AVAILABLE",
-    "storageType": "SUPABASE",
+    "storageType": "PLATFORM",
     "streamUrlExpiresAt": null
   },
   "access": {
@@ -889,7 +1006,7 @@ Every read that is granted by the operator branch writes a trail before the resp
 
 `Recording.recordingUrl` holds Stream's pre-signed S3 link. It is valid for fourteen days and carries its own credentials, so anybody who ends up holding the string can fetch the video with no session and no membership — a forwarded email, a pasted chat message, an exported CSV, or a third-party tool consuming the API all suffice. `GET /api/organizations/[orgId]/stream/calls` used to return that column verbatim to any org MANAGER+ when called with `?withRecordings=1`.
 
-That export now uses an explicit select allowlist that names no field which reaches the media — not `recordingUrl`, not `supabaseUrl`, not `supabasePath`, and not the thumbnail, preview clip or Stream identifiers. What remains is the retention picture the compliance pull actually exists for: whether a recording exists, whether it survived the transfer to permanent storage, how long it runs, and when its Stream link lapses.
+That export now uses an explicit select allowlist that names no field which reaches the media — not `recordingUrl`, not `storageUrl`, not `storagePath`, and not the thumbnail, preview clip or Stream identifiers. What remains is the retention picture the compliance pull actually exists for: whether a recording exists, whether it survived the transfer to permanent storage, how long it runs, and when its Stream link lapses.
 
 The route deliberately offers no playback arm at all, not even a short-lived signed one. [ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md) is the governing rule — an organization may see that a session happened, not what happened in it — and it considered and rejected exactly that design, on the grounds that an audit row does not change what a member has to assume about who can watch their coaching session. The equivalent allowlist already existed in `lib/api/scope/list-recordings.ts` for the org recordings page; this route was the arm the July 2026 audit missed.
 
@@ -977,10 +1094,14 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 NEXT_PUBLIC_STREAM_API_KEY=your_api_key
 STREAM_API_SECRET=your_api_secret
 
-# Webhook signature verification (required for webhooks)
-STREAM_WEBHOOK_SECRET=your_webhook_secret
+# Webhook signature verification
+# NOT required. Stream signs webhooks with STREAM_API_SECRET and its dashboard has
+# no separate signing-secret field. This is an optional override, read only as a
+# fallback (STREAM_WEBHOOK_SECRET || STREAM_API_SECRET), and is deliberately absent
+# from .env.sample. See "Webhook Security" above.
+# STREAM_WEBHOOK_SECRET=
 
-# Supabase (required for transfer)
+# Platform storage (required for transfer)
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
@@ -992,7 +1113,9 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 2. **Configure Webhooks** - Dashboard > Webhooks > Add Endpoint
    - URL: `https://your-domain.com/api/stream/webhooks`
    - Events: `call.recording_*`, `call.session_ended`, `call.ended`
-   - Signing Secret: Copy to `STREAM_WEBHOOK_SECRET`
+
+There is **no signing secret to copy.** The API secret from the dashboard's API Keys page is what
+signs the deliveries, and `STREAM_API_SECRET` is what verifies them.
 
 ### Supabase Storage Setup
 
@@ -1022,12 +1145,12 @@ bare `npx tsx jobs/...` process under GitHub Actions, takes the fleet cron lock
 so that a manual dispatch cannot race the schedule, and writes a
 `SystemJobExecution` row that the staff Jobs page reads.
 
-| Workflow                            | Schedule (UTC)         | What it does                                                                                                                                                                                                                                                                 |
-| ----------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `transfer-expiring-recordings.yml`  | Every six hours at :58 | Copies every `SUPABASE_PERMANENT` recording out of Stream's S3 before the fourteen-day URL lapses, warns consultants whose `STREAM_ONLY` recordings are about to expire, and pages when a permanent recording is within seventy-two hours of expiry and still untransferred. |
-| `mark-expired-recordings.yml`       | Daily at 03:20         | Flips `STREAM_S3` recordings whose `streamUrlExpiresAt` has passed to `EXPIRED`, so the dashboard stops offering a URL that no longer resolves.                                                                                                                              |
-| `cleanup-old-stream-recordings.yml` | Daily at 03:00         | Deletes the Supabase object and tombstones the row for every recording past its organization's `streamRecordingRetentionDays`. This is the erasure half of the retention promise, so a failure here is a compliance problem rather than an untidy database.                  |
-| `reconcile-orphaned-recordings.yml` | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                                                                                                                         |
+| Workflow                            | Schedule (UTC)         | What it does                                                                                                                                                                                                                                                        |
+| ----------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transfer-expiring-recordings.yml`  | Every six hours at :58 | Copies every `PERMANENT` recording out of Stream's S3 before the fourteen-day URL lapses, warns consultants whose `STREAM_ONLY` recordings are about to expire, and pages when a permanent recording is within seventy-two hours of expiry and still untransferred. |
+| `mark-expired-recordings.yml`       | Daily at 03:20         | Flips `STREAM_S3` recordings whose `streamUrlExpiresAt` has passed to `EXPIRED`, so the dashboard stops offering a URL that no longer resolves.                                                                                                                     |
+| `cleanup-old-stream-recordings.yml` | Daily at 03:00         | Deletes the Supabase object and tombstones the row for every recording past its organization's `streamRecordingRetentionDays`. This is the erasure half of the retention promise, so a failure here is a compliance problem rather than an untidy database.         |
+| `reconcile-orphaned-recordings.yml` | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                                                                                                                |
 
 ### Recovering a recording whose webhook never arrived
 
@@ -1111,9 +1234,14 @@ Supabase client module is not given the `NEXT_PUBLIC_SUPABASE_URL` and
 #### Webhook not receiving events
 
 1. Verify webhook URL is accessible from internet
-2. Check `STREAM_WEBHOOK_SECRET` matches dashboard
+2. Check that `STREAM_API_SECRET` is set — and that no stray `STREAM_WEBHOOK_SECRET` is overriding
+   it with a value Stream never signed with. There is no dashboard signing secret to compare
+   against; see "Webhook Security".
 3. Verify events are selected in Stream dashboard
-4. Check server logs for signature validation errors
+4. Check server logs for signature validation errors. A signature failure is **not** silent: it
+   raises a throttled Sentry event tagged `stream.signature_invalid`, carrying a `hasOverride` flag
+   that distinguishes "the override is set to the wrong value" from "the API secret is wrong". A
+   401 is final to Stream — the event is never redelivered.
 
 #### Recording not appearing after call
 

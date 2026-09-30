@@ -15,8 +15,9 @@ and it is also the place to record what these documents are and are not.
 This subsystem has repeatedly looked correct in code and been broken in
 production, and the documents here have drifted from the implementation more
 than once. The 2026-08-12 audit recorded in #1134 found a webhook pipeline that
-had never once run, because the signing secret was simply not set in Netlify —
-nothing in any file here would have revealed that.
+had never once run, because the code demanded a `STREAM_WEBHOOK_SECRET` that
+Stream's dashboard does not have a field for — the deliveries were verified with
+the API secret all along. Nothing in any file here would have revealed that.
 
 The two most reliable documents are `03-provider-authentication.md` and
 `troubleshooting.md`. Where a document and the code disagree, the code is
@@ -77,9 +78,17 @@ minted without one plus a single ban equals a permanent lockout.
 
 **Webhooks must be acknowledged first.** Stream retries within a fifteen-second
 total budget and then drops the event permanently. Verify the signature,
-persist the receipt, acknowledge, and do the work afterwards. Use the
-`X-Webhook-ID` header for idempotency, because a key built from `created_at`
-collides.
+persist the receipt, acknowledge, and do the work afterwards.
+
+**Verify with the API secret, and dedup on the body hash.** Stream signs
+webhooks with `STREAM_API_SECRET`; there is no separate signing secret in their
+dashboard. Deduplicate on `sha256(body)`, **not** on the `X-Webhook-ID` header,
+which is _not_ covered by the signature — one captured `(body, signature)` pair
+replayed under N invented header values would mint N dispatches from a single
+verified delivery. This is a deliberate deviation from Stream's own guidance
+("deduplicate on the ID rather than on event contents"); the reasoning is in
+`app/api/stream/webhooks/route.ts:254-274` and is pinned by
+`__tests__/stream/webhook-dedup-and-replay.test.ts`.
 
 **Never await a Stream call inside a database transaction**, and never leave
 channel provisioning as a floating promise. The function can freeze before it

@@ -14,12 +14,28 @@ An opt-in, consultant-curated marketplace for **webinar/class replays only**:
 
 ## Non-negotiable invariants
 
-1. **SUPABASE-only listings.** A published recording must have
-   `status=AVAILABLE && storageType=SUPABASE`. Stream S3 URLs die in ≤14 days
-   and are non-revocable — a STREAM_ONLY replay must never be sold. Enforced
+1. **Durably-ours listings.** A published recording must satisfy
+   `status=AVAILABLE && storageType=PLATFORM`. Stream S3 URLs die in ≤14 days
+   and are non-revocable — a `STREAM_S3` replay must never be sold. Enforced
    by `publicRecordingWhere()` (`lib/data/recordings-explore.ts`) AND again in
    the publish route (defense in depth; the where-clause alone would let an
    already-listed recording lapse silently).
+
+   **The enum value is `PLATFORM`, not `SUPABASE`.** `RecordingStorageType` is
+   `{ STREAM_S3, PLATFORM }`; `SUPABASE` was renamed by
+   `prisma/sql/one-off/2026-08-30-rename-recording-storage-vendor.sql`, which
+   also renamed `Recording.supabaseUrl` → `storageUrl` and
+   `Recording.supabasePath` → `storagePath`. Stream can write straight into our
+   bucket via `recording_external_storage` and the vendor behind that bucket is
+   a deployment choice, so neither the enum nor the columns name one. `SUPABASE`
+   is not a value the Prisma client can read.
+
+   The predicate itself lives in one place —
+   `isDurablyOurs()` and `durablyOursWhere()` in
+   `lib/stream/recording-storage.ts` — because three surfaces (publish,
+   purchase, and this listing query) each used to carry their own copy of the
+   pair, which spells the vendor into the business rule and drifts three ways.
+
 2. **Webinar/class plans only.** Consultation/subscription recordings cannot
    be listed. 1:1 sessions stay private by design; the plan schemas never
    exposed `recordingEnabled`, so the DB defaults hold everywhere.
@@ -52,9 +68,9 @@ plumbing through the existing refund family is future work.
 
 ## Storage layout
 
-| Asset | Bucket | Visibility |
-|---|---|---|
-| Full recording | `recordings` | private, signed 1h |
+| Asset                    | Bucket                | Visibility                  |
+| ------------------------ | --------------------- | --------------------------- |
+| Full recording           | `recordings`          | private, signed 1h          |
 | Preview clip + thumbnail | `recordings-previews` | **public**, immutable cache |
 
 Preview assets are marketing material for ISR-cached anonymous explore cards;
@@ -101,7 +117,7 @@ The order for any PR that adds columns AND prerenders a page that reads them:
    its schema is a strict superset — a push from a branch reconciles the DB to
    THAT branch's schema, and anything missing from it is dropped.
 2. Verify the delta is additive: `npx prisma migrate diff
-   --from-config-datasource --to-schema prisma/schema.prisma --script` and
+--from-config-datasource --to-schema prisma/schema.prisma --script` and
    confirm there is no `DROP TABLE`, `DROP COLUMN` or `SET NOT NULL`.
 3. `npx prisma db push` from the branch, then `npm run db:sidecars`.
 4. Re-run CI and the deploy preview, then merge.
@@ -112,7 +128,6 @@ that warning is a false positive — every existing row gets NULL, and Postgres
 unique indexes permit unlimited NULLs. Confirm the column does not yet exist,
 then `--accept-data-loss` is safe. Confirm first; do not reach for the flag by
 reflex.
-
 
 ⚠️ **Schema drift hazard (hit twice on #1244):** until this branch squashes
 into `dev`, a `prisma db push` run from any checkout whose schema.prisma

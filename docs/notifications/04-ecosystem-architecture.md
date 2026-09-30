@@ -238,8 +238,8 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 | Tier        | Workflows                                                                                                                                                                                                                                                                                    | Status                                                                 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Tier 1 (16) | appointment-booked, appointment-cancelled, appointment-reminder, payment-success, payment-failed, new-booking-request, subscription-started, subscription-cancelled, trial-session-\* (4), support-ticket-created, support-ticket-response, new-review-received, verification-status-changed | Template specs ready in `docs/notifications/03-novu-template-specs.md` |
-| Tier 2 (12) | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, refund-requested, payout-processed, payout-failed, maintenance-scheduled, collaborator-invited/accepted/removed, new-consultant-application                                                            | Triggers wired, Dashboard config deferred                              |
-| Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                            | Functions exist, wiring deferred |
+| Tier 2 (12) | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, refund-requested, payout-processed, payout-failed, maintenance-scheduled, collaborator-invited/accepted/removed, new-consultant-application                                               | Triggers wired, Dashboard config deferred                              |
+| Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                       | Functions exist, wiring deferred                                       |
 
 **Trigger wiring (which business logic calls which notification):**
 
@@ -517,7 +517,11 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 | `NEXT_PUBLIC_APP_URL`                | Yes      | Email link URLs, unsubscribe URLs                                                    |
 | `CRON_SECRET`                        | Yes      | Auth for cron job endpoints                                                          |
 | `WAITLIST_HMAC_SECRET`               | Yes      | Waitlist confirm/unsubscribe token signing; there is no fallback to `RESEND_API_KEY` |
-| `STREAM_WEBHOOK_SECRET`              | Yes      | Stream webhook signature verification                                                |
+| `STREAM_API_SECRET`                  | Yes      | Also verifies Stream webhook signatures — Stream signs with the API secret           |
+
+Stream has **no separate webhook signing secret**; its dashboard has no such field.
+`STREAM_WEBHOOK_SECRET` is read only as an optional override of `STREAM_API_SECRET` and is
+deliberately not in `.env.sample`.
 
 ---
 

@@ -213,36 +213,42 @@ sequenceDiagram
 
 ### 2. Meeting Join Flow
 
+The client **creates nothing**. `useGetCallById` used to call `client.queryCalls()` and, on a
+miss, `client.call("default", callId).getOrCreate()` — which minted a billable call and made the
+joiner its `created_by` _before_ the access check on the page had run, so any signed-in user who
+opened `/meetings/<anything>` created a room and was then shown "Access Denied". Room creation is
+server-side and behind an entitlement gate.
+
 ```mermaid
 sequenceDiagram
     participant User
     participant MeetingPage
     participant Hook
-    participant VideoClient
+    participant JoinRoute
     participant Database
     participant StreamCloud
 
-    User->>MeetingPage: Navigate to /meetings/{slotId}
+    User->>MeetingPage: Navigate to /meetings/{callId}
     MeetingPage->>Hook: useGetCallById(callId)
+    Hook->>JoinRoute: POST /api/meetings/[id]/join
 
-    Hook->>VideoClient: queryCalls({id: callId})
-    VideoClient->>StreamCloud: Query for call
+    JoinRoute->>Database: resolveMeetingAccess(callId)
+    Database-->>JoinRoute: occurrence / entitlement / ban
 
-    alt Call exists
-        StreamCloud-->>VideoClient: Return call
-    else Call not found
-        VideoClient->>StreamCloud: Create call
-        StreamCloud-->>VideoClient: New call created
-        Hook->>Database: Save Meeting
+    alt Access refused
+        JoinRoute-->>Hook: 403 — no Stream object created
+    else First join
+        JoinRoute->>Database: claim the occurrence's one Meeting row
+        Note over JoinRoute: id is occurrence-<occurrenceId>,<br/>or -r<suffix> after a #1607 rebuild
+        JoinRoute->>StreamCloud: getOrCreate(call, default)
+        JoinRoute->>StreamCloud: updateCallMembers(… call_member …)
+        JoinRoute-->>Hook: { call, token }
+    else Already provisioned
+        JoinRoute->>StreamCloud: updateCallMembers(… call_member …)
+        JoinRoute-->>Hook: { call, token }
     end
 
-    VideoClient-->>Hook: Call object
-    Hook-->>MeetingPage: Call ready
-    MeetingPage-->>User: Show MeetingSetup
-
-    User->>MeetingPage: Join meeting
-    MeetingPage->>VideoClient: call.join()
-    VideoClient->>StreamCloud: Join call
+    Hook->>StreamCloud: call.join()
     StreamCloud-->>User: In meeting
 ```
 
@@ -320,15 +326,32 @@ await chatClient.upsertUser({
 
 ```prisma
 model Meeting {
-  id           String   @id @default(cuid())
-  streamCallId String   @unique  // Maps to Stream Video call ID
-  platform     Platform @default(STREAM)
-  passcode     String?
-  hostKeys     String[]
-  recordings   Recording[]
-  appointmentOccurrence AppointmentOccurrence @relation(...)
+  id                      String   @id @default(cuid())
+  streamCallId            String   @unique  // "occurrence-<occurrenceId>", or
+                                                 // "occurrence-<occurrenceId>-r<suffix>"
+                                                 // after a #1607 pre-start-end rebuild
+  platform                Platform @default(STREAM)
+  passcode                String?
+  hostKeys                String[]
+  recordings              Recording[]
+  attendances             MeetingAttendance[]
+  recordingConsents       RecordingConsent[]
+  presences               MeetingPresence[]
+  occurrence              AppointmentOccurrence @relation(
+                            fields: [appointmentOccurrenceId], references: [id],
+                            onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId String   @unique
+  organizationId          String?  // denormalized tenant key; null for personal bookings
+  endedAt                 DateTime?
+  endedReason             String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 ```
+
+The scheduling link is `appointmentOccurrenceId String @unique` — there is no slot-of-appointment
+field. `appointmentOccurrenceId` is the **durable** identifier; the call id is derived from it
+(`lib/meetings/room-id.ts`) and can change under an open tab when a pre-start end forces a rebuild.
 
 **Appointment Linking:**
 
