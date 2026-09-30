@@ -52,7 +52,13 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+// Only the transport is faked. `isDefinitiveGatewayRejection` and
+// `RazorpayXHttpError` stay REAL: the org rail's error classification is an
+// HTTP-status comparison, so a mock that returned a stub would make the
+// "definitive 4xx releases earnings" contract untestable — and would silently
+// pass if the classifier regressed back to sniffing prose.
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
+  ...jest.requireActual("../../lib/payments/payouts/razorpay-payouts"),
   __esModule: true,
   getRazorpayPayoutsService: jest.fn(),
 }));
@@ -64,7 +70,10 @@ jest.mock("../../lib/novu/org-workflows", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { getRazorpayPayoutsService } from "@/lib/payments/payouts/razorpay-payouts";
+import {
+  getRazorpayPayoutsService,
+  RazorpayXHttpError,
+} from "@/lib/payments/payouts/razorpay-payouts";
 import {
   processOrgPayout,
   processPendingOrgPayouts,
@@ -215,14 +224,25 @@ describe("processOrgPayout — live submission gating", () => {
     }
   });
 
-  it("ENABLE_LIVE_PAYOUTS=true + 4xx (validation) → status=FAILED, failureReason+failedAt populated, earnings released to READY", async () => {
+  it("ENABLE_LIVE_PAYOUTS=true + definitive 4xx (validation) → status=FAILED, failureReason+failedAt populated, earnings released to READY", async () => {
     process.env.ENABLE_LIVE_PAYOUTS = "true";
     setupHappyClaim();
     setupVerifiedAccount();
+    // A REAL 400. The pre-#1846 code matched the substring "invalid" in the
+    // message, so a bare `new Error("...Invalid fund_account_id")` used to
+    // pass here — and that is precisely the defect: any 5xx or throttle whose
+    // prose contains "invalid" took the same branch and released the org's
+    // earnings, which the next batch then re-paid under a NEW idempotency
+    // key. Classification is now by `httpStatus`, so the test states the
+    // status the gateway would actually have returned.
     const createPayout = jest
       .fn()
       .mockRejectedValue(
-        new Error("RazorpayX API error: Invalid fund_account_id"),
+        new RazorpayXHttpError(
+          "RazorpayX API error: Invalid fund_account_id",
+          "BAD_REQUEST_ERROR",
+          400,
+        ),
       );
     setupGatewayService({ createPayout });
 
@@ -295,6 +315,66 @@ describe("processOrgPayout — live submission gating", () => {
       }),
     );
   });
+
+  // #1846 N1 — the regression guard. Before the fix this row was released
+  // because the message happened to contain "invalid".
+  it.each([
+    ["a 5xx whose description contains the word invalid", 502],
+    ["a 429 throttle", 429],
+    ["a 409 conflict", 409],
+    ["a 408 timeout", 408],
+  ])(
+    "ENABLE_LIVE_PAYOUTS=true + %s → earnings are NOT released (no double payment)",
+    async (_label, httpStatus) => {
+      process.env.ENABLE_LIVE_PAYOUTS = "true";
+      setupHappyClaim();
+      setupVerifiedAccount();
+      const createPayout = jest.fn().mockRejectedValue(
+        new RazorpayXHttpError(
+          "RazorpayX API error (HTTP 502): invalid_request",
+          "GATEWAY_ERROR",
+          httpStatus,
+        ),
+      );
+      setupGatewayService({ createPayout });
+
+      mockedPrisma.organizationPayout.updateMany.mockResolvedValue({
+        count: 1,
+      }); // the PENDING → PROCESSING claim still wins
+      mockedPrisma.organizationPayout.findUniqueOrThrow
+        .mockResolvedValueOnce({
+          id: PAYOUT_ID,
+          organizationId: ORG_ID,
+          amountPaise: 250000,
+          currency: "INR",
+          paymentGateway: "RAZORPAY",
+          payoutReference: null,
+        })
+        .mockResolvedValueOnce({
+          id: PAYOUT_ID,
+          organizationId: ORG_ID,
+          amountPaise: 250000,
+          currency: "INR",
+          paymentGateway: "RAZORPAY",
+          payoutReference: null,
+        });
+      mockedPrisma.organizationEarnings.updateMany.mockClear();
+
+      // The transient path deliberately re-throws so the cron owns the retry.
+      await expect(processOrgPayout(PAYOUT_ID)).rejects.toThrow();
+
+      // The load-bearing assertion: a submission whose outcome is unknown
+      // must leave the earnings BATCHED under the SAME payout row, so the
+      // cron re-submits under the SAME idempotency key. Releasing them here
+      // is what let RazorpayX pay the org twice.
+      expect(mockedPrisma.organizationEarnings.updateMany).not.toHaveBeenCalled();
+      const payoutRolls =
+        mockedPrisma.organizationPayout.updateMany.mock.calls.filter(
+          ([arg]) => arg.data?.status === "FAILED",
+        );
+      expect(payoutRolls).toHaveLength(0);
+    },
+  );
 
   it("idempotency — second processOrgPayout against PROCESSING row is a no-op AND does not call gateway", async () => {
     process.env.ENABLE_LIVE_PAYOUTS = "true";
