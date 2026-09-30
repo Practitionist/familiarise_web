@@ -16,6 +16,7 @@ import {
 } from "@/lib/errors/action-result";
 import { Refusal } from "@/lib/errors/refusal";
 import { STREAM_TOKEN_TTL_SECONDS } from "@/lib/stream/token-ttl";
+import { noteStreamTokenMint } from "@/lib/stream/usage";
 import * as Sentry from "@sentry/nextjs";
 
 // Input validation
@@ -114,6 +115,20 @@ export async function chatTokenProvider(
     const token = generateChatToken(validatedUserId, STREAM_TOKEN_TTL_SECONDS);
 
     streamLogger.debug("Generated chat token", { userId: validatedUserId });
+
+    // #E5 — count the mint against Stream's trailing-30-day MAU window. This is
+    // the ONLY place in the repository that can measure MAU, because MAU is
+    // defined by who CONNECTED to Stream and no Postgres table records that;
+    // a `Session` row proves a signed-in user, which is a superset.
+    //
+    // Chat only, not video: both actions mint for the same user in the same
+    // session, so counting both would inflate MAU twofold for no information.
+    // And it is AWAITED rather than floated, on purpose — the meter is one Redis
+    // `SET NX` for a user already inside the window, and it is cheap enough to
+    // be worth knowing whether it landed. Letting it float instead would trade
+    // one Upstash command for a promise this module already has the plumbing to
+    // settle.
+    await noteStreamTokenMint(validatedUserId);
 
     return okResult(token);
   } catch (error) {

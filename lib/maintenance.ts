@@ -13,6 +13,7 @@ import { MaintenancePhase } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import redis, { withCircuitBreaker } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -20,6 +21,22 @@ export interface MaintenanceState {
   estimatedEnd: string | null;
   bypassSecret: string | null;
   betterstackIncidentId: string | null;
+  /**
+   * True when the phase below is a GUESS, because Redis could not be read.
+   *
+   * The read fails open to OFF, which is the right behaviour for the request
+   * path — a maintenance window must not turn a Redis blip into a platform-wide
+   * 503. It is the wrong behaviour for anyone asking what the platform is
+   * doing: OFF is a claim ("we are serving normally") and during an outage it
+   * is a fabricated one. `/api/health` reported `phase: "OFF"` and looked
+   * perfectly healthy while the read that produced it was throwing, and
+   * `console.*` is stripped from Netlify's function log (#1122), so the
+   * catch-all below logged to nowhere at all.
+   *
+   * `unreadable` is the honest bit. It does not change enforcement; it exists so
+   * a monitor can distinguish "no window in force" from "we cannot tell".
+   */
+  unreadable: boolean;
 }
 
 const OFF_STATE: MaintenanceState = {
@@ -28,11 +45,12 @@ const OFF_STATE: MaintenanceState = {
   estimatedEnd: null,
   bypassSecret: null,
   betterstackIncidentId: null,
+  unreadable: false,
 };
 
 /**
  * Read current maintenance state from Redis.
- * Fail-open: returns OFF if Redis is unreachable.
+ * Fail-open: returns OFF if Redis is unreachable, and says so via `unreadable`.
  */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   return withCircuitBreaker(
@@ -60,10 +78,40 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
         estimatedEnd: config.estimatedEnd ?? null,
         bypassSecret: config.bypassSecret ?? null,
         betterstackIncidentId: config.betterstackIncidentId ?? null,
+        unreadable: false,
       };
     },
-    // Fail-open: site stays up if Redis is down
-    () => OFF_STATE,
+    // Fail-open: site stays up if Redis is down. The failure is REPORTED, not
+    // just survived — see `unreadable` above. Throttled through the shared
+    // helper because /api/health, the maintenance cron and the reconcile door
+    // all read this, and a Redis outage is total rather than per-caller: one
+    // event per key per minute is the whole information content.
+    () => {
+      reportMaintenanceReadUnreadable();
+      return { ...OFF_STATE, unreadable: true };
+    },
+  );
+}
+
+const MAINTENANCE_UNREADABLE_KEY = "maintenance:read-unreadable";
+
+function reportMaintenanceReadUnreadable(): void {
+  captureThrottled(
+    MAINTENANCE_UNREADABLE_KEY,
+    new Error(
+      "Maintenance phase read failed — reporting phase OFF. Enforcement fails open (correct); " +
+        "the OFF answer is a guess, not a reading, and the Netlify function log strips console.*.",
+    ),
+    {
+      subsystem: "maintenance",
+      op: "getMaintenanceState",
+      // A warning, not an error: nothing is broken for users (that is the point
+      // of failing open), and paging for it would page for every Redis blip.
+      // But it MUST be findable — an unreported unreadable read is how a real
+      // OFFLINE window goes unenforced without anyone knowing.
+      level: "warning",
+      tags: { reason: "maintenance.read_unreadable" },
+    },
   );
 }
 

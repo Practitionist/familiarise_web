@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { measureEventLoopStall, probeWithStallRetry } from "@/lib/health/probe";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getStreamStatus } from "@/lib/stream/health";
+import { getStreamCircuitStatus } from "@/lib/stream-client";
+import { readStreamUsage } from "@/lib/stream/usage";
 import prisma from "@/lib/prisma";
 import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
@@ -107,6 +109,33 @@ function redisOk(): RedisStatus {
   return isRedisCircuitOpen()
     ? { status: "degraded", reason: "CIRCUIT_OPEN" }
     : { status: "ok" };
+}
+
+// #E3 — a Stream outage was reportable and nothing reported it.
+//
+// `getStreamCircuitStatus()` has existed since #1280 2.1 with a docblock saying
+// it is "exposed so /api/health can report Stream's breaker rather than
+// Redis's", and it was called from nowhere. The `stream` block below therefore
+// described reachability but never the breaker, and a Stream outage was visible
+// only as `reachable: false` on a probe that could itself hang for thirty
+// seconds during the first minutes of the outage (the reason `lib/stream/
+// health.ts` grew its own deadline).
+//
+// It is read HERE, separately from `getStreamStatus`, on purpose: `getStreamStatus`
+// is mocked out in tests and is a whole round trip, whereas the breaker is a
+// synchronous in-memory read that costs nothing and cannot fail. If the two ever
+// disagree, the more specific one (the `stream` block, read inside the probe)
+// wins for `breaker.state` and this is the cross-check.
+//
+// The public health route must not attribute a Redis problem to Stream, so this
+// is tagged and named for Stream and nothing else.
+function streamBreakerStatus() {
+  const s = getStreamCircuitStatus();
+  return {
+    state: s.state,
+    failures: s.failures,
+    lastFailure: s.lastFailure ? new Date(s.lastFailure).toISOString() : null,
+  };
 }
 
 // #1822 Q-7 — the heartbeat GET doubles as the Redis probe, so a quota
@@ -224,20 +253,29 @@ export async function GET(request: Request) {
     retried,
   } = await probeDatabase();
 
-  const [maintenanceState, stream, betterstack, heartbeat] = await Promise.all([
-    getMaintenanceState(),
-    // #473 — the last unmet acceptance criterion on that issue. The breaker
-    // existed but nothing surfaced its state, so a Stream outage was invisible
-    // until users reported it.
-    getStreamStatus(),
-    includeBetterStack
-      ? checkBetterStack()
-      : Promise.resolve({
-          configured: Boolean(process.env.BETTERSTACK_API_KEY),
-          reachable: null,
-        }),
-    checkCronHeartbeat(),
-  ]);
+  const [maintenanceState, stream, betterstack, heartbeat, usage] =
+    await Promise.all([
+      getMaintenanceState(),
+      // #473 — the last unmet acceptance criterion on that issue. The breaker
+      // existed but nothing surfaced its state, so a Stream outage was invisible
+      // until users reported it. #E3 extended it: the probe now also reports the
+      // breaker's own state and whether the webhook secret can verify anything.
+      getStreamStatus(),
+      includeBetterStack
+        ? checkBetterStack()
+        : Promise.resolve({
+            configured: Boolean(process.env.BETTERSTACK_API_KEY),
+            reachable: null,
+          }),
+      checkCronHeartbeat(),
+      // #E5 — Stream quota. Read as a PRECOMPUTED nightly snapshot, not a live
+      // count: this endpoint is polled by an external monitor, and computing MAU
+      // per poll would mean a keyspace SCAN plus a `Session` read on every
+      // request. The cost of this line is 2 Redis commands per uncached call
+      // and zero per cached one — see lib/stream/usage.ts for the full
+      // accounting against the Upstash 500k cap.
+      readStreamUsage(),
+    ]);
   const { cron, redis: redisStatus } = heartbeat;
 
   // Stream being down degrades chat and video but leaves booking, payments and
@@ -245,8 +283,33 @@ export async function GET(request: Request) {
   // #1822 Q-7 — a Redis quota failure fails closed on every fail-closed cron
   // job and disables every rate limiter, so it degrades the overall status
   // too, not just the database.
+  //
+  // #E3 — a webhook secret that cannot verify anything DOES degrade the status,
+  // which is the one Stream-side condition that earns it. Everything else about
+  // Stream is a vendor availability question with a user-visible retry; a
+  // mis-signed webhook is not: every delivery 401s, so `MeetingAttendance` rows
+  // stop being written, `call.recording_ready` never becomes a `Recording`, and
+  // `call.ended` never closes a `Meeting`. That is the 2026-08-12 outage, whose
+  // entire signature was a green platform and zero `WebhookEvent` rows. Degrading
+  // here is the point: nothing else in the system was going to say so.
+  //
+  // #E5 — a crossed Stream quota threshold does NOT degrade the status, and that
+  // is deliberate. The platform is not impaired; it is approaching a commercial
+  // decision. It is carried in the `usage` block with a stable `worstAlert` for
+  // an alert rule to key on, so a budget conversation pages nobody at 3am.
+  const webhookSecretBroken =
+    stream.webhookSecret.reason === "WEBHOOK_SECRET_OVERRIDE_MISMATCH" ||
+    stream.webhookSecret.reason === "API_SECRET_UNSET";
+
   const status =
-    database === "unreachable" || redisStatus.status === "degraded"
+    database === "unreachable" ||
+    redisStatus.status === "degraded" ||
+    webhookSecretBroken ||
+    // #E6 — an unreadable maintenance phase is a GUESS reported as a fact. The
+    // read still fails open (enforcement is unchanged), but "phase: OFF" from a
+    // throwing read is not an answer, and the function log strips `console.*`,
+    // so this is the only place it becomes visible.
+    maintenanceState.unreadable
       ? "degraded"
       : "healthy";
 
@@ -265,8 +328,30 @@ export async function GET(request: Request) {
       phase: maintenanceState.phase,
       reason: maintenanceState.reason,
       estimatedEnd: maintenanceState.estimatedEnd,
+      // #E6 — see above. `false` is the ordinary case; `true` means every other
+      // field in this block is a default rather than a reading.
+      unreadable: maintenanceState.unreadable,
     },
-    stream,
+    stream: {
+      ...stream,
+      // #E3 — the breaker's own state, read outside the probe. `getStreamStatus`
+      // already reports one; this is the same object re-read on the same
+      // instance, and it is what makes the claim "this route can see Stream's
+      // breaker" true even when the probe itself is mocked out or times out —
+      // the failure mode that made the field useless before.
+      breaker: streamBreakerStatus(),
+    },
+    usage: {
+      worstAlert: usage.worstAlert,
+      unmetered: usage.unmetered,
+      mau: usage.meters.mau,
+      participantMinutes: usage.meters.participantMinutes,
+      // Present but possibly null: the snapshot's age is what tells an operator
+      // whether to trust the two numbers above it, and a stale-by-a-month
+      // figure with no timestamp reads exactly like a live one.
+      computedAt: usage.snapshot?.computedAt ?? null,
+      estimated: usage.snapshot?.estimated ?? null,
+    },
     betterstack,
     cron,
     redis: redisStatus,

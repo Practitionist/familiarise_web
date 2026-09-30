@@ -203,8 +203,29 @@ describe("Stream Client Module", () => {
   });
 
   describe("generateChatToken", () => {
-    it("should generate token without expiration", async () => {
-      const mockToken = "chat-token-no-exp";
+    /**
+     * #E5 — this case USED to be called "should generate token without
+     * expiration" and asserted `createToken(userId, undefined, expect.any(Number))`.
+     * That was a test of an accident, and a test is exactly why an accident
+     * survives: the name reads as a contract, so every later reader saw a
+     * deliberate non-expiring-token feature and left it alone.
+     *
+     * It was not deliberate. The production callers have always passed the
+     * shared `STREAM_TOKEN_TTL_SECONDS`; the parameter was optional so a caller
+     * COULD omit it, and this test pinned the omission as expected behaviour so
+     * the branch could never be deleted.
+     *
+     * A non-expiring token is not merely untidy. It is a credential that never
+     * ages out, so its only remedy is `revoke_tokens_issued_before` — the same
+     * global mechanism that, once set for a user, invalidates every token
+     * minted after it. A leaked or over-minted token therefore has no per-token
+     * revocation at all, and a previously-suspended user cannot be given a
+     * working token again without an explicit `revokeUserToken(id, null)` that
+     * no caller will remember to make. The TTL is now REQUIRED, which puts the
+     * expiry in the one place that knows how long the token is needed for.
+     */
+    it("stamps an exp derived from the TTL, never an omitted exp", async () => {
+      const mockToken = "chat-token";
       const mockInstance = {
         createToken: jest.fn().mockReturnValue(mockToken),
       };
@@ -214,18 +235,24 @@ describe("Stream Client Module", () => {
         await import("@/lib/stream-client");
 
       resetClients();
-      const token = generateChatToken(mockUserId);
+      expect(generateChatToken(mockUserId, 3600)).toBe(mockToken);
 
-      expect(token).toBe(mockToken);
-      // #1134 P0-4 — `iat` is mandatory even with no expiry. Stream treats a
-      // token with no `iat` as INVALID once revoke_tokens_issued_before is set
-      // for that user, and that flag never clears itself — so an iat-less token
-      // turned a 7-day suspension into a permanent chat ban.
-      expect(mockInstance.createToken).toHaveBeenCalledWith(
-        mockUserId,
-        undefined,
-        expect.any(Number),
-      );
+      const [, exp, iat] = mockInstance.createToken.mock.calls[0];
+      // The assertion the old test inverted: `exp` is a number, not undefined.
+      expect(typeof exp).toBe("number");
+      expect(exp).toBeGreaterThan(iat);
+    });
+
+    // The signature change from `expirationTime?: number` to
+    // `expirationTime: number` is what actually removes the branch, at the type
+    // level. A runtime test cannot see that, so it is pinned here: a
+    // reintroduced default or `?` makes `Function.length` drop to 1, and the
+    // next reader of that diff finds this comment.
+    it("requires the TTL rather than defaulting it", async () => {
+      const { generateChatToken } = await import("@/lib/stream-client");
+      // `Function.length` counts parameters BEFORE the first one with a
+      // default or `?`. Two means neither parameter is optional.
+      expect(generateChatToken.length).toBe(2);
     });
 
     it("should generate token with custom expiration", async () => {

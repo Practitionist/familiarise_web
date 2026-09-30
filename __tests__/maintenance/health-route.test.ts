@@ -11,6 +11,11 @@
  * until the loop is back. The pins: a block that lands on that first yield is
  * reported under `platform.eventLoopStallMs` and does NOT touch `database` or
  * `status`; a database that really fails still does.
+ *
+ * #E3 / #E5 / #E6 extended the body, and the pins below cover the three new
+ * claims that can change `status`: an unreadable maintenance phase, a webhook
+ * secret that cannot verify anything, and the two Stream-breaker reads that
+ * this route used to be unable to see at all.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -28,7 +33,24 @@ jest.mock("../../lib/redis", () => ({
   default: { get: jest.fn() },
   isMockRedis: jest.fn(() => true),
   isRedisCircuitOpen: jest.fn(() => false),
+  // #E3 — `lib/stream-client.ts` builds Stream's breaker at module load with
+  // this factory, so the mock has to provide it or importing the health route
+  // throws. The status it returns is what the route's `stream.breaker` block
+  // reports, so it is a mock with a value rather than a bare jest.fn().
+  createCircuitBreaker: jest.fn((name: string) => ({
+    run: (op: () => unknown) => op(),
+    reset: jest.fn(),
+    status: () => ({
+      name,
+      state: mockStreamBreakerState,
+      failures: mockStreamBreakerFailures,
+      lastFailure: null,
+    }),
+  })),
 }));
+
+let mockStreamBreakerState = "CLOSED";
+let mockStreamBreakerFailures = 0;
 
 jest.mock("../../lib/maintenance", () => ({
   getMaintenanceState: jest.fn(async () => ({
@@ -37,6 +59,7 @@ jest.mock("../../lib/maintenance", () => ({
     estimatedEnd: null,
     bypassSecret: null,
     betterstackIncidentId: null,
+    unreadable: false,
   })),
 }));
 
@@ -45,13 +68,35 @@ jest.mock("../../lib/stream/health", () => ({
     configured: true,
     reachable: true,
     breakerOpen: false,
+    breaker: { state: "CLOSED", failures: 0, lastFailure: null },
+    probeFastFailed: false,
+    webhookSecret: {
+      configured: true,
+      matchesApiSecret: true,
+      reason: null,
+      hasOverride: false,
+    },
     latencyMs: 12,
+  })),
+}));
+
+// #E5 — the usage block. Mocked so the health route's own assertions are about
+// the ROUTE (does it report, does it degrade) rather than about Redis, which
+// `__tests__/stream/usage-meter.test.ts` covers directly.
+jest.mock("../../lib/stream/usage", () => ({
+  readStreamUsage: jest.fn(async () => ({
+    snapshot: null,
+    meters: { mau: null, participantMinutes: null, feedApiCalls: null },
+    worstAlert: null,
+    unmetered: ["feedApiCalls"],
   })),
 }));
 
 import * as Sentry from "@sentry/nextjs";
 
 import { GET } from "../../app/api/health/route";
+import { getStreamStatus } from "../../lib/stream/health";
+import { readStreamUsage } from "../../lib/stream/usage";
 import prisma from "@/lib/prisma";
 import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
@@ -59,6 +104,8 @@ const findFirst = prisma.user.findFirst as unknown as jest.Mock;
 const warn = Sentry.logger.warn as jest.Mock;
 const mockIsMockRedis = isMockRedis as jest.Mock;
 const mockRedisGet = redis.get as jest.Mock;
+const mockStreamStatus = getStreamStatus as jest.Mock;
+const mockReadUsage = readStreamUsage as jest.Mock;
 
 const request = () => new Request("https://x.test/api/health");
 
@@ -77,6 +124,28 @@ beforeEach(() => {
   findFirst.mockResolvedValue({ id: "u1" });
   mockIsMockRedis.mockReturnValue(true);
   mockRedisGet.mockReset();
+  mockStreamBreakerState = "CLOSED";
+  mockStreamBreakerFailures = 0;
+  mockStreamStatus.mockResolvedValue({
+    configured: true,
+    reachable: true,
+    breakerOpen: false,
+    breaker: { state: "CLOSED", failures: 0, lastFailure: null },
+    probeFastFailed: false,
+    webhookSecret: {
+      configured: true,
+      matchesApiSecret: true,
+      reason: null,
+      hasOverride: false,
+    },
+    latencyMs: 12,
+  });
+  mockReadUsage.mockResolvedValue({
+    snapshot: null,
+    meters: { mau: null, participantMinutes: null, feedApiCalls: null },
+    worstAlert: null,
+    unmetered: ["feedApiCalls"],
+  });
 });
 
 describe("GET /api/health", () => {
@@ -198,6 +267,202 @@ describe("GET /api/health", () => {
 
       expect(body.redis).toEqual({ status: "ok" });
       expect(mockRedisGet).not.toHaveBeenCalled();
+    });
+  });
+
+  // #E3 — `getStreamCircuitStatus()` has existed since #1280 2.1 with a
+  // docblock saying /api/health reports Stream's breaker, and it was called from
+  // NOWHERE. The claim below is the whole of the change: a Stream outage has to
+  // be visible on this route, and a boolean cannot carry the trend.
+  describe("stream breaker (#E3)", () => {
+    it("reports the breaker's own state, not just the probe's verdict", async () => {
+      const body = await (await GET(request())).json();
+
+      expect(body.stream.breaker).toEqual({
+        state: "CLOSED",
+        failures: 0,
+        lastFailure: null,
+      });
+    });
+
+    it("surfaces an OPEN breaker and its failure count", async () => {
+      // The case the old field could never produce: the breaker is open on an
+      // instance whose probe SUCCEEDED. Before this, `breakerOpen` was derived
+      // from the probe's own rejection, so a successful probe reported `false`
+      // no matter what the breaker was doing — and on a cold instance the
+      // breaker is closed anyway, so the field was structurally always false.
+      mockStreamBreakerState = "OPEN";
+      mockStreamBreakerFailures = 5;
+
+      const body = await (await GET(request())).json();
+
+      expect(body.stream.breaker.state).toBe("OPEN");
+      expect(body.stream.breaker.failures).toBe(5);
+    });
+
+    it("does not degrade the platform for a Stream outage", async () => {
+      // Stream being down leaves booking, payments and every read path working.
+      // Degrading the whole platform on a vendor outage trains people to ignore
+      // this endpoint, which is the failure mode #1822 was written against.
+      mockStreamBreakerState = "OPEN";
+
+      const body = await (await GET(request())).json();
+
+      expect(body.status).toBe("healthy");
+      expect(body.stream.breaker.state).toBe("OPEN");
+    });
+  });
+
+  // #E3 — the 2026-08-12 signature: every webhook 401'd, nothing said so, and
+  // the only symptom was zero `WebhookEvent` rows days later. A wrong
+  // `STREAM_WEBHOOK_SECRET` is the one Stream condition that MUST degrade this
+  // route, because nothing else in the system was going to report it.
+  describe("stream webhook secret (#E3)", () => {
+    it("is healthy when the secret resolves to the API secret", async () => {
+      const body = await (await GET(request())).json();
+
+      expect(body.stream.webhookSecret).toEqual({
+        configured: true,
+        matchesApiSecret: true,
+        reason: null,
+        hasOverride: false,
+      });
+      expect(body.status).toBe("healthy");
+    });
+
+    it("degrades the platform when an override disagrees with the API secret", async () => {
+      mockStreamStatus.mockResolvedValue({
+        configured: true,
+        reachable: true,
+        breakerOpen: false,
+        breaker: { state: "CLOSED", failures: 0, lastFailure: null },
+        probeFastFailed: false,
+        webhookSecret: {
+          configured: true,
+          matchesApiSecret: false,
+          reason: "WEBHOOK_SECRET_OVERRIDE_MISMATCH",
+          hasOverride: true,
+        },
+        latencyMs: 9,
+      });
+
+      const res = await GET(request());
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.status).toBe("degraded");
+      // Booleans and a stable code only — never the secret, which is why the
+      // whole shape is assertable here at all.
+      expect(body.stream.webhookSecret).toEqual({
+        configured: true,
+        matchesApiSecret: false,
+        reason: "WEBHOOK_SECRET_OVERRIDE_MISMATCH",
+        hasOverride: true,
+      });
+    });
+
+    it("degrades when there is no API secret at all", async () => {
+      mockStreamStatus.mockResolvedValue({
+        configured: false,
+        reachable: null,
+        breakerOpen: false,
+        breaker: { state: "CLOSED", failures: 0, lastFailure: null },
+        probeFastFailed: false,
+        webhookSecret: {
+          configured: false,
+          matchesApiSecret: null,
+          reason: "API_SECRET_UNSET",
+          hasOverride: false,
+        },
+      });
+
+      const body = await (await GET(request())).json();
+
+      expect(body.status).toBe("degraded");
+    });
+  });
+
+  // #E6 — the maintenance read fails OPEN (enforcement must not turn a Redis
+  // blip into a platform-wide 503), but "phase: OFF" from a throwing read is a
+  // fabricated answer, and the function log strips `console.*` so it was
+  // invisible. `unreadable` is the honest bit and it degrades this route.
+  describe("maintenance read (#E6)", () => {
+    it("passes the unreadable flag through and degrades on it", async () => {
+      const { getMaintenanceState } = jest.requireMock("../../lib/maintenance");
+      getMaintenanceState.mockResolvedValueOnce({
+        phase: "OFF",
+        reason: null,
+        estimatedEnd: null,
+        bypassSecret: null,
+        betterstackIncidentId: null,
+        unreadable: true,
+      });
+
+      const body = await (await GET(request())).json();
+
+      expect(body.maintenance).toEqual({
+        phase: "OFF",
+        reason: null,
+        estimatedEnd: null,
+        unreadable: true,
+      });
+      expect(body.status).toBe("degraded");
+    });
+  });
+
+  // #E5 — the `usage` block. Reported always, degrading never: an approaching
+  // commercial limit is not a platform impairment, and a 3am page for it would
+  // be a page nobody acts on.
+  describe("stream usage (#E5)", () => {
+    it("reports nulls, not zeros, when the meter has never run", async () => {
+      const body = await (await GET(request())).json();
+
+      expect(body.usage).toEqual({
+        worstAlert: null,
+        unmetered: ["feedApiCalls"],
+        mau: null,
+        participantMinutes: null,
+        computedAt: null,
+        estimated: null,
+      });
+      expect(body.status).toBe("healthy");
+    });
+
+    it("carries the figures and the crossed threshold, and still stays healthy", async () => {
+      mockReadUsage.mockResolvedValue({
+        snapshot: {
+          mau: 1300,
+          participantMinutes: 40000,
+          peakConcurrency: 12,
+          computedAt: "2026-09-29T04:20:00.000Z",
+          estimated: false,
+        },
+        meters: {
+          mau: { used: 1300, cap: 2000, pct: 0.65, alert: 0.6 },
+          participantMinutes: {
+            used: 40000,
+            cap: 333000,
+            pct: 0.1201,
+            alert: null,
+          },
+          feedApiCalls: null,
+        },
+        worstAlert: 0.6,
+        unmetered: ["feedApiCalls"],
+      });
+
+      const body = await (await GET(request())).json();
+
+      expect(body.usage.worstAlert).toBe(0.6);
+      expect(body.usage.mau).toEqual({
+        used: 1300,
+        cap: 2000,
+        pct: 0.65,
+        alert: 0.6,
+      });
+      expect(body.usage.computedAt).toBe("2026-09-29T04:20:00.000Z");
+      // Alarm BEFORE the cap, and never as a platform outage.
+      expect(body.status).toBe("healthy");
     });
   });
 });

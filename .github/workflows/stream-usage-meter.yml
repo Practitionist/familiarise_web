@@ -1,0 +1,76 @@
+name: Stream Usage Meter
+
+permissions:
+  contents: read
+
+# Daily 04:20 UTC (09:50 IST). Off `stream-sync` (03:40) and
+# `mark-expired-recordings`, and deliberately LATE in the hour: the
+# participant-minute estimate is an upper bound that counts a participant who
+# never left a call all the way to "now", so a run at 04:00 would systematically
+# over-count a call that is still open and under-count nothing. Running after
+# the overnight booking window has closed is what makes the figure comparable
+# to the last night's.
+on:
+  schedule:
+    - cron: "20 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  meter:
+    runs-on: ubuntu-latest
+    # No `timeout-minutes` tuning needed: the job is one bounded query plus a
+    # sweep-line over at most 20,000 rows, and the row cap is the thing keeping
+    # it short (see lib/stream/usage-estimator.ts). The cap is a deliberate
+    # refusal to hold a Postgres connection open, because PG_POOL_MAX=1 makes a
+    # long-held connection a platform-wide stall rather than a slow job.
+    timeout-minutes: 10
+
+    env:
+      # #1066 — jobs run as bare Node processes, so Sentry.init only sees what
+      # the step env carries. Without the DSN the runner initialises a disabled
+      # client and every capture is a no-op again.
+      NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # The per-mint MAU counter and the nightly snapshot both live here.
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx --no-install prisma generate
+
+      # Issues the 60/80/90%-of-Maker-cap Sentry alert from inside
+      # lib/stream/usage.ts. The job still succeeds at 95% of the cap — an
+      # approaching commercial limit is not a job failure, and failing the run
+      # would train everyone to ignore a red X.
+      - name: Compute Stream usage
+        run: node_modules/.bin/tsx jobs/stream/stream-usage-meter.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
+        run: bash scripts/ci/notify-ops-failure.sh "stream-usage-meter"

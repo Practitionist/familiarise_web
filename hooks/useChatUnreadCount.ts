@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  queryChannelsPaged,
+  STREAM_QUERY_CHANNELS_LIMIT,
+} from "@/lib/stream/batch";
 import { StreamChat, type Channel } from "stream-chat";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -91,24 +95,37 @@ export function useChatUnreadCount(): number {
         // Paginate: the first page alone undercounts anyone with more
         // personal channels than one page holds. Hard-capped so a
         // pathological account cannot loop forever.
-        const PAGE_SIZE = 30;
-        const MAX_PAGES = 5;
-        const channels: Channel[] = [];
-        let offset = 0;
-        let page;
-        do {
-          page = await client.queryChannels(
-            { members: { $in: [client.userID!] }, ...PERSONAL_FILTER },
-            { last_message_at: -1 },
-            // state:true hydrates read state so countUnread() works;
-            // watch:false because this hook only counts — ChatSidebar owns
-            // watching.
-            { limit: PAGE_SIZE, offset, state: true, watch: false },
-          );
-          if (cancelled) return;
-          channels.push(...page);
-          offset += PAGE_SIZE;
-        } while (page.length === PAGE_SIZE && offset < PAGE_SIZE * MAX_PAGES);
+        //
+        // #E7 — sorted by `created_at`, NOT `last_message_at`. Offset paging
+        // is only coherent over an order that does not move while you walk it,
+        // and `last_message_at` moves: a single message arriving mid-walk
+        // promotes that channel past the current offset and pushes everything
+        // between its old and new position off the end of the list, while a
+        // demotion at the far end makes a page repeat a channel already seen.
+        // The badge is not a compliance export, so nothing downstream notices
+        // the skip or the double-count — the count is just quietly wrong, and
+        // only when the user is actively being messaged, which is exactly when
+        // it is being displayed. A channel's creation time never changes.
+        // `actions/stream/chat/event-channel.action.ts` was already fixed this
+        // way; this hook was not.
+        const { channels } = await queryChannelsPaged(
+          (opts) =>
+            client.queryChannels(
+              { members: { $in: [client.userID!] }, ...PERSONAL_FILTER },
+              { created_at: 1 },
+              // state:true hydrates read state so countUnread() works;
+              // watch:false because this hook only counts — ChatSidebar owns
+              // watching.
+              { ...opts, state: true, watch: false },
+            ),
+          // 150 channels, the same five pages the hand-rolled loop allowed. The
+          // bound is kept: the reconciler wants everything, a badge does not,
+          // and every extra page is a billable `QueryChannels` call on the hot
+          // path. See `queryChannelsPaged`'s `maxChannels` for why this is not
+          // the same thing as `truncated`.
+          5 * STREAM_QUERY_CHANNELS_LIMIT,
+        );
+        if (cancelled) return;
         setUnreadCount(channels.reduce((sum, c) => sum + c.countUnread(), 0));
       } catch (error) {
         // A failed recount leaves the previous number in place — a stale badge

@@ -4,15 +4,65 @@
  * ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
- * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
- * sweeps, since #1633 the ledger reconcile backstop, since #1654 the Novu
- * outbox relay every tick and the email outbox relay on every third tick,
- * and since #1583/#1589 five booking sweeps on every third tick, two of them
- * on the 20 s tier) instead of waiting on Actions. It never writes money state itself: every
- * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
- * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
- * the loser — expected, not an error — and Actions stays as the unbounded
- * daily/weekly scheduler and backstop (#1356).
+ * the latency-sensitive `/api/cleanup/*` routes every five minutes instead of
+ * waiting on Actions. It never writes money state itself: every target is
+ * `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a tick that
+ * overlaps a GitHub Actions run (or another tick) answers 409 from the loser —
+ * expected, not an error — and Actions stays as the unbounded daily/weekly
+ * scheduler and backstop (#1356).
+ *
+ * ## Cadence: there is no "every tick" target any more
+ *
+ * An earlier version of this header said the Novu outbox relay runs "every
+ * tick". That stopped being true in #1654, and the sentence outlived the code by
+ * a long time — the kind of stale claim in a docblock that a reader believes and
+ * then reasons wrongly from, which is why it is corrected here rather than left
+ * as colour.
+ *
+ * `TARGET_EVERY_MINUTES` (below) now has an entry for EVERY target. `dueTargets`
+ * is the single source of truth, and it means:
+ *
+ *   - `sentry-ingest-canary`  fires on the :00 and :30 ticks only (30 min).
+ *   - `drain-notification-outbox` fires on the :00, :10, :20, :30, :40 and :50
+ *     ticks (10 min) — the ticker-only relay, which has no Actions twin.
+ *   - the remaining nineteen fire on the :00, :15, :30 and :45 ticks (15 min).
+ *
+ * So four of every twelve hourly ticks — the :05, :25, :35 and :55 — are
+ * HEARTBEAT-ONLY. They do not invoke a single cleanup route. They exist to
+ * refresh `cron:heartbeat:last`, to send the Sentry cron check-in, and to
+ * maintain a twelve-tick-per-hour ceiling on the dead-man monitor, so a
+ * completely silent ticker trips `checkin_margin: 3` after three ticks (15
+ * minutes) rather than after forty-five. That is the entire reason the
+ * five-minute schedule was kept after the cadence cut; if the heartbeat ever
+ * moves onto a slower tick, this is the sentence that needs rewriting.
+ *
+ * ## The real invocation cost — read this before adding a target
+ *
+ * Per TICK, not per hour:
+ *
+ *   target invocations   4 on the heartbeat-only ticks, 20 on a 15-minute tick,
+ *                        21 on a :00 tick, 22 on a :10 tick. Twelve ticks/hour,
+ *                        so ≈12 × 20 = ~240/day.
+ *   per invocation       1 maintenance GET (two Upstash GETs behind one
+ *                        `getMaintenanceState`, pipelined), 1 Redis health PING
+ *                        (cached 30s per instance, so usually free), 1 lock
+ *                        `SET NX PX` + 1 `releaseLock` Lua `EVAL`, and 1
+ *                        heartbeat `SET` — all on Upstash. Say 5 commands
+ *                        worst case, ~4 with the health cache warm.
+ *   Redis total          ~240 invocations/day × ~4 = ~960 commands/day, or
+ *                        ~29,000/month — about 5.8% of the 500k free-tier cap
+ *                        that production and every deploy-preview share (#1792,
+ *                        #1822).
+ *   Sentry                exactly ONE check-in per tick (288/day) plus at most
+ *                        one failed-targets event per tick, and never both for
+ *                        the canary. See `reportableToSentry`.
+ *
+ * So the cadence is still affordable, but it is not free and the margin is not
+ * large: adding one target to the 15-minute tier costs ~96 invocations/day, or
+ * ~2,900 commands/month, for ~0.6% of the cap. Adding one to the DEFAULT tier
+ * (i.e. forgetting the `TARGET_EVERY_MINUTES` entry) costs 4× that. Budget
+ * accordingly, and prefer a 15-minute slot plus an Actions twin over a
+ * five-minute slot.
  *
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
@@ -110,6 +160,14 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
  * #1654 — targets that run on a multiple of the five-minute tick. A missing
  * entry means every tick. The check is on the wall-clock minute, so a late
  * tick (Netlify fires within the minute) still counts as its slot.
+ *
+ * INVARIANT, and it is the reason the header above is worded the way it is:
+ * EVERY target has an entry here. The four "heartbeat-only" ticks (:05, :25,
+ * :35, :55) exist only because of that — if a target were left off this table
+ * it would silently fill those four slots and the ticker's cost would jump by
+ * a quarter with nothing in the diff to explain it. `__tests__/maintenance/
+ * cron-tick-targets.test.ts` pins it: adding a target without a cadence entry
+ * is a test failure, not a surprise in the Upstash bill two months later.
  */
 // #1792 — Upstash REST hit its 500k request cap (2026-09-21: every fail-closed
 // money cron red with CronLockUnavailableError). Per-invocation Redis cost
@@ -168,7 +226,37 @@ const TARGET_QUERIES: Partial<Record<Target, string>> = {
   "reconcile-ledgers": "resume=1",
 };
 
-/** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
+/**
+ * The per-target abort deadline, and the edge ceiling it is measured against.
+ *
+ * ASSESSED against the observed Netlify ceiling, and the number that matters is
+ * the FUNCTION's, not the ticker's. Measured on this site: Netlify's edge
+ * receive-timeout is ~37–38 s and the 504 actually observed was ~26 s, while a
+ * scheduled function is additionally capped at 30 s. So the real budget for this
+ * invocation is 30 s, and every request below must resolve inside it.
+ *
+ * Six seconds as the DEFAULT is right, and the reason is the concurrency shape
+ * rather than a guess: all due targets are fired in parallel, so the tick's
+ * duration is the SLOWEST target, not their sum. Twenty targets at 20 s in
+ * parallel finish in ~20 s, comfortably inside 30 s. What would break the budget
+ * is a target on the 6 s default simply taking longer than that — it is aborted,
+ * reports status 0, and the GitHub Actions twin picks the rest up. Aborting is
+ * the right answer: a target that needs 20 s is mis-tiered, and the 20 s tier
+ * exists for exactly that (`TARGET_TIMEOUTS_MS`).
+ *
+ * The 20 s tier is the number to watch, and it was chosen for a reason that is
+ * worth restating because it is easy to erode: 20 s leaves only ~10 s of
+ * headroom under the scheduled-function cap for a COLD instance, whose first
+ * invocation is 24–39 s of event-loop stall (#1124) before any of this runs.
+ * Eight targets now sit on that tier, so the tick is close enough to the edge
+ * that a tenth should be an explicit decision — either demote one to a
+ * smaller `limit` so it fits the 6 s default, or move it off the ticker
+ * entirely and let its Actions twin be the only scheduler.
+ *
+ * Below PER_TARGET_TIMEOUT_MS the whole platform's money sweeps are aborted by
+ * one slow target, so the ceiling is not negotiable; the batch sizes in
+ * `TARGET_LIMITS` are the lever that was meant to be pulled first.
+ */
 const PER_TARGET_TIMEOUT_MS = 6_000;
 
 /** A reconcile chunk takes ~13 s deployed; 20 s still sits under the 30 s scheduled cap. */

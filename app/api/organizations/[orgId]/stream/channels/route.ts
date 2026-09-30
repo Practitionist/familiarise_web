@@ -12,6 +12,33 @@
  * PAGINATION: Stream caps `queryChannels` at 30 per call; we ship 20/page
  * with offset-based pagination to keep the URL simple. `?page=` is 1-based.
  *
+ * #E7 — the sort key is `created_at`, NOT `last_message_at`, and the response
+ * says whether the walk was truncated. Both were wrong here and the reason this
+ * endpoint is worse than it sounds is that it is a COMPLIANCE SURFACE: it writes
+ * a `STREAM_CHANNELS_EXPORTED` audit row and is the documented companion of
+ * `/stream/calls`, so "what this org's roster of internal channels was" is a
+ * fact someone may later be asked to attest to. Two defects made that attestation
+ * unsound:
+ *
+ *   - Offset paging over a MOVING sort. `last_message_at` changes while the walk
+ *     is in progress, so a message arriving mid-walk promotes its channel past
+ *     the current offset — pushing everything between the old and new position
+ *     off the end of the list, i.e. SKIPPING channels — while a channel moving
+ *     the other way can be returned twice. An export that skips and repeats is
+ *     worse than one that stops early, because nothing downstream can tell.
+ *     `created_at` never changes, which is what makes offset paging coherent at
+ *     all. `actions/stream/chat/event-channel.action.ts` was already sorted this
+ *     way and said why; this route was not.
+ *   - `hasMore` was computed as "this page came back full", which conflates
+ *     "there is more" with "there might be more, and we will not find out past
+ *     Stream's 1000-offset ceiling". Stream stops serving past that offset with
+ *     no cursor to continue with, so a large org silently got a short list
+ *     presented as complete. `truncated` now says so explicitly.
+ *
+ * The page ceiling is unchanged at 50 (≈1,000 channels), which is exactly
+ * Stream's offset ceiling — the honest cap for an offset walk. The only
+ * behavioural change is that reaching it is now visible instead of silent.
+ *
  * RESPONSE: minimal shape so the client can render a directory table
  * without fetching messages.
  *
@@ -35,6 +62,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { getStreamChatClient } from "@/lib/stream-client";
+import { STREAM_QUERY_CHANNELS_MAX_OFFSET } from "@/lib/stream/batch";
 import { streamLogger } from "@/lib/stream-logger";
 
 const QuerySchema = z.object({
@@ -52,7 +80,9 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // #1527 P0-4 — was a MANAGER rank floor, which admitted BILLING_ADMIN.
-  const access = await requireOrgAccess(orgId, { permission: "messaging.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "messaging.read",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -75,6 +105,9 @@ export async function GET(
     // when prefixed (or matched implicitly via custom_field_name). Since
     // our helper writes `organization_id` at the top level of channel
     // custom data, the equality match below is the canonical form.
+    //
+    // `created_at` ascending, and the reason is in the file header: offset
+    // paging is only coherent over an order that cannot move during the walk.
     const channels = await client.queryChannels(
       // Cast through unknown — stream-chat's `ChannelFilters` typing is
       // strict about known fields and rejects custom keys, but the
@@ -82,7 +115,7 @@ export async function GET(
       { organization_id: { $eq: orgId } } as unknown as Parameters<
         typeof client.queryChannels
       >[0],
-      [{ last_message_at: -1 }],
+      [{ created_at: 1 }],
       {
         limit: PAGE_SIZE,
         offset,
@@ -92,6 +125,14 @@ export async function GET(
         member_limit: 0,
       },
     );
+
+    // #E7 — the walk reached Stream's offset ceiling rather than the end of the
+    // list. `>=` and not `>`: a FULL page at offset 980 has just served row
+    // 1,000, which is the last offset Stream will serve, so anything past it is
+    // unknown rather than absent. A SHORT page at the same offset means the
+    // list genuinely ended there and nothing is truncated.
+    const truncated =
+      offset + channels.length >= STREAM_QUERY_CHANNELS_MAX_OFFSET;
 
     const rows = channels.map((ch) => {
       const data = ch.data as Record<string, unknown> | undefined;
@@ -131,7 +172,17 @@ export async function GET(
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.STREAM_CHANNELS_EXPORTED,
           description: `Listed ${rows.length} Stream chat channels`,
-          details: { page, pageSize: PAGE_SIZE, count: rows.length },
+          // #E7 — `truncated` belongs in the AUDIT row, not just the response.
+          // The response is read by the operator; the audit row is read later by
+          // whoever asks what was exported and when. A partial export recorded
+          // as a complete one is the shape of a misstatement, so the flag has to
+          // travel with the record.
+          details: {
+            page,
+            pageSize: PAGE_SIZE,
+            count: rows.length,
+            truncated,
+          },
         },
       });
     } catch (auditErr) {
@@ -149,12 +200,18 @@ export async function GET(
       page,
       pageSize: PAGE_SIZE,
       // `hasMore` is best-effort — Stream doesn't return a total count.
-      // If we got a full page back, assume another exists.
-      hasMore: rows.length === PAGE_SIZE,
+      // If we got a full page back, assume another exists. `truncated` is the
+      // honest ceiling: at page 50 we are AT Stream's 1000-offset limit, so a
+      // "full page" here means "we cannot go further", not "there is more".
+      hasMore: rows.length === PAGE_SIZE && !truncated,
+      truncated,
       rows,
     });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     streamLogger.error("Failed to query org channels", err, { orgId, page });
     return NextResponse.json(
       {

@@ -31,7 +31,11 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
-import { addRemainingMembers, createMemberChunk } from "@/lib/stream/batch";
+import {
+  addRemainingMembers,
+  createMemberChunk,
+  forEachChunk,
+} from "@/lib/stream/batch";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -694,13 +698,27 @@ export async function createCollaboratorChannel(
   const channel = client.channel("messaging", channelId, {
     name: `${title} - Collaborators`,
     created_by_id: hostUserId,
-    members: roster,
+    // #1270, applied here for consistency — see the note on `createChannel`
+    // above. LATENT, not live: `MAX_COLLABORATORS_PER_PLAN = 3` in
+    // `lib/collaborators/service.ts` caps the roster at four, so this cannot
+    // overflow today. It is fixed anyway because the cap is a PLAN
+    // configuration, not a Stream one, and the two are edited by different
+    // people: raising the plan cap is a one-line change that would otherwise
+    // turn every collaborator channel create into a rejected request with no
+    // test standing between them. The cost of the fix is three lines and the
+    // guarantee that this creator cannot be the one that forgets.
+    members: createMemberChunk(roster),
     [`${planType}_plan_id`]: planId,
     is_collaborator_channel: true,
   } as Record<string, unknown>);
 
   // Idempotent create — no-op if channel already exists
   await channel.create();
+  // Everyone the create() body could not carry, 100 at a time. Same reasoning as
+  // `createChannel`: the host is first in `roster`, so they are always inside
+  // the chunk, and the remainder is owed even on the idempotent-create path
+  // because `addMembers` is a no-op for anyone already in.
+  await addRemainingMembers(channel, roster);
   markChannelExists("messaging", channelId);
 
   // Host moderates their own collab channel — this path bypasses
@@ -713,20 +731,30 @@ export async function createCollaboratorChannel(
     .map((m) => m.user_id)
     .filter((id): id is string => !!id);
 
-  // Add members present in DB but missing from channel
+  // Add members present in DB but missing from channel.
+  // #1270 — chunked, like every other roster write in this file. The diff
+  // `toRemove` is computed from the SAME `currentMemberIds` as before, so a
+  // roster over 100 still reconciles correctly; the only change is that a large
+  // one takes several requests instead of being rejected.
   const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
   if (toAdd.length > 0) {
-    await channel.addMembers(toAdd);
+    await forEachChunk(toAdd, async (batch) => {
+      await channel.addMembers(batch);
+    });
     streamLogger.debug("Collaborator channel: added missing members", {
       channelId,
       added: toAdd,
     });
   }
 
-  // Remove channel members no longer in the DB set
+  // Remove channel members no longer in the DB set. Chunked for the same
+  // 100-member ceiling (`removeMembers` is bound by the same limit as
+  // `addMembers` — Stream documents one payload ceiling for both).
   const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
   if (toRemove.length > 0) {
-    await channel.removeMembers(toRemove);
+    await forEachChunk(toRemove, async (batch) => {
+      await channel.removeMembers(batch);
+    });
     streamLogger.debug("Collaborator channel: removed departed members", {
       channelId,
       removed: toRemove,

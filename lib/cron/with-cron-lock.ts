@@ -67,8 +67,22 @@ export interface CronLockOpts {
    * closed — money jobs: without a real lock the job refuses to run and the
    *   workflow's notify-on-failure step pages (silent unlocked double-runs of
    *   dunning/payout sweeps are worse than a missed schedule).
-   * open — cleanup/alert jobs: run unlocked with a warning when Redis is
-   *   absent; their side effects are harmless to repeat.
+   * open — cleanup/alert jobs: run UNLOCKED, with a warning, when Redis is
+   *   absent or provably down; their side effects are harmless to repeat.
+   *
+   * The "open" half used to be documented and not implemented. The re-probe
+   * that tells "someone else holds the lock" apart from "Redis is unreachable"
+   * was gated behind `failMode === "closed"`, so a fail-OPEN job during a Redis
+   * outage took the same `null` token, read it as "held by a peer", and returned
+   * 409 — skipping the very work its fail-open contract exists to guarantee
+   * would still happen. Five ticker targets were silently dead for the length of
+   * the outage: the outbound-webhook dispatcher, the ledger reconcile backstop,
+   * the reschedule-proposal expiry, the tentative-occurrence cleanup, and the
+   * appointment reminders. A Redis blip is a platform event; "the job that
+   * makes state converge did not run for an hour and nothing said so" is a
+   * correctness event, and the second is the one that costs money.
+   *
+   * The re-probe now runs for BOTH modes. Only the branch differs.
    */
   failMode: "open" | "closed";
 }
@@ -158,9 +172,11 @@ export async function withCronLock<T>(
     return fn();
   }
 
-  // acquireLock returns null for BOTH "held" and "circuit open". Held is a
-  // clean skip; an unreachable Redis on a fail-closed job must page instead —
-  // otherwise money jobs freeze silently for as long as the outage lasts.
+  // PRE-ACQUIRE gate, fail-closed jobs only, and it stays that way on purpose:
+  // a fail-open job that knows Redis is down should not pay a PING and then
+  // still take the lock — it should just run, which is what the null-token
+  // branch below arranges. Keeping this check off the open path also keeps the
+  // open path's cost at exactly one lock attempt plus, on failure, one probe.
   if (opts.failMode === "closed") {
     const healthy = await checkRedisHealthForCron();
     if (!healthy) throw new CronLockUnavailableError(jobName);
@@ -172,18 +188,60 @@ export async function withCronLock<T>(
     // breaker fallback short-circuits to null while OPEN, and during the
     // FIRST FOUR consecutive failures the breaker is still CLOSED while every
     // acquire already fails. The pre-acquire health check cannot see either
-    // window (it ran earlier, and it deliberately bypasses the breaker). So
-    // on a null token for a fail-closed job we probe Redis AGAIN, right now:
-    // unhealthy ⇒ page (CronLockUnavailableError); reachable ⇒ someone really
-    // holds the lock (clean CronLockHeldError skip).
-    if (opts.failMode === "closed") {
-      // Live probe, NOT the cron-scoped cache above — this exists to catch
-      // Redis going down between the pre-acquire gate and this point.
-      const healthyNow = await checkRedisHealth();
-      if (!healthyNow || isRedisCircuitOpen()) {
+    // window (it ran earlier, and it deliberately bypasses the breaker). So on
+    // a null token we probe Redis AGAIN, right now: the answer separates
+    // "someone really holds the lock" (a clean skip) from "the lock was never
+    // taken because Redis is gone" (which the two modes MUST treat differently
+    // — a page, or an unlocked run).
+    //
+    // This probe runs for BOTH fail modes. It used to sit behind
+    // `failMode === "closed"`, which is what made a fail-OPEN job skip itself
+    // for the length of a Redis outage: it took the same null token, was never
+    // told to check, and threw CronLockHeldError — a 409 skip — for a failure
+    // that is not a held lock. See {@link CronLockOpts.failMode} for the five
+    // ticker targets that went quiet that way.
+    //
+    // The probe is deliberately NOT the cron-scoped 30s cache used for the
+    // PRE-ACQUIRE gate, and that asymmetry is the point rather than an
+    // oversight: the cache exists to stop one tick's eighteen targets each
+    // paying a PING, while this one exists to catch Redis going down BETWEEN
+    // the pre-acquire gate and this line (#1205-triage). A cached "healthy"
+    // here would re-create the very blind spot the pre-acquire gate has, one
+    // step later.
+    const healthyNow = await checkRedisHealth();
+    const redisUnavailable = !healthyNow || isRedisCircuitOpen();
+
+    if (redisUnavailable) {
+      if (opts.failMode === "closed") {
         throw new CronLockUnavailableError(jobName);
       }
+      // Fail-open, and actually fail-open: the job runs, unlocked, and leaves a
+      // loud trace. The warning is load-bearing — an unlocked run of a job whose
+      // peers assume mutual exclusion has to be visible, or the overlap is not.
+      //
+      // No trail and no heartbeat on this path, for the same reason the mock
+      // branch above skips them: both are fleet-grade bookkeeping, and during a
+      // Redis outage the writes that would carry them are the ones that cannot
+      // land. The consequence is stated rather than hidden — a fail-open job
+      // that skips its lock here leaves `cron:heartbeat:last` unrefreshed, so
+      // /api/health's six-hour dead-man will eventually report cron silence.
+      // That is the right answer: the fleet really is unmonitored during the
+      // outage, and a green heartbeat here would be the lie.
+      console.warn(
+        JSON.stringify({
+          event: "cron_lock_redis_down_fail_open",
+          job: jobName,
+          key,
+          message:
+            "Redis unavailable — running UNLOCKED (fail-open). No lock, no heartbeat, no job trail.",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return fn();
     }
+
+    // Redis answered, so the null token is a genuine "held by a peer" — a
+    // clean skip, for both modes.
     throw new CronLockHeldError(jobName);
   }
 

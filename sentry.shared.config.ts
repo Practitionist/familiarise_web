@@ -46,13 +46,76 @@ export const INFRA_TRANSIENT_PATTERNS = [
   // scoped to the marker rather than to a database-error pattern, which would
   // also swallow genuine faults elsewhere.
   /\[system-events\] write failed/,
+  // #E4 — the Stream fast-fail. `StreamUnavailableError` is raised by
+  // `withStreamCircuitBreaker` for EVERY Stream call made while the breaker is
+  // open, and it is raised on the request path: a dashboard load fans out into
+  // several Stream calls, so a 10-minute outage on a modest site is hundreds of
+  // identical events saying one thing, which is the 2026-09-21 shape exactly.
+  //
+  // Its own class rather than folded into the `subsystem: stream` rule below, so
+  // "the breaker is refusing" and "Stream returned a 5xx" stay
+  // distinguishable — a fix that clears one of them is not a fix for the other.
+  /Stream circuit breaker is OPEN/,
 ];
+
+/**
+ * #E4 — a Stream outage trickles instead of fire-hosing.
+ *
+ * This is the rule that stopped a Stream vendor incident from being an error
+ * quota incident. It is keyed on the SUBSYSTEM TAG rather than on a message
+ * pattern because the message is whatever the SDK said, and the tag is ours and
+ * stable — `subsystem: "stream"` is what `withStreamCircuitBreaker`, the
+ * meeting-join door and the recording door all set, so one rule covers every
+ * Stream call site including the ones added after this was written.
+ *
+ * Two exclusions, both deliberate and both load-bearing:
+ *
+ *   - `reason: "stream.billing"` (Stream code 99, app suspended) is NOT
+ *     throttled with the rest. It is the one Stream failure with a human action
+ *     attached, it does not self-resolve, and it is rare — throttling it into
+ *     the same bucket as a 429 is how the message "we owe Stream money" gets
+ *     lost. It falls through to `STREAM_BILLING_EXEMPT` and pages as before.
+ *   - Nothing is throttled on the strength of the tag ALONE unless the event is
+ *     also transient-looking. See {@link isTransientStreamEvent}: a
+ *     `subsystem: "stream"` account-state refusal (a deactivated user, a
+ *     suspended app) is a DIFFERENT bug from a vendor 5xx and must keep
+ *     producing its own issue, or fixing it will look like the throttle ate it.
+ */
+const STREAM_BILLING_EXEMPT = "stream.billing";
+
+/**
+ * Does this Stream event describe a VENDOR problem, as opposed to an account
+ * state or a defect of ours?
+ *
+ * The distinction is the same one `lib/stream-client.ts` already draws in
+ * `isExpectedStreamError` / `isRateLimitError` / `isStreamBillingError`: 404 is
+ * an expected miss on the lazy create-or-join path, 429 is self-inflicted quota
+ * exhaustion, 99 is a suspended app, and none of those are evidence that Stream
+ * is having a bad time. A network error, a timeout and a 5xx are.
+ *
+ * Kept as a regex over the rendered text rather than as a status-code parse
+ * because `infraThrottleKey` only ever sees the event's message and exception
+ * values — the tag is available, the HTTP status is not.
+ */
+const STREAM_TRANSIENT_TEXT =
+  /\b(429|500|502|503|504)\b|rate limit|too many requests|timeout|timed out|socket hang up|econnreset|econnrefused|etimedout|enotfound|network|fetch failed/i;
+
+function isTransientStreamEvent(text: string, reason: string | undefined) {
+  if (reason === STREAM_BILLING_EXEMPT) return false;
+  return STREAM_TRANSIENT_TEXT.test(text);
+}
 
 const infraLastSent = new Map<string, number>();
 
 export function infraThrottleKey(event: {
   message?: string;
   exception?: { values?: Array<{ type?: string; value?: string }> };
+  // Sentry's own `Event['tags']` values are `Primitive` (string | number |
+  // boolean | null), not `string`. Only `subsystem` and `reason` are read below
+  // and both are always strings, so the value type is widened here and the two
+  // reads coerce — a `Primitive` that is not a string simply never matches, which
+  // is the right answer for a tag we did not write.
+  tags?: Record<string | symbol, unknown>;
 }): string | null {
   const text = [
     event.message ?? "",
@@ -61,7 +124,26 @@ export function infraThrottleKey(event: {
     ),
   ].join(" | ");
   const hit = INFRA_TRANSIENT_PATTERNS.find((re) => re.test(text));
-  return hit ? hit.source : null;
+  if (hit) return hit.source;
+
+  // #E4 — see the note above. Read from the tag first and the text second, so
+  // an event that is BOTH (a Stream fast-fail also matches the pattern above)
+  // keys on the more specific class rather than on whichever check runs first.
+  const tags = event.tags as Record<string, unknown> | undefined;
+  const subsystem = tags?.subsystem;
+  if (subsystem === "stream") {
+    const reason = tags?.reason ?? tags?.["stream.failure"];
+    if (
+      isTransientStreamEvent(
+        text,
+        typeof reason === "string" ? reason : undefined,
+      )
+    ) {
+      return "stream.subsystem";
+    }
+  }
+
+  return null;
 }
 
 /**

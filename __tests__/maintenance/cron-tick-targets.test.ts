@@ -187,6 +187,53 @@ describe("cron-tick dueTargets cadence", () => {
     expect(reportableToSentry("process-payouts")).toBe(true);
     expect(reportableToSentry("reconcile-ledgers")).toBe(true);
   });
+
+  /**
+   * #E8 — the docblock claimed the Novu relay ran "every tick" after
+   * `TARGET_EVERY_MINUTES` had gained an entry for every target, so four of the
+   * twelve hourly ticks fire nothing. The docblock is corrected; this pins the
+   * INVARIANT the corrected wording rests on.
+   *
+   * The invariant is what makes the cost arithmetic in the header checkable: if
+   * a target is added without a cadence entry it silently fills the four
+   * heartbeat-only ticks, the ticker's Redis cost jumps by a quarter, and
+   * nothing in the diff explains it. A test failure is the cheapest possible
+   * place for that to surface.
+   */
+  it("gives EVERY target a cadence entry, so the heartbeat-only ticks stay empty", () => {
+    const { dueTargets } = loadTicker();
+    const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
+
+    // Union of every target any tick fires. If this set is a strict superset of
+    // the due set on each of the four heartbeat-only ticks, some target has no
+    // entry in TARGET_EVERY_MINUTES and is running on the default tier.
+    const allFired = new Set<string>([
+      ...dueTargets(at(0)),
+      ...dueTargets(at(5)),
+      ...dueTargets(at(10)),
+      ...dueTargets(at(15)),
+      ...dueTargets(at(20)),
+      ...dueTargets(at(25)),
+      ...dueTargets(at(30)),
+      ...dueTargets(at(35)),
+      ...dueTargets(at(40)),
+      ...dueTargets(at(45)),
+      ...dueTargets(at(50)),
+      ...dueTargets(at(55)),
+    ]);
+
+    for (const minute of [5, 25, 35, 55]) {
+      expect(dueTargets(at(minute))).toEqual([]);
+    }
+
+    // A target present in some ticks and absent from others HAS a cadence entry.
+    // A target present in ALL of them does not — which is what "heartbeat-only
+    // tick" is supposed to mean.
+    const everyTick = [...allFired].filter((name) =>
+      [5, 25, 35, 55].every((m) => dueTargets(at(m)).includes(name)),
+    );
+    expect(everyTick).toEqual([]);
+  });
 });
 
 // #1686 — Netlify re-invokes a scheduled function that answers 5xx, up to
