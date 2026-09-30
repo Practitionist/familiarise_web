@@ -40,6 +40,27 @@ jest.mock("../../lib/db/serializable-retry", () => ({
   withSerializableRetry: (fn: () => unknown) => fn(),
 }));
 
+// `earnings-service` reaches `lib/prisma` and `lib/collaborators/service`, and
+// the latter transitively loads `better-auth`, which ships ESM-only
+// (`dist/index.mjs`). Jest's default transformIgnorePatterns skips node_modules,
+// so the suite died at import time with "Cannot use import statement outside a
+// module". Every test here drives an explicit `tx`, so the real client is never
+// touched — stubbing it is both correct and the sibling suites' convention.
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    $transaction: (fn: (tx: unknown) => unknown) => fn({}),
+  },
+  Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" } },
+}));
+jest.mock("../../lib/collaborators/service", () => ({
+  calculateRevenueSplit: jest.fn(() => ({
+    consultantSharePaise: 0,
+    platformFeePaise: 0,
+    collaboratorSharePaise: 0,
+  })),
+}));
+
 import { applyCappedEarningReversal } from "../../lib/payments/payouts/earning-reversal-cas";
 import { refundEarnings } from "../../lib/payments/payouts/earnings-service";
 import { EarningStatus } from "@prisma/client";

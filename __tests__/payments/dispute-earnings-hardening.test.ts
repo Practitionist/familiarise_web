@@ -194,9 +194,17 @@ type EarningsUpdate = Partial<
 
 /** The two WHERE shapes handleDispute* issues on earnings tables. */
 interface EarningsHoldWhere {
-  paymentId: string;
-  status?: EarningStatus;
+  /** The dispute paths select by payment; the W1c LOST CAS selects by id. */
+  paymentId?: string;
+  id?: string;
+  status?: EarningStatus | { in: EarningStatus[] };
   preDisputeStatus?: EarningStatus | null;
+  /**
+   * W1c — the optimistic half of the REFUNDED CAS. The WHERE pins the
+   * pre-read value so two concurrent reversals cannot both win, and the write
+   * is absolute rather than an `increment`.
+   */
+  refundedShareAmount?: number;
 }
 interface EarningsLostWhere {
   paymentId: string;
@@ -384,8 +392,28 @@ function makeTxStub(): TxStub {
       updateMany: async ({ where, data }) => {
         let count = 0;
         for (const e of store.consultantEarnings) {
-          if (e.paymentId !== where.paymentId) continue;
-          if (where.status && e.status !== where.status) continue;
+          if (where.paymentId !== undefined && e.paymentId !== where.paymentId)
+            continue;
+          // W1c — the LOST branch's CAS predicates the row by `id`, a
+          // `status: { in: [...] }` set, and a pinned `refundedShareAmount`.
+          // Without these the mock matched nothing, the CAS reported a lost
+          // race, and the reversal silently never landed.
+          if (where.id !== undefined && e.id !== where.id) continue;
+          if (where.status !== undefined) {
+            if (Array.isArray(where.status)) {
+              if (!where.status.includes(e.status)) continue;
+            } else if ("in" in where.status) {
+              if (!where.status.in.includes(e.status)) continue;
+            } else if (e.status !== where.status) {
+              continue;
+            }
+          }
+          if (
+            where.refundedShareAmount !== undefined &&
+            e.refundedShareAmount !== where.refundedShareAmount
+          ) {
+            continue;
+          }
           if (
             where.preDisputeStatus !== undefined &&
             e.preDisputeStatus !== where.preDisputeStatus

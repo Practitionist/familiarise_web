@@ -81,6 +81,7 @@ const db = prisma as unknown as {
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date("2026-09-30T12:00:00.000Z");
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 24 * HOUR);
+const hoursAgo = (h: number) => new Date(NOW.getTime() - h * HOUR);
 
 // Prisma hands back BigInt for the money columns; the rows below are the
 // shape `readParkedRows` selects.
@@ -401,14 +402,48 @@ describe("runReleasePendingTrustEarnings — release is condition-driven only", 
       // The rows are un-parkable, so the CAS is never even attempted.
       expect(db.consultantEarnings.updateMany).not.toHaveBeenCalled();
       expect(db.organizationEarnings.updateMany).not.toHaveBeenCalled();
-      // The escalation is a report, never a payout.
-      expect(reportSentryError).toHaveBeenCalled();
+      // The escalation is a report, never a payout. Asserted as "an
+      // escalation fired" rather than "the pager fired": the ladder is
+      // warn-then-page, so the 25h and 48h cases only warn. The pager is
+      // pinned separately below, where the age justifies it.
+      expect(
+        (reportSentryError as jest.Mock).mock.calls.length +
+          (reportSentryMessage as jest.Mock).mock.calls.length,
+      ).toBeGreaterThan(0);
       expect(
         (reportSentryError as jest.Mock).mock.calls.every(
           (c: unknown[]) => c[0] instanceof Error,
         ),
       ).toBe(true);
     }
+
+    // The pager rung, pinned on its own: only an age past the page threshold
+    // earns a page, and the warn rung must not page.
+    jest.clearAllMocks();
+    seed({
+      consultantParks: [ceRow("ce2", "orgA", 12_000, daysAgo(5))],
+      orgParks: [],
+      verifiedOrgIds: [],
+      paidOrgIds: [],
+      releasedOrgCount: 0,
+      releasedConsultantCount: 0,
+    });
+    await runReleasePendingTrustEarnings();
+    expect(reportSentryError).toHaveBeenCalled();
+
+    jest.clearAllMocks();
+    seed({
+      consultantParks: [ceRow("ce3", "orgA", 12_000, hoursAgo(25))],
+      orgParks: [],
+      verifiedOrgIds: [],
+      paidOrgIds: [],
+      releasedOrgCount: 0,
+      releasedConsultantCount: 0,
+    });
+    await runReleasePendingTrustEarnings();
+    // 25h is past the warn threshold and well short of the page threshold.
+    expect(reportSentryMessage).toHaveBeenCalled();
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 
   it("keeps the earning withheld from totals while parked", async () => {

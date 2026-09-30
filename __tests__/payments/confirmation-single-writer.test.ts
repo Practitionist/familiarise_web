@@ -397,10 +397,22 @@ describe("capture clock", () => {
       .split("if (confirmed.count === 0)")[0];
     expect(confirm).toContain("paymentStatus: PaymentStatus.PENDING");
     expect(confirm).toContain("capturedAt: new Date()");
+    // The replay short-circuit is `if (alreadyProcessed) { … }` — named once so
+    // the parity check above and this guard are mutually exclusive (W1b). Slice
+    // THAT block, not everything from `const recoverable =`: that span now also
+    // contains the #1695 EXPIRED/FAILED claim, which is a different path and
+    // legitimately stamps `capturedAt` when it takes a terminal row back as
+    // SUCCEEDED for auto-refund.
     const replay = handlers
-      .split("const recoverable =")[1]
+      .split("if (alreadyProcessed) {")[1]
       .split("return null; // Signal: already processed")[0];
+    expect(replay).toBeDefined();
     expect(replay).not.toContain("capturedAt");
+    // …and the two guards really are distinct, or the slice proves nothing.
+    expect(handlers).toContain("const alreadyProcessed =");
+    expect(handlers).toContain(
+      "payment.paymentStatus === PaymentStatus.SUCCEEDED && !recoverable",
+    );
   });
 });
 

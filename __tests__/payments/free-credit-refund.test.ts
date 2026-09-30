@@ -191,7 +191,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   tx.refund.findFirst.mockResolvedValue(null);
   tx.refund.create.mockResolvedValue({ id: "refund-row-1" });
-  tx.consultantEarnings.update.mockResolvedValue({});
+  // W1c — the earnings reversal now lands through the CAS `updateMany`;
+  // a `{count: 1}` return is what makes the helper report it won.
+  tx.consultantEarnings.updateMany.mockResolvedValue({ count: 1 });
   tx.organizationEarnings.update.mockResolvedValue({});
   tx.payment.findUniqueOrThrow.mockResolvedValue(freeCreditSettlement());
   mockReverseCredits.mockResolvedValue(118_000);
@@ -242,8 +244,17 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
     );
 
     // The payable's source row nets first, so payout math follows the ledger.
-    expect(tx.consultantEarnings.update).toHaveBeenCalledWith({
-      where: { id: "ce-1" },
+    // W1c — CAS-in-WHERE: the WHERE now pins the source status AND the
+    // pre-read `refundedShareAmount`, so a concurrent reversal cannot both
+    // win, and the value written is absolute rather than an `increment`.
+    expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "ce-1",
+        status: {
+          in: expect.arrayContaining(["PENDING", "READY", "PAID", "HELD"]),
+        },
+        refundedShareAmount: 0,
+      },
       data: { refundedShareAmount: 80_000, status: "REFUNDED" },
     });
     expect(mockAssertEarningTransition).toHaveBeenCalledWith(
@@ -427,11 +438,12 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     });
 
     // The paid share nets to REFUNDED…
-    const earningUpdate = tx.consultantEarnings.update.mock.calls.find(
+    const earningUpdate = tx.consultantEarnings.updateMany.mock.calls.find(
       ([arg]: [{ where: { id: string } }]) => arg.where.id === "ce-paid",
     );
-    // Cumulative-set semantics on this rail (not {increment}).
-    expect(earningUpdate[0].data).toMatchObject({
+    // Absolute-set semantics on this rail (not {increment}) — the whole point
+    // of the CAS: two writers can only compose to min(share, a + b).
+    expect(earningUpdate![0].data).toMatchObject({
       status: "REFUNDED",
       refundedShareAmount: 80_000,
     });
@@ -574,8 +586,13 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
 
   expect(r).toMatchObject({ rail: "CREDITS", restoredPaise: 59_000 });
   expect(mockRestoreUpTo).toHaveBeenCalledWith(PAYMENT_ID, tx, 59_000);
-  expect(tx.consultantEarnings.update).toHaveBeenCalledWith({
-    where: { id: "ce-1" },
+  // W1c — CAS-in-WHERE, same shape as the assertion above.
+  expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
+    where: {
+      id: "ce-1",
+      status: { in: expect.arrayContaining(["PENDING", "READY", "PAID", "HELD"]) },
+      refundedShareAmount: 0,
+    },
     data: { refundedShareAmount: 40_000, status: "PENDING" },
   });
   const posting = mockPostLedgerTxn.mock.calls[0][1];

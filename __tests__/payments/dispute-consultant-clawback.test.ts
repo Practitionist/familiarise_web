@@ -191,7 +191,42 @@ function makeTxStub() {
       },
     },
     consultantEarnings: {
-      updateMany: async () => ({ count: 0 }),
+      // W1c — the LOST branch writes through a CAS `updateMany` (source status
+      // in WHERE, `refundedShareAmount` pinned to the pre-read). This stub
+      // EVALUATES that predicate and applies the write, so a landed reversal
+      // reports `{count: 1}` and a lost race reports `{count: 0}` — exactly as
+      // Postgres would. Returning a constant count would make the handler's
+      // `consultantReversalApplied` gate always false, so the clawback and the
+      // ops page would be skipped on every case and the suite would assert
+      // nothing about the money.
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: {
+          id: string;
+          status?: { in: EarningStatus[] } | EarningStatus;
+          refundedShareAmount?: number;
+        };
+        data: Record<string, unknown>;
+      }) => {
+        const row = store.consultantEarnings.find((e) => e.id === where.id);
+        if (!row) return { count: 0 };
+        const wantStatus = where.status
+          ? Array.isArray((where.status as { in?: EarningStatus[] }).in)
+            ? (where.status as { in: EarningStatus[] }).in
+            : [where.status as EarningStatus]
+          : null;
+        if (wantStatus && !wantStatus.includes(row.status)) return { count: 0 };
+        if (
+          where.refundedShareAmount !== undefined &&
+          row.refundedShareAmount !== where.refundedShareAmount
+        ) {
+          return { count: 0 };
+        }
+        Object.assign(row, data);
+        return { count: 1 };
+      },
       findMany: async ({ where }: { where: { paymentId: string; status?: { in: EarningStatus[] } } }) =>
         store.consultantEarnings
           .filter(
