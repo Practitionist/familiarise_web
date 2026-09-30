@@ -11,6 +11,10 @@ import {
   type AuthSyncMessage,
 } from "@/lib/auth-broadcast";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
+import {
+  clearSentryIdentity,
+  setSentryIdentity,
+} from "@/lib/observability/identity";
 
 /**
  * Keeps the auth session in sync across browser tabs.
@@ -39,6 +43,8 @@ import { signOutEverywhere } from "@/lib/auth/sign-out";
  * `visibilitychange` re-check (cross-device, within one tab-switch),
  * and the opt-in Redis poll below (cross-device, within the poll
  * interval).
+ *   4. Mirrors the resolved session onto the Sentry user, so client-side
+ *      events are attributable.
  *
  * Renders nothing. See `lib/auth-broadcast.ts` for why this is needed.
  */
@@ -152,6 +158,11 @@ export default function AuthSyncProvider() {
   const previousAuthedRef = useRef<boolean | undefined>(undefined);
   const previousUserIdRef = useRef<string | undefined>(undefined);
   const lastCheckRef = useRef<number>(0);
+  // Last user stamped onto Sentry, as `id|role`, so a re-render that resolves
+  // the same session does not re-issue a `setUser` on every re-render — but a
+  // ROLE change does re-issue one. The role is part of the identity label, and
+  // a promotion or a back-office demotion arrives on the same `user.id`.
+  const stampedIdentityRef = useRef<string | null>(null);
 
   /**
    * One authoritative re-check that answers "was I revoked?".
@@ -201,6 +212,40 @@ export default function AuthSyncProvider() {
     };
     return subscribeAuthSync(onMessage);
   }, [refetch, classifyUnexpectedSignOut]);
+
+  // Stamp the acting user onto Sentry. The single source of truth for the
+  // CLIENT identity, and it lives here rather than in the sign-in page for two
+  // reasons: SSO and social sign-in are full-page redirects through an IdP, so
+  // the only place their return trip observes a session is this resolver —
+  // which is why the previous `Sentry.setUser` in `app/auth/signin/page.tsx`
+  // fired for email/password only and left every SSO and OAuth user
+  // unattributed; and this also covers session expiry and cross-tab sign-out,
+  // neither of which touches the sign-in page.
+  //
+  // The wrapped `signOut` in `lib/auth-client.ts` clears the identity on
+  // SUCCESS, not eagerly — a failed sign-out leaves the user authenticated, so
+  // the id already on the scope is still correct and clearing it would drop the
+  // actor for someone who never left (see that file for the full argument). It
+  // needs no backstop on the success path, because `signOutEverywhere` and the
+  // `onError` paths hard-navigate, which reloads this provider. This effect is
+  // the backstop for every path that resolves a session change WITHOUT a
+  // sign-out call: session expiry, cross-tab sign-out, SSO, and OAuth.
+  useEffect(() => {
+    if (isPending) return;
+    const userId = session?.user?.id ?? null;
+    const role = session?.user?.role ?? null;
+    const identity = userId ? `${userId}|${role ?? ""}` : null;
+    if (identity === stampedIdentityRef.current) return;
+    stampedIdentityRef.current = identity;
+    if (userId) {
+      setSentryIdentity({ userId, role });
+    } else {
+      // Without this, the next anonymous session on the same tab keeps the
+      // previous account's id — so a stranger on a shared machine files events
+      // against the last person who signed in.
+      clearSentryIdentity();
+    }
+  }, [isPending, session]);
 
   // Unexpected authed→null transitions (revoked elsewhere, expired, or
   // transient) all land here; the classifier tells them apart. The

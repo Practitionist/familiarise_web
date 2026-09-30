@@ -75,8 +75,8 @@ import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import {
-  recordSystemError,
-  recordSystemEvent,
+  recordSystemEventSafe,
+  recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
@@ -831,13 +831,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           tags: { feature: "overage-credit-back" },
           extra: { parentPaymentId: input.paymentId, sidePaymentId },
         });
-        void recordSystemError({
+        void recordSystemErrorSafe({
           organizationId: null,
           category: "PAYMENT",
           summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
           err,
           context: { parentPaymentId: input.paymentId, sidePaymentId },
-        }).catch(() => {});
+        });
       }
     }
   }
@@ -939,7 +939,7 @@ export async function applyRefundCascade(
   });
   if (rawInput.amountPaise > remaining) {
     input = { ...rawInput, amountPaise: Math.max(remaining, 0) };
-    await recordSystemEvent({
+    await recordSystemEventSafe({
       db: tx,
       organizationId: payment.organizationId ?? null,
       category: "PAYMENT",
@@ -951,7 +951,7 @@ export async function applyRefundCascade(
         requestedPaise: rawInput.amountPaise,
         reversedPaise: remaining,
       },
-    }).catch(() => {});
+    });
     reportSentryMessage("REFUND_CASCADE_CLAMPED", {
       subsystem: "payments",
       expected: true,
@@ -1708,13 +1708,13 @@ export async function applyRefundCascade(
     // #1582 B-P1-02 — deliberately NOT `db: tx`: the rethrow below rolls the
     // tx back, so a tx-client row would vanish; the global insert queues
     // behind the rollback (PG_POOL_MAX=1) and lands once it releases.
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",
       summary: `Refund reversal ledger posting failed for payment ${payment.id}`,
       err,
       context: { paymentId: payment.id, refundId: input.refundId },
-    }).catch(() => {});
+    });
     throw err;
   }
 
@@ -1765,7 +1765,7 @@ async function reportOrgCreditNoteFullyCredited(
   },
 ): Promise<void> {
   // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); this branch commits.
-  await recordSystemEvent({
+  await recordSystemEventSafe({
     db: tx,
     organizationId: params.organizationId,
     category: "BILLING",
@@ -1777,7 +1777,7 @@ async function reportOrgCreditNoteFullyCredited(
       refundId: params.refundId ?? null,
       disputeId: params.disputeId ?? null,
     },
-  }).catch(() => {});
+  });
   reportSentryMessage("CREDIT_NOTE_FULLY_CREDITED", {
     subsystem: "payments",
     expected: true,

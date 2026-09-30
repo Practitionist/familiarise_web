@@ -324,8 +324,24 @@ export const auth = betterAuth({
               }
             } catch (consentError) {
               // Fail open on consent stamping — the user-create hook
-              // shouldn't sink a signup over an audit-trail glitch. The
-              // /consent backfill cron (#701) re-creates missing rows.
+              // shouldn't sink a signup over an audit-trail glitch.
+              //
+              // There is NO backfill job. An earlier version of this comment
+              // claimed a "/consent backfill cron (#701)" would re-create the
+              // rows; that cron was never built, so the comment promised a
+              // recovery path that did not exist and this failure was
+              // permanently unrecoverable for the user.
+              //
+              // The real recovery path, and it is deliberate: `ConsentSection`
+              // renders every purpose with a "Give consent" button, and the
+              // gates are fail-closed, so a user with no artifact is denied at
+              // checkout and at video/chat until they grant it themselves.
+              // That is a degraded experience, not a compliance hole — the
+              // alternative (failing the signup) would trade a recoverable
+              // missing row for a lost account.
+              //
+              // If you want genuine backfill, it has to be built and
+              // documented. Do not restore a reference to it until it exists.
               console.error(
                 "[AUTH_HOOK] DPDP consent stamp error:",
                 consentError,

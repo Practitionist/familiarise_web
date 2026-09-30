@@ -27,7 +27,7 @@ import {
   recarveOverageBase,
   restoreOverageBaseCarve,
 } from "@/lib/payments/billing/overage-base-carve";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -124,13 +124,13 @@ export async function handleOverageMemberSuccess(
           // charge sat FAILED; the member's capture now over-relieves the org
           // by basePaise. Money already moved — flag for a manual adjustment
           // rather than refusing the capture.
-          void recordSystemError({
+          void recordSystemErrorSafe({
             organizationId: side.organizationId,
             category: "OVERAGE",
             summary: `Late capture of overage side-payment ${side.id} after the parent was invoiced — basePaise double-collected; manual billing adjustment needed`,
             err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
             context: { sidePaymentId: side.id, paymentIntentId },
-          }).catch(() => {});
+          });
         }
       }
     }
@@ -140,13 +140,13 @@ export async function handleOverageMemberSuccess(
       // after the order was minted but before this webhook landed. Money was
       // collected for an obligation that no longer exists — do NOT credit the
       // org; surface it for a manual side-payment refund instead (#782).
-      void recordSystemError({
+      void recordSystemErrorSafe({
         organizationId: side.organizationId,
         category: "OVERAGE",
         summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
         err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
         context: { sidePaymentId: side.id, paymentIntentId },
-      }).catch(() => {});
+      });
       return;
     }
 
@@ -210,13 +210,13 @@ export async function handleOverageMemberFailure(
         sidePaymentId: side.id,
       });
       if (restore === "invoiced") {
-        void recordSystemError({
+        void recordSystemErrorSafe({
           organizationId: null,
           category: "OVERAGE",
           summary: `Failed overage side-payment ${side.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
           err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
           context: { sidePaymentId: side.id, paymentIntentId },
-        }).catch(() => {});
+        });
       }
     }
   });

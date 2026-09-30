@@ -61,9 +61,13 @@ import { recordSystemError } from "../../lib/enterprise/system-events";
 // supplier config, the system-event write and Sentry are all stubbed so the
 // assertion is about the decision, not the plumbing.
 jest.mock("../../lib/pdf/supplier", () => ({ getPlatformSupplier: jest.fn() }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
   reportSentryMessage: jest.fn(),

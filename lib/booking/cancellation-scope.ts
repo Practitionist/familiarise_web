@@ -26,7 +26,7 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   isCompletedOccurrence,
   sessionsTotalOf,
@@ -193,7 +193,7 @@ export async function resolveBookingRefundContext(
   // is scoped to a payer (or the booking has exactly one: the 1:1 types).
   const singlePayer = !!payerUserId || (!ref.classId && !ref.webinarId);
   if (singlePayer && payments.length > 1) {
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary:
@@ -201,7 +201,7 @@ export async function resolveBookingRefundContext(
         `oldest is being refunded, so the buyer may be owed more`,
       err: new Error("MULTIPLE_REFUNDABLE_PAYMENTS"),
       context: { ref, payerUserId, paymentIds: payments.map((p) => p.id) },
-    }).catch(() => {});
+    });
   }
   const paidPayment = payment
     ? {

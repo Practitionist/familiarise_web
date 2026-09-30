@@ -39,7 +39,7 @@ import {
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -1234,13 +1234,13 @@ export async function createEarningsFromPayment({
                 // then RE-THROW so the imbalance rolls back the whole booking
                 // transaction. The ledger is the source of truth: a booking that can't
                 // post a balanced journal must not be allowed to half-commit and drift.
-                void recordSystemError({
+                void recordSystemErrorSafe({
                   organizationId: payment.organizationId ?? null,
                   category: "LEDGER",
                   summary: `Booking ledger posting failed for payment ${payment.id}`,
                   err,
                   context: { paymentId: payment.id },
-                }).catch(() => {});
+                });
               } else {
                 // Lost SSI race — withSerializableRetry re-runs the whole txn.
                 // Modelled outcome, reported at low volume/info only.

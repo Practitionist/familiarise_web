@@ -7,6 +7,7 @@ import {
   SessionLookupFailedError,
 } from "@/lib/auth-session-lookup";
 import prisma from "@/lib/prisma";
+import { setSentryIdentityFromSession } from "@/lib/observability/identity";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
@@ -74,6 +75,10 @@ async function resolveGuardSession() {
       new Error("stale-session cleanup did not redirect"),
     );
   }
+  // Covers every page guard below (requireAuth, requireOnboarded,
+  // requireUserRole, requireBackofficePage, requireNotOnboarded): a server
+  // component that throws reached Sentry with no actor at all before this.
+  setSentryIdentityFromSession(lookup.session);
   return lookup.session;
 }
 

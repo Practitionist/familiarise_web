@@ -243,7 +243,7 @@ Each section also lists:
 ### C.1 Roles & Permissions — ✅ Wired
 
 - **Schema:** `Membership.role` (7-role ladder: OWNER → MAINTAINER → BILLING_ADMIN → MANAGER → EXPERT → SUPPORT → LEARNER). `MemberRole` enum.
-- **Code paths:** [`lib/auth-helpers.ts:requireOrgAccess`](../../../lib/auth-helpers.ts) + [`lib/auth/billing-admin-gate.ts`](../../../lib/auth/billing-admin-gate.ts). Role-transition reconciliation in [`lib/api/organizations/membership-transitions.ts`](../../../lib/api/organizations/membership-transitions.ts).
+- **Code paths:** [`lib/auth-helpers.ts:requireOrgAccess`](../../../lib/auth-helpers.ts) with a key from the permission matrix in [`lib/auth/org-permissions.ts`](../../../lib/auth/org-permissions.ts). Role-transition reconciliation in [`lib/api/organizations/membership-transitions.ts`](../../../lib/api/organizations/membership-transitions.ts).
 - **Why:** Role rank decides not just permission but profile reconciliation — LEARNER lazy-creates `ConsulteeProfile`, EXPERT lazy-creates `ConsultantProfile`. The bridge ensures consultant earnings and consultee bookings work the moment a role flip commits.
 - **Future work:** none open.
 

@@ -47,7 +47,10 @@ import {
   buildOccurrenceForWindow,
   liveOccurrenceWhere,
 } from "@/lib/appointments/occurrences";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemErrorSafe,
+} from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
@@ -301,7 +304,7 @@ async function reportTerminalCaptureRace(params: {
   const currentStatus = fresh?.paymentStatus ?? params.observedStatus;
   // #1582 B-P1-02 — written through the caller's client (PG_POOL_MAX=1): a
   // global-client insert inside the tx would queue and die at the connect timeout.
-  await recordSystemError({
+  await recordSystemErrorSafe({
     organizationId: null,
     category: "PAYMENT",
     summary: `Capture for order ${params.orderId} landed on a ${currentStatus} payment — status left alone, refund by hand`,
@@ -313,7 +316,7 @@ async function reportTerminalCaptureRace(params: {
       reason: params.reason,
     },
     db: params.db,
-  }).catch(() => {});
+  });
   reportSentryMessage(
     "Capture landed on a terminal payment — status not restamped",
     {
@@ -942,13 +945,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       });
       return null;
     }
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: `Legacy-shape capture ${paymentIntentId} overlapped a confirmed booking — auto-refunding`,
       err: err instanceof Error ? err : new Error(String(err)),
       context: { paymentIntentId, paymentId: loser.id },
-    }).catch(() => {});
+    });
     try {
       await refundPayment({
         paymentId: loser.id,
@@ -1038,13 +1041,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         subsystem: "payments",
         contexts: { payment: { paymentId: txResult.paymentId } },
       });
-      void recordSystemError({
+      void recordSystemErrorSafe({
         organizationId: null,
         category: "PAYMENT",
         summary: `Capture after hold release (${txResult.releasedBy}) could not be auto-refunded — refund by hand`,
         err: new Error("CAPTURE_AFTER_RELEASE_REFUND_FAILED"),
         context: { paymentId: txResult.paymentId },
-      }).catch(() => {});
+      });
     }
     return txResult.outcome;
   }
@@ -1179,10 +1182,12 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     // P3 referral bells, post-commit. scheduleAfter, not after(): this
     // handler also runs from scripts/payments/reconcile-orphaned-confirmations
     // where no request scope exists and a bare after() throws.
-    scheduleAfter(() =>
-      notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-        console.error("[referral-qualification-bell] failed:", bellErr),
-      ),
+    scheduleAfter(
+      () =>
+        notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+          console.error("[referral-qualification-bell] failed:", bellErr),
+        ),
+      "payments.handlePaymentSuccess.referral-bell",
     );
   } catch (referralError) {
     reportSentryError(referralError, {
@@ -2065,14 +2070,14 @@ async function confirmApprovalStatus(
         capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
         // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps a
         // telemetry failure from aborting money.
-        await recordSystemError({
+        await recordSystemErrorSafe({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for consultation ${entityId} in terminal state ${freshStatus} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "consultation", entityId },
           db: tx,
-        }).catch(() => {});
+        });
       }
     }
   } else {
@@ -2089,14 +2094,14 @@ async function confirmApprovalStatus(
     const flagTerminal = async (status: AppointmentStatus) => {
       capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
       // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
-      await recordSystemError({
+      await recordSystemErrorSafe({
         organizationId: null,
         category: "PAYMENT",
         summary: `Payment captured for subscription ${entityId} in terminal state ${status} — refund needed`,
         err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
         context: { entityType: "subscription", entityId },
         db: tx,
-      }).catch(() => {});
+      });
     };
 
     // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
@@ -2280,7 +2285,7 @@ export async function confirmExistingAppointment(
         if (!alreadyRecorded) {
           // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); also keeps the
           // once-per-appointment probe above in the same snapshot.
-          await recordSystemError({
+          await recordSystemErrorSafe({
             organizationId: null,
             category: "PAYMENT",
             summary: holdExpired
@@ -2295,7 +2300,7 @@ export async function confirmExistingAppointment(
             },
             correlationId,
             db: tx,
-          }).catch(() => {});
+          });
         }
         // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
         // the loser and releases the hold. The #830 sweep re-drives via this
@@ -2328,14 +2333,14 @@ export async function confirmExistingAppointment(
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
         // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
-        await recordSystemError({
+        await recordSystemErrorSafe({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for class ${classId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "class", entityId: classId },
           db: tx,
-        }).catch(() => {});
+        });
         return { capturedAfterTerminal: true };
       }
     }
@@ -2375,14 +2380,14 @@ export async function confirmExistingAppointment(
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
         // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
-        await recordSystemError({
+        await recordSystemErrorSafe({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for webinar ${webinarId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "webinar", entityId: webinarId },
           db: tx,
-        }).catch(() => {});
+        });
         return { capturedAfterTerminal: true };
       }
     }

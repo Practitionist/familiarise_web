@@ -329,7 +329,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
     <>
       <DashboardHeader
         title="DPDP consent"
-        subtitle="Tamper-evident consent artifacts per the Digital Personal Data Protection Act 2023. Retained 7 years from grant or withdrawal."
+        subtitle="Tamper-evident consent artifacts per the Digital Personal Data Protection Act 2023. Retained 7 years from the grant or the withdrawal, whichever is later."
       />
       <DashboardContent>
         <Card>
@@ -368,7 +368,9 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
             <CardTitle>Withdrawal history</CardTitle>
             <CardDescription>
               Read-only record of withdrawn consents. Retained for the DPDP
-              7-year audit window; a daily cron purges rows past retention.
+              7-year audit window, counted from the withdrawal. A weekly job
+              flags rows past that date; rows are only deleted when
+              DPDP_SWEEPER_DELETE is enabled.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0 sm:p-4">

@@ -40,9 +40,13 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   },
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 import prisma from "../../lib/prisma";
 import { applyReversal } from "../../lib/payments/operations/reversal-engine";

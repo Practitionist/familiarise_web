@@ -91,7 +91,7 @@ export async function handleReviewPatch(
   scheduleAfter(async () => {
     if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
     if (email) await attemptOnboardingEmail(email);
-  });
+  }, "verification.review.post-commit");
 
   const verification = await prisma.consultantProfileVerification.findUnique({
     where: { id: verificationId },

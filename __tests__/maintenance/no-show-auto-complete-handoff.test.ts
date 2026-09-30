@@ -25,10 +25,14 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
     refundBookingPayment(...(a as [never])),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: jest.fn(async () => undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn(async () => undefined);
+  return {
+    __esModule: true,
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 jest.mock("../../lib/novu/service", () => ({
   __esModule: true,

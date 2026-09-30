@@ -152,9 +152,13 @@ jest.mock("../../lib/novu", () => ({
   notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 jest.mock("../../lib/activity/log-activity", () => ({
   logConsultationCancelled: jest.fn().mockResolvedValue(undefined),

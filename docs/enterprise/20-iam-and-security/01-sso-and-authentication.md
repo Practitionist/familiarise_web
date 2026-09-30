@@ -374,7 +374,7 @@ login. An OWNER opens a **time-boxed** window during which the
 works again until the IdP is restored.
 
 `POST /api/organizations/[orgId]/sso/break-glass` (OWNER-gated via
-`requireOrgOwner`):
+`requireOrgAccess(orgId, { permission: "identity.manage" })`):
 
 ```jsonc
 { "hours": 4, "reason": "Okta SAML cert expired; renewing now" }
@@ -414,7 +414,7 @@ sequenceDiagram
   participant Veto as session.create.before veto
   Note over O,Veto: 02:00 — Okta SAML metadata goes stale.<br/>Every @wipro.com login is rejected SSO_REQUIRED.
   O->>API: POST .../sso/break-glass { hours: 4, reason }
-  API->>DB: requireOrgOwner + enforceSSO? (404 if not enforced)
+  API->>DB: identity.manage check + enforceSSO? (404 if not enforced)
   API->>DB: SET breakGlassUntil = now+4h<br/>+ SETTINGS_CHANGED audit row (reason, hours)
   API-->>O: 200 { breakGlassUntil }
   Note over O,Veto: window OPEN — lookupEnforcedOrg returns null
@@ -472,6 +472,8 @@ denials, leaving users with a session cookie but no Membership row.
 For the full sequence (including the `sessionGeneration` marker that
 keeps active sessions fresh after role changes) see
 [`jit-and-session-refresh`](02-jit-and-session-refresh.md).
+
+An SSO-created account no longer gets the sign-up consent stamp, because the person never saw the sign-up terms (#1854). The org dashboard shows a first sign-in consent step (`JoinConsentGate`) to a member who has no core-processing consent record at all, and accepting an invitation from such an account shows the sign-up consent inline and records it in the same transaction as the acceptance. SSO sign-in itself still records nothing.
 
 ### JIT default role
 

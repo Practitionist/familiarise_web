@@ -34,8 +34,10 @@ The application enforces authorization at the API layer:
 2. **`requireOrgAccess`** verifies membership + capability gates
    against the target org for every `/api/organizations/[orgId]/**`
    route.
-3. **`requireOrgBillingAdminOrOwner`** layers the BILLING_ADMIN
-   disjunction on top for finance-mutating routes.
+3. **The permission matrix** (`lib/auth/org-permissions.ts`) decides
+   the role gate through `requireOrgAccess`'s `permission` option; the
+   BILLING_ADMIN disjunction that once lived in its own helper is now the
+   `billing.manage` key on finance-mutating routes.
 4. **SCIM bearer tokens** authenticate at the SCIM endpoints and
    carry the implicit tenant scope via `ScimToken.organizationId`.
 5. **Cron routes** require `CRON_SECRET` for every `/api/cleanup/*`.

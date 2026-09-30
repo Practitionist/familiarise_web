@@ -32,9 +32,14 @@
  *      - Version increments when the notice text changes.
  *
  * 3. Retention: audit artifact retained for 7 years from grant or
- *    withdrawal, whichever later. `auditRetainedUntil` on the schema
- *    captures this. A daily cron (`consent-retention-sweeper.ts`) purges
- *    artifacts past the retention date.
+ *    withdrawal, whichever is later. `auditRetainedUntil` on the schema
+ *    captures this — `withdrawConsent` restarts the clock, so a withdrawal
+ *    can never make its own record deletable.
+ *
+ *    A WEEKLY cron (`consent-retention-sweeper.ts`, Sunday 21:00 UTC) runs
+ *    against that field. It is COUNT-ONLY unless `DPDP_SWEEPER_DELETE=true`
+ *    is set, in which case it deletes in capped batches. In the default
+ *    posture nothing is deleted, and an overdue row is reported instead.
  *
  * 4. Withdrawal: user can withdraw at any time. `withdrawnAt` populated;
  *    downstream processing must stop within a commercially reasonable
@@ -133,6 +138,33 @@ export interface ConsentArtifactDraft {
 }
 
 /**
+ * How long a consent record is kept as audit evidence, counted from whichever
+ * of grant or withdrawal is later. Seven years is the period the consent
+ * retention sweeper enforces against `auditRetainedUntil`, so the two must
+ * agree: if this drifts, rows outlive the sweeper (or, as the withdrawal path
+ * used to, get deleted early).
+ */
+export const CONSENT_AUDIT_RETENTION_YEARS = 7;
+
+/**
+ * Calendar-year addition, deliberately not `+ 7 * 365 * 24 * 60 * 60 * 1000`.
+ * A fixed millisecond offset drifts by a day every four years across leap days,
+ * and the sweeper compares the two values directly.
+ */
+function addYears(from: Date, years: number): Date {
+  // UTC methods, not the local ones. `getFullYear()`/`setFullYear()` read and
+  // write in the host's local zone, so a DST transition inside the retention
+  // window shifts the stored deadline by an hour. The sweeper compares this
+  // value directly, so a one-hour ambiguity is a real boundary: on a
+  // spring-forward date a deadline computed in local time can land an hour
+  // earlier in UTC than intended, and the row is eligible for deletion an
+  // hour early. Deterministic, server-independent, and immune to the host's TZ.
+  const out = new Date(from);
+  out.setUTCFullYear(out.getUTCFullYear() + years);
+  return out;
+}
+
+/**
  * STUB: Builds a ConsentArtifact payload ready for Prisma insert.
  *
  * Real SHA-256 hashing is implemented here — safe to use for testing.
@@ -143,8 +175,7 @@ export function buildConsentArtifact(
   input: ConsentGrantInput,
 ): ConsentArtifactDraft {
   const grantedAt = input.grantedAt ?? new Date();
-  const auditRetainedUntil = new Date(grantedAt);
-  auditRetainedUntil.setFullYear(auditRetainedUntil.getFullYear() + 7);
+  const auditRetainedUntil = addYears(grantedAt, CONSENT_AUDIT_RETENTION_YEARS);
 
   const payload = JSON.stringify({
     userId: input.userId,
@@ -306,7 +337,20 @@ export async function withdrawConsent(params: {
 
   const { count } = await prisma.consentArtifact.updateMany({
     where,
-    data: { withdrawnAt: now },
+    data: {
+      withdrawnAt: now,
+      // The audit clock restarts at the withdrawal. Without this the row's
+      // `auditRetainedUntil` keeps running from `grantedAt`, so an artifact
+      // granted six years ago and withdrawn today becomes deletable
+      // immediately — and the consent-retention sweeper would delete the only
+      // record that the user ever withdrew. That destroys the evidence of the
+      // withdrawal itself, which is the thing an audit asks for.
+      //
+      // The org consent dashboard already told users retention runs "7 years
+      // from grant or withdrawal" (app/dashboard/organization/[orgId]/consent/
+      // page.tsx). This is the code that makes that sentence true.
+      auditRetainedUntil: addYears(now, CONSENT_AUDIT_RETENTION_YEARS),
+    },
   });
 
   // A Stream roster built in the next five minutes would otherwise still admit

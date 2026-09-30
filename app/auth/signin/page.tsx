@@ -370,7 +370,12 @@ function SignInContent() {
           });
         }
       } else if (data) {
-        Sentry.setUser({ id: data.user.id });
+        // The Sentry user is NOT set here. `AuthSyncProvider` mirrors the
+        // resolved session onto the identity, which also covers the SSO and
+        // social sign-in redirects that come back through a full page load
+        // and never touch this handler. Setting it here as well would only
+        // re-stamp the same id without the role, and would keep this one
+        // sign-in path as a second place to forget when identity changes.
         settle({
           title: "Sign In Successful",
           description: callbackUrl

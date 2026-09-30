@@ -199,6 +199,7 @@ MEMBER events fire on every change to an organization's human membership roster 
 | `ROLE_CHANGE` / `STATUS_CHANGE` | member PATCH |
 | `INVITE_SENT` / `INVITE_RESENT` / `INVITE_ACCEPTED` / `INVITE_REVOKED` | invite routes |
 | `INVITE_EXPIRED` | `cleanup-stale-invitations` cron (PENDING invite past 14d) |
+| `APPOINTMENT_CANCELLED_FOR_ORG` / `APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG` **(#1860)** | an operator cancels, or requests a reschedule of, a member's org-funded 1:1 or subscription booking "Acting for <Org>"; written on the booking's transaction, in MEMBER because the booking is the member's record |
 
 ### `CONTRACT`
 CONTRACT events span a contract's entire state machine — creation, countersigning, termination, and natural expiry fired by cron — plus the v2 supersession and auto-renew actions that result from the `advance-program-cycles` / `auto-renew-contracts` jobs.
@@ -218,6 +219,7 @@ PROGRAM events cover the full entitlement lifecycle — create, pause, archive, 
 | `PROGRAM_ARCHIVED` **(v2 #777 §B)** | archive/unarchive (soft-hide; financial history preserved) |
 | `PROGRAM_ASSIGNED` / `PROGRAM_ASSIGNMENT_UPDATED` / `PROGRAM_UNASSIGNED` | assignment routes |
 | `PROGRAM_ASSIGNMENT_ROLLED` **(v2 #779)** | `advance-program-cycles` cron — one row per ROLL **and** per CLOSE (`details.closed` distinguishes) |
+| `ASSIGNMENT_CLOSED_BY_CONTRACT` **(#1854)** | `closeContractSeats`, from the manual TERMINATED/EXPIRED cascade and the nightly contract-expiry job: one row per seat the ending contract closed |
 | `RATE_CARD_BUMPED` | rate-card change |
 
 ### `WALLET`
@@ -240,6 +242,10 @@ INVOICE events record the full arc of an organization's billing document — fro
 | `INVOICE_DUNNING_SUSPENDED` **(#812)** | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
 | `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID` | invoice pay flow |
 | `INVOICE_CANCELLED` / `INVOICE_VOIDED` / `INVOICE_REFUNDED` / `REFUND_DENIED` | invoice admin actions |
+| `FUNDING_SOURCE_CHANGED` / `BILLING_ACCOUNT_UPDATED` **(#1860)** | billing-account PATCH; billing-account edits used to write a SETTINGS row and moved here so operations-only readers no longer see a credit limit |
+| `PURCHASE_ORDER_UPDATED` / `PURCHASE_ORDER_DELETED` **(#1860)** | PO money and term edits, and PO deletes |
+| `INVOICE_UPDATED` **(#1860)** | invoice due-date or PDF edits |
+| `REIMBURSEMENTS_EXPORTED` **(#1860)** | the reimbursements export |
 | `INVOICE_ROLLED_UP` | accrual rollup in `settle-invoice-accruals` (parent rolls up child invoices), which absorbed the retired `consolidated-invoice-rollup` job (#813) |
 
 > Dunning **stage 2** (escalation reminders, 7d cadence × max 3) does
@@ -257,6 +263,8 @@ PAYOUT events trace the full disbursement lifecycle — from batch creation and 
 |---|---|
 | `PAYOUT_INITIATED` / `PAYOUT_PROCESSED` / `PAYOUT_COMPLETED` / `PAYOUT_CANCELLED` / `PAYOUT_FAILED` | payout pipeline + webhooks |
 | `EARNINGS_HELD` / `EARNINGS_RELEASED` | hold gate + release cron |
+| `PAYOUT_STATUS_OVERRIDDEN` | the org payout PATCH moving a batch to APPROVED; since #1860 its `details` carry `selfApproved: true` when the sole approver of a one-person org approved their own batch |
+| `PAYOUT_RECIPIENT_CHANGED` **(#1854)** | where an EXPERT's org share is paid changed, from the member PATCH or the Org › Payouts expert-routing section, through `auditPayoutRecipientChange` |
 | `PAYOUT_CLAWBACK` | `applyRefundCascade` when a refund hits an already-COMPLETED payout (manual recovery v1) |
 | `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
 
@@ -293,6 +301,7 @@ Sponsored-plan visibility is managed through CATALOG events, which fire when an 
 |---|---|
 | `CATALOG_PLAN_CREATED` | `POST …/catalog` (OWNER adds a sponsored plan) |
 | `CATALOG_PLAN_DEACTIVATED` | `DELETE …/catalog` bulk deactivate (one row, `details.planIds`) |
+| `PLAN_MATERIAL_ADDED` / `PLAN_MATERIAL_UPDATED` / `PLAN_MATERIAL_REMOVED` **(#1860)** | an org role changes a file on an org-owned plan through `materials.manage.orgPlan`; the row targets the delivering expert's membership, and the plan owner's materials GET returns it as `orgChanges` |
 
 ### `SYSTEM`
 The catch-all for platform-actor events (the actor is the platform/an
