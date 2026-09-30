@@ -129,15 +129,14 @@ export function isPrivileged(role: string | undefined | null): boolean {
  */
 export const TWO_FACTOR_EXEMPT_PATHS: readonly string[] = [
   // BetterAuth's two-factor plugin (better-auth 1.6.5,
-  // dist/plugins/two-factor/client.mjs:14-21). The complete set — enable,
-  // disable, send-otp, generate-backup-codes, get-totp-uri, and all three
-  // verify legs. `enable` and the verifications are the enrolment; the rest
-  // are recovery, and a locked-out operator must be able to rotate them.
+  // dist/plugins/two-factor/client.mjs:14-21), minus the email-OTP legs
+  // (send-otp / verify-otp): no `sendOTP` is configured, so no code can ever
+  // be issued and they are not a way to answer the gate. `enable` and the
+  // verifications are the enrolment; the rest are recovery, and a locked-out
+  // operator must be able to rotate them.
   "/api/auth/two-factor/enable",
   "/api/auth/two-factor/verify-totp",
-  "/api/auth/two-factor/verify-otp",
   "/api/auth/two-factor/verify-backup-code",
-  "/api/auth/two-factor/send-otp",
   "/api/auth/two-factor/generate-backup-codes",
   "/api/auth/two-factor/get-totp-uri",
   "/api/auth/two-factor/disable",

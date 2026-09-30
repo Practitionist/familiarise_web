@@ -16,15 +16,12 @@
  * precondition for the gate being allowed to exist, and it is why
  * `TWO_FACTOR_EXEMPT_PATHS` lists `/dashboard/{admin,staff}/settings`.
  *
- * ## Why TOTP, and why the email leg is not the default
+ * ## Why TOTP, and backup codes as the only fallback
  *
  * TOTP is the primary factor because a staff member's phone is already a second
- * thing they carry. The emailed OTP exists purely for the operator who has
- * enrolled and then lost their authenticator, and it is rate-limited harder
- * than anything else in the app — `twoFactor.otpOptions.allowedAttempts` is 5,
- * and the plugin shares one failure counter across TOTP, OTP and backup codes,
- * so guessing an emailed code also burns TOTP attempts. Backup codes are the
- * third leg and the only one that works with no device and no inbox.
+ * thing they carry. Backup codes are the recovery leg for the operator who has
+ * enrolled and then lost their authenticator, and the only one that works with
+ * no device at all.
  *
  * ## The one thing that must not regress
  *

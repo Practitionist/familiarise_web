@@ -538,20 +538,18 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    // Two-factor. TOTP (authenticator app) + emailed OTP + single-use backup
-    // codes.
+    // Two-factor. TOTP (authenticator app) + single-use backup codes.
     //
-    // `allowPasswordless: true` is required and was not obvious: the plugin
-    // refuses to enable 2FA for a user with no credential account, and this app
-    // has real users who sign in only through Google/GitHub/SSO. Without it
-    // those accounts could not secure themselves at all.
+    // `allowPasswordless` is NOT set, so enabling 2FA requires the account's
+    // password: a user who signs in only through Google/GitHub/SSO cannot
+    // enrol. Staff accounts always have a password (they are created through
+    // the invite / bootstrap flows), which is who the rule below targets.
     //
-    // It does NOT change which sign-in methods are challenged — that is still
-    // the credential endpoints only, and the "must 2FA" rule for staff is
-    // enforced server-side in `lib/auth-helpers.ts` (an admin without 2FA gets
-    // TWO_FACTOR_REQUIRED and is routed to settings) rather than by making
-    // BetterAuth hard-fail the session, which would also lock them out of the
-    // very page they need to enrol on.
+    // Only the credential endpoints are challenged. The "must 2FA" rule for
+    // staff is enforced server-side in `lib/auth-helpers.ts` (an admin without
+    // 2FA gets TWO_FACTOR_REQUIRED and is routed to settings) rather than by
+    // making BetterAuth hard-fail the session, which would also lock them out
+    // of the very page they need to enrol on.
     twoFactor({
       issuer: "Familiarise",
       // The pending-2FA cookie is the window in which a correct password has
@@ -560,15 +558,6 @@ export const auth = betterAuth({
       // enough that a shoulder-surfed six-digit code is not worth waiting for.
       twoFactorCookieMaxAge: 600,
       trustDeviceMaxAge: 30 * 24 * 60 * 60,
-      otpOptions: {
-        // The emailed fallback exists for the staff who join without a phone.
-        // "hashed" is the only acceptable storage for a code that is valid for
-        // minutes and readable by anyone with Redis access.
-        storeOTP: "hashed",
-        period: 5,
-        digits: 6,
-        allowedAttempts: 5,
-      },
       backupCodeOptions: {
         amount: 10,
         length: 10,

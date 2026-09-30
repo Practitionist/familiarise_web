@@ -7213,8 +7213,8 @@ enum EmailSuppressionReason {
   MANUAL
 }
 
-// BetterAuth two-factor plugin table. Holds the TOTP shared secret, the
-// emailed-OTP payload and the hashed backup codes for one user.
+// BetterAuth two-factor plugin table. Holds the TOTP shared secret and the
+// hashed backup codes for one user.
 //
 // The plugin's schema declares `secret` and `backupCodes` as
 // `returned: false`, so Prisma must mark them the same way — BetterAuth never
