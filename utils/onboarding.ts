@@ -21,6 +21,7 @@ import {
   CertificationSchema,
   CareerStageEnum,
   LONG_FORM_TEXT_MAX,
+  linkedinProfileUrlFormSchema,
 } from "@/schemas/user";
 
 // ============================================================================
@@ -159,6 +160,55 @@ export const AdminProfileCreateObjectSchema = z.object({
 // SERVER PAYLOAD SCHEMA (what the API receives)
 // ============================================================================
 
+// #region Verification References
+
+/**
+ * A client-supplied reference to one uploaded verification document.
+ *
+ * Only `id` is meaningful. Everything else exists so the form can render a row
+ * for a document it already has, and **none of it is persisted** — the server
+ * writes only `id`, and `lib/verification/submit-request.ts` re-reads every row
+ * it links with `uploadedByUserId` scoping and a count assertion. A client that
+ * invents a `fileUrl` here changes nothing but its own rendering.
+ *
+ * This was `z.array(z.any())`, which is not a safety valve but a false claim:
+ * `safeParse` could never raise a field error for a malformed array, so the form
+ * failed silently, and the array itself was unbounded (#1869).
+ */
+export const VerificationDocumentRefSchema = z
+  .object({
+    id: z.string().min(1),
+    /** Draft rows carry no server id and are dropped, not persisted. */
+    isOnboardingUpload: z.boolean().optional(),
+    fileName: z.string().max(255).optional(),
+    originalName: z.string().max(255).optional(),
+    fileSize: z.number().int().nonnegative().optional(),
+    mimeType: z.string().max(100).optional(),
+    fileUrl: z.string().max(2048).optional(),
+    storagePath: z.string().max(1024).optional(),
+    description: z.string().max(500).optional(),
+  })
+  .strip();
+
+/**
+ * OWASP ASVS V5.2.4 asks for a per-user maximum on uploads. The upload route
+ * caps each file at 10 MB; this caps how many may be claimed in one submission.
+ */
+export const MAX_VERIFICATION_DOCUMENTS = 6;
+
+/** Admin-facing free text on a verification submission. */
+export const VERIFICATION_NOTES_MAX = 500;
+
+const VerificationDocumentsSchema = z
+  .array(VerificationDocumentRefSchema)
+  .max(
+    MAX_VERIFICATION_DOCUMENTS,
+    `You can attach at most ${MAX_VERIFICATION_DOCUMENTS} documents`,
+  )
+  .optional();
+
+// #endregion
+
 export const OnboardingBaseSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email address"),
@@ -171,11 +221,11 @@ export const OnboardingBaseSchema = z.object({
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
-  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  linkedinUrl: linkedinProfileUrlFormSchema,
   bio: z.string().max(160).optional(),
-  verificationLinkedinUrl: z.string().optional(),
-  verificationNotes: z.string().optional(),
-  verificationDocuments: z.array(z.any()).optional(),
+  verificationLinkedinUrl: linkedinProfileUrlFormSchema,
+  verificationNotes: z.string().max(VERIFICATION_NOTES_MAX).optional(),
+  verificationDocuments: VerificationDocumentsSchema,
   termsAcceptedAt: z.coerce.date().optional(),
   privacyAcceptedAt: z.coerce.date().optional(),
 });
@@ -248,7 +298,7 @@ export const FrontendOnboardingBaseSchema = z.object({
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
-  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  linkedinUrl: linkedinProfileUrlFormSchema,
   bio: z.string().max(160).optional(),
 });
 
@@ -268,7 +318,7 @@ export const PersonalInfoAndRoleFormSchema = z.object({
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
-  linkedinUrl: z.string().url().optional().or(z.literal("")),
+  linkedinUrl: linkedinProfileUrlFormSchema,
   bio: z.string().max(160).optional(),
 });
 
@@ -370,9 +420,9 @@ const consultantFormFields = sharedFormFields.extend({
   toolsAndTechnologies: z.array(z.string()).optional(),
   offeringFormats: z.array(z.nativeEnum(OfferingFormat)).optional(),
   // Verification
-  verificationLinkedinUrl: z.string().url().optional().or(z.literal("")),
-  verificationNotes: z.string().max(500).optional(),
-  verificationDocuments: z.array(z.any()).optional(),
+  verificationLinkedinUrl: linkedinProfileUrlFormSchema,
+  verificationNotes: z.string().max(VERIFICATION_NOTES_MAX).optional(),
+  verificationDocuments: VerificationDocumentsSchema,
   // Professional background
   workExperiences: z.array(WorkExperienceSchema).optional(),
   achievements: z.array(AchievementCreateInputSchema).optional(),

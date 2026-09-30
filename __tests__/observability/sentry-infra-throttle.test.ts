@@ -61,6 +61,19 @@ describe("infraThrottleKey", () => {
 
   test("window is ten minutes", () => {
     expect(INFRA_THROTTLE_MS).toBe(10 * 60 * 1000);
-    expect(INFRA_TRANSIENT_PATTERNS).toHaveLength(2);
+    /**
+     * Pinned so growing this list is a conscious act rather than an accident.
+     * Each entry is a separate throttle class with its own window, so adding
+     * one is cheap in events and expensive in attention: the new class stops
+     * being distinguishable from a real fault, or starts hiding a real fault.
+     *
+     * 3 as of #1868, which added `/\[system-events\] write failed/` for the
+     * failed-`SystemEvent`-write report. That one is keyed on an explicit
+     * marker rather than on a database-error pattern, precisely so it cannot
+     * swallow genuine data faults — see
+     * `__tests__/observability/system-event-write-throttle.test.ts` for the
+     * negative cases that hold it to that.
+     */
+    expect(INFRA_TRANSIENT_PATTERNS).toHaveLength(3);
   });
 });

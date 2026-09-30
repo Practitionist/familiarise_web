@@ -39,9 +39,13 @@ jest.mock("../../lib/payments/billing/overage-base-carve", () => ({
   restoreOverageBaseCarve: jest.fn().mockResolvedValue("restored"),
   recarveOverageBase: jest.fn().mockResolvedValue("recarved"),
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 import prisma from "../../lib/prisma";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";

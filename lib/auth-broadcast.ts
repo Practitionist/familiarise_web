@@ -14,25 +14,7 @@
  */
 export const AUTH_SYNC_CHANNEL = "familiarise.auth";
 
-/**
- * Cross-tab auth pings (#1856 adds `session-revoked`).
- *
- * `login` / `logout` are transitions observed by the sending tab.
- * `session-revoked` is sent by the tab that performed the revoke (device
- * list, "sign out others", password-change sweep): `sessionId` names the
- * revoked row, or `"*"` when every other session was ended. Receiving
- * tabs do NOT compare ids — they run one authoritative re-check and
- * sign out only if their own session is actually gone (a failed lookup
- * is never a revocation, #1716).
- *
- * Same-origin, same-browser-profile ONLY: BroadcastChannel never
- * crosses devices. Cross-device revocation is covered by the
- * focus-based authoritative check and the opt-in Redis poll in
- * `providers/AuthSyncProvider.tsx`.
- */
-export type AuthSyncMessage =
-  | { type: "login" | "logout" }
-  | { type: "session-revoked"; sessionId: string };
+export type AuthSyncMessage = { type: "login" | "logout" };
 
 // Last observed authed state, shared across tabs via localStorage. Lets a tab
 // tell a genuine login (null/false -> true, including the OAuth/SSO full-page

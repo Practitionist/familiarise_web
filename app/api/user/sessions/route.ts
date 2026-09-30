@@ -24,8 +24,7 @@ export async function GET() {
     if (auth.error) return auth.error;
 
     // Per-user bucket (the precise gate; the edge IP rule is coarse
-    // friction for NAT-shared offices). Skipped for the signal poll,
-    // which is exempt at the edge too.
+    // friction for NAT-shared offices).
     const limited = await applyRateLimit(
       sessionMgmtUserLimiter,
       `session-mgmt-user:${auth.session.user.id}`,

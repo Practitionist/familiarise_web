@@ -6,7 +6,7 @@
  * The session-revocation choke point (#1856). Ownership rides in the
  * `where` clause (a foreign id matches zero rows — no separate
  * read-then-check), deletes are `deleteMany` so concurrent revokes are
- * 0-count successes, and the cross-device signal is best-effort.
+ * 0-count successes.
  */
 
 const deleteMany = jest.fn();
@@ -15,31 +15,10 @@ jest.mock("../../lib/prisma", () => ({
   default: {},
 }));
 
-const redisIncr = jest.fn();
-const redisSet = jest.fn();
-const redisGet = jest.fn();
-jest.mock("../../lib/redis", () => ({
-  __esModule: true,
-  default: {
-    incr: (...a: unknown[]) => redisIncr(...a),
-    set: (...a: unknown[]) => redisSet(...a),
-    get: (...a: unknown[]) => redisGet(...a),
-  },
-}));
-
-const throttledCapture = jest.fn();
-jest.mock("../../lib/observability/throttled-capture", () => ({
-  __esModule: true,
-  captureThrottled: (...a: unknown[]) => throttledCapture(...a),
-}));
-
 import {
   revokeAllUserSessions,
   revokeSessionById,
   revokeUserSessionsExcept,
-  readRevocationSignal,
-  revocationSignalKey,
-  signalRevocation,
 } from "../../lib/auth/session-revoke";
 
 const db = { session: { deleteMany } } as unknown as Parameters<
@@ -92,48 +71,5 @@ describe("revokeAllUserSessions (#1856)", () => {
       revoked: 7,
     });
     expect(deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
-  });
-});
-
-describe("revocation signal (#1856)", () => {
-  it("creates the counter with a TTL, then bumps it (no TTL-less leak)", async () => {
-    redisSet.mockResolvedValue("OK");
-    redisIncr.mockResolvedValue(4);
-
-    await signalRevocation("u1");
-
-    // SET NX PX first: INCR preserves an existing TTL, so a key created
-    // here always carries one — a crash between the calls can never
-    // leave a permanent counter.
-    expect(redisSet).toHaveBeenCalledWith(
-      revocationSignalKey("u1"),
-      "0",
-      expect.objectContaining({ nx: true }),
-    );
-    expect(redisIncr).toHaveBeenCalledWith(revocationSignalKey("u1"));
-  });
-
-  it("never throws — a Redis blip is throttled-reported and swallowed", async () => {
-    redisIncr.mockRejectedValue(new Error("READONLY"));
-
-    await expect(signalRevocation("u1")).resolves.toBeUndefined();
-    expect(throttledCapture).toHaveBeenCalledWith(
-      "session:signalRevocation",
-      expect.any(Error),
-      expect.objectContaining({ subsystem: "auth" }),
-    );
-  });
-
-  it("reads the counter, defaulting an absent key to 0", async () => {
-    redisGet.mockResolvedValue(null);
-
-    await expect(readRevocationSignal("u1")).resolves.toBe(0);
-    expect(redisGet).toHaveBeenCalledWith(revocationSignalKey("u1"));
-  });
-
-  it("fail-open: an unreadable signal is null, never a revocation", async () => {
-    redisGet.mockRejectedValue(new Error("timeout"));
-
-    await expect(readRevocationSignal("u1")).resolves.toBeNull();
   });
 });

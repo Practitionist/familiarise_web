@@ -32,9 +32,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 jest.mock("../../lib/maintenance-cron", () => ({
   abortIfMaintenance: jest.fn(),

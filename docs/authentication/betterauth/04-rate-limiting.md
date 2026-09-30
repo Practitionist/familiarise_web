@@ -171,7 +171,7 @@ too.
 | Limiter | Endpoint | Key | Limit | Window |
 |---|---|---|---|---|
 | *(policy)* | all eleven auth + enterprise scopes in §2.2 | see table | see table | see table |
-| `sessionMgmtLimiter` | `/api/user/sessions*` except the signal poll — device list, per-device revoke, revoke-others (#1856; own limiter so session traffic cannot exhaust the sign-in budget; generous because one office NAT shares it) | IP | 120 | 15 min |
+| `sessionMgmtLimiter` | `/api/user/sessions*` except the `/current` liveness probe (every tab calls it on focus) — device list, per-device revoke, revoke-others (#1856; own limiter so session traffic cannot exhaust the sign-in budget; generous because one office NAT shares it) | IP | 120 | 15 min |
 | `streamJoinLimiter` | `POST /api/meetings/:id/join` (#1134 P1-11; deterministic call ids make this the enumeration surface) | IP | 20 | 1 min |
 | `streamApiLimiter` | `/api/stream/**` except `/api/stream/webhooks` | IP | 60 | 1 min |
 | `searchLimiter` | GET `/api/user/consultants`, GET `/api/explore/recordings` | IP | 60 | 1 min |

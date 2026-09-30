@@ -22,9 +22,12 @@ jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
   getRazorpayPayoutsService: () => ({ getAccountBalance: mockGetBalance }),
   isRazorpayPayoutsConfigured: () => mockConfigured(),
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 import { assertPayoutBalance } from "@/lib/payments/payouts/balance-preflight";
 

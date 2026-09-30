@@ -3,7 +3,7 @@ title: A user sees their own sessions; nobody else sees the tokens
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-09-27
+last-reviewed: 2026-09-30
 ---
 
 # ADR 35 — User session visibility and revocation
@@ -38,7 +38,7 @@ account" tickets without gaining a silent kick button.
 1. **User device list.** `GET /api/user/sessions` returns the caller's
    unexpired sessions through `SESSION_PUBLIC_SELECT`
    (`lib/auth/session-select.ts`): id, timestamps, `ipAddress`,
-   derived label, `lastSeenAt`, `isCurrent`, `isImpersonated` — never
+   derived label, `lastSeenAt` (= `updatedAt`), `isCurrent`, `isImpersonated` — never
    `token`, never the raw `userAgent` string (a fingerprint; only the
    coarse "Chrome on Windows" label crosses). `__tests__/security/
 session-payload-allowlist.test.ts` pins both the select keys and the
@@ -51,7 +51,7 @@ session-payload-allowlist.test.ts` pins both the select keys and the
    your own current session is allowed and reported as
    `currentSessionEnded` so the client signs out cleanly.
 3. **One choke point.** `lib/auth/session-revoke.ts` owns every end:
-   user routes, the staff door, the moderation ban path and the cap.
+   user routes, the staff door and the moderation ban path.
    Direct Prisma is correct for system-initiated revokes: BetterAuth's
    admin `revokeUserSessions` endpoint is caller-scoped (it checks the
    _calling_ admin's session and cannot join a transaction). This
@@ -70,30 +70,29 @@ session-payload-allowlist.test.ts` pins both the select keys and the
    destructive act on their account — it needs the admin grant, not
    the support grant.
 6. **Password change ends other sessions.** OWASP: a reset the stolen
-   device survives is not a reset. The current session survives so the
-   user is not signed out of the device they are holding.
-7. **Cap of 10, eventually consistent.** `MAX_CONCURRENT_SESSIONS`
-   with a total-order eviction (`createdAt, id`) under a Serializable
-   retry. Generous on purpose (phone + laptop + tablet is normal);
-   the cap is hygiene, not the security gate — `authLimiter` owns
-   brute force. Raising it is a product decision.
-8. **Revocation propagates in four tiers.** A provider-owned visible-tab
-   tick finds revocation with no focus needed (authoritative, so ~5 min
-   worst case, jittered per tab so open tabs do not stampede the session
-   read; hidden tabs skip free); same-browser tabs via the instant
-   `session-revoked` BroadcastChannel ping; cross-device within one
-   tab-switch via a throttled focus re-check; cross-device within the
-   poll interval via the opt-in Redis counter (`sess:revsig:{userId}`,
-   ships DISABLED). The tick is the only trigger that pays full price —
-   `disableCookieCache` plus `customSession` is ~4 uncached Prisma
-   round trips, and the call goes over HTTP so `React.cache` does not
-   apply — which is why it is minutes, not seconds, and why the seconds
-   answer is the opt-in poll. Every tier funnels into
-   one classifier, and the classifier never reads a failed lookup as
-   a revocation (#1716, client-side): error → refetch and stay put.
-9. **`lastSeenAt` is honest.** Last server-validated activity, ±5 min
-   (throttled touch; the cookie cache means most requests never reach
-   the DB). The UI says "last seen", never "active now".
+   device survives is not a reset. `changePassword({ revokeOtherSessions:
+   true })` does it in the same request; the current session survives
+   so the user is not signed out of the device they are holding.
+7. **Revocation is read from the database, not pushed.** The cookie
+   cache is off, so every server read sees a deleted row, ban or role
+   change on the next request. An open tab on another device learns on
+   its next server request or on tab focus (a 30 s-throttled probe of
+   `GET /api/user/sessions/current`). Same-browser tabs share one cookie
+   and so one session; the existing login/logout BroadcastChannel ping
+   covers them.
+8. **A failed lookup is never a revocation.** The probe is tri-state —
+   200 active, 401/403 revoked or suspended, 503 unknown — because
+   BetterAuth's `/get-session` answers `200 null` for a failed lookup
+   too. The client signs out only on 401/403 (#1716, client-side).
+9. **No raw tokens anywhere.** `disabledPaths` blocks the plugin's
+   `/list-sessions`, `/admin/list-user-sessions`,
+   `/admin/revoke-user-session` and `/admin/revoke-user-sessions` over
+   HTTP; staff roles hold no `session:*` permission; `customSession`
+   strips `session.token` from the payload.
+10. **"Last active" is BetterAuth's `updatedAt`.** Day-granular
+    (`updateAge` = 1 day); the UI says "Active in the last day" / "Last
+    active N days ago", never "active now". The device label is derived
+    from `userAgent` at read time. No extra columns, no hot-path write.
 
 ## Alternatives considered
 
@@ -105,19 +104,38 @@ window would let a month-old stolen session change the password.
 A single "sessions" grant covering staff revoke was rejected: the
 back-office matrix already separates seeing (`users.read`) from
 destroying (`users.moderate`), and this is exactly the case it exists
-for. A short session TTL instead of a cap was rejected on the same
-grounds as ADR 10 (constant UX cost for a rare event).
+for. A short session TTL was rejected on the same grounds as ADR 10
+(constant UX cost for a rare event).
+
+### Alternatives rejected (built, then removed in #1857)
+
+- **Visible-tab 5-minute tick.** Paid a full uncached session read per
+  open tab for a case (visible, untouched, revoked) where the tab can
+  read nothing new anyway.
+- **Redis revocation-signal counter + poll route.** Always-on Upstash
+  traffic, a route, a limiter exemption and an env knob to beat
+  "next focus" by seconds; nobody needed that.
+- **`session-revoked` BroadcastChannel ping.** Same-browser tabs share
+  the session, so the login/logout ping already covers them.
+- **Per-user session cap (10, Serializable eviction).** Hygiene with no
+  security value (`authLimiter` owns brute force), plus a
+  `session.create.after` hook on the sign-in path.
+- **`Session.lastSeenAt` / `Session.deviceLabel` columns.** A throttled
+  write on every request and a push-before-traffic migration, to show
+  data `updatedAt` and `userAgent` already give us.
+- **Cookie cache (5 min).** Saved one indexed lookup per read at the
+  cost of honouring revocation, bans and role changes up to 5 min late.
 
 ## Consequences
 
-The device list is now the account-takeover triage surface: a user who
+The device list is the account-takeover triage surface: a user who
 sees a device they don't recognize ends it, changes their password
 (which sweeps the rest), and is done without support. What we pay:
-every permission-adjacent surface now has a session story to keep in
-sync (the `session-revoked` ping, the classifier, the cap), and the
-`lastSeenAt` touch is one more write on the hot path — throttled to
-one per session per 5 min per lambda, but a write all the same.
-Revisit the cap if the device list ever shows rows the cap should have
-eaten (the `create.after` hook is eventually consistent by design), and
-revisit the Redis poll default if takeover triage ever needs
-faster-than-a-tab-switch cross-device propagation.
+every session read is a database lookup (one more indexed query per
+request than with the cookie cache), and a revoked device that stays
+visible and untouched keeps showing its last rendered page until the
+next request or focus. `getCachedSession()` and the eslint rule on bare
+`getSession()` stay so that re-enabling the cookie cache cannot
+silently make a sensitive read stale. Revisit the cookie cache if
+session reads show up in database load; revisit push-style propagation
+only if takeover triage ever needs faster than next-request/next-focus.

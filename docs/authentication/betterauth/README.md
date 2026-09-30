@@ -18,7 +18,7 @@ other.
 | 10 | [`07-email-verification.md`](./07-email-verification.md) | Verification links, their TTLs, and the resend paths. |
 | 11 | [`08-redirects-and-navigation.md`](./08-redirects-and-navigation.md) | **The anti-flicker contract**: auth redirect rules (`replace` not `push`, idempotency refs, force-fresh destination checks, `safeSameOriginPath`, server-side dashboard entry redirects). Read before touching any redirect. |
 | 12 | [`08-staff-onboarding.md`](./08-staff-onboarding.md) | **How an admin is bootstrapped and how staff join**: why domain is never the authorisation key, why an admin cannot be self-created, the single-use email-bound token, and why mandatory 2FA is enforced in the guard rather than at session creation. Contract and invariants, not implementation. |
-| 13 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, the cap, propagation tiers, the staff doors. Read before touching any session row or the Sessions UI. |
+| 13 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, what each sign-out scenario does and how fast other devices notice, the staff doors. Read before touching any session row or the Sessions UI. |
 | 14 | [`09-failure-modes.md`](./09-failure-modes.md) | **The cross-service failure matrix**: Postgres (and `PG_POOL_MAX=1`), Upstash (outage and quota), Resend, Novu, the gateways, Stream, Sentry, Netlify (cold stall, timeout, env reclaim) and the auth layer itself. What the user sees, what the code does, what it should do, and who owns it. Read before an on-call rotation. |
 
 > **Two `04-` files and two `09-` files.** The numbering predates this pass and the
@@ -44,8 +44,9 @@ don't repeat content.
 
 1. **No JWT.** Sessions are server-side rows in a Postgres `Session`
    table; the client carries an opaque cookie. We get revocation,
-   audit, and rotation for free at the cost of a cookie-cached DB read
-   per session validation. See [`01-architecture.md`](./01-architecture.md).
+   audit, and rotation for free at the cost of a DB read per session
+   validation (the cookie cache is off, so a revoke applies on the next
+   request). See [`01-architecture.md`](./01-architecture.md).
 2. **Middleware is cookie-only.** `middleware.ts` runs in the Edge
    Runtime, can't import BetterAuth's Node-only deps, and only checks
    for a session cookie. Real validation happens in the API route via

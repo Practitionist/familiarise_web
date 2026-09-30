@@ -3,17 +3,14 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, sessionMgmtUserLimiter } from "@/lib/rate-limit";
 import { sessionRouteError } from "@/lib/auth/session-response";
-import {
-  revokeUserSessionsExcept,
-  signalRevocation,
-} from "@/lib/auth/session-revoke";
+import { revokeUserSessionsExcept } from "@/lib/auth/session-revoke";
 
 /**
  * POST /api/user/sessions/revoke-others — end every session except the
  * caller's (#1856). Own route rather than `authClient.
- * revokeOtherSessions()` so the revoke, the audit-shaped response and
- * the cross-device signal share one choke point. Powers the device
- * list's "sign out other devices" and the post-password-change sweep.
+ * revokeOtherSessions()` so every revoke goes through
+ * `lib/auth/session-revoke.ts`. Powers the device list's "sign out other
+ * devices".
  */
 export async function POST() {
   try {
@@ -33,7 +30,6 @@ export async function POST() {
       userId,
       auth.session.session.id,
     );
-    if (revoked > 0) void signalRevocation(userId);
 
     return NextResponse.json({ revoked }, { status: 200 });
   } catch (error) {

@@ -381,7 +381,7 @@ describe("SessionsSection load states (#1856)", () => {
     expect(alert?.textContent).toContain("Too many requests");
   });
 
-  it("password change toasts swept / none / failed distinctly", async () => {
+  it("password change revokes other sessions in the same request", async () => {
     const { authClient } = jest.requireMock(
       "../../lib/auth-client",
     ) as unknown as {
@@ -420,50 +420,17 @@ describe("SessionsSection load states (#1856)", () => {
       await flush();
     }
 
-    // Swept: other devices were ended.
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ revoked: 3 }),
-    });
     await mountPassword();
     await submitPasswordForm();
+    // One request: BetterAuth ends the other sessions itself.
+    expect(authClient.changePassword).toHaveBeenCalledWith(
+      expect.objectContaining({ revokeOtherSessions: true }),
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Password changed",
         description: "Your other devices were signed out.",
-      }),
-    );
-
-    // None: success with nothing to end — plain toast, no description.
-    jest.clearAllMocks();
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ revoked: 0 }),
-    });
-    await submitPasswordForm();
-    expect(toast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Password changed",
-        description: undefined,
-        variant: undefined,
-      }),
-    );
-
-    // Failed: the warning names the fallback action.
-    jest.clearAllMocks();
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: async () => ({}),
-    });
-    await submitPasswordForm();
-    expect(toast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Password changed",
-        description: expect.stringContaining("Sign out other devices"),
-        variant: "destructive",
       }),
     );
   });

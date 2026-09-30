@@ -23,7 +23,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import * as Sentry from "@sentry/nextjs";
 import { authClient, useSession } from "@/lib/auth-client";
-import { postAuthSync } from "@/lib/auth-broadcast";
 import { AUTH_PROVIDERS, type AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
@@ -109,9 +108,13 @@ export function PasswordSection() {
 
     setIsSaving(true);
     try {
+      // #1856 — a password change must end every other session, or a
+      // stolen device survives the reset. BetterAuth does it in the same
+      // request, so there is no second call that can fail on its own.
       const { error } = await authClient.changePassword({
         currentPassword: current,
         newPassword: next,
+        revokeOtherSessions: true,
       });
       if (error) {
         // BEFORE: `error.message` straight into the form. Better Auth's
@@ -149,37 +152,9 @@ export function PasswordSection() {
         return;
       }
       reset();
-      // #1856 — a password change must end every other session, or a
-      // stolen device survives the reset. Best-effort: the password
-      // itself already changed, so a sweep failure only affects the
-      // toast copy, never the outcome.
-      let sweep: "swept" | "none" | "failed" = "failed";
-      try {
-        const res = await fetch("/api/user/sessions/revoke-others", {
-          method: "POST",
-        });
-        if (!res.ok) {
-          reportRevokeFailure("revoke-others", res.status, null);
-        } else {
-          sweep =
-            ((await res.json()) as { revoked: number }).revoked > 0
-              ? "swept"
-              : "none";
-        }
-      } catch (error) {
-        reportRevokeFailure("revoke-others", null, error);
-      }
-      let sweepDescription: string | undefined;
-      if (sweep === "swept") {
-        sweepDescription = "Your other devices were signed out.";
-      } else if (sweep === "failed") {
-        sweepDescription =
-          "We couldn't sign out your other devices — use 'Sign out other devices' below to finish.";
-      }
       toast({
         title: "Password changed",
-        description: sweepDescription,
-        variant: sweep === "failed" ? "destructive" : undefined,
+        description: "Your other devices were signed out.",
       });
     } catch {
       toast({
@@ -286,27 +261,22 @@ function reportRevokeFailure(
 }
 
 /**
- * "Last seen X ago" — server-validated activity, accurate to ~5 min
- * (see `lib/auth/last-seen.ts`). Never "active now": the cookie cache
- * means most requests never reach the database.
+ * "Last active" — the session row's `updatedAt`, which BetterAuth bumps at
+ * most once per `updateAge` (1 day). So it is day-granular: "in the last
+ * day" or "N days ago", never minutes.
  */
-function formatLastSeen(iso: string): string {
+function formatLastActive(iso: string): string {
   const diffMs = Math.max(0, Date.now() - new Date(iso).getTime());
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 1) return "Last seen just now";
-  if (minutes < 60) return `Last seen ${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `Last seen ${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? "Last seen 1d ago" : `Last seen ${days}d ago`;
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days < 1) return "Active in the last day";
+  return days === 1 ? "Last active 1 day ago" : `Last active ${days} days ago`;
 }
 
 /**
  * Where you're signed in (#1856): the device list with per-device
- * revoke, "sign out other devices", and the pre-existing "log out
- * everywhere". Revoking posts a `session-revoked` ping so same-browser
- * peer tabs re-check immediately; the server bumps the cross-device
- * counter for phones left open on a screen.
+ * revoke, "sign out other devices", and "log out everywhere". A revoked
+ * device notices on its next server request or tab focus
+ * (`AuthSyncProvider`).
  */
 /** Why the device list failed to load — the UI says different things. */
 type SessionsLoadError = "signed-out" | "retryable";
@@ -424,14 +394,6 @@ export function SessionsSection() {
         await signOutEverywhere("/auth/signin");
         return;
       }
-      // Ping peers only when something actually ended — and not when the
-      // ended session was this tab's own (we're navigating away; peers'
-      // sessions are untouched by a single-row delete, so nobody needs
-      // waking). Receivers re-check authoritatively regardless, so a
-      // skipped ping only costs them nothing.
-      if (body.revoked > 0 && !body.currentSessionEnded) {
-        postAuthSync({ type: "session-revoked", sessionId: target.id });
-      }
       toast({ title: `Signed out ${target.label}` });
       await load();
     },
@@ -469,9 +431,6 @@ export function SessionsSection() {
         throw new Error(
           "We couldn't end your other sessions. Please try again.",
         );
-      }
-      if (revoked > 0) {
-        postAuthSync({ type: "session-revoked", sessionId: "*" });
       }
       if (andSignOut) {
         toast({ title: "Signing you out everywhere" });
@@ -539,7 +498,7 @@ export function SessionsSection() {
                 )}
               </span>
               <span className="text-muted-foreground">
-                {formatLastSeen(s.lastSeenAt)}
+                {formatLastActive(s.lastSeenAt)}
                 {s.ipAddress ? ` · ${s.ipAddress}` : ""}
               </span>
             </span>

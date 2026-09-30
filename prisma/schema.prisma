@@ -913,19 +913,6 @@ model Session {
   // itself is not enabled (#693).
   impersonatedBy       String?
 
-  // Device management (#1856). Both nullable so every existing row stays
-  // valid without a backfill — additive-only per the #705 schema freeze.
-  // lastSeenAt is the last server-validated activity for this session
-  // (sampled + throttled touch in lib/auth/last-seen.ts); it is NOT true
-  // "last active", because most requests never reach the database.
-  // deviceLabel is a server-derived human label ("Chrome on Windows")
-  // stamped at session creation by databaseHooks.session.create.after;
-  // rows written before this deploy (or by direct Prisma writes, which
-  // skip BetterAuth hooks) fall back to read-time derivation from
-  // userAgent.
-  lastSeenAt  DateTime?
-  deviceLabel String?
-
   @@index([userId])
   @@map("sessions")
 }
@@ -1726,7 +1713,7 @@ model Program {
 
   assignments ProgramAssignment[]
 
-  /// ADR 18 — unenforced curated-panel stub; empty = open network.
+  /// ADR 18 — optional curated panel, ENFORCED at checkout (#971); empty = open network.
   consultantAllowlist ProgramConsultantAllowlist[]
 
   createdAt DateTime @default(now())
@@ -3067,7 +3054,7 @@ model ConsultantProfile {
   trials       Trial[]
   activityLogs ActivityLog[]
 
-  // ADR 18 — program curated-panel stub (unenforced)
+  // ADR 18 — program curated panels this consultant is listed on (enforced at checkout, #971)
   programAllowlists ProgramConsultantAllowlist[]
 
   // Note: Professional background (workExperiences, certifications, education)

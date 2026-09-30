@@ -29,11 +29,16 @@ jest.mock("../../lib/payments/ledger/post", () => ({
   ledgerAccountId: jest.fn(),
   LedgerImbalanceError: class extends Error {},
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: (...a: unknown[]) => recordSystemError(...a),
-  recordSystemEvent: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemEvent = jest.fn().mockResolvedValue(undefined);
+  return {
+    __esModule: true,
+    recordSystemError: (...a: unknown[]) => recordSystemError(...a),
+    recordSystemEvent,
+    recordSystemErrorSafe: (...a: unknown[]) => recordSystemError(...a),
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 
 // Stubs for the rest of utils.ts's import graph so the module loads (mirrors
 // dispute-refund-correctness.test.ts — these paths have side-effectful graphs).
@@ -87,7 +92,11 @@ type Entry = {
   };
 };
 
-function dr(kind: string, amt: number, scope: Record<string, string> = {}): Entry {
+function dr(
+  kind: string,
+  amt: number,
+  scope: Record<string, string> = {},
+): Entry {
   return {
     direction: "DEBIT",
     amountPaise: BigInt(amt),
@@ -98,7 +107,11 @@ function dr(kind: string, amt: number, scope: Record<string, string> = {}): Entr
     },
   };
 }
-function cr(kind: string, amt: number, scope: Record<string, string> = {}): Entry {
+function cr(
+  kind: string,
+  amt: number,
+  scope: Record<string, string> = {},
+): Entry {
   return { ...dr(kind, amt, scope), direction: "CREDIT" };
 }
 
@@ -109,17 +122,19 @@ function makeTx(opts: {
 }) {
   return {
     ledgerTransaction: {
-      findUnique: jest.fn(async ({ where }: { where: { idempotencyKey: string } }) => {
-        if (where.idempotencyKey.startsWith("chargeback:")) {
-          return opts.chargebackExists ? { id: "cb_existing" } : null;
-        }
-        if (where.idempotencyKey.startsWith("booking:")) {
-          return opts.bookingEntries
-            ? { id: "booking_txn", entries: opts.bookingEntries }
-            : null;
-        }
-        return null;
-      }),
+      findUnique: jest.fn(
+        async ({ where }: { where: { idempotencyKey: string } }) => {
+          if (where.idempotencyKey.startsWith("chargeback:")) {
+            return opts.chargebackExists ? { id: "cb_existing" } : null;
+          }
+          if (where.idempotencyKey.startsWith("booking:")) {
+            return opts.bookingEntries
+              ? { id: "booking_txn", entries: opts.bookingEntries }
+              : null;
+          }
+          return null;
+        },
+      ),
     },
     refund: {
       aggregate: jest.fn(async () => ({
@@ -145,8 +160,12 @@ const sumBy = (arg: PostArg, kind: string, dir: "DEBIT" | "CREDIT") =>
     .filter((p) => p.account.kind === kind && p.direction === dir)
     .reduce((s, p) => s + p.amountPaise, 0);
 const balanced = (arg: PostArg) => {
-  const d = arg.postings.filter((p) => p.direction === "DEBIT").reduce((s, p) => s + p.amountPaise, 0);
-  const c = arg.postings.filter((p) => p.direction === "CREDIT").reduce((s, p) => s + p.amountPaise, 0);
+  const d = arg.postings
+    .filter((p) => p.direction === "DEBIT")
+    .reduce((s, p) => s + p.amountPaise, 0);
+  const c = arg.postings
+    .filter((p) => p.direction === "CREDIT")
+    .reduce((s, p) => s + p.amountPaise, 0);
   return { d, c };
 };
 

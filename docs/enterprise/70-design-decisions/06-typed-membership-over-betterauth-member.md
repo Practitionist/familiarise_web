@@ -32,10 +32,11 @@ role-specific profile FKs, `payoutRecipient`, the rate-card override, and
 `externalScimId`, and it holds an optional `betterAuthMemberId` that
 bridges to BetterAuth's row when one exists. `MemberRole` is the
 seven-value enum (`OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`,
-`EXPERT`, `LEARNER`, `SUPPORT`) ranked by `ORG_ROLE_RANK` in
-`lib/auth/role-ranks.ts`, and gates resolve through `isAtLeastRole` or the
-dedicated `requireOrgBillingAdminOrOwner` disjunction. `requireOrgAccess`
-rejects any membership whose status is not `ACTIVE`. When BetterAuth's SSO
+`EXPERT`, `LEARNER`, `SUPPORT`), which `ORG_ROLE_RANK` in
+`lib/auth/role-ranks.ts` orders for display only. Gates resolve through
+`requireOrgAccess(orgId, { permission: "<key>" })` against the permission
+matrix in `lib/auth/org-permissions.ts`, and `requireOrgAccess` rejects
+any membership whose status is not `ACTIVE`. When BetterAuth's SSO
 plugin auto-provisions a user it writes only a bare `member` row; the
 `customSession` hook in `lib/auth.ts` detects the missing typed sibling
 (`findMany members WHERE membership IS null`) and mints the typed
@@ -45,11 +46,13 @@ auto-join](../20-iam-and-security/02-jit-and-session-refresh.md)).
 
 The decisive capabilities the typed row buys are the role enum and the
 status lifecycle. A free-string role means every gate is a string
-comparison with no compiler help and no rank arithmetic; the enum gives
-both, and lets `BILLING_ADMIN` sit at rank 70 between `MAINTAINER` (80)
-and `MANAGER` (60) so a finance operator can do everything a manager can
-plus the financial mutations, without renumbering anything
-(`lib/auth/role-ranks.ts`). The status lifecycle is load-bearing for
+comparison with no compiler help; the enum gives compiler-checked role
+names that the permission matrix in `lib/auth/org-permissions.ts` can key
+on. `BILLING_ADMIN` was slotted at 70 in the display order between
+`MAINTAINER` (80) and `MANAGER` (60) without renumbering anything
+(`lib/auth/role-ranks.ts`), but since #1860 that order decides nothing:
+what a finance operator may do is exactly the set of matrix keys that
+list `BILLING_ADMIN`, and it does not inherit a manager's reads by rank. The status lifecycle is load-bearing for
 compliance: `MemberStatus.SUSPENDED` returns a 403 without deleting the
 row, `REMOVED` is a terminal tombstone retained for audit, and
 `MemberStatus.ERASED` is the DPDP §12 tombstone the erasure pipeline sets

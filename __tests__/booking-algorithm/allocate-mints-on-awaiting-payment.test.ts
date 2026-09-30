@@ -35,9 +35,12 @@ jest.mock("../../lib/booking/approve-request", () => ({
       : null,
 }));
 const recordSystemError = jest.fn().mockResolvedValue(undefined);
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => recordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => recordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => recordSystemError(...a),
+  };
+});
 
 import { NextRequest } from "next/server";
 import { handleAllocate } from "../../lib/scheduling/allocate-route";

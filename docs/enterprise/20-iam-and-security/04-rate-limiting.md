@@ -237,8 +237,8 @@ limiter is wired, and none is needed at current threat-model:
 | `POST` / `DELETE .../consent` | MANAGER+ | MANAGER-gated config write; low call volume, audit-logged. |
 
 Everything else inherits the org-scoped role gates in
-`lib/auth-helpers.ts:requireOrgAccess` (and the field-level
-`requireOrgBillingAdminOrOwner` disjunction on finance writes) plus the
+`lib/auth-helpers.ts:requireOrgAccess` (whose `permission` option names a
+matrix key, such as `billing.manage` on finance writes) plus the
 IP-level Cloudflare / Netlify edge rate limits (the latter are
 operational, not in code).
 

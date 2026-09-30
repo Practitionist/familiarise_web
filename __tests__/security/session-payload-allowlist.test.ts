@@ -21,12 +21,10 @@ describe("session payload allowlist (#1856)", () => {
     expect(Object.keys(SESSION_PUBLIC_SELECT).sort()).toEqual(
       [
         "createdAt",
-        "deviceLabel",
         "expiresAt",
         "id",
         "impersonatedBy",
         "ipAddress",
-        "lastSeenAt",
         "updatedAt",
         "userAgent",
       ].sort(),
@@ -43,8 +41,6 @@ describe("session payload allowlist (#1856)", () => {
       ipAddress: "1.2.3.4",
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      deviceLabel: null,
-      lastSeenAt: null,
       impersonatedBy: null,
     } satisfies SessionPublicRow;
 
@@ -67,48 +63,27 @@ describe("session payload allowlist (#1856)", () => {
     expect(out.label).toBe("Chrome on Windows");
     expect(out.isCurrent).toBe(true);
     expect(out.isImpersonated).toBe(false);
-    // Pre-deploy rows (lastSeenAt null) fall back to updatedAt until
-    // the first throttled touch lands.
+    // "Last active" is BetterAuth's own refresh stamp.
     expect(out.lastSeenAt).toEqual(row.updatedAt);
   });
 
-  it("prefers the persisted deviceLabel and marks foreign sessions", () => {
+  it("marks foreign and impersonated sessions", () => {
     const row = {
       id: "sess_2",
       createdAt: new Date("2026-01-01T00:00:00Z"),
       updatedAt: new Date("2026-01-02T00:00:00Z"),
       expiresAt: new Date("2026-02-01T00:00:00Z"),
       ipAddress: null,
-      userAgent: null,
-      deviceLabel: "Kaustav's iPhone",
-      lastSeenAt: new Date("2026-01-03T00:00:00Z"),
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
       impersonatedBy: "admin_1",
     } satisfies SessionPublicRow;
 
     const out = toPublicSession(row, "sess_1");
 
-    expect(out.label).toBe("Kaustav's iPhone");
+    expect(out.label).toBe("Safari on macOS");
     expect(out.isCurrent).toBe(false);
     expect(out.isImpersonated).toBe(true);
-    expect(out.lastSeenAt).toEqual(row.lastSeenAt);
-  });
-
-  it("falls back to derivation for an empty-string label (direct writes)", () => {
-    const row = {
-      id: "sess_4",
-      createdAt: new Date("2026-01-01T00:00:00Z"),
-      updatedAt: new Date("2026-01-02T00:00:00Z"),
-      expiresAt: new Date("2026-02-01T00:00:00Z"),
-      ipAddress: null,
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-      deviceLabel: "",
-      lastSeenAt: null,
-      impersonatedBy: null,
-    } satisfies SessionPublicRow;
-
-    // An empty label is not a label — never render a blank device row.
-    expect(toPublicSession(row, "sess_4").label).toBe("Safari on macOS");
   });
 
   it("does not flag impersonation for a missing field (mocks, select drift)", () => {
@@ -119,8 +94,6 @@ describe("session payload allowlist (#1856)", () => {
       expiresAt: new Date("2026-02-01T00:00:00Z"),
       ipAddress: null,
       userAgent: null,
-      deviceLabel: null,
-      lastSeenAt: null,
       impersonatedBy: undefined,
     } as unknown as SessionPublicRow;
 
@@ -135,8 +108,6 @@ describe("session payload allowlist (#1856)", () => {
       expiresAt: new Date("2026-02-01T00:00:00Z"),
       ipAddress: null,
       userAgent: null,
-      deviceLabel: null,
-      lastSeenAt: null,
       impersonatedBy: null,
     } satisfies SessionPublicRow;
 

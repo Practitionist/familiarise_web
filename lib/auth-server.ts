@@ -1,7 +1,6 @@
 import { cache } from "react";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { touchSessionLastSeen } from "@/lib/auth/last-seen";
 import {
   assertSessionReadMemoized,
   isSessionReadMemoized,
@@ -45,17 +44,11 @@ type SessionReader = (
   disableCookieCache: boolean,
 ) => ReturnType<typeof auth.api.getSession>;
 
-const readSession: SessionReader = async (disableCookieCache) => {
-  const session = await auth.api.getSession({
+const readSession: SessionReader = async (disableCookieCache) =>
+  auth.api.getSession({
     headers: await headers(),
     ...(disableCookieCache && { query: { disableCookieCache: true } }),
   });
-  // Advance the device list's "last seen" marker (#1856). Fire-and-forget
-  // WITHOUT await: the touch is throttled, best-effort, and never throws,
-  // so it must not gate the session read it annotates.
-  if (session?.session?.id) touchSessionLastSeen(session.session.id);
-  return session;
-};
 
 /**
  * Report the memoization state at IMPORT time, not at first call.
@@ -113,10 +106,12 @@ export async function getSession(disableCookieCache = false) {
  * argument, and so the `no-restricted-syntax` freshness rule in
  * eslint.config.mjs can ban the bare call without banning this one.
  *
- * Do NOT use for PII, finance, documents, recordings, or role-gated reads:
- * the cache honours demotions, bans, revocations and DPDP-erasures up to
- * ~5 minutes late. Those take `getSession(true)` (or `requireApiAuth()` /
- * `requireBackofficeSurface()` in routes). See #1807.
+ * The cookie cache is currently OFF (lib/auth.ts), so today this reads the
+ * database like every other call. The split stays so re-enabling the cache
+ * is a one-line change that cannot silently make a sensitive read stale:
+ * PII, finance, documents, recordings and role-gated reads take
+ * `getSession(true)` (or `requireApiAuth()` / `requireBackofficeSurface()`
+ * in routes). See #1807.
  */
 export async function getCachedSession() {
   return sessionReader()(false);

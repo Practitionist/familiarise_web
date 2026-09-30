@@ -7,7 +7,6 @@ import { applyRateLimit, adminSessionAccessLimiter } from "@/lib/rate-limit";
 import {
   revokeAllUserSessions,
   revokeSessionById,
-  signalRevocation,
 } from "@/lib/auth/session-revoke";
 
 /**
@@ -64,7 +63,6 @@ export const POST = withOpsAction(
       const { revoked } = body.sessionId
         ? await revokeSessionById(prisma, userId, body.sessionId)
         : await revokeAllUserSessions(prisma, userId);
-      if (revoked > 0) void signalRevocation(userId);
       return {
         target: { kind: "User", id: userId },
         correlationId: `user:${userId}`,

@@ -3,6 +3,7 @@ import { customSessionClient, twoFactorClient } from "better-auth/client/plugins
 import { ssoClient } from "@better-auth/sso/client";
 import type { auth } from "@/lib/auth";
 import { forgetAuthState } from "@/lib/auth-broadcast";
+import { clearSentryIdentity } from "@/lib/observability/identity";
 
 export const authClient = createAuthClient({
   // Empty string would be a truthy-enough config that breaks URL resolution;
@@ -23,10 +24,8 @@ export const authClient = createAuthClient({
   plugins: [customSessionClient<typeof auth>(), ssoClient(), twoFactorClient()],
   // NOTE (#1856): no `sessionOptions.refetchInterval` here, deliberately.
   // BetterAuth's built-in poll cannot skip hidden tabs and re-renders
-  // every consumer 1x/min, yet still reads the cookie cache (so it
-  // detects revocation no faster). The visible-tab tick lives in
-  // AuthSyncProvider instead: visibility-guarded, authoritative
-  // (disableCookieCache), and re-render-free on the happy path.
+  // every consumer on each tick. AuthSyncProvider re-checks on tab focus
+  // instead, and server guards read the database on every request.
 });
 
 export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =
@@ -41,6 +40,18 @@ export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =
  * the request also fails safe: if the request errors the next resolved session
  * simply rewrites the cache.
  *
+ * The Sentry identity is cleared only on SUCCESS, which is the opposite of
+ * `forgetAuthState` above and for a different reason. A failed sign-out leaves
+ * the user authenticated, so the id already on the scope is still correct —
+ * and `AuthSyncProvider` would not put it back, because it memoises the last
+ * identity it stamped and the id is unchanged, so its effect early-returns.
+ * Clearing eagerly would therefore drop the actor for a user who never left.
+ * (Both sign-out paths hard-navigate in their `onError` too, which reloads the
+ * provider and re-stamps anyway, so waiting for success costs nothing.)
+ *
+ * `clearSentryIdentity` cannot throw, so the chain below cannot turn a
+ * successful sign-out into a rejection.
+ *
  * Asserted rather than annotated because BetterAuth's `signOut` is generic in
  * its fetch options; a spread wrapper erases that generic and the contextual
  * annotation then fails to match. The runtime behaviour is a straight
@@ -48,5 +59,8 @@ export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =
  */
 export const signOut = ((...args: Parameters<typeof authClient.signOut>) => {
   forgetAuthState();
-  return authClient.signOut(...args);
+  return authClient.signOut(...args).then((result) => {
+    clearSentryIdentity();
+    return result;
+  });
 }) as typeof authClient.signOut;

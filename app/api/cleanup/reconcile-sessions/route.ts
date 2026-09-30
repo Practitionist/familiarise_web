@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { bearerMatches } from "@/lib/cron/cleanup-route";
 import * as Sentry from "@sentry/nextjs";
 import {
   assertNotInMaintenance,
@@ -12,7 +13,10 @@ export async function POST(req: NextRequest) {
     const authHeader = req.headers.get("authorization");
     const cronSecret =
       process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    // Constant-time, via the same helper the cleanupRoute factory uses. This
+    // route previously compared the header with `!==`, which leaks the length
+    // of the matching prefix of CRON_SECRET through response timing.
+    if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
       return NextResponse.json(
         {
           error: "Unauthorized",

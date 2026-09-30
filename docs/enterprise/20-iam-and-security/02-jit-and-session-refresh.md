@@ -156,35 +156,24 @@ permissions update on the next round-trip — no forced logout needed.
 The marker is what client code can compare against its cached payload to
 *detect* staleness; the always-on refetch is what actually corrects it.
 
-One nuance worth knowing: BetterAuth's cookie cache (`session.cookieCache`,
-`maxAge: 5 min` in `lib/auth.ts`) can serve a cached session shape for
-up to 5 minutes before `customSession` is re-invoked, so "next
-round-trip" means "next round-trip that misses the 5-minute cookie
-cache." The catastrophic 24h figure below is the worst case when the
-bump is *not* called at all and the only refresh is BetterAuth's
-`updateAge: 24h` rotation.
+BetterAuth's cookie cache is **off** (`session.cookieCache.enabled:
+false` in `lib/auth.ts`, #1857), so every server session read re-runs
+`customSession` and "next round-trip" means exactly that. The
+catastrophic 24h figure below is the worst case when the bump is *not*
+called at all and the only refresh is BetterAuth's `updateAge: 24h`
+rotation.
 
-#### Trade-off: 5-minute cookie cache vs a DB hit every request
+#### Trade-off: a DB hit every request vs a cookie cache
 
-The cookie cache is a deliberate freshness-for-throughput trade.
-Without it, every authenticated request would re-run `customSession` —
-which reads the live `users` row and a `memberships.findMany` — turning
-the session check into a guaranteed two-query round-trip on *every* page
-load and API call. With `cookieCache.maxAge = 5 min`, most requests are
-served from the signed cookie and skip the DB entirely. The cost is a
-bounded staleness window: a role change can take up to 5 minutes to
-surface. We accept that ceiling for benign role *changes*, where "your new
-capabilities appear within a few minutes, no re-login" is the right UX. The
-*dangerous* staleness — a downgraded OWNER still acting as OWNER, or a
-removed member still inside — is bounded by the **same** window rather than
-cut short by a hard kill: there is no server-side revoke-by-userId
-available (BetterAuth's `admin` plugin, which exposes `revokeUserSessions`,
-is not installed, and core `revokeSession` needs the target's own token),
-so removal also relies on the `sessionGeneration` bump and refetches on the
-next cookie-cache miss, worst case at BetterAuth's 24h `updateAge`
-rotation. Shrink `maxAge` toward zero and you trade DB load for fresher
-roles; the current value says throughput wins for the benign case, and the
-removal window is a known limitation rather than a kill switch.
+With the cache off, every authenticated request runs `customSession` —
+the live `users` row plus `memberships.findMany`. We pay that so a role
+change, a removal, a ban or a revoked session applies on the next
+request rather than up to `maxAge` later; `customSession` already
+queried Prisma on every read, so the cache only saved one indexed
+lookup. Re-enabling it would bring back that staleness window for the
+dangerous cases too (a downgraded OWNER still acting as OWNER, a
+removed member still inside), which is why sensitive reads use
+`getSession(true)` regardless.
 
 ### Why a counter, not a boolean
 
@@ -201,11 +190,15 @@ The UX cost of "you've been signed out, please log in again" is high
 relative to the marginal security benefit. The catastrophic case is
 role downgrade with a stale OWNER session, or a removed member still
 inside — and that is handled by the same `sessionGeneration` bump, not a
-hard kill: no server-side revoke-by-userId is available (BetterAuth's
-`admin` plugin is not installed, and core `revokeSession` needs the
-target's own session token). So removal, downgrade, and soft-suspend all
-bump the generation and refetch on the next cookie-cache miss, worst case
-at the 24h `updateAge` rotation.
+hard kill. BetterAuth's `admin` plugin *is* installed, but its
+`revokeUserSessions` endpoint is caller-scoped (it checks the *calling*
+admin's session) and cannot join the membership transaction, so it is
+not the primitive for system-initiated changes. Removal, downgrade and
+soft-suspend bump the generation and take effect on the next request.
+Human-initiated revokes (the user's device list, the staff door) do
+hard-revoke through `lib/auth/session-revoke.ts`; if removal ever
+should too, the primitive is `revokeAllUserSessions` (ADR 10 addendum,
+ADR 35).
 
 The `sessionGeneration` bump also handles the middle case: the membership
 is still active, but the role / status changed. Next request reflects
@@ -216,8 +209,7 @@ the new permissions; no UX disruption.
 Walk it through a real promotion: a **Wipro** admin promotes a member
 from LEARNER to MANAGER. The PATCH bumps `sessionGeneration` inside the
 same transaction as the role write; the promoted user does *not* get
-logged out. Their next request that misses the 5-minute cookie cache
-re-runs `customSession`, which re-reads memberships and the new MANAGER
+logged out. Their next request re-runs `customSession`, which re-reads memberships and the new MANAGER
 capabilities simply appear.
 
 ```mermaid
@@ -234,17 +226,14 @@ sequenceDiagram
   Note over API,DB: atomic increment, not read-modify-write —<br/>concurrent promotions can't lose a bump
   API->>DB: COMMIT
   API-->>A: 200 OK
-  Note over M: no forced logout. Cookie cache (maxAge 5 min)<br/>may still serve the OLD shape briefly.
-  M->>API: next request that MISSES the 5-min cookie cache
+  Note over M: no forced logout
+  M->>API: next request (cookie cache off)
   API->>DB: customSession reads user.sessionGeneration → N+1
   API->>DB: memberships.findMany (always runs)
   API-->>M: session.user now reflects MANAGER ✅
 ```
 
-The "misses the 5-min cookie cache" qualifier is the honest version of
-"next request": BetterAuth may serve a cached session shape for up to
-`cookieCache.maxAge` (5 min) before `customSession` re-runs. The bump
-itself is the *atomic increment* in the COMMIT box — it can never lose a
+The bump itself is the *atomic increment* in the COMMIT box — it can never lose a
 concurrent promotion, which is why the marker is a counter and not a
 boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
 
@@ -283,21 +272,6 @@ The table below maps the symptoms you are most likely to observe back to their p
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | New SSO user can't access the dashboard, session cookie present | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error. | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it. |
-| User keeps acting as old role well past the 5-min cookie-cache window after promotion | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
+| User keeps acting as old role after promotion, across several requests | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
 | `customSession` slow under high SSO sign-in load | The bareMembers loop is running for many orgs without `preloadedProfiles`. | Ensure the pre-fetch at the top of `customSession` is still in place; passes through `preloadedProfiles` to `applyMembershipRoleEffects`. |
 | Settings page shows a role dropdown for `defaultRoleForAutoJoin` | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`. | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block. |
-
----
-
-## §6 — Correction (2026-09-27) — #1856: the admin plugin IS installed
-
-Two passages in §2 ("The fix" and "Why we don't force logout") state
-that BetterAuth's `admin` plugin "is not installed" and conclude no
-server-side revoke-by-userId exists. The premise was wrong:
-`lib/auth.ts` installs `admin({...})`. The conclusion stood anyway —
-the plugin's `revokeUserSessions` endpoint is caller-scoped (it checks
-the *calling* admin's session), so system-initiated revokes still go
-through Prisma — but the dangerous case (removed member, demoted
-OWNER) is no longer kill-less by necessity. Human-initiated revokes
-now hard-revoke through `lib/auth/session-revoke.ts`; see ADR 10's
-addendum and ADR 35 for the full story.

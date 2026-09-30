@@ -256,7 +256,7 @@ export async function POST(
   scheduleAfter(async () => {
     for (const row of stagedBells) await attemptTrigger(row);
     await attemptStagedEmail(stagedEmail, EMAIL_BUDGET_MS.AUTH);
-  });
+  }, "org.invitation.send");
 
   return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });
 }

@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, sessionMgmtUserLimiter } from "@/lib/rate-limit";
 import { sessionRouteError } from "@/lib/auth/session-response";
-import { revokeSessionById, signalRevocation } from "@/lib/auth/session-revoke";
+import { revokeSessionById } from "@/lib/auth/session-revoke";
 
 interface RouteParams {
   params: Promise<{ sessionId: string }>;
@@ -40,15 +40,6 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
 
     const { revoked } = await revokeSessionById(prisma, userId, sessionId);
     const currentSessionEnded = sessionId === currentSessionId;
-    if (revoked > 0) {
-      // Best-effort cross-device ping; never gates the response (the
-      // helper swallows Redis faults, so awaiting only costs a fast
-      // path — fire-and-forget keeps even that off the critical path).
-      // Skipped when nothing was removed — no peer needs waking.
-      // Skipped for the current session — the revoking tab IS the
-      // revoked tab and signs itself out off the response flag.
-      if (!currentSessionEnded) void signalRevocation(userId);
-    }
 
     return NextResponse.json({ revoked, currentSessionEnded }, { status: 200 });
   } catch (error) {

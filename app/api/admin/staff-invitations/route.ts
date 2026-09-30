@@ -301,8 +301,8 @@ export async function GET(_req: NextRequest) {
           userId: { in: operators.map((o) => o.id) },
           expiresAt: { gt: now },
         },
-        orderBy: { lastSeenAt: "desc" },
-        select: { userId: true, lastSeenAt: true, updatedAt: true },
+        orderBy: { updatedAt: "desc" },
+        select: { userId: true, updatedAt: true },
       })
     : [];
 
@@ -311,13 +311,9 @@ export async function GET(_req: NextRequest) {
   for (const row of sessions) {
     activeByUser.set(row.userId, (activeByUser.get(row.userId) ?? 0) + 1);
     if (!lastSeenByUser.has(row.userId)) {
-      // `lastSeenAt` is the throttled server-validated touch; `updatedAt` is
-      // its fallback for rows written before #1856. Never a "currently
+      // BetterAuth's day-granular refresh stamp. Never a "currently
       // active" claim — see lib/auth/session-select.ts.
-      lastSeenByUser.set(
-        row.userId,
-        (row.lastSeenAt ?? row.updatedAt).toISOString(),
-      );
+      lastSeenByUser.set(row.userId, row.updatedAt.toISOString());
     }
   }
 

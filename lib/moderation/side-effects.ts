@@ -36,10 +36,7 @@ import {
   notifyAccountBanned,
   notifyVerificationStatusChanged,
 } from "@/lib/novu";
-import {
-  revokeAllUserSessions,
-  signalRevocation,
-} from "@/lib/auth/session-revoke";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import {
   EMAIL_BUDGET_MS,
   sendAccountBannedEmail,
@@ -295,20 +292,6 @@ export async function applyBestEffortEffects(
 
   if (actionType === "USER_SUSPENDED" || actionType === "USER_BANNED") {
     await runBulkCancellations(input, summary, errors);
-  }
-  // #1856 — the phase-1 revoke joined the ban transaction, so by commit
-  // the target's sessions are gone but no cross-device signal fired (the
-  // shared helper deliberately doesn't signal — most callers do it
-  // themselves). Bump the counter so opted-in tabs learn within the
-  // poll interval instead of on next focus. Post-commit by placement:
-  // Redis can't join the tx, and signalling a rolled-back ban would cry
-  // wolf. Gated on sessionsRevoked: a ban with nothing to revoke (no
-  // live sessions) wakes nobody.
-  if (
-    (actionType === "USER_SUSPENDED" || actionType === "USER_BANNED") &&
-    (transactional.sessionsRevoked ?? 0) > 0
-  ) {
-    void signalRevocation(input.report.targetUserId);
   }
   if (hasStreamEnforcement(actionType, input.report)) {
     await runStreamStep(input, summary, errors);

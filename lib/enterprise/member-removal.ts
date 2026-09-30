@@ -209,7 +209,10 @@ export async function removeMember(
   }
   if (result.email) {
     const staged = result.email;
-    scheduleAfter(() => attemptOnboardingEmail(staged));
+    scheduleAfter(
+      () => attemptOnboardingEmail(staged),
+      "org.member-removal.onboarding-email",
+    );
   }
   return { removed: result.removed };
 }

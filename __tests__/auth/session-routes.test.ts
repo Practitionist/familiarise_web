@@ -43,27 +43,9 @@ jest.mock("../../lib/rate-limit", () => ({
   sessionMgmtUserLimiter: {},
 }));
 
-// `lib/auth/session-revoke` is deliberately NOT mocked here. It used to
-// be, with a hand-written re-implementation of the delete inside the
-// factory — so assertions like
-//   expect(sessionDeleteMany).toHaveBeenCalledWith({ where: { userId,
-//   id: { not: keep } } })
-// were asserting the TEST's own body. The route never calls
-// `prisma.session.deleteMany` at all; it calls the helper. The real
-// predicate was always pinned in `session-revoke.test.ts`, so this
-// removes an assertion that looked like coverage without providing it.
-// Only the Redis round trip stays stubbed, so the tests assert the
-// effect through the real helper.
-const mockSignalRevocation = jest.fn();
-jest.mock("../../lib/auth/session-revoke", () => {
-  const actual = jest.requireActual("../../lib/auth/session-revoke");
-  return {
-    __esModule: true,
-    ...actual,
-    signalRevocation: (...a: unknown[]) => mockSignalRevocation(...a),
-  };
-});
-
+// `lib/auth/session-revoke` is deliberately NOT mocked: the routes are
+// exercised through the real helper, so the assertions below pin the
+// effect, not a re-implementation in the test.
 import { GET as listSessions } from "../../app/api/user/sessions/route";
 import { DELETE as revokeSession } from "../../app/api/user/sessions/[sessionId]/route";
 import { POST as revokeOthers } from "../../app/api/user/sessions/revoke-others/route";
@@ -89,8 +71,6 @@ describe("GET /api/user/sessions (#1856)", () => {
         expiresAt: new Date("2026-02-01T00:00:00Z"),
         ipAddress: "1.2.3.4",
         userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/126.0",
-        deviceLabel: null,
-        lastSeenAt: null,
         impersonatedBy: null,
       },
     ]);
@@ -162,7 +142,6 @@ describe("DELETE /api/user/sessions/[sessionId] (#1856)", () => {
       revoked: 1,
       currentSessionEnded: false,
     });
-    expect(mockSignalRevocation).toHaveBeenCalledWith("u1");
   });
 
   it("is idempotent: a foreign or already-gone id is 200 with revoked 0", async () => {
@@ -175,11 +154,9 @@ describe("DELETE /api/user/sessions/[sessionId] (#1856)", () => {
       revoked: 0,
       currentSessionEnded: false,
     });
-    // Nothing removed — no peer needs waking.
-    expect(mockSignalRevocation).not.toHaveBeenCalled();
   });
 
-  it("revoking the current session reports it and skips the signal", async () => {
+  it("revoking the current session reports it", async () => {
     authedAs("u1", "s-current");
     sessionDeleteMany.mockResolvedValue({ count: 1 });
 
@@ -188,7 +165,6 @@ describe("DELETE /api/user/sessions/[sessionId] (#1856)", () => {
       revoked: 1,
       currentSessionEnded: true,
     });
-    expect(mockSignalRevocation).not.toHaveBeenCalled();
   });
 
   it("rejects an empty id", async () => {
@@ -201,7 +177,7 @@ describe("DELETE /api/user/sessions/[sessionId] (#1856)", () => {
 });
 
 describe("POST /api/user/sessions/revoke-others (#1856)", () => {
-  it("keeps the caller's session and signals when something was removed", async () => {
+  it("keeps the caller's session and removes the rest", async () => {
     authedAs("u1", "s-current");
     sessionDeleteMany.mockResolvedValue({ count: 2 });
 
@@ -211,16 +187,14 @@ describe("POST /api/user/sessions/revoke-others (#1856)", () => {
     expect(sessionDeleteMany).toHaveBeenCalledWith({
       where: { userId: "u1", id: { not: "s-current" } },
     });
-    expect(mockSignalRevocation).toHaveBeenCalledWith("u1");
   });
 
-  it("stays silent when there was nothing else to revoke", async () => {
+  it("reports 0 when there was nothing else to revoke", async () => {
     authedAs("u1", "s-current");
     sessionDeleteMany.mockResolvedValue({ count: 0 });
 
     const res = await revokeOthers();
     await expect(res.json()).resolves.toEqual({ revoked: 0 });
-    expect(mockSignalRevocation).not.toHaveBeenCalled();
   });
 });
 

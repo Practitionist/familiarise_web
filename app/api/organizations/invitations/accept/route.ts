@@ -174,7 +174,7 @@ export async function POST(req: NextRequest) {
     scheduleAfter(async () => {
       for (const row of stagedBells) await attemptTrigger(row);
       if (stagedWelcome) await attemptOnboardingEmail(stagedWelcome);
-    });
+    }, "org.invitation.accept.post-commit");
   }
 
   // Client contract (app/organizations/invite/[token]/page.tsx): expects

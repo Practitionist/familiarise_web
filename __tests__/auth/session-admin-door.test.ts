@@ -45,7 +45,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { getMockRedis, resetMockRedis } from "../../lib/redis-mock";
+import { resetMockRedis } from "../../lib/redis-mock";
 import { SESSION_PUBLIC_SELECT } from "../../lib/auth/session-select";
 import { GET as listUserSessions } from "../../app/api/admin/users/[userId]/sessions/route";
 import { POST as revokeUserSessions } from "../../app/api/admin/users/[userId]/sessions/revoke/route";
@@ -188,19 +188,5 @@ describe("POST /api/admin/users/[userId]/sessions/revoke (#1856)", () => {
     expect(res).toBe(err);
     expect(sessionDeleteMany).not.toHaveBeenCalled();
     expect(opsActionLogCreate).not.toHaveBeenCalled();
-  });
-
-  it("a successful revoke bumps the cross-device signal", async () => {
-    authedAdmin();
-    sessionDeleteMany.mockResolvedValue({ count: 2 });
-    opsActionLogCreate.mockImplementation(
-      async ({ data }: { data: object }) => ({
-        ...data,
-      }),
-    );
-
-    await post("u9", { reason: "account takeover containment" });
-
-    await expect(getMockRedis().get("sess:revsig:u9")).resolves.not.toBeNull();
   });
 });

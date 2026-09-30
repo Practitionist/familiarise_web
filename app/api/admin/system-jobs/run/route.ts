@@ -534,7 +534,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             extra: { jobId },
           });
         }
-      });
+      }, "admin.system-job.dispatch");
       return NextResponse.json(
         {
           success: true,

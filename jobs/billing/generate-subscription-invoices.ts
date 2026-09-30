@@ -43,7 +43,7 @@ import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatc
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { reportSentryError } from "@/lib/observability/report";
-import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
@@ -304,7 +304,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         // is written through recordSystemEvent directly instead. Awaited: the
         // insert rides this job's Prisma client, and a fire-and-forget one
         // loses the audit row to the `$disconnect()` at the end of `main`.
-        await recordSystemEvent({
+        await recordSystemEventSafe({
           organizationId: sub.contract.organization.id,
           category: "INVOICE",
           severity: "ERROR",
@@ -314,7 +314,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
             competingInvoiceNumber,
             errorMessage: err.message,
           },
-        }).catch(() => {});
+        });
         skipped++;
         continue;
       }

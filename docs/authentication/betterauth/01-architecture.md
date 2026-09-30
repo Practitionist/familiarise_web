@@ -4,7 +4,7 @@
 | ------------- | ------------------------------------------------------------------------------ |
 | Status        | Stable                                                                         |
 | Audience      | All engineers                                                                  |
-| Last reviewed | 2026-04-26                                                                     |
+| Last reviewed | 2026-09-30                                                                     |
 | Source files  | `lib/auth.ts`, `lib/auth-client.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts` |
 
 ## 1. Background
@@ -59,22 +59,18 @@ organization() → sso() → customSession() → nextCookies()
                    └───────────────────────┘
 ```
 
-**Cookie cache:** Enabled via `cookieCache` — a compact serialization of session data cached in the cookie itself for 5 minutes. This avoids a DB hit on every request while keeping the staleness window small.
+**Cookie cache:** Off. Every session read hits the database, so a revoked session, a ban or a role change applies on the next request. `customSession` already queries Prisma on every read, so the cache only saved one indexed lookup.
 
 ```typescript
 session: {
-  expiresIn: 30 * 24 * 60 * 60,  // 30 days
-  updateAge: 24 * 60 * 60,        // touch DB once per day
-  cookieCache: {
-    enabled: true,
-    maxAge: 5 * 60,                // 5 min cache in cookie
-    strategy: "compact",
-  },
+  expiresIn: 30 * 24 * 60 * 60,  // 30 days, sliding
+  updateAge: 24 * 60 * 60,        // bump expiresAt/updatedAt at most once per day
+  cookieCache: { enabled: false },
 }
 ```
 
 > [!IMPORTANT]
-> When you need the freshest session data (e.g., checking `onboardingCompleted` right after the user finishes onboarding), call `getSession(true)` — the `true` parameter sets `disableCookieCache` and forces a DB read. See [`lib/auth-server.ts`](../../../lib/auth-server.ts).
+> Keep using `getSession(true)` (sets `disableCookieCache`) for PII, finance, role-gated reads and freshly-mutated fields, and `getCachedSession()` only for cosmetic reads. With the cache off both read the DB today; the split exists so re-enabling the cache cannot silently make a sensitive read stale. See [`lib/auth-server.ts`](../../../lib/auth-server.ts).
 
 ### 3.3 Password Hashing
 
@@ -111,14 +107,13 @@ Fields marked `input: false` cannot be set by the client during sign-up — they
 
 ### 4.2 Database Hooks
 
-Four hooks fire at key lifecycle events:
+Three hooks fire at key lifecycle events:
 
-| Hook                    | When                                   | What it does                                                                                                                                                                                                                                    |
-| ----------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `user.create.after`     | After a new user signs up              | Creates `CookiePreference` + `NotificationPreference`. Sends welcome email (fire-and-forget). Syncs Novu subscriber.                                                                                                                            |
-| `session.create.before` | Before issuing a session cookie        | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). Pure veto: device metadata is stamped in `create.after`, never merged into the insert (#1856). |
-| `session.create.after`  | After the session row commits          | Device stamp: awaited but infallible `stampSessionDeviceMetadata()` (one PK update, catches internally). Concurrent-session cap: awaited `enforceSessionCapForUser()` (cap 10, catches internally — a floating promise would die with the serverless freeze, #1856).                                                  |
-| `account.create.after`  | After linking a non-credential account | Sends "account linked" notification email (fire-and-forget).                                                                                                                                                                                    |
+| Hook                    | When                                   | What it does                                                                                                                                      |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user.create.after`     | After a new user signs up              | Creates `CookiePreference` + `NotificationPreference`. Sends welcome email (fire-and-forget). Syncs Novu subscriber.                              |
+| `session.create.before` | Before issuing a session cookie        | **SSO enforcement gate.** Calls `shouldRejectSession()` — rejects credential/OAuth signins from enforced domains. See [`sso/`](./sso/README.md). |
+| `account.create.after`  | After linking a non-credential account | Sends "account linked" notification email (fire-and-forget).                                                                                      |
 
 > [!NOTE]
 > `ConsulteeProfile` is **not** auto-created in the user hook. It is lazy-created on first consumer action via `ensureConsulteeProfile` in `lib/profiles/ensure-consultee-profile.ts`. This prevents org-operators and consultants from carrying a dangling consumer profile.
@@ -150,9 +145,9 @@ These are server-component guards — they `redirect()` (never return an error r
 
 If a session is deleted from the DB but the browser still has the cookie, `requireOnboarded()` would bounce between `/dashboard` and `/auth/signin` infinitely. The fix: `redirectWithCookieCleanup()` sends to `/api/auth/clear-stale-session`, which is a Route Handler that can clear cookies (Server Components cannot).
 
-### Cookie Cache Staleness
+### Session Read Cost
 
-The 5-minute cookie cache means a user who just completed onboarding might see a stale `onboardingCompleted: false` for up to 5 minutes. Mitigated by using `getSession(true)` (bypasses cache) in flows that read freshly-mutated fields.
+With the cookie cache off, every authenticated request runs the session lookup plus `customSession`'s Prisma queries. If that ever shows up in database load, re-enabling the cache is a one-line change in `lib/auth.ts` — but it brings back a stale window (up to `maxAge`) for revocation, bans, role changes and just-mutated fields like `onboardingCompleted`, which is why sensitive reads already use `getSession(true)`.
 
 ## 6. Edge Cases & Foot-Guns
 
