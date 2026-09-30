@@ -15,10 +15,30 @@ import {
   slotsOverlap,
   validateWeeklySlotTimeOrder,
 } from "@/utils/scheduling-engine/slotTimeUtils";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 
 export const MIN_WINDOW_MINUTES = 30;
 export const MAX_WINDOW_MINUTES = 12 * 60;
 const MINUTES_PER_DAY = 24 * 60;
+
+/**
+ * The grid a published window's boundaries must sit on, in minutes. Derived
+ * from the engine's own atom rather than written as a literal, because the two
+ * have to be the same number: a window off this grid mints starts the buyer
+ * path refuses (see GRID below), and the buyer's own edge check
+ * (`slotStartRefusal`) tests the same 30 minutes from the same engine constant.
+ */
+export const AVAILABILITY_GRID_MINUTES = SCHEDULING_INTERVAL_MS / 60_000;
+
+/** Whether a minute-of-day value is a legal booking-grid boundary. */
+function isOnGridMinute(minutes: number): boolean {
+  return minutes % AVAILABILITY_GRID_MINUTES === 0;
+}
+
+/** Whether an instant sits on the :00/:30 UTC grid the buyer path demands. */
+export function isOnSchedulingGrid(instantMs: number): boolean {
+  return instantMs % SCHEDULING_INTERVAL_MS === 0;
+}
 
 export interface WeeklyWindowInput {
   startDay: DayOfWeek;
@@ -37,6 +57,7 @@ export type AvailabilityRefusalCode =
   | "RANGE"
   | "ORDER"
   | "DURATION"
+  | "GRID"
   | "OVERLAP"
   | "PAST";
 
@@ -67,6 +88,7 @@ export const AVAILABILITY_REFUSAL_STATUS: Record<
   RANGE: 400,
   ORDER: 400,
   DURATION: 400,
+  GRID: 400,
   OVERLAP: 400,
   PAST: 400,
 };
@@ -91,6 +113,30 @@ function isMinuteOfDay(value: unknown): value is number {
 const durationMessage = (index: number) =>
   `Window ${index + 1}: duration must be between ${MIN_WINDOW_MINUTES} minutes and ${MAX_WINDOW_MINUTES / 60} hours`;
 
+const gridMessage = (index: number) =>
+  `Window ${index + 1}: times must start on the hour or half hour — a window off the ${AVAILABILITY_GRID_MINUTES}-minute booking grid publishes hours nobody can book`;
+
+/**
+ * The GRID refusal: a window whose boundaries are not on the booking grid.
+ *
+ * Both the grid generator and the allocator step 30 minutes FROM THIS ROW'S OWN
+ * START, so an off-grid row mints starts at :15 and :45. Every buyer path then
+ * refuses them structurally — `slotStartRefusal` answers SLOT_NOT_ON_GRID in
+ * checkout and in request-for-approval — so the row is not "harder to book", it
+ * is 100% unbookable, and the grid shows cells the checkout throws away.
+ *
+ * Refused rather than snapped: silently moving a consultant's published hours is
+ * worse than telling them, and a snapped row is indistinguishable from one they
+ * chose. Checked LAST, after RANGE / ORDER / DURATION, so the cheaper and more
+ * specific complaints about the same row still speak first.
+ */
+function gridRefusal(
+  offGrid: boolean,
+  index: number,
+): AvailabilityRefusal | null {
+  return offGrid ? { code: "GRID", index, message: gridMessage(index) } : null;
+}
+
 /** Validate one weekly window on its own (no pairwise check). */
 export function validateWeeklyWindow(
   row: WeeklyWindowInput,
@@ -114,7 +160,10 @@ export function validateWeeklyWindow(
   if (duration < MIN_WINDOW_MINUTES || duration > MAX_WINDOW_MINUTES) {
     return { code: "DURATION", index, message: durationMessage(index) };
   }
-  return null;
+  return gridRefusal(
+    !isOnGridMinute(row.startTimeUtc) || !isOnGridMinute(row.endTimeUtc),
+    index,
+  );
 }
 
 /**
@@ -190,7 +239,13 @@ export function validateCustomWindow(
       message: `Window ${index + 1} has already ended`,
     };
   }
-  return null;
+  // A custom row has the same defect as a weekly one and for the same reason:
+  // `matchCustomSlotToDay` hands the allocator the row's raw `startsAt`, so an
+  // off-grid row mints off-grid candidate starts that checkout refuses.
+  return gridRefusal(
+    !isOnSchedulingGrid(startMs) || !isOnSchedulingGrid(endMs),
+    index,
+  );
 }
 
 /** Validate a consultant's whole custom set; same empty rule as weekly. */

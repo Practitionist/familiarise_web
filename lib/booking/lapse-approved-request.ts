@@ -178,12 +178,23 @@ export interface WithdrawActor {
   privileged: boolean;
 }
 
-/** `withAppointmentLock`'s shape, injected: the Redis client behind it does
- *  not load under jsdom, and the sweeps import this module. */
+/**
+ * `withAppointmentLock`'s shape, injected: the Redis client behind it does not
+ * load under jsdom, and the sweeps import this module. The callback is handed
+ * the grant so a RETRY LOOP can re-grant it per attempt — see `renewLock`.
+ */
 export type AppointmentLock = <T>(
   appointmentId: string,
-  fn: () => Promise<T>,
+  fn: (lock: unknown) => Promise<T>,
 ) => Promise<T>;
+
+/**
+ * How a withdrawn approval's CAS is re-serialised between retries. Injected
+ * beside the lock for the same reason the lock is: the Redis module must stay
+ * out of this file so the sweeps that share `lapseApprovedRequest` load without
+ * it. Production passes `renewAppointmentLock`; a test passes a spy.
+ */
+export type RenewInjectedLock = (lock: unknown) => Promise<void>;
 
 /** The repo's typed-error convention (lock 423 / 503, IllegalTransition 409). */
 function isTypedHttpError(
@@ -257,12 +268,25 @@ export async function withdrawApproval(args: {
   id: string;
   actor: WithdrawActor;
   lock: AppointmentLock;
+  /**
+   * Re-grants `lock` at the top of every retry attempt. Required beside the lock
+   * rather than defaulted, so the Redis renewal cannot be forgotten here: the
+   * retry loop outlives the grant (see `run`).
+   */
+  renewLock: RenewInjectedLock;
 }): Promise<{ status: "CANCELLED" }> {
   const { row, plan } = await readOwnedRequest(args.kind, args.id, args.actor);
 
-  const run = () =>
-    withSerializableRetry(() =>
-      prisma.$transaction(
+  const run = (lock: unknown) =>
+    withSerializableRetry(async () => {
+      // 4 attempts × (10 s maxWait + 30 s timeout) ≈ 160 s outlive the fixed
+      // 75 s grant, so each attempt re-grants it — the same shape the approval
+      // route uses through `renewApprovalLock` (#1319). Not renewing here only
+      // ever cost serialisation: the request CAS below carries the money
+      // predicate in its WHERE, so a second withdraw running concurrently
+      // matches zero rows and answers REQUEST_CHANGED_ELSEWHERE.
+      await args.renewLock(lock);
+      return prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
             kind: args.kind,
@@ -274,15 +298,16 @@ export async function withdrawApproval(args: {
           ...SLOT_TRANSITION_TX_OPTIONS,
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         },
-      ),
-    );
+      );
+    });
   // A subscription may have no wrapper yet (#1554); then there is no atom to
-  // contend for and nothing held.
+  // contend for. The attempt still runs — one CAS, and it needs no renewal,
+  // which the production helper answers as "no grant" for a null lock.
   let moved: 0 | 1;
   try {
     ({ moved } = row.appointment
       ? await args.lock(row.appointment.id, run)
-      : await run());
+      : await run(null));
   } catch (error) {
     if (isTypedHttpError(error)) {
       throw new Refusal({

@@ -125,10 +125,15 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
 
 `RescheduleRequestStatus` via `transitionRescheduleRequest`:
 
-- Open state: `PENDING_REVIEW`. `COUNTERED` is still declared in the enum and
-  in `RESCHEDULE_ALLOWED_FROM`, but no writer ever transitions a row to it —
-  the counter-round was specified and never built, and `lib/booking/reschedule-proposals.ts`
-  documents the removal — so treat it as an unreachable edge, not a live state.
+- Open state: `PENDING_REVIEW`, and it is the only one. `COUNTERED` (the
+  round-2 counter-offer) was removed from the enum, from
+  `RESCHEDULE_ALLOWED_FROM`, from the operator badge and from the seed. It was
+  specified and never built — `lib/booking/reschedule-proposals.ts` documents
+  the removal — and the only writer in the whole repo was
+  `prisma/seedFiles/6c-create-reschedule-proposals.ts`, so the seed was keeping
+  a dev database full of rows the respond route had no code for. The six read
+  surfaces that filtered on `["PENDING_REVIEW", "COUNTERED"]` now use
+  `RESCHEDULE_OPEN_STATUSES`, so a future open state is added in one place.
 - `AUTO_ACCEPTED` is a second terminal-acceptance state alongside `ACCEPTED`,
   written by `lib/booking/reschedule-auto-confirm.ts` when the responding
   party lets the reschedule window lapse without a reply; it deliberately

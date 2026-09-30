@@ -4,10 +4,55 @@ import redisClient, {
   checkRedisHealth,
 } from "../lib/redis";
 import crypto from "crypto";
+import * as Sentry from "@sentry/nextjs";
 import { SlotLockError } from "./errors/SlotLockError";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * #1846 — one Sentry log per CONTENTION OUTCOME, tagged with the atom family.
+ *
+ * Lock contention is a named production risk on this module (a hot slot, a
+ * flash sale, two devices on one account) and it was completely invisible: the
+ * typed errors below are RETURN VALUES on the way to an HTTP 409, never events,
+ * and the repo emits no metrics, so there was no way to answer "how often does
+ * this happen, and on which atom" short of reading Netlify function logs.
+ *
+ * Cheap by construction, which is the whole constraint:
+ *   - it runs on the SLOW path only (a held lock already cost ~7 s of backoff),
+ *     so it is not in the hot path at all;
+ *   - one `Sentry.logger.warn` with a two-word message and a tag, no
+ *     `captureException` (a contention is a modelled outcome, not a fault, and
+ *     an exception here would spend the error allowance on the same incident
+ *     every time a popular slot sells out);
+ *   - no timers, no client, no allocation beyond the two strings.
+ *
+ * `Sentry.logger` rather than `captureMessage` deliberately: the repo already
+ * uses `Sentry.logger.info` for cron start/finish, so this lands in the same
+ * structured stream an operator is already reading, at warning level so it is
+ * filterable without being a page.
+ *
+ * `family` is the ATOM family, not the key. The key embeds a cuid or an ISO
+ * instant and would be unbounded-cardinality as a tag value — Sentry's tag
+ * distribution degrades on exactly that (see the ORG_ID_TAG caveat in
+ * lib/observability/identity.ts). The family is the thing an operator groups
+ * by, and it is a closed set.
+ */
+function reportLockContention(
+  family: string,
+  detail: Record<string, unknown>,
+): void {
+  try {
+    Sentry.logger.warn("booking lock contended", {
+      tags: { subsystem: "booking", op: "lock-contention", family },
+      ...detail,
+    });
+  } catch {
+    // Telemetry must never be the reason a booking fails. Losing this line
+    // costs observability, nothing else.
+  }
 }
 
 // CN-1 (#676) — retries exhausted because the lock is genuinely HELD (SET NX
@@ -299,6 +344,11 @@ async function acquireGuarded(
   }
 
   if (lock instanceof LockContentionError) {
+    // #1846 — the guarded front door is where every booking atom's contention
+    // surfaces, so this is the one place a report has to live to cover them
+    // all: slot intervals, consultee, appointment, auto-allocate, the approval
+    // atoms and the recording-purchase mint. `context` is the family.
+    reportLockContention(context, { key, attempts: lock.attempts });
     throw lock;
   }
   return lock;
@@ -857,6 +907,15 @@ export async function lockEventCheckout(
     // Genuine contention — another buyer holds the mutex. Fail OPEN
     // (retry-later): benign, expected, and now TYPED so the route can answer
     // a structured 409 with retryAfter instead of classifyError guessing.
+    //
+    // #1846 — reported here rather than in `acquireGuarded` because the
+    // event-checkout mutex is the ONE atom in this module that does not go
+    // through the guarded front door, so a report in `acquireGuarded` alone
+    // would miss the most contended atom of all: the flash-sale one.
+    reportLockContention("event-checkout", {
+      key,
+      appointmentType,
+    });
     throw new EventCheckoutBusyError(appointmentType);
   }
 
@@ -917,14 +976,46 @@ export async function unlockAppointment(lock: ApprovalLock): Promise<void> {
 /** Run one lifecycle mutation under the appointment lock; always releases. */
 export async function withAppointmentLock<T>(
   appointmentId: string,
-  fn: () => Promise<T>,
+  /**
+   * Receives the grant so a caller whose body is a RETRY LOOP can re-grant it
+   * per attempt (see `renewAppointmentLock`). Existing callers that ignore the
+   * argument are unaffected — the lock was always released by this wrapper.
+   */
+  fn: (lock: ApprovalLock) => Promise<T>,
 ): Promise<T> {
   const lock = await lockAppointment(appointmentId);
   try {
-    return await fn();
+    return await fn(lock);
   } finally {
     await unlockAppointment(lock);
   }
+}
+
+/**
+ * Re-grant the appointment lock for one more Serializable attempt.
+ *
+ * #1319's `renewApprovalLock` twin. Two callers wrap `withSerializableRetry`
+ * (4 attempts) AROUND this lock without renewing: abandon is 4 × (10 s maxWait +
+ * 15 s timeout) ≈ 100 s and a withdraw is 4 × (10 s + 30 s) ≈ 160 s, both past
+ * `APPOINTMENT_LOCK_TTL_MS`. A lapsed grant does not corrupt anything — each
+ * body's CAS carries the state and money predicates in its WHERE, so the second
+ * writer matches zero rows and answers with its own typed refusal — but the two
+ * writers do then run concurrently, which is exactly the serialisation the
+ * coarsest key exists to provide.
+ *
+ * NEVER throws. A lost grant means somebody else holds the key (or Redis
+ * `extendLock` failed); `extendLock` has already logged it, and the CAS is the
+ * authority on whether this attempt may write. Throwing here would replace a
+ * clean typed refusal with a lock error the callers have no code for.
+ *
+ * @returns whether the grant is still ours.
+ */
+export async function renewAppointmentLock(
+  lock: ApprovalLock | null | undefined,
+  ttl: number = APPOINTMENT_LOCK_TTL_MS,
+): Promise<boolean> {
+  if (!lock) return false;
+  return await extendLock(lock, ttl);
 }
 
 // ============================================================================
