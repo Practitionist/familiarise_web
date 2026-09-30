@@ -140,7 +140,18 @@ function classWith(rows: ReturnType<typeof customRows>) {
         availabilityWindowsCustom: rows,
       },
     },
-    appointment: { occurrences: [] },
+    // `stageAllocationNotices` re-reads the event inside the write transaction
+    // and SELECTs the wrapper's `participants` and live `occurrences`, then
+    // destructures `{ user }` off every participant — so a fixture that omits
+    // the relation does not merely return a thinner row, it throws mid-txn and
+    // the allocation answers 500 instead of its real result. Prisma always
+    // returns the relation (empty here: nobody is booked yet).
+    appointment: {
+      id: "appt-existing",
+      organizationId: null,
+      participants: [],
+      occurrences: [],
+    },
     schedulingPeriodStartsAt: at("2025-06-01T00:00:00.000Z"),
     schedulingPeriodEndsAt: at("2026-05-31T23:59:59.000Z"),
     schedulingTimezone: "UTC",

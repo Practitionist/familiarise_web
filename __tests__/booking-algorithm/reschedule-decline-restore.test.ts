@@ -200,26 +200,35 @@ const OVERLAP_VIOLATION = Object.assign(
   { code: "P2010", meta: { code: "23P01" } },
 );
 
-const mockPrisma = {
-  rescheduleRequest: {
-    findUnique: jest.fn(async (): Promise<unknown> => null),
-  },
-  appointmentOccurrence: {
-    // Declared with its argument, not as `(): Promise<unknown>`: the tests
-    // below swap in a real matcher via mockImplementation, and a zero-arg
-    // signature rejects that at compile time.
-    findFirst: jest.fn(
-      async (_args: {
-        where: { id: { in: string[] }; completionStatus?: string };
-      }): Promise<unknown> => null,
-    ),
-  },
-  $transaction: jest.fn((fn: (t: unknown) => unknown) => runTransaction(fn)),
-};
-
+/**
+ * Mock prisma (relative path required — @/ aliases fail in jest.mock), with the
+ * client declared INSIDE the factory.
+ *
+ * `jest.mock` is hoisted above this file's top-level statements and its factory
+ * is evaluated the moment the module under test is first required — which is
+ * before a `const mockPrisma` further down the file had run, so closing over one
+ * read it in the temporal dead zone and the whole suite never loaded. The
+ * sibling `rescheduleCancel.test.ts` solves the same problem the same way: the
+ * factory builds the client, and the tests reach it by importing the mocked
+ * module and casting per call. The `findFirst` argument is declared only to
+ * document the shape; the tests install a real matcher through the cast.
+ */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: mockPrisma,
+  default: {
+    rescheduleRequest: {
+      // Nothing found unless `seed` says otherwise.
+      findUnique: jest.fn(async () => null),
+    },
+    appointmentOccurrence: {
+      findFirst: jest.fn(
+        async (_args: {
+          where: { id: { in: string[] }; completionStatus?: string };
+        }): Promise<unknown> => null,
+      ),
+    },
+    $transaction: jest.fn((fn: (t: unknown) => unknown) => runTransaction(fn)),
+  },
 }));
 
 jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
@@ -257,6 +266,7 @@ jest.mock("../../lib/email", () => ({
   sendAppointmentRescheduledEmail: jest.fn().mockResolvedValue(undefined),
 }));
 
+import prisma from "@/lib/prisma";
 import {
   proposedAtomCount,
   proposalCoverageMatches,
@@ -372,18 +382,20 @@ function seed(
     },
   };
 
-  mockPrisma.rescheduleRequest.findUnique.mockImplementation(async () => ({
-    // The decline reads this row twice off two different selects — once for
-    // the restore fields, once for the notification side — so the mock answers
-    // with their union, as one row would.
-    ...state.request,
-    appointment: {
-      consultationId,
-      subscriptionId,
-      ...state.notify.appointment,
-    },
-  }));
-  mockPrisma.appointmentOccurrence.findFirst.mockImplementation(
+  (prisma.rescheduleRequest.findUnique as jest.Mock).mockImplementation(
+    async () => ({
+      // The decline reads this row twice off two different selects — once for
+      // the restore fields, once for the notification side — so the mock answers
+      // with their union, as one row would.
+      ...state.request,
+      appointment: {
+        consultationId,
+        subscriptionId,
+        ...state.notify.appointment,
+      },
+    }),
+  );
+  (prisma.appointmentOccurrence.findFirst as jest.Mock).mockImplementation(
     async ({ where }: { where: { id: { in: string[] }; completionStatus?: string } }) => {
       const hit = state.slots
         .filter(
@@ -405,7 +417,9 @@ function seed(
   (notifyAppointmentRescheduled as jest.Mock).mockClear();
   // A miss is the exception, not the default: every other suite in this file
   // needs the plain write.
-  mockPrisma.$transaction.mockImplementation((fn) => runTransaction(fn));
+  (prisma.$transaction as jest.Mock).mockImplementation((fn) =>
+    runTransaction(fn),
+  );
 }
 
 /** The `-partial` reports, so a clean restore can be asserted as silent. */
@@ -679,7 +693,7 @@ describe("a decline whose original time is gone parks instead of failing", () =>
    */
   async function seedWithOverlappingClaim() {
     seed();
-    mockPrisma.$transaction.mockImplementation(async (fn) => {
+    (prisma.$transaction as jest.Mock).mockImplementation(async (fn) => {
       const saved = snapshot();
       tx = makeTx();
       tx.appointmentOccurrence.updateManyAndReturn.mockImplementation(() => {

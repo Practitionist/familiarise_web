@@ -85,15 +85,23 @@ describe("cron-tick targetRequest", () => {
     });
   });
 
-  // #1583 E-P0-04 — the two booking sweeps with per-row outbox staging or
-  // gateway refunds get the 20 s tier; the rest keep the default.
+  // #1583 E-P0-04 — the booking sweeps with per-row outbox staging or gateway
+  // refunds get the 20 s tier; the rest keep the default.
+  //
+  // The 20 s tier is three of the five, not two: `reschedule-proposals` stages
+  // its own outbox row per restored row (the "your original time stands"
+  // notice), and both its route and its core size the ticker's abort at 20 s.
+  // It is asserted here as well as below so this tier cannot be read off the
+  // other test's name.
   //
   // #1583 P1 — all five now READ their limit, so the ticker's bite is stated
   // rather than left to what a route happens to parse.
-  it("gives the reminders and stale-request sweeps 20 s, the rest 6 s", () => {
+  it("gives the outbox-staging and refund sweeps 20 s, the rest 6 s", () => {
     expect(targetRequest(base, "appointment-reminders").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-stale-requests").timeoutMs).toBe(20_000);
+    expect(targetRequest(base, "reschedule-proposals").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-unpaid-trials").timeoutMs).toBe(6_000);
+    expect(targetRequest(base, "tentative-occurrences").timeoutMs).toBe(6_000);
   });
 
   // #1583 P1 — the five booking sweeps used to be handed `?limit=50` and

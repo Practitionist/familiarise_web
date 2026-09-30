@@ -45,36 +45,51 @@ const mockWithAppointmentLock = jest.fn();
 const passThroughLock = (...args: unknown[]) =>
   (args[1] as () => Promise<unknown>)();
 
-const txStub = {
-  rescheduleRequest: {
-    updateMany: jest.fn(),
-    findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
-  },
-  bookingStatusHistory: {
-    create: jest.fn().mockResolvedValue({}),
-    // #1589 R-P1-01 — the origin read `settleParentAfterReschedule` uses to pick
-    // the parent's restore target. APPROVED is the paid-booking shape, which is
-    // also the one that keeps the booking out of the refunded sweeps' cohort.
-    findFirst: jest.fn().mockResolvedValue({ fromStatus: "APPROVED" }),
-  },
-  appointmentOccurrence: {
-    // #1846 — a decline restores, so the occurrence write is on this path, and it
-    // must go through `transitionOccurrenceCompletion`: `updateManyAndReturn`
-    // carries the from-set CAS and the history rows, and `updateMany` is here
-    // only as the tripwire that catches a write which skipped both.
-    findMany: jest.fn().mockResolvedValue([]),
-    updateMany: jest.fn(),
-    updateManyAndReturn: jest.fn(),
-  },
-  consultation: {
-    findUnique: jest.fn().mockResolvedValue({ status: "PENDING" }),
-    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-  },
-  subscription: {
-    findUnique: jest.fn().mockResolvedValue({ status: "PENDING" }),
-    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-  },
-};
+/**
+ * A fresh transaction stub. Rebuilt per test rather than cleared, because
+ * `clearMocks` drops call RECORDS only: a `mockResolvedValue` set inside one
+ * test survives into the next, and a shared stub therefore let one case's
+ * override — "the parent's own CAS misses", which makes `consultation
+ * .updateMany` return `{count: 0}` — decide the restore path of every decline
+ * after it. Same `makeTx()` idiom the restore suites use.
+ *
+ * The defaults are the shapes a healthy decline sees: the parent CAS hits, and
+ * the origin it restores to is APPROVED.
+ */
+function makeTxStub() {
+  return {
+    rescheduleRequest: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
+    },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // #1589 R-P1-01 — the origin read `settleParentAfterReschedule` uses to pick
+      // the parent's restore target. APPROVED is the paid-booking shape, which is
+      // also the one that keeps the booking out of the refunded sweeps' cohort.
+      findFirst: jest.fn().mockResolvedValue({ fromStatus: "APPROVED" }),
+    },
+    appointmentOccurrence: {
+      // #1846 — a decline restores, so the occurrence write is on this path, and it
+      // must go through `transitionOccurrenceCompletion`: `updateManyAndReturn`
+      // carries the from-set CAS and the history rows, and `updateMany` is here
+      // only as the tripwire that catches a write which skipped both.
+      findMany: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      updateManyAndReturn: jest.fn(),
+    },
+    consultation: {
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING" }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    subscription: {
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING" }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+  };
+}
+
+let txStub = makeTxStub();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -280,10 +295,10 @@ function sessionOf(userId: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 1 });
-  txStub.appointmentOccurrence.updateMany.mockResolvedValue({ count: 0 });
+  // Rebuilt, not cleared — see `makeTxStub`.
   // #1846 — a FULL restore is the default: both released rows are in the
   // from-set, and both come back. Every other decline case narrows one of these.
+  txStub = makeTxStub();
   txStub.appointmentOccurrence.findMany.mockResolvedValue(
     RELEASED_IDS.map((id) => ({ id, completionStatus: "RESCHEDULED" })),
   );
@@ -1025,11 +1040,14 @@ describe("who counts as the counterparty", () => {
     );
   });
 
-  it("a booking the org only TAGGED leaves the learner as the only counterparty", async () => {
-    // #1854 / ADR 19 — `organizationId: ORG` alone does not make the org the
-    // payer. With a CARD payment behind it the org admin is nobody here, so the
-    // sponsored learner's own proposal is confirmable by the consultant and by
-    // nobody else.
+  // #1854 / ADR 19 — the FUNDING half of "is this an org booking", and the
+  // third way to fail the opener gate. `organizationId: ORG` alone is a TAG:
+  // with a CARD payment behind the booking the org's money did not pay for it,
+  // so its admin is not a payer-side actor here. A proposal they opened then
+  // resolves to NO side at all — the same fail-closed shape as an unidentifiable
+  // opener — and nobody may confirm it. Pre-gate this read as a payer-side act
+  // and let the consultant confirm a move the org had no authority over.
+  it("a booking the org only TAGGED makes its admin opener nobody", async () => {
     mockRequestFindFirst.mockResolvedValue(orgFundedRow(ORG_ADMIN_USER));
     mockMembershipFindUnique.mockResolvedValue({
       status: "ACTIVE",
@@ -1037,8 +1055,38 @@ describe("who counts as the counterparty", () => {
     });
     mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "CARD" });
 
+    for (const who of [CONSULTANT_USER, CONSULTEE_USER]) {
+      mockGetSession.mockResolvedValue(sessionOf(who));
+      expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+        404,
+      );
+    }
+    // What refused it: the membership passed and the tag was read, so the
+    // funding proof off the booking's own Payment is the gate that closed.
+    expect(mockOrgFundingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG,
+          appointment: { consultationId: "cons-1" },
+        }),
+      }),
+    );
+  });
+
+  // The same tagged-only booking with a PARTY opener — the case the name above
+  // used to describe. The funding gate is consulted only for an opener who is
+  // NEITHER party, so a learner's own proposal on a booking their org merely
+  // tagged resolves exactly as it does on a funded one: the consultant
+  // answers it, and the learner may not confirm their own request. Pinned so
+  // the tag is never read as authority over a learner's own negotiation.
+  it("a learner who opened a tagged-only proposal is still answered by the consultant", async () => {
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow(CONSULTEE_USER));
+    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "CARD" });
+
     mockGetSession.mockResolvedValue(sessionOf(CONSULTANT_USER));
-    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(200);
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      200,
+    );
 
     mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
     expect((await respondHandler(makeRequest(), makeParams())).status).toBe(404);

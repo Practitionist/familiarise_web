@@ -43,7 +43,13 @@ jest.mock("../../lib/prisma", () => {
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    payment: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    // `refusalFor` reads this to tell NOT_ABANDONABLE from ALREADY_PAID once the
+    // CAS misses, so without it the withdrawal ends on a TypeError instead of the
+    // typed refusal the renewal is then asserted against.
+    payment: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      count: jest.fn().mockResolvedValue(0),
+    },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
@@ -64,6 +70,26 @@ jest.mock("../../utils/appointmentlock", () => ({
 
 jest.mock("../../scripts/payments/cleanup-abandoned-payments", () => ({
   cancelPaymentIntent: jest.fn().mockResolvedValue(undefined),
+}));
+
+// Both modules under test reach the notification and refund world only AFTER
+// their CAS has matched, and neither assertion below depends on any of it:
+// `stageNoticesForAppointmentHolds` and `notifyConsulteeRequestExpired` stage
+// outbox rows, and `softCancelTrialAppointmentInTx` refunds. Left real they drag
+// `lib/email` (resend + react-email), `lib/novu/{service,outbox}` and
+// `lib/payments/operations/*` in behind them — and `lib/novu/client` evaluates
+// `@novu/api` at import time, whose module scope reads the `Request` global the
+// jsdom environment lacks. The suite then dies with `ReferenceError: Request is
+// not defined` before a single test runs. The shared `./setup` mock of the
+// `lib/novu` barrel is not enough: these chains import the leaves directly.
+jest.mock("../../lib/booking/backup-interest", () => ({
+  stageNoticesForAppointmentHolds: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("../../lib/booking/expiry-notices", () => ({
+  notifyConsulteeRequestExpired: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("../../lib/trials/cancellation", () => ({
+  softCancelTrialAppointmentInTx: jest.fn().mockResolvedValue(0),
 }));
 
 import { abandonBooking } from "@/lib/booking/abandon";

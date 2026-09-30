@@ -12,6 +12,15 @@ import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 const read = (rel: string) =>
   fs.readFileSync(path.join(process.cwd(), rel), "utf8");
 
+/**
+ * A copy assertion reads the source, and a JSX sentence is one text node that
+ * prettier wraps at 80 columns with the indent in between — so the words a test
+ * means to pin are routinely split across two lines. Collapsing the runs of
+ * whitespace reads the sentence as the browser renders it without depending on
+ * where the formatter chose to break, and pins exactly the same words.
+ */
+const copy = (src: string) => src.replace(/\s+/g, " ");
+
 const proposalCard = read(
   "components/appointments/detail/RescheduleProposalCard.tsx",
 );
@@ -51,8 +60,13 @@ describe("#1163 — the proposal card answers through the lifecycle endpoints", 
   });
 
   it("decline confirms first and says the booking is not being cancelled", () => {
-    expect(proposalCard).toContain("not");
-    expect(proposalCard).toContain("cancelling the booking");
+    const dialogCopy = copy(proposalCard);
+    expect(dialogCopy).toContain("not");
+    // Collapsed, not literal: the sentence is one JSX text node prettier wraps
+    // between "cancelling" and "the booking", so the source never contains this
+    // substring. The words are the contract — the decline restores or parks the
+    // request and cancels nothing.
+    expect(dialogCopy).toContain("cancelling the booking");
     expect(proposalCard).toContain("AlertDialog");
   });
 

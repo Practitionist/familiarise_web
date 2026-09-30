@@ -36,7 +36,13 @@ jest.mock("../../lib/prisma", () => ({
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn(), findFirst: jest.fn() },
-    appointmentOccurrence: { count: jest.fn(), updateManyAndReturn: jest.fn() },
+    // `probeConfirmedOverlap` reads `findFirst`; without it the probe throws
+    // into its own catch and silently skips the pre-lock overlap check.
+    appointmentOccurrence: {
+      count: jest.fn(),
+      findFirst: jest.fn(),
+      updateManyAndReturn: jest.fn(),
+    },
     rescheduleRequest: { findFirst: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
@@ -75,6 +81,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 import prisma from "@/lib/prisma";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { ScheduleType } from "@prisma/client";
 
 type Occurrence = {
   id: string;
@@ -89,8 +96,20 @@ const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
   subscription: { findUnique: jest.Mock };
   appointment: { findMany: jest.Mock; findFirst: jest.Mock };
-  appointmentOccurrence: { count: jest.Mock };
+  appointmentOccurrence: { count: jest.Mock; findFirst: jest.Mock };
 };
+
+/** One of the event's own appointments, as the delete path SELECTs it. */
+function existingAppointment(occurrences: unknown[]) {
+  return {
+    id: "appt-1",
+    // #1554 — the delete path reads the live seat holders off the wrapper, so
+    // an appointment fixture without `participants` is not a thinner row: it
+    // throws `undefined is not iterable` and the allocation answers 500.
+    participants: [],
+    occurrences,
+  };
+}
 
 function occurrence(
   overrides: Partial<Occurrence> & { id: string },
@@ -113,8 +132,18 @@ const subscriptionRow = {
     sessionsPerWeek: 1,
     sessionDurationInHours: 1,
     totalSessions: 1,
+    // `fetchEventData` reads the profile off the plan and refuses the whole
+    // allocation with NOT_FOUND when it is absent, which is a 400 raised
+    // BEFORE the guard under test — so a fixture without it makes every
+    // assertion in this file pass or fail for the wrong reason.
+    consultantProfile: {
+      user: { id: "consultant-user-1", name: "Consultant", timezone: "UTC" },
+      scheduleType: ScheduleType.CUSTOM,
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [],
+    },
   },
-  requestedBy: { user: { id: "user-1" } },
+  requestedBy: { user: { id: "user-1", name: "Consultee" } },
   appointment: { occurrences: [], payment: [] },
   schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
   schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
@@ -122,7 +151,14 @@ const subscriptionRow = {
 };
 
 const mockTx = {
-  subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
+  subscription: {
+    findUnique: jest.fn(),
+    // `updateEventStatus` ends a subscription's allocation through this CAS, and
+    // a count-less `updateMany` returns undefined, so `res.count` throws and the
+    // run answers 500 instead of the result its own assertions are about. One
+    // matched row = the request really was APPROVED_PENDING_PAYMENT.
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  },
   consultantProfile: { findFirst: jest.fn().mockResolvedValue({ id: "cp-1" }) },
   collaborator: { findMany: jest.fn().mockResolvedValue([]) },
   appointmentParticipant: {
@@ -167,6 +203,9 @@ beforeEach(() => {
   mockPrisma.appointment.findMany.mockImplementation(
     async () => existingAppointments,
   );
+  // The pre-lock overlap probe reads this; null is "no other appointment covers
+  // the requested instants", which is what every fixture here means.
+  mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue(null);
   mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
   mockTx.appointment.findMany.mockImplementation(
     async () => existingAppointments,
@@ -205,17 +244,14 @@ describe("a tombstoned tentative row is not a session the event carries", () => 
     // Bare `isTentative` counted two and answered 409 RESCHEDULE_STATE_CHANGED
     // — a refusal the consultant could do nothing with.
     existingAppointments = [
-      {
-        id: "appt-1",
-        occurrences: [
-          occurrence({ id: "s1", isTentative: true }),
-          occurrence({
-            id: "s2",
-            isTentative: true,
-            deletedAt: new Date("2026-07-31T00:00:00.000Z"),
-          }),
-        ],
-      },
+      existingAppointment([
+        occurrence({ id: "s1", isTentative: true }),
+        occurrence({
+          id: "s2",
+          isTentative: true,
+          deletedAt: new Date("2026-07-31T00:00:00.000Z"),
+        }),
+      ]),
     ];
 
     const result = await allocateManual(1);
@@ -229,16 +265,13 @@ describe("a tombstoned tentative row is not a session the event carries", () => 
     // and is exactly what the guard protects. Every reschedule goes through
     // here, so dropping it would 409 the whole feature.
     existingAppointments = [
-      {
-        id: "appt-1",
-        occurrences: [
-          occurrence({
-            id: "s1",
-            isTentative: true,
-            completionStatus: "RESCHEDULED",
-          }),
-        ],
-      },
+      existingAppointment([
+        occurrence({
+          id: "s1",
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+        }),
+      ]),
     ];
 
     const result = await allocateManual(1);
@@ -250,16 +283,13 @@ describe("a tombstoned tentative row is not a session the event carries", () => 
     // The guard must not have been defanged into never firing: another tab
     // really did place the session, so zero live tentative rows ≠ the page's 1.
     existingAppointments = [
-      {
-        id: "appt-1",
-        occurrences: [
-          occurrence({
-            id: "s1",
-            isTentative: false,
-            endsAt: new Date("2026-08-03T11:00:00.000Z"),
-          }),
-        ],
-      },
+      existingAppointment([
+        occurrence({
+          id: "s1",
+          isTentative: false,
+          endsAt: new Date("2026-08-03T11:00:00.000Z"),
+        }),
+      ]),
     ];
 
     const result = await allocateManual(1);

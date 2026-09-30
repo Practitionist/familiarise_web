@@ -92,6 +92,15 @@ function setCalendarData(overrides: Record<string, unknown> = {}) {
     subscriptionMeta: null,
     loading: false,
     error: null,
+    // #1863 — a REQUIRED field of UseCalendarDataReturn, not an optional one, so
+    // a mock that omits it does not render a quieter grid: the footer reads
+    // `freshness.label` unguarded and every render in this file threw on it.
+    // The hook's own initial value — never fetched yet, so nothing to say.
+    availabilityFreshness: {
+      freshness: "unknown",
+      label: null,
+      failed: false,
+    },
     refetch: jest.fn(),
     refetchEventSlots: jest.fn(),
     refetchAvailability: jest.fn(),

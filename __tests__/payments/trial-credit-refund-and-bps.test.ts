@@ -395,7 +395,12 @@ describe("quoteTrialRefund — basis points, not floats (#1396)", () => {
       amount: BigInt(100_000),
       paymentIntent: "pi_test",
     });
-    mockAppointmentFindUnique.mockResolvedValue(startingInHours(1));
+    // Inside the 50% rung's window, not merely inside the policy: the ladder
+    // hands out the first tier whose notice the cancellation clears, and at one
+    // hour that is the 0h rung. The quote would then be ₹0, `refundCancelledTrial`
+    // would return before the front door, and the case would read as "the card
+    // rail sends no amount" — pinning a half refund the policy never promised.
+    mockAppointmentFindUnique.mockResolvedValue(startingInHours(72));
 
     const result = await refundCancelledTrial({
       trialId: TRIAL_ID,

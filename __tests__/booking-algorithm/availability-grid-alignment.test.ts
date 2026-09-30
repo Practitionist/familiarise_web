@@ -82,10 +82,19 @@ describe("weekly windows", () => {
     expect(
       validateWeeklyWindow(weekly(1380, 0, "MONDAY", "TUESDAY")),
     ).toBeNull();
-    // …but 23:45 → Tue 00:15 is off the grid on both ends, and 15 minutes long,
-    // so duration is what a consultant is told first.
+    // …but 23:45 → Tue 00:15 is off the grid on both ends. It is 30 minutes —
+    // EXACTLY MIN_WINDOW_MINUTES, because the carry-over is 15 minutes up to
+    // midnight plus 15 past it — so duration passes and the row is the GRID case
+    // it looks like: a legal-length window every one of whose mints checkout
+    // refuses.
     expect(
       validateWeeklyWindow(weekly(1425, 15, "MONDAY", "TUESDAY"))?.code,
+    ).toBe("GRID");
+    // The same carry-over shape one notch shorter — 23:45 → Tue 00:10 is 25
+    // minutes — is too short AND off the grid, so duration is still what a
+    // consultant is told first. The overnight arm gets the ordering too.
+    expect(
+      validateWeeklyWindow(weekly(1425, 10, "MONDAY", "TUESDAY"))?.code,
     ).toBe("DURATION");
   });
 
