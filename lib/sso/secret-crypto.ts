@@ -49,14 +49,10 @@
  * `SSO_PROVIDER_MISCONFIGURED` and not as a 500 with an empty body — that
  * empty-body 500 is the failure mode audit Phase A.2 was written to kill.
  *
- * ## Migration path
+ * ## Plaintext rows
  *
- * `decryptSecretPayload` passes plaintext through unchanged, so the
- * re-encryption job (`scripts/encrypt-sso-secrets.ts`) can be run in any
- * order relative to a deploy and is safe to re-run: rows already in the
- * envelope format are skipped, and rows still in plaintext are converted.
- * There is no flag day and no read path that can tell the two apart by
- * accident.
+ * `decryptSecretPayload` still passes plaintext JSON through unchanged, so a
+ * row written without an envelope stays readable.
  *
  * ## Where the read seam lives
  *
@@ -75,31 +71,6 @@
  * the client, *every* reader is covered — BetterAuth's plugin, the admin
  * settings GET, the pre-auth `domain-check`, the cert-expiry cron — and no
  * caller can forget to decrypt.
- *
- * ## Why the WRITE stays flag-gated even though the read seam exists
- *
- * The read path being correct makes the write *safe*; it does not make the
- * write *reversible*. The hazard is a rollback, not a live request: a build
- * from before the extension existed reads the column with an unconditional
- * `safeJsonParse`, so any envelope written by the newer build is invisible to
- * it and that provider cannot sign anyone in. Defaulting the flag on would
- * mean a plain `git revert` of the extension commit silences SSO for every
- * org that registered a provider in the meantime, with no data in the
- * database that looks wrong and no error that says why.
- *
- * So `SSO_CONFIG_ENCRYPTION_ENABLED` still defaults to off. Its job is no
- * longer "is the read path ready" — that is answered structurally, because
- * the seam lives in client construction rather than in a call site that could
- * be forgotten. Its job is now to keep the window in which the database holds
- * envelopes and the deployed code cannot read them closed, which means the
- * flag and the extension turn on in the SAME deploy. That is a deliberate
- * operational step, not a default.
- *
- * If a rollback is ever needed after the flag is on: redeploy forward to a
- * build carrying the extension. The rows are still readable and the format is
- * self-describing (`isEncrypted` is a prefix test), so no data repair is
- * needed — a rollback that has to be undone by re-encrypting columns is a
- * second outage, and avoiding that is what the flag is for.
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
@@ -194,8 +165,7 @@ export function isEncrypted(stored: string | null | undefined): boolean {
  *
  * The caller stores the returned string verbatim; it is NOT valid JSON, so
  * anything that expects JSON in that column (BetterAuth's own read path) has
- * to run it through {@link decryptSecretPayload} first. See the module
- * header for why the write is currently gated.
+ * to run it through {@link decryptSecretPayload} first.
  */
 export function encryptSecretPayload(payload: unknown): string {
   const key = getKey();
@@ -318,17 +288,6 @@ export function decryptSecretPayload<T = unknown>(
       "decrypted envelope did not contain JSON",
     );
   }
-}
-
-/**
- * True when the deployment has opted in to writing envelopes.
- *
- * Off by default, and the reason is rollback safety rather than read safety —
- * see "Why the WRITE stays flag-gated" in the module header. The read path
- * handles both formats unconditionally.
- */
-export function isSecretEncryptionEnabled(): boolean {
-  return process.env.SSO_CONFIG_ENCRYPTION_ENABLED === "true";
 }
 
 /**

@@ -403,10 +403,6 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "claude-code-review.yml": "infra",
   "knip.yml": "infra",
   "race-condition-tests.yml": "infra",
-  // PR-triggered like ci.yaml. `infra` is what keeps it out of the
-  // scheduled/manual rules (failure pager, `--ignore-scripts`, notifier) that
-  // exist for jobs which run unattended on a timer.
-  "sso-e2e.yml": "infra",
 };
 
 for (const file of files) {

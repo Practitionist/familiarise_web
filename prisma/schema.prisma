@@ -2633,12 +2633,6 @@ model OrganizationSSOSettings {
   enforceSSO             Boolean    @default(false)
   defaultRoleForAutoJoin MemberRole @default(LEARNER)
 
-  /// #779 §A — break-glass for enforceSSO. When SSO is enforced and the IdP is
-  /// down, an OWNER opens a time-boxed window where password login is permitted
-  /// again (auth layer skips the enforceSSO gate while breakGlassUntil > now).
-  /// Who/why lives in the OrgAuditLog row the route emits — no duplicate columns.
-  breakGlassUntil DateTime?
-
   /// Optimistic-lock clock — same CAS contract as Organization.version.
   version Int @default(1)
 

@@ -94,7 +94,6 @@ import { buildStoredSamlConfig } from "@/lib/sso/stored-config";
 import {
   encryptSecretPayload,
   isEncryptionKeyUsable,
-  isSecretEncryptionEnabled,
 } from "@/lib/sso/secret-crypto";
 
 export async function GET(
@@ -361,33 +360,15 @@ export async function POST(
             })
           : null;
 
-      // At-rest encryption is opt-in and stays that way, but the REASON has
-      // changed. It used to be gated because writing an envelope broke
-      // BetterAuth's own read path and the decrypt seam did not exist yet. It
-      // does now: `lib/prisma-sso-secret-extension.ts` decrypts both columns
-      // on the way out, for both formats, for every reader. So enabling this
-      // is safe for a running deployment.
-      //
-      // What it is still protecting is rollback. A build from before the
-      // extension existed reads the column with an unconditional
-      // `safeJsonParse`; if the flag were on by default, reverting the
-      // extension commit would silence SSO for every org that registered a
-      // provider in between, and nothing in the database or in the error
-      // would say why. Off-by-default keeps that window shut: the flag and the
-      // extension turn on together, in one deploy, and the envelope format is
-      // self-describing so rolling forward again needs no data repair. Full
-      // reasoning in the "Why the WRITE stays flag-gated" section of
-      // `lib/sso/secret-crypto.ts`.
-      const encryptAtRest = isSecretEncryptionEnabled();
       // Checked up front rather than discovered by `encryptSecretPayload`
       // throwing mid-write: a malformed key (present, but not 64 hex chars)
       // is a deployment mistake, and the operator should get a named code for
       // it instead of a 500 out of a 201-shaped request.
-      if (encryptAtRest && !isEncryptionKeyUsable()) {
+      if (!isEncryptionKeyUsable()) {
         throw Object.assign(
           new Error(
-            "SSO_CONFIG_ENCRYPTION_ENABLED is true but AUTH_CONFIG_ENCRYPTION_KEY is missing or malformed. " +
-              "Set it to a 64-character hex string (openssl rand -hex 32) or turn the flag off.",
+            "AUTH_CONFIG_ENCRYPTION_KEY is missing or malformed. " +
+              "Set it to a 64-character hex string (openssl rand -hex 32).",
           ),
           { httpStatus: 500, code: "SSO_ENCRYPTION_KEY_MISSING" },
         );
@@ -405,14 +386,10 @@ export async function POST(
           // would delete the org's SSO when that person is removed.
           // `scripts/verify-sso-invariants.sh` Check 4 pins this.
           oidcConfig: storedOidcConfig
-            ? encryptAtRest
-              ? encryptSecretPayload(storedOidcConfig)
-              : JSON.stringify(storedOidcConfig)
+            ? encryptSecretPayload(storedOidcConfig)
             : null,
           samlConfig: storedSamlConfig
-            ? encryptAtRest
-              ? encryptSecretPayload(storedSamlConfig)
-              : JSON.stringify(storedSamlConfig)
+            ? encryptSecretPayload(storedSamlConfig)
             : null,
         },
       });

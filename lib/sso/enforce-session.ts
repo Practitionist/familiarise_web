@@ -97,7 +97,6 @@ export async function lookupEnforcedOrg(
             select: {
               enforceSSO: true,
               allowedEmailDomains: true,
-              breakGlassUntil: true,
             },
           },
         },
@@ -112,13 +111,6 @@ export async function lookupEnforcedOrg(
     claim.organization.status !== "ACTIVE" ||
     !claim.organization.ssoSettings?.enforceSSO
   ) {
-    return null;
-  }
-
-  // #779 §E time-boxed IdP-outage escape hatch — while break-glass is
-  // active, don't enforce SSO so password login works for the domain.
-  const breakGlassUntil = claim.organization.ssoSettings.breakGlassUntil;
-  if (breakGlassUntil && breakGlassUntil > new Date()) {
     return null;
   }
 
