@@ -6,6 +6,7 @@ import { apiError } from "@/lib/errors";
 import {
   renewAppointmentLock,
   withAppointmentLock,
+  type ApprovalLock,
 } from "@/utils/appointmentlock";
 import { withdrawApproval } from "@/lib/booking/lapse-approved-request";
 
@@ -51,8 +52,15 @@ export async function POST(
       // because the request CAS below carries the money predicate in its WHERE
       // (see lapseApprovedRequest), so correctness never rests on the lock
       // being held for the whole retry loop.
+      //
+      // The cast is this route's job, not a shortcut. `RenewInjectedLock` takes
+      // `unknown` on purpose — lapse-approved-request must not import the Redis
+      // module, or every sweep that shares it stops loading under jsdom. This is
+      // the one boundary that has both types in scope.
       renewLock: async (heldLock) => {
-        await renewAppointmentLock(heldLock);
+        await renewAppointmentLock(
+          heldLock as ApprovalLock | null | undefined,
+        );
       },
     });
     return NextResponse.json(body, {
