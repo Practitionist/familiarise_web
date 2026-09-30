@@ -241,9 +241,10 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     await expect(
       applyCappedEarningReversal(db, { ...r }, 8_000),
     ).rejects.toThrow();
+    // `updateMany` was never called, which is the assertion — and the reason a
+    // `whereOf(updateMany)` here would throw rather than test anything.
     expect(updateMany).not.toHaveBeenCalled();
     expect(r.refundedShareAmount).toBe(2_000);
-    expect(whereOf(updateMany).status.in).not.toContain(EarningStatus.REFUNDED);
   });
 
   it("a fully-reversed row is a no-op with no race, because the cap zeroes it first", async () => {
@@ -385,9 +386,9 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
 
   it("PAID + forceRefund still transitions to REFUNDED and files the TDS reversal", async () => {
     const r = row({ status: EarningStatus.PAID, payoutId: "po-1" });
-    const { db, updateMany } = harness([r]);
+    const { updateMany, refundEarningsTx } = harness([r]);
 
-    await refundEarnings("pay-1", { forceRefund: true, tx: db });
+    await refundEarnings("pay-1", { forceRefund: true, tx: refundEarningsTx });
 
     expect(dataOf(updateMany)).toEqual({
       refundedShareAmount: 8_000,
@@ -404,9 +405,9 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
 
   it("PAID without forceRefund still writes nothing", async () => {
     const r = row({ status: EarningStatus.PAID, payoutId: "po-1" });
-    const { db, updateMany } = harness([r]);
+    const { updateMany, refundEarningsTx } = harness([r]);
 
-    await refundEarnings("pay-1", { tx: db });
+    await refundEarnings("pay-1", { tx: refundEarningsTx });
 
     expect(updateMany).not.toHaveBeenCalled();
     expect(mockRecordTdsReversal).not.toHaveBeenCalled();
@@ -415,9 +416,9 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
 
   it("skips a row a concurrent writer already took to REFUNDED", async () => {
     const r = row({ status: EarningStatus.REFUNDED, refundedShareAmount: 8_000 });
-    const { db, updateMany } = harness([r]);
+    const { updateMany, refundEarningsTx } = harness([r]);
 
-    await refundEarnings("pay-1", { forceRefund: true, tx: db });
+    await refundEarnings("pay-1", { forceRefund: true, tx: refundEarningsTx });
 
     expect(updateMany).not.toHaveBeenCalled();
     expect(mockRecordTdsReversal).not.toHaveBeenCalled();
@@ -426,15 +427,15 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
 
   it("a second cascade over the same READY row cannot re-reverse it", async () => {
     const r = row();
-    const { db, updateMany } = harness([r]);
+    const { updateMany, refundEarningsTx } = harness([r]);
 
-    await refundEarnings("pay-1", { tx: db });
+    await refundEarnings("pay-1", { tx: refundEarningsTx });
     expect(r.refundedShareAmount).toBe(8_000);
     // The webhook redelivers, but findMany now hands back the terminal row.
     (db as any).consultantEarnings.findMany.mockImplementation(async () => [
       { ...r },
     ]);
-    await refundEarnings("pay-1", { tx: db });
+    await refundEarnings("pay-1", { tx: refundEarningsTx });
 
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(r.refundedShareAmount).toBe(8_000);

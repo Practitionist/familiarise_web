@@ -605,13 +605,19 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
   expect(r).toMatchObject({ rail: "CREDITS", restoredPaise: 59_000 });
   expect(mockRestoreUpTo).toHaveBeenCalledWith(PAYMENT_ID, tx, 59_000);
   // W1c — CAS-in-WHERE, same shape as the assertion above.
+  //
+  // The `data` carries NO `status`, where the old write restated `"PENDING"` —
+  // the row's own current value, so that write was a no-op. The helper only sets
+  // `status` when the reversal actually exhausts the share, which is the whole
+  // point of making the write absolute rather than incremental: a transition
+  // that did not happen is not written. The row is left PENDING either way.
   expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
     where: {
       id: "ce-1",
       status: { in: expect.arrayContaining(["PENDING", "READY", "PAID", "HELD"]) },
       refundedShareAmount: 0,
     },
-    data: { refundedShareAmount: 40_000, status: "PENDING" },
+    data: { refundedShareAmount: 40_000 },
   });
   const posting = mockPostLedgerTxn.mock.calls[0][1];
   expect(sum(posting.postings, "CREDIT")).toBe(59_000);
