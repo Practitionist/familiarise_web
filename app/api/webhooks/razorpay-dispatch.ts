@@ -28,6 +28,7 @@ import {
 import {
   handleRecordingPurchaseSuccess,
   handleRecordingPurchaseFailure,
+  handleRecordingPurchaseRefund,
 } from "@/lib/payments/webhooks/recording-purchase";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
@@ -80,6 +81,52 @@ const payoutEntitySchema = z.object({
   // matches a consultant payout whose submit reply was lost.
   reference_id: z.string().nullable().optional(),
 });
+
+/**
+ * A gateway refund, routed by what the refunded order actually IS.
+ *
+ * D6 — `recording_purchase` orders settle on a `RecordingPurchase` row and have
+ * no `Payment`, no `WalletTopUp` and no `OrganizationInvoice`. Feeding one into
+ * `handleRefundCreated` therefore matched nothing and, on Razorpay, returned a
+ * `DeferSignal` — parking the event unprocessed so the stuck-event sweeper
+ * re-drove it until the 168-hour give-up cap, for a refund that had been fully
+ * handled in the first branch. It also never revoked anything, because
+ * `RecordingPurchaseStatus.REFUNDED` had no writer anywhere in the repo while the
+ * entitlement check reads `status: "SUCCEEDED"` — so a refunded buyer kept
+ * permanent replay access.
+ *
+ * Both refund cases funnel through here so the routing rule exists once.
+ */
+async function routeRecordingRefundOrB2C(params: {
+  refundEvent: {
+    id: string;
+    payment_id: string;
+    amount: number;
+    currency?: string;
+    status: string;
+  };
+  /** Resolved order id (the `pay_*` id stands in when the lookup failed). */
+  paymentIntentId: string;
+  overrideStatus?: string;
+}): Promise<Awaited<ReturnType<typeof handleRefundCreated>> | void> {
+  const { refundEvent, paymentIntentId } = params;
+  const isReplay = await handleRecordingPurchaseRefund({
+    orderId: paymentIntentId,
+    status: params.overrideStatus ?? refundEvent.status,
+    amountPaise: refundEvent.amount,
+  });
+  if (isReplay) return;
+
+  return handleRefundCreated(
+    refundEvent.id,
+    paymentIntentId,
+    refundEvent.amount,
+    refundEvent.currency || "INR",
+    params.overrideStatus ?? refundEvent.status,
+    "RAZORPAY",
+    refundEvent.payment_id,
+  );
+}
 
 /**
  * Route a captured payment to the handler its `notes.type` selects.
@@ -137,10 +184,22 @@ export async function routeCapturedPayment(params: {
   }
   if (notes.type === "recording_purchase") {
     // #366 — standalone replay sale; not a Payment row, settled on its own
-    // RecordingPurchase record (idempotent per gatewayOrderId).
-    await handleRecordingPurchaseSuccess(orderId, gatewayPaymentId);
+    // RecordingPurchase record (idempotent on gatewayOrderId).
+    //
+    // D6 — the captured amount is passed under the SAME condition the org branch
+    // above uses: only when it provably came off a payment entity. On
+    // `order.paid` the figure can be the order total rather than what settled,
+    // and a partial capture is precisely the case the parity check exists to
+    // refuse — so the handler settles without a check when it cannot check,
+    // rather than checking against a number it cannot trust.
+    await handleRecordingPurchaseSuccess(
+      orderId,
+      gatewayPaymentId,
+      gatewayPaymentId ? amountPaise : undefined,
+    );
     return;
   }
+
   // #1353 — the B2C pipeline persists the `pay_…` id on the Payment row it is
   // already the single writer of, so later refund and dispute webhooks (which
   // carry only that id) can find the row without a live gateway lookup.
@@ -284,15 +343,10 @@ export async function processRazorpayWebhookEvent(
           }
         }
 
-        const refundResult = await handleRefundCreated(
-          refundEvent.id,
+        const refundResult = await routeRecordingRefundOrB2C({
+          refundEvent,
           paymentIntentId,
-          refundEvent.amount,
-          refundEvent.currency || "INR",
-          refundEvent.status,
-          "RAZORPAY",
-          refundEvent.payment_id,
-        );
+        });
         if (refundResult instanceof DeferSignal) {
           deferred = true;
           console.log(
@@ -344,15 +398,11 @@ export async function processRazorpayWebhookEvent(
           }
         }
 
-        const failedRefundResult = await handleRefundCreated(
-          failedRefundEvent.id,
-          failedPaymentIntentId,
-          failedRefundEvent.amount,
-          failedRefundEvent.currency || "INR",
-          "failed",
-          "RAZORPAY",
-          failedRefundEvent.payment_id,
-        );
+        const failedRefundResult = await routeRecordingRefundOrB2C({
+          refundEvent: failedRefundEvent,
+          paymentIntentId: failedPaymentIntentId,
+          overrideStatus: "failed",
+        });
         if (failedRefundResult instanceof DeferSignal) {
           deferred = true;
           console.log(

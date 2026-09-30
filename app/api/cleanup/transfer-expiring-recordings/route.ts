@@ -89,17 +89,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // entry. The notify MUST stay inside the lock: the old shape released the
     // lock before notifying, so two sequential ticks (Actions + ticker) both
     // passed the lock and both pinged the same consultants.
-    const { transferResult, expiringStreamOnly } = await withCronLock(
+    const { transferResult, expiringStreamOnly, atRisk } = await withCronLock(
       "transfer-expiring-recordings",
       { failMode: "open" },
       async () => {
         // Phase 1: Auto-transfer PERMANENT recordings.
         // #899 — 14-day window sweeps every READY permanent recording
-        // (near-ready transfer), matching the GH Actions entry.
+        // (near-ready transfer), matching the GH Actions entry. The batch size
+        // is the service's raised default (D7) — do not re-pin it to 10 here.
         const transferResult =
           await RecordingTransferService.processExpiringRecordings(
             14, // days before expiry (= full Stream URL lifetime)
-            10, // batch size
+            undefined, // batch size (service default)
             "PERMANENT",
           );
 
@@ -114,20 +115,53 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           });
           await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
         }
-        return { transferResult, expiringStreamOnly };
+
+        // Phase 4 (D7) — the backlog count. This used to exist ONLY in
+        // jobs/stream/transfer-expiring-recordings.ts, so the Netlify ticker —
+        // which is how this cron actually runs in the deployed app, the GitHub
+        // Actions wrapper being the legacy entry — never raised it. A transfer
+        // pipeline that had fallen irrecoverably behind was therefore silent on
+        // the only path that reports it. It runs inside the lock so a tick that
+        // skipped (409) also skips the alarm, rather than reporting a backlog
+        // the skipped tick had not measured.
+        const atRisk =
+          await RecordingTransferService.countAtRiskPermanentRecordings(72);
+        if (atRisk > 0) {
+          streamLogger.warn(
+            `${atRisk} permanent recording(s) <72h from Stream expiry, still untransferred`,
+          );
+          // `error`, not `warning` — see the identical note in the job: a
+          // permanent recording inside 72h of losing its bytes is a page.
+          Sentry.captureMessage(
+            "Permanent recordings at risk of Stream URL expiry",
+            {
+              level: "error",
+              tags: {
+                subsystem: "cron",
+                job: "transfer-expiring-recordings",
+              },
+              extra: { atRisk },
+            },
+          );
+        }
+        return { transferResult, expiringStreamOnly, atRisk };
       },
     );
 
     Sentry.logger.info("cron:transfer-expiring-recordings finished", {
       transferred: transferResult.succeeded,
       failed: transferResult.failed,
+      retired: transferResult.retired,
       expiringStreamOnly: expiringStreamOnly.length,
+      atRisk,
     });
     return NextResponse.json({
       success: true,
       transferred: transferResult.succeeded,
       failed: transferResult.failed,
+      retired: transferResult.retired,
       expiringStreamOnly: expiringStreamOnly.length,
+      atRisk,
       errors: transferResult.errors,
     });
   } catch (error) {

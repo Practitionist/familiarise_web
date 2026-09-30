@@ -1,6 +1,7 @@
 /**
  * Recording Details API Route
  * GET /api/stream/recordings/[recordingId]
+ * DELETE /api/stream/recordings/[recordingId]
  *
  * Gets details for a specific recording. Access is a capability question, not
  * a role question — see the branches below.
@@ -8,11 +9,19 @@
  * #1270 — platform operators are no longer a single blanket grant. ADMIN gets
  * the playback URL; STAFF gets metadata and never a URL that renders the
  * session; both are audited. See lib/stream/recording-operator-access.ts.
+ *
+ * D6 — DELETE is the same question asked destructively. There was previously no
+ * delete for a recording at all, on any surface: no admin path, no user path,
+ * and no DPDP erasure path that could reach a `Recording` and its bytes. The
+ * row is tombstoned rather than removed (audit + any sold replay's
+ * financial-linkage continuity), the Supabase object is deleted before the row
+ * moves, and Stream's own copy is deleted where the vendor lets us address it.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -266,6 +275,73 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * DELETE /api/stream/recordings/[recordingId] — remove a session recording.
+ *
+ * Authorisation reuses the operator gate rather than inventing a second one:
+ * `recordings.play` is the permission #1270 already decided marks a role able
+ * to reach into a session it has no relationship to, and it resolves to ADMIN
+ * only. STAFF is refused here even though STAFF may read the metadata — the
+ * whole point of #1270's split is that reading about a private session and
+ * destroying it are not the same capability, and a delete that inherited the
+ * read grant would hand every staff member an erasure button.
+ *
+ * `deleteRecording` writes its own audit (OrgAuditLog when the session belongs
+ * to a tenant, SystemEvent always) and marks the storage object delete BEFORE
+ * the row flip, so a failure leaves the row intact and this route can be
+ * retried. That is also why the read-audit helper is not used here: a delete is
+ * not a read, and writing a "platform operator read recording metadata" row for
+ * a deletion would put a lie in the tenant's trail.
+ */
+export async function DELETE(_req: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await getSession(true);
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const operator = resolveOperatorRecordingAccess(session.user.role);
+    if (!operator.canPlay) {
+      return NextResponse.json(
+        {
+          error:
+            "Deleting a recording requires the recordings.play permission.",
+        },
+        { status: 403 },
+      );
+    }
+
+    const { recordingId } = await params;
+
+    const result = await RecordingTransferService.deleteRecording(recordingId);
+
+    if (!result.success) {
+      const notFound = result.error === "Recording not found";
+      return NextResponse.json(
+        { error: result.error ?? "Failed to delete recording" },
+        { status: notFound ? 404 : 500 },
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      recordingId,
+      storageDeleted: result.storageDeleted,
+      streamDeleted: result.streamDeleted,
+    });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream", op: "recording.delete" } },
+    );
+    streamLogger.error("Error deleting recording", error);
+    return NextResponse.json(
+      { error: "Failed to delete recording" },
       { status: 500 },
     );
   }

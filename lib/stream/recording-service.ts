@@ -12,7 +12,10 @@ import { Prisma, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
-import { generateRecordingTitle } from "@/lib/stream/recording-utils";
+import {
+  generateRecordingTitle,
+  streamUrlExpiresAt,
+} from "@/lib/stream/recording-utils";
 import type {
   RecordingRow,
   ConsultantRecordingWithDetails,
@@ -38,7 +41,22 @@ export interface StreamRecording {
   url: string;
   start_time: Date;
   end_time: Date;
+  /**
+   * Stream's call session this file belongs to. Needed to address ONE recording
+   * at the vendor (`call.deleteRecording({ session, filename })`) — nothing else
+   * exposes it. Not persisted on `Recording` yet; see the D7 note on
+   * `getCallRecordingsFromStream`.
+   */
+  session_id?: string;
 }
+
+/**
+ * D7 — defensive bound on one call's recording list. Stream splits a call into
+ * a new file every two hours, so a long session is tens of files, not thousands.
+ * See the note on `getCallRecordingsFromStream` for why exceeding it is an
+ * error worth logging rather than a case to handle quietly.
+ */
+const LIST_RECORDINGS_CEILING = 200;
 
 /**
  * The slice of a Meeting the recording sync actually reads. Structural
@@ -158,6 +176,16 @@ export class RecordingService {
    * Stream outage indistinguishable from "this call has no recordings", so the
    * orphan reconciler counted an unreachable session as checked-and-empty and
    * reported success (#1280).
+   *
+   * D7 — Stream's `listRecordings` takes no `limit` and no cursor (it is keyed
+   * on an optional call session id and returns the whole set), so the bound here
+   * is defensive rather than negotiated. A session is split into a new file
+   * every two hours, so real call volume puts a session in the tens of files;
+   * anything past `LIST_RECORDINGS_CEILING` means Stream is returning something
+   * other than this call's recordings, and the orphan reconciler — which treats
+   * a complete list as proof that nothing is missing — would draw its "nothing
+   * is missing" conclusion from a truncated one. Truncating silently is the one
+   * outcome that must not happen, so it truncates loudly.
    */
   static async getCallRecordingsFromStream(
     streamCallId: string,
@@ -173,46 +201,32 @@ export class RecordingService {
         call.listRecordings(),
       );
 
-      return response.recordings.map((r) => ({
+      if (response.recordings.length > LIST_RECORDINGS_CEILING) {
+        streamLogger.error(
+          "Stream returned more recordings than this call could have produced",
+          {
+            streamCallId,
+            count: response.recordings.length,
+            ceiling: LIST_RECORDINGS_CEILING,
+          },
+        );
+      }
+
+      return response.recordings.slice(0, LIST_RECORDINGS_CEILING).map((r) => ({
         filename: r.filename,
         url: r.url,
         start_time: r.start_time,
         end_time: r.end_time,
+        // Carried through so a caller that has to address Stream about ONE
+        // of these files can. Stream's deleteRecording is keyed on
+        // (callSessionId, filename) and the session id exists nowhere else.
+        session_id: r.session_id,
       }));
     } catch (error) {
       streamLogger.error("Failed to get call recordings from Stream", error, {
         streamCallId,
       });
       return null;
-    }
-  }
-
-  /**
-   * Get recordings for a meeting session from database
-   * @param meetingId The meeting session ID
-   */
-  static async getSessionRecordings(
-    meetingId: string,
-  ): Promise<RecordingRow[]> {
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          meetingId,
-          status: {
-            notIn: ["FAILED", "EXPIRED"],
-          },
-        },
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get session recordings", error, {
-        meetingId,
-      });
-      return [];
     }
   }
 
@@ -579,166 +593,6 @@ export class RecordingService {
   }
 
   /**
-   * Update recording status
-   * @param recordingId The recording ID
-   * @param status The new status
-   * @param additionalData Additional fields to update
-   */
-  static async updateRecordingStatus(
-    recordingId: string,
-    status: RecordingStatus,
-    additionalData?: Partial<RecordingRow>,
-  ): Promise<RecordingRow | null> {
-    try {
-      const recording = await prisma.recording.update({
-        where: { id: recordingId },
-        data: {
-          status,
-          ...additionalData,
-        },
-      });
-
-      streamLogger.info("Recording status updated", {
-        recordingId,
-        status,
-      });
-
-      return recording;
-    } catch (error) {
-      streamLogger.error("Failed to update recording status", error, {
-        recordingId,
-        status,
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Check if recording is enabled for an appointment type
-   * @param appointmentId The appointment ID
-   */
-  static async isRecordingEnabledForAppointment(
-    appointmentId: string,
-  ): Promise<boolean> {
-    try {
-      const appointment = await prisma.appointment.findUnique({
-        where: { id: appointmentId },
-        include: {
-          webinar: {
-            include: {
-              webinarPlan: {
-                select: {
-                  recordingEnabled: true,
-                },
-              },
-            },
-          },
-          class: {
-            include: {
-              classPlan: {
-                select: {
-                  recordingEnabled: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (!appointment) {
-        return false;
-      }
-
-      // Check webinar recording setting
-      if (appointment.webinar?.webinarPlan?.recordingEnabled) {
-        return true;
-      }
-
-      // Check class recording setting
-      if (appointment.class?.classPlan?.recordingEnabled) {
-        return true;
-      }
-
-      // Consultations and subscriptions don't have recording enabled by default
-      return false;
-    } catch (error) {
-      streamLogger.error("Failed to check recording enabled", error, {
-        appointmentId,
-      });
-      return false;
-    }
-  }
-
-  /**
-   * Get recordings that are expiring soon (for transfer to Supabase)
-   * @param daysBeforeExpiry Number of days before expiry to consider
-   */
-  static async getExpiringRecordings(
-    daysBeforeExpiry: number = 3,
-  ): Promise<RecordingRow[]> {
-    const expiryThreshold = new Date();
-    expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
-
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          storageType: "STREAM_S3",
-          status: "READY",
-          streamUrlExpiresAt: {
-            lte: expiryThreshold,
-          },
-        },
-        orderBy: {
-          streamUrlExpiresAt: "asc",
-        },
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get expiring recordings", error, {
-        daysBeforeExpiry,
-      });
-      return [];
-    }
-  }
-
-  /**
-   * Get the current recording state for a meeting session
-   * @param meetingId The meeting session ID
-   */
-  static async getRecordingState(meetingId: string): Promise<{
-    isRecording: boolean;
-    startedAt: Date | null;
-    startedBy: string | null;
-  }> {
-    try {
-      const session = await prisma.meeting.findUnique({
-        where: { id: meetingId },
-        select: {
-          isRecording: true,
-          recordingStartedAt: true,
-          recordingStartedBy: true,
-        },
-      });
-
-      if (!session) {
-        return { isRecording: false, startedAt: null, startedBy: null };
-      }
-
-      return {
-        isRecording: session.isRecording,
-        startedAt: session.recordingStartedAt,
-        startedBy: session.recordingStartedBy,
-      };
-    } catch (error) {
-      streamLogger.error("Failed to get recording state", error, {
-        meetingId,
-      });
-      return { isRecording: false, startedAt: null, startedBy: null };
-    }
-  }
-
-  /**
    * Mirrors one session's Stream recordings into the database.
    *
    * The consultant and consultee sync paths held byte-identical copies of this
@@ -800,9 +654,19 @@ export class RecordingService {
         const appointment = session.occurrence.appointment;
         const title = generateRecordingTitle(appointment, startDate);
 
-        // Calculate Stream URL expiration (2 weeks from now)
-        const streamUrlExpiresAt = new Date();
-        streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+        // D4 — the expiry clock starts at the CALL, not at the moment this row
+        // is written. Stream's retention on the object is fourteen days from the
+        // call and the app-level `cdn_expiration_seconds` (1209600) is fourteen
+        // days from when the URL is minted, so the real deadline is the earlier
+        // of the two. Measuring from `now()` was indistinguishable from the
+        // correct answer on the webhook path (minutes of skew) and badly wrong
+        // on the path that matters most here: this function is the orphan
+        // reconciler's writer, so a recording recovered on day ten was given an
+        // expiry of day 24 while Stream deleted the bytes on day 14 — and
+        // `app/api/stream/recordings/[recordingId]`'s 410 gate, which only asks
+        // whether `streamUrlExpiresAt` has passed, cheerfully handed the user a
+        // dead URL for the intervening ten days. See `streamUrlExpiresAt`.
+        const expiresAt = streamUrlExpiresAt(startDate);
 
         // #1166 ORG-6 — mirror the parent appointment's org tag, as the webhook
         // writer does: the personal recordings read now filters on this column,
@@ -817,7 +681,7 @@ export class RecordingService {
             streamCallId: session.streamCallId,
             storageType: "STREAM_S3",
             status: "READY",
-            streamUrlExpiresAt,
+            streamUrlExpiresAt: expiresAt,
             meetingId: session.id,
             organizationId: appointment?.organizationId ?? null,
           },

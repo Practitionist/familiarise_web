@@ -124,6 +124,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       await RecordingTransferService.transferRecordingToSupabase(recordingId);
 
     if (!result.success) {
+      // D1 — a `retired` outcome means a retention tombstone or the expiry
+      // sweep won the row while this transfer was in flight, and the copied
+      // object was deleted rather than attached to a row that must not have it.
+      // 409, not 500: retrying is pointless and the client's state is simply no
+      // longer what it asked about.
+      if (result.retired) {
+        return NextResponse.json(
+          { error: result.error ?? "Recording was retired", code: "RETIRED" },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { error: result.error || "Transfer failed" },
         { status: 500 },
