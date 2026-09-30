@@ -153,7 +153,7 @@ new schema, say so and stop; do not push it to prove a test passes.
 Since #1322 merged, `db:push` on `dev` is push-then-sidecars-then-assert
 (`db:push:schema` = `prisma db push && npm run db:sidecars`, then
 `db:assert-sidecars`), so a push can no longer silently leave
-`slot_no_confirmed_overlap` and the money CHECK constraints behind. The bare
+`occurrence_no_confirmed_overlap` and the money CHECK constraints behind. The bare
 escape hatch survives as `db:push:no-sidecars-DANGEROUS`. Either way, "Prisma
 schema is up to date" says nothing about the sidecars.
 

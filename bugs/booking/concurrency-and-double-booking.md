@@ -2,7 +2,7 @@
 
 ## Context
 
-Three layers: (1) Redis locks (`utils/appointmentlock.ts`) with documented lock order, (2) re-validation inside transactions, (3) DB GiST `slot_no_confirmed_overlap` for confirmed 1:1 slots. Events (webinar/class) use event locks + Serializable participant recount (no exclusion constraint). Payment confirmation re-checks overlaps before flipping `isTentative=false` (#827).
+Three layers: (1) Redis locks (`utils/appointmentlock.ts`) with documented lock order, (2) re-validation inside transactions, (3) DB GiST `occurrence_no_confirmed_overlap` for confirmed 1:1 slots. Events (webinar/class) use event locks + Serializable participant recount (no exclusion constraint). Payment confirmation re-checks overlaps before flipping `isTentative=false` (#827).
 
 ## Triage verdict (2026-07-12)
 

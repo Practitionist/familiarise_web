@@ -1,6 +1,6 @@
 ---
 name: booking
-description: How this repo's booking subsystem is built and kept correct — the non-negotiable doctrine (CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, no-backfill reset posture), how published availability becomes bookable slots (weekly vs custom rows, the 30-minute atom, union coverage, the three allocation modes), how concurrent booking writes are serialized (Redis lock atoms, global lock order, CAS-in-WHERE, Serializable retries), where booking touches money (the tentative hold, price derivation, refund quotes, funding rails, the earnings healer), and how to actually verify a booking change (jest suites, prisma-mocking patterns, the seeded dev-server recipe, the chaos runbook). Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund, availability, allocation, checkout or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/scheduling-engine/, utils/appointmentlock.ts, utils/timeSlotsProcessing.ts, lib/db/serializable-retry.ts, lib/payments/pricing/, lib/payments/operations/, scripts/appointments/, prisma/sql/, app/api/scheduling/, or app/api/appointments|bookings|checkout.
+description: How this repo's booking subsystem is built and kept correct — the non-negotiable doctrine (CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, no-backfill reset posture), how published availability becomes bookable slots (weekly vs custom rows, the 30-minute atom, union coverage, the three allocation modes), how concurrent booking writes are serialized (Redis lock atoms, global lock order, CAS-in-WHERE, Serializable retries), where booking touches money (the tentative hold, price derivation, refund quotes, funding rails, the earnings healer), and how to actually verify a booking change (jest suites, prisma-mocking patterns, the seeded dev-server recipe, the chaos runbook). Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund, availability, allocation, checkout or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/scheduling-engine/, utils/appointmentlock.ts, lib/db/serializable-retry.ts, lib/payments/pricing/, lib/payments/operations/, scripts/appointments/, prisma/sql/, app/api/scheduling/, or app/api/appointments|bookings|checkout.
 ---
 
 # Booking
@@ -161,13 +161,37 @@ Compose filters with `scopeOrgId` and `scopeToWhereOrgId`, end every `buildWhere
 with `assertNeverScope` so an unhandled kind is a compile error instead of an
 unfiltered cross-tenant read, and never hand-roll an org filter.
 
-The org arm is **owned rows only**. As of #1166 ORG-8 the funded-elsewhere
-clause (`payment: { some: { organizationId } }`) is gone from
-`lib/api/scope/list-appointments.ts`, because the detail page 404s any row whose
-`organizationId` is not this org — the list was offering rows the click could
-not open. Cross-org funding visibility now belongs to the money views. Org lists remain
-metadata-only by design (ADR 20): an org sees that a session happened, never its
-content.
+The `org` arm is **rows this org actually funded, and only while it is readable**.
+`lib/api/scope/list-appointments.ts` demands all three at once: the row's
+`organizationId` is this org, a `payment` on it carries this same
+`organizationId` **and** `paymentMethod ∈ {WALLET, INVOICE, LICENSE}` (the
+`sponsoredSeatsWhere` predicate, so the two surfaces answer "whose session is
+this" identically), and `organization.status` is in
+`ORG_SCOPE_READABLE_STATUSES`. SUSPENDED stays in that tuple on purpose — its
+OWNER has to be able to open the org to find whatever suspended it; DEACTIVATED
+is the one exclusion. The `all` arm is deliberately left unfiltered, because
+verifying a teardown means being able to read the dead org.
+
+Both clauses are load-bearing and they close different holes. #1166 ORG-8 removed
+the funded-elsewhere arm — `payment: { some: { organizationId } }` OR-ed beside
+the row's own `organizationId`, so the list offered rows the detail page 404s.
+What is back is narrower, not wider: the payment clause rides the ownership pin
+as an **AND**, so it cannot re-open that hole, and it adds the half the tag never
+established — checkout stamps `Appointment.organizationId` for ANY org in the
+request body, including `fundingSource === "PERSONAL"`, so filtering on the tag
+alone published the amount of a member's personal purchase to every MANAGER+ in
+the "Everyone" feed. Cross-org funding visibility remains the money views' job.
+Org lists stay metadata-only by design (ADR 20): an org sees that a session
+happened, never its content.
+
+The readable-status predicate is the same shape in `list-documents.ts` (through
+the parent `Appointment`, which is where a document's org lives) and
+`list-recordings.ts` (on the denormalized `organizationId` the org arm already
+pins). `resolveOrgScope`'s own `orgStatus` field is the better door and no caller
+passes it yet — read that field's docblock before assuming the resolver is
+refusing a DEACTIVATED org, because today it is not. A scope that reaches a
+consumer with neither the predicate nor the field is still open, and
+`/api/collaborations` is the one that is.
 
 ### 5. An approved request that was never paid has one outcome: EXPIRED
 

@@ -1,6 +1,6 @@
 ---
 name: booking-availability
-description: How a consultant's published availability becomes bookable slots — weekly versus custom rows, the scheduleType discriminator, coalescing on save, the 30-minute atom, union coverage validation, the grid endpoint, the occupancy and dead-hold rules, and the three allocation modes with partial allocation and the collaborator guard. Load when working on availability rows, the booking calendar grid, slot generation, conflict detection, or anything under utils/scheduling-engine/, utils/timeSlotsProcessing.ts, app/api/scheduling/, or the allocate routes.
+description: How a consultant's published availability becomes bookable slots — weekly versus custom rows, the scheduleType discriminator, coalescing on save, the 30-minute atom, union coverage validation, the grid endpoint, the occupancy and dead-hold rules, and the three allocation modes with partial allocation and the collaborator guard. Load when working on availability rows, the booking calendar grid, slot generation, conflict detection, or anything under utils/scheduling-engine/, app/api/scheduling/, or the allocate routes.
 ---
 
 # Booking Availability
@@ -66,7 +66,7 @@ Custom rows merge on adjacency **or overlap**, keeping the later `endsAt`, and
 the folded rows, because a booking names a custom row. That asymmetry is
 load-bearing; do not "simplify" it.
 
-Both folds stop at `MAX_DURATION_MINUTES` (`utils/timeScheduleValidation.ts`, twelve
+Both folds stop at `MAX_DURATION_MINUTES` (`utils/scheduling-engine/interval-validation.ts`, twelve
 hours). A merge that would cross that bound starts a new row instead, because
 `isValidTimeRange` rejects anything longer and the settings loader filters its
 rows through that validator — a thirteen-hour merged row would vanish from the
@@ -75,9 +75,25 @@ form and the next save would delete it.
 ## 3. Checkout validates against the union of rows, atom by atom
 
 Every slot is uniformly 30 minutes (ADR B1), but there is no single canonical
-constant — the value is redeclared under at least six names, of which the
-exported forms are `SCHEDULING_INTERVAL_MS` (`lib/appointments/occurrences.ts`)
-and `THIRTY_MIN_MS` (`utils/timeSlotsProcessing.ts`). Do not add a seventh.
+constant, and the copies are **not interchangeable**: they are declared under
+at least eight names and fall into three genuinely different behaviours, plus a
+fourth category that is not an atom at all. Read the table before assuming two
+of them can be swapped.
+
+| Declaration | File | Behaviour |
+| --- | --- | --- |
+| `SLOT_GRID_MS` | `lib/payments/utils/slot-validation.ts` | **Rejects off-grid.** `slotStartRefusal` refuses a client-picked start with `SLOT_NOT_ON_GRID` when `start % 30min !== 0`. The only place 30 minutes is a constraint *on a timestamp*. |
+| `SLOT_ATOM_MS` | `utils/appointmentlock.ts` | **Floors to the grid.** `Math.floor(startsAt / SLOT_ATOM_MS) * SLOT_ATOM_MS`, then steps. Deliberately a superset: a `:15` start takes both the `:00` and `:30` atoms, so two writers can never hold disjoint keys for the same booked minute. |
+| `ATOM_MS`, `slidingIntervalMillis`, `SCHEDULING_INTERVAL_MS`, `SLOT_MS`, `thirtyMinMs` | `utils/scheduling-engine/availabilityCoverage.ts`, `utils/scheduling-engine/intervals.ts`, `lib/appointments/occurrences.ts`, `schemas/appointments.ts`, `utils/scheduling-engine/SchedulingService.ts` | **Steps from an arbitrary anchor.** Never consults the epoch — it steps from whatever start it is handed, so a window opening at `:15` yields `:15`/`:45` atoms. |
+| `THIRTY_MIN_MS` | `utils/scheduling-engine/intervals.ts` | **Not an atom.** Used only as a `Math.floor(ms / X)` *bucket divisor* for index keys in `buildAppointmentIndex` and in `lib/booking/overlap-meta.ts`. It has no window semantics, so "the atom" is the wrong name for it. |
+| `intervalDurationMs` | `utils/scheduling-engine/interval-meta.ts` | **A duration, not a grid.** The "is this 30-minute interval already full?" threshold. |
+
+Only the exported `SCHEDULING_INTERVAL_MS` (`lib/appointments/occurrences.ts`) and
+`THIRTY_MIN_MS` (`utils/scheduling-engine/intervals.ts`) are importable, and
+neither is the one you usually want. The rest are module-private. Do not add a
+ninth, and do not "consolidate" by pointing one call site at another: the
+difference between flooring and anchoring is load-bearing in both
+`appointmentlock.ts` and `availabilityCoverage.ts`.
 
 `utils/scheduling-engine/availabilityCoverage.ts` is the write-time gate.
 `windowAtoms(start, end)` chops the half-open window into atoms and
@@ -96,10 +112,11 @@ exactly two callers enforce this inside their transaction: checkout
 `OutsideAvailabilityWindowError` even when the consultant is the one scheduling,
 because a trial is a booking.
 
-The display path matches: `mergeConsecutiveSlots` (`utils/timeSlotsProcessing.ts`)
+The display path matches: `mergeConsecutiveSlots` (`utils/scheduling-engine/intervals.ts`)
 joins free slots on **exact** adjacency — the merged end is the next start — and,
 as of #1320, **across** availability rows, accumulating every covering id into
-`slotOfAvailabilityIds`. Merging across rows was forbidden until union validation
+`availabilityWindowIds` (the first row's id also stays on the slot alone as
+`availabilityWindowId`, for compatibility). Merging across rows was forbidden until union validation
 replaced the single-row-id check, and the old ±60 s tolerance had to go with it:
 rows ending 10:30 and starting 10:31 would otherwise be offered as one window
 whose 10:30 atom no row publishes, which checkout's union coverage then rejects.
@@ -108,7 +125,7 @@ whose 10:30 atom no row publishes, which checkout's union coverage then rejects.
 
 `ScheduleCalculationService` is a static date and duration utility, **not** the
 generator. Generation happens in two places that must agree:
-`processAvailabilitySlots` (`utils/timeSlotsProcessing.ts`) for the grid and the
+`processAvailabilitySlots` (`utils/scheduling-engine/intervals.ts`) for the grid and the
 private `SchedulingService.findAvailableSlots` for the allocator.
 
 What makes them agree is that both project weekly rows through the same

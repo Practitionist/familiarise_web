@@ -133,7 +133,7 @@ Prisma cannot express these, so they live in `prisma/sql/*.sql` and are applied 
 | ------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ledger_txn_balanced` (deferred constraint trigger)     | `ledger-triggers.sql`       | Σ DEBIT == Σ CREDIT per `LedgerTransaction` at COMMIT                                                                                                                  |
 | `payment_legs_sum_to_amount` + `payment_amount_vs_legs` | `payment-legs-triggers.sql` | Σ non-reversal, non-`REFERRAL_CREDIT` legs == `Payment.amount`; LICENSE-only payments exempt; every `*_REVERSAL` leg negative and bounded (#1347 / #1385)              |
-| `slot_no_confirmed_overlap` (GiST exclusion)            | `check-constraints.sql`     | no two non-tentative slots for one consultant overlap                                                                                                                  |
+| `occurrence_no_confirmed_overlap` (GiST exclusion)      | `check-constraints.sql`     | no two non-tentative, non-tombstoned occurrences overlap for one consultant; a NULL `consultantProfileId` is exempt                                                      |
 | ~30 CHECK constraints                                   | `check-constraints.sql`     | non-negative money, `wallet_nonnegative`, `po_amounts_coherent`, `rate_card_bps_sum_is_whole`, `tds_record_deductee_xor`, `overage_marginal_is_base_plus_surcharge`, … |
 
 ### 1.3 Chart of accounts and the canonical postings

@@ -86,7 +86,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] Trials take the shared `slot-booking:` atom keys through `lockSlotBooking`, not a namespace of their own — the retired `trial-slot-booking:` prefix must never reappear (`__tests__/booking-algorithm/trial-slot-integrity.test.ts` asserts this)
 - [ ] Consultee-side dedupe locks under `consultee-booking:<userId>` (`lockConsulteeBooking`)
 - [ ] Event checkout (webinar/class) locks a single mutex per event under `event-checkout:<type>:<eventOrPlanId>` (`lockEventCheckout`) — this is a mutex, not a counting semaphore; capacity is re-checked inside the write transaction, not by the lock
-- [ ] `SchedulingService` keeps its coarser consultant-wide `auto-allocate:<consultantProfileId>[:scope]` lock (`lockAutoAllocate`), because it discovers slots dynamically under that lock; its write transaction re-validates conflicts and absorbs the `slot_no_confirmed_overlap` exclusion constraint
+- [ ] `SchedulingService` keeps its coarser consultant-wide `auto-allocate:<consultantProfileId>[:scope]` lock (`lockAutoAllocate`), because it discovers slots dynamically under that lock; its write transaction re-validates conflicts and absorbs the `occurrence_no_confirmed_overlap` exclusion constraint
 - [ ] Cancel and reschedule take `lockAppointment` (`APPOINTMENT_LOCK_TTL_MS`) so a stale tab and a live cancel serialize instead of racing the CAS write
 - [ ] Global lock order is respected end-to-end: event/consultant -> consultee -> slot
 - [ ] Checkout lock TTLs match `CHECKOUT_LOCK_TTL_MS` by type (CONSULTATION 60s, SUBSCRIPTION/WEBINAR 120s, CLASS 600s) — sized per checkout shape, not one universal TTL
@@ -151,7 +151,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] M2M `_AppointmentParticipant` connects BOTH consultant AND consultee
 - [ ] Cascading deletes: `ConsultantProfile` -> `AvailabilityWindowWeekly/Custom`
 - [ ] No orphaned slots after cancellation (cleanup or cascade)
-- [ ] The correctness backstops that are NOT in `schema.prisma` — the `slot_no_confirmed_overlap` GiST exclusion constraint, CHECK constraints, ledger triggers — are applied via `npm run db:sidecars` after every schema push; never assume they exist on a database that only saw a bare `prisma db push`
+- [ ] The correctness backstops that are NOT in `schema.prisma` — the `occurrence_no_confirmed_overlap` GiST exclusion constraint, CHECK constraints, ledger triggers — are applied via `npm run db:sidecars` after every schema push; never assume they exist on a database that only saw a bare `prisma db push`
 - [ ] Migration safety: no destructive migrations without a data migration plan on prod
 - [ ] Seed data includes `_AppointmentParticipant` rows for test appointments
 

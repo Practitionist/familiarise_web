@@ -25,7 +25,7 @@ All `/api/scheduling/` endpoints are covered by `AUTHENTICATED_API_PREFIXES` in 
 | `/api/scheduling/appointments` (POST)        | Yes           | Admin/staff only                                                   |
 | `/api/scheduling/appointments/[id]` (GET)    | Yes           | Requires participant check (consultant or consultee on the appointment) |
 
-**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `slot_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through `SchedulingService` (allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
+**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `occurrence_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through `SchedulingService` (allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
 
 ### Status Filters
 

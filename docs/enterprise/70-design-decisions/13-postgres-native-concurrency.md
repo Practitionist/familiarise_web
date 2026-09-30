@@ -151,7 +151,7 @@ from the live catalog. So CAS WHERE clauses are the _first_ enforcement layer,
 not the only one.
 
 The live sidecars are the deferred `ledger_txn_balanced` CONSTRAINT TRIGGER, the
-`slot_no_confirmed_overlap` GiST exclusion, and ~30 CHECK constraints. The trap
+`occurrence_no_confirmed_overlap` GiST exclusion, and ~30 CHECK constraints. The trap
 they guard against is `npm run db:push:schema`, which exists as a standalone
 script and skips the sidecars entirely.
 

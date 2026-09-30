@@ -43,7 +43,7 @@ objects live in checked-in SQL and are applied and asserted by scripts.
 
 | File                                   | Contents                                                                                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `slot_no_confirmed_overlap` and the money invariants. Its final section is the block staged for the pre-MVP reset. |
+| `prisma/sql/check-constraints.sql`     | Every `CHECK` constraint and partial index, including `occurrence_no_confirmed_overlap` and the money invariants. Its final section is the block staged for the pre-MVP reset. |
 | `prisma/sql/ledger-triggers.sql`       | The double-entry ledger constraint triggers.                                                                                                                             |
 | `prisma/sql/payment-legs-triggers.sql` | The trigger asserting that payment legs sum to the payment amount.                                                                                                       |
 | `prisma/sql/known-drift.json`          | The reviewed allowlist of divergences the drift guard tolerates. Every entry carries an owner, a reason and an expiry.                                                   |

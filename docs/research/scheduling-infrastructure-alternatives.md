@@ -8,13 +8,13 @@
 
 The current custom slot booking system has several concerns:
 
-1. **Maintenance Burden**: Complex time slot processing logic (`utils/timeSlotsProcessing.ts`) with edge cases for overnight slots, timezone handling, and overlap calculations
+1. **Maintenance Burden**: Complex time slot processing logic (`utils/scheduling-engine/intervals.ts`) with edge cases for overnight slots, timezone handling, and overlap calculations
 2. **Reliability Concerns**: Recent bugs like COMPLETED events blocking availability, data corruption filters needed, defensive programming required throughout
 3. **Scalability**: Need to handle real-time availability for millions of users simultaneously
 4. **Accuracy**: Coverage percentage calculations, slot merging, and booking status determination are error-prone
 
 **Current Implementation Files:**
-- `utils/timeSlotsProcessing.ts` - Core availability processing logic (~400 lines)
+- `utils/scheduling-engine/intervals.ts` - Core availability processing logic (~400 lines)
 - `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` - API endpoint with defensive filters
 - Multiple components consuming slot data
 

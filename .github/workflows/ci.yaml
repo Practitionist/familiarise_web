@@ -165,7 +165,19 @@ jobs:
       - name: Terminology guard
         # #1554 — the scheduling vocabulary the reset retired (SlotOfAppointment,
         # MeetingSession, TrialSession, /api/slots/ …) must not come back into
-        # code. Docs and prompts are reported, never fatal. Static only.
+        # code. Static only.
+        #
+        # NOT warn-only, but the split is not "code vs docs". Retired vocabulary
+        # is fatal in code and printed-and-passed in docs, skills and prompts.
+        # The second, independent check — dangling pointers, a doc naming a file
+        # or constraint that does not exist — is fatal under
+        # `.claude/skills/booking/`, `docs/booking/` and
+        # `docs/payments/checkout-flow/` (DOC_POINTER_FATAL in
+        # scripts/ci/check-terminology.ts) and reported everywhere else. Those
+        # three trees are the doctrine another agent is told to trust before
+        # editing booking code, so a wrong pointer there is a wrong instruction,
+        # not a stale sentence. Do not "fix" the guard by demoting that class to
+        # a warning.
         run: node_modules/.bin/tsx scripts/ci/check-terminology.ts
 
       - name: Workflow hygiene guard

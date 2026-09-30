@@ -120,15 +120,22 @@ if (allPendingCount >= 3) {
 }
 ```
 
-**DB backstop — `slot_no_confirmed_overlap` exclusion constraint (#440):**
+**DB backstop — `occurrence_no_confirmed_overlap` exclusion constraint (#440):**
 
-Even if two Serializable transactions race past all three application-layer checks, a PostgreSQL **exclusion constraint** on `AppointmentOccurrence` prevents two _confirmed_ (non-tentative) rows from overlapping the same `(consultantId, startsAt, endsAt)` range. This is the last-resort guarantee that concurrent webhooks cannot double-confirm a slot. The constraint fires at `COMMIT` time; the losing transaction receives a `P2002` / `UniqueConstraintError` which surfaces to the webhook handler as a 409 and triggers a gateway refund cascade.
+Even if two Serializable transactions race past all three application-layer checks, a PostgreSQL **exclusion constraint** on `AppointmentOccurrence` prevents two _confirmed_ (non-tentative) rows from overlapping the same `(consultantProfileId, startsAt, endsAt)` range. This is the last-resort guarantee that concurrent webhooks cannot double-confirm a slot. The constraint fires at `COMMIT` time; the losing transaction receives a `P2002` / `UniqueConstraintError` which surfaces to the webhook handler as a 409 and triggers a gateway refund cascade.
+
+The predicate has three conditions, not one, and all three matter. A row with a NULL `consultantProfileId` is **outside the constraint entirely** — group-event rows that leave the column unset are unguarded, which is why the owner's profile is denormalized onto every webinar and class occurrence. Tombstones are exempt via `deletedAt IS NULL` (#1694): a cancel or a hold-release keeps the row (`CANCELLED` + `deletedAt`) and every reader already treats it as free, so without the exemption re-booking a cancelled time 409s at commit.
 
 ```sql
--- prisma/sql/check-constraints.sql lines 56-58
-ALTER TABLE "AppointmentOccurrence"
-  ADD CONSTRAINT "slot_no_confirmed_overlap"
-  EXCLUDE USING gist (...) WHERE ("isTentative" = false);
+-- prisma/sql/check-constraints.sql lines 104-111
+ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
+-- SPLIT
+ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_overlap"
+  EXCLUDE USING gist (
+    "consultantProfileId" WITH =,
+    tstzrange("startsAt", "endsAt") WITH &&
+  )
+  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL);
 ```
 
 **Resolution:**
