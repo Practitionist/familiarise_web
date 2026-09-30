@@ -224,11 +224,18 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "drain-notification-outbox": 20_000,
   // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
   "reconcile-orphaned-confirmations": 20_000,
-  // #1583 E-P0-04 — per-row outbox staging (reminders) and gateway refunds
-  // (stale requests) do not fit 6 s on a cold instance; the cron lock makes
-  // an overlap with the Actions run a 409, not a double run.
+  // #1583 E-P0-04 — per-row outbox staging (reminders, reschedule-proposals)
+  // and gateway refunds (stale requests) do not fit 6 s on a cold instance; the
+  // cron lock makes an overlap with the Actions run a 409, not a double run.
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
+  // Per row: an appointment lock, a transaction, a slot restore, and a
+  // "your original time stands" notice (a Novu trigger plus the email twin's
+  // outbox stage). Its own route and core both size the ticker's abort at 20 s,
+  // and the bite above is 25 for that budget — at 6 s this sweep was aborted
+  // part-way through every batch, which is the mid-run partial this tier exists
+  // to stop.
+  "reschedule-proposals": 20_000,
   "settle-cancelled-sessions": 20_000,
   "retry-auto-refunds": 20_000,
   // #1775 — one Stream call-report round trip per judged session (auto-complete)
