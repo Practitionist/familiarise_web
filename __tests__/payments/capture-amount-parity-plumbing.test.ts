@@ -50,13 +50,23 @@ jest.mock("../../lib/db/serializable-retry", () => ({
 // #1439 — every in-tx status stamp is a CAS, so the writer is `updateMany`
 // and its count decides whether the flow continues.
 const paymentUpdateMany = jest.fn(
-  async (_args: { where: { paymentStatus?: string } }) => ({ count: 1 }),
+  async (_args: {
+    where: { paymentStatus?: string };
+    // CAS-in-WHERE (#1439): the stamp carries a full Prisma `data` payload.
+    // Typing the arg without it made every `stamp.data.*` assertion a compile
+    // error — and a runtime `undefined` had the reader not checked.
+    data: {
+      paymentStatus?: string;
+      description?: string;
+      gatewayPaymentId?: string | null;
+    };
+  }) => ({ count: 1 }),
 );
-const paymentFindUnique = jest.fn();
-const appointmentFindUnique = jest.fn();
-const txPaymentUpdate = jest.fn(async () => ({}));
-const trialUpdateMany = jest.fn(async () => ({ count: 1 }));
-const trialFindUnique = jest.fn();
+const paymentFindUnique = jest.fn((..._a: unknown[]) => undefined);
+const appointmentFindUnique = jest.fn((..._a: unknown[]) => undefined);
+const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
+const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
+const trialFindUnique = jest.fn((..._a: unknown[]) => undefined);
 const occurrenceFindMany = jest.fn();
 const txStub = {
   payment: {
@@ -69,7 +79,7 @@ const txStub = {
   appointmentOccurrence: { findMany: occurrenceFindMany },
 };
 // The Phase-2 settle-marker write runs on the base client, outside the tx.
-const prismaPaymentUpdate = jest.fn(async () => ({}));
+const prismaPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -77,7 +87,7 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
     },
-    webhookEvent: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    webhookEvent: { updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })) },
   },
 }));
 
@@ -118,7 +128,7 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), error: jest.fn() },
 }));
-const recordSystemEvent = jest.fn(async () => undefined);
+const recordSystemEvent = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemError: (...a: unknown[]) => recordSystemEvent(...(a as [never])),
   recordSystemErrorSafe: (...a: unknown[]) =>

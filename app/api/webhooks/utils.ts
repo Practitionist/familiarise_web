@@ -1649,13 +1649,14 @@ export async function handleDisputeUpdated(
               payoutId: true,
               status: true,
               // #R-06 — whether the cash actually left. Only a COMPLETED payout
-              // has anything to claw back. `amountPaise` + `tdsDeducted` are
-              // here for the GROSS→NET scale: the clawback recovers the net the
-              // consultant actually received, never the withheld tax (W1a).
+              // has anything to claw back. `amount` (gross) + `tdsDeducted`
+              // are here for the GROSS→NET scale: the clawback recovers the
+              // net the consultant actually received, never the withheld tax
+              // (W1a).
               payout: {
                 select: {
                   status: true,
-                  amountPaise: true,
+                  amount: true,
                   tdsDeducted: true,
                 },
               },
@@ -1740,16 +1741,20 @@ export async function handleDisputeUpdated(
                 // belongs to the government and is already handled separately
                 // by `recordTdsReversal` above.
                 //
-                // So the receivable is the pro-rata net: this earning's share
-                // of the gross, scaled by the fraction the consultant
-                // actually received. `tdsDeducted` is 0 for a payout with no
-                // withholding, which makes the scale exactly 1 — so a
-                // TDS-free payout claws back the gross, unchanged.
-                const payoutAmount = Number(earning.payout?.amountPaise ?? 0);
+              // So the receivable is the pro-rata net: this earning's share
+              // of the gross, scaled by the fraction the consultant actually
+              // received. `ConsultantPayout.amount` is the gross and
+              // `tdsDeducted` the withholding, so `amount - tdsDeducted` is
+              // the figure that left. Derived rather than read from the
+              // nullable `netAmount`, which is staged pre-gateway and so is
+              // not guaranteed present on every row. `tdsDeducted` is 0 for a
+              // payout with no withholding, which makes the scale exactly 1 —
+              // so a TDS-free payout claws back the gross, unchanged.
+                const payoutGross = Number(earning.payout?.amount ?? 0);
                 const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
                 const netFraction =
-                  payoutAmount > 0
-                    ? Math.max(0, 1 - payoutTds / payoutAmount)
+                  payoutGross > 0
+                    ? Math.max(0, 1 - payoutTds / payoutGross)
                     : 1;
                 const netClawbackPaise = Math.floor(
                   reversalNow * netFraction,

@@ -34,7 +34,7 @@ jest.mock("../../lib/payments/ledger/post", () => {
   const actual = jest.requireActual("../../lib/payments/ledger/post");
   return {
     ...actual,
-    postLedgerTxn: jest.fn().mockResolvedValue(undefined),
+    postLedgerTxn: jest.fn().mockResolvedValue({ transactionId: "ltx_1", created: true }),
   };
 });
 jest.mock("../../lib/payments/operations/refund", () => ({
@@ -54,6 +54,15 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 const mockedPost = postLedgerTxn as jest.MockedFunction<typeof postLedgerTxn>;
+
+/**
+ * `postLedgerTxn(db, input)` — the input is the SECOND argument, so
+ * `mock.calls[0][0]` is the tx. Asserting on `[0]` silently reads
+ * `undefined.postings` and passes vacuously.
+ */
+function LAST_INPUT(): PostLedgerTxnInput {
+  return mockedPost.mock.calls[0][1];
+}
 
 /** Σ(DEBIT) === Σ(CREDIT) — the property `postLedgerTxn` itself asserts. */
 function assertBalanced(postings: PostLedgerTxnInput["postings"]): void {
@@ -85,8 +94,11 @@ function makeTx(overrides: { alreadyPosted?: boolean; payout?: unknown } = {}) {
       // for the reconciler to compare the journal against.
       update: jest.fn().mockResolvedValue({}),
     },
-  } as never;
+  };
 }
+
+/** The stub's own shape, so tests can read `tx.consultantPayout.update`. */
+type TxStub = ReturnType<typeof makeTx>;
 
 const SOURCE = {
   kind: "CONSULTANT_CLAWBACK",
@@ -96,7 +108,7 @@ const SOURCE = {
 
 beforeEach(() => {
   mockedPost.mockClear();
-  mockedPost.mockResolvedValue(undefined);
+  mockedPost.mockResolvedValue({ transactionId: "ltx_1", created: true });
 });
 
 describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
@@ -115,7 +127,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
     expect(res.cascades).toHaveLength(0);
     expect(mockedPost).toHaveBeenCalledTimes(1);
 
-    const arg = mockedPost.mock.calls[0][0];
+    const arg = LAST_INPUT();
     // One append-only txn: never a mutation of the original `payout:<id>` row.
     expect(arg.kind).toBe("PAYOUT");
     expect(arg.payoutId).toBe("cpay-1");
@@ -157,8 +169,8 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
       reason: "r",
       refundId: "dispute:disp_1",
     });
-    expect(mockedPost.mock.calls[0][0].postings[0].amountPaise).toBe(33_333);
-    expect(mockedPost.mock.calls[0][0].postings[1].amountPaise).toBe(33_333);
+    expect(LAST_INPUT().postings[0].amountPaise).toBe(33_333);
+    expect(LAST_INPUT().postings[1].amountPaise).toBe(33_333);
   });
 
   it("increments the payout's clawback counter and stamps it once", async () => {
@@ -169,7 +181,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
       reason: "r",
       refundId: "dispute:disp_1",
     });
-    const update = tx.consultantPayout.update as jest.Mock;
+    const update = tx.consultantPayout.update;
     expect(update).toHaveBeenCalledTimes(1);
     const arg = update.mock.calls[0][0];
     expect(arg.where).toEqual({ id: "cpay-1" });
@@ -189,7 +201,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
       reason: "r",
       refundId: "dispute:disp_2",
     });
-    const arg = (tx.consultantPayout.update as jest.Mock).mock.calls[0][0];
+    const arg = tx.consultantPayout.update.mock.calls[0][0];
     expect(arg.data.clawbackAmountPaise).toEqual({ increment: 1_000 });
     expect(arg.data.clawbackInitiatedAt).toBeUndefined();
   });
@@ -231,7 +243,7 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the idempotency key", () => {
       refundId: "dispute:disp_2",
     });
 
-    const keys = mockedPost.mock.calls.map((c) => c[0].idempotencyKey);
+    const keys = mockedPost.mock.calls.map((c) => c[1].idempotencyKey);
     expect(keys).toEqual([
       "clawback:dispute:disp_1:cpay-1",
       "clawback:dispute:disp_1:cpay-2",

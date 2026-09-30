@@ -30,7 +30,7 @@ export interface AccountRef {
   kind: LedgerAccountKind;
   /** Org-scoped accounts (WALLET, ORG_PAYABLE, ORG_RECEIVABLE). */
   organizationId?: string | null;
-  /** Consultant-scoped accounts (CONSULTANT_PAYABLE). */
+  /** Consultant-scoped accounts (CONSULTANT_PAYABLE, CONSULTANT_RECEIVABLE). */
   consultantProfileId?: string | null;
   /**
    * #783 — the ledger is **INR-denominated**: Razorpay always settles in INR

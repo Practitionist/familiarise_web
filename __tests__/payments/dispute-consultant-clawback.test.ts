@@ -151,13 +151,14 @@ interface ConsultantEarningRow {
   payoutId: string | null;
   /**
    * The relation the handler selects: `status` gates on "the cash actually
-   * left", and `amountPaise` + `tdsDeducted` give the GROSS→NET scale for the
+   * left", and `amount` + `tdsDeducted` give the GROSS→NET scale for the
    * clawback (W1a). Both optional in the fixture so a payout with no TDS (or a
    * partial select) still scales to exactly 1.
    */
   payout: {
     status: PayoutStatus;
-    amountPaise?: number;
+    /** `ConsultantPayout.amount` — the GROSS. Named to match the handler's select. */
+    amount?: number;
     tdsDeducted?: number;
   } | null;
 }
@@ -267,7 +268,7 @@ function seedEarning(
     refundedShareAmount: 0,
     consultantProfileId: "cp_1",
     payoutId: "cpay_1",
-    payout: { status: "COMPLETED", amountPaise: 10_000, tdsDeducted: 0 },
+    payout: { status: "COMPLETED", amount: 10_000, tdsDeducted: 0 },
     ...over,
   });
 }
@@ -337,7 +338,7 @@ describe("LOST dispute on a PAID consultant earning — the clawback", () => {
     seedEarning({
       id: "ce_paid",
       consultantSharePaise: 6_000,
-      payout: { status: "COMPLETED", amountPaise: 10_000, tdsDeducted: 1_000 },
+      payout: { status: "COMPLETED", amount: 10_000, tdsDeducted: 1_000 },
     });
     seedOpenDispute(5_000); // 50 % of the payment
 
@@ -362,7 +363,7 @@ describe("LOST dispute on a PAID consultant earning — the clawback", () => {
     seedEarning({
       id: "ce_paid",
       consultantSharePaise: 6_000,
-      payout: { status: "COMPLETED", amountPaise: 10_000, tdsDeducted: 0 },
+      payout: { status: "COMPLETED", amount: 10_000, tdsDeducted: 0 },
     });
     seedOpenDispute(5_000);
 
@@ -463,7 +464,11 @@ describe("LOST dispute — cases with no cash out stay untouched", () => {
     seedPayment(10_000);
     seedEarning({
       id: "ce_batched",
-      payout: { status: "BATCHED" },
+      // PROCESSING, not BATCHED: BATCHED is an EARNING status, and a
+      // ConsultantPayout is never in it. PROCESSING is the real
+      // "submitted, cash not confirmed out" state — the submitted-but-unsettled
+      // window where clawing back would demand money that may never have moved.
+      payout: { status: "PROCESSING" },
       consultantSharePaise: 6_000,
     });
     seedOpenDispute(10_000);
