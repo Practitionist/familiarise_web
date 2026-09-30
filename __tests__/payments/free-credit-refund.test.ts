@@ -49,9 +49,15 @@ const tx = {
   },
   consultantEarnings: {
     update: jest.fn(),
+    // W1c — `reverseFreeCreditSettlement` now writes through a CAS
+    // `updateMany` (status-in-WHERE + `refundedShareAmount` pinned to the
+    // pre-read) instead of a plain `update`. Without this the free-credit
+    // rail throws `updateMany is not a function` on every run.
+    updateMany: jest.fn(async () => ({ count: 1 })),
   },
   organizationEarnings: {
     update: jest.fn(),
+    updateMany: jest.fn(async () => ({ count: 1 })),
   },
   organizationPayout: {
     update: jest.fn(),
