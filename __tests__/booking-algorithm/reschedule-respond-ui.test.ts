@@ -22,7 +22,7 @@ const adapter = read(
   "components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx",
 );
 const eventActions = read(
-  "components/appointments/consultee/useEventActions.ts",
+  "components/appointments/consultee/useEventActions.tsx",
 );
 // #1775 — the Requests tab became the inbox: the row decides, the inbox calls.
 const inbox = read("components/dashboard/shared/requests/RequestsInbox.tsx");

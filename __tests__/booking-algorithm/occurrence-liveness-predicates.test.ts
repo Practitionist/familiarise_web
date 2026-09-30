@@ -92,7 +92,7 @@ const mockPrisma = prisma as unknown as {
   appointmentOccurrence: { count: jest.Mock };
 };
 
-const occurrence = (
+function occurrence(
   overrides: Partial<Occurrence> & { id: string },
 ): Occurrence {
   return {
