@@ -44,10 +44,9 @@
  * A stored value that *looks* like an envelope but cannot be decrypted (key
  * rotated without re-running the migration, truncated column, wrong key
  * mounted) throws {@link SecretPayloadError} rather than returning garbage.
- * Callers include the PRE-AUTH `GET /api/auth/sso/domain-check` endpoint, so
- * an undecryptable config has to surface as a specific
- * `SSO_PROVIDER_MISCONFIGURED` and not as a 500 with an empty body — that
- * empty-body 500 is the failure mode audit Phase A.2 was written to kill.
+ * The admin settings GET catches it, so an undecryptable config surfaces as
+ * a specific `SSO_PROVIDER_MISCONFIGURED` and not as a 500 with an empty
+ * body.
  *
  * ## Plaintext rows
  *
@@ -68,9 +67,8 @@
  * `$extends({ result })` map in `lib/prisma.ts` that runs
  * `decryptSecretPayload` on `SsoProvider.oidcConfig` and `.samlConfig` on
  * every read, and normalises the result to a parsed object. Because it is on
- * the client, *every* reader is covered — BetterAuth's plugin, the admin
- * settings GET, the pre-auth `domain-check`, the cert-expiry cron — and no
- * caller can forget to decrypt.
+ * the client, *every* reader is covered — BetterAuth's plugin and the admin
+ * settings GET — and no caller can forget to decrypt.
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
@@ -187,10 +185,9 @@ export function encryptSecretPayload(payload: unknown): string {
  *
  * Three-way behaviour, all of it load-bearing:
  *
- *   1. `null` / `undefined` / empty → `null`. A half-written row (admin
- *      started a SAML setup and never finished) is a legitimate "no config",
- *      not an error, and `GET /providers` infers provider type from whether
- *      this column is null.
+ *   1. `null` / `undefined` / empty → `null`. A half-written row is a
+ *      legitimate "no config", not an error, and the settings routes infer
+ *      provider type from whether this column is null.
  *   2. No `sso:v1:` prefix → parsed as plaintext JSON. Every row written
  *      before this module existed is in this state, and they must keep
  *      working. A non-JSON value here is a corrupt legacy row, which is

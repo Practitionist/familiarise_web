@@ -23,18 +23,10 @@
  * degradation flag, echoed from the request. See `degradedEcho` below.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
-import { validateSamlCert } from "@/lib/sso/provider-schemas";
-import { SecretPayloadError } from "@/lib/sso/secret-crypto";
-import { markExpected } from "@/lib/observability/expected";
-import {
-  readStoredSamlConfig,
-  type StoredConfig,
-} from "@/lib/sso/stored-config";
 
 const QuerySchema = z.object({
   email: z.string().email(),
@@ -100,97 +92,14 @@ export async function GET(req: NextRequest) {
   // users to the wrong IdP. (B.4's composite unique now enforces
   // this at the DB level too.)
   //
-  // This query is where the stored config is DECRYPTED. The
-  // `$extends({ result })` map in `lib/prisma-sso-secret-extension.ts`
-  // runs `decryptSecretPayload` on the two config columns, so
-  // `samlConfig` arrives already parsed and already an object. That is
-  // why nothing below parses it: the format is the adapter's problem,
-  // not this route's.
-  //
-  // It is also why the try/catch has to wrap the QUERY rather than the
-  // cert check. A rotated encryption key, a truncated column, or a
-  // key that is simply not mounted throws `SecretPayloadError` out of
-  // `findFirst` — before a single line of the check below has run. This
-  // endpoint is pre-auth and fires on every email blur, so letting that
-  // escape would produce the exact empty-body 500 the guard exists to
-  // prevent. Errors that are NOT `SecretPayloadError` (a dead database,
-  // a Prisma bug) are re-thrown rather than relabelled: telling a user
-  // "your provider is misconfigured" when the database is down sends
-  // the admin to fix the wrong thing.
-  let provider: { providerId: string; samlConfig: StoredConfig } | null;
-  try {
-    provider = await prisma.ssoProvider.findFirst({
-      where: { domain, organizationId: enforced.organizationId },
-      select: { providerId: true, samlConfig: true },
-    });
-  } catch (error) {
-    if (!(error instanceof SecretPayloadError)) throw error;
-    // Failure-modes row 19, verbatim: "a `SecretPayloadError` behind a 200". The
-    // response below is a *modelled* answer — `providerMisconfigured: true` with
-    // a typed code, HTTP 200, the signin page falling back to credentials — so
-    // this is a refusal that reports itself, not a fault. Unmarked it pages
-    // on-call for every email blur by every user of an org whose encryption key
-    // was rotated, which is the whole tenant rather than one person.
-    //
-    // `markExpected` is the right tool here and not `reportSentryError(…,
-    // { expected: true })` because the capture below is a direct
-    // `Sentry.captureException(error)`: `@sentry/core@10.59.0` puts the exception
-    // it was handed on the event hint as `originalException`
-    // (`build/cjs/scope.js:481-497`), and `beforeSend` reads the marker off
-    // exactly that field. No `level` is passed deliberately — the re-levelling to
-    // `warning` is then provably the marker's doing and not a hand-written
-    // option that would mask a regression in it.
-    Sentry.captureException(markExpected(error), {
-      tags: { subsystem: "auth", op: "sso-domain-check" },
-      extra: { failure: error.failure },
-    });
-    // From the user's side, an unreadable config and a bad certificate are
-    // the same situation: this org's SSO cannot be used, so the signin page
-    // stays on the credentials form and shows a typed error. The Sentry
-    // capture above is the only place the two remain distinguishable.
-    return json(req, {
-      enforceSSO: true,
-      providerMisconfigured: true,
-      errorCode: "SSO_PROVIDER_MISCONFIGURED",
-    });
-  }
+  // Only `providerId` is selected, so the encrypted config column is never
+  // decrypted on this pre-auth path.
+  const provider = await prisma.ssoProvider.findFirst({
+    where: { domain, organizationId: enforced.organizationId },
+    select: { providerId: true },
+  });
   if (!provider) {
     return json(req, { enforceSSO: false });
-  }
-
-  // Pre-flight integrity check on the stored cert. Legacy SsoProvider rows
-  // registered before `validateSamlCert` landed in `provider-schemas.ts` may
-  // carry a malformed PEM (or none at all). If we hand BetterAuth's SAML
-  // adapter a bad cert, it crashes inside `validatePostResponse` with an
-  // empty-body 500 — the user clicks "Sign in with SSO" and sees a blank
-  // page with no error to act on. Returning the typed
-  // `SSO_PROVIDER_MISCONFIGURED` response keeps the signin page on the
-  // credentials form and shows a friendly toast.
-  //
-  // `readStoredSamlConfig` narrows the parsed column field by field, so
-  // `cert` is a `string | undefined` rather than an `unknown` — a row whose
-  // `cert` is not a string is reported here as "no usable cert" instead of
-  // reaching `new X509Certificate(<not a string>)`.
-  //
-  // OIDC providers don't have a cert; they fail differently (discoveryEndpoint
-  // unreachable, etc.) and are out of scope for this guard.
-  //
-  // The `samlConfig` presence test is load-bearing, not defensive. An OIDC-only
-  // provider stores `samlConfig: null`, so `readStoredSamlConfig` returns
-  // `null` and the `!saml?.cert` test below would be true — flagging every
-  // OIDC provider as misconfigured and refusing OIDC sign-in outright. The
-  // "does this provider have a SAML config at all" question and the "is that
-  // config's certificate valid" question have to be asked separately, because
-  // only the second one has a certificate to be wrong about.
-  if (provider.samlConfig) {
-    const saml = readStoredSamlConfig(provider.samlConfig);
-    if (!saml?.cert || !validateSamlCert(saml.cert)) {
-      return json(req, {
-        enforceSSO: true,
-        providerMisconfigured: true,
-        errorCode: "SSO_PROVIDER_MISCONFIGURED",
-      });
-    }
   }
 
   // The org name is the only extra field this endpoint emits beyond

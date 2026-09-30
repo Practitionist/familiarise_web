@@ -134,10 +134,10 @@ function makeClient() {
   //     plugin has no read hook (`SSOOptions` exposes no decrypt), and
   //     @better-auth/prisma-adapter has no transform option, so the database
   //     layer is the only seam that covers *every* reader at once — the
-  //     plugin, the admin settings GET, the pre-auth domain-check, the cert
-  //     expiry cron. Decrypting per call site is how a tenant's IdP client
-  //     secret ends up in a log line. Plaintext rows pass through untouched,
-  //     so this is safe to land before the encryption migration.
+  //     plugin and the admin settings GET. Decrypting per call site is how a
+  //     tenant's IdP client secret ends up in a log line. Plaintext rows pass
+  //     through untouched, so this is safe to land before the encryption
+  //     migration.
   //     See lib/prisma-sso-secret-extension.ts for the full rationale.
   //
   // Merged per-model, not with a top-level spread: `$extends` infers each

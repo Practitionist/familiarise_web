@@ -25,7 +25,7 @@
  *      body schema has no field to override it. `SsoProvider.userId` is an FK
  *      with `onDelete: Cascade`, so binding an org-scoped provider to the
  *      admin who registered it means deleting that admin deletes the org's
- *      SSO. `scripts/verify-sso-invariants.sh` Check 4 exists specifically to
+ *      SSO. `scripts/verify-sso-invariants.sh` Check 3 exists specifically to
  *      forbid this.
  *
  *   2. **Discovery is gated on the app's own `trustedOrigins`.**

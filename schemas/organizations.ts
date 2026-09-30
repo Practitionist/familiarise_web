@@ -332,7 +332,7 @@ export const SsoProviderRowSchema = z.object({
   domain: z.string(),
   // Server occasionally hands back null when the provider was registered
   // before the type column existed; tolerate it so the table renders.
-  providerType: z.enum(["saml", "oidc"]).nullable(),
+  providerType: z.literal("oidc").nullable(),
 });
 
 export const SsoSettingsResponseSchema = z.object({
@@ -361,46 +361,8 @@ export const PatchSsoSettingsPayloadSchema = z.object({
   defaultRoleForAutoJoin: z.literal("LEARNER").optional(),
 });
 
-// POST /api/organizations/[orgId]/sso/providers — outbound.
-// Discriminated union on `providerType` so the SAML branch must include
-// `samlConfig` and the OIDC branch must include `oidcConfig`. This catches
-// a class of UI bugs at the call site (e.g. flipping the type radio
-// without re-validating the matching config).
-/**
- * #1132 — the IdP signing certificate must be a real X.509 PEM. `min(1)` let
- * any string through, and BetterAuth's SAML library then threw
- * `Cannot read properties of undefined (reading 'metadata')` deep inside
- * POST /api/auth/sign-in/sso — a 500 with an empty body and no way for the
- * admin to tell what was wrong. Validate the envelope and the base64 body here
- * so the error lands at configuration time with a message that names the field.
- */
-const X509PemSchema = z
-  .string()
-  .min(1)
-  .refine(
-    (v) => {
-      const m = v
-        .trim()
-        .match(
-          /^-----BEGIN CERTIFICATE-----\r?\n([\s\S]+?)\r?\n-----END CERTIFICATE-----$/,
-        );
-      if (!m) return false;
-      const body = m[1].replace(/\s+/g, "");
-      // Base64 alphabet + correct padding, and long enough to be a real cert
-      // rather than a placeholder.
-      return /^[A-Za-z0-9+/]+={0,2}$/.test(body) && body.length >= 512;
-    },
-    {
-      message:
-        "Certificate must be a PEM-encoded X.509 certificate, including the BEGIN/END CERTIFICATE lines",
-    },
-  );
-
-const SamlConfigSchema = z.object({
-  issuer: z.string().min(1),
-  entryPoint: z.string().url(),
-  cert: X509PemSchema,
-});
+// POST /api/organizations/[orgId]/sso/providers — outbound. SSO is
+// OIDC-only.
 const OidcConfigSchema = z.object({
   issuer: z.string().min(1),
   clientId: z.string().min(1),
@@ -408,25 +370,13 @@ const OidcConfigSchema = z.object({
   discoveryEndpoint: z.string().url(),
   pkce: z.boolean(),
 });
-export const CreateSsoProviderPayloadSchema = z.discriminatedUnion(
-  "providerType",
-  [
-    z.object({
-      providerId: z.string().min(1),
-      domain: z.string().min(1),
-      issuer: z.string().min(1),
-      providerType: z.literal("saml"),
-      samlConfig: SamlConfigSchema,
-    }),
-    z.object({
-      providerId: z.string().min(1),
-      domain: z.string().min(1),
-      issuer: z.string().min(1),
-      providerType: z.literal("oidc"),
-      oidcConfig: OidcConfigSchema,
-    }),
-  ],
-);
+export const CreateSsoProviderPayloadSchema = z.object({
+  providerId: z.string().min(1),
+  domain: z.string().min(1),
+  issuer: z.string().min(1),
+  providerType: z.literal("oidc"),
+  oidcConfig: OidcConfigSchema,
+});
 export type CreateSsoProviderPayload = z.infer<
   typeof CreateSsoProviderPayloadSchema
 >;

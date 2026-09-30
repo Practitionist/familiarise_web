@@ -4,7 +4,8 @@
  *
  * Detail + delete for a single SSO provider registration. PATCH is NOT
  * offered — identity-provider config edits are risky (a silent typo in
- * `entryPoint` or `cert` locks users out), so the UX is delete-and-recreate.
+ * `clientId` or `clientSecret` locks users out), so the UX is
+ * delete-and-recreate.
  *
  * The URL path uses the human `providerId` slug, not the internal row
  * uuid, to match the IdP-side setup flow (admins copy the slug into their
@@ -17,7 +18,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
+import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
 import { SecretPayloadError, type SecretPayloadFailure } from "@/lib/sso/secret-crypto";
 
@@ -30,13 +31,6 @@ import { SecretPayloadError, type SecretPayloadFailure } from "@/lib/sso/secret-
  * garbage) is almost always a row the admin can repair themselves, and
  * telling them to contact support for a self-inflicted problem wastes a
  * round trip.
- *
- * Note what is no longer expressible: which of the two columns failed. The
- * decrypt happens inside a single `findFirst`, and `SecretPayloadError` does
- * not carry a column name, so a provider with both configs unreadable is
- * reported once rather than twice. That is a small loss of diagnostic
- * precision and it is not worth an extra query to recover — the resolution
- * is the same either way.
  */
 function unreadableConfigError(failure: SecretPayloadFailure): string {
   return failure === "key_unavailable"
@@ -60,7 +54,7 @@ export async function GET(
 
   // This query is where the stored config is decrypted: the
   // `$extends({ result })` map in `lib/prisma-sso-secret-extension.ts`
-  // normalises `oidcConfig` / `samlConfig` to parsed objects on the way
+  // normalises `oidcConfig` to a parsed object on the way
   // out, for both the `sso:v1:` envelope and the legacy plaintext-JSON
   // format. So there is nothing to decode here, and no per-column
   // `try`/`catch` — a row we cannot read now fails as ONE query rather
@@ -87,14 +81,13 @@ export async function GET(
     configError = unreadableConfigError(err.failure);
     // The shape is fixed and the ids are route params, so a placeholder row
     // is enough to keep the response identical to the readable case. The
-    // configs are `null` below, so a failed read can never leak a partial
+    // config is `null` below, so a failed read can never leak a partial
     // config into the MAINTAINER branch either.
     provider = {
       id: "",
       providerId,
       issuer: "",
       domain: "",
-      samlConfig: null,
       oidcConfig: null,
     };
   }
@@ -107,21 +100,16 @@ export async function GET(
   }
 
   // Only identity.manage (OWNER) gets the full config JSON in the payload.
-  // Everyone else sees redacted markers — cert/client-secret values would
-  // leak sensitive IdP credentials otherwise.
+  // Everyone else sees redacted markers — client-secret values would leak
+  // sensitive IdP credentials otherwise.
   const isOwner = hasOrgPermission(access.member.role, "identity.manage");
-  const type: "saml" | "oidc" | null = provider.samlConfig
-    ? "saml"
-    : provider.oidcConfig
-      ? "oidc"
-      : null;
+  const type: "oidc" | null = provider.oidcConfig ? "oidc" : null;
 
-  // A provider row with neither config is a half-written record (e.g.
-  // an admin started a SAML setup, dropped the cert, never finished).
-  // Fabricating an `acsUrl` from a null type would write a misleading
-  // value into the admin UI; return null instead so the page can
-  // render the "configuration incomplete" state correctly.
-  const acsUrl = type ? deriveAcsUrl(provider.providerId, type) : null;
+  // A provider row with no config is a half-written record. Fabricating a
+  // `callbackUrl` for it would write a misleading value into the admin UI;
+  // return null instead so the page can render the "configuration
+  // incomplete" state correctly.
+  const callbackUrl = type ? deriveCallbackUrl(provider.providerId) : null;
 
   if (!isOwner) {
     return NextResponse.json({
@@ -131,12 +119,10 @@ export async function GET(
         issuer: provider.issuer,
         domain: provider.domain,
         providerType: type,
-        acsUrl,
-        metadataUrl: deriveMetadataUrl(provider.providerId),
+        callbackUrl,
         // A MAINTAINER's rank stops at `identity.read`; the client secret
-        // and the SAML cert stay with OWNER. Reported as present, not shown.
+        // stays with OWNER. Reported as present, not shown.
         oidcConfig: provider.oidcConfig ? "[redacted]" : null,
-        samlConfig: provider.samlConfig ? "[redacted]" : null,
       },
     });
   }
@@ -148,23 +134,18 @@ export async function GET(
       issuer: provider.issuer,
       domain: provider.domain,
       providerType: type,
-      acsUrl,
-      metadataUrl: deriveMetadataUrl(provider.providerId),
-      // The parsed config objects, verbatim. The settings form pre-fills
-      // from these and `clientSecret` and the PEM `cert` are in here in
-      // cleartext — that is the existing contract for `identity.manage`,
-      // unchanged by this route.
+      callbackUrl,
+      // The parsed config object, verbatim. The settings form pre-fills
+      // from it and `clientSecret` is in here in cleartext — that is the
+      // existing contract for `identity.manage`, unchanged by this route.
       //
       // They are passed through rather than validated or rebuilt on
       // purpose. This view exists so an admin can SEE the config that is
       // actually stored, including the field that is wrong; a
       // reconstruct-from-schema response would show them a well-formed
       // config that differs from the real one, which is the opposite of
-      // useful when they are mid-repair. (The `test` endpoint is the
-      // validating view — it checks one field at a time and says which one
-      // is wrong.)
+      // useful when they are mid-repair.
       oidcConfig: provider.oidcConfig,
-      samlConfig: provider.samlConfig,
       ...(configError
         ? {
             providerMisconfigured: true,
@@ -177,7 +158,7 @@ export async function GET(
 }
 
 /**
- * The provider row, as the Prisma layer returns it: the two config columns
+ * The provider row, as the Prisma layer returns it: the config column
  * already decrypted and parsed.
  *
  * `select` is explicit so the returned shape is exactly what this route
@@ -194,7 +175,6 @@ function findProvider(providerId: string, orgId: string) {
       issuer: true,
       domain: true,
       oidcConfig: true,
-      samlConfig: true,
     },
   });
 }

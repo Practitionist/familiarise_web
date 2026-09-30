@@ -249,7 +249,6 @@ export async function GET(
         providerId: true,
         issuer: true,
         domain: true,
-        samlConfig: true,
         oidcConfig: true,
       },
     }),
@@ -267,9 +266,9 @@ export async function GET(
       defaultRoleForAutoJoin: "LEARNER",
       version: 1,
     },
-    providers: providers.map(({ samlConfig, oidcConfig, ...rest }) => ({
+    providers: providers.map(({ oidcConfig, ...rest }) => ({
       ...rest,
-      providerType: samlConfig ? "saml" : oidcConfig ? "oidc" : null,
+      providerType: oidcConfig ? "oidc" : null,
     })),
     domainClaims: claims,
   });

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Copy, Check } from "lucide-react";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
-import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
+import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import {
   CreateSsoProviderPayloadSchema,
   PatchSsoSettingsPayloadSchema,
@@ -46,14 +46,6 @@ import {
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
 // SsoResponse shape is imported from `@/schemas/organizations` so the
 // same definitions back the UI, the payload validators, and any future
 // operator/admin tooling.
@@ -68,12 +60,6 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
     cell: (p) => <Badge variant="secondary">{p.providerId}</Badge>,
   },
   {
-    key: "type",
-    header: "Type",
-    className: "text-xs uppercase text-muted-foreground",
-    cell: (p) => p.providerType ?? "—",
-  },
-  {
     key: "domain",
     header: "Domain",
     cell: (p) => p.domain,
@@ -85,15 +71,9 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
     cell: (p) => (
       <div className="space-y-1.5">
         <CopyableUrl
-          label={p.providerType === "oidc" ? "Redirect URI" : "ACS URL"}
-          value={deriveAcsUrl(p.providerId, p.providerType)}
+          label="Redirect URI"
+          value={deriveCallbackUrl(p.providerId)}
         />
-        {p.providerType === "saml" && (
-          <CopyableUrl
-            label="SP Metadata URL"
-            value={deriveMetadataUrl(p.providerId)}
-          />
-        )}
       </div>
     ),
   },
@@ -178,9 +158,6 @@ async function createProvider(
   orgId: string,
   payload: CreateSsoProviderPayload,
 ) {
-  // Discriminated union enforces "providerType: 'saml' ⇒ samlConfig" and
-  // "providerType: 'oidc' ⇒ oidcConfig" — flipping the radio without
-  // re-validating the matching config block fails before we hit the wire.
   const validated = validateOutboundPayload(
     CreateSsoProviderPayloadSchema,
     payload,
@@ -257,14 +234,9 @@ export function SsoPanel({ orgId }: { orgId: string }) {
   });
 
   const [showAdd, setShowAdd] = useState(false);
-  const [providerType, setProviderType] = useState<"saml" | "oidc">("saml");
   const [providerId, setProviderId] = useState("");
   const [domain, setDomain] = useState("");
   const [issuer, setIssuer] = useState("");
-  // SAML fields
-  const [samlEntryPoint, setSamlEntryPoint] = useState("");
-  const [samlCert, setSamlCert] = useState("");
-  // OIDC fields
   const [oidcClientId, setOidcClientId] = useState("");
   const [oidcClientSecret, setOidcClientSecret] = useState("");
   const [oidcDiscoveryUrl, setOidcDiscoveryUrl] = useState("");
@@ -272,34 +244,19 @@ export function SsoPanel({ orgId }: { orgId: string }) {
 
   const createProviderMutation = useMutation({
     mutationFn: () => {
-      // Build the discriminated payload up-front so TS narrows correctly
-      // and the schema's union sees a complete object.
-      const payload: CreateSsoProviderPayload =
-        providerType === "saml"
-          ? {
-              providerId: providerId.trim(),
-              domain: domain.trim(),
-              issuer: issuer.trim(),
-              providerType: "saml",
-              samlConfig: {
-                issuer: issuer.trim(),
-                entryPoint: samlEntryPoint.trim(),
-                cert: samlCert.trim(),
-              },
-            }
-          : {
-              providerId: providerId.trim(),
-              domain: domain.trim(),
-              issuer: issuer.trim(),
-              providerType: "oidc",
-              oidcConfig: {
-                issuer: issuer.trim(),
-                clientId: oidcClientId.trim(),
-                clientSecret: oidcClientSecret.trim(),
-                discoveryEndpoint: oidcDiscoveryUrl.trim(),
-                pkce: true,
-              },
-            };
+      const payload: CreateSsoProviderPayload = {
+        providerId: providerId.trim(),
+        domain: domain.trim(),
+        issuer: issuer.trim(),
+        providerType: "oidc",
+        oidcConfig: {
+          issuer: issuer.trim(),
+          clientId: oidcClientId.trim(),
+          clientSecret: oidcClientSecret.trim(),
+          discoveryEndpoint: oidcDiscoveryUrl.trim(),
+          pkce: true,
+        },
+      };
       return createProvider(orgId, payload);
     },
     onSuccess: () => {
@@ -308,8 +265,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
       setProviderId("");
       setDomain("");
       setIssuer("");
-      setSamlEntryPoint("");
-      setSamlCert("");
       setOidcClientId("");
       setOidcClientSecret("");
       setOidcDiscoveryUrl("");
@@ -338,7 +293,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
     <>
       {/* No "Back to settings" button — this is a tab within Settings now,
           so the tab bar above already is the way back. */}
-      <PanelHeader description="Configure SAML or OIDC sign-in for this organization" />
+      <PanelHeader description="Configure OIDC sign-in for this organization" />
       <div className="space-y-6">
         <Card>
           <CardHeader>
@@ -414,7 +369,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
             <div>
               <CardTitle className="text-base">SSO providers</CardTitle>
               <CardDescription>
-                SAML and OIDC providers registered for this organization.
+                OIDC providers registered for this organization.
               </CardDescription>
             </div>
             {canEdit && (
@@ -468,7 +423,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
           <DialogHeader>
             <DialogTitle>Add SSO provider</DialogTitle>
             <DialogDescription>
-              Configure a SAML or OIDC identity provider for this organization.
+              Configure an OIDC identity provider for this organization.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -499,99 +454,48 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 placeholder="https://idp.acme.com"
               />
             </div>
-            <div className="space-y-2">
-              <Label>Provider type</Label>
-              <Select
-                value={providerType}
-                onValueChange={(v) => setProviderType(v as "saml" | "oidc")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="saml">SAML</SelectItem>
-                  <SelectItem value="oidc">OIDC</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 space-y-3">
               <p className="text-sm font-medium text-zinc-700">
                 Configure these values in your IdP
               </p>
               <CopyableUrl
-                label={
-                  providerType === "saml"
-                    ? "ACS / Callback URL"
-                    : "Redirect URI"
-                }
-                value={deriveAcsUrl(providerId, providerType)}
+                label="Redirect URI"
+                value={deriveCallbackUrl(providerId)}
               />
-              {providerType === "saml" && (
-                <CopyableUrl
-                  label="SP Metadata URL (Entity ID)"
-                  value={deriveMetadataUrl(providerId)}
-                />
-              )}
               <p className="text-xs text-zinc-500">
-                Paste these into your IdP app configuration (Okta, Auth0, Azure
-                AD, Google Workspace). URLs update when you change the Provider
-                ID above.
+                Paste this into your IdP app configuration (Okta, Auth0, Azure
+                AD, Google Workspace). The URI updates when you change the
+                Provider ID above.
               </p>
             </div>
-            {providerType === "saml" ? (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="saml-entry">SSO entry point URL</Label>
-                  <Input
-                    id="saml-entry"
-                    value={samlEntryPoint}
-                    onChange={(e) => setSamlEntryPoint(e.target.value)}
-                    placeholder="https://idp.acme.com/sso/saml"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="saml-cert">X.509 certificate</Label>
-                  <textarea
-                    id="saml-cert"
-                    value={samlCert}
-                    onChange={(e) => setSamlCert(e.target.value)}
-                    className="w-full min-h-20 rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono"
-                    placeholder="MIICpDCCAYwCCQC..."
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="oidc-client-id">Client ID</Label>
-                  <Input
-                    id="oidc-client-id"
-                    value={oidcClientId}
-                    onChange={(e) => setOidcClientId(e.target.value)}
-                    placeholder="abc123..."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="oidc-secret">Client secret</Label>
-                  <Input
-                    id="oidc-secret"
-                    type="password"
-                    value={oidcClientSecret}
-                    onChange={(e) => setOidcClientSecret(e.target.value)}
-                    placeholder="secret..."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="oidc-discovery">Discovery URL</Label>
-                  <Input
-                    id="oidc-discovery"
-                    value={oidcDiscoveryUrl}
-                    onChange={(e) => setOidcDiscoveryUrl(e.target.value)}
-                    placeholder="https://idp.acme.com/.well-known/openid-configuration"
-                  />
-                </div>
-              </>
-            )}
+            <div className="space-y-2">
+              <Label htmlFor="oidc-client-id">Client ID</Label>
+              <Input
+                id="oidc-client-id"
+                value={oidcClientId}
+                onChange={(e) => setOidcClientId(e.target.value)}
+                placeholder="abc123..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="oidc-secret">Client secret</Label>
+              <Input
+                id="oidc-secret"
+                type="password"
+                value={oidcClientSecret}
+                onChange={(e) => setOidcClientSecret(e.target.value)}
+                placeholder="secret..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="oidc-discovery">Discovery URL</Label>
+              <Input
+                id="oidc-discovery"
+                value={oidcDiscoveryUrl}
+                onChange={(e) => setOidcDiscoveryUrl(e.target.value)}
+                placeholder="https://idp.acme.com/.well-known/openid-configuration"
+              />
+            </div>
             {providerError && (
               <p className="text-sm text-red-600">{providerError}</p>
             )}

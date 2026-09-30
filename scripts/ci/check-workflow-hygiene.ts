@@ -383,7 +383,6 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "retry-moderation-enforcement.yml": "scheduled",
   "send-appointment-reminders.yml": "scheduled",
   "settle-invoice-accruals.yml": "scheduled",
-  "sso-cert-expiry-alert.yml": "scheduled",
   "stream-sync.yml": "scheduled",
   "stream-webhook-drift.yml": "scheduled",
   "sweep-abandoned-overage-charges.yml": "scheduled",

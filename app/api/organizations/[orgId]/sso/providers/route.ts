@@ -4,11 +4,11 @@
  *
  * SSO IdP registrations scoped to this organization. Rows live in
  * `SsoProvider` (BetterAuth-managed, not Prisma-owned at auth time — we
- * write it, BetterAuth's sso() plugin reads it). Each row holds the
- * provider-type-specific config as JSON strings (`oidcConfig` /
- * `samlConfig`) so BetterAuth can parse it on login attempts.
+ * write it, BetterAuth's sso() plugin reads it). SSO is OIDC-only: each
+ * row holds its config as a JSON string in `oidcConfig` so BetterAuth can
+ * parse it on login attempts.
  *
- * ACS + metadata URLs are DERIVED from providerId (see
+ * The OIDC redirect URI is DERIVED from providerId (see
  * lib/sso/derive-urls.ts) — never accepted from the client — so IdP-side
  * setup instructions stay aligned with what BetterAuth actually mounts.
  *
@@ -16,7 +16,7 @@
  *
  * `registerSSOProvider` (BetterAuth's own `POST /sso/register`) is the
  * endpoint that performs registration-time OIDC discovery and writes the
- * canonical `oidcConfig` / `samlConfig` shape. It is unusable for an
+ * canonical `oidcConfig` shape. It is unusable for an
  * org-scoped provider at the pinned `@better-auth/sso@1.6.5`, for two
  * independent reasons. Both were read out of the installed package, not
  * inferred:
@@ -27,7 +27,7 @@
  *      to override it. `SsoProvider.userId` is an FK with `onDelete:
  *      Cascade` (`prisma/schema.prisma`), so the org's SSO would be deleted
  *      the moment the admin who registered it was removed from the user
- *      table. `scripts/verify-sso-invariants.sh` Check 4 exists specifically
+ *      table. `scripts/verify-sso-invariants.sh` Check 3 exists specifically
  *      to forbid that, and it is the right call: an org's IdP must outlive
  *      the staff who configured it.
  *
@@ -44,33 +44,21 @@
  *      authorization/token/JWKS endpoints back onto the admin form, which is
  *      the defect this change exists to fix.
  *
- * So the two things `registerSSOProvider` would have given us are obtained
- * directly instead, using the plugin's own exported helpers so nothing here
- * is a divergent re-implementation:
- *
- *   - Discovery: `discoverOidcConfigForTenant` in `lib/sso/oidc-discovery.ts`,
- *     which calls the exported `discoverOIDCConfig` with a tenant-appropriate
- *     trust predicate and the existing SSRF guard. The stored `oidcConfig`
- *     therefore gains `authorizationEndpoint` / `tokenEndpoint` /
- *     `jwksEndpoint` / `userInfoEndpoint` / `tokenEndpointAuthentication`, and
- *     BetterAuth's `needsRuntimeDiscovery` returns false on the sign-in
- *     path, so no discovery fetch happens while a user is waiting to log in.
- *
- *   - Canonical stored shape: `buildStoredSamlConfig` in
- *     `lib/sso/stored-config.ts`. This is not cosmetic — the previous
- *     `{issuer, entryPoint, cert}` shape makes BetterAuth 1.6.5 throw
- *     `TypeError: Cannot read properties of undefined (reading 'metadata')`
- *     at `dist/index.mjs:2447` (sign-in) and `:1851` (SP metadata), because
- *     both dereference `parsedSamlConfig.spMetadata.metadata` with no
- *     optional chaining. Every SAML provider this app has registered was
- *     therefore unable to sign anyone in.
+ * So discovery is done directly instead, using the plugin's own exported
+ * helper so nothing here is a divergent re-implementation:
+ * `discoverOidcConfigForTenant` in `lib/sso/oidc-discovery.ts` calls the
+ * exported `discoverOIDCConfig` with a tenant-appropriate trust predicate and
+ * the existing SSRF guard. The stored `oidcConfig` therefore gains
+ * `authorizationEndpoint` / `tokenEndpoint` / `jwksEndpoint` /
+ * `userInfoEndpoint` / `tokenEndpointAuthentication`, and BetterAuth's
+ * `needsRuntimeDiscovery` returns false on the sign-in path, so no discovery
+ * fetch happens while a user is waiting to log in.
  *
  * On the 1.7 upgrade: re-check whether `registerSSOProvider` gains (a) a way
  * to leave `userId` null for org-scoped providers and (b) a tenant-scoped
  * trust predicate for discovery. If both land, this handler collapses to a
  * single `auth.api.registerSSOProvider` call and `lib/sso/oidc-discovery.ts`
- * and `lib/sso/stored-config.ts` are deleted. If only (a) lands, discovery
- * still has to stay here.
+ * is deleted. If only (a) lands, discovery still has to stay here.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -83,14 +71,13 @@ import {
   createProviderSchema,
   isReservedProviderId,
 } from "@/lib/sso/provider-schemas";
-import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
+import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import {
   buildStoredOidcConfig,
   discoverOidcConfigForTenant,
   OidcDiscoveryError,
   type DiscoveredOidcConfig,
 } from "@/lib/sso/oidc-discovery";
-import { buildStoredSamlConfig } from "@/lib/sso/stored-config";
 import {
   encryptSecretPayload,
   isEncryptionKeyUsable,
@@ -113,42 +100,15 @@ export async function GET(
       providerId: true,
       issuer: true,
       domain: true,
-      // `samlConfig` and `oidcConfig` are JSON-encoded strings on the
-      // `SsoProvider` model (`prisma/schema.prisma`), decrypted and parsed
-      // into objects on the way out by the `$extends({ result })` map in
-      // `lib/prisma-sso-secret-extension.ts`. We only need to know *which*
-      // is populated to drive ACS URL inference below — the contents stay
-      // opaque to the list view (the detail endpoint is the one that returns
-      // them, redacted for anyone below OWNER). Audit Phase B.2.
-      //
-      // Only truthiness is read, never a field. That is what keeps this
-      // correct across the encryption rollout: a config column is non-null
-      // exactly when the admin supplied one, and that is true of a plaintext
-      // JSON string, an `sso:v1:` envelope, and the parsed object the
-      // extension hands back. Nothing here has to know which.
-      samlConfig: true,
-      oidcConfig: true,
     },
   });
 
-  // Augment each with its derived ACS + metadata URLs so the dashboard
-  // doesn't have to re-compute them client-side. Type inference matters
-  // because OIDC providers use a different callback path; the
-  // pre-audit-B.2 code hardcoded `null` which always picked the SAML
-  // URL — fine for SAML providers, wrong for OIDC providers and very
-  // confusing for admins configuring OIDC in their IdP console.
-  const augmented = providers.map(({ samlConfig, oidcConfig, ...p }) => {
-    const type: "saml" | "oidc" | null = samlConfig
-      ? "saml"
-      : oidcConfig
-        ? "oidc"
-        : null;
-    return {
-      ...p,
-      acsUrl: deriveAcsUrl(p.providerId, type),
-      metadataUrl: deriveMetadataUrl(p.providerId),
-    };
-  });
+  // Augment each with its derived redirect URI so the dashboard doesn't
+  // have to re-compute it client-side.
+  const augmented = providers.map((p) => ({
+    ...p,
+    callbackUrl: deriveCallbackUrl(p.providerId),
+  }));
 
   return NextResponse.json({ data: augmented });
 }
@@ -192,20 +152,6 @@ export async function POST(
     );
   }
   const body = parsed.data;
-
-  // Cross-check: providerType-specific config must be present.
-  if (body.providerType === "saml" && !body.samlConfig) {
-    return NextResponse.json(
-      { error: "samlConfig is required for providerType=saml" },
-      { status: 400 },
-    );
-  }
-  if (body.providerType === "oidc" && !body.oidcConfig) {
-    return NextResponse.json(
-      { error: "oidcConfig is required for providerType=oidc" },
-      { status: 400 },
-    );
-  }
 
   const normalizedDomain = body.domain.toLowerCase();
 
@@ -311,54 +257,38 @@ export async function POST(
   }
 
   // Discovery, now that the org is known to own a verified domain.
-  let discoveredOidc: DiscoveredOidcConfig | null = null;
-  if (body.providerType === "oidc" && body.oidcConfig) {
-    try {
-      discoveredOidc = await discoverOidcConfigForTenant(
-        body.issuer,
-        body.oidcConfig.discoveryEndpoint,
+  let discoveredOidc: DiscoveredOidcConfig;
+  try {
+    discoveredOidc = await discoverOidcConfigForTenant(
+      body.issuer,
+      body.oidcConfig.discoveryEndpoint,
+    );
+  } catch (err) {
+    if (err instanceof OidcDiscoveryError) {
+      return NextResponse.json(
+        { error: err.message, code: "OIDC_DISCOVERY_FAILED", reason: err.failure },
+        { status: 422 },
       );
-    } catch (err) {
-      if (err instanceof OidcDiscoveryError) {
-        return NextResponse.json(
-          { error: err.message, code: "OIDC_DISCOVERY_FAILED", reason: err.failure },
-          { status: 422 },
-        );
-      }
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-        tags: { subsystem: "enterprise", op: "sso-oidc-discovery" },
-      });
-      throw err;
     }
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      tags: { subsystem: "enterprise", op: "sso-oidc-discovery" },
+    });
+    throw err;
   }
 
   try {
     const provider = await prisma.$transaction(async (tx) => {
-      // Canonical stored shape, built by the two `lib/sso` modules whose
-      // headers explain why each field is there. In short: the OIDC config
-      // carries the endpoints discovery just resolved (so login never has to
-      // fetch them), and the SAML config carries `spMetadata` (without which
-      // BetterAuth 1.6.5 throws a TypeError on the sign-in path).
-      const storedOidcConfig =
-        body.providerType === "oidc" && body.oidcConfig && discoveredOidc
-          ? buildStoredOidcConfig({
-              issuer: body.issuer,
-              clientId: body.oidcConfig.clientId,
-              clientSecret: body.oidcConfig.clientSecret,
-              discoveryEndpoint: body.oidcConfig.discoveryEndpoint,
-              pkce: body.oidcConfig.pkce,
-              scopes: body.oidcConfig.scopes,
-              discovered: discoveredOidc,
-            })
-          : null;
-      const storedSamlConfig =
-        body.providerType === "saml" && body.samlConfig
-          ? buildStoredSamlConfig({
-              issuer: body.issuer,
-              entryPoint: body.samlConfig.entryPoint,
-              cert: body.samlConfig.cert,
-            })
-          : null;
+      // Canonical stored shape: the OIDC config carries the endpoints
+      // discovery just resolved, so login never has to fetch them.
+      const storedOidcConfig = buildStoredOidcConfig({
+        issuer: body.issuer,
+        clientId: body.oidcConfig.clientId,
+        clientSecret: body.oidcConfig.clientSecret,
+        discoveryEndpoint: body.oidcConfig.discoveryEndpoint,
+        pkce: body.oidcConfig.pkce,
+        scopes: body.oidcConfig.scopes,
+        discovered: discoveredOidc,
+      });
 
       // Checked up front rather than discovered by `encryptSecretPayload`
       // throwing mid-write: a malformed key (present, but not 64 hex chars)
@@ -384,13 +314,8 @@ export async function POST(
           // Deliberately NO `userId`. See the module header: the FK cascades
           // on user delete, so binding this row to the registering admin
           // would delete the org's SSO when that person is removed.
-          // `scripts/verify-sso-invariants.sh` Check 4 pins this.
-          oidcConfig: storedOidcConfig
-            ? encryptSecretPayload(storedOidcConfig)
-            : null,
-          samlConfig: storedSamlConfig
-            ? encryptSecretPayload(storedSamlConfig)
-            : null,
+          // `scripts/verify-sso-invariants.sh` Check 3 pins this.
+          oidcConfig: encryptSecretPayload(storedOidcConfig),
         },
       });
 
@@ -420,8 +345,7 @@ export async function POST(
           providerId: provider.providerId,
           issuer: provider.issuer,
           domain: provider.domain,
-          acsUrl: deriveAcsUrl(provider.providerId, body.providerType),
-          metadataUrl: deriveMetadataUrl(provider.providerId),
+          callbackUrl: deriveCallbackUrl(provider.providerId),
         },
       },
       { status: 201 },

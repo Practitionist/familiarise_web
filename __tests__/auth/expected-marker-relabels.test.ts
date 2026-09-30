@@ -107,9 +107,9 @@ describe("the marker reaches beforeSend (row 19)", () => {
     expect(JSON.stringify({ err })).toBe('{"err":{}}');
   });
 
-  // BREAKS IF DELETED: the domain-check route's `SecretPayloadError` and both
-  // auth pages' thrown fetch re-level to `error` and page on-call for a
-  // platform stall that has already been triaged as expected.
+  // BREAKS IF DELETED: both auth pages' thrown fetch re-level to `error` and
+  // page on-call for a platform stall that has already been triaged as
+  // expected.
   it("re-levels a direct Sentry.captureException to warning + expected:true", async () => {
     Sentry.captureException(markExpected(new Error("direct-capture")));
     await flush();

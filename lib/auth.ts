@@ -676,7 +676,7 @@ export const auth = betterAuth({
       allowUserToCreateOrganization: false,
     }),
 
-    // Enterprise: SSO plugin (SAML / OIDC).
+    // Enterprise: SSO plugin (OIDC).
     // Auto-generates the `ssoProvider` table. Per-org providers are linked
     // via `organizationId` on the row. See lib/auth-helpers.ts and the
     // OrganizationSSOSettings model in prisma/schema.prisma for the policy

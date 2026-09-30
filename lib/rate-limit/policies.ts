@@ -302,9 +302,9 @@ export const RATE_POLICIES = {
     description:
       "GET /api/auth/sso/callback[/:providerId] and POST " +
       "/api/auth/sso/saml2/sp/acs[/:providerId] — the OIDC redirect landing " +
-      "and the SAML HTTP-POST binding, i.e. both callback halves. SAML is " +
-      "enabled here, so covering only the OIDC leg left half of enterprise " +
-      "sign-in on no budget. Was unthrottled. The budget is on the IP because " +
+      "and the SAML HTTP-POST binding, i.e. both callback halves. SSO is " +
+      "OIDC-only, but the sso() plugin still mounts the SAML ACS endpoint, so " +
+      "it stays on budget. Was unthrottled. The budget is on the IP because " +
       "both arrive from the *user's* browser, not from the IdP, so the address " +
       "is the person's; thirty is set by the provider's own retry behaviour " +
       "rather than by ours — exceeding it locks a corporate user out of their " +

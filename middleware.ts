@@ -418,10 +418,9 @@ const POLICY_ROUTES: PolicyRoute[] = [
     match: (p, m) => m === "POST" && p.startsWith("/api/auth/sign-in/sso"),
   },
   {
-    // @better-auth/sso — both callback halves, and SAML is enabled here
-    // (`sso()` is registered in lib/auth.ts, and lib/sso/derive-urls.ts builds
-    // the ACS URL), so leaving the SAML leg out would leave half of enterprise
-    // sign-in on no budget at all:
+    // @better-auth/sso — both callback halves. SSO is OIDC-only, but `sso()`
+    // (lib/auth.ts) still mounts the SAML ACS endpoint, so it stays on budget
+    // rather than being left as an unthrottled public POST:
     //   GET  /api/auth/sso/callback[/:providerId]   — OIDC redirect landing
     //   POST /api/auth/sso/saml2/sp/acs[/:providerId] — SAML HTTP-POST binding
     // IP-keyed because both are the *user's browser* arriving from their IdP, so
