@@ -14,7 +14,7 @@ other.
 | 6 | [`05-testing.md`](./05-testing.md) | SSO unit tests, `verify-sso-invariants.sh` static checks, how to write new auth tests. |
 | 7 | [`06-ci-deployment.md`](./06-ci-deployment.md) | GitHub Actions CI pipeline, SSO cert expiry cron, Docker dev/prod, Netlify, env vars, secret rotation. |
 | 8 | [`sso/README.md`](./sso/README.md) | Enterprise SSO in depth — SAML/OIDC, enforcement layers, domain claims, provider schemas, PKCE, cert rotation. |
-| 9 | [`oauth/README.md`](./oauth/README.md) | OAuth providers (Google, GitHub, Facebook), account linking, how to add a new provider. |
+| 9 | [`oauth/README.md`](./oauth/README.md) | OAuth providers (Google, GitHub), account linking, how to add a new provider. |
 | 10 | [`07-email-verification.md`](./07-email-verification.md) | Verification links, their TTLs, and the resend paths. |
 | 11 | [`08-redirects-and-navigation.md`](./08-redirects-and-navigation.md) | **The anti-flicker contract**: auth redirect rules (`replace` not `push`, idempotency refs, force-fresh destination checks, `safeSameOriginPath`, server-side dashboard entry redirects). Read before touching any redirect. |
 | 12 | [`08-staff-onboarding.md`](./08-staff-onboarding.md) | **How an admin is bootstrapped and how staff join**: why domain is never the authorisation key, why an admin cannot be self-created, the single-use email-bound token, and why mandatory 2FA is enforced in the guard rather than at session creation. Contract and invariants, not implementation. |

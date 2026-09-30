@@ -105,7 +105,6 @@ Primary deployment target is **Netlify** via `netlify.toml`:
 | `NEXT_PUBLIC_APP_URL` | Yes | Public app URL (used by auth client + SSO URL derivation) |
 | `GOOGLE_CLIENT_ID` / `_SECRET` | Yes | Google OAuth |
 | `GITHUB_CLIENT_ID` / `_SECRET` | Yes | GitHub OAuth |
-| `FACEBOOK_CLIENT_ID` / `_SECRET` | Yes | Facebook OAuth |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Yes | Rate limiting (edge + handler) |
 | `DATABASE_URL` | Yes | Postgres (session storage, user data) |
 

@@ -54,7 +54,7 @@ import {
  * half of the team whose mail is slowest to arrive. The other reason to verify
  * — `requireEmailVerification: true` in `lib/auth.ts` exists to stop an
  * attacker pre-registering a victim's address and then hijacking it via a later
- * trusted-provider login — does not apply, because a holder of this token
+ * OAuth login — does not apply, because a holder of this token
  * controls this address right now and there is no pre-registration race: the
  * `User.email` unique below is the gate, and losing that race is a 409.
  *

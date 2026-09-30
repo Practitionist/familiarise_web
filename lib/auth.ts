@@ -124,8 +124,8 @@ export const auth = betterAuth({
     maxPasswordLength: 128,
     // #673 — a credential signup must prove email ownership before it can hold
     // a session. Without this an attacker can pre-register a victim's address; a
-    // later trusted-provider OAuth login (see accountLinking below) would then
-    // auto-link the real user into the attacker-seeded account (pre-hijacking).
+    // later OAuth login (see accountLinking below) would then auto-link the
+    // real user into the attacker-seeded account (pre-hijacking).
     // OAuth/SSO are unaffected — the IdP already asserts a verified email.
     requireEmailVerification: true,
     password: {
@@ -188,20 +188,17 @@ export const auth = betterAuth({
       clientId: process.env.GITHUB_CLIENT_ID ?? "",
       clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
     },
-    facebook: {
-      clientId: process.env.FACEBOOK_CLIENT_ID ?? "",
-      clientSecret: process.env.FACEBOOK_CLIENT_SECRET ?? "",
-    },
   },
 
   account: {
     accountLinking: {
       enabled: true,
-      // "credential" is intentionally not listed. trustedProviders only applies
-      // to OAuth providers during the implicit auto-link flow in BetterAuth's
-      // callback handler. Credential accounts are created explicitly during
-      // sign-up, not via OAuth auto-link.
-      trustedProviders: ["google", "github", "facebook"],
+      // No trustedProviders on purpose. A trusted provider links into an
+      // existing account on its email claim alone, so a provider that lets
+      // users set an unverified email could take over any account. Without
+      // it, BetterAuth only auto-links when the provider asserts
+      // email_verified AND the local user's email is verified
+      // (requireLocalEmailVerified, default true).
     },
     // #1861 S1 / #1529 — Account.accessToken/refreshToken are encrypted with
     // the Better Auth secret; nothing in the app reads them directly. Legacy

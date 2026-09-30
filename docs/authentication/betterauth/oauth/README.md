@@ -9,7 +9,7 @@
 
 ## 1. Background
 
-Three OAuth social providers are registered: **Google**, **GitHub**, **Facebook**. They enable "Sign in with X" buttons on the auth pages and support automatic account linking by email.
+Two OAuth social providers are registered: **Google** and **GitHub**. They enable "Sign in with X" buttons on the auth pages and support automatic account linking by verified email. Facebook was removed; existing Facebook-only users must reset a password or sign in with another provider on the same verified email.
 
 OAuth is the lighter-weight cousin of SSO — it authenticates individual users via their personal accounts. Enterprise SSO (SAML/OIDC for org-managed IdPs) lives in [`../sso/`](../sso/README.md).
 
@@ -23,27 +23,25 @@ Defined in [`lib/auth.ts`](../../../../lib/auth.ts#L57-L70):
 socialProviders: {
   google:   { clientId: env.GOOGLE_CLIENT_ID,   clientSecret: env.GOOGLE_CLIENT_SECRET },
   github:   { clientId: env.GITHUB_CLIENT_ID,   clientSecret: env.GITHUB_CLIENT_SECRET },
-  facebook: { clientId: env.FACEBOOK_CLIENT_ID, clientSecret: env.FACEBOOK_CLIENT_SECRET },
 },
 ```
 
 ### 2.2 Account Linking
 
-All three are `trustedProviders`:
+No provider is in `trustedProviders`:
 
 ```typescript
 account: {
   accountLinking: {
     enabled: true,
-    trustedProviders: ["google", "github", "facebook"],
   },
 },
 ```
 
-When a user signs in via OAuth with an email that already exists (from a credential signup or another OAuth provider), BetterAuth auto-links the accounts. The `account.create.after` hook sends a "new account linked" notification email.
+When a user signs in via OAuth with an email that already exists, BetterAuth auto-links only if the provider asserts `email_verified` **and** the local user's email is verified (`requireLocalEmailVerified`, default `true`). Otherwise sign-in fails with `account_not_linked`. The `account.create.after` hook sends a "new account linked" notification email.
 
-> [!NOTE]
-> `"credential"` is intentionally **not** in `trustedProviders`. It only applies to OAuth providers during BetterAuth's implicit auto-link callback flow. Credential accounts are created explicitly during sign-up.
+> [!WARNING]
+> Do not add `trustedProviders`. A trusted provider links on its email claim alone, which turns any provider that allows unverified emails into an account-takeover path.
 
 ### 2.3 UI Configuration
 
@@ -53,20 +51,16 @@ When a user signs in via OAuth with an email that already exists (from a credent
 export const AUTH_PROVIDERS = [
   { id: "github",   label: "GitHub",   className: "bg-black hover:bg-gray-700" },
   { id: "google",   label: "Google",   className: "bg-red-600 hover:bg-red-500" },
-  { id: "facebook", label: "Facebook", className: "bg-blue-600 hover:bg-blue-500" },
 ] as const;
 ```
 
 ## 3. How to Add a New OAuth Provider
 
-1. **`lib/auth.ts`** — Add to `socialProviders` and `trustedProviders`:
+1. **`lib/auth.ts`** — Add to `socialProviders`:
    ```typescript
    socialProviders: {
      // ... existing
      apple: { clientId: env.APPLE_CLIENT_ID, clientSecret: env.APPLE_CLIENT_SECRET },
-   },
-   account: {
-     accountLinking: { trustedProviders: [..., "apple"] },
    },
    ```
 

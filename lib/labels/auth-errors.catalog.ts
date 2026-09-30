@@ -33,7 +33,12 @@
 
 import type { AuthErrorCode } from "./auth-error-codes";
 
-export type AuthErrorField = "email" | "password" | "newPassword" | "referral" | "code";
+export type AuthErrorField =
+  | "email"
+  | "password"
+  | "newPassword"
+  | "referral"
+  | "code";
 
 /**
  * What the page should offer next. Deliberately a small closed set: every
@@ -99,7 +104,7 @@ export const AUTH_ERROR_COPY = {
   CREDENTIAL_ACCOUNT_NOT_FOUND: {
     title: "This account has no password",
     description:
-      "You signed up with Google, GitHub or Facebook, or through your organisation's SSO. Use that button instead.",
+      "You signed up with Google or GitHub, or through your organisation's SSO. Use that button instead.",
   },
   USER_NOT_FOUND: {
     title: "We couldn't find that account",
@@ -129,7 +134,8 @@ export const AUTH_ERROR_COPY = {
   },
   SESSION_NOT_FRESH: {
     title: "Please sign in again",
-    description: "This is a sensitive action, so we ask you to confirm it's you.",
+    description:
+      "This is a sensitive action, so we ask you to confirm it's you.",
     action: "sign-in",
   },
   SESSION_LOOKUP_FAILED: UNREACHABLE,
@@ -235,7 +241,8 @@ export const AUTH_ERROR_COPY = {
   },
   CALLBACK_URL_REQUIRED: {
     title: "This link is incomplete",
-    description: "It looks like part of the address is missing. Request a new one.",
+    description:
+      "It looks like part of the address is missing. Request a new one.",
     action: "request-new-link",
   },
 
@@ -253,7 +260,8 @@ export const AUTH_ERROR_COPY = {
   },
   FAILED_TO_UNLINK_LAST_ACCOUNT: {
     title: "You need one way to sign in",
-    description: "Add a password or another provider before disconnecting this one.",
+    description:
+      "Add a password or another provider before disconnecting this one.",
   },
   ACCOUNT_NOT_FOUND: {
     title: "We couldn't find that connection",
@@ -285,17 +293,20 @@ export const AUTH_ERROR_COPY = {
 
   INVITATION_NOT_FOUND: {
     title: "This invitation link isn't valid",
-    description: "It may have been revoked. Ask whoever invited you for a new one.",
+    description:
+      "It may have been revoked. Ask whoever invited you for a new one.",
     action: "contact-support",
   },
   YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION: {
     title: "This invitation isn't for you",
-    description: "It was sent to a different email address. Ask for one for this address.",
+    description:
+      "It was sent to a different email address. Ask for one for this address.",
     action: "contact-support",
   },
   USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION: {
     title: "You're already on the team",
-    description: "No need to accept again — open the organisation from your dashboard.",
+    description:
+      "No need to accept again — open the organisation from your dashboard.",
     action: "retry",
   },
   INVITATION_EXPIRED: {
@@ -324,17 +335,20 @@ export const AUTH_ERROR_COPY = {
 
   SETUP_TOKEN_INVALID: {
     title: "This setup link isn't valid",
-    description: "It may have been revoked. Ask an administrator for a new one.",
+    description:
+      "It may have been revoked. Ask an administrator for a new one.",
     action: "contact-support",
   },
   SETUP_TOKEN_EXPIRED: {
     title: "This setup link has expired",
-    description: "Setup links last 72 hours. Ask an administrator for a new one.",
+    description:
+      "Setup links last 72 hours. Ask an administrator for a new one.",
     action: "contact-support",
   },
   SETUP_TOKEN_ALREADY_USED: {
     title: "This setup link was already used",
-    description: "If that wasn't you, contact support — your account may be at risk.",
+    description:
+      "If that wasn't you, contact support — your account may be at risk.",
     action: "contact-support",
   },
 
@@ -407,7 +421,8 @@ export const AUTH_ERROR_COPY = {
   },
   INVALID_BACKUP_CODE: {
     title: "That backup code isn't right",
-    description: "Each backup code works once. Try another, or generate new ones.",
+    description:
+      "Each backup code works once. Try another, or generate new ones.",
     field: "code",
   },
   INVALID_TWO_FACTOR_COOKIE: {
@@ -436,7 +451,8 @@ export const AUTH_ERROR_COPY = {
   },
   CROSS_SITE_NAVIGATION_LOGIN_BLOCKED: {
     title: "Sign-in blocked for your safety",
-    description: "This looked like a cross-site request. Open the app directly and sign in there.",
+    description:
+      "This looked like a cross-site request. Open the app directly and sign in there.",
     action: "sign-in",
   },
   INVALID_ORIGIN: {
@@ -524,7 +540,9 @@ export const AUTH_ERROR_COPY = {
  * replacement, so a flow override only has to state what differs.
  */
 export const AUTH_ERROR_COPY_BY_FLOW: Readonly<
-  Partial<Record<AuthFlowName, Readonly<Record<string, Partial<AuthErrorCopy>>>>>
+  Partial<
+    Record<AuthFlowName, Readonly<Record<string, Partial<AuthErrorCopy>>>>
+  >
 > = {
   reset: {
     INVALID_TOKEN: {
@@ -542,7 +560,8 @@ export const AUTH_ERROR_COPY_BY_FLOW: Readonly<
   verify: {
     INVALID_TOKEN: {
       title: "This verification link no longer works",
-      description: "Verification links last 1 hour and work once. Request a fresh one.",
+      description:
+        "Verification links last 1 hour and work once. Request a fresh one.",
       action: "resend-verification" as const,
     },
     TOKEN_EXPIRED: {
@@ -563,9 +582,7 @@ export const AUTH_ERROR_COPY_BY_FLOW: Readonly<
 /* -------------------------------------------------------------------------- */
 
 /** The base copy for a code, or `undefined` when the code is not ours. */
-export function baseAuthErrorCopy(
-  code: string,
-): AuthErrorCopy | undefined {
+export function baseAuthErrorCopy(code: string): AuthErrorCopy | undefined {
   return (AUTH_ERROR_COPY as Record<string, AuthErrorCopy>)[code];
 }
 

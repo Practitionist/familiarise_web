@@ -27,7 +27,7 @@ import {
  *     the identity proof the rest of the app insists on.
  *  2. **It bypassed BetterAuth.** `requireEmailVerification: true` in
  *     `lib/auth.ts` is the control that stops someone pre-registering a
- *     victim's address and hijacking it later through a trusted-provider
+ *     victim's address and hijacking it later through an OAuth
  *     login. This route wrote `emailVerified: true` outright, and wrote a
  *     second, unwatched copy of the hash algorithm — the exact hazard
  *     `hashStaffPassword` in `lib/auth/staff-invitations.ts` now prevents.

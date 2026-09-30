@@ -78,7 +78,7 @@ Passwords are hashed with `bcrypt` at cost factor 12. BetterAuth's default hashe
 
 ### 3.4 Social Providers
 
-Three OAuth providers are registered in `socialProviders`: **Google**, **GitHub**, **Facebook**. All three are also listed in `trustedProviders` for account linking. See [`oauth/README.md`](./oauth/README.md) for details.
+Two OAuth providers are registered in `socialProviders`: **Google** and **GitHub**. Neither is a `trustedProviders` entry; account linking needs a verified email on both sides. See [`oauth/README.md`](./oauth/README.md) for details.
 
 ### 3.5 User Additional Fields
 

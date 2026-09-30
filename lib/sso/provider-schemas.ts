@@ -57,9 +57,8 @@ export const oidcConfigSchema = z.object({
  *     this app renders. Beyond the URL hijack, an `Account.providerId` row
  *     and an `SsoProvider.providerId` row sharing an id is a genuinely
  *     ambiguous state for account linking.
- *   - `accountLinking.trustedProviders` (`lib/auth.ts:191`) — the same three
- *     ids today, listed separately so a future divergence is visible here
- *     rather than silently load-bearing.
+ *   - `facebook` — no longer offered, but `Account` rows with that
+ *     providerId can still exist, so the id stays taken.
  *   - `credential` — BetterAuth's own id for email+password accounts. The
  *     `enforceSSO` check in `lib/sso/enforce-session.ts` reasons about
  *     `Account.providerId`; a provider claiming `credential` would make
@@ -75,17 +74,14 @@ export const oidcConfigSchema = z.object({
 export const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
   "credential",
   "sso",
-  // `AUTH_PROVIDERS[].id` is a `as const` union of already-lowercase ids, so
-  // it covers `accountLinking.trustedProviders` (lib/auth.ts:191) as well as
-  // the rendered social buttons. `scripts/verify-sso-invariants.sh` Check 4
-  // pins the enforcement check to those same rows, so the two cannot drift
-  // apart without that grep failing.
+  "facebook",
+  // `AUTH_PROVIDERS[].id` is a `as const` union of already-lowercase ids.
   ...AUTH_PROVIDERS.map((provider) => provider.id),
 ]);
 
 const RESERVED_PROVIDER_ID_MESSAGE =
   "That providerId is reserved. It would shadow a sign-in method that already exists " +
-  "(Google, GitHub, Facebook, or email+password), so another organisation's users " +
+  "(Google, GitHub, or email+password), so another organisation's users " +
   `could be redirected to your identity provider. Reserved ids: ${[
     ...RESERVED_PROVIDER_IDS,
   ]
@@ -101,7 +97,9 @@ const RESERVED_PROVIDER_ID_MESSAGE =
     // the list sees `Y, Zebra, apple, credential` — capital letters first, and
     // `apple` after `Zebra`. Pinned to "en" this reads as a list of words.
     .sort((a, b) => a.localeCompare(b, "en"))
-    .join(", ")}. Pick a name that identifies your organisation, e.g. "acme-okta".`;
+    .join(
+      ", ",
+    )}. Pick a name that identifies your organisation, e.g. "acme-okta".`;
 
 export function isReservedProviderId(providerId: string): boolean {
   return RESERVED_PROVIDER_IDS.has(providerId.trim().toLowerCase());
