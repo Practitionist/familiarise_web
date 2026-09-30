@@ -434,8 +434,10 @@ describe("GET /api/health", () => {
           estimated: null,
           computedAt: null,
         },
-        windowDays: null,
-        windowKind: "calendar-month",
+        windows: {
+          mau: { days: 30, kind: "calendar-month" },
+          participantMinutes: { days: 30, kind: "rolling-30d" },
+        },
         redacted: true,
       });
       expect(body.status).toBe("healthy");
@@ -471,10 +473,14 @@ describe("GET /api/health", () => {
       expect(body.usage.alert).toBe(0.6);
       expect(body.usage.quality.computedAt).toBe("2026-09-29T04:20:00.000Z");
       expect(body.usage.redacted).toBe(true);
-      // The MAU window is the CALENDAR month (Stream resets it monthly), and the
-      // redacted block says so — a reader needs to know which bucket a figure
-      // would have belonged to in order to interpret any future figure.
-      expect(body.usage.windowKind).toBe("calendar-month");
+      // The two meters have DIFFERENT windows and the payload says so, because
+      // `worstAlert` is the max across both: a "calendar-month" alarm can be
+      // escalated by a rolling-30-day meter, so one shared label would
+      // misdescribe whichever meter it did not match.
+      expect(body.usage.windows.mau.kind).toBe("calendar-month");
+      expect(body.usage.windows.participantMinutes.kind).toBe("rolling-30d");
+      expect(body.usage.windowKind).toBeUndefined();
+      expect(body.usage.windowDays).toBeUndefined();
 
       // Neither the usage nor either cap, as a value or a digit sequence.
       for (const secret of [

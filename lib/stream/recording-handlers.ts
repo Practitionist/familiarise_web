@@ -96,10 +96,23 @@ export interface StreamRecordingFailedEvent {
  * true and the event settles. A recording whose timestamp we cannot read is still
  * a recording that happened, and losing it is worse than dating it approximately.
  */
-function eventInstant(createdAt: string): Date {
+function eventInstant(createdAt: string, fallback?: string): Date {
   const parsed = new Date(createdAt);
   if (!Number.isNaN(parsed.getTime())) return parsed;
-  streamLogger.warn("Unparseable created_at on a Stream event", { createdAt });
+  if (fallback !== undefined) {
+    const alt = new Date(fallback);
+    if (!Number.isNaN(alt.getTime())) {
+      streamLogger.warn(
+        "Unparseable timestamp on a Stream event; using the fallback",
+        {
+          createdAt,
+          fallback,
+        },
+      );
+      return alt;
+    }
+  }
+  streamLogger.warn("Unparseable timestamp on a Stream event", { createdAt });
   return new Date();
 }
 
@@ -298,7 +311,7 @@ export async function handleRecordingStopped(
 export async function handleRecordingReady(
   event: StreamRecordingReadyEvent,
 ): Promise<void> {
-  const { call_cid, call_recording, created_at: _created_at } = event;
+  const { call_cid, call_recording, created_at } = event;
 
   const streamCallId = toCallId(call_cid);
   const { filename, url, start_time, end_time } = call_recording;
@@ -386,7 +399,18 @@ export async function handleRecordingReady(
     // Date. So a single unparseable `start_time` failed the write rather than
     // dating it approximately — and the sweeper would re-drive the event for the
     // full 168-hour give-up window before discarding it.
-    const startDate = eventInstant(start_time);
+    //
+    // `start_time` falls back to `created_at`, NOT to "now". The two differ
+    // materially, because this value is the base for `streamUrlExpiresAt` —
+    // Stream deletes the bytes at CALL + 14 days, so a fallback of `new Date()`
+    // measured from a sweeper re-drive days later sets the expiry to "re-drive +
+    // 14d" and the 410 gate then passes on a URL Stream has already deleted. It
+    // re-creates, at the re-drive, exactly the broken-URL state the sweep exists
+    // to detect. `created_at` is stamped by the same event and is within
+    // milliseconds of the call, so the derived clock stays honest.
+    const startDate = eventInstant(start_time, created_at);
+    // `end_time` only feeds the duration, so "now" is harmless there and no
+    // fallback field is offered.
     const endDate = eventInstant(end_time);
     const durationInMinutes = Math.round(
       (endDate.getTime() - startDate.getTime()) / (1000 * 60),

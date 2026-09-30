@@ -372,15 +372,25 @@ export async function GET(request: Request) {
         // timestamp reads exactly like a live one.
         computedAt: usage.snapshot?.computedAt ?? null,
       },
-      // The WINDOW, not progress through it. The comment this replaces claimed
-      // this was "how many days into the window", which would let a reader tell
-      // a month-to-date figure from a final one — but it is a constant 30 and
-      // says nothing about progress, so that was a claim the field cannot keep.
-      // What a reader can actually derive is the bucket: month-to-date, which is
-      // what a cap alarm needs. `computedAt` is the timestamp that tells them
-      // how stale it is.
-      windowDays: usage.meters.mau ? 30 : null,
-      windowKind: "calendar-month" as const,
+      // The windows are PER METRIC, because they genuinely differ, and one
+      // shared label would misdescribe whichever one it did not match.
+      //
+      //   MAU                 — the CALENDAR month. Stream counts "any user who
+      //                         connected within the last calendar month" and
+      //                         resets the total monthly, so a rolling window
+      //                         would be monotonic and could never clear.
+      //   participantMinutes  — a ROLLING 30 days, summed from
+      //                         `MeetingAttendance` in
+      //                         `lib/stream/usage-estimator.ts`.
+      //
+      // Naming them separately matters because `worstAlert` is the maximum
+      // across BOTH meters: a single label attached to it describes the alarm
+      // the operator is looking at, and a "calendar-month" alarm can be
+      // escalated by a rolling-window meter.
+      windows: {
+        mau: { days: 30, kind: "calendar-month" },
+        participantMinutes: { days: 30, kind: "rolling-30d" },
+      },
       redacted: true,
     },
     betterstack,

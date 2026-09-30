@@ -220,8 +220,11 @@ describe("#1829 — every connect path that resolves a client also kicks the syn
   it("kicks from the full connectUser path", () => {
     const n = (provider.match(/kickChannelSync\(userDetails\.id\)/g) ?? [])
       .length;
-    // Reconnect branch + live-adopt branch + full connect path.
-    expect(n).toBe(3);
+    // Four paths resolve a client: the in-flight reconnect, the opened
+    // reconnect, the live-adopt, and the full connect. All four must kick, or a
+    // reconnect reopens the socket and reconciles nothing — the bug these paths
+    // were changed to fix.
+    expect(n).toBe(4);
   });
 
   it("no connect path returns a client without kicking or skipping deliberately", () => {
@@ -240,9 +243,63 @@ describe("#1829 — every connect path that resolves a client also kicks the syn
     for (const match of returns) {
       const idx = match.index;
       const before = body.slice(Math.max(0, idx - 400), idx);
+      // Each `return client;` is either preceded by a sync kick, or is one of
+      // the two deliberate bail-outs: the concurrent-connect guard and the
+      // adopt-a-live-client path (which kicks separately, earlier).
       expect(before).toMatch(
         /kickChannelSync\(userDetails\.id\)|isChatConnectingRef|adoptable|getGlobalChatClient/,
       );
     }
+  });
+});
+
+/**
+ * #1829 — the in-flight reconnect must not claim to be connected.
+ *
+ * `wsConnection.isConnecting` means a handshake is running. Marking
+ * `chatConnected` on that basis reintroduces through this branch exactly what
+ * `#E7` fixed one layer up: a matching `userID` mistaken for a live socket, so
+ * the store reports connected over a socket that never finished connecting — and
+ * if the handshake fails, over a dead one. `connection.changed` or the grace
+ * timer is what sets the flag honestly.
+ */
+describe("#1829 — an in-flight reconnect is adopted, not declared connected", () => {
+  const inFlightBranch = (): string => {
+    const at = provider.indexOf("client.wsConnection?.isConnecting");
+    return provider.slice(at, provider.indexOf("return client;", at));
+  };
+
+  it("does not setChatConnected in the isConnecting branch", () => {
+    const b = inFlightBranch();
+    expect(provider).toContain("client.wsConnection?.isConnecting");
+    expect(b).not.toContain("setChatConnected(true)");
+  });
+
+  it("still kicks the channel sync, because staleness is not a socket fact", () => {
+    // Membership went stale when the network went away, not when the handshake
+    // finishes — so this branch must reconcile too, or the guard the grace timer
+    // cleared goes unused on exactly the path that needed it.
+    expect(inFlightBranch()).toContain("kickChannelSync(userDetails.id)");
+  });
+
+  it("awaits openConnection on the NOT-in-flight path, so connected is earned", () => {
+    const open = provider.indexOf("await client.openConnection()");
+    const ret = provider.indexOf("return client;", open);
+    const b = provider.slice(open, ret);
+    expect(b).toContain("await client.openConnection()");
+    expect(b).toContain("setChatConnected(true)");
+  });
+
+  it("records the fallback as a test fixture assertion, not a doc claim", () => {
+    // `start_time` must fall back to `created_at`, never to "now": the value
+    // feeds `streamUrlExpiresAt`, and a "now" fallback measured from a sweeper
+    // re-drive sets the expiry to re-drive + 14d while Stream deletes the bytes
+    // at call + 14d — so the 410 gate passes on a URL that is already dead.
+    const handlers = readFileSync(
+      join(process.cwd(), "lib/stream/recording-handlers.ts"),
+      "utf8",
+    );
+    expect(handlers).toContain("eventInstant(start_time, created_at)");
+    expect(handlers).not.toContain("eventInstant(start_time)");
   });
 });

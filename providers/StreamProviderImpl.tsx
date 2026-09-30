@@ -632,18 +632,44 @@ const StreamProviderImpl = ({
       // than resolving stale — so a genuine failure still lands in the catch
       // below and is retried honestly.
       if (client.userID && client.userID === userDetails.id) {
-        if (client.wsConnection?.isConnecting) {
-          streamLogger.debug("Chat socket already reconnecting, waiting", {
-            userId: userDetails.id,
-          });
-        } else {
-          streamLogger.info("Reopening chat socket for an existing user", {
-            userId: userDetails.id,
-          });
-          await client.openConnection();
-        }
         setGlobalChatClient(client);
         setCurrentStreamUserId(userDetails.id);
+
+        if (client.wsConnection?.isConnecting) {
+          // #1829 — a reconnect is ALREADY in flight, so there is nothing to
+          // await and nothing to open. Critically, this must NOT mark the store
+          // connected: the socket is mid-handshake, and if that handshake fails
+          // we would be reporting connected over a dead socket — reintroducing
+          // through this branch exactly what #E7 fixed one layer up, where a
+          // matching `userID` was mistaken for a live socket.
+          //
+          // `chatConnected` is left as-is and the `connection.changed` listener
+          // sets it on the event that actually means the socket is up, or the
+          // grace timer takes over if it does not arrive. Waiting on the
+          // in-flight promise instead would block `connectChat` on a handshake we
+          // do not own and cannot time out.
+          streamLogger.debug(
+            "Chat socket already reconnecting; awaiting the event",
+            {
+              userId: userDetails.id,
+            },
+          );
+          // The sync is NOT conditional on the socket. Channel membership went
+          // stale when the network went away, not when the handshake finishes,
+          // and it stays stale whether this branch opens the socket or inherits
+          // one already in flight. `syncUserEventChannels` reads Stream directly
+          // and is not awaited on the connect path, so there is nothing here to
+          // serialise against the in-flight socket.
+          kickChannelSync(userDetails.id);
+          return client;
+        }
+
+        streamLogger.info("Reopening chat socket for an existing user", {
+          userId: userDetails.id,
+        });
+        // Awaited, so this only marks connected once the socket is genuinely up,
+        // and a failure falls to the catch below like any other.
+        await client.openConnection();
         setChatConnected(true);
         // #1829 — the reconnect reconciles channels. This branch returns before
         // the block that used to hold the sync, so a mid-session flap reopened
