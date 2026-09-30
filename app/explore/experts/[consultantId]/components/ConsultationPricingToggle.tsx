@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { BookingSteps } from "@/components/booking/BookingSteps";
 import { BookingSummary } from "@/components/booking/BookingSummary";
+import { BookingCalendarLoadingGrid } from "@/components/booking/BookingCalendarLoadingGrid";
 import {
   sameBookingWindow,
   isCurrentBookingWindow,
@@ -82,6 +83,8 @@ interface ConsultationPricingToggleProps {
   onRefreshSlots?: () => void;
   slotsLoading?: boolean;
   slotsError?: boolean;
+  calendarLoading?: boolean;
+  calendarError?: boolean;
   initialPlanId?: string | null;
   bookingRequest?: number;
 }
@@ -102,6 +105,8 @@ export default function ConsultationPricingToggle({
   onRefreshSlots,
   slotsLoading = false,
   slotsError = false,
+  calendarLoading = false,
+  calendarError = false,
   initialPlanId,
   bookingRequest = 0,
 }: Readonly<ConsultationPricingToggleProps>) {
@@ -564,7 +569,10 @@ export default function ConsultationPricingToggle({
                       <CalendarIcon className="h-4 w-4" />
                       Choose a date
                     </h3>
-                    <div className="calendar-surface p-3 sm:p-4">
+                    <div
+                      className="calendar-surface p-3 sm:p-4"
+                      aria-busy={calendarLoading}
+                    >
                       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                         <span className="font-medium">
                           {currentDate.toLocaleString("default", {
@@ -624,14 +632,35 @@ export default function ConsultationPricingToggle({
                           ),
                         )}
                       </div>
-                      <div className="grid grid-cols-7 gap-1">
-                        {renderCalendar()}
-                      </div>
+                      {calendarLoading ? (
+                        <BookingCalendarLoadingGrid month={currentDate} />
+                      ) : (
+                        <div className="grid grid-cols-7 gap-1">
+                          {renderCalendar()}
+                        </div>
+                      )}
                     </div>
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Outlined days have available times. Times shown in{" "}
-                      {timezone}.
-                    </p>
+                    {calendarLoading ? (
+                      <p
+                        role="status"
+                        className="mt-3 text-xs text-muted-foreground"
+                      >
+                        Checking available dates…
+                      </p>
+                    ) : calendarError ? (
+                      <p
+                        role="status"
+                        className="mt-3 text-xs text-muted-foreground"
+                      >
+                        Couldn’t check available dates. Choose a day to check
+                        its times.
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Outlined days have available times. Times shown in{" "}
+                        {timezone}.
+                      </p>
+                    )}
                   </section>
                   <section
                     className={cn(step !== 1 && "hidden md:block")}
@@ -761,7 +790,12 @@ export default function ConsultationPricingToggle({
                   <>
                     <Button
                       className="md:hidden"
-                      disabled={!selectedDate || slotsLoading || slotsError}
+                      disabled={
+                        !selectedDate ||
+                        calendarLoading ||
+                        slotsLoading ||
+                        slotsError
+                      }
                       onClick={() => setStep(1)}
                     >
                       Choose time

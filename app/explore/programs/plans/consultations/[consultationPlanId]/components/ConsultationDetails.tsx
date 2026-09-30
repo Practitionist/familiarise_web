@@ -42,7 +42,7 @@ export function ConsultationDetails({
           Back to experts
         </Link>
 
-        <div className="explore-plan-header mb-8">
+        <div className="mb-8">
           <Badge className="bg-muted text-muted-foreground mb-3">
             1:1 consultation
           </Badge>

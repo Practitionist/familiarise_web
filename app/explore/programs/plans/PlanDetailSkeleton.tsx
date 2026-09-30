@@ -4,12 +4,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function PlanDetailSkeleton() {
   return (
     <main className="explore-page min-h-screen">
-      <div className="explore-plan-header mx-auto mt-6 min-h-[260px] max-w-7xl overflow-hidden">
+      <div className="relative h-[350px] w-full overflow-hidden bg-zinc-900 md:h-[400px]">
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 space-y-3 p-6 md:p-10">
-          <Skeleton className="h-6 w-24 rounded-full bg-muted" />
-          <Skeleton className="h-10 w-full max-w-xl bg-muted" />
-          <Skeleton className="h-4 w-64 bg-muted" />
+          <Skeleton className="h-6 w-24 rounded-full bg-zinc-700" />
+          <Skeleton className="h-10 w-full max-w-xl bg-zinc-700" />
+          <Skeleton className="h-4 w-64 bg-zinc-700" />
         </div>
       </div>
       <div className="mx-auto grid max-w-[92%] gap-8 py-8 lg:grid-cols-3 lg:py-12">

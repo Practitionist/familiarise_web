@@ -27,10 +27,6 @@
   margin-inline: auto;
   padding-inline: clamp(1rem, 4vw, 4rem);
 }
-.explore-hero {
-  padding-block: clamp(3rem, 7vw, 6.5rem);
-  border-bottom: 1px solid hsl(var(--border));
-}
 .explore-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -39,35 +35,6 @@
   font-weight: 600;
   letter-spacing: 0.11em;
   text-transform: uppercase;
-}
-.explore-highlight {
-  color: #d4d4d8;
-}
-.explore-hero-note {
-  position: relative;
-  padding: clamp(1.5rem, 4vw, 3rem);
-  border: 1px solid hsl(var(--border));
-  border-radius: 1.5rem;
-  background: #18181b99;
-}
-.explore-primary-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  border-radius: 0.85rem;
-  padding: 0.9rem 1.25rem;
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-.explore-primary-link:hover {
-  background: #e4e4e7;
-}
-.explore-hero a:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 4px;
 }
 .explore-card {
   border-radius: 1.25rem;
@@ -97,28 +64,6 @@
   border: 1px solid hsl(var(--border));
   border-radius: 1.5rem;
   background: linear-gradient(115deg, #eee6f7, #f8efe6 85%);
-}
-/* Dark editorial headers are local surfaces, not an app-wide dark mode. */
-.explore-hero,
-.explore-profile-header,
-.explore-page .explore-plan-header {
-  --background: 240 10% 4%;
-  --foreground: 0 0% 98%;
-  --card: 240 6% 10%;
-  --card-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 240 10% 4%;
-  --secondary: 240 4% 16%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 4% 16%;
-  --muted-foreground: 240 5% 65%;
-  --border: 240 4% 16%;
-  --input: 240 4% 16%;
-  --ring: 0 0% 98%;
-  --accent: 240 4% 16%;
-  --accent-foreground: 0 0% 98%;
-  background: #09090b;
-  color: hsl(var(--foreground));
 }
 .explore-booking-panel {
   border: 1px solid hsl(var(--border));
@@ -224,6 +169,7 @@
   .calendar-surface,
   .calendar-surface * {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }

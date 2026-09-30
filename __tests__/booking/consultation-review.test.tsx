@@ -64,11 +64,15 @@ function Harness({
   mode = "INSTANT",
   paused = false,
   loading = false,
+  calendarLoading = false,
+  calendarError = false,
 }: {
   slots?: TIntervalTiming[];
   mode?: BookingMode;
   paused?: boolean;
   loading?: boolean;
+  calendarLoading?: boolean;
+  calendarError?: boolean;
 }) {
   const [selectedDate, setSelectedDate] = useState<Date | null>(
     new Date("2026-10-05T00:00:00Z"),
@@ -109,6 +113,8 @@ function Harness({
       setSelectedSlot={setSelectedSlot}
       timezone="UTC"
       slotsLoading={loading}
+      calendarLoading={calendarLoading}
+      calendarError={calendarError}
     />
   );
 }
@@ -199,5 +205,59 @@ it("keeps a paused request-only expert's final action disabled", async () => {
   await act(async () => root.render(<Harness mode="REQUEST" paused />));
   await review();
   expect(button("Request this time").disabled).toBe(true);
+  expect(checkout).not.toHaveBeenCalled();
+});
+
+it("hides date buttons and availability claims until the month is loaded", async () => {
+  await act(async () => root.render(<Harness calendarLoading />));
+  await click("Choose a time");
+  expect(
+    document.querySelector('[data-testid="calendar-loading-grid"]'),
+  ).not.toBeNull();
+  expect(document.body.textContent).toContain("Checking available dates…");
+  expect(
+    document.querySelector(".calendar-surface")?.textContent,
+  ).not.toContain("October 5");
+  expect(document.body.textContent).not.toContain(
+    "Outlined days have available times",
+  );
+  expect(button("Choose time").disabled).toBe(true);
+  expect(
+    document.querySelector(".calendar-surface")?.getAttribute("aria-busy"),
+  ).toBe("true");
+
+  await act(async () => root.render(<Harness />));
+  expect(
+    document.querySelector('[data-testid="calendar-loading-grid"]'),
+  ).toBeNull();
+  expect(button("October 5")).toBeDefined();
+  expect(button("Choose time").disabled).toBe(false);
+  expect(
+    document.querySelector(".calendar-surface")?.getAttribute("aria-busy"),
+  ).toBe("false");
+});
+
+it("keeps loaded dates visible while only times are refreshing", async () => {
+  await act(async () => root.render(<Harness loading />));
+  await click("Choose a time");
+  expect(button("October 5")).toBeDefined();
+  expect(
+    document.querySelector('[data-testid="calendar-loading-grid"]'),
+  ).toBeNull();
+  expect(document.body.textContent).toContain("Checking available times…");
+  expect(button("Choose time").disabled).toBe(true);
+});
+
+it("distinguishes a failed month read from loading and allows per-day fallback", async () => {
+  await act(async () => root.render(<Harness calendarError />));
+  await click("Choose a time");
+  expect(document.body.textContent).toContain("Couldn’t check available dates");
+  expect(document.body.textContent).not.toContain(
+    "Outlined days have available times",
+  );
+  expect(
+    document.querySelector('[data-testid="calendar-loading-grid"]'),
+  ).toBeNull();
+  expect(button("October 5").disabled).toBe(false);
   expect(checkout).not.toHaveBeenCalled();
 });

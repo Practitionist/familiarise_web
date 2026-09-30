@@ -96,20 +96,23 @@ export function WebinarDetails({
     <main className="explore-page min-h-screen pb-24 lg:pb-0">
       <PlanHero
         title={plan.title}
-        image={generateProgramImageUrl(plan.id, 700, 500, plan.imageUrl)}
+        image={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+        badge={
+          <div className="flex items-center gap-3 mb-4">
+            <Badge className="bg-background text-foreground">Webinar</Badge>
+            <Badge className={getStatusBadgeClass(sessionStatus)}>
+              {sessionStatus}
+            </Badge>
+          </div>
+        }
       >
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge>Webinar</Badge>
-          <Badge className={getStatusBadgeClass(sessionStatus)}>
-            {sessionStatus}
-          </Badge>
-        </div>
-        <p className="mt-4 text-lg font-medium">
-          {formatPrice(plan.price)}{" "}
-          <span className="text-sm font-normal text-muted-foreground">
-            · {plan.durationInHours} hour{plan.durationInHours === 1 ? "" : "s"}
+        <div className="flex items-center gap-4 text-white/80">
+          <span className="text-2xl md:text-3xl font-bold text-white">
+            {formatPrice(plan.price)}
           </span>
-        </p>
+          <span className="text-white/60">•</span>
+          <span>{plan.durationInHours} hours</span>
+        </div>
       </PlanHero>
 
       {/* Content */}

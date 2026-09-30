@@ -44,7 +44,7 @@ export function SubscriptionDetails({
           Back to experts
         </Link>
 
-        <div className="explore-plan-header mb-8">
+        <div className="mb-8">
           <Badge className="bg-muted text-muted-foreground mb-3">
             Mentorship programme
           </Badge>
@@ -96,6 +96,7 @@ export function SubscriptionDetails({
               whatsIncluded={plan.whatsIncluded}
               curriculum={plan.subscriptionContents}
               curriculumHeading="Your roadmap"
+              brochure={{ planId: plan.id, planType: "subscriptions" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
               faqs={plan.faqs}

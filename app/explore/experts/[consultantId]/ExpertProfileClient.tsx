@@ -283,8 +283,9 @@ export function ExpertProfileClient({
   // Day cells carry their state without colour (#1785 L-4): a ring and a bold
   // number on a day with a bookable time, plain grey and disabled on a day
   // without, dimmed and disabled in the past, a dot under today. The marks
-  // come from the month read; while it loads the cells pulse, and if it
-  // fails the cells stay plain and clickable under a one-line notice.
+  // come from the month read. The booking dialog replaces the date grid with
+  // neutral placeholders until those marks are known. If the read fails,
+  // unknown days remain plain and clickable to check their times individually.
   const renderCalendar = useCallback(() => {
     const daysInMonth = new Date(
       currentDate.getFullYear(),
@@ -301,7 +302,6 @@ export function ExpertProfileClient({
     const days = [];
     const now = new Date();
     const marks = monthQuery.data ?? null;
-    const marksLoading = monthQuery.isPending && !!timezone;
 
     for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(<div key={`empty-${i}`} className="h-10 w-full"></div>);
@@ -349,10 +349,6 @@ export function ExpertProfileClient({
               (state === "none" || state === "today+none") &&
               "text-zinc-500",
             state === "past" && "opacity-40 text-zinc-500",
-            marksLoading &&
-              state !== "past" &&
-              !isSelected &&
-              "animate-pulse ring-1 ring-border",
           )}
           onClick={() => {
             setSelectedDate(date);
@@ -370,27 +366,8 @@ export function ExpertProfileClient({
       );
     }
 
-    if (monthQuery.isError) {
-      days.push(
-        <p
-          key="marks-error"
-          role="status"
-          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
-        >
-          Couldn&apos;t load availability marks — pick a day to see its times.
-        </p>,
-      );
-    }
-
     return days;
-  }, [
-    currentDate,
-    selectedDate,
-    timezone,
-    monthQuery.data,
-    monthQuery.isPending,
-    monthQuery.isError,
-  ]);
+  }, [currentDate, selectedDate, timezone, monthQuery.data]);
 
   return (
     <main className="explore-page pb-24 xl:pb-0">
@@ -413,7 +390,7 @@ export function ExpertProfileClient({
           {/* Main Content */}
           <motion.div
             className="flex-1 min-w-0"
-            initial={false}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
@@ -486,6 +463,8 @@ export function ExpertProfileClient({
               }
               slotsLoading={dayQuery.isFetching || isTimezoneLoading}
               slotsError={dayQuery.isError}
+              calendarLoading={monthQuery.isPending || isTimezoneLoading}
+              calendarError={monthQuery.isError}
               onRefreshSlots={refreshSlots}
             />
           </motion.div>

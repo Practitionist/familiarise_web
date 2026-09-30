@@ -1,5 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PlanBrochureDownload } from "@/components/plans/PlanBrochureDownload";
+import type { BrochurePlanType } from "@/lib/pdf/plan-brochure-data";
 import {
   CurriculumOutline,
   PlanFaqAccordion,
@@ -33,6 +35,7 @@ export interface PlanDetailBodyProps {
   materialProvided?: string | null;
   faqs?: PlanFaqItem[] | null;
   topics?: { id: string; name: string }[];
+  brochure?: { planId: string; planType: BrochurePlanType };
 }
 
 function SectionCard({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -55,6 +58,7 @@ export function PlanDetailBody({
   materialProvided,
   faqs,
   topics,
+  brochure,
 }: Readonly<PlanDetailBodyProps>) {
   // "None" is the historical default on prerequisites/materialProvided, so it
   // means "nothing to say" rather than a value worth giving a card to.
@@ -107,6 +111,20 @@ export function PlanDetailBody({
       {(curriculum?.length ?? 0) > 0 && (
         <SectionCard>
           <CurriculumOutline items={curriculum} title={curriculumHeading} />
+          {brochure && (
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
+              <div className="min-w-0 max-w-sm">
+                <p className="text-sm font-medium">
+                  Take the curriculum with you
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Save the curriculum for later or share it with someone helping
+                  you decide.
+                </p>
+              </div>
+              <PlanBrochureDownload {...brochure} />
+            </div>
+          )}
         </SectionCard>
       )}
 

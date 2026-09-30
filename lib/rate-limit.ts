@@ -220,6 +220,13 @@ export const documentUploadLimiter = makeLimiter(
   "rl:document-upload",
 );
 
+/** 6 per minute per IP — on-demand plan brochure rendering, independent of uploads. */
+export const brochureDownloadLimiter = makeLimiter(
+  6,
+  "1 m",
+  "rl:plan-brochure",
+);
+
 /**
  * 30 per minute per user — #347 bulk document review. One request reviews many
  * documents in a single transaction (replacing the old N-PATCH fan-out), so the

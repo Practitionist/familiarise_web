@@ -48,6 +48,8 @@ interface ExpertPricingProps {
   onRefreshSlots?: () => void;
   slotsLoading?: boolean;
   slotsError?: boolean;
+  calendarLoading?: boolean;
+  calendarError?: boolean;
   initialPlanId?: string | null;
   initialService?: "consultations" | "subscriptions";
   bookingRequest?: number;
@@ -71,6 +73,8 @@ export function ExpertPricing({
   onRefreshSlots,
   slotsLoading,
   slotsError,
+  calendarLoading,
+  calendarError,
   initialPlanId,
   initialService,
   bookingRequest,
@@ -307,6 +311,8 @@ export function ExpertPricing({
                 onRefreshSlots={onRefreshSlots}
                 slotsLoading={slotsLoading}
                 slotsError={slotsError}
+                calendarLoading={calendarLoading}
+                calendarError={calendarError}
                 initialPlanId={initialPlanId}
                 bookingRequest={bookingRequest}
               />
@@ -340,6 +346,8 @@ export function ExpertPricing({
             onRefreshSlots={onRefreshSlots}
             slotsLoading={slotsLoading}
             slotsError={slotsError}
+            calendarLoading={calendarLoading}
+            calendarError={calendarError}
             initialPlanId={initialPlanId}
             bookingRequest={bookingRequest}
           />

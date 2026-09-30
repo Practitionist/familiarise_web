@@ -31,6 +31,8 @@ export const NO_CHROME_PREFIXES = [
  */
 export const TRANSPARENT_HERO_ROUTES = [
   "/",
+  "/explore/experts",
+  "/explore/programs",
   "/explore/community",
   "/explore/enterprise/organisations",
   // The four persona pages open on the same full-bleed dark hero.
@@ -59,13 +61,13 @@ export function isChromeHidden(pathname: string): boolean {
 }
 
 /**
- * Exact match, not prefix: only the listed marketing routes use dark heroes.
- * Explore experts and programs now use light editorial headers. Query strings never reach
+ * Exact match, not prefix: `/explore/experts` has a dark hero but its detail
+ * page `/explore/experts/[consultantId]` does not. Query strings never reach
  * here — callers pass `usePathname()`.
  */
 export function hasDarkHero(pathname: string): boolean {
   // Tolerate a trailing slash; still an exact-route match otherwise, because
-  // Detail routes never inherit a marketing page’s transparent navigation.
+  // `/explore/experts` has a dark hero but `/explore/experts/[id]` does not.
   const normalised =
     pathname.length > 1 && pathname.endsWith("/")
       ? pathname.slice(0, -1)
