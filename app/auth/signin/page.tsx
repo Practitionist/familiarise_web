@@ -463,9 +463,8 @@ function SignInContent() {
    *   - `sign-in` — the visitor is already on this page.
    *   - `resend-verification` — `needsVerification` lights the banner above,
    *     which carries its own resend button.
-   *   - `enroll-2fa` / `upgrade-plan` — no 2FA settings or plan page is
-   *     reachable from an auth page; a button that goes nowhere is worse than
-   *     no button.
+   *   - `enroll-2fa` — no 2FA settings page is reachable from an auth page; a
+   *     button that goes nowhere is worse than no button.
    *   - `retry` — never renderable (see `AuthErrorAffordance`).
    *
    * Rebuilt per render rather than memoised: the callbacks close over this

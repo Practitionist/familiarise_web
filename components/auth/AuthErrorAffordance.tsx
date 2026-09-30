@@ -43,7 +43,6 @@ export const AUTH_ERROR_ACTION_LABEL: Record<
   "sign-up": "Sign up",
   "contact-support": "Contact support",
   "enroll-2fa": "Set up two-factor authentication",
-  "upgrade-plan": "Upgrade plan",
 };
 
 export interface AuthErrorAffordanceProps {

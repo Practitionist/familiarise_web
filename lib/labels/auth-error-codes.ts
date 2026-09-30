@@ -10,8 +10,8 @@
  *     cannot silently become an unreachable branch.
  *
  *   - `AppAuthErrorCode` — codes this codebase mints itself: the SSO veto in
- *     `lib/auth.ts`'s `session.create.before`, the edge rate limiter, the
- *     session-lookup tri-state, and the B2C entitlement layer.
+ *     `lib/auth.ts`'s `session.create.before`, the edge rate limiter and the
+ *     session-lookup tri-state.
  *
  * Why the union is closed: `lib/labels/auth-errors.catalog.ts` is a
  * `Record<AuthErrorCode, AuthErrorCopy>`. Adding a code to either half makes
@@ -146,9 +146,6 @@ export type AppAuthErrorCode =
   | "REQUEST_REJECTED"
   /* Server-enrolled 2FA that the client has not satisfied yet. */
   | "TWO_FACTOR_REQUIRED"
-  /* lib/entitlements/ — B2C plan gates. */
-  | "PLAN_FEATURE_NOT_INCLUDED"
-  | "PLAN_LIMIT_REACHED"
   /* Staff/admin onboarding. */
   | "INVITATION_EXPIRED"
   | "INVITATION_ALREADY_ACCEPTED"
@@ -255,8 +252,6 @@ export const AUTH_ERROR_CODES = {
   SESSION_LOOKUP_FAILED: "SESSION_LOOKUP_FAILED",
   REQUEST_REJECTED: "REQUEST_REJECTED",
   TWO_FACTOR_REQUIRED: "TWO_FACTOR_REQUIRED",
-  PLAN_FEATURE_NOT_INCLUDED: "PLAN_FEATURE_NOT_INCLUDED",
-  PLAN_LIMIT_REACHED: "PLAN_LIMIT_REACHED",
   INVITATION_EXPIRED: "INVITATION_EXPIRED",
   INVITATION_ALREADY_ACCEPTED: "INVITATION_ALREADY_ACCEPTED",
   INVITATION_NOT_FOR_YOU: "INVITATION_NOT_FOR_YOU",

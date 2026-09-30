@@ -455,7 +455,7 @@ function SignUpContent() {
    *   - `resend-verification` — only the post-signup "check your email" panel
    *     has a resend, and no failure can reach it from the form.
    *   - `forgot-password` — the address does not belong to this visitor yet.
-   *   - `enroll-2fa` / `upgrade-plan` — not reachable from an auth page.
+   *   - `enroll-2fa` — not reachable from an auth page.
    *   - `retry` — never renderable (see `AuthErrorAffordance`).
    *
    * Rebuilt per render rather than memoised: the callback closes over this

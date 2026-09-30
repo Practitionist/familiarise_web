@@ -49,8 +49,7 @@ export type AuthErrorAction =
   | "sign-up"
   | "retry"
   | "contact-support"
-  | "enroll-2fa"
-  | "upgrade-plan";
+  | "enroll-2fa";
 
 export interface AuthErrorCopy {
   title: string;
@@ -469,19 +468,6 @@ export const AUTH_ERROR_COPY = {
     title: "This link is incomplete",
     description: "Part of the address is missing. Request a new one.",
     action: "request-new-link",
-  },
-
-  /* ── Entitlement (B2C) ──────────────────────────────────────────────── */
-
-  PLAN_FEATURE_NOT_INCLUDED: {
-    title: "Not on your plan",
-    description: "Upgrade your plan to unlock this.",
-    action: "upgrade-plan",
-  },
-  PLAN_LIMIT_REACHED: {
-    title: "You've reached your plan's limit",
-    description: "Upgrade your plan, or wait for the current cycle to reset.",
-    action: "upgrade-plan",
   },
 
   /* ── Impersonation ───────────────────────────────────────────────────── */
