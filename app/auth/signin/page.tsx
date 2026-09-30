@@ -426,6 +426,12 @@ function SignInContent() {
       </div>
       <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
         <div className="mx-auto flex w-full max-w-md flex-col">
+          <Link
+            href="/"
+            className="mb-8 inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-white uppercase md:hidden"
+          >
+            <GlobeIcon className="h-5 w-5" /> Familiarise
+          </Link>
           <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Sign in to your account
           </h2>

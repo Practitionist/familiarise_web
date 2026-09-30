@@ -29,9 +29,11 @@ async function RecordingsGrid() {
 
   if (items.length === 0) {
     return (
-      <div className="py-24 text-center text-muted-foreground">
+      <div className="rounded-2xl border border-border bg-card py-24 text-center text-muted-foreground">
         <PlayCircle className="mx-auto mb-4 h-12 w-12 opacity-40" />
-        <p className="text-lg font-medium">No published recordings yet</p>
+        <p className="text-lg font-medium text-foreground">
+          No published recordings yet
+        </p>
         <p className="mt-1 text-sm">
           Consultants can publish webinar and class replays from their dashboard.
         </p>
@@ -44,37 +46,41 @@ async function RecordingsGrid() {
       {items.map((rec) => (
         <Link
           key={rec.id}
-          href={rec.slug ? `/explore/recordings/${rec.slug}` : `/explore/recordings`}
-          className="group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-shadow"
+          href={
+            rec.slug
+              ? `/explore/recordings/${rec.slug}`
+              : `/explore/recordings`
+          }
+          className="group rounded-2xl border border-border bg-card overflow-hidden hover:border-foreground/20 hover:shadow-md transition-all"
         >
-          <div className="aspect-video relative bg-muted">
+          <div className="aspect-video relative bg-muted overflow-hidden">
             {rec.thumbnailUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={rec.thumbnailUrl}
                 alt={rec.listingTitle}
-                className="h-full w-full object-cover"
+                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
             ) : (
               <div className="flex h-full items-center justify-center">
                 <PlayCircle className="h-10 w-10 text-muted-foreground/50" />
               </div>
             )}
-            <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs text-white flex items-center gap-1">
+            <span className="absolute bottom-2.5 right-2.5 rounded-md bg-zinc-950/80 backdrop-blur-sm px-2 py-0.5 text-xs font-medium text-white flex items-center gap-1">
               <Clock className="h-3 w-3" />
               {rec.durationInMinutes}m
             </span>
           </div>
-          <div className="p-4 space-y-2">
+          <div className="p-5 space-y-2.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {rec.planType}
               </span>
-              <span className="font-semibold text-primary">
+              <span className="font-bold text-foreground">
                 {formatPrice(rec.listPricePaise)}
               </span>
             </div>
-            <h3 className="line-clamp-2 text-sm font-medium group-hover:text-primary transition-colors">
+            <h3 className="line-clamp-2 text-base font-semibold text-foreground group-hover:text-primary transition-colors">
               {rec.listingTitle}
             </h3>
             <p className="text-xs text-muted-foreground truncate">
@@ -90,17 +96,36 @@ async function RecordingsGrid() {
 
 export default function ExploreRecordingsPage() {
   return (
-    <div className="container mx-auto px-4 py-10 space-y-8">
-      <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight">Recordings Library</h1>
-        <p className="text-muted-foreground max-w-2xl mx-auto">
-          Replays of paid webinars and classes, published by their consultants.
-          Buy once, watch anytime.
-        </p>
+    <div className="min-h-screen bg-background">
+      {/* Cohesive Dark Editorial Hero Header */}
+      <header className="bg-zinc-950 text-white border-b border-zinc-800">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-8 lg:px-12 py-12 md:py-16">
+          <div className="max-w-2xl space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
+              On-Demand Learning
+            </p>
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-white">
+              Recordings Library
+            </h1>
+            <p className="text-sm md:text-base text-zinc-400 leading-relaxed">
+              Replays of paid webinars and classes, published by verified
+              consultants. Buy once, watch anytime on your schedule.
+            </p>
+          </div>
+        </div>
       </header>
-      <Suspense fallback={<div className="py-24 text-center text-muted-foreground">Loading recordings…</div>}>
-        <RecordingsGrid />
-      </Suspense>
+
+      <main className="mx-auto max-w-[1600px] px-4 sm:px-8 lg:px-12 py-10">
+        <Suspense
+          fallback={
+            <div className="py-24 text-center text-muted-foreground">
+              Loading recordings…
+            </div>
+          }
+        >
+          <RecordingsGrid />
+        </Suspense>
+      </main>
     </div>
   );
 }

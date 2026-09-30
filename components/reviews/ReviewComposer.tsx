@@ -158,19 +158,25 @@ export function ReviewComposer({
         ))}
       </div>
 
-      <Textarea
-        className="mt-3"
-        rows={compact ? 2 : 3}
-        maxLength={2000}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="What was useful, and what could have been better? (optional)"
-      />
+      <div className="mt-3 space-y-1.5">
+        <Textarea
+          rows={compact ? 2 : 3}
+          maxLength={2000}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="What was useful, and what could have been better? (optional)"
+        />
+        <div className="flex justify-end">
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {text.length}/2000
+          </span>
+        </div>
+      </div>
 
-      <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+      <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
         <input
           type="checkbox"
-          className="mt-0.5"
+          className="mt-0.5 rounded border-border accent-primary"
           checked={anonymous}
           onChange={(e) => setAnonymous(e.target.checked)}
         />
@@ -178,11 +184,15 @@ export function ReviewComposer({
             paid, attended session either way. Hiding it buys candour from
             someone who may want to book this person again. */}
         <span>
-          Post as <strong>Verified client</strong> instead of my name
+          Post as{" "}
+          <strong className="font-medium text-foreground">
+            Verified client
+          </strong>{" "}
+          instead of my name
         </span>
       </label>
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-4 flex items-center gap-3">
         <Button
           size="sm"
           disabled={rating === 0 || save.isPending}

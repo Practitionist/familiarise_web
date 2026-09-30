@@ -212,7 +212,7 @@ export function ContactForm() {
         <select
           id="category"
           name="category"
-          className="w-full px-3 py-2 border border-border rounded-md bg-background"
+          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={values.category}
           onChange={(e) => set("category")(e.target.value)}
         >

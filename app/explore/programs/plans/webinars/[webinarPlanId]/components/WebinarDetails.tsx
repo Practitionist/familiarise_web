@@ -210,7 +210,27 @@ export function WebinarDetails({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <div className="sticky top-24 space-y-6">
+            <div className="lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)] space-y-6">
+              {/* Registration Card — primary registration CTA above the fold */}
+              <ClientWebinarRegistration
+                title={plan.title}
+                webinarPlanId={plan.id}
+                webinarId={webinarId}
+                price={plan.price}
+                currency={plan.priceCurrency}
+                nextSessionDate={
+                  nextSession ? new Date(nextSession) : undefined
+                }
+                sessionStatus={sessionStatus}
+                appointment={plan.webinars?.[0]?.appointment}
+                maxParticipants={plan.maxParticipants ?? 100}
+                instanceMaxParticipants={
+                  plan.webinars?.[0]?.maxParticipants ?? null
+                }
+                consultantUserId={plan.consultantProfile?.user?.id}
+                refundWindowHours={plan.refundWindowHours}
+              />
+
               {/* Instructor Card */}
               <Card className="border-border shadow-sm">
                 <CardHeader className="pb-2">
@@ -294,25 +314,6 @@ export function WebinarDetails({
                   </CardContent>
                 </Card>
               )}
-
-              {/* Registration Card */}
-              <ClientWebinarRegistration
-                webinarPlanId={plan.id}
-                webinarId={webinarId}
-                price={plan.price}
-                currency={plan.priceCurrency}
-                nextSessionDate={
-                  nextSession ? new Date(nextSession) : undefined
-                }
-                sessionStatus={sessionStatus}
-                appointment={plan.webinars?.[0]?.appointment}
-                maxParticipants={plan.maxParticipants ?? 100}
-                instanceMaxParticipants={
-                  plan.webinars?.[0]?.maxParticipants ?? null
-                }
-                consultantUserId={plan.consultantProfile?.user?.id}
-                refundWindowHours={plan.refundWindowHours}
-              />
             </div>
           </motion.div>
         </div>

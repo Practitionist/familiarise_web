@@ -141,7 +141,11 @@ export function SubscriptionDetails({
 
                 <Button asChild className="w-full h-11">
                   <Link
-                    href={`/checkout/plans/subscription/${plan.id}`}
+                    href={
+                      consultant?.id
+                        ? `/explore/experts/${consultant.id}?action=subscribe&plan=${plan.id}`
+                        : "/explore/experts"
+                    }
                   >
                     Subscribe
                   </Link>

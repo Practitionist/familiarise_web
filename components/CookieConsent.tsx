@@ -59,10 +59,13 @@ const CHOICE_STYLE = {
   background: "#fafafa",
   color: "#18181b",
   fontSize: "13px",
-  borderRadius: "6px",
+  fontWeight: 500,
+  borderRadius: "8px",
+  padding: "8px 16px",
 };
 
 export default function CookieConsentBanner() {
+  const [visible, setVisible] = useState(true);
   const [showPrefs, setShowPrefs] = useState(false);
   const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
@@ -93,6 +96,8 @@ export default function CookieConsentBanner() {
     }
   };
 
+  if (!visible) return null;
+
   return (
     <CookieConsent
       location="bottom"
@@ -100,7 +105,12 @@ export default function CookieConsentBanner() {
       declineButtonText="Essential only"
       enableDeclineButton
       cookieName="cookie_consent"
-      style={{ background: "#18181b", fontSize: "13px" }}
+      style={{
+        background: "rgba(9, 9, 11, 0.96)",
+        backdropFilter: "blur(12px)",
+        borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+        fontSize: "13px",
+      }}
       buttonStyle={CHOICE_STYLE}
       declineButtonStyle={CHOICE_STYLE}
       expires={365}
@@ -111,7 +121,7 @@ export default function CookieConsentBanner() {
       overlay={false}
     >
       <div ref={contentRef} className="space-y-2">
-        <p>
+        <p className="text-zinc-200">
           We use cookies to improve your experience. Essential cookies are
           always on.
         </p>
@@ -120,7 +130,7 @@ export default function CookieConsentBanner() {
             <Button
               size="sm"
               variant="ghost"
-              className="text-zinc-400 underline text-xs h-auto p-0"
+              className="text-zinc-400 hover:text-zinc-200 hover:bg-transparent underline text-xs h-auto p-0"
               onClick={(e) => {
                 e.preventDefault();
                 setShowPrefs((v) => !v);
@@ -129,7 +139,7 @@ export default function CookieConsentBanner() {
               {showPrefs ? "Hide preferences" : "Customize preferences"}
             </Button>
             {showPrefs && (
-              <div className="mt-2 space-y-2 text-left">
+              <div className="mt-3 space-y-2.5 text-left">
                 {(
                   [
                     ["analytics", "Analytics", "Usage tracking (GA4, Hotjar)"],
@@ -137,26 +147,34 @@ export default function CookieConsentBanner() {
                     ["functional", "Functional", "Chat widgets, video embeds"],
                   ] as Array<[keyof Prefs, string, string]>
                 ).map(([key, label, desc]) => (
-                  <div key={key} className="flex items-center gap-2">
+                  <div key={key} className="flex items-center gap-3">
                     <Switch
                       id={`cc-${key}`}
                       checked={prefs[key]}
                       onCheckedChange={(v) =>
                         setPrefs((prev) => ({ ...prev, [key]: v }))
                       }
+                      className="data-[state=unchecked]:bg-zinc-700 data-[state=checked]:bg-white"
                     />
-                    <Label htmlFor={`cc-${key}`} className="text-xs">
-                      <span className="font-medium">{label}</span> — {desc}
+                    <Label
+                      htmlFor={`cc-${key}`}
+                      className="text-sm font-medium text-zinc-100 cursor-pointer"
+                    >
+                      {label}{" "}
+                      <span className="text-xs font-normal text-zinc-400">
+                        — {desc}
+                      </span>
                     </Label>
                   </div>
                 ))}
                 <Button
                   size="sm"
+                  className="bg-zinc-800 text-zinc-100 hover:bg-zinc-700 border border-zinc-700"
                   onClick={async () => {
                     const ok = await save(prefs);
                     if (ok) {
                       document.cookie = `cookie_consent=true; max-age=${365 * 24 * 3600}; path=/`;
-                      window.location.reload();
+                      setVisible(false);
                     } else {
                       setSaveError(true);
                     }
@@ -165,7 +183,7 @@ export default function CookieConsentBanner() {
                   Save preferences
                 </Button>
                 {saveError && (
-                  <p className="text-xs text-red-600">
+                  <p className="text-xs text-red-400">
                     Could not save — please try again.
                   </p>
                 )}

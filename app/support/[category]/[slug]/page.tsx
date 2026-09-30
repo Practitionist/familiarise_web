@@ -106,7 +106,7 @@ export default async function SupportArticlePage({
 
         <SupportSidebarMobile />
         <div className="flex gap-10">
-          <div className="hidden xl:block">
+          <div className="hidden lg:block">
             <SupportSidebar />
           </div>
           <article className="min-w-0 flex-1">

@@ -21,7 +21,14 @@ import {
 import { useCurrency } from "@/hooks/useCurrency";
 
 interface ConsultantCardProps {
-  consultant: IConsultantCardData;
+  consultant: IConsultantCardData & {
+    classPlans?: Array<{
+      id: string;
+      title: string;
+      price: number;
+      durationInMonths?: number;
+    }>;
+  };
   metadata: {
     domains: { id: string; name: string }[];
     subdomains: { id: string; name: string }[];
@@ -30,43 +37,6 @@ interface ConsultantCardProps {
   /** Opens the quick-view details drawer instead of navigating. */
   onSelect?: (consultant: IConsultantCardData) => void;
 }
-
-const ConsultantInfo = ({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string | null | undefined;
-}) => (
-  <div className="flex items-center gap-2 text-sm">
-    <Icon className="w-4 h-4 text-muted-foreground/70" />
-    <span className="text-muted-foreground">{label}:</span>
-    <span className="text-foreground font-medium">
-      {value || "Not specified"}
-    </span>
-  </div>
-);
-
-/**
- * A labelled row of badges. The label column is fixed-width so the "Field" and
- * "Skills" rows align with each other and with the ConsultantInfo rows above.
- */
-const BadgeRow = ({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) => (
-  <div className="flex items-start gap-2 mt-2">
-    <span className="w-16 shrink-0 pt-1.5 text-sm text-muted-foreground">
-      {label}:
-    </span>
-    <div className="flex flex-wrap gap-2">{children}</div>
-  </div>
-);
 
 interface SubscriptionPlanCardData {
   price: number;
@@ -171,6 +141,14 @@ export const ConsultantCard = memo(function ConsultantCard({
       ?.slice()
       .sort((a, b) => a.durationInMonths - b.durationInMonths) || [];
 
+  const sortedConsultations =
+    consultant.consultationPlans?.slice().sort((a, b) => a.price - b.price) ||
+    [];
+  const sortedClasses =
+    consultant.classPlans?.slice().sort((a, b) => a.price - b.price) || [];
+  const startingConsultation = sortedConsultations[0] ?? null;
+  const startingClass = sortedClasses[0] ?? null;
+
   // Count how many plans share each duration so we can disambiguate labels
   // when multiple plans have the same `durationInMonths`.
   const durationCounts = sortedPlans.reduce<Record<number, number>>(
@@ -205,23 +183,26 @@ export const ConsultantCard = memo(function ConsultantCard({
     return base;
   });
 
+  const secondaryActionsCount =
+    (onSelect ? 1 : 0) + (trialOffer ? 1 : 0) + 1;
+  const secondaryGridClass =
+    secondaryActionsCount === 3
+      ? "grid-cols-1 sm:grid-cols-3"
+      : secondaryActionsCount === 2
+        ? "grid-cols-2"
+        : "grid-cols-1";
+
   return (
     <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
         {/* Left Section: Consultant Info. Clicking anywhere here (except
             nested links/buttons) opens the quick-view drawer; the primary
-            CTA on the right navigates to the full profile page. No
-            role="button" on the container — button semantics would flatten
-            the nested org-badge link for assistive tech — so keyboard/AT
-            users get the native Quick view button in the header instead. */}
+            CTA on the right navigates to the full profile page. */}
         <div
           className={`relative flex-grow ${onSelect ? "cursor-pointer" : ""}`}
           {...(onSelect
             ? {
                 onClick: (e: React.MouseEvent) => {
-                  // Let nested interactive elements (org badge link, Quick
-                  // view button) behave normally instead of opening the
-                  // drawer twice.
                   if ((e.target as HTMLElement).closest("a,button")) return;
                   onSelect(consultant);
                 },
@@ -229,41 +210,23 @@ export const ConsultantCard = memo(function ConsultantCard({
             : {})}
         >
           {/* Header */}
-          <div className="flex items-start gap-4 mb-6">
-            {onSelect && (
-              <button
-                type="button"
-                onClick={() => onSelect(consultant)}
-                className="absolute right-0 top-0 z-10 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                Quick view
-              </button>
-            )}
+          <div className="flex items-start gap-4 mb-5">
             <div className="relative h-20 w-20 flex-shrink-0">
               <Image
                 alt={`Portrait of ${consultant.user.name}`}
                 className="rounded-2xl object-cover ring-2 ring-muted"
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
-                // 80×80 slot — without sizes, `fill` fetches a 100vw image (#932 perf).
                 sizes="80px"
               />
-              {/* TODO: Add real presence indicator when online tracking is implemented */}
             </div>
             <div className="flex-1 min-w-0">
-              {/* Name and org badge share one row, so neither may wrap: a long
-                  org name ("Indian Institute of Technology Madras") otherwise
-                  breaks onto a second line and squeezes the name into wrapping
-                  too. Both truncate instead, and the badge keeps its `title`
-                  so the full name is still reachable on hover. */}
               <div className="flex items-center gap-1.5 min-w-0">
                 <h3 className="truncate text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
                   {consultant.user.name}
                 </h3>
                 {consultant.isVerified && (
                   <span title="Verified by Familiarise" className="shrink-0">
-                    {/* Verification is an attribute, not a semantic status —
-                        the off-brand blue was the only chromatic accent here. */}
                     <BadgeCheck className="w-5 h-5 text-foreground" />
                   </span>
                 )}
@@ -286,8 +249,11 @@ export const ConsultantCard = memo(function ConsultantCard({
                   </Link>
                 )}
               </div>
-              {/* #705 — a null score means too few rated sessions to publish
-                  one. Say that rather than printing 0.0. */}
+              {isMeaningfulText(consultant.headline) && (
+                <p className="mt-1 truncate text-sm font-medium text-muted-foreground">
+                  {consultant.headline.trim()}
+                </p>
+              )}
               <div className="flex items-center gap-2 mt-2">
                 {consultant.rating !== null ? (
                   <>
@@ -310,40 +276,33 @@ export const ConsultantCard = memo(function ConsultantCard({
 
           {/* Description — only render when it's meaningful free-form text */}
           {isMeaningfulText(consultant.description) && (
-            <p className="text-muted-foreground leading-relaxed mb-6 line-clamp-2">
+            <p className="text-muted-foreground leading-relaxed mb-5 line-clamp-2">
               {consultant.description.trim()}
             </p>
           )}
 
-          {/* Meta Info */}
-          <div className="space-y-3 mb-6">
-            {/* Headline - first line */}
-            <ConsultantInfo
-              icon={Briefcase}
-              label="Headline"
-              value={consultant.headline}
-            />
-            {/* Experience and Domain - second line together */}
-            <div className="flex items-center gap-6">
-              <ConsultantInfo
-                icon={Clock}
-                label="Experience"
-                value={
-                  consultant.experience
-                    ? `${consultant.experience} years`
-                    : null
-                }
-              />
-              {/* Domain moved to the labelled badge row below — it was stated
-                  twice, once here and once as the first badge. */}
-            </div>
-            {/* Languages */}
+          {/* Metadata Pills / Chips */}
+          <div className="flex flex-wrap items-center gap-2 mb-5">
+            {isMeaningfulText(consultant.headline) && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-foreground">
+                <Briefcase className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="truncate max-w-[240px]">
+                  {consultant.headline.trim()}
+                </span>
+              </span>
+            )}
+            {consultant.experience !== null &&
+              consultant.experience !== undefined && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-foreground">
+                  <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                  {consultant.experience} yrs exp
+                </span>
+              )}
             {consultant.languages && consultant.languages.length > 0 && (
-              <ConsultantInfo
-                icon={Globe}
-                label="Languages"
-                value={consultant.languages.join(", ")}
-              />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-foreground">
+                <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+                {consultant.languages.join(", ")}
+              </span>
             )}
           </div>
 
@@ -368,12 +327,11 @@ export const ConsultantCard = memo(function ConsultantCard({
               </div>
             )}
 
-          {/* Domain & Subdomains. Labelled rather than a bare run of pills:
-              domain, subdomain and skill badges are visually interchangeable,
-              so without a label the reader can't tell which taxonomy they're
-              looking at. */}
-          {(consultant.domain?.name || consultant.subDomains.length > 0) && (
-            <BadgeRow label="Field">
+          {/* Domain, Subdomains & Skills Chips */}
+          {(consultant.domain?.name ||
+            consultant.subDomains.length > 0 ||
+            consultant.tags.length > 0) && (
+            <div className="flex flex-wrap gap-2">
               {consultant.domain?.name && (
                 <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1">
                   {consultant.domain.name}
@@ -388,12 +346,6 @@ export const ConsultantCard = memo(function ConsultantCard({
                   {sd.name}
                 </Badge>
               ))}
-            </BadgeRow>
-          )}
-
-          {/* Tags */}
-          {consultant.tags.length > 0 && (
-            <BadgeRow label="Skills">
               {consultant.tags.slice(0, 3).map((t) => (
                 <Badge
                   key={`${consultant.id}-tag-${t.id}`}
@@ -402,11 +354,11 @@ export const ConsultantCard = memo(function ConsultantCard({
                   {t.name}
                 </Badge>
               ))}
-            </BadgeRow>
+            </div>
           )}
         </div>
 
-        {/* Right Section: Subscription Plans & Actions */}
+        {/* Right Section: Subscription Plans / Starting Session & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
           <div className="bg-muted rounded-xl p-4">
             {sortedPlans.length > 0 ? (
@@ -434,30 +386,104 @@ export const ConsultantCard = memo(function ConsultantCard({
                   </TabsContent>
                 ))}
               </Tabs>
+            ) : startingConsultation || startingClass ? (
+              <div className="bg-card rounded-xl p-5 border border-border space-y-4">
+                {startingConsultation ? (
+                  <>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div className="text-2xl sm:text-3xl font-bold text-foreground">
+                        {formatPrice(startingConsultation.price)}
+                      </div>
+                      <div className="text-xs sm:text-sm text-muted-foreground font-medium bg-muted px-2.5 py-1 rounded-full whitespace-nowrap">
+                        {startingConsultation.durationInHours}h session
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span className="text-muted-foreground truncate">
+                          {startingConsultation.title || "1:1 Consultation"}
+                        </span>
+                      </div>
+                      {sortedConsultations.length > 1 && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                          <span className="text-muted-foreground">
+                            {sortedConsultations.length} consultation options
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : startingClass ? (
+                  <>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div className="text-2xl sm:text-3xl font-bold text-foreground">
+                        {formatPrice(startingClass.price)}
+                      </div>
+                      {startingClass.durationInMonths && (
+                        <div className="text-xs sm:text-sm text-muted-foreground font-medium bg-muted px-2.5 py-1 rounded-full whitespace-nowrap">
+                          {startingClass.durationInMonths} mo class
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span className="text-muted-foreground truncate">
+                        {startingClass.title || "Group Class"}
+                      </span>
+                    </div>
+                  </>
+                ) : null}
+                <Button
+                  asChild
+                  variant="outline"
+                  className="w-full h-10 rounded-xl text-sm font-medium border-border"
+                >
+                  <Link href={profileHref}>Book 1:1 Session</Link>
+                </Button>
+              </div>
             ) : (
-              <div className="text-center text-muted-foreground py-8">
-                <p className="text-sm">No subscription plans available</p>
+              <div className="bg-card rounded-xl p-5 border border-border space-y-3">
+                <p className="text-sm font-medium text-foreground">
+                  1:1 Sessions & Mentorship
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  View profile for available sessions and scheduling options.
+                </p>
+                <Button
+                  asChild
+                  variant="outline"
+                  className="w-full h-10 rounded-xl text-sm font-medium border-border"
+                >
+                  <Link href={profileHref}>Book 1:1 Session</Link>
+                </Button>
               </div>
             )}
           </div>
 
-          {/* Primary CTA navigates to the full profile page (wrapped in
-              <Link> via Button asChild so the browser context menu offers
-              "Open in new tab" / "Copy link"). The card body opens the
-              quick-view drawer instead. */}
+          {/* Bottom Action Row: View full profile + Quick view / Trial / Book */}
           <div className="flex flex-col gap-2">
             <Button
               asChild
               className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
             >
               <Link href={profileHref}>
-                <span>View Profile</span>
+                <span>View full profile</span>
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>
             </Button>
-            <div
-              className={`grid gap-2 ${trialOffer ? "grid-cols-2" : "grid-cols-1"}`}
-            >
+            <div className={`grid gap-2 ${secondaryGridClass}`}>
+              {onSelect && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onSelect(consultant)}
+                  className="h-10 border-border hover:bg-muted text-muted-foreground hover:text-foreground rounded-xl text-sm font-medium"
+                >
+                  Quick view
+                </Button>
+              )}
               {trialOffer && (
                 <Button
                   asChild

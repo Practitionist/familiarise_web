@@ -44,6 +44,12 @@ export const TRANSPARENT_HERO_ROUTES = [
   "/enterprise",
   "/enterprise/team-training",
   "/enterprise/corporate-mentorship",
+  // Additional dark-hero marketing pages.
+  "/become-an-expert",
+  "/blog",
+  "/pricing",
+  "/about",
+  "/contactus",
 ] as const;
 
 /**

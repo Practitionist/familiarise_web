@@ -19,7 +19,7 @@ import {
   webinarSearchParamsSchema,
   type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
-import { CreditCard as CreditCardIcon } from "lucide-react";
+import { Check, CreditCard as CreditCardIcon, Lock } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -551,14 +551,14 @@ export default function WebinarCheckoutPage({
 
   if (error) {
     return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
+      <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)] bg-muted/40 p-4">
         <div
-          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
+          className="rounded-2xl border border-border bg-card p-8 shadow-elevation-2 text-card-foreground max-w-md w-full text-center"
           role="alert"
         >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
             <svg
-              className="h-6 w-6 text-background/70"
+              className="h-6 w-6 text-destructive"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
@@ -571,14 +571,17 @@ export default function WebinarCheckoutPage({
               />
             </svg>
           </div>
-          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-background/70 text-sm">{error}</p>
-          <button
+          <p className="font-semibold text-lg mb-2 text-foreground">
+            Unable to load checkout
+          </p>
+          <p className="text-muted-foreground text-sm">{error}</p>
+          <Button
+            variant="outline"
             onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+            className="mt-5"
           >
             Go back
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -611,14 +614,14 @@ export default function WebinarCheckoutPage({
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)]">
         <p>Essential webinar data is missing. Please try again later.</p>
       </div>
     );
   }
 
   return (
-    <>
+    <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 min-w-0">
@@ -757,7 +760,11 @@ export default function WebinarCheckoutPage({
             <Button
               variant="outline"
               onClick={() => handleApplyDiscount()}
-              disabled={isApplyingDiscount || !!appliedDiscount}
+              disabled={
+                isApplyingDiscount ||
+                !!appliedDiscount ||
+                !discountCodeInput.trim()
+              }
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
             </Button>
@@ -766,7 +773,7 @@ export default function WebinarCheckoutPage({
             <div className="text-sm text-red-500">{discountError}</div>
           )}
           {appliedDiscount && (
-            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-md">
+            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-lg border border-green-200">
               <div className="min-w-0">
                 <div className="font-medium text-green-700 truncate">
                   {appliedDiscount.code}
@@ -780,7 +787,7 @@ export default function WebinarCheckoutPage({
               <Button
                 variant="ghost"
                 size="sm"
-                className="shrink-0"
+                className="shrink-0 text-green-700 hover:text-green-800"
                 onClick={() => {
                   setAppliedDiscount(null);
                   setDiscountError(null);
@@ -790,27 +797,6 @@ export default function WebinarCheckoutPage({
               </Button>
             </div>
           )}
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium">WEBINAR10</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 10% off your webinar registration
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-muted-foreground">10% off</div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleApplyDiscount("WEBINAR10")}
-                  disabled={isApplyingDiscount || !!appliedDiscount}
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
         <Separator className="bg-border" />
         <ReferralCreditsBlock
@@ -822,29 +808,37 @@ export default function WebinarCheckoutPage({
           formatPrice={formatPrice}
         />
       </div>
-      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
-        <Card className="border-border shadow-sm">
+      <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
+        <Card className="rounded-2xl border-border shadow-elevation-1">
           <CardHeader>
             <CardTitle className="text-foreground">Webinar Pricing</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <div className="grid gap-2">
+            <div className="grid gap-3">
               <div className="flex items-center justify-between">
-                <div>Registration Fee</div>
-                <div>{formatPrice(planDetails?.price || 0)}</div>
+                <div className="text-muted-foreground">Registration Fee</div>
+                <div className="font-medium">
+                  {formatPrice(planDetails?.price || 0)}
+                </div>
               </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <span className="font-semibold">Includes</span>
+              <Separator className="bg-border" />
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Includes
                 </div>
-                <div className="font-semibold">
-                  <ul className="list-disc">
-                    <li>Live webinar access</li>
-                    <li>Q&A session</li>
-                    <li>Recording access</li>
-                    <li>Certificate of attendance</li>
-                  </ul>
-                </div>
+                <ul className="space-y-1.5 text-sm text-foreground">
+                  {[
+                    "Live webinar access",
+                    "Q&A session",
+                    "Recording access",
+                    "Certificate of attendance",
+                  ].map((item) => (
+                    <li key={item} className="flex items-center gap-2">
+                      <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
             <Separator className="bg-border" />
@@ -895,29 +889,31 @@ export default function WebinarCheckoutPage({
             </div>
           </CardContent>
         </Card>
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <div className="font-semibold">Payment</div>
-            <div className="text-muted-foreground">
+        <Card className="rounded-2xl border-border shadow-elevation-1">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base text-foreground">
+              Payment Method
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
               Select your preferred payment method
-            </div>
-          </div>
-          {paymentGateways.map((gateway) => (
-            <Card key={gateway.name} className="border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">
-                  {gateway.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="divide-y divide-border">
+              {paymentGateways.map((gateway) => (
+                <div
+                  key={gateway.name}
+                  className="flex flex-wrap items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/50">
+                      <CreditCardIcon className="w-5 h-5 text-muted-foreground" />
+                    </div>
                     <div className="min-w-0">
-                      <div className="font-semibold text-foreground">
-                        Credit/Debit Card
+                      <div className="font-semibold text-sm text-foreground">
+                        {gateway.name}
                       </div>
-                      <div className="text-sm text-muted-foreground/70">
+                      <div className="text-xs text-muted-foreground">
                         {gateway.description}
                       </div>
                     </div>
@@ -992,16 +988,23 @@ export default function WebinarCheckoutPage({
                       )}
                     </div>
                   ) : (
-                    <Button variant="outline" disabled>
+                    <span className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">
                       Coming Soon
-                    </Button>
+                    </span>
                   )}
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+              <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span>
+                256-bit SSL encrypted checkout. Additional international
+                gateways coming soon.
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </>
+    </div>
   );
 }

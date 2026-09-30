@@ -245,15 +245,15 @@ const Footer: React.FC = () => {
 
       {/* Waitlist signup — every marketing page, merged with the footer */}
       <div className="relative z-10 border-b border-zinc-800">
-        <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
+        <div className="container mx-auto px-4 md:px-6 py-14 md:py-16">
           <div className="max-w-2xl mx-auto text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-6 shadow-lg">
-              <MessageSquare className="w-8 h-8 text-white" />
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-5 shadow-lg">
+              <MessageSquare className="w-6 h-6 text-white" />
             </div>
-            <h2 className="text-fluid-5xl font-bold tracking-tight text-white mb-4">
+            <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-white mb-3">
               Stay in the <span className="silver-text">loop</span>
             </h2>
-            <p className="text-lg text-zinc-500 mb-8">
+            <p className="text-base md:text-lg text-zinc-400 mb-7">
               Get expert tips, career advice, and exclusive offers delivered to
               your inbox weekly.
             </p>
@@ -267,7 +267,7 @@ const Footer: React.FC = () => {
                 placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-14 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
+                className="h-12 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-400 rounded-xl focus:border-zinc-600 focus:ring-zinc-600"
               />
               <Button
                 type="submit"
@@ -275,7 +275,7 @@ const Footer: React.FC = () => {
                 disabled={
                   waitlistStatus === "loading" || waitlistStatus === "success"
                 }
-                className="h-14 bg-white text-zinc-900 hover:bg-zinc-200 px-8 rounded-xl font-medium shrink-0"
+                className="h-12 bg-white text-zinc-900 hover:bg-zinc-200 px-7 rounded-xl font-medium shrink-0"
               >
                 {subscribeButtonLabel}
               </Button>
@@ -287,11 +287,11 @@ const Footer: React.FC = () => {
               </p>
             )}
 
-            <p className="text-sm text-zinc-600 mt-4">
+            <p className="text-sm text-zinc-400 mt-4">
               No spam, unsubscribe anytime.{" "}
               <Link
                 href="/privacy"
-                className="underline hover:text-zinc-400 transition-colors"
+                className="underline hover:text-white transition-colors"
               >
                 Privacy Policy
               </Link>
@@ -362,7 +362,7 @@ const Footer: React.FC = () => {
 
         {/* Expertise band — deep links into the catalog */}
         <div className="mt-12 pt-8 border-t border-zinc-800">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 mb-3">
+          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-3">
             Find an expert in
           </h3>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
@@ -379,13 +379,32 @@ const Footer: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Bar — legal lives in its own column above, so this carries
-          only the copyright line. */}
+      {/* Bottom Bar */}
       <div className="border-t border-zinc-800 relative z-10">
-        <div className="container mx-auto px-4 md:px-6 py-6">
-          <p className="text-sm text-zinc-500 text-center md:text-left">
+        <div className="container mx-auto px-4 md:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-sm text-zinc-400 text-center sm:text-left">
             © {new Date().getFullYear()} Familiarise. All rights reserved.
           </p>
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-zinc-400">
+            <Link
+              href="/privacy"
+              className="hover:text-white transition-colors"
+            >
+              Privacy
+            </Link>
+            <Link href="/terms" className="hover:text-white transition-colors">
+              Terms
+            </Link>
+            <Link href="/refund" className="hover:text-white transition-colors">
+              Refunds
+            </Link>
+            <Link
+              href="/support"
+              className="hover:text-white transition-colors"
+            >
+              Support
+            </Link>
+          </div>
         </div>
       </div>
     </footer>

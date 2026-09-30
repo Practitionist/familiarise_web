@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
@@ -13,32 +13,30 @@ import {
 
 export default function RefundPolicyPage() {
   return (
-    <section className="w-full">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Hero Section */}
-        <div className="text-center mb-12">
-          <div className="flex justify-center mb-4">
-            <RefreshCw className="h-16 w-16 text-foreground" />
-          </div>
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
-            {PAGE_META.refund.title}
-          </h1>
-          <p className="text-muted-foreground max-w-3xl mx-auto">
-            {PAGE_META.refund.description}
-          </p>
-        </div>
-
+    <section className="w-full py-12 md:py-16">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="max-w-3xl mx-auto">
-          <Card className="shadow-elevation-1">
-            <CardHeader>
-              <CardTitle className="text-fluid-2xl">
-                Cancellation & Refund Policy
-              </CardTitle>
-              <p className="text-sm text-muted-foreground">
+          {/* Editorial Document Header */}
+          <div className="mb-10">
+            <div className="flex flex-wrap items-center gap-2.5 mb-4">
+              <Badge variant="secondary" className="gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" />
+                Billing &amp; Refunds
+              </Badge>
+              <Badge variant="outline" className="text-muted-foreground">
                 Last Updated: {POLICY_DATES.refundLastUpdated}
-              </p>
-            </CardHeader>
-            <CardContent className="prose prose-slate max-w-none">
+              </Badge>
+            </div>
+            <h1 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight mb-3">
+              {PAGE_META.refund.title}
+            </h1>
+            <p className="text-fluid-base text-muted-foreground leading-relaxed">
+              {PAGE_META.refund.description}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card p-6 md:p-10 shadow-elevation-1">
+            <div className="prose prose-slate dark:prose-invert max-w-none">
               <h2 className="text-2xl font-semibold mt-6 mb-4">
                 1. Introduction
               </h2>
@@ -457,7 +455,7 @@ export default function RefundPolicyPage() {
                   additional time based on your bank's processing schedule
                 </li>
               </ul>
-              <div className="bg-yellow-50 dark:bg-yellow-950 p-4 rounded-lg mt-4">
+              <div className="rounded-xl border border-border bg-muted/60 p-4 mt-4">
                 <p className="text-sm">
                   <strong>Note:</strong> The total time from refund request to
                   receiving funds in your account may take 7-14 business days
@@ -659,7 +657,7 @@ export default function RefundPolicyPage() {
                 <li>Do not initiate a chargeback before contacting us</li>
                 <li>We will investigate and resolve within 7 business days</li>
               </ol>
-              <div className="bg-red-50 dark:bg-red-950 p-4 rounded-lg mt-4">
+              <div className="rounded-xl border border-border bg-muted/60 p-4 mt-4">
                 <p className="text-sm">
                   <strong>Important:</strong> Initiating a chargeback without
                   contacting us first may result in immediate suspension of your
@@ -812,7 +810,7 @@ export default function RefundPolicyPage() {
 
               <Separator className="my-6" />
 
-              <div className="bg-secondary border border-border p-6 rounded-lg mt-8">
+              <div className="bg-secondary border border-border p-6 rounded-xl mt-8">
                 <h3 className="text-lg font-semibold mb-2">
                   Fair Treatment for All
                 </h3>
@@ -825,8 +823,8 @@ export default function RefundPolicyPage() {
                   refund so we can explore all available options.
                 </p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       </div>
     </section>

@@ -152,7 +152,15 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <div className="sticky top-24 space-y-6">
+            <div className="lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)] space-y-6">
+              {/* Registration Card — primary enrollment CTA above the fold */}
+              <ClientClassRegistration
+                plan={plan}
+                maxParticipants={plan.maxParticipants ?? undefined}
+                consultantUserId={plan.consultantProfile?.user?.id}
+                batch={cards.find((c) => c.canEnrol) ?? cards[0]}
+              />
+
               {/* Instructor Card */}
               <Card className="border-border shadow-sm">
                 <CardHeader className="pb-2">
@@ -237,14 +245,6 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </CardContent>
                 </Card>
               )}
-
-              {/* Registration Card */}
-              <ClientClassRegistration
-                plan={plan}
-                maxParticipants={plan.maxParticipants ?? undefined}
-                consultantUserId={plan.consultantProfile?.user?.id}
-                batch={cards.find((c) => c.canEnrol) ?? cards[0]}
-              />
             </div>
           </motion.div>
         </div>

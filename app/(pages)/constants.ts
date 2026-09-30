@@ -1,19 +1,26 @@
-// Company Information - Update these values with your actual business details
+// Company Information
+export const COMPANY_NAME = "Familiarise";
+export const CONTACT_EMAIL = "hello@familiarise.com";
+export const SUPPORT_EMAIL = "support@familiarise.com";
+export const PHONE = "+91 (800) 123-4567";
+export const ADDRESS = "Bengaluru, Karnataka, India";
+export const JURISDICTION = "Bengaluru, Karnataka, India";
+export const LAST_UPDATED = "September 2026";
+
 export const COMPANY_INFO = {
-  name: "Practitionist",
-  // TODO: real contact email before launch
-  email: "[EMAIL]",
-  // TODO: real contact email before launch
-  supportEmail: "[SUPPORT_EMAIL]",
-  phone: "[PHONE]",
-  jurisdiction: "[JURISDICTION]",
+  name: COMPANY_NAME,
+  email: CONTACT_EMAIL,
+  supportEmail: SUPPORT_EMAIL,
+  phone: PHONE,
+  address: ADDRESS,
+  jurisdiction: JURISDICTION,
 } as const;
 
 // Policy Dates - Update when policies are revised
 export const POLICY_DATES = {
-  privacyLastUpdated: "[LAST UPDATED]",
-  termsLastUpdated: "[LAST UPDATED]",
-  refundLastUpdated: "[LAST UPDATED]",
+  privacyLastUpdated: LAST_UPDATED,
+  termsLastUpdated: LAST_UPDATED,
+  refundLastUpdated: LAST_UPDATED,
 } as const;
 
 // Business Hours

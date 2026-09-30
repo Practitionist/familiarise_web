@@ -11,17 +11,20 @@ export const AUTH_PROVIDERS = [
   {
     id: "github" as const,
     label: "GitHub",
-    className: "bg-black hover:bg-gray-700",
+    className:
+      "bg-zinc-900/90 hover:bg-zinc-800 border border-white/10 text-white font-medium h-11 rounded-xl transition-colors",
   },
   {
     id: "google" as const,
     label: "Google",
-    className: "bg-red-600 hover:bg-red-500",
+    className:
+      "bg-zinc-900/90 hover:bg-zinc-800 border border-white/10 text-white font-medium h-11 rounded-xl transition-colors",
   },
   {
     id: "facebook" as const,
     label: "Facebook",
-    className: "bg-blue-600 hover:bg-blue-500",
+    className:
+      "bg-zinc-900/90 hover:bg-zinc-800 border border-white/10 text-white font-medium h-11 rounded-xl transition-colors",
   },
 ] as const;
 

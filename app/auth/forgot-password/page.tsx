@@ -80,56 +80,66 @@ export default function ForgotPassword() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-neutral-950 p-6 text-white">
       <div className="mx-auto flex w-full max-w-md flex-col">
-        <div className="text-center">
-          <GlobeIcon className="mx-auto h-10 w-auto text-white" />
-          <h2 className="mt-6 text-fluid-3xl font-semibold tracking-tight">
-            Forgot your password?
-          </h2>
-          <p className="mt-2 text-sm text-zinc-400 md:text-base">
-            Enter your email address and we&apos;ll send you a link to reset it.
-          </p>
-        </div>
-        <form className="mt-8 space-y-6" onSubmit={handleRequestReset}>
-          <div className="grid gap-2">
-            <Label htmlFor="email" className="sr-only">
-              Email address
-            </Label>
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              placeholder="Email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={isLoading}
-            />
-          </div>
-
-          {message && (
-            <p
-              className={`text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}
-            >
-              {message.text}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            className="w-full bg-white text-black hover:bg-white/90"
-            disabled={isLoading}
-          >
-            {isLoading ? "Sending..." : "Send Reset Link"}
-          </Button>
-        </form>
-        <div className="mt-6 text-center text-sm">
+        <div className="mb-6 flex justify-center">
           <Link
-            href="/auth/signin"
-            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            href="/"
+            className="inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-white uppercase"
           >
-            Remembered your password? Sign in
+            <GlobeIcon className="h-5 w-5" /> Familiarise
           </Link>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-6 sm:p-8">
+          <div className="text-center">
+            <h2 className="text-fluid-3xl font-semibold tracking-tight">
+              Forgot your password?
+            </h2>
+            <p className="mt-2 text-sm text-zinc-400 md:text-base">
+              Enter your email address and we&apos;ll send you a link to reset
+              it.
+            </p>
+          </div>
+          <form className="mt-6 space-y-5" onSubmit={handleRequestReset}>
+            <div className="grid gap-2">
+              <Label htmlFor="email" className="sr-only">
+                Email address
+              </Label>
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            {message && (
+              <p
+                className={`text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}
+              >
+                {message.text}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full bg-white text-black hover:bg-white/90"
+              disabled={isLoading}
+            >
+              {isLoading ? "Sending..." : "Send Reset Link"}
+            </Button>
+          </form>
+          <div className="mt-6 text-center text-sm">
+            <Link
+              href="/auth/signin"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Remembered your password? Sign in
+            </Link>
+          </div>
         </div>
       </div>
     </div>

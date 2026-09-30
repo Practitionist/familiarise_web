@@ -349,17 +349,14 @@ function DesktopDropdownPanel({
   return (
     <div
       id={panelId}
-      // Mega panels centre on the VIEWPORT (fixed), list panels on their
-      // trigger (absolute) — an 860px panel hung off a narrow left-side trigger
-      // reads as badly misaligned.
-      //
-      // Centred with `inset-x-0 mx-auto`, never `left-1/2 -translate-x-1/2`:
-      // a transform-based centre fights other transforms. Margin centring
-      // can't be clobbered.
-      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 ${
+      // Mega panels centre on the VIEWPORT (fixed), list panels align to their
+      // trigger (absolute left-0) — an 860px panel hung off a narrow left-side
+      // trigger reads as badly misaligned, while inset-x-0 mx-auto on a list
+      // panel overflows narrow triggers.
+      className={`rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-xl shadow-elevation-3 z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 before:content-[''] before:absolute before:-top-3 before:inset-x-0 before:h-3 ${
         isMega
-          ? `fixed max-w-[calc(100vw-2rem)] ${panelWidth}`
-          : `absolute top-full mt-2 ${panelWidth}`
+          ? `fixed inset-x-0 mx-auto max-w-[calc(100vw-2rem)] ${panelWidth}`
+          : `absolute left-0 top-full mt-2 ${panelWidth}`
       }`}
       style={
         isMega
@@ -538,9 +535,26 @@ const Navbar = () => {
 
   useEffect(() => {
     const checkScroll = () => setIsScrolled(window.scrollY > 50);
-    window.addEventListener("scroll", checkScroll);
+    checkScroll();
+    window.addEventListener("scroll", checkScroll, { passive: true });
     return () => window.removeEventListener("scroll", checkScroll);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
 
   if (isChromeHidden(pathname)) return null;
 
@@ -564,7 +578,7 @@ const Navbar = () => {
       <nav
         className={`fixed w-full z-[1000] transition-all duration-300 ${
           showDarkStyle
-            ? "bg-transparent"
+            ? "bg-transparent border-b border-white/[0.08]"
             : "bg-background/90 backdrop-blur-xl border-b border-border shadow-sm"
         }`}
         style={{
@@ -711,15 +725,29 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                <Button
-                  asChild
-                  variant="ghost"
-                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
-                >
-                  <Link href="/auth/signin" onClick={closeMenu}>
-                    Sign in
-                  </Link>
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="sm"
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                  >
+                    <Link href="/auth/signin" onClick={closeMenu}>
+                      Sign in
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    size="sm"
+                    className={`rounded-lg font-medium ${
+                      showDarkStyle
+                        ? "bg-white text-zinc-900 hover:bg-zinc-100"
+                        : ""
+                    }`}
+                  >
+                    <Link href="/explore/experts">Find an expert</Link>
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -759,9 +787,18 @@ const Navbar = () => {
           />
 
           {/* Drawer */}
-          <div className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile navigation"
+            className="lg:hidden fixed left-0 w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl flex flex-col safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300"
+            style={{
+              top: "var(--maintenance-banner-height, 0px)",
+              height: "calc(100dvh - var(--maintenance-banner-height, 0px))",
+            }}
+          >
             {/* Drawer Header */}
-            <div className="flex justify-between items-center p-5 border-b border-zinc-800">
+            <div className="flex justify-between items-center p-5 border-b border-zinc-800 shrink-0">
               <div className="relative h-8 w-28">
                 <Image
                   src={familiariseLogoWhite}
@@ -782,10 +819,7 @@ const Navbar = () => {
             </div>
 
             {/* Navigation — Accordion Sections */}
-            <div
-              className="flex flex-col p-5 overflow-y-auto"
-              style={{ maxHeight: "calc(100% - 10rem)" }}
-            >
+            <div className="flex-1 flex flex-col p-5 overflow-y-auto">
               {isAuthedView && (
                 <Link
                   href="/dashboard"
@@ -915,7 +949,7 @@ const Navbar = () => {
             </div>
 
             {/* User Section */}
-            <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
+            <div className="shrink-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
               {authView.mode === "unknown" ? (
                 <div className="flex items-center gap-3">
                   <Skeleton className="h-10 w-10 rounded-full" />
@@ -923,8 +957,14 @@ const Navbar = () => {
                 </div>
               ) : isAuthedView ? (
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10 border border-zinc-700">
+                  <Link
+                    href={
+                      accountSettingsHref(session?.user ?? {}) ?? "/profile"
+                    }
+                    onClick={() => setIsOpen(false)}
+                    className="flex items-center gap-3 min-w-0 hover:opacity-80 transition-opacity"
+                  >
+                    <Avatar className="h-10 w-10 border border-zinc-700 shrink-0">
                       <AvatarImage src={getUserImage()} alt="Profile" />
                       <AvatarFallback className="bg-zinc-800 text-white">
                         {authView.name?.charAt(0) ?? "U"}
@@ -933,7 +973,7 @@ const Navbar = () => {
                     <span className="text-white font-medium text-sm truncate max-w-[140px]">
                       {authView.name}
                     </span>
-                  </div>
+                  </Link>
                   <Button
                     variant="ghost"
                     onClick={handleSignOut}
@@ -943,15 +983,25 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                /* Mirrors the desktop bar: no marketing CTAs, sign in only. */
-                <Button
-                  asChild
-                  className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
-                >
-                  <Link href="/auth/signin" onClick={closeMenu}>
-                    Sign in
-                  </Link>
-                </Button>
+                <div className="flex flex-col gap-2.5">
+                  <Button
+                    asChild
+                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-medium"
+                  >
+                    <Link href="/explore/experts" onClick={closeMenu}>
+                      Find an expert
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="w-full border-zinc-700 bg-transparent text-white hover:bg-zinc-800 hover:text-white"
+                  >
+                    <Link href="/auth/signin" onClick={closeMenu}>
+                      Sign in
+                    </Link>
+                  </Button>
+                </div>
               )}
             </div>
           </div>

@@ -150,18 +150,18 @@ export function ConsultantAvailability({
 
   if (showErrorCard) {
     return (
-      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
-        <div className="relative text-center">
-          <h3 className="text-xl font-bold mb-2 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+      <div className="bg-card rounded-2xl p-6 md:p-8 border border-border shadow-elevation-1">
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold text-foreground">
             Consultant Availability
           </h3>
-          <p className="text-sm text-muted-foreground mb-4">
+          <p className="text-sm text-muted-foreground">
             Couldn&apos;t load availability. Please try again.
           </p>
           <button
             type="button"
             onClick={() => weekQuery.refetch()}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700"
+            className="mt-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Retry
           </button>
@@ -172,17 +172,14 @@ export function ConsultantAvailability({
 
   if (showLoadingCard) {
     return (
-      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
-        <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
-        <div className="relative">
-          <h3 className="text-xl font-bold mb-4 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
-            Consultant Availability
-          </h3>
-          <div className="flex items-center justify-center py-8">
-            <div className="text-muted-foreground flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-muted-foreground"></div>
-              <span>Loading availability...</span>
-            </div>
+      <div className="bg-card rounded-2xl p-6 md:p-8 border border-border shadow-elevation-1">
+        <h3 className="text-lg font-semibold text-foreground mb-4">
+          Consultant Availability
+        </h3>
+        <div className="flex items-center justify-center py-8">
+          <div className="text-muted-foreground flex items-center space-x-2">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-muted-foreground" />
+            <span>Loading availability...</span>
           </div>
         </div>
       </div>
@@ -196,17 +193,19 @@ export function ConsultantAvailability({
   return (
     <div
       className={
-        refetching ? "space-y-6 opacity-70 transition-opacity" : "space-y-6"
+        refetching
+          ? "bg-card rounded-2xl p-6 md:p-8 border border-border shadow-elevation-1 space-y-6 opacity-70 transition-opacity"
+          : "bg-card rounded-2xl p-6 md:p-8 border border-border shadow-elevation-1 space-y-6"
       }
     >
-      <div className="text-center">
-        <h3 className="text-2xl font-bold mb-3 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+      <div className="space-y-1">
+        <h3 className="text-lg font-semibold text-foreground">
           Consultant Availability
         </h3>
-        <p className="text-sm text-muted-foreground bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-xl border border-border shadow-sm inline-block">
+        <p className="text-sm text-muted-foreground">
           {consultantDetails.scheduleType === "WEEKLY"
-            ? "Weekly schedule. Use the 'Book Now' button to schedule a meeting."
-            : "Custom schedule. Use the arrows to navigate weeks. Use the 'Book Now' button to schedule a meeting."}
+            ? "Weekly schedule overview. Use the booking panel to select a session time."
+            : "Custom schedule overview. Use the arrows to navigate weeks, or use the booking panel to schedule a session."}
         </p>
       </div>
 
