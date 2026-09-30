@@ -11,22 +11,13 @@
  *
  * ## Why a code is not enough on its own
  *
- * Three of the answers have to vary at runtime for the *same* code:
+ * Two of the answers have to vary at runtime for the *same* code:
  *
- *   1. **Tiered disclosure.** `INVALID_EMAIL_OR_PASSWORD` means "wrong
- *      password", "no such account" and "this account has no password" all at
- *      once, and Better Auth will not tell the client which. Attempts 1–2 show
- *      the collapsed sentence. Once `lib/auth/attempts.ts` has recorded three
- *      failures for the address, the server unlocks the specific sentence
- *      (see `unlocked` below). Before that, the specific copy is *not sent* —
- *      an unread entry on the client is not a disclosure, and a determined
- *      caller has to be told by the server to use it.
- *
- *   2. **Flow.** The same `INVALID_TOKEN` means something different on the
+ *   1. **Flow.** The same `INVALID_TOKEN` means something different on the
  *      password-reset page than on the email-verification page. Per-flow
  *      overrides live in `AUTH_ERROR_COPY_BY_FLOW`, below.
  *
- *   3. **Retry timing.** A 429 is only useful if the customer knows when to come
+ *   2. **Retry timing.** A 429 is only useful if the customer knows when to come
  *      back. `lib/rate-limit/*` puts `retryAfterSeconds` on the body and
  *      `humanizeAuthError` turns it into a duration.
  *
@@ -70,12 +61,6 @@ export interface AuthErrorCopy {
   needsVerification?: boolean;
   /** The next thing the customer can do about it. */
   action?: AuthErrorAction;
-  /**
-   * The stronger sentence, permitted ONLY once the server has unlocked
-   * disclosure for this address. Absent on almost every code — its absence is
-   * the guarantee that the code cannot disclose.
-   */
-  unlocked?: { title: string; description: string };
 }
 
 const SUPPORT = "support@familiarisenow.com";
@@ -105,12 +90,6 @@ export const AUTH_ERROR_COPY = {
     description: "Check both and try again, or use Forgot password?",
     field: "password",
     action: "forgot-password",
-    // Sent only after three recorded failures for this address.
-    unlocked: {
-      title: "No account matches that email",
-      description:
-        "We couldn't find an account for this address. If that's right, create one below — if not, check the address or reset your password.",
-    },
   },
   INVALID_PASSWORD: {
     title: "That password didn't work",
@@ -122,11 +101,6 @@ export const AUTH_ERROR_COPY = {
     title: "This account has no password",
     description:
       "You signed up with Google, GitHub or Facebook, or through your organisation's SSO. Use that button instead.",
-    unlocked: {
-      title: "No account matches that email",
-      description:
-        "We couldn't find an account for this address. If that's right, create one below.",
-    },
   },
   USER_NOT_FOUND: {
     title: "We couldn't find that account",
@@ -386,18 +360,13 @@ export const AUTH_ERROR_COPY = {
     action: "retry",
   },
 
-  /* ── Throttling and lockout ──────────────────────────────────────────── */
+  /* ── Throttling ──────────────────────────────────────────────────────── */
 
   // The description is rewritten at call time from `retryAfterSeconds`; see
   // `withRetryAfter` in `auth-errors.ts`.
   RATE_LIMITED: {
     title: "Too many attempts",
     description: "Please wait a moment, then try again.",
-    action: "retry",
-  },
-  ACCOUNT_TEMPORARILY_LOCKED: {
-    title: "This account is temporarily locked",
-    description: "Too many failed attempts. Wait for the timer, then try again.",
     action: "retry",
   },
 

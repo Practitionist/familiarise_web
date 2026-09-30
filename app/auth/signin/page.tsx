@@ -11,7 +11,6 @@ import {
   humanizeAuthError,
   type AuthErrorAction,
   type AuthErrorField,
-  type SignInDisclosure,
 } from "@/lib/labels/auth-errors";
 import {
   signIn,
@@ -42,43 +41,6 @@ import { AuthFormSkeleton } from "../AuthFormSkeleton";
 /** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
 const SUPPORT_EMAIL =
   process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
-
-/**
- * Read a server-issued disclosure off a failed sign-in and hand it to
- * `humanizeAuthError` — **only** when the server says `unlocked`.
- *
- * The tiered-disclosure design (`lib/labels/auth-errors.catalog.ts`,
- * `INVALID_EMAIL_OR_PASSWORD.unlocked`) has one hard rule: the specific
- * sentence is not allowed to appear until the server has recorded
- * `DISCLOSURE_UNLOCK_AFTER` failures for that address. An unread copy entry on
- * the client is not a disclosure — a determined caller reads the bundle — so
- * the *server* has to be the thing that says "you may now be told". Which is
- * why this function refuses anything that is not `unlocked === true`, and
- * never counts, infers or predicts the answer itself. Until `lib/auth.ts`
- * starts attaching the object, `disclosureFrom` returns `undefined` and
- * `humanizeAuthError` falls back to the collapsed sentence, which is the
- * correct behaviour for an un-instructed client.
- */
-function disclosureFrom(error: unknown): SignInDisclosure | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const carrier = (error as { disclosure?: unknown }).disclosure;
-  const source =
-    carrier && typeof carrier === "object"
-      ? (carrier as Record<string, unknown>)
-      : (error as Record<string, unknown>);
-  if (source.unlocked !== true) return undefined;
-  const attempts =
-    typeof source.attempts === "number" ? source.attempts : undefined;
-  return {
-    unlocked: true,
-    attempts: attempts ?? 0,
-    ...(typeof source.accountState === "string"
-      ? {
-          accountState: source.accountState as SignInDisclosure["accountState"],
-        }
-      : {}),
-  };
-}
 
 /**
  * Resolve the redirect target for an already-authenticated visitor.
@@ -433,9 +395,7 @@ function SignInContent() {
       error: unknown,
     ) => {
       if (error) {
-        // Disclosure is read, never computed: see `disclosureFrom`.
         const copy = humanizeAuthError("signin", error, {
-          disclosure: disclosureFrom(error),
           retryAfterSeconds: retryAfter.take(),
         });
         setErrorAction(copy.action ?? null);

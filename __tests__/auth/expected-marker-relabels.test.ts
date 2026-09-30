@@ -130,8 +130,8 @@ describe("the marker reaches beforeSend (row 19)", () => {
   });
 
   // BREAKS IF DELETED: auth files could no longer mark at the throw site and
-  // report wherever the capture happens, which is the pattern the
-  // `sign-in-attempt-hooks` disclosure probe and `requireApiAuth` both rely on.
+  // report wherever the capture happens, which is the pattern
+  // `requireApiAuth` relies on.
   it("rides through reportSentryError even when it is told expected:false", async () => {
     reportSentryError(markExpected(new Error("via-report-helper")), {
       subsystem: "auth",

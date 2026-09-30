@@ -42,18 +42,13 @@
  *
  * ## Account keys are digests, never addresses
  *
- * Mirrors `accountAttemptKey` in `lib/auth/attempts.ts`:
  * `sha256(lower(trim(email)))`, hex. Upstash keys are plaintext at rest and
  * visible in `MONITOR`, so an address list living in Redis is a customer list
  * living in Redis — the same reason this project holds `sendDefaultPii: false`
  * in Sentry. Trimming and lower-casing first is what makes the budget *per
  * account* rather than per string: without it `Bob@x.com` and `bob@x.com ` are
- * two budgets for one account and the second is free.
- *
- * `lib/auth/attempts.ts` deliberately cannot be imported here: it is
- * `node:crypto` and this module is in the edge graph. Hence the same algorithm
- * written twice, and hence the risk of the two drifting — mitigated by
- * exporting `accountKey` and having callers import it rather than re-derive it.
+ * two budgets for one account and the second is free. Callers import
+ * `accountKey` rather than re-derive it, so there is one algorithm.
  *
  * Hashing uses **Web Crypto** (`crypto.subtle.digest`), not `node:crypto`, so
  * this module is safe to import from Edge middleware. It is a global in Node
@@ -129,20 +124,6 @@ export interface RatePolicy {
    */
   readonly dimensions: Readonly<Partial<Record<RateDimension, number>>>;
   /**
-   * Account-keyed graduated lockout, in failed attempts, for surfaces that
-   * authenticate a password.
-   *
-   * Metadata only, and deliberately NOT implemented here. The lockout needs an
-   * exact consumed count, a per-address TTL doubling on the second offence, and
-   * deletion on success — none of which a sliding window can express — so it
-   * lives in `lib/auth/attempts.ts` and is gated inside the sign-in handler.
-   * This edge budget is the coarse layer *underneath* it and must stay wide
-   * enough not to lock a user out a minute before the real lockout fires, or
-   * the customer is told "too many attempts" for a reason they cannot see.
-   * Keep this number equal to `LOCKOUT_THRESHOLD` in that file.
-   */
-  readonly lockAfter?: number;
-  /**
    * The canonical rationale, and the one place it is written down. The edge
    * rules are generated from scopes, so they cannot each carry their own
    * comment; this is what a reader of a 429 comes here for.
@@ -170,15 +151,12 @@ export const RATE_POLICIES = {
     scope: RATE_SCOPE.AUTH_SIGN_IN,
     window: "15 m",
     dimensions: { ip: 30, account: 10 },
-    lockAfter: 8,
     description:
       "POST /api/auth/sign-in/email. IP 30/15m is far above a human (a few " +
       "typos, one Caps Lock discovery, a re-auth after a long idle) and well " +
       "below a scripted sweep of one address. Account 10/15m is the sprayed " +
       "dimension: an attacker with a residential proxy resets the IP counter " +
-      "for free, and a counter that resets is a counter that never fills. " +
-      "lockAfter 8 mirrors LOCKOUT_THRESHOLD in lib/auth/attempts.ts, which " +
-      "owns the graduated 15m-then-1h lockout this budget must stay clear of.",
+      "for free, and a counter that resets is a counter that never fills.",
   },
 
   [RATE_SCOPE.AUTH_SIGN_UP]: {
@@ -483,9 +461,7 @@ async function digestHex(value: string): Promise<string> {
 /**
  * Redis key for an email address: `sha256(lower(trim(email)))`, hex.
  *
- * Same normalisation and same output form as `accountAttemptKey` in
- * `lib/auth/attempts.ts`, so both keyspaces obey one convention. Never put the
- * address itself in a key.
+ * Never put the address itself in a key.
  */
 export function accountKey(email: string): Promise<string> {
   return digestHex(email.trim().toLowerCase());

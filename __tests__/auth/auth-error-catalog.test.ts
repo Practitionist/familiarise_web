@@ -9,10 +9,10 @@
  *      *serialised* set so a code that reaches the wire without matching
  *      (casing, whitespace) is still covered.
  *
- *   2. **No leakage below the disclosure threshold.** A wrong password and an
- *      unknown address must produce byte-identical copy for the first three
- *      attempts. This is the assertion that stops a well-meaning future edit
- *      from turning the sign-in form into a customer-enumeration oracle.
+ *   2. **No account enumeration.** A wrong password and an unknown address
+ *      must both produce non-revealing copy. This is the assertion that stops
+ *      a well-meaning future edit from turning the sign-in form into a
+ *      customer-enumeration oracle.
  *
  *   3. **No raw server text.** No path may surface Better Auth's `message`.
  *      This is the regression that shipped `TypeError: Cannot read properties
@@ -23,7 +23,6 @@
 import {
   humanizeAuthError,
   formatRetryAfter,
-  type SignInDisclosure,
 } from "../../lib/labels/auth-errors";
 import { AUTH_ERROR_COPY } from "../../lib/labels/auth-errors.catalog";
 import {
@@ -148,15 +147,8 @@ describe("no raw server text escapes", () => {
   });
 });
 
-describe("tiered disclosure", () => {
-  const locked: SignInDisclosure = { unlocked: false, attempts: 0 };
-  const unlockedNoAccount: SignInDisclosure = {
-    unlocked: true,
-    attempts: 3,
-    accountState: "unknown",
-  };
-
-  it("attempts 0-2 produce byte-identical copy for a wrong password and an unknown address", () => {
+describe("sign-in copy does not enumerate accounts", () => {
+  it("a wrong password and an unknown address are both non-revealing", () => {
     // Better Auth answers both with the same code; the copy must not undo that
     // by hinting at existence.
     const wrongPassword = humanizeAuthError("signin", {
@@ -174,67 +166,6 @@ describe("tiered disclosure", () => {
     // states that an account exists or does not.
     for (const copy of [wrongPassword, unknownAddress]) {
       expect(copy.description).not.toMatch(/no account|not found|does not exist/i);
-    }
-  });
-
-  it("below the threshold the unlocked copy is not used even if handed in", () => {
-    for (const attempts of [0, 1, 2]) {
-      const copy = humanizeAuthError(
-        "signin",
-        { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 },
-        { disclosure: { unlocked: false, attempts } },
-      );
-      expect(copy.description).not.toMatch(/couldn't find an account/i);
-    }
-  });
-
-  it("at the threshold the specific copy is used", () => {
-    const copy = humanizeAuthError(
-      "signin",
-      { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 },
-      { disclosure: unlockedNoAccount },
-    );
-    expect(copy.description).toMatch(/couldn't find an account/i);
-  });
-
-  it("an unlocked 'banned' account says so instead of blaming the password", () => {
-    const copy = humanizeAuthError(
-      "signin",
-      { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 },
-      { disclosure: { unlocked: true, attempts: 4, accountState: "banned" } },
-    );
-    expect(copy.title).toMatch(/suspended/i);
-    expect(copy.action).toBe("contact-support");
-  });
-
-  it("an unlocked 'sso_only' account points at SSO", () => {
-    const copy = humanizeAuthError(
-      "signin",
-      { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 },
-      { disclosure: { unlocked: true, attempts: 4, accountState: "sso_only" } },
-    );
-    expect(copy.action).toBe("switch-to-sso");
-  });
-
-  it("an unlocked 'unverified' account offers a resend, not a password retry", () => {
-    const copy = humanizeAuthError(
-      "signin",
-      { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 },
-      { disclosure: { unlocked: true, attempts: 4, accountState: "unverified" } },
-    );
-    expect(copy.needsVerification).toBe(true);
-    expect(copy.action).toBe("resend-verification");
-  });
-
-  it("disclosure is ignored on every other flow", () => {
-    // Only sign-in can enumerate; a signup error must not gain an oracle.
-    for (const flow of ["signup", "forgot", "reset", "verify"] as const) {
-      const copy = humanizeAuthError(
-        flow,
-        { code: "INVALID_EMAIL_OR_PASSWORD", status: 400 },
-        { disclosure: { unlocked: true, attempts: 9, accountState: "banned" } },
-      );
-      expect(copy.title).not.toMatch(/suspended/i);
     }
   });
 });

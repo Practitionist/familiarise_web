@@ -455,7 +455,7 @@ export function retryAfterSeconds(
  * Set when the limiter store could not be reached, cleared on the next
  * successful check. Module-scope on purpose: when the shared state is down
  * there is no shared state left to coordinate through (same reasoning as the
- * `captureThrottled` note below, and as `lib/auth/attempts.ts`).
+ * `captureThrottled` note below).
  */
 let rateLimitStoreDegraded = false;
 

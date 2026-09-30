@@ -32,10 +32,6 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
-import {
-  signInAttemptAfterHook,
-  signInAttemptBeforeHook,
-} from "@/lib/auth/sign-in-attempt-hooks";
 import { hashStaffPassword } from "@/lib/auth/staff-invitations";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
@@ -106,10 +102,6 @@ export const auth = betterAuth({
   // generates both the matcher and the limiter, so a typo in an endpoint name
   // can no longer silently disable a gate the way that one did.
   //
-  // IP is only the first line. `lib/auth/attempts.ts` adds a per-account
-  // counter and lockout, keyed on the email address, because a per-IP limit is
-  // defeated by IP rotation and shared by everyone behind one office NAT.
-  //
   // Bot traffic is a third line: the `captcha` plugin below gates the three
   // endpoints an attacker scripts, and it is wired to *escalate* when the
   // limiter's Redis is unreachable (see `lib/rate-limit/policies.ts`).
@@ -129,18 +121,6 @@ export const auth = betterAuth({
   // See audit Phase B.8 + docs/enterprise/20-iam-and-security/04-rate-limiting.md.
   rateLimit: {
     enabled: false,
-  },
-
-  // Per-account lockout + the server-side disclosure verdict for sign-in.
-  // `before` refuses a locked account before the password is compared;
-  // `after` counts the failure, publishes the disclosure header once the
-  // threshold is crossed, and refuses the attempt that trips the lockout so a
-  // credential staller gets no free authenticated session.
-  // See lib/auth/sign-in-attempt-hooks.ts for the hook mechanics, verified
-  // against better-call's short-circuit and after-hook merge behaviour.
-  hooks: {
-    before: signInAttemptBeforeHook,
-    after: signInAttemptAfterHook,
   },
 
   emailAndPassword: {

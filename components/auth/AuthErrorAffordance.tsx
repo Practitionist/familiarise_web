@@ -28,8 +28,8 @@ export type AuthActionTarget =
  *
  * `retry` is deliberately absent, and a resolver cannot return it. Turnstile-
  * style "just try again" as a *button* invites a second click on a request
- * that already failed — on sign-in that is precisely the behaviour a lockout
- * and a limiter exist to interrupt, and the submit button is always on screen
+ * that already failed — on sign-in that is precisely the behaviour a limiter
+ * exists to interrupt, and the submit button is always on screen
  * anyway. `retry` therefore means "the button you just pressed is the retry".
  */
 export const AUTH_ERROR_ACTION_LABEL: Record<

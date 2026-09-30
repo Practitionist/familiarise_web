@@ -9,15 +9,12 @@
  *      obliged to match Better Auth's casing.
  *   2. **Flow override.** The same code can read differently per page (see
  *      `AUTH_ERROR_COPY_BY_FLOW`).
- *   3. **Disclosure.** Only on sign-in, and only when the *server* said so —
- *      see `SignInDisclosure` below. The client never decides on its own that
- *      an address exists.
- *   4. **Status.** A code-less 429 becomes a timed message; a code-less 401/403
+ *   3. **Status.** A code-less 429 becomes a timed message; a code-less 401/403
  *      becomes `REQUEST_REJECTED`, not the generic sentence. The previous
  *      version fell through to `GENERIC[flow]`, which turned a `trustedOrigins`
  *      misconfiguration on a deploy preview into "Something went wrong on our
  *      side" — the single most confusing auth failure this app can produce.
- *   5. **Generic**, per flow, as a true last resort.
+ *   4. **Generic**, per flow, as a true last resort.
  *
  * The raw `error.message` is *never* returned. Not for a known code, not for an
  * unknown one, not in a fallback. Better Auth's messages are developer-facing
@@ -73,39 +70,7 @@ export interface AuthClientError {
   scope?: string;
 }
 
-/**
- * What the server is willing to tell the client about the account behind an
- * email address. Produced by `lib/auth/attempts.ts` and attached to the sign-in
- * response by the `hooks.after` middleware — never computed in the browser.
- */
-export interface SignInDisclosure {
-  /**
-   * False until the server has recorded `DISCLOSURE_UNLOCK_AFTER` failures for
-   * this address. While false, the `unlocked` copy is withheld regardless of
-   * what the client believes.
-   */
-  unlocked: boolean;
-  /** Failures recorded for this address in the current window. */
-  attempts: number;
-  /**
-   * Only meaningful once `unlocked`. Lets the page say the precise thing —
-   * "this account has no password yet" reads very differently from "this
-   * account is suspended", and both are more useful than either password error.
-   */
-  accountState?: AccountState;
-}
-
-export type AccountState =
-  | "unknown"
-  | "unverified"
-  | "active"
-  | "banned"
-  | "sso_only"
-  | "no_password";
-
 export interface HumanizeOptions {
-  /** Sign-in only. Gates the stronger, existence-revealing copy. */
-  disclosure?: SignInDisclosure;
   /** Overrides `error.retryAfterSeconds` — useful when the page parsed a header. */
   retryAfterSeconds?: number;
 }
@@ -118,9 +83,9 @@ export interface HumanizeOptions {
  * "in 12 minutes", not "in 731 seconds" and not "in a moment".
  *
  * Rounding is deliberately coarse and *up*: a customer told to come back in
- * "9 minutes" for a 9m30s lockout has been told to come back too early, and the
+ * "9 minutes" for a 9m30s wait has been told to come back too early, and the
  * natural reaction is to hammer the button — which is exactly the behaviour a
- * lockout exists to interrupt.
+ * rate limit exists to interrupt.
  */
 export function formatRetryAfter(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "a moment";
@@ -133,7 +98,7 @@ export function formatRetryAfter(seconds: number): string {
   return `${Math.ceil(hours / 24)} days`;
 }
 
-/** `RATE_LIMITED` / `ACCOUNT_TEMPORARILY_LOCKED` gain a real time to wait. */
+/** `RATE_LIMITED` gains a real time to wait. */
 function withRetryAfter(
   copy: AuthErrorCopy,
   seconds: number | undefined,
@@ -251,45 +216,6 @@ function copyForCode(
   return base ?? null;
 }
 
-/**
- * The account-state sentence, which is strictly more useful than either
- * password error — but is only ever reachable behind `disclosure.unlocked`.
- */
-function copyForAccountState(state: AccountState): AuthErrorCopy | null {
-  switch (state) {
-    case "unverified":
-      return {
-        title: "Verify your email first",
-        description: "This account exists but the email isn't verified yet.",
-        needsVerification: true,
-        action: "resend-verification",
-      };
-    case "banned":
-      return {
-        title: "This account is suspended",
-        description: "The address matches a suspended account.",
-        action: "contact-support",
-      };
-    case "sso_only":
-      return {
-        title: "Use your organisation's sign-in",
-        description: "This account signs in through SSO, not a password.",
-        action: "switch-to-sso",
-      };
-    case "no_password":
-      return {
-        title: "This account has no password",
-        description: "It signs in with Google, GitHub, Facebook or SSO.",
-        action: "sign-in",
-      };
-    case "active":
-    case "unknown":
-      // `active` means the address exists *and* the password was the problem;
-      // that is the collapsed case, so the base copy already says it.
-      return null;
-  }
-}
-
 const GENERIC: Record<AuthFlow, AuthErrorCopy> = {
   signin: {
     title: "Sign-in failed",
@@ -378,27 +304,5 @@ export function humanizeAuthError(
   const retryAfter = options.retryAfterSeconds ?? error.retryAfterSeconds;
   const code = normalizeAuthErrorCode(error.code);
   const byCode = code ? copyForCode(flow, code, error.message) : null;
-  const base = byCode ?? copyForStatus(flow, error.status, retryAfter);
-
-  // Lockout and throttling always get the real wait, whichever branch produced
-  // the base copy.
-  if (base === AUTH_ERROR_COPY.ACCOUNT_TEMPORARILY_LOCKED) {
-    return withRetryAfter(base, retryAfter);
-  }
-
-  // Tiered disclosure. Sign-in only, and only when the server said so.
-  if (flow === "signin" && options.disclosure?.unlocked) {
-    const stateCopy = options.disclosure.accountState
-      ? copyForAccountState(options.disclosure.accountState)
-      : null;
-    if (stateCopy) return stateCopy;
-    // No more specific state — fall back to "we don't know this address", which
-    // is the only other thing disclosure unlocks.
-    if (code === "INVALID_EMAIL_OR_PASSWORD" || code === "INVALID_PASSWORD") {
-      const unlocked = AUTH_ERROR_COPY.INVALID_EMAIL_OR_PASSWORD.unlocked;
-      if (unlocked) return { ...base, ...unlocked };
-    }
-  }
-
-  return base;
+  return byCode ?? copyForStatus(flow, error.status, retryAfter);
 }

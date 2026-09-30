@@ -11,8 +11,8 @@
  *
  *   - `AppAuthErrorCode` — codes this codebase mints itself: the SSO veto in
  *     `lib/auth.ts`'s `session.create.before`, the edge rate limiter, the
- *     session-lookup tri-state, the captcha gate, the account lockout, and the
- *     B2C entitlement layer.
+ *     session-lookup tri-state, the captcha gate, and the B2C entitlement
+ *     layer.
  *
  * Why the union is closed: `lib/labels/auth-errors.catalog.ts` is a
  * `Record<AuthErrorCode, AuthErrorCopy>`. Adding a code to either half makes
@@ -151,8 +151,6 @@ export type AppAuthErrorCode =
   | "SSO_PROVIDER_UNREACHABLE"
   /* lib/rate-limit/* — 429. `scope` in the body says which limiter fired. */
   | "RATE_LIMITED"
-  /* lib/auth/attempts.ts — graduated per-account lockout after repeat failures. */
-  | "ACCOUNT_TEMPORARILY_LOCKED"
   /* lib/auth-session-lookup.ts — the lookup threw; it did not answer "no". */
   | "SESSION_LOOKUP_FAILED"
   /* The request never reached Better Auth: origin/CORS/CSRF at the edge. */
@@ -269,7 +267,6 @@ export const AUTH_ERROR_CODES = {
   SSO_PROVIDER_MISCONFIGURED: "SSO_PROVIDER_MISCONFIGURED",
   SSO_PROVIDER_UNREACHABLE: "SSO_PROVIDER_UNREACHABLE",
   RATE_LIMITED: "RATE_LIMITED",
-  ACCOUNT_TEMPORARILY_LOCKED: "ACCOUNT_TEMPORARILY_LOCKED",
   SESSION_LOOKUP_FAILED: "SESSION_LOOKUP_FAILED",
   REQUEST_REJECTED: "REQUEST_REJECTED",
   TWO_FACTOR_REQUIRED: "TWO_FACTOR_REQUIRED",
