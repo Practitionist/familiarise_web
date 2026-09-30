@@ -220,6 +220,29 @@ export async function nextOrdinal(
  * surplus live row (a legacy atom) is soft-retired RESCHEDULED, and a booking
  * with no live row gets one. Dead rows are left alone — they are not the live
  * call and must not donate their `startsAt` to a duration-only rewrite.
+ *
+ * ## `movedFrom` exists so the caller can tell Stream (C7)
+ *
+ * The Stream call is a SECOND description of this booking: its
+ * `custom.sessionStartsAt` / `sessionEndsAt`, and the SFU's hard
+ * `limits.max_duration_seconds` (lib/meetings/duration-cap.ts). This function
+ * used to move the row and say nothing, so a 60-minute consultation extended to
+ * four hours kept a ~105-minute SFU cap and Stream terminated the call 135
+ * minutes before its booked end, with nothing in the app able to predict it.
+ *
+ * The Stream call is made by the CALLER, after this transaction commits, and
+ * never from in here: this function is handed an already-open `PrismaLike`, and
+ * awaiting a provider round trip inside it would hold a Serializable transaction
+ * — plus its connection and row locks — open for the length of a network call.
+ * (An injected callback would run in exactly the same place, so it is not the
+ * alternative it looks like.) Hence a return value instead of a side effect: the
+ * scheduling module keeps no Stream import, which also keeps it out of a cycle
+ * with the join gate and testable without a provider. See
+ * `lib/meetings/sync-call-window.ts` for the other half.
+ *
+ * `null` means "the times did not move" — a title-only edit, a consultant swap,
+ * a re-save of the same window — and in every one of those cases the call is
+ * still correct and must not be written to.
  */
 export async function replaceOccurrence(
   // PrismaLike (not Prisma.TransactionClient): the app client is `$extends`,
@@ -233,7 +256,11 @@ export async function replaceOccurrence(
     consultantProfileId: string;
     isTentative?: boolean;
   },
-): Promise<{ occurrenceId: string }> {
+): Promise<{
+  occurrenceId: string;
+  /** The window this edit moved the run FROM, or null when nothing moved. */
+  movedFrom: { startsAt: Date; endsAt: Date } | null;
+}> {
   const existing = await tx.appointmentOccurrence.findMany({
     where: { appointmentId: args.appointmentId },
     orderBy: { startsAt: "asc" },
@@ -263,7 +290,9 @@ export async function replaceOccurrence(
     });
     // #1569 — the earnings hold anchors on the call's end, which just moved.
     await recomputeEarningsHold(tx, args.appointmentId);
-    return { occurrenceId: created.id };
+    // A row that did not exist before has no room to be stale: the call is
+    // minted lazily, from these times, on the first join.
+    return { occurrenceId: created.id, movedFrom: null };
   }
 
   const [kept, ...surplus] = live;
@@ -286,7 +315,7 @@ export async function replaceOccurrence(
       !moved &&
       kept.consultantProfileId === target.consultantProfileId;
     if (!unchanged) throw new ScheduleLockedError(SESSION_ALREADY_HELD_MESSAGE);
-    return { occurrenceId: kept.id };
+    return { occurrenceId: kept.id, movedFrom: null };
   }
 
   // `occurrence_no_confirmed_overlap` is NOT DEFERRABLE and checks each UPDATE
@@ -320,7 +349,13 @@ export async function replaceOccurrence(
     });
   }
   await recomputeEarningsHold(tx, args.appointmentId);
-  return { occurrenceId: kept.id };
+  // #C7 — report the move, do not act on it. `moved` is the same predicate that
+  // stamps `movedAt` above, so a caller that re-stamps the Stream call and a row
+  // that claims to have moved can never disagree.
+  return {
+    occurrenceId: kept.id,
+    movedFrom: moved ? { startsAt: kept.startsAt, endsAt: kept.endsAt } : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

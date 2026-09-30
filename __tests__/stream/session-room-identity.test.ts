@@ -31,6 +31,11 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: (_type: string, id: string) => ({
         getOrCreate: async (payload: unknown) => {
+          // #C1 — the two writes are ordered now, so the ORDER is what these
+          // tests assert. Recorded before the failure switch so a mint that
+          // throws still records that it was attempted.
+          mockWriteOrder.push("stream.getOrCreate");
+          if (mockStreamFailure) throw mockStreamFailure;
           mockStreamCallsCreated.push(id);
           mockCallPayloads.push(payload as CallData);
           return {};
@@ -192,6 +197,10 @@ let sessions: Array<{
 }> = [];
 let mockStreamCallsCreated: string[] = [];
 let mockCallPayloads: CallData[] = [];
+/** #C1 — interleaving of the two writes, which is the invariant under test. */
+let mockWriteOrder: string[] = [];
+/** #C1 — set to make the mint fail, so the compensation path can be exercised. */
+let mockStreamFailure: Error | null = null;
 
 function seed(
   slotRows: SlotRow[],
@@ -203,6 +212,8 @@ function seed(
   sessions = [];
   mockStreamCallsCreated = [];
   mockCallPayloads = [];
+  mockWriteOrder = [];
+  mockStreamFailure = null;
   signIn(caller);
 
   const seatsOf = (appointmentId: string) =>
@@ -252,9 +263,18 @@ function seed(
         .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
   );
   db.appointment.findUnique.mockResolvedValue({ organizationId: null });
+  // Answers BOTH shapes the code looks a Meeting up by: the occurrence (the
+  // mint's own lookup) and the row id (the read-back after a lost rebind CAS).
   db.meeting.findUnique.mockImplementation(
-    async ({ where }: { where: { appointmentOccurrenceId: string } }) =>
-      sessions.find((s) => s.slotId === where.appointmentOccurrenceId) ?? null,
+    async ({
+      where,
+    }: {
+      where: { appointmentOccurrenceId?: string; id?: string };
+    }) =>
+      (where.id
+        ? sessions.find((s) => s.id === where.id)
+        : sessions.find((s) => s.slotId === where.appointmentOccurrenceId)) ??
+      null,
   );
   db.meeting.updateMany.mockReset();
   db.meeting.updateMany.mockImplementation(
@@ -265,6 +285,7 @@ function seed(
       where: { id: string; endedReason: string };
       data: { streamCallId: string };
     }) => {
+      mockWriteOrder.push("db.meeting.updateMany");
       const row = sessions.find(
         (s) => s.id === where.id && s.endedReason === where.endedReason,
       );
@@ -282,6 +303,7 @@ function seed(
         occurrence: { connect: { id: string } };
       };
     }) => {
+      mockWriteOrder.push("db.meeting.create");
       const created = {
         id: `ms-${sessions.length + 1}`,
         streamCallId: data.streamCallId,
@@ -438,6 +460,114 @@ describe("a room closed before the start is rebuilt on the next join", () => {
     expect(await join(rowA())).toBe("occurrence-A");
     expect(mockStreamCallsCreated).toEqual([]);
     expect(db.meeting.updateMany).not.toHaveBeenCalled();
+  });
+
+  // #C1 — the rebuild moved its CAS in front of the mint as well. Minting first
+  // meant a losing racer created a room no row would ever point at, which is the
+  // orphan the first-mint branch was fixed to make impossible.
+  it("rebinds the row BEFORE it mints the replacement room", async () => {
+    seed([rowA()]);
+    sessions.push({
+      id: "ms-1",
+      streamCallId: "occurrence-A",
+      slotId: "A",
+      endedAt: at("09:48"),
+      endedReason: "ended_early",
+    });
+
+    const room = await join(rowA());
+
+    expect(mockWriteOrder).toEqual([
+      "db.meeting.updateMany",
+      "stream.getOrCreate",
+    ]);
+    expect(mockStreamCallsCreated).toEqual([room]);
+  });
+
+  it("mints nothing at all when a concurrent join already won the rebind", async () => {
+    seed([rowA()]);
+    sessions.push({
+      id: "ms-1",
+      streamCallId: "occurrence-A",
+      slotId: "A",
+      endedAt: at("09:48"),
+      endedReason: "ended_early",
+    });
+    // The CAS matches nothing: another join rebound the row between our read and
+    // our write, so this call is the loser.
+    db.meeting.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    // The winner's id, not ours — and no second room on Stream for the winner's
+    // row to be the only pointer to.
+    expect(await join(rowA())).toBe("occurrence-A");
+    expect(mockStreamCallsCreated).toEqual([]);
+  });
+});
+
+/**
+ * #C1 — the row is the source of truth; the Stream call is the recoverable half.
+ *
+ * The defect this pins: `call.getOrCreate()` ran first and `createDbMeeting` was
+ * the LAST statement of `provisionAppointmentMeeting`, so a throw between them left
+ * a live, billable Stream call that no `Meeting` row pointed at. Nothing can find
+ * that: every reconciler in the product finds candidates by SCANNING
+ * `prisma.meeting` (the orphan reconciler, the maintenance drain, the earnings
+ * healer, the org audit queries) and not one of them calls `queryCalls`, because
+ * they are database jobs whose whole job is repairing rows that exist.
+ *
+ * The flip is only safe because the room id is deterministic — `occurrence-<id>`
+ * needs nothing from Stream — and only correct if the leftover state is
+ * recoverable. `POST /api/meetings/[id]/join` calls `getOrCreate` itself after
+ * `resolveMeetingAccess`, so the next person into the room materialises it.
+ */
+describe("the Meeting row is written before the call is minted (C1)", () => {
+  const rowA = () => slotRow("A", "10:00", "11:00");
+
+  it("creates the row first, then mints", async () => {
+    seed([rowA()]);
+
+    expect(await join(rowA())).toBe("occurrence-A");
+
+    // The ORDER is the fix. Asserting that both happened (as the rest of this
+    // file does) passed happily while the row was written last.
+    expect(mockWriteOrder).toEqual(["db.meeting.create", "stream.getOrCreate"]);
+  });
+
+  it("keeps the row when the mint fails, and the retry lands on the same room", async () => {
+    seed([rowA()]);
+    mockStreamFailure = new Error("stream 503");
+
+    // The caller is told the room is not ready…
+    await expect(join(rowA())).rejects.toThrow(/stream 503/);
+
+    // …and what is left behind is a row naming a room that does not exist yet,
+    // which is a state every reconciler can see and the join route heals. NOT a
+    // live Stream call that nothing can see, and not a deleted row: a delete that
+    // failed would be the same orphan, and the row is what the retry needs.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].streamCallId).toBe("occurrence-A");
+
+    // The retry: the row short-circuits the whole branch and hands back the same
+    // id. (The room itself is created by the join route's own getOrCreate, which
+    // `__tests__/stream/meeting-join-gate.test.ts` pins.)
+    mockStreamFailure = null;
+    expect(await join(rowA())).toBe("occurrence-A");
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("defers to the row's id when it was claimed under another one", async () => {
+    // A rebuild by a concurrent join, or a legacy/seeded row: the id this
+    // function computed is not the one the row names, and the row is the truth.
+    seed([rowA()]);
+    sessions.push({
+      id: "ms-legacy",
+      streamCallId: "legacy-uuid",
+      slotId: "A",
+    });
+
+    expect(await join(rowA())).toBe("legacy-uuid");
+    // No mint against an id the row does not claim.
+    expect(mockStreamCallsCreated).toEqual([]);
   });
 });
 

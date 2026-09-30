@@ -417,6 +417,12 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       totalProcessed: result.processed,
       reconciledCount: result.reconciled,
       streamNotFoundCount: result.streamNotFound,
+      // #C2 — rows left OPEN because Stream would not confirm an end (the room is
+      // still open, or Stream could not answer). Surfaced because it is now a
+      // normal outcome rather than a bug: an operator reading only
+      // `reconciledCount` would see a run that processed 200 rows and closed
+      // none of them with no indication that this is the job working.
+      unconfirmedCount: result.unconfirmed,
       errorCount: result.errors,
     };
   },

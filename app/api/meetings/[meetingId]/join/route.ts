@@ -8,7 +8,7 @@ import {
 } from "@/lib/stream-client";
 import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
-import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -67,11 +67,19 @@ export async function POST(
     // via useCallCustomData(), never from the Stream role.
     const role = "call_member";
 
+    // #C8 — the call id comes from the RESOLVED row, not from the URL segment.
+    // The end route has always read it that way (`toCallId(access.streamCallId)`)
+    // and this one read the raw segment instead, which is two authorities for one
+    // id: `default:`-prefixed URLs 404 here while working there, and after a
+    // #1607 rebuild the segment and the row disagree, because the rebuild
+    // rebinds `streamCallId` to `occurrence-<id>-r<suffix>` while the open tab is
+    // still on `occurrence-<id>`. `toCallId` also normalises a cid to a bare id,
+    // which is what `client.call(type, id)` expects — passing a cid through here
+    // mints a call whose id literally contains a colon.
+    const callId = toCallId(access.streamCallId);
+
     await withStreamCircuitBreaker(async () => {
-      const call = getStreamVideoClient().video.call(
-        STREAM_CALL_TYPE,
-        meetingId,
-      );
+      const call = getStreamVideoClient().video.call(STREAM_CALL_TYPE, callId);
 
       // A Meeting row does not guarantee the Stream call exists, and
       // updateCallMembers on a missing call throws — which this route reports as
@@ -90,6 +98,17 @@ export async function POST(
       // This runs only after resolveMeetingAccess has confirmed the caller is on
       // this appointment — authorization first, creation second, which is the
       // ordering P0-2 was about.
+      //
+      // #C1 — and it is no longer only a repair path for seeded rows. The mint
+      // now writes the `Meeting` row BEFORE it creates the call, so the normal
+      // state of a session whose first mint failed is exactly this one: a row
+      // naming a room that does not exist yet. That ordering is what makes the
+      // orphan impossible (no reconciler can see a call with no row, so nothing
+      // would ever find one), and THIS line is what closes the loop by creating
+      // the missing half on the way in. Do not remove it on the grounds that
+      // `provisionAppointmentMeeting` mints: that function short-circuits on an
+      // existing row and deliberately does not re-mint, precisely so this route
+      // can be the one that does.
       // #1270 — server-side auth carries no user context, so Stream requires
       // an explicit author on GetOrCreateCall. Omitting it threw code 4 on
       // EVERY request, which this route reported as a 500 after access had
@@ -113,12 +132,17 @@ export async function POST(
     streamLogger.info("Admitted to meeting", {
       userId: userId,
       meetingId,
+      callId,
       role: access.role,
     });
 
+    // #C8 — the id handed back is the one the room actually has, not the one the
+    // URL happened to carry. `useGetCallById` builds its `Call` handle from this
+    // value, so returning the stale segment would have the client resolve a room
+    // the server never granted membership on.
     return NextResponse.json({
       callType: STREAM_CALL_TYPE,
-      callId: meetingId,
+      callId,
       role: access.role,
     });
   } catch (error) {

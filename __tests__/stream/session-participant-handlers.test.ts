@@ -8,13 +8,16 @@
  * MeetingAttendance row keyed on [meetingId, userId]:
  *  - first join stamps firstJoinedAt (create branch)
  *  - rejoin only increments joinCount (update branch, firstJoinedAt untouched)
- *  - leave stamps lastLeftAt
+ *  - leave stamps lastLeftAt, and only ever FORWARD (C3)
  *  - missing session / missing user id are skipped, not thrown
  */
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     meeting: { findUnique: jest.fn() },
-    meetingAttendance: { upsert: jest.fn().mockResolvedValue({}) },
+    meetingAttendance: {
+      upsert: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     meetingPresence: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -44,6 +47,11 @@ const mockFindUnique = (
 const mockUpsert = (
   prisma as unknown as { meetingAttendance: { upsert: jest.Mock } }
 ).meetingAttendance.upsert;
+const mockAttendanceUpdateMany = (
+  prisma as unknown as {
+    meetingAttendance: { upsert: jest.Mock; updateMany: jest.Mock };
+  }
+).meetingAttendance.updateMany;
 const mockPresenceCreate = (
   prisma as unknown as { meetingPresence: { createMany: jest.Mock } }
 ).meetingPresence.createMany;
@@ -140,25 +148,47 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
 });
 
 describe("handleSessionParticipantLeft (STR-4)", () => {
+  const leave = (created_at: string) => ({
+    call_cid: "default:call_abc",
+    type: "call.session_participant_left" as const,
+    created_at,
+    session_id: "sess_1",
+    duration_seconds: 1800,
+    participant: { user: { id: "user_1" } },
+  });
+
   it("stamps lastLeftAt on leave (update branch)", async () => {
     mockFindUnique.mockResolvedValue({ id: "ms_1" });
 
-    await handleSessionParticipantLeft({
-      call_cid: "default:call_abc",
-      type: "call.session_participant_left",
-      created_at: "2026-06-16T10:30:00.000Z",
-      session_id: "sess_1",
-      duration_seconds: 1800,
-      participant: { user: { id: "user_1" } },
-    });
+    await handleSessionParticipantLeft(leave("2026-06-16T10:30:00.000Z"));
 
     const arg = mockUpsert.mock.calls[0][0];
     expect(arg.where).toEqual({
       meetingId_userId: { meetingId: "ms_1", userId: "user_1" },
     });
+    // #C3 — `lastLeftAt` is NOT in the upsert's update branch any more. This
+    // assertion USED to pin `{ lastLeftAt, joinCount: { increment: 1 } }`, and
+    // that expectation was wrong: a bare `lastLeftAt` in an upsert's update is
+    // unconditional, so a leave delivered out of order (Stream redelivers, and
+    // the sweeper re-drives for 168 h) moved the value BACKWARDS. #472 derives
+    // "still in the room" from this column, so a backwards move invents an
+    // absence for someone who is on the call. The write moved to the
+    // compare-and-set below; this branch is left carrying only the counter.
     expect(arg.update).toEqual({
-      lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),
       joinCount: { increment: 1 },
+    });
+    // The monotonic write, and the predicate that makes it monotonic: it only
+    // applies to a row that has never left (null) or left EARLIER.
+    expect(mockAttendanceUpdateMany).toHaveBeenCalledWith({
+      where: {
+        meetingId: "ms_1",
+        userId: "user_1",
+        OR: [
+          { lastLeftAt: null },
+          { lastLeftAt: { lt: new Date("2026-06-16T10:30:00.000Z") } },
+        ],
+      },
+      data: { lastLeftAt: new Date("2026-06-16T10:30:00.000Z") },
     });
     // #1569 — join lost, leave arrives: one closed interval rebuilt from duration_seconds.
     expect(mockPresenceCreate.mock.calls[0][0].data).toEqual([
@@ -176,6 +206,25 @@ describe("handleSessionParticipantLeft (STR-4)", () => {
     });
   });
 
+  // The regression, stated as a test rather than as a comment: a leave from an
+  // EARLIER stint of the same meeting arriving after the later one.
+  it("never moves lastLeftAt backwards when an older leave lands late (C3)", async () => {
+    mockFindUnique.mockResolvedValue({ id: "ms_1" });
+
+    await handleSessionParticipantLeft(leave("2026-06-16T10:10:00.000Z"));
+
+    const predicate = mockAttendanceUpdateMany.mock.calls[0][0].where
+      .OR as Array<{
+      lastLeftAt?: { lt: Date } | null;
+    }>;
+    const guard = predicate.find((clause) => clause.lastLeftAt?.lt);
+    // The guard is `lastLeftAt < this leave`, so a row already stamped at 10:30
+    // does not match a 10:10 delivery: `10:30 < 10:10` is false.
+    expect(guard?.lastLeftAt?.lt).toEqual(new Date("2026-06-16T10:10:00.000Z"));
+    // And the per-device presence row carries the same guard, which it always did.
+    expect(mockUpsert.mock.calls[0][0].update.lastLeftAt).toBeUndefined();
+  });
+
   it("skips when meeting session does not exist (no throw)", async () => {
     mockFindUnique.mockResolvedValue(null);
 
@@ -190,5 +239,6 @@ describe("handleSessionParticipantLeft (STR-4)", () => {
     ).resolves.toBeUndefined();
 
     expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockAttendanceUpdateMany).not.toHaveBeenCalled();
   });
 });

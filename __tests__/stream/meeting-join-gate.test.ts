@@ -560,3 +560,188 @@ describe("resolveMeetingAccess still admits a live session", () => {
     expect(db.appointmentOccurrence.findMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #C8 / #C9 — one authority for the call id, and a URL that outlives its room.
+ *
+ * The route used to address the call with the RAW URL segment while the end route
+ * used `toCallId(access.streamCallId)` from the row. Two authorities for one id
+ * means a `default:`-prefixed URL 404s on join and works on end, and — the worse
+ * half — a #1607 rebuild REBINDS `streamCallId` to `occurrence-<id>-r<suffix>`,
+ * so every URL minted before it stops matching on the bare id. The person's tab
+ * is still open in the room, `CallEnded`'s "Try to Rejoin" re-posts to the URL
+ * they arrived on, and it resolves to nothing.
+ *
+ * The occurrence id is the durable key (`appointmentOccurrenceId` is `@unique` on
+ * `Meeting`), so `loadMeeting` falls back to it. Note what is NOT being widened:
+ * which ids resolve changes, WHO may resolve them does not — every refusal below
+ * still applies, and the last test here is the one that would catch a regression
+ * in which the fallback became a quieter way into a closed room.
+ */
+describe("the room id is resolved from the row, and survives a #1607 rebuild", () => {
+  /** A row whose call has been rebuilt onto a suffixed id (#1607). */
+  function seedRebuiltRoom() {
+    seedAccess(consultation("APPROVED"));
+    db.meeting.findUnique.mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { streamCallId?: string; appointmentOccurrenceId?: string };
+      }) => {
+        // The bare id no longer names anything — the rebuild moved it.
+        if (where.streamCallId) return null;
+        if (where.appointmentOccurrenceId === "slot-1") {
+          return {
+            id: "ms-1",
+            streamCallId: "occurrence-slot-1-rmunantmv",
+            endedAt: null,
+            endedReason: null,
+            occurrence: {
+              id: "slot-1",
+              startsAt: new Date(Date.now() - 5 * MINUTE),
+              endsAt: new Date(Date.now() + 25 * MINUTE),
+              isTentative: false,
+              completionStatus: "SCHEDULED",
+              deletedAt: null,
+              appointmentId: "appt-1",
+              appointment: {
+                id: "appt-1",
+                deletedAt: null,
+                ...consultation("APPROVED"),
+              },
+            },
+          };
+        }
+        return null;
+      },
+    );
+  }
+
+  it("resolves an old `occurrence-<id>` URL to the row's CURRENT room", async () => {
+    seedRebuiltRoom();
+
+    const access = await resolveMeetingAccess("occurrence-slot-1", "user_1");
+
+    expect(access.hasAccess).toBe(true);
+    // The id handed to Stream is the rebuilt one, not the URL's — which is what
+    // the join route now passes to `video.call()`.
+    expect((access as { streamCallId: string }).streamCallId).toBe(
+      "occurrence-slot-1-rmunantmv",
+    );
+  });
+
+  it("still refuses a rebuilt room that is over", async () => {
+    // The fallback widens WHICH ids resolve, never WHO may. A closed room stays
+    // closed for the person holding an old link to it.
+    seedRebuiltRoom();
+    db.meeting.findUnique.mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { streamCallId?: string; appointmentOccurrenceId?: string };
+      }) => {
+        if (where.streamCallId) return null;
+        if (where.appointmentOccurrenceId !== "slot-1") return null;
+        return {
+          id: "ms-1",
+          streamCallId: "occurrence-slot-1-rmunantmv",
+          endedAt: new Date(Date.now() - 45 * MINUTE),
+          endedReason: "call_ended",
+          occurrence: {
+            id: "slot-1",
+            startsAt: new Date(Date.now() - 50 * MINUTE),
+            endsAt: new Date(Date.now() - 45 * MINUTE),
+            isTentative: false,
+            completionStatus: "SCHEDULED",
+            deletedAt: null,
+            appointmentId: "appt-1",
+            appointment: {
+              id: "appt-1",
+              deletedAt: null,
+              ...consultation("APPROVED"),
+            },
+          },
+        };
+      },
+    );
+
+    const access = await resolveMeetingAccess("occurrence-slot-1", "user_1");
+
+    expect(access.hasAccess).toBe(false);
+    expect(access.message).toBe("This session has ended.");
+  });
+
+  it("answers not_found for an id that names no occurrence at all", async () => {
+    seedAccess(consultation("APPROVED"));
+    db.meeting.findUnique.mockResolvedValue(null);
+
+    const access = await resolveMeetingAccess("some-other-id", "user_1");
+
+    expect(access.hasAccess).toBe(false);
+    // Only the two refusals carry an id; a miss does not leak that a session
+    // exists under some other name.
+    expect((access as { streamCallId?: string }).streamCallId).toBeUndefined();
+  });
+
+  it("normalises a `default:`-prefixed URL, the way the end route always has", async () => {
+    // #C8 — the same bookmark that works on `/end` used to 404 on `/join`,
+    // because this route split the id out of the URL segment and the other one
+    // did not. `toCallId` is idempotent, so a bare id is unaffected.
+    seedAccess(consultation("APPROVED"));
+    const calls: unknown[] = [];
+    db.meeting.findUnique.mockImplementation(
+      async (args: { where: { streamCallId?: string } }) => {
+        calls.push(args.where.streamCallId);
+        return null;
+      },
+    );
+
+    await resolveMeetingAccess("default:slot-abc", "user_1");
+
+    expect(calls[0]).toBe("slot-abc");
+  });
+});
+
+describe("POST /api/meetings/[meetingId]/join addresses the RESOLVED room (C8)", () => {
+  it("joins the id the row names, and hands the client the same one", async () => {
+    // A #1607 rebuild: the URL is the pre-rebuild id, the row has moved on. The
+    // client builds its Call handle from the RESPONSE, so returning the URL's id
+    // would have it resolve a room membership was never granted on.
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      message: "Access granted as participant",
+      reason: "granted",
+      streamCallId: "occurrence-slot-abc-rmunantmv",
+    });
+
+    const res = await POST(req, {
+      params: Promise.resolve({ meetingId: "occurrence-slot-abc" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      callType: "default",
+      callId: "occurrence-slot-abc-rmunantmv",
+    });
+  });
+
+  it("joins a `default:`-prefixed URL as a bare id", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      message: "Access granted as participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+    });
+
+    const res = await POST(req, {
+      params: Promise.resolve({ meetingId: "default:slot-abc" }),
+    });
+
+    expect(res.status).toBe(200);
+    // Never a cid: `client.call(type, id)` with a colon in the id mints a
+    // different call than the one membership was granted on.
+    expect((await res.json()).callId).toBe("slot-abc");
+  });
+});
