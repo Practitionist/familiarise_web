@@ -194,7 +194,9 @@ const INBOX_ORDER = [
 // back as `number`, which GetPayload still spells `bigint`.
 const findConsultations = (where: Prisma.ConsultationWhereInput) =>
   prisma.consultation.findMany({
-    where: { ...where, deletedAt: null },
+    // No `deletedAt`: a request is retired by `status` + `cancelledAt`, both
+    // written by the transition that closed it. See the Consultation model.
+    where,
     select: CONSULTATION_SELECT,
     orderBy: INBOX_ORDER,
     take: INBOX_SCAN,
@@ -593,7 +595,8 @@ function trialWhere(
   return {
     ...scopeToWhereOrgId(scope),
     consultantProfileId,
-    deletedAt: null,
+    // No `deletedAt`: every terminal trial outcome is a TrialStatus value, so
+    // the status filter below is already the liveness test. See the Trial model.
     status: { in: statuses },
   };
 }
@@ -820,15 +823,16 @@ async function readCounts(
   if (known?.type !== "consultation") {
     tasks.push(() =>
       prisma.consultation.count({
-        where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
+        where: pendingConsultationWhere(cp, scope),
       }),
     );
     tasks.push(() =>
       prisma.consultation.count({
-        where: {
-          ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-          deletedAt: null,
-        },
+        where: consultationRequestWhere(
+          cp,
+          scope,
+          "APPROVED_PENDING_PAYMENT",
+        ),
       }),
     );
   }

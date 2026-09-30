@@ -260,6 +260,32 @@ describe("a decline restores rather than strands", () => {
     expect(src).toContain("restoreMiss = err;");
   });
 
+  it("completes the whole decline under ONE grant on the appointment atom", () => {
+    // The restore-miss fallback used to run after `withAppointmentLock` had
+    // unwound, so the terminal DECLINED and the park executed UNLOCKED. A
+    // concurrent cancel or reschedule could take the appointment in that gap,
+    // the park's CAS would then match nothing, and the booking would be left
+    // PENDING with released sessions — the exact shape the refunding sweep
+    // selects, reached by a race rather than by a decision.
+    //
+    // The old body was a bare `() =>` returning the one transaction, with the
+    // catch outside the grant. The body is an `async` callback now, which is the
+    // discriminator: nothing else in this file opens the appointment atom, so
+    // this line IS the whole invariant, and a merge that reverts the two-step
+    // turns it back into a bare pass-through.
+    const src = read("lib/booking/reschedule-respond.ts");
+    expect(src).toContain(
+      "await withAppointmentLock(request.appointmentId, async () => {",
+    );
+    expect(src).not.toContain(
+      "await withAppointmentLock(request.appointmentId, () =>",
+    );
+    // The decision it protects still commits on its own transaction, so a missed
+    // parent CAS can never veto a human's answer — the reason the park is not
+    // folded into the DECLINED, and the reason one grant holds two transactions.
+    expect(src).toContain("parkedStatus = await prisma.$transaction((tx) =>");
+  });
+
   it("is one definition of a restore miss, not two", () => {
     // The sweep and the decline must ask the same question; a second copy in
     // scripts/appointments/expire-reschedule-proposals.ts is how one of them
@@ -287,7 +313,14 @@ describe("a decline restores rather than strands", () => {
     );
     // The sentence is looked up by the code, so the two cannot disagree.
     expect(route).toContain("message: DECLINE_OUTCOME_COPY[outcome],");
-    expect(route).toContain("countRestoredOccurrences(");
+    // The outcome comes from the module that did the restore, not from a
+    // recount this route performs after the lock is released. The pin exists to
+    // stop a second reader of one decision coming back: a re-read is free to
+    // disagree with the write it is describing, and the disagreement is what
+    // tells a consultant their restored times are gone.
+    expect(route).toContain("result.restoredFully");
+    expect(route).not.toContain("countRestoredOccurrences");
+    expect(route).not.toMatch(/appointmentOccurrence\.count\(/);
   });
 });
 

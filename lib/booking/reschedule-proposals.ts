@@ -266,10 +266,15 @@ const CLOSED_AUTO_CONFIRM_REFUSALS = new Set([
 ]);
 
 /**
- * Refusals that leave the proposal open AND leave the consultant as the next
- * actor, so the sentence may name them: the times were never ours to place
- * (`CONSULTANT_INITIATED`), or the attempt never reached a decision
- * (`APPOINTMENT_BUSY`, `BOOKING_LOCK_UNAVAILABLE`, `ERROR`).
+ * Refusals that leave the proposal open AND leave a human as the next actor:
+ * the times were never ours to place (`CONSULTANT_INITIATED`), or the attempt
+ * never reached a decision (`APPOINTMENT_BUSY`, `BOOKING_LOCK_UNAVAILABLE`,
+ * `ERROR`).
+ *
+ * Membership is the CLASSIFICATION — the proposal is still answerable, so the
+ * code is AWAITING_ANSWER. The sentence is per-reason: `CONSULTANT_INITIATED`
+ * is the one member whose next actor is the other side (see the arm below), so
+ * it carries its own wording.
  *
  * Anything unrecognised — a typed `AllocationErrorCode`, or one added after this
  * was written — falls to NOT_PLACEABLE, whose sentence asserts only that the
@@ -322,6 +327,20 @@ export function rescheduleProposeOutcome(args: {
         "This request is no longer pending — the booking has moved on since you submitted it.",
     };
   }
+  // The one AWAITING_ANSWER case whose next actor is not the consultant.
+  // Auto-confirm is asymmetric on purpose — `mayAutoConfirm` takes a CONSULTEE
+  // initiator only — so a CONSULTANT_INITIATED refusal means the caller reading
+  // this response IS the consultant, and the shared sentence below told them
+  // their own request had been "sent to the consultant". The code is unchanged
+  // (a proposal is open and the client has it to answer, which is what
+  // AWAITING_ANSWER means); only the party the sentence names changes, because
+  // the initiator is the only side this function is told apart from the reason.
+  if (autoConfirmReason === "CONSULTANT_INITIATED") {
+    return {
+      code: "AWAITING_ANSWER",
+      message: "Your new time has been sent to the attendee to confirm.",
+    };
+  }
   if (
     autoConfirmReason === null ||
     AWAITING_AUTO_CONFIRM_REFUSALS.has(autoConfirmReason)
@@ -341,10 +360,11 @@ export function rescheduleProposeOutcome(args: {
 /*
  * There is deliberately no counter-round.
  *
- * MAX_PROPOSAL_ROUNDS and mayCounter lived here, and the COUNTERED status is
- * still in the enum and the transition map — but nothing ever wrote it. The
- * round-2 path was specified and never built, so removing it costs nothing and
- * leaves one fewer half-implemented state to reason about.
+ * MAX_PROPOSAL_ROUNDS and mayCounter lived here. The round-2 path was
+ * specified and never built, so it cost nothing to finish the removal: the
+ * COUNTERED status is gone from the enum, from RESCHEDULE_ALLOWED_FROM, from
+ * the open-status filter six read surfaces share, from the operator badge, and
+ * from the seed. One fewer half-implemented state to reason about.
  *
  * Propose -> accept or decline is the whole flow. A decline does not dead-end
  * anything: it puts the original time back, or — when that time is gone — leaves

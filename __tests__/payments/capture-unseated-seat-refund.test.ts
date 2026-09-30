@@ -452,7 +452,14 @@ describe("a capture whose seat is not there any more", () => {
 
     expect(result).toEqual({
       capturedAfterTerminal: true,
-      seatRefund: { kind: "webinar", eventId: WEBINAR, participantId: null },
+      seatRefund: {
+        kind: "webinar",
+        eventId: WEBINAR,
+        participantId: null,
+        // No row, so no seat to name a sale from: Phase 2 falls back to the
+        // payment the capture itself landed on.
+        paymentId: null,
+      },
     });
     expect(recordSystemErrorSafe).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -505,7 +512,15 @@ describe("a capture whose seat is not there any more", () => {
 
     expect(result).toEqual({
       capturedAfterTerminal: true,
-      seatRefund: { kind: "class", eventId: "class-1", participantId: "part-2" },
+      seatRefund: {
+        kind: "class",
+        eventId: "class-1",
+        participantId: "part-2",
+        // The seat's own funding row travels with it: the refund is addressed to
+        // the payment this capture landed on, not to whichever of the buyer's
+        // payments on this class is oldest.
+        paymentId: "pay-1",
+      },
     });
   });
 });

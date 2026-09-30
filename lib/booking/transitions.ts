@@ -25,6 +25,34 @@ import type {
 } from "@prisma/client";
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { reportSentryMessage } from "@/lib/observability/report";
+
+/**
+ * The two `fromStatus` values on `BookingStatusHistory` that are NOT members of
+ * any status enum.
+ *
+ * The column is a bare `String` because seven lifecycles with seven different
+ * enums share one log (see the model comment), so these two cannot be enum
+ * members — they have to be named constants, which is what makes them a
+ * documented part of the audit format instead of a magic string that four files
+ * had to spell identically.
+ *
+ * `CREATED` — "this row never moved; it is the creation record". Defensible and
+ * load-bearing: `appendCreationHistory` writes one per booking, and
+ * `lib/booking/response-rate.ts` uses them as the request's clock (the EARLIEST
+ * `fromStatus: CREATED` row per entity is when the learner asked). A booking that
+ * exists and has never moved must still have a timeline, and NULL cannot say that
+ * without being indistinguishable from a lost pre-read.
+ *
+ * `UNKNOWN` — "the pre-read did not see this row, so its from-status was not
+ * captured". Honest, but a gap in an audit trail must be COUNTABLE, so
+ * `appendHistory` reports it. It is never a silent "we don't know": the
+ * transition itself is real — `updateManyAndReturn` returned the row's id — and
+ * only the from-status is missing. Dropping the row instead would lose the
+ * `toStatus`, which is the part recording what actually happened.
+ */
+export const HISTORY_FROM_CREATED = "CREATED";
+export const HISTORY_FROM_UNKNOWN = "UNKNOWN";
 
 // #1319 A12 — every guarded transition appends one BookingStatusHistory row in
 // the same tx. The from-status is read before the CAS because updateMany
@@ -50,11 +78,36 @@ async function appendHistory(
   toStatus: string,
   meta: HistoryMeta,
 ): Promise<void> {
+  if (fromStatus == null) {
+    // An audit trail must not record "we don't know" quietly. The A12 pre-read
+    // missed this row — `transitionOccurrenceCompletion` says so directly for a
+    // row that entered the from-set after the pre-read — and the durable row is
+    // about to say the same thing forever. One report per occurrence makes the
+    // rate answerable; `toStatus` is still recorded, because the transition DID
+    // happen and dropping the row would lose the only record of it.
+    //
+    // `expected: true` so this is not an error-budget line: it is the documented
+    // cost of reading before writing, not a fault.
+    //
+    // Wrapped because this runs INSIDE the caller's transaction. Telemetry must
+    // never be the reason a booking fails — the same rule as the contention
+    // report in utils/appointmentlock.ts.
+    try {
+      reportSentryMessage("booking history from-status pre-read missed", {
+        subsystem: "bookings",
+        op: "status-history",
+        expected: true,
+        extra: { entity, entityId, toStatus },
+      });
+    } catch {
+      // Losing this line costs observability, nothing else.
+    }
+  }
   await tx.bookingStatusHistory.create({
     data: {
       entity,
       entityId,
-      fromStatus: fromStatus ?? "UNKNOWN",
+      fromStatus: fromStatus ?? HISTORY_FROM_UNKNOWN,
       toStatus,
       actorUserId: meta.actorUserId ?? null,
       reason: meta.reason ?? null,
@@ -68,8 +121,8 @@ async function appendHistory(
  * The one history row that is not a transition (#1333). Creation moves nothing,
  * so a freshly created request had an empty timeline until its first CAS fired —
  * the staff surface read "nothing has moved on this booking yet" for every new
- * booking. The from-status is the literal `"CREATED"`, deliberately not the
- * null sentinel: `appendHistory` renders null as `"UNKNOWN"`, which on this
+ * booking. The from-status is `HISTORY_FROM_CREATED`, deliberately not the null
+ * sentinel: `appendHistory` renders null as `HISTORY_FROM_UNKNOWN`, which on this
  * surface means "a concurrent writer moved the row between the pre-read and the
  * update", and creation is not that.
  *
@@ -83,7 +136,14 @@ export async function appendCreationHistory(
   initialStatus: string,
   meta: HistoryMeta = {},
 ): Promise<void> {
-  await appendHistory(tx, entity, entityId, "CREATED", initialStatus, meta);
+  await appendHistory(
+    tx,
+    entity,
+    entityId,
+    HISTORY_FROM_CREATED,
+    initialStatus,
+    meta,
+  );
 }
 
 /** The purchase wrapper's id for a history row, unless it was tombstoned. */
@@ -400,7 +460,8 @@ export async function transitionOccurrenceCompletion(
   const fromById = new Map(before.map((row) => [row.id, row.completionStatus]));
   for (const row of moved) {
     // A row that entered the from-set after the pre-read has no entry here and
-    // logs UNKNOWN — the A12 stale-from-status limitation, not a missing row.
+    // logs HISTORY_FROM_UNKNOWN (and reports once) — the A12 stale-from-status
+    // limitation, not a missing row.
     await appendHistory(
       tx,
       "OCCURRENCE",
@@ -474,28 +535,30 @@ export async function transitionTrial(
 
 //////////////////////////////////////////////// Reschedule proposals ////////////////////////////////////////////////
 
-// A proposal is a two-party negotiation with exactly one counter-round, so the
-// legal graph is small and every edge is terminal-or-countered. AUTO_ACCEPTED
-// has no allowed-from: it is only ever written at creation, when a consultee's
-// times land in the consultant's published availability and both calendars are
-// free, so there is no state to move out of.
+// A proposal is a two-party negotiation with no counter-round: the consultant
+// accepts or declines, and a decline is terminal (it puts the original time back,
+// or leaves the released sessions in the consultant's allocate queue).
+// AUTO_ACCEPTED has no allowed-from: it is only ever written at creation, when a
+// consultee's times land in the consultant's published availability and both
+// calendars are free, so there is no state to move out of. `COUNTERED` was
+// removed from this map with the enum member — the round-2 path was specified
+// and never built, so its allowed-from and reverse edge described a conversation
+// the system cannot hold.
 export const RESCHEDULE_ALLOWED_FROM: Record<
   RescheduleRequestStatus,
   RescheduleRequestStatus[]
 > = {
   AUTO_ACCEPTED: [],
-  PENDING_REVIEW: ["COUNTERED"],
-  COUNTERED: ["PENDING_REVIEW"],
-  ACCEPTED: ["PENDING_REVIEW", "COUNTERED"],
-  DECLINED: ["PENDING_REVIEW", "COUNTERED"],
-  WITHDRAWN: ["PENDING_REVIEW", "COUNTERED"],
-  EXPIRED: ["PENDING_REVIEW", "COUNTERED"],
+  PENDING_REVIEW: [],
+  ACCEPTED: ["PENDING_REVIEW"],
+  DECLINED: ["PENDING_REVIEW"],
+  WITHDRAWN: ["PENDING_REVIEW"],
+  EXPIRED: ["PENDING_REVIEW"],
 };
 
 /** The states in which a proposal is still awaiting an answer. */
 export const RESCHEDULE_OPEN_STATUSES: RescheduleRequestStatus[] = [
   "PENDING_REVIEW",
-  "COUNTERED",
 ];
 
 /** Terminal states — the request is answered and holds no claim on its slots. */

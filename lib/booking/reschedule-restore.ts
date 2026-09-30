@@ -8,6 +8,7 @@ import {
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
+  HISTORY_FROM_UNKNOWN,
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
@@ -85,9 +86,9 @@ async function readRescheduleOrigin(
     orderBy: { createdAt: "desc" },
     select: { fromStatus: true },
   });
-  // appendHistory renders a lost pre-read as the literal "UNKNOWN" (A12); that
-  // is no origin either, so the fallback and its report fire for it too.
-  if (!origin || origin.fromStatus === "UNKNOWN") return undefined;
+  // appendHistory renders a lost pre-read as HISTORY_FROM_UNKNOWN (A12); that is
+  // no origin either, so the fallback and its report fire for it too.
+  if (!origin || origin.fromStatus === HISTORY_FROM_UNKNOWN) return undefined;
   return origin.fromStatus;
 }
 

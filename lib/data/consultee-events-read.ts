@@ -17,6 +17,7 @@
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -35,7 +36,7 @@ import type { TConsulteeEventsResponse } from "@/types/consultee-events";
  * on a TTFB-bound query to render an answer nobody can give.
  */
 const liveProposalInclude = {
-  where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+  where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
   orderBy: { createdAt: "desc" },
   take: 1,
   select: {

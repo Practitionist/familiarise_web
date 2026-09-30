@@ -17,6 +17,7 @@
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -278,7 +279,7 @@ export async function getStaffAppointments(
       include: {
         // #1486 / #1527 — read-only: a reschedule still waiting on a party.
         rescheduleRequests: {
-          where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+          where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
           orderBy: { createdAt: "desc" },
           take: 1,
           select: { status: true, initiatorRole: true, expiresAt: true },

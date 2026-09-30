@@ -691,6 +691,44 @@ CREATE TRIGGER usage_ledger_entry_immutable
   EXECUTE FUNCTION assert_usage_ledger_entry_immutable();
 
 -- SPLIT
+-- BookingStatusHistory is the booking's audit trail, and the schema comment
+-- claimed append-only while nothing stopped an UPDATE or a DELETE. Two consumers
+-- are only true while the rows cannot be edited:
+--
+--   - `lib/booking/reschedule-restore.ts` reads the status the request held
+--     BEFORE the reschedule by scanning for the history row whose toStatus is
+--     PENDING and taking its fromStatus. A rewritten fromStatus moves a booking
+--     back to a status it never had — or hides that it ever moved.
+--   - `lib/booking/response-rate.ts` measures consultant response time from the
+--     EARLIEST `fromStatus = CREATED` row per entity. An edited or deleted
+--     creation row silently moves the consultant's published number.
+--
+-- And the replay surface matters: `getBookingTimeline` reads this table, so a
+-- DELETE is indistinguishable from "this booking never moved".
+--
+-- Nothing in the codebase writes anything but `create` on this table — every
+-- guarded transition calls `appendHistory`, which only creates — so a raise
+-- trigger costs nothing. Same argument, same shape, as ledger_entry_immutable
+-- in ledger-triggers.sql and usage_ledger_entry_immutable above.
+--
+-- NOT staged behind the banner below, unlike the CHECKs there: a trigger fires
+-- on FUTURE writes and never scans existing rows, so it cannot fail to apply
+-- against pre-reset data. Only a constraint that validates what is already in
+-- the table needs the reset window.
+DROP TRIGGER IF EXISTS booking_status_history_immutable ON "BookingStatusHistory";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_booking_status_history_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'BookingStatusHistory % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER booking_status_history_immutable
+  BEFORE UPDATE OR DELETE ON "BookingStatusHistory"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_booking_status_history_immutable();
+
+-- SPLIT
 -- ============================================================================
 -- APPLIED AT THE PRE-MVP RESET (#1169 decision 8; #1554 uncommented them).
 -- Each of these could fail against pre-reset data, so they shipped commented
