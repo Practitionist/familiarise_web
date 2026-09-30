@@ -81,10 +81,12 @@ export async function getSession(disableCookieCache = false) {
  * argument, and so the `no-restricted-syntax` freshness rule in
  * eslint.config.mjs can ban the bare call without banning this one.
  *
- * Do NOT use for PII, finance, documents, recordings, or role-gated reads:
- * the cache honours demotions, bans, revocations and DPDP-erasures up to
- * ~5 minutes late. Those take `getSession(true)` (or `requireApiAuth()` /
- * `requireBackofficeSurface()` in routes). See #1807.
+ * The cookie cache is currently OFF (lib/auth.ts), so today this reads the
+ * database like every other call. The split stays so re-enabling the cache
+ * is a one-line change that cannot silently make a sensitive read stale:
+ * PII, finance, documents, recordings and role-gated reads take
+ * `getSession(true)` (or `requireApiAuth()` / `requireBackofficeSurface()`
+ * in routes). See #1807.
  */
 export async function getCachedSession() {
   return sessionReader()(false);

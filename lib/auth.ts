@@ -27,8 +27,10 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 
-// STAFF = moderator: read users + session control (a subset of the full admin
-// AC). Shares defaultAc so statements line up.
+// STAFF = moderator: read users (a subset of the full admin AC). Shares
+// defaultAc so statements line up. No `session:*`: the plugin's session
+// endpoints return raw tokens, and staff revoke goes through
+// app/api/admin/users/[userId]/sessions/revoke instead.
 //
 // #1132 — `set-role` and `ban` are deliberately NOT granted here. The admin
 // plugin's /admin/set-role authorises on the caller's `user:["set-role"]`
@@ -39,7 +41,6 @@ import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 // via Prisma rather than auth.api.banUser, so nothing legitimate needed it.
 const staffAc = defaultAc.newRole({
   user: ["list", "get"],
-  session: ["list", "revoke", "delete"],
 });
 
 export const auth = betterAuth({
@@ -58,6 +59,18 @@ export const auth = betterAuth({
   logger: {
     log: reportAuthLogToSentry,
   },
+
+  // Endpoints that return raw session tokens (bearer credentials for the
+  // whole account) or bypass the app's audited revoke path. Every session
+  // list and revoke in the app goes through lib/auth/session-select.ts and
+  // lib/auth/session-revoke.ts instead. Blocks HTTP only; `auth.api.*`
+  // server calls are unaffected.
+  disabledPaths: [
+    "/list-sessions",
+    "/admin/list-user-sessions",
+    "/admin/revoke-user-session",
+    "/admin/revoke-user-sessions",
+  ],
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
@@ -187,11 +200,12 @@ export const auth = betterAuth({
   session: {
     expiresIn: 30 * 24 * 60 * 60, // 30 days
     updateAge: 24 * 60 * 60, // 24 hours
-    cookieCache: {
-      enabled: true,
-      maxAge: 5 * 60, // 5 minutes
-      strategy: "compact",
-    },
+    // Off: every session read hits the database, so a revoke, ban or role
+    // change applies on the very next request instead of up to 5 minutes
+    // later. customSession already queries Prisma on every read, so the
+    // cache saved one indexed lookup. Re-enabling it brings back the stale
+    // window that getCachedSession() and the eslint freshness rule guard.
+    cookieCache: { enabled: false },
   },
 
   user: {
@@ -796,11 +810,20 @@ export const auth = betterAuth({
           banned: effectivelyBanned,
           organizationMemberships,
         },
-        session,
+        // The token is the cookie's value — a bearer credential. The
+        // browser already holds it (httpOnly); it never needs it in JSON.
+        session: sessionWithoutToken(session),
       };
     }),
     nextCookies(), // Must be last
   ],
 });
+
+function sessionWithoutToken<T extends { token: string }>(
+  session: T,
+): Omit<T, "token"> {
+  const { token: _token, ...rest } = session;
+  return rest;
+}
 
 export type Session = typeof auth.$Infer.Session;
