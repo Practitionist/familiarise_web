@@ -259,18 +259,6 @@ export const AUDIT_ACTIONS = {
     DATA_EXPORT_GENERATED: "DATA_EXPORT_GENERATED",
     DATA_EXPORT_FAILED: "DATA_EXPORT_FAILED",
     DATA_EXPORT_DOWNLOADED: "DATA_EXPORT_DOWNLOADED",
-    // PR #655 Batch 4 — SCIM 2.0 provisioning events that don't map
-    // cleanly to MEMBER (because the actor is an IdP token, not a
-    // human). Grouped here so the SCIM trail is filterable as a unit.
-    SCIM_USER_CREATED: "SCIM_USER_CREATED",
-    SCIM_USER_UPDATED: "SCIM_USER_UPDATED",
-    SCIM_USER_DEPROVISIONED: "SCIM_USER_DEPROVISIONED",
-    SCIM_USER_REPROVISIONED: "SCIM_USER_REPROVISIONED",
-    SCIM_GROUP_MAPPED: "SCIM_GROUP_MAPPED",
-    SCIM_GROUP_UNMAPPED: "SCIM_GROUP_UNMAPPED",
-    SCIM_TOKEN_CREATED: "SCIM_TOKEN_CREATED",
-    SCIM_TOKEN_REVOKED: "SCIM_TOKEN_REVOKED",
-    SCIM_TOKEN_USED_AFTER_REVOKE: "SCIM_TOKEN_USED_AFTER_REVOKE",
   },
   // PR #655 Batch 3 — outbound webhook subsystem audit trail. One
   // category for both endpoint configuration (CRUD) and delivery

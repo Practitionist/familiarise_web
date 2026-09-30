@@ -18,7 +18,7 @@ import { stageOrgInvitationEmail } from "@/lib/email";
  * #1846 bucket C rule 3 — joining is invite + accept only. "Add people" and
  * bulk import both land here, so every human-initiated add is an Invitation
  * the person accepts (with the DPDP consent check at accept), never a
- * membership an operator switches on. SSO JIT and SCIM stay automatic.
+ * membership an operator switches on. SSO JIT stays automatic.
  *
  * Runs inside the caller's Serializable transaction: the unverified-org seat
  * cap is a count-then-insert, and the pending-invite dedupe is a

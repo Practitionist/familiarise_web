@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // The user may already hold a Membership here from SSO JIT or SCIM.
+      // The user may already hold a Membership here from SSO JIT.
       // A live row makes the accept idempotent, so the button is safe to
       // click twice. A REMOVED row, or a PENDING row from a pre-#1846 bulk
       // import, is what an invitation brings back: accepting is the only
@@ -271,9 +271,8 @@ export async function POST(req: NextRequest) {
       // "invite-accept as LEARNER" as a sanctioned creation point — gating
       // it broke sponsored-employee onboarding). EXPERT stays strict: a
       // consultant identity carries domain/rates/verification/payout
-      // prerequisites that no invite click can substitute for. SSO JIT and
-      // SCIM keep their own lazy path; there is no admin direct-add any
-      // more (#1846).
+      // prerequisites that no invite click can substitute for. SSO JIT keeps
+      // its own lazy path; there is no admin direct-add any more (#1846).
       if (normalizedRole === "EXPERT") {
         const existingConsultant = await tx.consultantProfile.findUnique({
           where: { userId },

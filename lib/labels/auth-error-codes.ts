@@ -149,8 +149,6 @@ export type AppAuthErrorCode =
   /* lib/sso/enforce-session.ts — a provider row that cannot serve a sign-in. */
   | "SSO_PROVIDER_MISCONFIGURED"
   | "SSO_PROVIDER_UNREACHABLE"
-  /* The IdP answered, but the subject is not a live directory identity. */
-  | "SCIM_USER_NOT_ACTIVE"
   /* lib/rate-limit/* — 429. `scope` in the body says which limiter fired. */
   | "RATE_LIMITED"
   /* lib/auth/attempts.ts — graduated per-account lockout after repeat failures. */
@@ -270,7 +268,6 @@ export const AUTH_ERROR_CODES = {
   SSO_REQUIRED: "SSO_REQUIRED",
   SSO_PROVIDER_MISCONFIGURED: "SSO_PROVIDER_MISCONFIGURED",
   SSO_PROVIDER_UNREACHABLE: "SSO_PROVIDER_UNREACHABLE",
-  SCIM_USER_NOT_ACTIVE: "SCIM_USER_NOT_ACTIVE",
   RATE_LIMITED: "RATE_LIMITED",
   ACCOUNT_TEMPORARILY_LOCKED: "ACCOUNT_TEMPORARILY_LOCKED",
   SESSION_LOOKUP_FAILED: "SESSION_LOOKUP_FAILED",

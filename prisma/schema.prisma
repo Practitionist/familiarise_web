@@ -134,7 +134,7 @@ model User {
   // active Membership is flipped to MemberStatus.ERASED. Financial rows
   // (invoices, payouts, ledger entries) are intentionally retained per
   // IT Act 5–7y obligations — the erasure is selective, not destructive.
-  // SCIM and JIT re-creation paths must return 410 Gone when erasedAt is set.
+  // JIT re-creation paths must return 410 Gone when erasedAt is set.
   erasedAt       DateTime?
   // SHA-256(userId + salt) — opaque stable id used to rewrite audit-log
   // JSON references after scrub so historical investigations still trace
@@ -1164,8 +1164,6 @@ model Organization {
 
   // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).
   webhookEndpoints   WebhookEndpoint[]
-  scimTokens         ScimToken[]
-  scimGroupMappings  ScimGroupMapping[]
   dataExportJobs     OrgDataExportJob[]
   /// Platform-side operational events scoped to this org (job failures,
   /// worker errors, etc.). Admin-only — see SystemEvent docstring.
@@ -1308,17 +1306,6 @@ model Membership {
   // BetterAuth bridge
   betterAuthMemberId String? @unique
   betterAuthMember   Member? @relation(fields: [betterAuthMemberId], references: [id], onUpdate: Cascade, onDelete: SetNull)
-
-  /// SCIM 2.0 stable external identity per org. Populated when the
-  /// membership was created or last-updated via /scim/v2/Users; null for
-  /// memberships created through the in-app invite flow. Indexed under the
-  /// sidecar partial unique `membership_org_scim_key` on
-  /// (organizationId, externalScimId) WHERE externalScimId IS NOT NULL —
-  /// added by #1093 §4; this comment asserted it for months before it
-  /// existed. Two orgs can map the same IdP user without collision; one org
-  /// cannot map them twice. Allows idempotent SCIM upserts and is the
-  /// canonical key for DELETE (deprovision = SUSPEND, never erase).
-  externalScimId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -7010,11 +6997,11 @@ model SsoProvider {
 // =============================================================================
 // PR #655 enterprise lockdown — Batches 3 / 4 / 5
 //
-// The six models below are the schema surface for outbound webhooks (Batch 3),
-// SCIM 2.0 provisioning (Batch 4), and DPDP §12 erasure + DPDP §11 data export
-// (Batch 5 / Batch 6.5). The matching SQL was applied via Supabase MCP under
-// migration `pr655_enterprise_lockdown_schema` — this Prisma block exists for
-// type generation and IDE intellisense; it does NOT drive db push.
+// The models below are the schema surface for outbound webhooks (Batch 3) and
+// DPDP §12 erasure + DPDP §11 data export (Batch 5 / Batch 6.5). The matching
+// SQL was applied via Supabase MCP under migration
+// `pr655_enterprise_lockdown_schema` — this Prisma block exists for type
+// generation and IDE intellisense; it does NOT drive db push.
 // =============================================================================
 
 /// Outbound webhook destinations per organization. Each row maps an HTTPS
@@ -7226,11 +7213,6 @@ enum EmailSuppressionReason {
   MANUAL
 }
 
-/// Per-org SCIM 2.0 bearer tokens. Stored as SHA-256 hashes; the raw token
-/// is shown once at creation and never persisted. Auth path: bearer →
-/// sha256 → lookup in this table → load organizationId. Status flips to
-/// REVOKED on explicit DELETE; a token also stops authenticating once past
-/// its optional expiresAt (enforced in lib/scim/auth.ts).
 // BetterAuth two-factor plugin table. Holds the TOTP shared secret, the
 // emailed-OTP payload and the hashed backup codes for one user.
 //
@@ -7255,47 +7237,6 @@ model TwoFactor {
 
   @@index([userId])
   @@map("twoFactor")
-}
-
-model ScimToken {
-  id                    String          @id @default(cuid())
-  organizationId        String
-  organization          Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  tokenHash             String          @unique
-  label                 String
-  status                ScimTokenStatus @default(ACTIVE)
-  createdByMembershipId String?
-  createdAt             DateTime        @default(now())
-  lastUsedAt            DateTime?
-  revokedAt             DateTime?
-  /// Optional auto-rotation TTL. Null = "never expires"; non-null is the
-  /// absolute deadline after which the SCIM auth path (#789) refuses the token
-  /// with 401 even while `status = ACTIVE` — the row stays ACTIVE so the
-  /// operator sees it lapsed rather than revoked.
-  expiresAt             DateTime?
-
-  @@index([organizationId, status])
-  @@index([organizationId, expiresAt])
-}
-
-enum ScimTokenStatus {
-  ACTIVE
-  REVOKED
-}
-
-/// Mapping from SCIM Group name (as the IdP knows it, e.g. "IT-Admins") to
-/// the local MemberRole that should be applied when a user joins that
-/// group. One mapping per (org, group name); the SCIM Groups endpoint
-/// reads from this table when reconciling group memberships.
-model ScimGroupMapping {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  scimGroupName  String
-  role           MemberRole
-  createdAt      DateTime     @default(now())
-
-  @@unique([organizationId, scimGroupName])
 }
 
 /// DPDP §12 right-to-erasure request queue. Users file via
@@ -7610,8 +7551,7 @@ model StaffInvitation {
   /// the right primitive here and NOT a shortcut: the token is 256 bits of
   /// CSPRNG output, so there is no dictionary to slow down, and a
   /// password-strength hash would only add latency to the accept path that
-  /// must stay inside the Netlify 60s function budget. Same posture as
-  /// `ScimToken.tokenHash`.
+  /// must stay inside the Netlify 60s function budget.
   tokenHash String @unique
 
   /// 72 hours. Deliberately shorter than the org invite's 14 days: this is a

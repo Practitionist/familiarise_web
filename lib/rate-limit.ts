@@ -423,15 +423,6 @@ export const orgAutoEnrollLimiter = makeLimiter(
 export const orgWebhookLimiter = makeLimiter(5, "1 m", "rl:org-webhook");
 
 /**
- * 60 requests per minute per token — SCIM 2.0 bearer endpoint.
- * Matches Okta + Azure AD default polling cadence; integrator IdPs
- * tend to issue 10–30 RPM at most, so 60 is two-headroom while still
- * mitigating runaway loops in test scripts. Keyed on tokenHash so a
- * leaked token can't burn another org's quota.
- */
-export const scimLimiter = makeLimiter(60, "1 m", "rl:scim");
-
-/**
  * 1 per 24h per org — POST /api/organizations/[orgId]/data-exports.
  * The bundle build is expensive (cross-entity walk + zip + Supabase
  * Storage upload + Resend email). One export per day is well above

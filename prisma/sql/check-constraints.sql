@@ -335,17 +335,9 @@ ALTER TABLE "DiscountCode" ADD CONSTRAINT "discount_code_uses_within_cap"
   );
 
 -- SPLIT
--- #1093 §4 — two partial uniques the schema doc-comments always claimed.
--- Verified duplicate-free on the live database before adding (2026-08-13), so
--- these apply cleanly outside a reset. Two orgs may map the same IdP user;
--- one org must not map them twice — without this, deprovisionScimUser's
--- findFirst picks arbitrarily and an IdP DELETE can leave a twin ACTIVE.
-DROP INDEX IF EXISTS "membership_org_scim_key";
--- SPLIT
-CREATE UNIQUE INDEX "membership_org_scim_key"
-  ON "Membership" ("organizationId", "externalScimId")
-  WHERE "externalScimId" IS NOT NULL;
--- SPLIT
+-- #1093 §4 — a partial unique the schema doc-comment always claimed. Verified
+-- duplicate-free on the live database before adding (2026-08-13), so it
+-- applies cleanly outside a reset.
 DROP INDEX IF EXISTS "erasure_request_active_user_key";
 -- SPLIT
 CREATE UNIQUE INDEX "erasure_request_active_user_key"

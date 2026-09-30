@@ -38,7 +38,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What this middleware does, in order (see `middleware()` at the bottom):
-//   1. Skip static assets / Next internals / SCIM (no auth concerns).
+//   1. Skip static assets / Next internals (no auth concerns).
 //   2. Maintenance gate     → `handleMaintenance()`  (OFFLINE/DEGRADED windows).
 //   3. Edge rate limiting   → `applyEdgeRateLimits()` (table-driven; DDoS/abuse).
 //   4. Auth routing         → cookie-presence check (NO DB hit at the edge).
@@ -694,15 +694,6 @@ export async function middleware(
     pathname.startsWith("/favicon") ||
     HAS_FILE_EXTENSION.test(pathname)
   ) {
-    return NextResponse.next();
-  }
-
-  // 1b. SCIM 2.0 self-authenticates via bearer tokens — it's the surface IdPs
-  // (Okta, Azure AD) hit when provisioning. A session-cookie check here would
-  // mis-classify it as an unauth user and bounce it to /auth/signin. The route
-  // handler enforces token auth + rate limit + per-org scoping. See
-  // lib/scim/auth.ts and docs/enterprise/20-iam-and-security/03-scim-provisioning.md.
-  if (pathname.startsWith("/scim/v2/")) {
     return NextResponse.next();
   }
 

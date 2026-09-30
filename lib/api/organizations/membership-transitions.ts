@@ -30,7 +30,7 @@
  * existing expert profile for a move into EXPERT) lives in the shared guard
  * `lib/enterprise/membership-guards.ts` (#1846). By the time this helper
  * runs, the transition is already known to be allowed, so its EXPERT
- * lazy-create is reachable only from SSO JIT and SCIM provisioning.
+ * lazy-create is reachable only from SSO JIT.
  */
 
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -222,7 +222,6 @@ async function ensureConsultantProfile(
  * Recompute `ConsultantProfile.isIndependent` from current membership
  * state. Call this AFTER any membership mutation that touches the
  * consultant's EXPERT memberships:
- *   - SCIM provisioning (create or reprovision EXPERT)
  *   - PATCH /api/organizations/[orgId]/members/[memberId] (role / status change)
  *   - DELETE /api/organizations/[orgId]/members/[memberId] (soft-delete)
  *   - invitation accept (create EXPERT via accept flow)

@@ -335,8 +335,6 @@ authenticate at all a denial of service against real customers.
   the lockout and the disclosure verdict ride on.
 - [`../../enterprise/20-iam-and-security/01-sso-and-authentication.md`](../../enterprise/20-iam-and-security/01-sso-and-authentication.md)
   — the SAML `spMetadata` fix, cert rotation and break-glass.
-- [`../../enterprise/20-iam-and-security/03-scim-provisioning.md`](../../enterprise/20-iam-and-security/03-scim-provisioning.md)
-  — rows 15 and 16 in their own domain.
 - [`../../notifications/06-engineering-log-2026-09-14-email-resend-outage.md`](../../notifications/06-engineering-log-2026-09-14-email-resend-outage.md)
   — row 3, and the three causes that produced one symptom.
 - [`../../upstash/00-pricing-overview.md`](../../upstash/00-pricing-overview.md)

@@ -83,10 +83,9 @@ raw rank check.
 
 **The rank ladder survives as an ordering, not a permission.**
 [`lib/auth/role-ranks.ts`](../../lib/auth/role-ranks.ts) is explicit: *"Display
-order for org roles — never an authorization input."* Two readers remain, and
-both are ordering questions: picking the most operator-like org to land on
-(`lib/labels/org-labels.ts`) and choosing one role when a SCIM user sits in
-several mapped groups (`lib/scim/resource-user.ts`).
+order for org roles — never an authorization input."* One reader remains, and
+it is an ordering question: picking the most operator-like org to land on
+(`lib/labels/org-labels.ts`).
 
 ## 5. Matrix 3 — `BackofficeSurface`: the internal axis
 

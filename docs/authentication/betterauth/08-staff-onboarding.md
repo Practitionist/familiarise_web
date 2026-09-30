@@ -174,7 +174,6 @@ downgrades.
 dictionary to slow down, so a password-strength hash would add latency to an
 accept path that has to stay inside Netlify's 60-second function budget and buy
 nothing. The comparison is `timingSafeEqual` over equal-length hex digests.
-Same posture as `ScimToken.tokenHash`.
 
 **Four statuses, not two.** `PENDING | ACCEPTED | REVOKED | EXPIRED`, and the
 distinction is load-bearing in the sentences. A revoked invitation and a spent

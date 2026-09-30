@@ -385,12 +385,6 @@ export const AUTH_ERROR_COPY = {
       "The organisation's sign-in service didn't answer. Wait a minute and try again.",
     action: "retry",
   },
-  SCIM_USER_NOT_ACTIVE: {
-    title: "Your directory account is no longer active",
-    description:
-      "Your identity provider says this account is deactivated. Ask an administrator to re-activate it.",
-    action: "contact-support",
-  },
 
   /* ── Throttling and lockout ──────────────────────────────────────────── */
 

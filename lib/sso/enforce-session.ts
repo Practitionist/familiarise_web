@@ -13,26 +13,12 @@ import type { PrismaLike } from "@/lib/prisma";
  * registered any `ssoProvider` rows. Locking everyone out mid-setup would
  * trap the org owner after they flip the switch but before they finish
  * adding an IdP.
- *
- * ## Two refusals, and why the second one only exists past the first
- *
- * `SSO_REQUIRED` is the original #673 veto. `SCIM_USER_NOT_ACTIVE` is
- * failure-modes row 16 and is the answer to a different question: the person's
- * identity was fine — the IdP authenticated them — but the *directory* says the
- * account is deactivated, so every org-scoped read returns nothing and they land
- * on an empty dashboard with a valid session. It is placed after the
- * `hasAccountInProviders` gate, which makes its reach exactly "signed in through
- * this org's own SSO provider": a password user is already refused with
- * `SSO_REQUIRED` and never gets here, and a non-enforced domain never gets here.
- * See the `findSuspendedScimMembership` docblock for the rest of why the
- * condition is as narrow as it is.
  */
 
 
 export type EnforceDecision =
   | { reject: false }
-  | { reject: true; reason: "SSO_REQUIRED"; organizationId: string }
-  | { reject: true; reason: "SCIM_USER_NOT_ACTIVE"; organizationId: string };
+  | { reject: true; reason: "SSO_REQUIRED"; organizationId: string };
 
 /**
  * The customer-visible sentence for each rejection, kept beside the decision so
@@ -40,15 +26,11 @@ export type EnforceDecision =
  * is one line rather than a branch per reason. It is deliberately *not* read
  * from `AUTH_ERROR_COPY`: that is a `Record` over a closed union and a refusal
  * raised before a session exists has no catalog code of its own — `SSO_REQUIRED`
- * is minted with a hand-written message there today, and this keeps the two
- * reasons in one place instead of two.
+ * is minted with a hand-written message there today.
  */
 export const SESSION_REJECTION_MESSAGES = {
   SSO_REQUIRED:
     "This email domain requires SSO sign-in. Please use your organization's SSO provider at /auth/signin.",
-  SCIM_USER_NOT_ACTIVE:
-    "Your directory account is no longer active. Your identity provider says " +
-    "this account is deactivated. Ask an administrator to re-activate it.",
 } as const satisfies Record<
   Extract<EnforceDecision, { reject: true }>["reason"],
   string
@@ -145,81 +127,6 @@ export interface EnforceInputs {
     userId: string,
     providerIds: string[],
   ) => Promise<boolean>;
-  /**
-   * The SCIM deprovision probe. **Optional**, and the reason is a migration
-   * hazard rather than laziness: `EnforceInputs` has five call sites in tests
-   * plus one in `lib/auth.ts`, and making the field required breaks every one of
-   * them at once on a change that is otherwise additive. A caller that omits it
-   * gets the pre-existing behaviour exactly — no SCIM check, no regression — and
-   * `lib/auth.ts` passes the implementation below.
-   *
-   * Absent also has to mean "off" rather than "assume active", because assuming
-   * active would make the check disappear silently for any future caller.
-   */
-  findSuspendedScimMembership?: SuspendedScimMembershipProbe;
-}
-
-/** Returns the membership id, or `null` when the user is not SCIM-suspended. */
-export type SuspendedScimMembershipProbe = (args: {
-  organizationId: string;
-  userId: string;
-}) => Promise<{ membershipId: string } | null>;
-
-/**
- * Is this user's membership in this org one the customer's IdP owns, and
- * currently deactivated?
- *
- * ## Why `externalScimId IS NOT NULL` is the load-bearing filter
- *
- * It is what makes "SCIM-deactivated" mean "the directory said so" rather than
- * "not an active member of this org". A member removed by an org admin from the
- * dashboard has the same `SUSPENDED` status and a perfectly ordinary null
- * external id, and telling that person "your identity provider says this account
- * is deactivated" would be a lie with a support ticket attached. Only a
- * membership that `/scim/v2/Users` created or last wrote carries the id, and only
- * then is the IdP the authority on the person's employment.
- *
- * ## Why SUSPENDED and not "not ACTIVE"
- *
- * `SUSPENDED` is the one status whose meaning *is* "the directory deactivated
- * this person": both SCIM PATCH `active=false` (Okta) and SCIM DELETE write it,
- * via `applyScimStatus` in `lib/scim/operations.ts`. `REMOVED` and `ERASED` are
- * excluded on purpose — they are tombstones owned by a dashboard admin and by
- * DPDP §12 respectively, and the copy would be wrong for both (and for `ERASED`
- * it would leak the existence of an org the person asked us to forget). `PENDING`
- * is a locally-invited member who has not accepted; a SCIM-provisioned row is
- * created ACTIVE, so the combination is not a state this needs to answer for.
- *
- * ## Fail open
- *
- * A dead database here would refuse a session to every corporate user on the
- * org, which is the row-16 lockout this change exists to prevent, caused by the
- * fix for it. A probe that throws is treated as "not suspended" and reported as
- * a fault (unmarked — unlike the row-19 expected failures, a broken probe means
- * the check is not running, and somebody should know).
- */
-export async function findSuspendedScimMembership(
-  prisma: PrismaLike,
-  args: { organizationId: string; userId: string },
-): Promise<{ membershipId: string } | null> {
-  // `findUnique` on the compound key, not a filtered `findFirst`: the
-  // `@@unique([userId, organizationId])` index answers this in one read with no
-  // scan, and the `externalScimId` / `status` tests are then on the returned
-  // row rather than in the query plan. This runs on the SSO callback for
-  // enforced domains only.
-  const membership = await prisma.membership.findUnique({
-    where: {
-      userId_organizationId: {
-        userId: args.userId,
-        organizationId: args.organizationId,
-      },
-    },
-    select: { id: true, status: true, externalScimId: true },
-  });
-  if (!membership) return null;
-  if (!membership.externalScimId) return null;
-  if (membership.status !== "SUSPENDED") return null;
-  return { membershipId: membership.id };
 }
 
 export async function shouldRejectSession(
@@ -247,37 +154,6 @@ export async function shouldRejectSession(
       reason: "SSO_REQUIRED",
       organizationId: enforced.organizationId,
     };
-  }
-
-  // Past the `linked` gate, so SSO *is* the path being taken — the only way to
-  // reach here is a sign-in through one of the org's own providers, because a
-  // password-only user was already refused above. That ordering is what makes
-  // the SCIM check safe: it cannot lock out the password path, and it cannot
-  // fire on a domain that does not enforce SSO, because `lookupEnforcedOrg`
-  // returned null for those.
-  //
-  // Failure-modes row 16: without this, a SCIM-deactivated user gets a
-  // *successful* login to an empty dashboard. The session is valid, the account
-  // is not suspended, and the only symptom is "the product is broken".
-  if (inputs.findSuspendedScimMembership) {
-    let suspended: Awaited<ReturnType<SuspendedScimMembershipProbe>> = null;
-    try {
-      suspended = await inputs.findSuspendedScimMembership({
-        organizationId: enforced.organizationId,
-        userId: inputs.userId,
-      });
-    } catch {
-      // Fail OPEN, deliberately — see the probe's docblock. The check going
-      // quiet must not become a lockout.
-      return { reject: false };
-    }
-    if (suspended) {
-      return {
-        reject: true,
-        reason: "SCIM_USER_NOT_ACTIVE",
-        organizationId: enforced.organizationId,
-      };
-    }
   }
 
   return { reject: false };

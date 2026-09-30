@@ -144,7 +144,6 @@ These five docs cover how people get into orgs (SSO, JIT, SCIM) and the protecti
 | --- | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
 | 01  | [sso-and-authentication](20-iam-and-security/01-sso-and-authentication.md)   | `OrganizationSSOSettings`, `SsoProvider`, domain claims |
 | 02  | [jit-and-session-refresh](20-iam-and-security/02-jit-and-session-refresh.md) | JIT auto-join, `sessionGeneration`, role-change refresh |
-| 03  | [scim-provisioning](20-iam-and-security/03-scim-provisioning.md)             | SCIM tokens + provisioning                              |
 | 04  | [rate-limiting](20-iam-and-security/04-rate-limiting.md)                     | coverage matrix; why BetterAuth's limiter is off        |
 | 05  | [security-headers](20-iam-and-security/05-security-headers.md)               | CSP + header posture                                    |
 
