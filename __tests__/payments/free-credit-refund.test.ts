@@ -53,11 +53,24 @@ const tx = {
     // `updateMany` (status-in-WHERE + `refundedShareAmount` pinned to the
     // pre-read) instead of a plain `update`. Without this the free-credit
     // rail throws `updateMany is not a function` on every run.
-    updateMany: jest.fn(async () => ({ count: 1 })),
+    // Typed with the CAS argument so `mock.calls` is inspectable — a
+    // zero-parameter `jest.fn` types `calls` as `[][]` and the assertions
+    // against the write silently stop type-checking.
+    updateMany: jest.fn(
+      async (
+        ..._a: unknown[]
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ): Promise<{ count: number }> => ({ count: 1 }),
+    ),
   },
   organizationEarnings: {
     update: jest.fn(),
-    updateMany: jest.fn(async () => ({ count: 1 })),
+    updateMany: jest.fn(
+      async (
+        ..._a: unknown[]
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ): Promise<{ count: number }> => ({ count: 1 }),
+    ),
   },
   organizationPayout: {
     update: jest.fn(),
@@ -439,11 +452,13 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
 
     // The paid share nets to REFUNDED…
     const earningUpdate = tx.consultantEarnings.updateMany.mock.calls.find(
-      ([arg]: [{ where: { id: string } }]) => arg.where.id === "ce-paid",
+      (args: unknown[]) =>
+        (args[0] as { where?: { id?: string } })?.where?.id === "ce-paid",
     );
     // Absolute-set semantics on this rail (not {increment}) — the whole point
     // of the CAS: two writers can only compose to min(share, a + b).
-    expect(earningUpdate![0].data).toMatchObject({
+    expect(earningUpdate).toBeDefined();
+    expect((earningUpdate![0] as { data: Record<string, unknown> }).data).toMatchObject({
       status: "REFUNDED",
       refundedShareAmount: 80_000,
     });

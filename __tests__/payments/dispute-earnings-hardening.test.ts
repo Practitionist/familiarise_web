@@ -400,12 +400,10 @@ function makeTxStub(): TxStub {
           // race, and the reversal silently never landed.
           if (where.id !== undefined && e.id !== where.id) continue;
           if (where.status !== undefined) {
-            if (Array.isArray(where.status)) {
-              if (!where.status.includes(e.status)) continue;
-            } else if ("in" in where.status) {
+            if (typeof where.status === "string") {
+              if (e.status !== where.status) continue;
+            } else if (Array.isArray(where.status.in)) {
               if (!where.status.in.includes(e.status)) continue;
-            } else if (e.status !== where.status) {
-              continue;
             }
           }
           if (

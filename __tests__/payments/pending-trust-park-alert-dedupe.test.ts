@@ -196,8 +196,16 @@ function seed(args: {
     const boom = async () => {
       throw new Error("P1001 connection pool timeout");
     };
-    db.consultantEarnings = { findMany: boom, updateMany: jest.fn() };
-    db.organizationEarnings = { findMany: boom, updateMany: jest.fn() };
+    db.consultantEarnings = {
+      findMany: boom,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      updateMany: jest.fn(async (..._a: any[]): Promise<any> => ({ count: 0 })),
+    };
+    db.organizationEarnings = {
+      findMany: boom,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      updateMany: jest.fn(async (..._a: any[]): Promise<any> => ({ count: 0 })),
+    };
   } else {
     const consultantFindMany = jest.fn(async (q: { where?: unknown }) => {
       // The release pass narrows by unlocked sponsor; the watchdog reads all.
