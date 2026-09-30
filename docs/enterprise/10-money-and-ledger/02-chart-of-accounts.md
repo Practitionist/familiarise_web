@@ -21,6 +21,7 @@ classDiagram
   class Assets_DebitNormal {
     CASH  — platform gateway / settlement cash
     ORG_RECEIVABLE  — an INVOICE-funded org owes us (accrued at booking, cleared on payment)
+    CONSULTANT_RECEIVABLE  — a consultant owes us cash we already disbursed and cannot pull back (a lost dispute or chargeback on an already-PAID earning)
   }
   class Liabilities_CreditNormal {
     WALLET  — prepaid balance we owe an org
@@ -44,6 +45,7 @@ classDiagram
 | `ORG_RECEIVABLE` | asset | DEBIT | org | an INVOICE-funded org owes us; accrued at booking, cleared on invoice payment |
 | `WALLET` | liability | CREDIT | org | prepaid balance we owe the org (an IOU) |
 | `CONSULTANT_PAYABLE` | liability | CREDIT | consultant | earnings owed to a consultant, not yet paid out |
+| `CONSULTANT_RECEIVABLE` | asset | DEBIT | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning. There is no inbound bank-pull on the consultant rail, so the amount is **recovered by hand** — the ledger entry makes the debt visible and reconcilable rather than losing it. Net of TDS: the transfer was net, and the withheld tax is `TDS_PAYABLE`'s, reversed separately |
 | `ORG_PAYABLE` | liability | CREDIT | org | host-org share owed, not yet paid out |
 | `TDS_PAYABLE` | liability | CREDIT | platform | TDS withheld at payout, owed to the government |
 | `GST_PAYABLE` | liability | CREDIT | platform | GST collected on a booking, owed to the government |
@@ -62,6 +64,7 @@ flowchart LR
   subgraph BUY["Buyers (money in)"]
     ORGW["org WALLET<br/>(we owe the org — Cr)"]
     ORGR["org ORG_RECEIVABLE<br/>(org owes us — Dr)"]
+    CONSR["consultant CONSULTANT_RECEIVABLE<br/>(consultant owes us — Dr)"]
     CARDIN["learner card"]
   end
   CASH(["CASH (platform)<br/>Dr-normal asset"])
@@ -87,7 +90,7 @@ flowchart LR
   CASH -->|"collected at booking"| GST
 ```
 
-Every liability/revenue box is **credit-normal** (the meaningful figure is the *negative* of the signed balance — what we owe / booked); the two asset boxes (`CASH`, `ORG_RECEIVABLE`) and the two contra-revenue boxes (`PLATFORM_PROMO`, `DISCOUNT`) are **debit-normal**. That split is exactly the sign-flip rule in the callout above.
+Every liability/revenue box is **credit-normal** (the meaningful figure is the *negative* of the signed balance — what we owe / booked); the three asset boxes (`CASH`, `ORG_RECEIVABLE`, `CONSULTANT_RECEIVABLE`) and the two contra-revenue boxes (`PLATFORM_PROMO`, `DISCOUNT`) are **debit-normal**. That split is exactly the sign-flip rule in the callout above.
 
 ---
 

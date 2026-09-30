@@ -62,6 +62,7 @@ jest.mock("../../lib/collaborators/service", () => ({
 }));
 
 import { applyCappedEarningReversal } from "../../lib/payments/payouts/earning-reversal-cas";
+import { IllegalEarningStatusTransitionError } from "../../lib/payments/payouts/earning-status";
 import { refundEarnings } from "../../lib/payments/payouts/earnings-service";
 import { EarningStatus } from "@prisma/client";
 
@@ -275,6 +276,64 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
 
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(out).toMatchObject({ reversedPaise: 0, lostRace: true });
+  });
+});
+
+/**
+ * The guard is UNCONDITIONAL now — it runs on the FIRST attempt, not only on a
+ * retry. It used to be gated on `attempt > 0`, so it was the caller's job to
+ * assert first; that made the shared primitive unsafe by construction, since a
+ * caller that forgot would get an unguarded PAID → REFUNDED through. These pin
+ * the primitive on its own, with no caller assertion in front of it.
+ */
+describe("capped earning reversal — the status guard is unconditional", () => {
+  it("asserts on the FIRST attempt, before any write — not only after a lost race", async () => {
+    // A terminal row that still shows room: the cap would otherwise let this
+    // call mutate a REFUNDED earning. The WHERE would also refuse it (REFUNDED
+    // is not in REFUNDABLE_EARNING_SOURCE), but that is the DB backstop — the
+    // point here is that nothing is even ATTEMPTED. Before the fix, `attempt > 0`
+    // was false, so no assertion ran and `updateMany` was called.
+    const r = row({
+      status: EarningStatus.REFUNDED,
+      consultantSharePaise: 8_000,
+      refundedShareAmount: 3_000,
+    });
+    const { db, updateMany } = store([r]);
+
+    await expect(applyCappedEarningReversal(db, { ...r }, 5_000)).rejects.toThrow(
+      IllegalEarningStatusTransitionError,
+    );
+    // Threw BEFORE the write: no conditional update was even issued.
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(r.refundedShareAmount).toBe(3_000);
+    expect(r.status).toBe(EarningStatus.REFUNDED);
+  });
+
+  it("still allows PAID → REFUNDED on the first attempt", async () => {
+    // The guard must not turn a legitimate force-refund into a throw: the
+    // first-attempt assertion is new, so it needs a case that passes it.
+    const r = row({ status: EarningStatus.PAID });
+    const { db, updateMany } = store([r]);
+
+    const out = await applyCappedEarningReversal(db, { ...r }, 8_000);
+
+    expect(out).toMatchObject({ reversedPaise: 8_000, fullyRefunded: true });
+    expect(dataOf(updateMany)).toEqual({
+      refundedShareAmount: 8_000,
+      status: EarningStatus.REFUNDED,
+    });
+  });
+
+  it("leaves a partial first attempt unguarded — no status moves, so no throw", async () => {
+    const r = row({ status: EarningStatus.PAID, refundedShareAmount: 5_000 });
+    const { db, updateMany } = store([r]);
+
+    const out = await applyCappedEarningReversal(db, { ...r }, 2_000);
+
+    expect(out).toMatchObject({ reversedPaise: 2_000, fullyRefunded: false });
+    // PAID stays PAID: the assertion only runs when this call sets REFUNDED.
+    expect(dataOf(updateMany)).toEqual({ refundedShareAmount: 7_000 });
+    expect(r.status).toBe(EarningStatus.PAID);
   });
 });
 

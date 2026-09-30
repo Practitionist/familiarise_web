@@ -213,28 +213,32 @@ export async function POST(req: NextRequest) {
           // `payment_intent` (pi_...) is this rail's `pay_…`: the object the
           // refund/dispute webhooks can be resolved against.
           //
-          // A Checkout Session carries no `amount_received` — that is a
-          // PaymentIntent field — so this door's best gateway-side figure is the
-          // session's own `amount_total`. Best-effort, not strict: a null here
-          // means the session told us nothing, not that the capture is a lie,
-          // and withholding the amount SKIPS the parity check (status quo for
-          // this door) rather than 500-looping an endpoint Stripe will eventually
-          // disable. The `payment_intent.succeeded` door below is the one that
-          // refuses without `amount_received`, so a partial capture on this rail
-          // is still caught by whichever door fires.
+          // A Checkout Session carries no CAPTURED amount. `amount_total` is
+          // the session's ORDER total — what was asked for — and it does not
+          // move when a payment is partially captured. Passing it as
+          // `amountPaise` would make the parity check compare the gateway
+          // against itself, which is the same defect removed from the Razorpay
+          // `order.paid` fallback in W1b, and it would read as "verified" while
+          // proving nothing. So this door deliberately WITHHOLDS the amount and
+          // the parity check is skipped — the org rail's existing conservatism.
+          //
+          // The rail is not blind to a short capture: Stripe fires
+          // `payment_intent.succeeded`, which does carry `amount_received`, and
+          // the door below passes that through. This one only adds the session
+          // as a second entry point.
           const sessionTotalPaise = readCapturedAmountPaise(
             event.data.object,
             "amount_total",
           );
-          if (sessionTotalPaise === undefined) {
+          if (sessionTotalPaise !== undefined) {
             console.warn(
-              `⚠️ Stripe checkout.session.completed ${session.id} carries no amount_total; confirming without a capture-amount parity check`,
+              `⚠️ Stripe checkout.session.completed ${session.id}: amount_total is the session ORDER total (${sessionTotalPaise}p), not a captured amount — confirming without a capture-amount parity check; the payment_intent.succeeded door carries amount_received`,
             );
           }
           await routeCapturedPayment({
             orderId: session.id,
             notes: session.metadata || {},
-            amountPaise: sessionTotalPaise,
+            // Intentionally undefined — see above.
             gatewayPaymentId: session.payment_intent ?? undefined,
           });
           break;

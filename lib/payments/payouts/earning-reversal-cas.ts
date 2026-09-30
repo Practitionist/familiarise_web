@@ -34,7 +34,14 @@ export const REFUNDABLE_EARNING_SOURCE: EarningStatus[] = [
 ];
 
 export type EarningReversalOutcome = {
-  /** Paise this call actually wrote. 0 when the CAS was refused. */
+  /**
+   * Paise this call actually wrote — the ONLY figure a caller may post to the
+   * ledger or TDS with. It is `<= requestPaise`: the cap clamps it, and a lost
+   * race re-reads and takes only the residual. Posting the requested amount
+   * instead books paise the earning never absorbed (EARNINGS_LEDGER_DRIFT at
+   * reconcile). 0 means the CAS was refused: post nothing at all — a
+   * zero-amount `postLedgerTxn` THROWS (each posting must be positive paise).
+   */
   reversedPaise: number;
   /** `refundedShareAmount` as it stands after this call. */
   refundedShareAmount: number;
@@ -100,9 +107,15 @@ export async function applyCappedEarningReversal(
 
     const nextRefundedShare = alreadyRefunded + take;
     const fullyRefunded = nextRefundedShare >= current.consultantSharePaise;
-    if (fullyRefunded && attempt > 0) {
-      // The retry is driven by a re-read, so the caller's own assertion (made
-      // on its pre-read) no longer covers this transition — re-assert here.
+    // UNCONDITIONAL, on the first attempt as much as on the retry. This is a
+    // shared primitive now, so the guard cannot live in the callers: one that
+    // forgets its own assertion would otherwise slip an unguarded
+    // PAID → REFUNDED (or REFUNDED → anything) straight through. On attempt 0
+    // this re-checks the caller's own pre-read value, so it is idempotent with
+    // a caller that did assert; on a retry it covers the re-read, which the
+    // caller never saw. Either way it runs BEFORE the write, and it only fires
+    // when this call actually moves the status.
+    if (fullyRefunded) {
       assertEarningStatusTransitionLegal(
         current.id,
         current.status,

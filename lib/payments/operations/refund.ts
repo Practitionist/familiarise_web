@@ -1209,6 +1209,14 @@ export async function applyRefundCascade(
       : (trancheAbsorb.get(earnings.id) ?? 0);
 
   let consultantEarningsReversed = 0;
+  // What each row ACTUALLY absorbed, keyed by earning id. Step 9's journal
+  // debits and this loop's TDS filing must read this, never `reversalOf(row)`:
+  // the helper caps at `share - refundedShareAmount` and takes only the
+  // residual after a lost race, so the request can exceed the write — and
+  // booking the request while the column advanced by less is exactly the
+  // EARNINGS_LEDGER_DRIFT `reconcile-ledgers` raises. Rows skipped below are
+  // absent, which reads as 0.
+  const appliedByEarning = new Map<string, number>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1219,36 +1227,22 @@ export async function applyRefundCascade(
     // #CASC — the cap and the status predicate now live in the WHERE as well
     // (applyCappedEarningReversal), so the re-run above is refused by the
     // database rather than only by this function's pre-read.
-    const newRefundedShare = Math.min(
-      earnings.consultantSharePaise,
-      earnings.refundedShareAmount + shareReversal,
-    );
-    const fully = newRefundedShare >= earnings.consultantSharePaise;
-
-    if (fully && earnings.status !== EarningStatus.REFUNDED) {
-      // Guard the transition. PAID → REFUNDED is allowed; other
-      // sources (PENDING/HELD/READY/PENDING_TRUST) → REFUNDED is
-      // implicitly allowed by the guard. The guard rejects
-      // REFUNDED→anything (already-terminal), which we skip via the
-      // outer `!== REFUNDED` check.
-      assertEarningStatusTransitionLegal(
-        earnings.id,
-        earnings.status,
-        EarningStatus.REFUNDED,
-      );
-    }
-
+    //
+    // No `assertEarningStatusTransitionLegal` here any more: with `to` fixed at
+    // REFUNDED, that guard can only ever throw for `from === REFUNDED` (the one
+    // case the `!== REFUNDED` check excluded), so this call site was
+    // unreachable-by-throw, and the helper now asserts the same transition
+    // itself on every attempt, including the first, before it writes.
     const reversal = await applyCappedEarningReversal(
       tx,
       earnings,
       shareReversal,
     );
+    appliedByEarning.set(earnings.id, reversal.reversedPaise);
     if (reversal.lostRace) {
       // Someone else owns this row's reversal now (or we only got the residual
       // after a re-read). Report it — and do NOT count the row as reversed by
-      // this cascade unless this call actually moved paise. The TDS reversal
-      // below still runs either way (the helper dedups against a prior filing),
-      // so a chargeback that follows an app refund cannot lose its 26Q netting.
+      // this cascade unless this call actually moved paise.
       console.warn(
         `Earnings ${earnings.id}: refund cascade CAS lost, ` +
           `${reversal.reversedPaise} paise applied of ${shareReversal} ` +
@@ -1263,7 +1257,15 @@ export async function applyRefundCascade(
     // left the TDS un-reversed. The shared helper owns the integer proportion,
     // the dedup/cap against double-reversal, and the filed-aware FY/quarter
     // policy (pending CA sign-off).
-    if (earnings.payoutId) {
+    //
+    // Skipped outright when this call applied 0 paise (the CAS was refused):
+    // filing a TDS reversal against an `earningsId` whose earning was not
+    // clawed back would net withholding back out for money the consultant never
+    // had taken back. The proportion BASIS stays booking-level
+    // (`input.amountPaise / payment.amount`) — 26Q is filed per payout, not per
+    // earning row, so scaling the numerator to this row's applied share would
+    // both change a compliance figure and multiply-reverse a multi-row payment.
+    if (earnings.payoutId && reversal.reversedPaise > 0) {
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
@@ -1591,7 +1593,15 @@ export async function applyRefundCascade(
 
     const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
     if (fundingTotal > 0) {
-      const consRev = payment.earnings.reduce((s, e) => s + reversalOf(e), 0);
+      // The APPLIED total (Step 6's map), not the requested total — see that
+      // comment. `platformPlug` below is the residual that keeps this
+      // transaction balanced, so a smaller `consRev` lands the un-clawed-back
+      // remainder on PLATFORM_FEE instead of silently debiting a payable for
+      // paise the earning never took back.
+      const consRev = payment.earnings.reduce(
+        (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
+        0,
+      );
       const orgRev = payment.organizationEarnings.reduce(
         (s, o) => s + proportion(o.orgSharePaise),
         0,
@@ -1645,7 +1655,12 @@ export async function applyRefundCascade(
       // left collaborators' payables un-reversed in the ledger — an invisible
       // per-account divergence on every multi-collaborator refund.
       for (const earning of payment.earnings) {
-        const earningRev = reversalOf(earning);
+        // #Bugfix — the amount this cascade ACTUALLY applied to this row, not
+        // `reversalOf(earning)` (the request). Debiting the payable for the
+        // request when the CAS applied less is precisely the ledger-vs-earnings
+        // divergence `EARNINGS_LEDGER_DRIFT` reports, and it is unrepairable
+        // because the journal is append-only.
+        const earningRev = appliedByEarning.get(earning.id) ?? 0;
         if (earningRev > 0) {
           debits.push({
             account: {

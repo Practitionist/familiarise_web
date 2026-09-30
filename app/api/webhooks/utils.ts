@@ -1485,13 +1485,22 @@ export async function handleDisputeUpdated(
   let consultantClawbackPage: {
     disputeId: string;
     paymentId: string;
+    /** NET auto-booked as receivable — the figure an operator can collect. */
     amountPaise: number;
+    /**
+     * GROSS share reversed on the earnings. Larger than `amountPaise` by the
+     * withheld TDS, which is NOT collectible: the transfer was net and the tax
+     * is reversed separately by `recordTdsReversal`. Stated so nobody reads the
+     * earnings figure as a recovery target.
+     */
+    grossReversedPaise: number;
     earnings: number;
     /**
-     * Ledger idempotency keys of the automatic clawbacks posted for this
-     * dispute, so ops can tie the manual-recovery worklist back to the journal
-     * instead of reconciling two sets of numbers by eye. Empty when nothing was
-     * auto-clawed back (no COMPLETED payout on any affected earning).
+     * Ledger idempotency keys of the automatic clawbacks ACTUALLY posted for
+     * this dispute, so ops can tie the manual-recovery worklist back to the
+     * journal instead of reconciling two sets of numbers by eye. Empty when
+     * nothing was auto-clawed back (no COMPLETED payout on any affected
+     * earning, or every attempt was already journaled by an earlier delivery).
      */
     clawbackKeys: string[];
   } | null = null;
@@ -1678,7 +1687,8 @@ export async function handleDisputeUpdated(
               },
             },
           });
-          let consultantManualRecoveryPaise = 0;
+          let consultantManualRecoveryPaise = 0; // NET auto-booked (what we can actually collect)
+          let consultantGrossReversedPaise = 0; // GROSS share reversed (earnings, not cash)
           let consultantManualRecoveryCount = 0;
           /**
            * Automatic clawback of money a COMPLETED ConsultantPayout already
@@ -1752,6 +1762,28 @@ export async function handleDisputeUpdated(
             // vanishing. Ops are still paged once per dispute, because the page
             // is the only thing that names the earnings and the disputed total
             // an operator has to go and collect — see the staged page below.
+            // GROSS vs NET, deliberately two different numbers, computed ONCE.
+            //
+            // `reversalNow` is the GROSS share the consultant no longer earned,
+            // and it is the right figure for `refundedShareAmount` — that column
+            // measures earnings, not cash. But the CASH that left was the
+            // payout's NET: TDS was withheld at source and never transferred.
+            // Clawing back the gross would demand money the platform never sent,
+            // and specifically the withheld tax, which belongs to the government
+            // and is already handled separately by `recordTdsReversal` above.
+            //
+            // `ConsultantPayout.amount` is the gross and `tdsDeducted` the
+            // withholding, so `amount - tdsDeducted` is the figure that left.
+            // Derived rather than read from the nullable `netAmount`, which is
+            // staged pre-gateway and so is not guaranteed present on every row.
+            // `tdsDeducted` is 0 for a payout with no withholding, making the
+            // scale exactly 1 — so a TDS-free payout claws back the gross.
+            const payoutGross = Number(earning.payout?.amount ?? 0);
+            const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
+            const netFraction =
+              payoutGross > 0 ? Math.max(0, 1 - payoutTds / payoutGross) : 1;
+            const netClawbackPaise = Math.floor(reversalNow * netFraction);
+
             if (earning.status === "PAID" && reversalNow > 0) {
               // W1c — only count and page for a reversal THIS call actually
               // wrote. Gating on the CAS result is what stops a concurrent
@@ -1760,7 +1792,8 @@ export async function handleDisputeUpdated(
               // reversed (the clawback's own idempotency key would collapse the
               // journal, but the page and the counter would not).
               if (consultantReversalApplied) {
-                consultantManualRecoveryPaise += reversalNow;
+                consultantManualRecoveryPaise += netClawbackPaise;
+                consultantGrossReversedPaise += reversalNow;
                 consultantManualRecoveryCount++;
               } else {
                 console.warn(
@@ -1778,36 +1811,6 @@ export async function handleDisputeUpdated(
                 earning.payoutId &&
                 earning.payout?.status === "COMPLETED"
               ) {
-                // GROSS vs NET, deliberately two different numbers.
-                //
-                // `reversalNow` is the GROSS share the consultant no longer
-                // earned, and it is the right figure for
-                // `refundedShareAmount` — that column measures earnings, not
-                // cash. But the CASH that left was the payout's NET: TDS was
-                // withheld at source and never transferred. Clawing back the
-                // gross would demand from the consultant money the platform
-                // never sent them — and specifically the withheld tax, which
-                // belongs to the government and is already handled separately
-                // by `recordTdsReversal` above.
-                //
-                // So the receivable is the pro-rata net: this earning's share
-                // of the gross, scaled by the fraction the consultant actually
-                // received. `ConsultantPayout.amount` is the gross and
-                // `tdsDeducted` the withholding, so `amount - tdsDeducted` is
-                // the figure that left. Derived rather than read from the
-                // nullable `netAmount`, which is staged pre-gateway and so is
-                // not guaranteed present on every row. `tdsDeducted` is 0 for a
-                // payout with no withholding, which makes the scale exactly 1 —
-                // so a TDS-free payout claws back the gross, unchanged.
-                const payoutGross = Number(earning.payout?.amount ?? 0);
-                const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
-                const netFraction =
-                  payoutGross > 0
-                    ? Math.max(0, 1 - payoutTds / payoutGross)
-                    : 1;
-                const netClawbackPaise = Math.floor(
-                  reversalNow * netFraction,
-                );
 
                 if (netClawbackPaise > 0) {
                   const prior = consultantClawbacks.get(earning.payoutId);
@@ -1833,7 +1836,7 @@ export async function handleDisputeUpdated(
           // reverse-transfer to pull the money back through.
           const clawbackRefundId = `dispute:${dispute.id}`;
           for (const [consultantPayoutId, claw] of consultantClawbacks) {
-            await applyReversal(tx, {
+            const applied = await applyReversal(tx, {
               source: {
                 kind: "CONSULTANT_CLAWBACK",
                 consultantPayoutId,
@@ -1843,9 +1846,16 @@ export async function handleDisputeUpdated(
               reason: `chargeback lost (dispute ${disputeId})`,
               refundId: clawbackRefundId,
             });
-            consultantClawbackKeys.push(
-              consultantClawbackKey(clawbackRefundId, consultantPayoutId),
-            );
+            // Name the key only for a journal that ACTUALLY posted. A key for a
+            // journal that was never written sends an operator to reconcile
+            // against a transaction id that does not exist — the page is the
+            // only thing that tells them what to collect, so a phantom key in it
+            // is worse than a missing one.
+            if (applied.clawbackPosted) {
+              consultantClawbackKeys.push(
+                consultantClawbackKey(clawbackRefundId, consultantPayoutId),
+              );
+            }
           }
 
           if (consultantManualRecoveryCount > 0) {
@@ -1861,6 +1871,7 @@ export async function handleDisputeUpdated(
               disputeId,
               paymentId: dispute.paymentId,
               amountPaise: consultantManualRecoveryPaise,
+              grossReversedPaise: consultantGrossReversedPaise,
               earnings: consultantManualRecoveryCount,
               clawbackKeys: consultantClawbackKeys,
             };
@@ -2048,7 +2059,10 @@ export async function handleDisputeUpdated(
   const stagedClawbackPage = consultantClawbackPage as {
     disputeId: string;
     paymentId: string;
+    /** NET auto-booked as receivable — the figure an operator can collect. */
     amountPaise: number;
+    /** GROSS share reversed on the earnings. Higher than `amountPaise` by the TDS. */
+    grossReversedPaise: number;
     earnings: number;
     clawbackKeys: string[];
   } | null;
@@ -2056,7 +2070,7 @@ export async function handleDisputeUpdated(
     void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYOUT",
-      summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) totalling ${stagedClawbackPage.amountPaise} paise on dispute ${stagedClawbackPage.disputeId} (${stagedClawbackPage.clawbackKeys.length} receivable(s) auto-booked: ${stagedClawbackPage.clawbackKeys.join(", ") || "none — collect by hand"})`,
+      summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) on dispute ${stagedClawbackPage.disputeId} — ${stagedClawbackPage.amountPaise} paise auto-booked as receivable(s) ${stagedClawbackPage.clawbackKeys.join(", ") || "none — collect by hand"}. The gross share reversed is ${stagedClawbackPage.grossReversedPaise} paise; the receivable is NET of TDS because the transfer was net, so collect the NET figure and do not pursue the withheld tax (it is reversed separately by recordTdsReversal).`,
       err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
       context: { ...stagedClawbackPage },
     });

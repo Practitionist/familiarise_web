@@ -737,26 +737,26 @@ async function reverseFreeCreditSettlement(
   )
     return;
 
-  // Consultant earnings net in full — same cap + legal-transition guard as
-  // cascade Step 6, with the identity proportion (a cancellation is total).
+  // Consultant earnings net in full — same cap as cascade Step 6, via the same
+  // shared CAS writer. `appliedByEarning` records what each row ACTUALLY
+  // absorbed: the helper clamps to `share - refundedShareAmount` and, on a lost
+  // race, takes only the residual, so the request can exceed the write. The TDS
+  // filing and the counter-posting below must read the applied figure, never the
+  // request.
+  const appliedByEarning = new Map<string, number>();
   for (const earnings of payment.earnings) {
     const delta = part(earnings.consultantSharePaise);
-    const newRefundedShare = Math.min(
-      earnings.consultantSharePaise,
-      earnings.refundedShareAmount + delta,
-    );
-    const fully = newRefundedShare >= earnings.consultantSharePaise;
-    if (fully && earnings.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        earnings.id,
-        earnings.status,
-        EarningStatus.REFUNDED,
-      );
-    }
     // #CASC — the cap and the legal-source predicate are repeated in the WHERE,
     // so a concurrent gateway refund that already took this row wins the race
     // here instead of both writers landing.
+    //
+    // No `assertEarningStatusTransitionLegal` here any more: with `to` fixed at
+    // REFUNDED that guard can only throw for `from === REFUNDED` — the one case
+    // the old `!== REFUNDED` check excluded — so this call site could never
+    // actually throw, and the helper now asserts the same transition itself on
+    // every attempt, including the first, before it writes.
     const reversal = await applyCappedEarningReversal(tx, earnings, delta);
+    appliedByEarning.set(earnings.id, reversal.reversedPaise);
     if (reversal.lostRace) {
       console.warn(
         `Earnings ${earnings.id}: credit-funded cancel CAS lost, ` +
@@ -764,14 +764,18 @@ async function reverseFreeCreditSettlement(
           `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
       );
     }
-    if (earnings.payoutId) {
+    if (earnings.payoutId && reversal.reversedPaise > 0) {
       // Full reversal of this share → full TDS reversal for it; the helper's
-      // own dedup + original-cap keeps a re-run bounded.
+      // own dedup + original-cap keeps a re-run bounded. The numerator is the
+      // APPLIED paise against the same share denominator, so the proportion
+      // keeps its exact meaning (fraction of this earning's share reversed)
+      // while no longer claiming paise the earning never absorbed. Skipped
+      // entirely at 0 — a refused CAS must not net withholding back out.
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
         earningsId: earnings.id,
-        refundAmountPaise: delta,
+        refundAmountPaise: reversal.reversedPaise,
         paymentAmountPaise: earnings.consultantSharePaise,
         refundId: input.refundId,
       });
@@ -876,8 +880,12 @@ async function reverseFreeCreditSettlement(
   }
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+  // APPLIED, not requested (see `appliedByEarning`). `platformPlug` is the
+  // residual that keeps this transaction balanced, so a smaller `consRev` puts
+  // the un-clawed-back remainder on PLATFORM_FEE rather than over-debiting the
+  // consultant payable.
   const consRev = payment.earnings.reduce(
-    (s, e) => s + part(e.consultantSharePaise),
+    (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
     0,
   );
   const orgRev = payment.organizationEarnings.reduce(
@@ -892,7 +900,10 @@ async function reverseFreeCreditSettlement(
 
   const debits: Posting[] = [];
   for (const earnings of payment.earnings) {
-    const delta = part(earnings.consultantSharePaise);
+    // APPLIED paise, not `part(consultantSharePaise)` (the request) — debiting
+    // the payable for paise the CAS never applied is the ledger-vs-earnings
+    // divergence `reconcile-ledgers` raises as EARNINGS_LEDGER_DRIFT.
+    const delta = appliedByEarning.get(earnings.id) ?? 0;
     if (delta > 0) {
       debits.push({
         account: {

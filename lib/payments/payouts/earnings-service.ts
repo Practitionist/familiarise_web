@@ -136,7 +136,6 @@ export {
   IllegalEarningStatusTransitionError,
   assertEarningStatusTransitionLegal,
 } from "./earning-status";
-import { assertEarningStatusTransitionLegal } from "./earning-status";
 import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
@@ -1626,11 +1625,11 @@ export async function refundEarnings(
       continue;
     }
 
-    // Determine if this reversal fully exhausts the earning
-    const isFullyRefunded =
-      alreadyRefunded + shareToReverse >= earnings.consultantSharePaise;
-
-    // Handle already-paid earnings (payout completed)
+    // Handle already-paid earnings (payout completed).
+    // (Whether this reversal exhausts the earning is now decided INSIDE
+    // `applyCappedEarningReversal`, which re-derives it against the freshest
+    // read on every attempt — a pre-read here could be stale by the time the
+    // write lands, which is exactly what the CAS exists to prevent.)
     if (earnings.status === EarningStatus.PAID) {
       if (!options?.forceRefund) {
         console.error(
@@ -1638,22 +1637,35 @@ export async function refundEarnings(
         );
         continue;
       }
-      if (isFullyRefunded) {
-        // Defensive double-check: forceRefund is the only path that
-        // writes PAID → REFUNDED, but if another code path ever forgets
-        // the assertion this throws before any state mutates.
-        assertEarningStatusTransitionLegal(
-          earnings.id,
-          earnings.status,
-          EarningStatus.REFUNDED,
-        );
-      }
+      // #CASC — the status + cap are re-asserted in the WHERE. A concurrent
+      // writer that already reversed this row wins; we then re-read and take
+      // only what the cap still allows (never an unguarded second increment).
+      //
+      // The PAID → REFUNDED assertion is no longer duplicated here:
+      // `applyCappedEarningReversal` asserts it unconditionally on every
+      // attempt, before it writes, so a shared primitive that a future caller
+      // reaches without its own check cannot bypass the rule.
+      const paidReversal = await applyCappedEarningReversal(
+        db,
+        earnings,
+        shareToReverse,
+      );
 
-      // #813 — force refund of PAID earnings: record the proportional TDS reversal
-      // via the shared helper (integer proportion + dedup/cap + filed-aware
-      // FY/quarter). Previously this path used float ratio math and no cap, and
-      // it diverged from the gateway/cron cascade (operations/refund.ts).
-      if (earnings.payoutId) {
+      // #813 — force refund of PAID earnings: record the proportional TDS
+      // reversal via the shared helper (integer proportion + dedup/cap +
+      // filed-aware FY/quarter). Previously this path used float ratio math and
+      // no cap, and it diverged from the gateway/cron cascade
+      // (operations/refund.ts).
+      //
+      // AFTER the CAS, and gated on `reversedPaise > 0`. Filing before the CAS
+      // meant it could not know how much was actually applied: the helper caps
+      // at the remaining share and, after a lost race, takes only the residual.
+      // Reversing TDS for a share that was never reversed would understate the
+      // 26Q figure in the government's favour by mistake. The basis stays
+      // `refundNumPaise / refundDenPaise` — a BOOKING-level proportion, not this
+      // share — so substituting the applied amount would change a compliance
+      // figure and multiply-reverse a multi-row payment.
+      if (earnings.payoutId && paidReversal.reversedPaise > 0) {
         await recordTdsReversal(db, {
           payoutId: earnings.payoutId,
           consultantProfileId: earnings.consultantProfileId,
@@ -1662,15 +1674,6 @@ export async function refundEarnings(
           paymentAmountPaise: refundDenPaise,
         });
       }
-
-      // #CASC — the status + cap are re-asserted in the WHERE. A concurrent
-      // writer that already reversed this row wins; we then re-read and take
-      // only what the cap still allows (never an unguarded second increment).
-      const paidReversal = await applyCappedEarningReversal(
-        db,
-        earnings,
-        shareToReverse,
-      );
       if (paidReversal.lostRace) {
         console.warn(
           `Earnings ${earnings.id} already reversed by a concurrent refund path; ` +

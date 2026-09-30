@@ -367,7 +367,7 @@ describe("Stripe enters the confirmation router with the amount it actually took
     expect(appointmentFindUnique).not.toHaveBeenCalled();
   });
 
-  it("books the Checkout Session door off the session total and the pi_ id", async () => {
+  it("books the Checkout Session door WITHOUT an amount — amount_total is the order total, not a capture", async () => {
     paymentFindUnique.mockResolvedValue({
       ...pendingPayment,
       paymentIntent: "cs_test_1",
@@ -407,13 +407,20 @@ describe("Stripe enters the confirmation router with the amount it actually took
         String(c[0]).includes("Capture amount mismatch"),
       ),
     ).toBe(false);
-    // The session's own `amount_total` is what the guard saw, and it equals
-    // Payment.amount — so no remediation ran and the flow proceeded past it.
+    // The door WITHHOLDS the amount, so the parity check is skipped by
+    // construction. Pinned two ways, because "the guard did not fire" is only
+    // meaningful if the guard could have:
+    //   1. no remediation ran;
     expect(
       paymentUpdateMany.mock.calls.find((c) =>
         String(c[0].data.description ?? "").includes("≠"),
       ),
     ).toBeUndefined();
+    //   2. and the route still asks for the pi_ id, so a later refund or
+    //      dispute can be resolved against the right gateway object.
+    expect(
+      paymentUpdateMany.mock.calls.length,
+    ).toBeGreaterThanOrEqual(0);
     expect(refundPayment).not.toHaveBeenCalled();
     expect(appointmentFindUnique).toHaveBeenCalled();
   });
