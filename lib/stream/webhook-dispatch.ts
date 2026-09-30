@@ -201,6 +201,18 @@ function isOwnCallType(callCid: string | undefined): boolean {
  * the insert. Deliberately does no DB-health probe and no handler dispatch —
  * this is the part that must be cheap enough to run on the request path.
  *
+ * #1829 — this used to return `void` and throw away the `logWebhookEvent`
+ * result, which is the whole answer to "have I seen this before?". The route had
+ * no choice but to call `processStreamEvent(..., { claimAlreadyHeld: true })`,
+ * and `claimAlreadyHeld` exists precisely to SKIP the `isNew` check — because
+ * the row was just created. So every duplicate delivery was acknowledged 200
+ * and then fully re-dispatched: attendance rows re-upserted, recording rows
+ * re-created, notifications re-staged. The dedup key and its `@unique`
+ * constraint were both correct and both gated nothing.
+ *
+ * The result is returned now so the route can answer `!isNew` with 200 and skip
+ * the `after()` entirely, and so the claim travels with the completion mark.
+ *
  * Throws on failure. The caller turns that into a non-2xx so Stream redelivers,
  * which is correct precisely because nothing was recorded.
  */
@@ -209,8 +221,72 @@ export async function recordStreamEventReceipt(
   eventType: string,
   event: unknown,
   signature: string | undefined,
-): Promise<void> {
-  await logWebhookEvent("stream", eventId, eventType, event, signature);
+): Promise<{ isNew: boolean; claim: WebhookClaim }> {
+  const logged = await logWebhookEvent(
+    "stream",
+    eventId,
+    eventType,
+    event,
+    signature,
+  );
+  // A P2002 race inside `logWebhookEvent` resolves to `{ isNew: false }` with no
+  // `claim`, because the losing writer has no fence of its own to finalise with.
+  // That is a duplicate by every measure the caller cares about, so normalise
+  // the shape here rather than making each caller handle a half-result.
+  return { isNew: logged.isNew, claim: logged.claim ?? { claimedAt: null } };
+}
+
+/**
+ * #1829 — how old a delivery's own `created_at` may be before we refuse to act
+ * on it, and how far into the future a clock is allowed to sit.
+ *
+ * The dedup key is `sha256(body)`, which is derived from SIGNED material — that
+ * is the property the key exists for, and it is why the key cannot be forged
+ * from a captured delivery. It is not, by itself, a replay defence, and the
+ * honest version of this file has to say so: a byte-identical body replayed
+ * after the 30-day archive has collected its row mints a FRESH key and dispatches
+ * again, under either scheme. So the freshness window below is the actual
+ * replay defence, and the key is only the collapse mechanism for retries.
+ *
+ * Why it matters concretely. `call.session_participant_joined` takes the CREATE
+ * branch of the `MeetingAttendance` upsert when no row exists, and stamps
+ * `firstJoinedAt` from the event's own clock. A replayed old body therefore
+ * writes an ancient `firstJoinedAt` — which is the input to the consultant
+ * no-show classifier and to the "were you actually there" review gate. One
+ * forged or stale delivery silently poisons attendance-derived money.
+ *
+ * The window is set far above Stream's delivery budget (6s per attempt, 15s
+ * total, no backoff) so a genuinely retried event is never near it, and far
+ * above the sweeper's cadence so the re-drive path is never blocked by it — a
+ * row the sweeper selects is minutes old, not days. It deliberately does NOT
+ * overlap the 168h give-up window: a row terminally capped at 168h is not
+ * re-driven, so a body older than the window can only be arriving from outside
+ * Stream's own machinery, which is the definition of a replay.
+ */
+export const STREAM_REPLAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Forward clock skew tolerated. NTP-grade hosts are within seconds of each other. */
+export const STREAM_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * Classify a delivery's age against the replay window.
+ *
+ * @returns `null` when the delivery is inside the window, or a stable reason
+ * string when it is not. The reason is written to the `error` column so the row
+ * is legible in the table, and it is prefixed so the sweeper's selector treats
+ * it as terminal and never re-drives it.
+ */
+export function classifyStreamDeliveryAge(
+  createdAt: Date,
+  now: number = Date.now(),
+): string | null {
+  const age = now - createdAt.getTime();
+  if (age > STREAM_REPLAY_WINDOW_MS) {
+    return `permanent: replay_window_exceeded (age ${Math.round(age / 3_600_000)}h)`;
+  }
+  if (age < -STREAM_CLOCK_SKEW_MS) {
+    return `permanent: created_at_in_future (${Math.round(-age / 1000)}s ahead)`;
+  }
+  return null;
 }
 
 /**
@@ -291,6 +367,19 @@ export async function processStreamEvent(
      * concurrency guard meaningful for the caller that actually competes.
      */
     claimAlreadyHeld?: boolean;
+    /**
+     * #1829 — the claim the caller already holds on the row, when it took one
+     * outside this function. The live route does (via
+     * `recordStreamEventReceipt`, which returns `logWebhookEvent`'s result);
+     * the sweeper does not, and claims normally below, which is what keeps the
+     * concurrency guard meaningful for the caller that actually competes.
+     *
+     * Passing it is what makes `markWebhookEventProcessed` fenced. Without it
+     * the completion write is unconditional, so a worker whose claim was taken
+     * over by the staleness escape can stamp its result over the newer
+     * worker's.
+     */
+    claim?: WebhookClaim;
   } = {},
 ): Promise<void> {
   try {
@@ -311,7 +400,16 @@ export async function processStreamEvent(
 
     // The live route's claim on the row; the sweeper holds its own and passes
     // none, so its completion stays unfenced.
-    let claim: WebhookClaim | undefined;
+    //
+    // #1829 — the route now passes the claim it actually took in `opts.claim`
+    // rather than leaving this `undefined` on the `claimAlreadyHeld` path. Both
+    // callers were arriving here with no fence: the route's because
+    // `claimAlreadyHeld` short-circuited the assignment, and the sweeper's
+    // because it never claimed at all. So `markWebhookEventProcessed` took the
+    // unfenced branch on every Stream event in the system, and a worker whose
+    // claim had been taken over by the staleness escape could stamp a completion
+    // over the newer worker's. The claim is now always in hand.
+    let claim: WebhookClaim | undefined = opts.claim;
     if (!opts.claimAlreadyHeld) {
       const logged = await logWebhookEvent(
         "stream",

@@ -23,6 +23,7 @@ import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /**
  * The terminal marker written when a deferred event ages past the give-up cap.
@@ -219,25 +220,37 @@ async function sweepStuckWebhookEventsUnlocked(
   let gaveUp = 0;
 
   for (const ev of stuck) {
-    // Claim the row before re-driving: bump receivedAt conditioned on it
-    // still holding the value we selected. Without this, two drivers (this
-    // sweep and a slow live after() callback, or two overlapping entries)
-    // could both re-run the same event. The Razorpay SDK now times out at
-    // 30s per call, so "still alive past the staleness window" is rare —
-    // but a claim makes sweep-vs-sweep double-drive impossible outright.
-    const claimed = await prisma.webhookEvent.updateMany({
-      where: {
-        eventId: ev.eventId,
-        OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
-      },
-      data: { claimedAt: new Date() },
-    });
-    if (claimed.count === 0) {
-      console.log(
-        `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
-      );
-      continue;
-    }
+    // #1829 — this loop used to claim the row here, before re-driving, so that
+    // two drivers could not both re-run the same event. It was correct in
+    // isolation and fatal in combination, and the interaction is worth writing
+    // down because it is invisible in either file.
+    //
+    // The claim stamped `claimedAt = now()`. `processStreamEvent` then calls
+    // `logWebhookEvent` (it owns its own bookkeeping — `claimAlreadyHeld` is
+    // passed by nobody here), and for a `processed:false, error:null` row
+    // `logWebhookEvent` runs its staleness escape: "if this has been in progress
+    // for more than five minutes, treat it as abandoned and allow reprocessing".
+    // It measures that age from `claimedAt ?? receivedAt` — which this claim had
+    // just reset to zero. So the age read as ~0, the escape did not fire, the
+    // call returned `isNew: false` ("currently being processed, skipping"), and
+    // `processStreamEvent` returned having done nothing at all.
+    //
+    // The net effect was that the sweeper could NEVER re-drive a Stream row in
+    // the one state it exists to rescue: acknowledged by the route, `after()`
+    // never completed. Every such row was re-selected, re-claimed and re-refused
+    // on every sweep for 168 hours, then terminally capped and discarded
+    // forever. That is exactly the instance-freeze-between-the-200-and-after()
+    // loss the sweeper was written for, and it is also why the 2026-08-12
+    // outage had no second line of defence.
+    //
+    // The exclusion this pre-claim was buying is not lost, because
+    // `logWebhookEvent` already performs it: its claim is a conditional
+    // `updateMany` scoped to the exact `claimedAt` the caller read, so of two
+    // racing drivers exactly one write lands and the loser is told the row is
+    // not new. The selector above also already refuses to hand us a row whose
+    // claim is fresher than `staleBefore`, so we never race a live worker.
+    // Claiming here was therefore a second, worse version of a lock we already
+    // held — and the one that broke the re-drive.
 
     // WebhookEvent.payload stores only `event.payload`; the per-event schemas
     // also require the envelope's entity/account_id/contains/created_at, so
@@ -256,6 +269,24 @@ async function sweepStuckWebhookEventsUnlocked(
     } as unknown as RazorpayWebhookEnvelope;
 
     try {
+      // #1829 — count the re-drive. `WebhookEvent` had no attempts column, so a
+      // deterministically-failing Stream row was indistinguishable from one that
+      // had crashed once: the give-up window was the only bound, and the only
+      // cross-provider signal (`deferCount`) is written exclusively by the
+      // Razorpay dispatcher, so a Stream row always read 0. With a counter the
+      // "stalling" class is decidable instead of inferred, and the give-up
+      // decision can name the number it was made on.
+      await prisma.webhookEvent
+        .update({
+          where: { eventId: ev.eventId },
+          data: { attempts: { increment: 1 } },
+        })
+        .catch(() => {
+          // Non-fatal. The column is an observability aid; a row we cannot
+          // count is still a row we can re-drive, and failing here would
+          // reintroduce the loss this sweep exists to prevent.
+        });
+
       if (ev.provider === "stream") {
         // Stream stores the whole event as the payload, so there is no envelope
         // to rebuild. processStreamEvent owns its own logWebhookEvent /
@@ -266,7 +297,16 @@ async function sweepStuckWebhookEventsUnlocked(
           ev.payload,
           ev.eventType,
           ev.eventId,
-          undefined,
+          // #1829 — pass the STORED signature through instead of `undefined`.
+          // The audit that flagged this as clobbering the value was wrong about
+          // the mechanism: neither retry branch of `logWebhookEvent` writes
+          // `signature`, and the create path (the only one that does) cannot run
+          // for a row that already exists, so the column survives regardless.
+          // It still matters — `logWebhookEvent` re-derives the claim from the
+          // value it is handed, and a re-drive that carries a different
+          // (absent) signature is one step further from reproducing the
+          // original delivery.
+          ev.signature ?? undefined,
           { call_cid: streamEvent?.call_cid },
         );
       } else {
@@ -304,6 +344,25 @@ async function sweepStuckWebhookEventsUnlocked(
           errors.push(`${ev.eventId}: ${giveUpReason(ev.provider)}`);
           console.warn(
             `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
+          );
+          // #1829 — a give-up is terminal and silent. The row becomes
+          // `processed: true` with a `gave up:` error, which is indistinguishable
+          // from a clean completion to every query anyone was likely to write,
+          // and the only remaining evidence is a line in a GitHub Actions log
+          // nobody opens. `captureThrottled` so a single poison event cannot
+          // empty the Sentry quota while telling us about it. Keyed by provider
+          // as well as id so a Razorpay give-up and a Stream give-up are
+          // distinguishable in the issue stream.
+          captureThrottled(
+            `webhook:give-up:${ev.provider}`,
+            `Gave up on a stuck ${ev.provider} webhook after the ${giveUpAfterHours}h cap — it will never be retried`,
+            {
+              subsystem: "webhook",
+              level: "error",
+              op: "sweeper.give-up",
+              tags: { job: "sweep-stuck-webhook-events" },
+              extra: { eventId: ev.eventId, eventType: ev.eventType },
+            },
           );
         } else {
           deferred++;

@@ -21,12 +21,22 @@ const REDACTED = "[redacted]";
 
 // Exact header names, matched case-insensitively, plus a substring match on
 // "secret" / "token" for anything not enumerated (custom internal headers).
+//
+// #1829 — `x-signature` joins the enumerated set. It is Stream's webhook HMAC
+// and the substring rule could not have caught it: the name contains neither
+// "secret" nor "token", only "signature". Every `Sentry.captureException` on
+// the Stream webhook path therefore shipped the live HMAC of a verified delivery
+// in `event.request.headers` — while Razorpay's and Stripe's equivalents were
+// redacted, so the list read as complete and nobody looked for a fourth.
 const REDACT_HEADER_EXACT = new Set([
   "authorization",
   "cookie",
   "set-cookie",
   "x-razorpay-signature",
   "stripe-signature",
+  "x-signature",
+  "svix-signature",
+  "svix-hmac-sha256",
   "x-maintenance-bypass",
   "x-cron-secret",
 ]);

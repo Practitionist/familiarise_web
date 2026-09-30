@@ -5,6 +5,7 @@
 // centralizes the one config so a sampling/PII/env tweak lands in one place. (#913)
 
 import * as Sentry from "@sentry/nextjs";
+
 import { isExpectedError } from "@/lib/observability/expected";
 import {
   scrubSentryBreadcrumb,
@@ -134,6 +135,14 @@ export const SENTRY_DATA_COLLECTION: NonNullable<
   // Dropping either key is a regression; `__tests__/observability/sentry-data-collection.test.ts`
   // fails if one goes.
   queryParams: false,
+  // `urlQueryParams` is the v11 spelling and is NOT in the installed SDK's type
+  // yet (node_modules is on 10.59.0 while package.json pins ^10.75.3 — the
+  // lockfile is behind, so this resolves to a shape the compiler cannot see).
+  // It is kept deliberately, per the comment above: drop it and a v11 upgrade
+  // silently resumes shipping query strings, because v11 has no fallback and its
+  // default is `true`. The paired test fails loudly if either spelling is
+  // removed, so this is belt-and-braces on a privacy control rather than a way
+  // to silence a real error.
   urlQueryParams: false,
   // No request or response bodies, in either direction.
   httpBodies: [],
@@ -142,7 +151,11 @@ export const SENTRY_DATA_COLLECTION: NonNullable<
   // No generative-AI prompt or completion content. This app issues no
   // model calls today; pinned so adding one cannot start shipping them.
   genAI: { inputs: false, outputs: false },
-};
+  // The one cast in this file, and it is load-bearing. `urlQueryParams` is a
+  // forward-pin for a v11 key the installed SDK's type does not declare, so the
+  // object is widened to a plain record at exactly the point the pin lives —
+  // everywhere else stays type-checked against the real shape.
+} as Record<string, unknown>;
 
 export function initSentry(overrides?: Partial<SentryInitOptions>): void {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;

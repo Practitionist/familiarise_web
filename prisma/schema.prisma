@@ -6322,11 +6322,24 @@ model WebhookEvent {
   /// give-up cap finally fired. The counter is what lets the sweeper alert on a
   /// stubborn event days before that cap.
   deferCount  Int       @default(0)
+  /// #1829 — how many times the STUCK-EVENT SWEEPER has re-driven this event.
+  /// Distinct from `deferCount`, which only the Razorpay dispatcher writes, so
+  /// before this a Stream row always read 0 and a deterministically-failing one
+  /// was indistinguishable from one that had crashed exactly once. Without a
+  /// counter the give-up window is the only bound and the "stalling" class is
+  /// inferred from wall-clock age rather than observed. Bumped by the sweeper
+  /// immediately before each re-drive, so it counts attempts, not outcomes.
+  attempts    Int       @default(0)
 
   @@index([provider])
   @@index([processed])
   @@index([eventType])
   @@index([receivedAt])
+  /// #1829 — the sweeper's own selector: provider + stuck shapes + a stale claim,
+  /// ordered by age. `deferCount` stays unbucketed on purpose — it is a single
+  /// row's story, not a fleet-wide one, and an index on it would be written by
+  /// a filter that almost never runs.
+  @@index([provider, receivedAt, claimedAt])
 }
 
 model DiscountCode {

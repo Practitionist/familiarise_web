@@ -68,8 +68,14 @@ describe("the data-minimisation policy", () => {
     // sentry.shared.config.ts before "fixing" it. They are not redundant:
     // 10.x reads `urlQueryParams ?? queryParams`, v11 reads `urlQueryParams`
     // with no fallback, and its default is `true`.
-    expect(SENTRY_DATA_COLLECTION.queryParams).toBe(false);
-    expect(SENTRY_DATA_COLLECTION.urlQueryParams).toBe(false);
+    //
+    // Read through a widened view on purpose: the config carries the v11 key as a
+    // forward-pin and casts to `Record<string, unknown>` to keep it, so the
+    // installed SDK's `DataCollection` type cannot see it. Asserting against
+    // that type would fail to compile for a key this test exists to protect.
+    const collection = SENTRY_DATA_COLLECTION as Record<string, unknown>;
+    expect(collection.queryParams).toBe(false);
+    expect(collection.urlQueryParams).toBe(false);
   });
 
   it("collects no identity, cookies, headers or bodies", () => {
