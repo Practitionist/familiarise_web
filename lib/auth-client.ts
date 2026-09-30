@@ -16,10 +16,8 @@ export const authClient = createAuthClient({
   plugins: [customSessionClient<typeof auth>(), ssoClient()],
   // NOTE (#1856): no `sessionOptions.refetchInterval` here, deliberately.
   // BetterAuth's built-in poll cannot skip hidden tabs and re-renders
-  // every consumer 1x/min, yet still reads the cookie cache (so it
-  // detects revocation no faster). The visible-tab tick lives in
-  // AuthSyncProvider instead: visibility-guarded, authoritative
-  // (disableCookieCache), and re-render-free on the happy path.
+  // every consumer on each tick. AuthSyncProvider re-checks on tab focus
+  // instead, and server guards read the database on every request.
 });
 
 export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =

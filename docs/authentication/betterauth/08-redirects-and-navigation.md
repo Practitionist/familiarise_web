@@ -39,8 +39,9 @@ reference implementation (signup duplicates it inline).
 
 ### Rule 3 — Destination decisions re-verify with a force-fresh session
 
-Client `useSession()` may serve the ≤5-min cookieCache payload
-(`lib/auth.ts`, `session.cookieCache.maxAge: 300`). Server guards
+Client `useSession()` holds whatever it last fetched, which can be stale
+after a mutation (and would be up to `cookieCache.maxAge` stale if the cookie
+cache in `lib/auth.ts`, currently off, were re-enabled). Server guards
 (`requireOnboarded`, `requireNotOnboarded` in `lib/auth-guard.ts`) **always**
 read force-fresh (`disableCookieCache: true`).
 
@@ -110,8 +111,8 @@ middleware, the answer is "you don't" — extend a server guard instead.
 
 ## Related context
 
-- `01-architecture.md` — customSession hot path & why cookieCache saves
-  little there; guards force-refresh by design.
+- `01-architecture.md` — customSession hot path & why the cookie cache is
+  off; guards force-refresh by design.
 - `02-middleware.md` — edge request lifecycle.
 - [#1241](https://github.com/Practitionist/familiarise_web/issues/1241) —
   SSO enforcement lifecycle: the read-time `ssoEnforcementFailed` flag was

@@ -15,7 +15,7 @@ other.
 | 7 | [`sso/README.md`](./sso/README.md) | Enterprise SSO in depth — SAML/OIDC, enforcement layers, domain claims, provider schemas, PKCE, cert rotation. |
 | 8 | [`oauth/README.md`](./oauth/README.md) | OAuth providers (Google, GitHub, Facebook), account linking, how to add a new provider. |
 | 9 | [`08-redirects-and-navigation.md`](./08-redirects-and-navigation.md) | **The anti-flicker contract**: auth redirect rules (`replace` not `push`, idempotency refs, force-fresh destination checks, `safeSameOriginPath`, server-side dashboard entry redirects). Read before touching any redirect. |
-| 10 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, the cap, propagation tiers, the staff doors. Read before touching any session row or the Sessions UI. |
+| 10 | [`09-sessions-devices.md`](./09-sessions-devices.md) | **The device list**: the select allowlist, the revocation choke point, what each sign-out scenario does and how fast other devices notice, the staff doors. Read before touching any session row or the Sessions UI. |
 
 Authorization (role hierarchy, capability gates, `requireOrgAccess`) lives in [`docs/authorization/`](../../authorization/README.md).
 
@@ -33,8 +33,9 @@ don't repeat content.
 
 1. **No JWT.** Sessions are server-side rows in a Postgres `Session`
    table; the client carries an opaque cookie. We get revocation,
-   audit, and rotation for free at the cost of a cookie-cached DB read
-   per session validation. See [`01-architecture.md`](./01-architecture.md).
+   audit, and rotation for free at the cost of a DB read per session
+   validation (the cookie cache is off, so a revoke applies on the next
+   request). See [`01-architecture.md`](./01-architecture.md).
 2. **Middleware is cookie-only.** `middleware.ts` runs in the Edge
    Runtime, can't import BetterAuth's Node-only deps, and only checks
    for a session cookie. Real validation happens in the API route via

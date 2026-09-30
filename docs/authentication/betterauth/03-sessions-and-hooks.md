@@ -4,12 +4,12 @@
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status        | Stable                                                                                                                                                                                                                                                                                                                           |
 | Audience      | All engineers                                                                                                                                                                                                                                                                                                                    |
-| Last reviewed | 2026-09-27                                                                                                                                                                                                                                                                                                                       |
-| Source files  | `lib/auth.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx`, `lib/auth/device-label.ts`, `lib/auth/session-cap.ts`, `lib/auth/last-seen.ts`, `lib/auth/session-revoke.ts`, `lib/auth/session-select.ts` |
+| Last reviewed | 2026-09-30                                                                                                                                                                                                                                                                                                                       |
+| Source files  | `lib/auth.ts`, `lib/auth-server.ts`, `lib/auth-guard.ts`, `lib/auth-client.ts`, `lib/auth-broadcast.ts`, `providers/AuthSyncProvider.tsx`, `app/layout.tsx`, `components/Navbar.tsx`, `app/api/user/sessions/current/route.ts` |
 
 ## 1. Background
 
-Sessions are server-side Postgres rows — no JWT. This doc covers the session lifecycle, the four database hooks, the `customSession` enrichment path, and the two membership tables.
+Sessions are server-side Postgres rows — no JWT. This doc covers the session lifecycle, the three database hooks, the `customSession` enrichment path, and the two membership tables.
 
 ## 2. Design
 
@@ -33,9 +33,10 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
     2. auth.api.getSession() in handler (DB validation + customSession)
        │
        ▼
-  Session expires after 30 days
-  Session "touched" (updatedAt) once per 24 hours
-  Cookie cache: 5 min compact serialization
+  Session expires 30 days after its last bump (sliding)
+  Session "touched" (expiresAt/updatedAt) at most once per 24 hours
+  Cookie cache: off — every read validates against the DB
+  Expired rows swept nightly (jobs/cleanup/cleanup-auth-tokens.ts)
 ```
 
 ### 2.2 Database Hooks
@@ -54,12 +55,6 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 - If domain is enforced (`enforceSSO=true`, verified claim, active org), checks whether user has an `account` row matching one of the org's registered `ssoProvider.providerId` values
 - **Fails open** if the org has no providers configured yet (prevents lockout during setup)
 - Throws `APIError("FORBIDDEN")` with `code: "SSO_REQUIRED"` if rejected
-- The allow path falls through untouched: device metadata is stamped in `session.create.after`, never merged into the insert (a missing column must never brick sign-in, #1856)
-
-**`session.create.after`** — Fires after the session row commits (#1856):
-
-- Awaited `stampSessionDeviceMetadata()`: writes `deviceLabel` + `lastSeenAt` via one PK update (catches failures internally, throttled-reported, so sign-in never fails — awaiting it only costs milliseconds on a rare path and keeps a serverless freeze from dropping it).
-- Awaited `enforceSessionCapForUser()` (cap 10, total-order eviction under a Serializable retry, multi-pass convergence for large overflows, just-created session reserved). A floating promise would die with the serverless freeze and never converge — failures are caught and Sentry-reported, so sign-in never fails; overflows past 5×200 keep converging on later sign-ins.
 
 **`account.create.after`** — Fires after linking a non-credential account:
 
@@ -135,13 +130,13 @@ Two pieces work together to make the rendered auth state correct and consistent 
 
 2. **Cross-tab propagation.** BetterAuth's client only broadcasts a session change to other tabs on sign-out and user-update, never on sign-in, and OAuth or SSO logins complete through a full-page redirect with no client fetch hook at all. As a result an already-open tab would not reflect a login elsewhere until it next regained focus (BetterAuth's built-in `visibilitychange` refetch). `AuthSyncProvider` (mounted once in the root layout) closes that gap: it detects this tab's logged-out to logged-in transition and pings peer tabs over a `BroadcastChannel`, and on receiving a ping it calls the `useSession` `refetch` so every consumer re-renders. The helper in `lib/auth-broadcast.ts` falls back to a `storage` event for browsers without `BroadcastChannel`. The provider renders nothing and shares the existing session atom, so it adds no extra `/get-session` request.
 
-3. **Revocation classification (#1856).** When a tab goes from authed to null without initiating it, one authoritative re-check (`disableCookieCache`) classifies: error → refetch and stay put (a failed lookup is never a revocation, #1716 client-side); user present → cookie-cache race, refetch to recover; confirmed null → clean sign-out to `/auth/signin?reason=session-revoked`. Four triggers feed it: the provider's own visible-tab tick (authoritative, ~5 min bound with per-tab jitter, hidden tabs skip free), the `session-revoked` BroadcastChannel ping from the revoking tab (same-browser), a throttled `visibilitychange` re-check (cross-device, one tab-switch), and the opt-in Redis counter poll (`NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`, default off). See `09-sessions-devices.md`.
+3. **Revocation from another device (#1856).** Every tab in a browser shares one cookie and so one session, so the login/logout ping above is all same-browser sync needs. For another device, the provider asks `GET /api/user/sessions/current` (200 active / 401 no session / 403 suspended / 503 lookup failed) when the tab becomes visible (throttled to once per 30 s) and whenever the session unexpectedly resolves to null. Only 401/403 signs out, to `/auth/signin?reason=session-revoked`; 503, other errors and network failures refetch and stay put (#1716 client-side). It deliberately does not classify on `/get-session`: `customSession` answers `200 null` for a failed lookup as well as a missing session. See `09-sessions-devices.md`.
 
 ## 3. Operational Concerns
 
-### When to Use `disableCookieCache`
+### When to Use `getSession(true)`
 
-Pass `true` to `getSession()` when reading fields that were just mutated (e.g., `onboardingCompleted` after onboarding submit). The 5-minute cookie cache will otherwise return stale data.
+Pass `true` to `getSession()` (sets `disableCookieCache`) for role-gated, PII or finance reads and for fields that were just mutated (e.g., `onboardingCompleted` after onboarding submit). The cookie cache is currently off, so both forms read the DB, but the distinction keeps those reads fresh if the cache is ever re-enabled.
 
 ### Two Membership Tables
 
@@ -156,10 +151,11 @@ Pass `true` to `getSession()` when reading fields that were just mutated (e.g., 
 
 1. **ConsulteeProfile is lazy.** Don't assume every user has one. Use `ensureConsulteeProfile()` before any consumer action.
 2. **Hook errors are non-fatal.** The `user.create.after` hook wraps everything in try/catch. A failing welcome email won't block signup.
-3. **Session enrichment is per-request.** Membership changes are visible on the next request, not the current one (unless you force a cache bypass).
+3. **Session enrichment is per-request.** Membership changes are visible on the next request, not the current one.
 
 ## 5. Related Docs
 
 - [01-architecture.md](./01-architecture.md) — Plugin chain, entry points
+- [09-sessions-devices.md](./09-sessions-devices.md) — Device list, revocation, cross-device sign-out
 - [sso/README.md](./sso/README.md) — SSO enforcement deep dive
 - [docs/authorization/](../../authorization/) — `requireOrgAccess` and role hierarchy

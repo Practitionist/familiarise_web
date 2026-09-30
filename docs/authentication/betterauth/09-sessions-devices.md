@@ -1,204 +1,137 @@
 # Sessions and Devices
 
-| Field         | Value                                                                                                                                                                                                                                                                                                      |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status        | Stable                                                                                                                                                                                                                                                                                                     |
-| Audience      | All engineers                                                                                                                                                                                                                                                                                              |
-| Last reviewed | 2026-09-27                                                                                                                                                                                                                                                                                                 |
-| Source files  | `lib/auth/session-select.ts`, `lib/auth/session-revoke.ts`, `lib/auth/device-label.ts`, `lib/auth/session-cap.ts`, `lib/auth/last-seen.ts`, `app/api/user/sessions/`, `app/api/admin/users/[userId]/sessions/`, `components/dashboard/account/SignInSecuritySection.tsx`, `providers/AuthSyncProvider.tsx` |
+| Field         | Value                                                                                                                                                                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status        | Stable                                                                                                                                                                                                                                                                                     |
+| Audience      | All engineers                                                                                                                                                                                                                                                                              |
+| Last reviewed | 2026-09-30                                                                                                                                                                                                                                                                                 |
+| Source files  | `lib/auth.ts`, `lib/auth/session-select.ts`, `lib/auth/session-revoke.ts`, `lib/auth/device-label.ts`, `app/api/user/sessions/`, `app/api/admin/users/[userId]/sessions/`, `components/dashboard/account/SignInSecuritySection.tsx`, `providers/AuthSyncProvider.tsx`, `lib/auth-broadcast.ts` |
 
-## 1. Background
+## 1. Model
 
-A signed-in user has N live sessions (phone, laptop, tablet) as N rows
-in the `sessions` table. They need to see them and end the ones they
-don't recognize — that is the account-takeover triage surface. The
-BetterAuth endpoints that look like the answer are unusable from the
-browser: in 1.6.5 _and_ 1.7.6, `listSessions()` returns the raw session
-**token** per device, and `revokeSession` accepts **only** the token
-(upstream `sessionId` support was never merged). Shipping either to the
-browser turns any XSS into a takeover of every device. So every list
-and every revoke in this app goes through our own routes, and a
-session token never leaves the server. The policy half lives in
-[ADR 35](../../enterprise/70-design-decisions/35-user-session-visibility-and-revocation.md).
+A signed-in user has one `sessions` row per browser (phone, laptop,
+tablet). Every tab in one browser profile shares one cookie, so they
+share **one** session. Sessions last 30 days, sliding: BetterAuth bumps
+`expiresAt`/`updatedAt` at most once per day (`updateAge`). There is no
+per-user session cap; expired rows are swept nightly by
+`jobs/cleanup/cleanup-auth-tokens.ts`.
 
-## 2. Design
+The cookie cache is **off** (`session.cookieCache.enabled: false`), so
+every server session read hits the database. A deleted row, a ban or a
+role change applies on the very next server request.
 
-### 2.1 The visibility boundary
+The BetterAuth list/revoke endpoints are unusable from the browser: in
+1.6.5 _and_ 1.7.6 `listSessions()` returns the raw session **token** per
+device and `revokeSession` accepts only the token. `disabledPaths`
+blocks `/list-sessions`, `/admin/list-user-sessions`,
+`/admin/revoke-user-session(s)` over HTTP (server `auth.api.*` calls are
+unaffected), `customSession` strips `session.token` from the
+`/get-session` payload, and every list and revoke goes through our own
+routes. Policy: [ADR 35](../../enterprise/70-design-decisions/35-user-session-visibility-and-revocation.md).
 
-`lib/auth/session-select.ts` defines `SESSION_PUBLIC_SELECT` — id,
-timestamps, `ipAddress`, `userAgent`, `deviceLabel`, `lastSeenAt`,
-`impersonatedBy` — and `toPublicSession()`, which emits the label
-(persisted, else derived), the IP, `lastSeenAt`, and the `isCurrent` /
-`isImpersonated` flags. `token` is absent by construction; the raw
-`userAgent` string is read only to derive the label and never crosses.
-`__tests__/security/session-payload-allowlist.test.ts` pins both key
-sets — adding `token` (or any new column) to either fails the suite.
+## 2. Building blocks
 
-### 2.2 The revocation choke point
+- **Visibility boundary** — `lib/auth/session-select.ts`:
+  `SESSION_PUBLIC_SELECT` (id, timestamps, `ipAddress`, `userAgent`,
+  `impersonatedBy`) and `toPublicSession()`, which emits a label derived
+  from `userAgent` at read time (`deriveDeviceLabel`), the IP,
+  `lastSeenAt` (= `updatedAt`, day-granular; the UI says "Active in the
+  last day" / "Last active N days ago"), and `isCurrent` /
+  `isImpersonated`. `token` and the raw `userAgent` never cross.
+  `__tests__/security/session-payload-allowlist.test.ts` pins both key sets.
+- **Revocation choke point** — `lib/auth/session-revoke.ts`:
+  `revokeSessionById` (`(id, userId)` in the `where` is the ownership
+  proof), `revokeUserSessionsExcept`, `revokeAllUserSessions` (takes the
+  ambient `tx`). All use `deleteMany`, so a double revoke is a 0-count
+  success and unknown ids answer 200 `{ revoked: 0 }`, never 404. Direct
+  Prisma, not `auth.api.revokeUserSessions`: the plugin endpoint checks
+  the _calling_ admin's session and cannot join a transaction.
+- **Liveness probe** — `GET /api/user/sessions/current` relays
+  `requireApiAuth`: 200 active, 401 no session, 403 suspended, 503 lookup
+  failed (`no-store`, exempt from `sessionMgmtLimiter`). It exists
+  because `customSession` answers `/get-session` with `200 null` on a
+  failed lookup too, which once signed every tab out during a DB blip.
+- **Client classifier** — `AuthSyncProvider.classifyUnexpectedSignOut`
+  asks the probe. Only 401/403 signs out
+  (`signOutEverywhere("/auth/signin?reason=session-revoked")`); 503,
+  other 5xx or a network error refetch and stay put; 200 does nothing
+  (or refetches after a transient null). It runs when a tab's session
+  unexpectedly resolves to null, and on `visibilitychange` to visible
+  (throttled to one probe per 30 s).
+- **Same-browser sync** — `lib/auth-broadcast.ts` posts a `login` /
+  `logout` BroadcastChannel ping (localStorage fallback); peer tabs
+  refetch. Since tabs share the session, that is all they need.
 
-`lib/auth/session-revoke.ts` owns every end: `revokeSessionById`
-(per-device; `(id, userId)` in the `where` is the ownership proof),
-`revokeUserSessionsExcept` (revoke-others, keeps the caller's row),
-`revokeAllUserSessions` (ban, erasure, staff — transaction-safe, takes
-the ambient `tx`). All three use `deleteMany`, so a concurrent second
-revoke is a 0-count success, never a throw: revocation is idempotent
-by construction, and unknown ids answer 200 `{ revoked: 0 }`, never
-404 (which would leak row existence across users).
+## 3. Scenarios
 
-Direct Prisma — not `auth.api.revokeUserSessions` — is correct for
-system-initiated revokes: the plugin endpoint is caller-scoped (it
-checks the _calling_ admin's session) and cannot join a transaction.
+| Scenario                   | What happens                                                                                                                                                                                                                              | Latency elsewhere                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Sign out in tab A          | `signOut` deletes the row and pings `logout`. Peer tabs refetch, resolve null, probe → 401, land on sign-in. Other devices are unaffected (different sessions).                                                                            | Same browser: instant. Other devices: none (still signed in).                  |
+| Revoke device X from B     | `DELETE /api/user/sessions/[id]` (or `revoke-others`) deletes X's row.                                                                                                                                                                     | X: next server request 401s; an idle open tab signs out on next focus.        |
+| Revoke own current session | Route returns `currentSessionEnded`; the UI calls `signOutEverywhere`.                                                                                                                                                                     | Instant here; peer tabs via the `logout` ping.                                 |
+| Password change            | `authClient.changePassword({ revokeOtherSessions: true })` — one request; BetterAuth deletes every other row. The current session survives.                                                                                                | Other devices: next request or next focus.                                     |
+| Password reset (email)     | `revokeSessionsOnPasswordReset` deletes **every** row, including the resetting user's own on any device.                                                                                                                                  | Same as revoke.                                                                |
+| Ban / suspend              | The moderation transaction calls `revokeAllUserSessions(tx, …)`. Belt and braces: `customSession` flags `banned` and `requireApiAuth` answers 403 for any surviving session.                                                              | Next request or next focus.                                                    |
+| Staff revoke               | Staff see the list via `GET /api/admin/users/[userId]/sessions` (`users.read`, OPERATORS); admins end one (`sessionId`) or all via `POST .../revoke` (`users.moderate`, ADMIN_ONLY, `reason` + OpsActionLog).                              | Same as revoke.                                                                |
+| Expiry                     | 30 days after the last daily bump the row is invalid; the next read returns no session. Nightly job deletes it.                                                                                                                           | Next request or next focus.                                                    |
 
-### 2.3 Row metadata
+"Next request" means any server-rendered page or API call: guards read
+the database, so a revoked device cannot act, only keep showing a page
+it already rendered until it navigates or regains focus.
 
-`Session.deviceLabel` + `Session.lastSeenAt` are nullable (additive
-under the #705 freeze, no backfill). The label is stamped by
-`session.create.after` (awaited PK update — deliberately NOT merged into
-the insert, so a stamp failure never fails sign-in) via the
-dependency-free `deriveDeviceLabel()` (`lib/auth/device-label.ts`);
-rows predating the deploy fall back to read-time derivation. Note the
-limit: the INSERT itself still requires the columns until the push,
-because the regenerated client selects all model fields by default —
-no hook placement avoids that. `lastSeenAt` starts at creation and advances via
-the throttled touch in `lib/auth/last-seen.ts`, fired from
-`lib/auth-server.ts` without await: in-process 5-min gate per session
-(production runs `PG_POOL_MAX=1`) plus a null-or-stale SQL predicate
-so N lambdas collapse into no-ops. Semantics: last _server-validated_
-activity, ±5 min — the UI says "last seen", never "active now".
+```mermaid
+sequenceDiagram
+  participant B as Device B (settings)
+  participant API as /api/user/sessions
+  participant DB as Postgres
+  participant X as Device X (idle tab)
+  B->>API: DELETE /[sessionId of X]
+  API->>DB: deleteMany where id, userId
+  API-->>B: 200 revoked 1
+  Note over X: tab regains focus (30 s throttle)
+  X->>API: GET /current
+  API->>DB: session lookup
+  API-->>X: 401
+  X->>X: signOutEverywhere(reason=session-revoked)
+```
 
-### 2.4 Cap
+## 4. Edge cases & foot-guns
 
-`MAX_CONCURRENT_SESSIONS = 10`, enforced in `session.create.after`
-(awaited but infallible — caught, Sentry-reported, never fails sign-in;
-fire-and-forget would die with the serverless freeze and, with no later
-sign-in, never converge) by
-`enforceSessionCapForUser()`: keep the N newest under the total order
-`(createdAt, id)` — `createdAt` alone ties within a millisecond —
-inside a Serializable retry. The just-created session is reserved from
-eviction (ordering alone could rank it out under clock skew).
-Eventually consistent by design; hygiene,
-not the security gate (`authLimiter` owns brute force).
+1. **Never read a failed lookup as a revocation.** Server: 503 /
+   `SESSION_LOOKUP_FAILED`. Client: probe 503/5xx/network. Only a
+   confirmed 401/403 signs out. Never classify on `/get-session` — its
+   `null` is ambiguous.
+2. **Never call `authClient.listSessions()` / `revokeSession()` from the
+   browser.** `/list-sessions` now 404s over HTTP (`disabledPaths`), and
+   `revokeSession` needs a token page JavaScript never sees (httpOnly cookie, stripped from the payload). Do not
+   remove `disabledPaths` entries or re-add `session.token` to the
+   payload without re-reading §1.
+3. **The reset option name lies.** BetterAuth 1.6.5 documents
+   `revokeSessionsOnPasswordReset` as revoking "all _other_ sessions",
+   but `api/routes/password.mjs:164` calls
+   `internalAdapter.deleteSessions(userId)`, which deletes **every** row.
+   That is what we want; re-check on the 1.7 upgrade (#1855). Unit tests
+   cannot drive the reset flow, so the flag is pinned by types plus this
+   paragraph.
+4. **Re-enabling the cookie cache** reopens a stale window (up to
+   `maxAge`) for revocation, bans and role changes. `getCachedSession()`
+   and the `no-restricted-syntax` rule on bare `getSession()` keep
+   sensitive reads on `getSession(true)` so that switch cannot silently
+   make them stale.
+5. **Latency is bounded by user activity, not a timer.** A tab left
+   visible and untouched on a revoked device keeps its rendered page
+   until the next navigation, API call or focus. That is accepted: it
+   can read nothing new.
 
-### 2.5 Propagation
+## 5. Operational notes
 
-Every revoke funnels into one classifier in `AuthSyncProvider`
-(`classifyUnexpectedSignOut`): one authoritative `disableCookieCache`
-re-check; error → refetch and stay put (a failed lookup is never a
-revocation, #1716 client-side); user present → cookie-cache race,
-refetch to recover; confirmed null → `forgetAuthState()` +
-`signOutEverywhere("/auth/signin?reason=session-revoked")`, which the
-sign-in page renders as a notice. Four triggers: the provider's own
-visible-tab tick (authoritative, so an already-visible tab learns
-within ~5 min; hidden tabs skip at zero cost, nothing re-renders on
-the happy path, and the cadence is jittered per tab so open tabs do not
-stampede `/get-session` in the same second), the `session-revoked`
-BroadcastChannel ping from the revoking tab (same-browser; the channel
-never crosses devices), a throttled (30s) `visibilitychange` re-check
-(cross-device, one tab-switch), and the opt-in Redis counter poll
-(`sess:revsig:{userId}`, `NEXT_PUBLIC_SESSION_REVOCATION_POLL_MS`,
-default 0 = off). Deliberately not BetterAuth's built-in
-`refetchInterval`: it cannot skip hidden tabs, re-renders every
-consumer 1x/min, and still reads the cookie cache.
+- Both device lists return at most 25 rows (newest first). Deferred until evidence: an
+  `@@index([userId, createdAt])` for the per-user scan, and a shared
+  fetch client for the three UI call sites.
 
-The tick is five minutes rather than sixty seconds on purpose. It is
-the one trigger that pays full price: `disableCookieCache` plus
-`customSession` is ~4 uncached Prisma round trips, and because the call
-travels over HTTP to `/api/auth/get-session`, the `React.cache` memo in
-`lib/auth-server.ts` does not apply, so there is no deduplication on
-that path at all. An active user is already covered within one
-tab-switch by the focus check and instantly by the BroadcastChannel
-ping; the tick only exists for a tab left visible and untouched, where
-five minutes is a fine bound. Turn the poll on for anything faster.
+## 6. Related docs
 
-### 2.6 Password change
-
-`PasswordSection` POSTs `revoke-others` after a successful
-`changePassword`: a reset the stolen device survives is not a reset.
-The current session survives; the toast says whether other devices
-were signed out.
-
-Password _reset_ (email-link flow) is stricter: BetterAuth's
-`revokeSessionsOnPasswordReset` ends every session server-side — the
-resetting browser holds no session, so nothing is preserved — and
-`onPasswordReset` bumps the counter so other tabs learn promptly.
-
-> **The "other" in the option name is not real.** In 1.6.5 the option is
-> documented as revoking "all _other_ sessions"
-> (`@better-auth/core` `init-options.ts:707`), but
-> `api/routes/password.mjs:164` calls `internalAdapter.deleteSessions(userId)`
-> with a bare user id, and `db/internal-adapter.mjs:373-389` has no
-> exclusion of any session. **Every** row for that user is deleted,
-> unconditionally. That is the behaviour we want here, and it is also
-> what a signed-in user who runs a reset will experience — they will be
-> signed out of the device they reset from too. Do not read the option
-> name as a promise, and re-check this on the 1.7 upgrade (#1855): if
-> upstream ever makes the implementation match its JSDoc, sessions will
-> be preserved where they are deleted today, which is a behaviour change
-> this flag silently inherits.
-
-Ordering note, verified in `api/routes/password.mjs:160-164`:
-`onPasswordReset` runs **before** `deleteSessions`, so our counter bump
-leads the revocation rather than following it. Harmless as written (the
-poll path re-checks authoritatively, so a counter that moved early just
-costs one extra poll), but do not move force-logout logic into that
-callback — it would race the very sessions it means to kill.
-Unit tests cannot drive the reset flow (it needs a live token); the
-flag is pinned by types plus this paragraph — do not remove one
-without the other.
-
-### 2.7 Back office
-
-`GET .../admin/users/[userId]/sessions` (`users.read`, OPERATORS) for
-takeover triage; `POST .../revoke` (`users.moderate`, ADMIN_ONLY,
-`reason` + OpsActionLog row via the `withOpsAction` gateway door) to
-end one (`sessionId`) or all sessions. Staff see, admin acts; staff
-act through the moderation ban path, which shares the helper.
-
-## 3. Operational Concerns
-
-- `npm run db:push` runs once, at merge, by the orchestrator — the two
-  columns are additive, but a push is still a production operation on
-  the shared Postgres. Push-before-traffic is mandatory: the
-  regenerated client selects all model fields by default, so ANY build
-  of this code 500s sign-ins against a database without the columns.
-  Never route sign-in traffic to an unpushed build (this bit us on the
-  #1857 preview).
-- `NEXT_PUBLIC_*` is baked at build time: changing the poll interval
-  needs a rebuild, same as `NEXT_PUBLIC_APP_URL`.
-- The device list is `take: 25` and the cap holds ~10; if either ever
-  needs raising, the allowlist test does not care, but the UI list
-  rendering does — keep them in step.
-- Deferred deliberately, revisit on evidence: (a) a composite
-  `@@index([userId, createdAt])` for the list/cap newest-first scans —
-  add it when the slow-query log (not before) shows the per-user scan
-  hurting, via the normal merge-time push; (b) a shared
-  `lib/auth/session-api.ts` fetch client for the three UI call sites
-  (list/revoke-one/revoke-others) — worth it at the next endpoint
-  rename, not before.
-
-## 4. Edge Cases & Foot-Guns
-
-1. **Never call `authClient.listSessions()` from the browser.** It
-   returns raw tokens in our pinned versions. The lint rule does not
-   cover this — the allowlist test and this doc do.
-2. **Never read a failed lookup as a revocation**, server or client:
-   503/`SESSION_LOOKUP_FAILED` (server) and `getSession` error (client)
-   both mean "could not ask". Only a confirmed null signs out.
-3. **`session.create.after` cannot fail sign-in.** The device stamp is
-   awaited but infallible by construction (one PK update, catches
-   internally — awaiting it only costs milliseconds on a rare path and
-   keeps a serverless freeze from dropping it). The cap is awaited for
-   the same freeze reason: a floating promise would die with the frozen
-   instance and, with no later sign-in, never converge. Both helpers
-   catch and Sentry-report internally, so awaiting neither fails
-   sign-in.
-4. **The Redis poll default is off for a reason.** Turning it on is
-   always-on Upstash traffic per visible tab; the focus check already
-   covers revocation within one tab-switch.
-
-## 5. Related Docs
-
-- [ADR 35](../../enterprise/70-design-decisions/35-user-session-visibility-and-revocation.md) — the policy: who sees what, and why the token never crosses
-- [03-sessions-and-hooks.md](./03-sessions-and-hooks.md) — lifecycle, hooks, cookie cache
-- [04-rate-limiting.md](./04-rate-limiting.md) — `sessionMgmtLimiter`, the extended auth rule
-- [ADR 10](../../enterprise/70-design-decisions/10-session-generation-clock.md) — addendum: the admin plugin was always installed
+- [ADR 35](../../enterprise/70-design-decisions/35-user-session-visibility-and-revocation.md) — the policy, and alternatives rejected
+- [03-sessions-and-hooks.md](./03-sessions-and-hooks.md) — lifecycle, hooks, cross-tab sync
+- [04-rate-limiting.md](./04-rate-limiting.md) — `sessionMgmtLimiter`
+- [ADR 10](../../enterprise/70-design-decisions/10-session-generation-clock.md) — generation clock; addendum on the admin plugin

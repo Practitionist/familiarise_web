@@ -40,7 +40,7 @@ try {
 | Limiter | Endpoint | Key | Limit | Window |
 |---|---|---|---|---|
 | `authLimiter` | POST `/api/auth/sign-in`, `sign-up`, `forget-password`, `reset-password`, `verify-email`, `change-password` (#1856: the latter three close the original gap; `sign-out`/link/unlink stay out deliberately) | IP | 10 | 15 min |
-| `sessionMgmtLimiter` | `/api/user/sessions*` except the signal poll — device list, per-device revoke, revoke-others (#1856; own limiter so session traffic can't exhaust the sign-in budget; generous because one office NAT shares it) | IP | 120 | 15 min |
+| `sessionMgmtLimiter` | `/api/user/sessions*` except the `/current` liveness probe (every tab calls it on focus) — device list, per-device revoke, revoke-others (#1856; own limiter so session traffic can't exhaust the sign-in budget; generous because one office NAT shares it) | IP | 120 | 15 min |
 | `searchLimiter` | GET `/api/user/consultants` | IP | 60 | 1 min |
 | `eligibilityLimiter` | GET `/api/trials/check-eligibility` | IP | 20 | 1 min |
 | `newsletterLimiter` | POST `/api/newsletter/subscribe` | IP | 3 | 1 hr |
