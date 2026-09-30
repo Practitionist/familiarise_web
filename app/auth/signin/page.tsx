@@ -28,11 +28,6 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
-import {
-  DEGRADED_BANNER,
-  isDegradedResponse,
-} from "@/lib/auth/degraded-capture";
-import { CaptchaWidget, useCaptcha } from "@/components/auth/CaptchaWidget";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo, useRef, Suspense } from "react";
@@ -138,12 +133,6 @@ function SignInContent() {
   // render the affordance instead of hardcoding one per failure.
   const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
   const retryAfter = useRetryAfterCapture();
-  // The edge's rate limiter is down, so the budgets this form relies on are not
-  // being enforced. Set from the domain-check response — see
-  // `lib/auth/degraded-capture.ts` for why that is the only channel that can
-  // carry it, and why the sentence is reassuring rather than alarming.
-  const [authDegraded, setAuthDegraded] = useState(false);
-  const captcha = useCaptcha({ action: "signin" });
 
   // Validate callbackUrl synchronously from the URL. safeSameOriginPath
   // resolves against a probe origin to reject backslash/scheme-relative
@@ -210,10 +199,6 @@ function SignInContent() {
       const res = await fetch(
         `/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`,
       );
-      // Read before the `res.ok` branch: the echo is on every response, and a
-      // degraded edge can still answer `ok` — that is the whole point, the
-      // limiter being down does not make this probe fail.
-      setAuthDegraded(isDegradedResponse(res));
       if (res.ok) {
         const data = await res.json();
         setSsoCheck(
@@ -299,7 +284,6 @@ function SignInContent() {
       const res = await fetch(
         `/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`,
       );
-      setAuthDegraded(isDegradedResponse(res));
       if (!res.ok) throw new Error("check failed");
       const data = await res.json();
       if (data.enforceSSO) {
@@ -349,16 +333,9 @@ function SignInContent() {
       const verificationCallbackUrl = callbackUrl
         ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
         : "/auth/verify-email";
-      // `sendVerificationEmail` is the endpoint the degradation gate escalates
-      // (`lib/auth/degraded-captcha.ts`), so this is the one call on this page
-      // that MUST carry the captcha token — without it a Redis blip turns every
-      // resend into a 400 for as long as the outage lasts.
-      await captcha.submit(async ({ headers: captchaHeaders }) => {
-        await sendVerificationEmail({
-          email,
-          callbackURL: verificationCallbackUrl,
-          fetchOptions: { headers: captchaHeaders },
-        });
+      await sendVerificationEmail({
+        email,
+        callbackURL: verificationCallbackUrl,
       });
       toast({
         title: "Verification email sent",
@@ -385,11 +362,7 @@ function SignInContent() {
     setIsLoading(true);
     const settle = pendingToast({ title: "Signing in..." });
 
-    /**
-     * Everything that depends on the *result*, lifted out so the captcha
-     * wrapper below stays one closure instead of four levels of nesting. The
-     * body is unchanged from when it ran inline after `signIn.email`.
-     */
+    /** Everything that depends on the *result* of `signIn.email`. */
     const applyResult = (
       data: { user: { id: string } } | null | undefined,
       error: unknown,
@@ -428,29 +401,18 @@ function SignInContent() {
     };
 
     try {
-      // `captcha.submit` is the only sanctioned way to send this request: the
-      // `captcha` plugin gates `/sign-in/email` server-side and refuses with
-      // `MISSING_RESPONSE` when the header is absent, and a Turnstile token is
-      // single-use, so it has to be reset on success, on failure and on a throw.
-      // `submit` does all three, and refuses to send at all without a token.
-      // With no `NEXT_PUBLIC_TURNSTILE_SITE_KEY` it is a pass-through, so this
-      // form is byte-identical in every deployment that has not turned the
-      // feature on.
-      await captcha.submit(async ({ headers: captchaHeaders }) => {
-        const { data, error } = await signIn.email({
-          email,
-          password,
-          // The `fetchOptions` bag is the client-level fetch configuration:
-          // the proxy (`better-auth/dist/client/proxy.mjs`) lifts it to the
-          // top-level fetch options, which is where `headers` (the captcha
-          // token) and `onResponse` (which reads `Retry-After` off the
-          // response — see `components/auth/useRetryAfterCapture.ts` for why
-          // the error object alone cannot carry it) are both consumed. The
-          // limiter's body field is the fallback when neither is present.
-          fetchOptions: { headers: captchaHeaders, ...retryAfter.fetchOptions },
-        });
-        applyResult(data, error);
+      const { data, error } = await signIn.email({
+        email,
+        password,
+        // The `fetchOptions` bag is the client-level fetch configuration: the
+        // proxy (`better-auth/dist/client/proxy.mjs`) lifts it to the top-level
+        // fetch options, which is where `onResponse` (which reads `Retry-After`
+        // off the response — see `components/auth/useRetryAfterCapture.ts` for
+        // why the error object alone cannot carry it) is consumed. The
+        // limiter's body field is the fallback when it is not present.
+        fetchOptions: retryAfter.fetchOptions,
       });
+      applyResult(data, error);
     } catch (error) {
       // Thrown fetch only (BetterAuth resolves API failures as `{ error }`
       // handled above): the request never completed, so this is a
@@ -569,21 +531,6 @@ function SignInContent() {
               </p>
             </div>
           )}
-          {authDegraded && (
-            // The limiter's store was unreachable for this request, so the
-            // per-IP budget on the sign-in form was not enforced. The form still
-            // works and the password is still checked — this is reassurance, not
-            // an error, and the wording must not imply the customer did anything
-            // wrong. See `lib/auth/degraded-capture.ts`.
-            <div
-              className="mb-4 rounded-md border border-amber-600/60 bg-amber-900/20 p-3"
-              data-testid="degraded-auth"
-            >
-              <p className="text-sm text-amber-200">
-                {DEGRADED_BANNER.description}
-              </p>
-            </div>
-          )}
           {wasRevokedElsewhere && (
             <div className="mb-4 rounded-md border border-sky-600/60 bg-sky-900/30 p-3">
               <p className="text-sm text-sky-300">
@@ -665,16 +612,6 @@ function SignInContent() {
                 {isLoading ? "Signing In..." : "Sign In with Email"}
               </Button>
             )}
-            {/* Renders nothing without `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, so
-                this is invisible in every deployment that has not turned the
-                captcha on. The server-side plugin gates `/sign-in/email`
-                whenever `TURNSTILE_SECRET_KEY` is set, so the two halves have
-                to be deployed together — see `lib/auth/degraded-captcha.ts`. */}
-            <CaptchaWidget
-              widgetRef={captcha.captchaRef}
-              error={captcha.error}
-              className="mt-4"
-            />
             {/* The catalog's next step for the last failure, if this page can
                 service it. One line, no repeated sentence — the toast above
                 already carried the title and description. */}

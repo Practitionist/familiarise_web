@@ -4,15 +4,14 @@
  * Two sources, deliberately kept apart:
  *
  *   - `BetterAuthErrorCode` — the codes Better Auth itself can return. Read off
- *     `@better-auth/core`'s `BASE_ERROR_CODES` plus the `admin`, `organization`,
- *     `two-factor` and `captcha` plugin tables. NOT hand-invented: each entry
+ *     `@better-auth/core`'s `BASE_ERROR_CODES` plus the `admin`, `organization`
+ *     and `two-factor` plugin tables. NOT hand-invented: each entry
  *     below is a literal that appears in the installed package, so a typo here
  *     cannot silently become an unreachable branch.
  *
  *   - `AppAuthErrorCode` — codes this codebase mints itself: the SSO veto in
  *     `lib/auth.ts`'s `session.create.before`, the edge rate limiter, the
- *     session-lookup tri-state, the captcha gate, and the B2C entitlement
- *     layer.
+ *     session-lookup tri-state, and the B2C entitlement layer.
  *
  * Why the union is closed: `lib/labels/auth-errors.catalog.ts` is a
  * `Record<AuthErrorCode, AuthErrorCopy>`. Adding a code to either half makes
@@ -119,21 +118,11 @@ export type TwoFactorPluginErrorCode =
   | "OTP_HAS_EXPIRED"
   | "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE";
 
-/**
- * `captcha` plugin, external half.
- * @see node_modules/better-auth/dist/plugins/captcha/error-codes.mjs
- */
-export type CaptchaPluginErrorCode =
-  | "VERIFICATION_FAILED"
-  | "MISSING_RESPONSE"
-  | "CAPTCHA_SERVICE_UNAVAILABLE";
-
 export type BetterAuthErrorCode =
   | BetterAuthCoreErrorCode
   | AdminPluginErrorCode
   | OrganizationPluginErrorCode
-  | TwoFactorPluginErrorCode
-  | CaptchaPluginErrorCode;
+  | TwoFactorPluginErrorCode;
 
 /* -------------------------------------------------------------------------- */
 /* Ours                                                                      */
@@ -258,10 +247,6 @@ export const AUTH_ERROR_CODES = {
   INVALID_TWO_FACTOR_COOKIE: "INVALID_TWO_FACTOR_COOKIE",
   OTP_HAS_EXPIRED: "OTP_HAS_EXPIRED",
   TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE",
-  // captcha plugin
-  VERIFICATION_FAILED: "VERIFICATION_FAILED",
-  MISSING_RESPONSE: "MISSING_RESPONSE",
-  CAPTCHA_SERVICE_UNAVAILABLE: "CAPTCHA_SERVICE_UNAVAILABLE",
   // ours
   SSO_REQUIRED: "SSO_REQUIRED",
   SSO_PROVIDER_MISCONFIGURED: "SSO_PROVIDER_MISCONFIGURED",

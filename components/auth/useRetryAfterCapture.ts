@@ -39,16 +39,6 @@ import { useCallback, useMemo, useRef } from "react";
  * `Retry-After` is `HTTP-date` OR `delay-seconds`. Ours is always seconds, but
  * parsing the date form costs three lines and a wrong "try again in -1
  * seconds" is worse than no number at all.
- *
- * ## Why degradation is read from the same place
- *
- * `RATE_LIMIT_DEGRADED_HEADER` means "the limiter's store was unreachable, so
- * the budgets on this request were not enforced" — and it is set on the
- * *request* by edge middleware, which the browser never sees. This hook reads
- * it off the response instead, and the only place that copies it across is
- * `/api/auth/sso/domain-check`, the one pre-auth call both auth pages already
- * make on email blur. So a `degraded: true` here means "the server just told us
- * it is running with no rate limiter", not "our client guessed".
  */
 export interface RetryAfterCapture {
   /**

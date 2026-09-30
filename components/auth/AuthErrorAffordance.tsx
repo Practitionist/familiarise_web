@@ -26,11 +26,10 @@ export type AuthActionTarget =
  * sentences (title + description) and this table owns what the button *says*.
  * Keeping them apart is what lets the catalog stay translatable on its own.
  *
- * `retry` is deliberately absent, and a resolver cannot return it. Turnstile-
- * style "just try again" as a *button* invites a second click on a request
- * that already failed — on sign-in that is precisely the behaviour a limiter
- * exists to interrupt, and the submit button is always on screen
- * anyway. `retry` therefore means "the button you just pressed is the retry".
+ * `retry` is deliberately absent, and a resolver cannot return it. A "just
+ * try again" *button* invites a second click on a request that already failed
+ * — on sign-in that is precisely the behaviour a limiter exists to interrupt,
+ * and the submit button is always on screen anyway. `retry` therefore means "the button you just pressed is the retry".
  */
 export const AUTH_ERROR_ACTION_LABEL: Record<
   Exclude<AuthErrorAction, "retry">,

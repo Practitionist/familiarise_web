@@ -468,9 +468,9 @@ let rateLimitStoreDegraded = false;
  * The two answer the same question about the same failure, but they reach
  * different processes. Edge middleware and the route handler are separate
  * isolates with separate module graphs, so a module-level flag set in the
- * middleware is **always `false`** when read from inside a handler. A captcha
- * gate that called the predicate in-process would be deaf to precisely the
- * outage it exists for.
+ * middleware is **always `false`** when read from inside a handler. A handler
+ * that called the predicate in-process would be deaf to precisely the outage
+ * it is asking about.
  *
  * The contract, then: **consumers inside a handler read the request header.**
  * `isRateLimitDegraded()` is for callers in the same isolate, and for tests.
@@ -503,7 +503,7 @@ export const RATE_LIMIT_DEGRADED_HEADER = "x-rate-limit-degraded";
  * are being rate limited", and the two must never be conflated into one boolean.
  *
  * See `RATE_LIMIT_DEGRADED_HEADER` for the cross-isolate version of the same
- * fact, and for what a captcha gate is expected to do with it.
+ * fact, and for what a consumer is expected to do with it.
  */
 export function isRateLimitDegraded(): boolean {
   return rateLimitStoreDegraded;

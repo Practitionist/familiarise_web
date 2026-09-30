@@ -5,7 +5,6 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import {
   admin,
-  captcha,
   customSession,
   organization,
   twoFactor,
@@ -101,10 +100,6 @@ export const auth = betterAuth({
   // unthrottled. The policy table is now keyed on a `RATE_SCOPE` constant that
   // generates both the matcher and the limiter, so a typo in an endpoint name
   // can no longer silently disable a gate the way that one did.
-  //
-  // Bot traffic is a third line: the `captcha` plugin below gates the three
-  // endpoints an attacker scripts, and it is wired to *escalate* when the
-  // limiter's Redis is unreachable (see `lib/rate-limit/policies.ts`).
   //
   // The unauth `/api/auth/sso/domain-check` endpoint has its own
   // 120/hr/IP gate (prevents domain enumeration of registered orgs),
@@ -543,48 +538,6 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    // Bot gate. Cloudflare Turnstile, `interaction-only` — invisible for a human,
-    // which is the point: a puzzle on a sign-in form is a support ticket.
-    //
-    // Three endpoints are listed rather than the plugin's default trio,
-    // deliberately:
-    //   - `/request-password-reset` is in the default set, and it is the
-    //     endpoint the app was NOT limiting at all (see the rateLimit note
-    //     above) — an unmetered mail trigger is exactly what this closes.
-    //   - `/sign-in/social` is added because social sign-in is the cheapest
-    //     way to burn an org's OAuth quota, and it is not password-guessable
-    //     so the per-account lockout does not apply.
-    //   - `/sign-in/sso` is added because it is *unauthenticated tenant
-    //     discovery*: a loop over `signIn.sso` is how someone enumerates which
-    //     domains have SSO configured.
-    //
-    // `/sign-up/email` is the plugin default and is kept.
-    //
-    // The plugin's `endpoints` matcher requires exact paths or an explicit
-    // wildcard — a bare `/sign-in` prefix does NOT match, which is a different
-    // footgun from the `/forget-password` one and worth writing down.
-    //
-    // Registered only when the secret is present, so dev, CI and any deployment
-    // without a Turnstile widget are byte-identical to before. The client
-    // (`components/auth/CaptchaWidget.tsx`) renders nothing without
-    // NEXT_PUBLIC_TURNSTILE_SITE_KEY, so the two halves cannot disagree about
-    // whether the gate exists.
-    ...(process.env.TURNSTILE_SECRET_KEY
-      ? [
-          captcha({
-            provider: "cloudflare-turnstile",
-            secretKey: process.env.TURNSTILE_SECRET_KEY,
-            endpoints: [
-              "/sign-up/email",
-              "/sign-in/email",
-              "/sign-in/social",
-              "/sign-in/sso",
-              "/request-password-reset",
-            ],
-          }),
-        ]
-      : []),
-
     // Two-factor. TOTP (authenticator app) + emailed OTP + single-use backup
     // codes.
     //

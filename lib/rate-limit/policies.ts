@@ -486,7 +486,7 @@ export function tokenKey(token: string): Promise<string> {
 /**
  * The degradation flag and its header live in `lib/rate-limit.ts`, beside the
  * limiter that sets them — see `RATE_LIMIT_DEGRADED_HEADER` and
- * `isRateLimitDegraded()` there for the cross-isolate contract a captcha gate
+ * `isRateLimitDegraded()` there for the cross-isolate contract a consumer
  * needs to read.
  *
  * They are not here because a policy is a statement about a budget, and

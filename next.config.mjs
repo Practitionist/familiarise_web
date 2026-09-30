@@ -156,21 +156,12 @@ const CSP_REPORT_ENDPOINT = RESOLVED_APP_URL
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  // `challenges.cloudflare.com` is Cloudflare Turnstile, the bot gate on
-  // sign-up / sign-in / password-reset. It is listed in BOTH script-src
-  // (for /turnstile/v0/api.js) and frame-src (managed mode renders the
-  // challenge in an iframe on that origin). connect-src is deliberately
-  // NOT extended: only pre-clearance mode fetches /cdn-cgi/ on our own
-  // origin, and we run interaction-only. The widget renders nothing when
-  // NEXT_PUBLIC_TURNSTILE_SITE_KEY is unset, so dev/CI are unaffected
-  // and neither origin is contacted on a deployment without the key.
-  // Until ENABLE_CSP_ENFORCE is turned on this is a report, not a break.
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co https://challenges.cloudflare.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
   "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com",
+  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.

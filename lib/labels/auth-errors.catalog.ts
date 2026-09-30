@@ -427,25 +427,6 @@ export const AUTH_ERROR_COPY = {
     action: "retry",
   },
 
-  /* ── Captcha ─────────────────────────────────────────────────────────── */
-
-  VERIFICATION_FAILED: {
-    title: "Please confirm you're human",
-    description:
-      "The check didn't pass. Tap the box again — it only takes a moment.",
-    action: "retry",
-  },
-  MISSING_RESPONSE: {
-    title: "Please complete the check",
-    description: "Finish the 'confirm you're human' box, then try again.",
-    action: "retry",
-  },
-  CAPTCHA_SERVICE_UNAVAILABLE: {
-    title: "The security check didn't load",
-    description: "Refresh the page and try again in a moment.",
-    action: "retry",
-  },
-
   /* ── Edge rejections (never reached Better Auth) ─────────────────────── */
 
   REQUEST_REJECTED: {

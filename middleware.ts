@@ -767,7 +767,7 @@ async function routeRequest(
   // Public API routes first (most common; no auth) — must precede the
   // authenticated-prefix check so public sub-routes shadow their private parent.
   // This is the branch that matters for the flag: it is where
-  // /api/auth/[...all] — and therefore the captcha gate that will read it — lands.
+  // /api/auth/[...all] lands.
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_API_PREFIXES)) {
     return next();
   }

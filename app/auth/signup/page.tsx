@@ -30,11 +30,6 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
-import {
-  DEGRADED_BANNER,
-  isDegradedResponse,
-} from "@/lib/auth/degraded-capture";
-import { CaptchaWidget, useCaptcha } from "@/components/auth/CaptchaWidget";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -123,11 +118,6 @@ function SignUpContent() {
   // The catalog's "what to do next" for the last failure.
   const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
   const retryAfter = useRetryAfterCapture();
-  // The edge's rate limiter is down for this request, so the budgets on this
-  // form were not enforced. Read off the domain-check response — see
-  // `lib/auth/degraded-capture.ts`.
-  const [authDegraded, setAuthDegraded] = useState(false);
-  const captcha = useCaptcha({ action: "signup" });
 
   // Validate the callbackUrl once and reuse the safe value across onboarding,
   // verification, and social login. safeSameOriginPath rejects backslash /
@@ -225,16 +215,9 @@ function SignUpContent() {
   const handleResendVerification = async () => {
     setResending(true);
     try {
-      // `sendVerificationEmail` is the endpoint the degradation gate escalates
-      // (`lib/auth/degraded-captcha.ts`), so this is the one call in the app
-      // that MUST carry the captcha token — without it a Redis blip turns every
-      // resend into a 400 for as long as the outage lasts.
-      await captcha.submit(async ({ headers: captchaHeaders }) => {
-        await sendVerificationEmail({
-          email,
-          callbackURL: verificationCallbackUrl,
-          fetchOptions: { headers: captchaHeaders },
-        });
+      await sendVerificationEmail({
+        email,
+        callbackURL: verificationCallbackUrl,
       });
       toast({
         title: "Verification email sent",
@@ -265,18 +248,6 @@ function SignUpContent() {
             <span className="font-medium text-white">{email}</span>. Click it to
             activate your account. The link expires in 1 hour.
           </p>
-          {/* The widget has to exist on THIS panel too, not only on the form.
-              `useCaptcha().submit` refuses to send without a token, and the
-              resend is the one call that must carry one whenever the limiter is
-              degraded — so omitting the widget here would make the button a
-              permanent `MISSING_RESPONSE` in a Turnstile-enabled deployment,
-              with no visible cause. Renders nothing when the feature is off. */}
-          <div className="mb-4 flex justify-center">
-            <CaptchaWidget
-              widgetRef={captcha.captchaRef}
-              error={captcha.error}
-            />
-          </div>
           <Button
             onClick={handleResendVerification}
             disabled={resending}
@@ -305,10 +276,6 @@ function SignUpContent() {
       const res = await fetch(
         `/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`,
       );
-      // Read before the `res.ok` branch: a degraded edge still answers `ok`,
-      // which is the whole point — the limiter being down does not fail this
-      // probe.
-      setAuthDegraded(isDegradedResponse(res));
       if (res.ok) {
         const data = await res.json();
         setSsoCheck(
@@ -387,8 +354,7 @@ function SignUpContent() {
     setIsLoading(true);
     const settle = pendingToast({ title: "Creating account..." });
 
-    /** Lifted out so the captcha wrapper below is one closure, not four
-     *  levels of nesting. The body is unchanged from when it ran inline. */
+    /** Everything that depends on the *result* of `signUp.email`. */
     const applyResult = (
       data: { token?: string | null } | null | undefined,
       error: unknown,
@@ -427,27 +393,16 @@ function SignUpContent() {
     };
 
     try {
-      // `captcha.submit` is the only sanctioned way to send this request: the
-      // `captcha` plugin gates `/sign-up/email` server-side and refuses with
-      // `MISSING_RESPONSE` when the header is absent, and a Turnstile token is
-      // single-use, so it has to be reset on success, on failure and on a throw.
-      // With no `NEXT_PUBLIC_TURNSTILE_SITE_KEY` it is a pass-through, so this
-      // form is byte-identical in a deployment that has not turned it on.
-      await captcha.submit(async ({ headers: captchaHeaders }) => {
-        const { data, error } = await signUp.email({
-          name,
-          email,
-          password,
-          callbackURL: verificationCallbackUrl,
-          // The `fetchOptions` bag is lifted to the top-level fetch options by
-          // the client proxy — see the same call on the signin page.
-          fetchOptions: {
-            headers: captchaHeaders,
-            ...retryAfter.fetchOptions,
-          },
-        });
-        applyResult(data, error);
+      const { data, error } = await signUp.email({
+        name,
+        email,
+        password,
+        callbackURL: verificationCallbackUrl,
+        // The `fetchOptions` bag is lifted to the top-level fetch options by
+        // the client proxy — see the same call on the signin page.
+        fetchOptions: retryAfter.fetchOptions,
       });
+      applyResult(data, error);
     } catch (error: unknown) {
       // Marked only for the "never reached the service" shapes — see
       // `lib/auth/expected-auth-failures.ts` and the same block on the signin
@@ -548,19 +503,6 @@ function SignUpContent() {
           <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Create your account
           </h2>
-          {authDegraded && (
-            // The limiter's store was unreachable for this request, so the
-            // per-IP budget on this form was not enforced. Reassurance, not an
-            // error — see `lib/auth/degraded-capture.ts`.
-            <div
-              className="mb-4 rounded-md border border-amber-600/60 bg-amber-900/20 p-3"
-              data-testid="degraded-auth"
-            >
-              <p className="text-sm text-amber-200">
-                {DEGRADED_BANNER.description}
-              </p>
-            </div>
-          )}
           <p className="mb-6 text-sm text-zinc-400 md:text-base">
             Enter your details below to get started.
           </p>
@@ -652,16 +594,6 @@ function SignUpContent() {
                 {isLoading ? "Creating Account..." : "Create Account"}
               </Button>
             )}
-            {/* Renders nothing without `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, so
-                this is invisible in every deployment that has not turned the
-                captcha on. The server-side plugin gates `/sign-up/email`
-                whenever `TURNSTILE_SECRET_KEY` is set, so the two halves have
-                to be deployed together — see `lib/auth/degraded-captcha.ts`. */}
-            <CaptchaWidget
-              widgetRef={captcha.captchaRef}
-              error={captcha.error}
-              className="mt-4"
-            />
             {/* The catalog's next step for the last failure, if this page can
                 service it. One line, no repeated sentence — the toast above
                 already carried the title and description. */}

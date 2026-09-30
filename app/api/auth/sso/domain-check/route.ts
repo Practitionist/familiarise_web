@@ -18,9 +18,6 @@
  * Intentionally does NOT use `requireApiAuth` — this runs before login.
  * The response payload is shaped to be minimal (no PII, no provider
  * internals) so leaking it to unauthenticated callers is safe.
- *
- * One non-payload field rides on every response: the edge's rate-limit
- * degradation flag, echoed from the request. See `degradedEcho` below.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -34,45 +31,17 @@ const QuerySchema = z.object({
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "";
 
-/**
- * The limiter's degradation flag, echoed from the request onto the response.
- *
- * This is the only channel by which the sign-in and sign-up pages can learn that
- * the auth surface is currently running with no rate limiter. The flag itself
- * travels on the *request* header `middleware.ts` stamps — the browser never
- * sees that, because the middleware is upstream of this handler — and the page
- * already fetches this endpoint on email blur, which is the earliest moment on
- * the form where "we have no bot protection right now" is actionable.
- *
- * The value is copied verbatim, never computed, so this route cannot disagree
- * with the edge about whether the limiter is up. Mirrors the constant in
- * `lib/auth/degraded-captcha.ts`; both are pinned to `RATE_LIMIT_DEGRADED_HEADER`
- * by `__tests__/auth/degraded-captcha.test.ts`.
- */
-const DEGRADED_HEADER = "x-rate-limit-degraded";
-
-function degradedEcho(req: NextRequest): Record<string, string> {
-  return req.headers.get(DEGRADED_HEADER) === "1"
-    ? { [DEGRADED_HEADER]: "1" }
-    : {};
-}
-
-/** `NextResponse.json` that always carries the edge's degradation flag. */
-function json(req: NextRequest, body: unknown) {
-  return NextResponse.json(body, { headers: degradedEcho(req) });
-}
-
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
     email: url.searchParams.get("email"),
   });
   if (!parsed.success) {
-    return json(req, { enforceSSO: false });
+    return NextResponse.json({ enforceSSO: false });
   }
 
   const domain = parsed.data.email.split("@")[1]?.toLowerCase();
-  if (!domain) return json(req, { enforceSSO: false });
+  if (!domain) return NextResponse.json({ enforceSSO: false });
 
   // Single source of truth for "is this domain enforced + by which org?"
   // (audit B.6). Returns null when any precondition fails: no verified
@@ -82,7 +51,7 @@ export async function GET(req: NextRequest) {
   // issue #673.
   const enforced = await lookupEnforcedOrg(prisma, domain);
   if (!enforced) {
-    return json(req, { enforceSSO: false });
+    return NextResponse.json({ enforceSSO: false });
   }
 
   // Provider lookup is scoped to BOTH (domain, organizationId). The
@@ -99,7 +68,7 @@ export async function GET(req: NextRequest) {
     select: { providerId: true },
   });
   if (!provider) {
-    return json(req, { enforceSSO: false });
+    return NextResponse.json({ enforceSSO: false });
   }
 
   // The org name is the only extra field this endpoint emits beyond
@@ -116,7 +85,7 @@ export async function GET(req: NextRequest) {
   // first-timers (relative-path XSS-guarded there). The auto-joined membership
   // is committed in the same customSession request, so the org layout resolves.
   const orgHome = `/dashboard/organization/${enforced.organizationId}/home`;
-  return json(req, {
+  return NextResponse.json({
     enforceSSO: true,
     organizationName: org?.name ?? null,
     ssoBody: {
