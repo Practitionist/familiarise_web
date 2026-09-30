@@ -49,6 +49,9 @@ const tx = {
   },
   consultantEarnings: {
     update: jest.fn(),
+    // `refundEarnings` reads a payment's earnings before reversing any, so the
+    // read surface has to exist or the first call throws.
+    findMany: jest.fn(async (..._a: unknown[]) => []),
     // W1c — `reverseFreeCreditSettlement` now writes through a CAS
     // `updateMany` (status-in-WHERE + `refundedShareAmount` pinned to the
     // pre-read) instead of a plain `update`. Without this the free-credit

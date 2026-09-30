@@ -195,9 +195,14 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
   it("keeps the cap when two partial reversals race", async () => {
     const r = row();
     const { db } = store([r]);
+    // ONE stale read, shared by both writers — that is what a race is. Spreading
+    // `r` afresh at each call site would hand writer B a POST-A snapshot, so it
+    // would legitimately win on its first attempt and `lostRace` would be false
+    // for the right reason, testing nothing.
+    const stale = { ...r };
 
-    await applyCappedEarningReversal(db, { ...r }, 5_000);
-    const b = await applyCappedEarningReversal(db, { ...r }, 5_000);
+    await applyCappedEarningReversal(db, { ...stale }, 5_000);
+    const b = await applyCappedEarningReversal(db, { ...stale }, 5_000);
 
     // The loser re-reads and takes only the residual: 5_000 + min(5_000, 3_000).
     expect(b).toMatchObject({ reversedPaise: 3_000, fullyRefunded: true, lostRace: true });
@@ -218,7 +223,34 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     expect(updateMany.mock.calls[0][0].data.refundedShareAmount).toBe(3_000);
   });
 
-  it("REFUNDED is terminal: a second reversal of a reversed row writes nothing", async () => {
+  it("REFUNDED is terminal: a reversal of an already-reversed row writes nothing", async () => {
+    // Headroom on purpose (`refundedShareAmount < share`). With the row ALREADY
+    // at its full share the CAP zeroes the request and the status predicate is
+    // never reached — which is a different (also correct) outcome, and asserting
+    // it while claiming to test terminality proved nothing. Leaving headroom
+    // forces the refusal to come from `status: { in: REFUNDABLE_EARNING_SOURCE }`,
+    // which is the guard this test is about.
+    const r = row({
+      status: EarningStatus.REFUNDED,
+      refundedShareAmount: 2_000,
+    });
+    const { db, updateMany } = store([r]);
+
+    // REFUNDED is terminal, so the unconditional assertion refuses the
+    // transition outright — before any write is attempted.
+    await expect(
+      applyCappedEarningReversal(db, { ...r }, 8_000),
+    ).rejects.toThrow();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(r.refundedShareAmount).toBe(2_000);
+    expect(whereOf(updateMany).status.in).not.toContain(EarningStatus.REFUNDED);
+  });
+
+  it("a fully-reversed row is a no-op with no race, because the cap zeroes it first", async () => {
+    // The sibling case above: nothing left to reverse, so no CAS is attempted at
+    // all. `lostRace` is FALSE and correctly so — no other writer won anything;
+    // there was simply nothing to take. Distinguishing this from a lost race is
+    // the point, because a caller reading `lostRace: true` would page ops.
     const r = row({
       status: EarningStatus.REFUNDED,
       refundedShareAmount: 8_000,
@@ -231,11 +263,9 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
       reversedPaise: 0,
       refundedShareAmount: 8_000,
       fullyRefunded: true,
-      lostRace: true,
+      lostRace: false,
     });
-    // Refused by the status predicate, not by the cap.
-    expect(whereOf(updateMany).status.in).not.toContain(EarningStatus.REFUNDED);
-    expect(r.refundedShareAmount).toBe(8_000);
+    expect(updateMany).not.toHaveBeenCalled();
   });
 
   it("gives up (and says so) rather than claiming a write that never landed", async () => {
