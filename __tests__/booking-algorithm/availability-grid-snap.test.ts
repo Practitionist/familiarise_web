@@ -304,13 +304,31 @@ describe("all four client save paths publish a bookable row", () => {
 // ─── 4. Midnight ────────────────────────────────────────────────────────────
 
 describe("a row that crosses midnight keeps its shape", () => {
-  it("an IST late block is untouched and reads as overnight in UTC", () => {
-    // 22:00 local is 16:30Z (aligned) and 00:00 the next day is 18:30Z, which is
-    // minute-of-day 0 — so the row reads as overnight in UTC, as it always did.
+  it("an IST late block is untouched, and stays on one UTC day", () => {
+    // 22:00 IST is 16:30Z (990) and local midnight is 18:30Z, not 00:00Z — so
+    // the end is 1110 and the row does NOT cross midnight in UTC. `endDay`
+    // records that UTC rollover (formatting.ts: endDay is the next weekday only
+    // when the UTC minutes wrap), so it stays MONDAY. An earlier version of
+    // this test asserted TUESDAY and read 18:30Z as "minute-of-day 0", which
+    // would have needed the IST offset to be 1440.
     const built = save("22:00", "00:00", IST);
     expect(built.startTimeUtc).toBe(990);
     expect(built.endTimeUtc).toBe(1110);
-    expect(built.endDay).toBe("TUESDAY");
+    expect(built.endDay).toBe(built.startDay);
+    expect(built.endDay).toBe("MONDAY");
+  });
+
+  it("an IST EARLY block is the one that wraps in UTC", () => {
+    // The other half of the same shape, and the only way a positive-offset zone
+    // produces endTimeUtc < startTimeUtc: 05:00 IST is 23:30Z on the PREVIOUS
+    // UTC day (1410) and 06:30 IST is 01:00Z on the next (60), so the UTC
+    // minutes wrap and `endDay` does advance. Pinned because the branch above
+    // now covers the non-wrapping case, and without this the next weekday
+    // rollover would be untested.
+    const built = save("05:00", "06:30", IST);
+    expect(built.startTimeUtc).toBe(1410);
+    expect(built.endTimeUtc).toBe(60);
+    expect(built.endDay).not.toBe(built.startDay);
   });
 
   it("a :45 zone's late block needs no shift — :15 IS its lattice", () => {
