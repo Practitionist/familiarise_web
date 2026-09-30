@@ -18,7 +18,12 @@ export const { GET, POST } = cleanupRoute({
     criticalCount: r.criticalCount,
     totalAmount: r.totalAmount,
   }),
-  // Return 500 if orphaned payments found (to trigger alerts)
+  // #1846 — 500 on a detection, as before. This route already had the honest
+  // status mapping; what it did NOT have was a durable trail behind the 500 and
+  // an honest `success` flag on the result (the core returned `success: true`
+  // with `criticalCount > 0`, so the Actions wrapper's exit code and the
+  // SystemJobExecution row both read as healthy). Both are fixed in the core,
+  // which now files one deduped SystemEvent per payment and reports to Sentry.
   status: (r) => (r.totalOrphaned > 0 ? 500 : 200),
   failureMessage: "Failed to check for orphaned payments",
 });

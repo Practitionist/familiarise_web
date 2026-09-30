@@ -56,15 +56,45 @@ export interface RescheduleProposalExpiryResult {
   timestamp: string;
 }
 
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// #59 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open because the work is idempotent.
-export async function expireRescheduleProposals(): Promise<RescheduleProposalExpiryResult> {
+//
+// `maxPerRun` is the Netlify ticker's bite (#1583 P1). It bounds a RUN rather
+// than a batch: the cohort is a loop of 500-row batches, so 4 × 500 is 2,000
+// per-row transactions with an appointment lock and a restore each, against a
+// 20 s abort. Every row leaves the cohort on EXPIRED and there is no persisted
+// cursor, so a smaller cap is a budget and not a drop.
+export async function expireRescheduleProposals(opts?: {
+  maxPerRun?: number;
+}): Promise<RescheduleProposalExpiryResult> {
+  const maxPerRun =
+    opts?.maxPerRun && opts.maxPerRun > 0
+      ? Math.floor(opts.maxPerRun)
+      : BATCH_SIZE * MAX_BATCHES_PER_RUN;
   return withCronLock("expire-reschedule-proposals", { failMode: "open" }, () =>
-    expireRescheduleProposalsUnlocked(),
+    expireRescheduleProposalsUnlocked(maxPerRun),
   );
 }
 
 const EXPIRY_REASON = "Proposal lapsed without an answer";
+
+/**
+ * One guarded transition per lapsed proposal rather than a bulk updateMany:
+ * the helper bakes the open-from set into the UPDATE's WHERE clause (a
+ * proposal answered between the read and the write matches zero rows instead
+ * of being overwritten) and appends the BookingStatusHistory row every other
+ * writer emits. Idempotent by construction: EXPIRED leaves the open set, so a
+ * re-run after a partial failure picks up precisely what is left. Clearing
+ * openForAppointmentId releases the nullable-unique reservation so the pair can
+ * try again.
+ *
+ * Bounded batches: a pathological backlog must not load every id or hold the
+ * cron past the function ceiling. Capped per invocation too: the GH Actions
+ * workflow times out at 10 minutes, and per-row transactions on a huge backlog
+ * could outrun it.
+ */
+const BATCH_SIZE = 500;
+const MAX_BATCHES_PER_RUN = 4;
 
 /** The proposal fields the restore needs, read with the cohort. */
 const EXPIRY_SELECT = {
@@ -159,7 +189,9 @@ async function expireOneProposal(
   }
 }
 
-async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalExpiryResult> {
+async function expireRescheduleProposalsUnlocked(
+  maxPerRun: number,
+): Promise<RescheduleProposalExpiryResult> {
   const errors: string[] = [];
   let proposalsExpired = 0;
   let proposalsExpiredUnrestored = 0;
@@ -171,33 +203,20 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
 
     // The status+expiresAt index covers this predicate exactly.
     //
-    // One guarded transition per lapsed proposal rather than a bulk updateMany:
-    // the helper bakes the open-from set into the UPDATE's WHERE clause (a
-    // proposal answered between the read and the write matches zero rows
-    // instead of being overwritten) and appends the BookingStatusHistory row
-    // every other writer emits. Idempotent by construction: EXPIRED leaves the
-    // open set, so a re-run after a partial failure picks up precisely what is
-    // left. Clearing openForAppointmentId releases the nullable-unique
-    // reservation so the pair can try again.
-    //
-    // Bounded batches: a pathological backlog must not load every id or hold
-    // the hourly cron past the function ceiling — loop until a batch comes
-    // back short. Capped per invocation too: the GH Actions workflow times
-    // out at 10 minutes, and per-row transactions on a huge backlog could
-    // outrun it — the next hourly tick continues where this one stopped,
-    // since EXPIRED leaves the cohort.
-    const BATCH_SIZE = 500;
-    const MAX_BATCHES_PER_RUN = 4;
-    let batchesRun = 0;
+    // Two independent bounds: the batch size keeps one read from loading every
+    // id, and `maxPerRun` keeps the whole RUN inside the caller's budget. The
+    // old pair (4 × 500) was sized for the 10-minute Actions workflow; the
+    // Netlify ticker drives the same core inside a 20 s abort.
+    let processed = 0;
     for (;;) {
-      if (batchesRun >= MAX_BATCHES_PER_RUN) break;
+      if (processed >= maxPerRun) break;
       const stale = await prisma.rescheduleRequest.findMany({
         where: {
           status: { in: RESCHEDULE_OPEN_STATUSES },
           expiresAt: { lt: now },
         },
         orderBy: { id: "asc" },
-        take: BATCH_SIZE,
+        take: Math.min(BATCH_SIZE, maxPerRun - processed),
         select: EXPIRY_SELECT,
       });
       if (stale.length === 0) break;
@@ -206,8 +225,8 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
         const outcome = await expireOneProposal(row, now);
         if (outcome !== "skipped") proposalsExpired += 1;
         if (outcome === "unrestored") proposalsExpiredUnrestored += 1;
+        processed += 1;
       }
-      batchesRun += 1;
 
       if (stale.length < BATCH_SIZE) break;
     }
