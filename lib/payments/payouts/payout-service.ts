@@ -15,6 +15,7 @@ import {
   PayoutMethod,
   PaymentGateway,
   EarningStatus,
+  RefundStatus,
   type Prisma,
 } from "@prisma/client";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
@@ -250,6 +251,22 @@ const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
 // real correctness backstop; the lock keeps the duplicate fan-out off the
 // gateway entirely.
 const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
+
+/**
+ * The refund-side sibling of `DISPUTE_INACTIVE_FOR_GATING`: refund statuses
+ * that must NOT block a payout, because the money was never returned. FAILED
+ * is a gateway rejection; CANCELLED is our own withdrawal. Both are terminal
+ * and settled. PENDING and SUCCEEDED are the two that move (or have moved) the
+ * money and are therefore the ones the disbursement guard screens for.
+ *
+ * Deliberately local: dispute-status.ts owns the dispute state machine, and
+ * there is no equivalent refund-status constant today. Naming it here keeps the
+ * "which statuses are safe" convention visible at the point of use.
+ */
+const REFUND_INACTIVE_FOR_GATING: RefundStatus[] = [
+  RefundStatus.FAILED,
+  RefundStatus.CANCELLED,
+];
 
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
@@ -1026,6 +1043,52 @@ async function processSinglePayout(payout: {
         `[Payouts] Payout ${payout.id} blocked — an earning's payment has a live dispute`,
       );
       reportSentryMessage("Payout blocked by live dispute", {
+        subsystem: "payments",
+        expected: true,
+        extra: { payoutId: payout.id },
+      });
+      return { payoutId: payout.id, success: false, skipped: true };
+    }
+
+    // #1020 sibling — a payout whose earnings sit on a REFUNDED payment must
+    // not leave the building either. The dispute guard above has an earnable
+    // HELD to fall back on; a refund has no such status, so this pre-claim
+    // reject is the ONLY line of defence.
+    //
+    // The window it closes is real and short. scripts/refunds/
+    // reconcile-pending-refunds.ts marks a refund SUCCEEDED once it is an hour
+    // old (RECONCILIATION_THRESHOLD_MS) WITHOUT running the earnings cascade,
+    // deliberately — the cascade is owned by applyRefundCascade so the app, the
+    // gateway webhook and the backstop cron apply it exactly once. Until the
+    // 15-minute cascade-refund-earnings backstop claims `cascadedAt`, the
+    // earning is still READY with refundedShareAmount = 0 for a booking the
+    // gateway has already refunded. Paying it in that state returns the money to
+    // the buyer AND pays the consultant. A PENDING refund blocks for the same
+    // reason one step earlier: the gateway call is out, so the outcome is
+    // unknown and could still land.
+    //
+    // FAILED/CANCELLED never block (see REFUND_INACTIVE_FOR_GATING): no money
+    // moved, so the earning is still owed in full. A SUCCEEDED refund whose
+    // cascade has landed already deducted the share, so it is safe to pay.
+    const refundPendingEarning = await prisma.consultantEarnings.findFirst({
+      where: {
+        payoutId: payout.id,
+        payment: {
+          refunds: {
+            some: {
+              status: { notIn: REFUND_INACTIVE_FOR_GATING },
+              OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (refundPendingEarning) {
+      console.warn(
+        `[Payouts] Payout ${payout.id} blocked — an earning's payment has an uncascaded refund`,
+      );
+      reportSentryMessage("Payout blocked by an uncascaded refund", {
         subsystem: "payments",
         expected: true,
         extra: { payoutId: payout.id },
