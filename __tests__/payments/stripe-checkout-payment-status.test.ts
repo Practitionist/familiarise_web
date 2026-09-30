@@ -311,15 +311,18 @@ describe("a session with no collected money must not confirm a booking", () => {
 
   it("names the invariant in a warn so the park is visible, not a silent drop", async () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Read the calls BEFORE restoring: `mockRestore()` resets the recorded
+    // calls along with the implementation, so restoring in a `finally` and
+    // asserting after it saw an empty array.
+    let line = "";
     try {
       await postStripe(
         sessionCompletedEvent({ payment_status: "unpaid" }),
       );
+      line = warn.mock.calls.map((c) => String(c[0])).join("\n");
     } finally {
       warn.mockRestore();
     }
-
-    const line = warn.mock.calls.map((c) => String(c[0])).join("\n");
     expect(line).toContain("cs_test_1");
     expect(line).toContain('payment_status="unpaid"');
     expect(line).toContain("NOT confirming a booking");

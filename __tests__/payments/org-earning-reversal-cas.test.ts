@@ -309,7 +309,13 @@ describe("org capped earning reversal — the cap under a partial race", () => {
       fullyRefunded: true,
       lostRace: true,
     });
-    expect(dataOf(updateMany, 1)).toEqual({
+    // THREE calls, not two: B's REFUSED first attempt is itself an
+    // `updateMany` — the conditional write that matched nothing. So the retry
+    // that carries the residual is index 2. (The 8_000/8_000 case above sees
+    // only two because there B's retry short-circuits at `take <= 0` and never
+    // issues a third write.)
+    expect(updateMany).toHaveBeenCalledTimes(3);
+    expect(dataOf(updateMany, 2)).toEqual({
       refundedAmountPaise: 8_000,
       status: EarningStatus.REFUNDED,
     });
