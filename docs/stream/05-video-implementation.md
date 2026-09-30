@@ -181,7 +181,7 @@ has to run first:
 ```bash
 npx tsx scripts/stream/backfill-call-member-role.ts          # dry run, reads production
 npx tsx scripts/stream/backfill-call-member-role.ts --apply
-npx tsx scripts/stream/ensure-call-type-grants.ts --apply --join-route-is-deployed
+npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
 ```
 
 The grants script now refuses to `--apply` until it has seen at least one member

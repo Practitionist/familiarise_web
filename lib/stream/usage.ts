@@ -126,9 +126,58 @@ type UsageRedis = Pick<
 >;
 const redis = redisClient as unknown as UsageRedis;
 
-/** Trailing window Stream bills MAU over. */
+/** Nominal length of the billing month, for the marker TTL and the docblocks. */
 export const STREAM_MAU_WINDOW_DAYS = 30;
-const MAU_WINDOW_SECONDS = STREAM_MAU_WINDOW_DAYS * 24 * 60 * 60;
+
+/**
+ * #1829 — the MAU window is the CALENDAR MONTH, and that is a billing fact
+ * rather than a modelling choice.
+ *
+ * Stream's own definition: MAU is "any user that connected to chat within the
+ * last calendar month", and the total "is entirely reset every month". So the
+ * quantity to alarm on is distinct users since the 1st, not distinct users in a
+ * rolling 30-day span.
+ *
+ * The distinction is not cosmetic, and getting it wrong made the alarm useless.
+ * A rolling window is MONOTONICALLY NON-DECREASING: a user counted today cannot
+ * be uncounted until 30 days pass, so the running total only ever climbs, and
+ * the 60/80/90% alarms — once crossed — can never clear. An operator watching a
+ * ceiling alarm that structurally cannot reset learns to ignore it, and the one
+ * signal standing between us and Stream pausing chat for every user is the one
+ * we have trained ourselves to dismiss. Bucketing by month makes the count fall
+ * back to zero on the 1st, which is both what Stream bills and what makes the
+ * alarm actionable.
+ *
+ * UTC, because the month boundary has to be the SAME boundary for every mint
+ * that lands in it. A local-time key would let two mints minutes apart either
+ * side of midnight UTC-5 land in different months and count one user twice.
+ */
+export function streamMauMonthKey(now: Date = new Date()): string {
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}${m}`;
+}
+
+/**
+ * Seconds from `now` to the last instant of its UTC month, plus a day of slack.
+ *
+ * The slack matters: a user who connects at 23:59:59 on the last day must stay
+ * deduped for the whole of that month, and a marker expiring exactly at the
+ * boundary would let a second mint 100 ms later write a fresh claim and inflate
+ * the count it had already been counted in.
+ */
+export function streamMauMonthTtlSeconds(now: Date = new Date()): number {
+  const nextMonth = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth() + 1,
+    1,
+    0,
+    0,
+    0,
+    0,
+  );
+  return Math.ceil((nextMonth - now.getTime()) / 1000) + 24 * 60 * 60;
+}
 
 /**
  * How long the running counter is kept after the last mint. Not 30 days: a
@@ -193,10 +242,17 @@ export const STREAM_USAGE_ALERT_THRESHOLDS = [0.6, 0.8, 0.9] as const;
 export const STREAM_UNMETERED: readonly StreamUsageMeter[] = ["feedApiCalls"];
 
 const KEYS = {
-  /** `stream:usage:mau:seen:<userId>` — the 30-day dedup marker. */
-  mauSeen: (userId: string) => `stream:usage:mau:seen:${userId}`,
-  /** `stream:usage:mau:count` — the running distinct-user count. */
-  mauCount: "stream:usage:mau:count",
+  /**
+   * `stream:usage:mau:<YYYYMM>:seen:<userId>` — the per-month dedup marker.
+   *
+   * Month-scoped so the set of "already counted" users expires WITH the count it
+   * belongs to. A single global marker plus a single global counter is what made
+   * the total monotonic: the counter outlived the users in it.
+   */
+  mauSeen: (month: string, userId: string) =>
+    `stream:usage:mau:${month}:seen:${userId}`,
+  /** `stream:usage:mau:<YYYYMM>:count` — distinct users so far this month. */
+  mauCount: (month: string) => `stream:usage:mau:${month}:count`,
   /** `stream:usage:snapshot` — the nightly pre-computed figures. */
   snapshot: "stream:usage:snapshot",
 } as const;
@@ -271,14 +327,21 @@ function meterEnabled(): boolean {
  * twofold for no extra information, and Stream bills MAU per USER, not per
  * token.
  *
- * Cheap by construction — the three-command path is only paid by a user Stream
- * has not seen in 30 days:
+ * Cheap by construction — the three-command path is only paid by a user who has
+ * not already connected this month:
  *
- *   1. `SET stream:usage:mau:seen:<userId> 1 NX PX 2592000000` — ONE command.
- *      The reply is `"OK"` for a user new to the window and `null` for one
- *      already counted, so the dedup decision and the marker write are the same
- *      round trip instead of a read followed by a write.
+ *   1. `SET stream:usage:mau:<YYYYMM>:seen:<userId> 1 NX PX <to month end>`
+ *      — ONE command. The reply is `"OK"` for a user new to the month and
+ *      `null` for one already counted, so the dedup decision and the marker
+ *      write are the same round trip instead of a read followed by a write.
  *   2. Only on `"OK"`: `INCR`, then `EXPIRE` to keep the counter alive.
+ *
+ * EXACT counts, deliberately, not a HyperLogLog. A ceiling alarm is the one
+ * number here where an approximation is the wrong trade: HLL's error is small
+ * in absolute terms but grows as 1/sqrt(m), so it is widest exactly when the
+ * count is smallest and a user is deciding whether to upgrade. The extra
+ * command buys a figure that is right rather than nearly right, on a path
+ * already gated behind an `NX` that a returning user never pays.
  *
  * Never throws, and the caller does not await it for a result. A quota meter
  * that can fail a login is strictly worse than no quota meter: a dropped
@@ -291,16 +354,20 @@ function meterEnabled(): boolean {
 export async function noteStreamTokenMint(userId: string): Promise<void> {
   if (!meterEnabled() || !userId) return;
   try {
-    const claimed = await redis.set(KEYS.mauSeen(userId), "1", {
+    const month = streamMauMonthKey();
+    const claimed = await redis.set(KEYS.mauSeen(month, userId), "1", {
       nx: true,
-      px: MAU_WINDOW_SECONDS * 1000,
+      px: streamMauMonthTtlSeconds() * 1000,
     });
     // The mock returns the literal string and the real client the literal
     // "OK"; anything else means the claim did not happen, and guessing would
     // double-count a user — which is the only error direction that matters here.
     if (claimed !== "OK") return;
-    await redis.incr(KEYS.mauCount);
-    await redis.expire(KEYS.mauCount, MAU_COUNTER_TTL_SECONDS);
+    await redis.incr(KEYS.mauCount(month));
+    // Set every time rather than only on the first mint: a re-`EXPIRE` is free,
+    // and the alternative (an `EXPIRE` guarded by a read to see whether the key
+    // is new) is a second round trip to save one command that costs nothing.
+    await redis.expire(KEYS.mauCount(month), MAU_COUNTER_TTL_SECONDS);
   } catch {
     // Swallowed on purpose — see the docblock above.
   }
@@ -352,6 +419,10 @@ export async function writeStreamUsageSnapshot(
 ): Promise<void> {
   await redis.hset(KEYS.snapshot, {
     mau: String(snapshot.mau),
+    // #1829 — stamp WHICH month `mau` describes. Without it the reader cannot
+    // tell a same-month figure from last month's, and the only safe reading of
+    // an unstamped snapshot is "0 this month", which under-reports.
+    mauMonth: streamMauMonthKey(new Date(snapshot.computedAt || Date.now())),
     participantMinutes: String(snapshot.participantMinutes),
     peakConcurrency: String(snapshot.peakConcurrency),
     computedAt: snapshot.computedAt,
@@ -415,7 +486,10 @@ async function readStreamUsageUncached(): Promise<StreamUsageReport> {
   try {
     const [readHash, readMau] = await Promise.all([
       redis.hgetall<Record<string, string>>(KEYS.snapshot),
-      redis.get<string>(KEYS.mauCount),
+      // The CURRENT month's counter. A figure from last month is not this
+      // month's usage, and reading a stale key here is how a month-boundary
+      // 1 January reports December's total as though it were already spent.
+      redis.get<string>(KEYS.mauCount(streamMauMonthKey())),
     ]);
     hash = readHash && typeof readHash === "object" ? readHash : null;
     liveMau = readMau ?? null;
@@ -432,10 +506,20 @@ async function readStreamUsageUncached(): Promise<StreamUsageReport> {
   if (hash) {
     snapshot = {
       // The live counter wins over the snapshot's stored copy: it is exact to
-      // the last mint, whereas the stored one is up to 24 h old. When the
-      // counter has expired (45-day TTL) the stored figure is still better than
-      // nothing, so it is the fallback rather than a zero.
-      mau: liveMau === null ? toNum(hash.mau) : toNum(liveMau),
+      // the last mint, whereas the stored one is up to 24 h old.
+      //
+      // #1829 — the snapshot is now month-stamped, and its stored `mau` is only
+      // a fallback for the SAME month. Last month's snapshot is a valid record
+      // of what we were billed, and a misleading number for what we are about to
+      // be billed: opening the month on a stale 1,800 that has already reset to
+      // zero would trip the 90% alarm on day one and, having been trained on
+      // that, nobody would read the real one later in the month.
+      mau:
+        liveMau !== null
+          ? toNum(liveMau)
+          : hash.mauMonth === streamMauMonthKey()
+            ? toNum(hash.mau)
+            : 0,
       participantMinutes: toNum(hash.participantMinutes),
       peakConcurrency: toNum(hash.peakConcurrency),
       computedAt: hash.computedAt ?? "",

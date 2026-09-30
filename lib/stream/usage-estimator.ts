@@ -86,7 +86,15 @@ interface Interval {
  * (only the currently-overlapping intervals) and is rebuilt per run, so there is
  * no state to leak between nights.
  */
-function sweepIntervals(intervals: Interval[]): {
+/**
+ * Peak concurrency and summed minutes over a set of intervals.
+ *
+ * Exported for the unit test that pins the sweep-line invariant below. It is
+ * pure and takes its data as an argument, so there is no reason for the shape to
+ * be private — and the bug it had (an unsorted `open` array) lived precisely
+ * because the only way to exercise it was through the database.
+ */
+export function sweepIntervals(intervals: Interval[]): {
   peak: number;
   minutes: number;
 } {
@@ -106,7 +114,25 @@ function sweepIntervals(intervals: Interval[]): {
     // the figure for no reason.
     while (open.length > 0 && open[0] <= start) open.shift();
 
-    open.push(end);
+    // #1829 — `open` must stay SORTED, and it was not. Intervals arrive sorted by
+    // START, which says nothing about their ends, so a plain `push` could leave
+    // a short interval stranded behind a long one:
+    //
+    //   A [0,100]  B [1,2]  C [50,60]
+    //   C starts → open is [100, 2] → open[0] is 100, which is > 50, so
+    //   nothing is retired, and peak is read as 3. The true peak is 2.
+    //
+    // The comment above this loop claimed `open` was kept ascending, so the bug
+    // was invisible in review — the code and its own description disagreed, and
+    // the description was the correct one.
+    //
+    // Insert in position rather than sort the whole array each time: this loop
+    // runs once per attendance interval and the array is bounded by the
+    // concurrency actually observed, so a linear insert from the back is cheaper
+    // than an O(n log n) re-sort and does not churn the array.
+    let at = open.length;
+    while (at > 0 && open[at - 1] > end) at--;
+    open.splice(at, 0, end);
     if (open.length > peak) peak = open.length;
 
     // A zero/negative length is possible (a webhook that closed the row before

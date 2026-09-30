@@ -109,11 +109,15 @@ const OUTAGE_ROW_MIN_GAP_MS = 15 * 60 * 1000;
  * benefit is that a Stream outage cannot be made worse by the act of recording
  * it.
  */
-let lastWritten: { unhealthy: boolean; at: number } | null = null;
+type ProbeName = string;
+const lastWrittenByProbe = new Map<
+  ProbeName,
+  { unhealthy: boolean; at: number }
+>();
 
-/** Test-only: forgets the last written state. */
+/** Test-only: forgets every probe's last written state. */
 export function resetStreamOutageLedgerForTesting(): void {
-  lastWritten = null;
+  lastWrittenByProbe.clear();
 }
 
 /**
@@ -149,6 +153,12 @@ export function resetStreamOutageLedgerForTesting(): void {
  * is computed from the probe, never from whether this succeeded.
  */
 export async function recordStreamOutage(params: {
+  /**
+   * Which probe this is, and the reason the ledger is keyed by it. The health
+   * route runs two independent probes per poll; sharing one slot made them write
+   * alternating recovery/outage rows for a single ongoing incident.
+   */
+  probe: ProbeName;
   /** What the probe concluded. */
   unhealthy: boolean;
   /** Stable, non-secret discriminator, e.g. a reason code. */
@@ -159,7 +169,19 @@ export async function recordStreamOutage(params: {
   context?: Record<string, unknown>;
 }): Promise<void> {
   const now = Date.now();
-  const previous = lastWritten;
+  // #1829 — the last-written state is keyed BY PROBE. The health route calls
+  // this twice per poll (webhook secret, then reachability) and they used to
+  // share one slot, which made the ledger flap: during an outage, the
+  // webhook-secret call saw `unhealthy: false` against a previous state of
+  // `true` and wrote "reachable again", and the reachability call then saw the
+  // reverse and wrote "unreachable" — a fresh pair of rows per poll, forever,
+  // while the actual outage was a single event in the table.
+  //
+  // Two probes, two independent transition logs. That is what an operator
+  // reading the table is actually asking: "is the webhook secret right?" and
+  // "can we reach Stream?" are different failures with different fixes, and
+  // interleaving them into one ledger made the table unreadable.
+  const previous = lastWrittenByProbe.get(params.probe) ?? null;
   const withinGap =
     previous !== null && now - previous.at < OUTAGE_ROW_MIN_GAP_MS;
   // Same state inside the gap: the common case, and the one that would otherwise
@@ -171,7 +193,10 @@ export async function recordStreamOutage(params: {
   ) {
     return;
   }
-  lastWritten = { unhealthy: params.unhealthy, at: now };
+  lastWrittenByProbe.set(params.probe, {
+    unhealthy: params.unhealthy,
+    at: now,
+  });
 
   const recovering = params.unhealthy === false;
   try {

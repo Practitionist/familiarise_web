@@ -342,15 +342,40 @@ export async function GET(request: Request) {
       breaker: streamBreakerStatus(),
     },
     usage: {
-      worstAlert: usage.worstAlert,
-      unmetered: usage.unmetered,
-      mau: usage.meters.mau,
-      participantMinutes: usage.meters.participantMinutes,
-      // Present but possibly null: the snapshot's age is what tells an operator
-      // whether to trust the two numbers above it, and a stale-by-a-month
-      // figure with no timestamp reads exactly like a live one.
-      computedAt: usage.snapshot?.computedAt ?? null,
-      estimated: usage.snapshot?.estimated ?? null,
+      // #1829 — the LEVEL is public; the FIGURES are not.
+      //
+      // This route is unauthenticated by design (it is what an uptime monitor
+      // and a load balancer hit), so anything in its body is public. Publishing
+      // exact monthly-active-user counts, billed participant-minutes and the
+      // plan CAPS would let anyone track the business's growth — and, more
+      // usefully to an attacker, time activity against the Maker-tier ceiling,
+      // where Stream does not degrade but simply stops accepting new
+      // connections. A cap is the one number worth knowing the shape of before
+      // you arrive at it.
+      //
+      // `worstAlert` stays because it is the operationally load-bearing half and
+      // reveals only a bucket (60/80/90%), which a monitor can act on. So can
+      // `unmetered` and `estimated`: both are statements about data QUALITY, and
+      // a figure nobody can trust is not a figure worth hiding.
+      //
+      // The absolute numbers are available to an operator on the admin health
+      // route, which is session-gated. This is a redaction, not a removal.
+      alert: usage.worstAlert,
+      quality: {
+        // True when the participant-minute sweep dropped rows, so the figure is
+        // a floor rather than an estimate. A reader must not treat a low number
+        // as good news when it is incomplete.
+        unmetered: usage.unmetered,
+        estimated: usage.snapshot?.estimated ?? null,
+        // Present but possibly null: the snapshot's age is what tells an operator
+        // whether to trust the figure, and a stale-by-a-month snapshot with no
+        // timestamp reads exactly like a live one.
+        computedAt: usage.snapshot?.computedAt ?? null,
+      },
+      // The shape, not the value: how many days into the window, so a reader can
+      // tell a month-to-date figure from a final one without learning the total.
+      windowDays: usage.meters.mau ? 30 : null,
+      redacted: true,
     },
     betterstack,
     cron,

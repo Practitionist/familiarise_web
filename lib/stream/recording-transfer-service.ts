@@ -1193,8 +1193,27 @@ export class RecordingTransferService {
       );
     }
 
+    // #1829 — fence the tombstone on the `storagePath` that was READ, not just on
+    // the id. The delete above is a network call against a value captured before
+    // it, and a transfer can complete inside that window:
+    //
+    //   1. findUnique reads `storagePath: null` (a transfer is in flight).
+    //   2. The transfer finishes: its fenced success write sets `storagePath`,
+    //      `PLATFORM` and `AVAILABLE`, and the object is now in our bucket.
+    //   3. This tombstone clears `storagePath` and writes EXPIRED.
+    //
+    // The object the transfer just uploaded is now unreachable: the row says
+    // there is nothing in storage, so no sweep will ever delete it, and it
+    // outlives whatever retention the delete was invoked to enforce. That is the
+    // same orphan class the retention sweep fix above exists to close, reachable
+    // from a different door.
+    //
+    // Matching on the exact value we read makes the interleaving detectable
+    // instead of destructive: `count === 0` means the row moved under us, and
+    // the caller must re-read rather than tombstone a row it no longer
+    // understands.
     const tombstoned = await prisma.recording.updateMany({
-      where: { id: recordingId },
+      where: { id: recordingId, storagePath: recording.storagePath },
       data: {
         status: RecordingStatus.EXPIRED,
         storageUrl: null,
@@ -1212,6 +1231,20 @@ export class RecordingTransferService {
       storageDeleted,
       streamDeleted,
     });
+
+    if (tombstoned.count === 0) {
+      streamLogger.warn(
+        "Recording delete lost its CAS — the row changed under us, nothing tombstoned",
+        { recordingId, storageDeleted, streamDeleted },
+      );
+      return {
+        success: false,
+        error:
+          "Recording changed during deletion — nothing was tombstoned. Re-read and retry.",
+        storageDeleted,
+        streamDeleted,
+      };
+    }
 
     streamLogger.info("Recording deleted", {
       recordingId,

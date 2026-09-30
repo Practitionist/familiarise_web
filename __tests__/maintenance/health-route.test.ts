@@ -414,21 +414,33 @@ describe("GET /api/health", () => {
   // commercial limit is not a platform impairment, and a 3am page for it would
   // be a page nobody acts on.
   describe("stream usage (#E5)", () => {
-    it("reports nulls, not zeros, when the meter has never run", async () => {
+    // #1829 — this route is UNAUTHENTICATED. It is what an uptime monitor and a
+    // load balancer hit, so its body is public, and the absolute figures it
+    // carries are the business's growth curve plus the plan ceilings. The Maker
+    // cap in particular is the one number worth knowing the shape of before
+    // arriving at it, because Stream does not degrade there — it stops accepting
+    // new connections.
+    //
+    // So the level stays public (a monitor can act on a bucket, and a
+    // three-way 60/80/90 split reveals nothing), data QUALITY stays public (a
+    // figure nobody can trust is not worth hiding), and the values do not.
+    it("reports the ALERT level and data quality, and not the figures", async () => {
       const body = await (await GET(request())).json();
 
       expect(body.usage).toEqual({
-        worstAlert: null,
-        unmetered: ["feedApiCalls"],
-        mau: null,
-        participantMinutes: null,
-        computedAt: null,
-        estimated: null,
+        alert: null,
+        quality: {
+          unmetered: ["feedApiCalls"],
+          estimated: null,
+          computedAt: null,
+        },
+        windowDays: null,
+        redacted: true,
       });
       expect(body.status).toBe("healthy");
     });
 
-    it("carries the figures and the crossed threshold, and still stays healthy", async () => {
+    it("publishes no absolute usage figure or plan cap", async () => {
       mockReadUsage.mockResolvedValue({
         snapshot: {
           mau: 1300,
@@ -452,15 +464,29 @@ describe("GET /api/health", () => {
       });
 
       const body = await (await GET(request())).json();
+      const serialised = JSON.stringify(body.usage);
 
-      expect(body.usage.worstAlert).toBe(0.6);
-      expect(body.usage.mau).toEqual({
-        used: 1300,
-        cap: 2000,
-        pct: 0.65,
-        alert: 0.6,
-      });
-      expect(body.usage.computedAt).toBe("2026-09-29T04:20:00.000Z");
+      // The level and the quality survive; the numbers do not.
+      expect(body.usage.alert).toBe(0.6);
+      expect(body.usage.quality.computedAt).toBe("2026-09-29T04:20:00.000Z");
+      expect(body.usage.redacted).toBe(true);
+
+      // Neither the usage nor either cap, as a value or a digit sequence.
+      for (const secret of [
+        "1300",
+        "40000",
+        "2000",
+        "333000",
+        "0.65",
+        "0.1201",
+      ]) {
+        expect(serialised).not.toContain(secret);
+      }
+      // Nor the figure keys, in case someone re-adds them under a new name.
+      expect(body.usage).not.toHaveProperty("mau");
+      expect(body.usage).not.toHaveProperty("participantMinutes");
+      expect(body.usage).not.toHaveProperty("worstAlert");
+
       // Alarm BEFORE the cap, and never as a platform outage.
       expect(body.status).toBe("healthy");
     });

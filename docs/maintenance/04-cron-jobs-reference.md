@@ -260,7 +260,7 @@ It is a mutual-exclusion tool and nothing more. Data correctness comes from comp
 
 Every scheduled workflow also declares a workflow-level `concurrency: { group: ${{ github.workflow }}, cancel-in-progress: false }`, a second and redundant guard at the Actions layer that queues an overlapping run rather than killing one mid-flight; `withCronLock` remains the correctness guard, and `__tests__/maintenance/cron-lock-registry.test.ts` asserts the concurrency block is present on every scheduled entry so the two guards cannot drift apart. GitHub Actions allows one running and one pending run per concurrency group by default, and a newer run replaces the pending one rather than queuing behind it; the twelve workflows that also accept `workflow_dispatch` add `queue: max` so a second manual trigger cannot silently displace one already waiting, up to a hundred pending runs.
 
-Four scheduled workflows do not use it, each for a stated reason.
+Five scheduled workflows do not use `withCronLock`, each for a stated reason.
 
 | Workflow                | Mechanism                    | Why not `withCronLock`                                                                                                                                                                                                                 |
 | ----------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

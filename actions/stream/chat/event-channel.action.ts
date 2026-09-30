@@ -931,8 +931,28 @@ export async function syncUserEventChannels(
       durationMs: duration,
     });
 
-    // Mark sync as completed for this user (suppress future automatic re-runs)
-    initialSyncCompletedUsers.add(userId);
+    // Mark sync as completed for this user (suppress future automatic re-runs).
+    //
+    // #1829 — NOT when the run was degraded. The guard means "we have already
+    // looked at this user's channel list", and a breaker-open run looked at
+    // NOTHING: `queryChannelsPaged` returned an empty page from the fallback, so
+    // `expectedChannelIds` is empty and the stale-membership removal pass below
+    // it removed nothing. Setting the guard anyway means every dashboard load
+    // during the outage window stamps it, and the user is then exempt from the
+    // reconcile until a `force` re-sync or a process recycle.
+    //
+    // That is not a cosmetic miss. Removing a stale membership is the REVOCATION
+    // path: it is what takes a user out of a channel for a booking they cancelled,
+    // so a degraded run that silently claims success defers access revocation by
+    // an unbounded amount of time, and reports nothing.
+    if (degraded) {
+      streamLogger.warn(
+        "Channel sync degraded — not marking the user synced, so the next load retries",
+        { userId },
+      );
+    } else {
+      initialSyncCompletedUsers.add(userId);
+    }
 
     return {
       success: true,

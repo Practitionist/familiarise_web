@@ -280,10 +280,13 @@ Three independent clocks, which is the thing to remember:
 code used to do — produced a ten-day window where the 410 gate passed and every
 viewer was handed a dead Stream URL.
 
-**Throughput is the standing risk.** The transfer sweep moves **10 files per run,
-4 runs a day = 40/day**, and there is no queue behind it. Above ~40 permanent
-recordings a day this is a data-loss machine, because Stream deletes at 14 days
-and we cannot keep up. The backlog alarm
+**Throughput is the standing risk.** The transfer sweep moves **25 files per run,
+4 runs a day ≈ 100/day**, and there is no queue behind it — a batch is bounded,
+not a schedule. Sustained permanent recordings above roughly that rate is a
+data-loss machine, because Stream deletes at 14 days and a bounded batch cannot
+keep up. Raise `batchSize` before assuming headroom: the bound is per run, so
+the figure that matters is 25 × runs-per-day, and the alarm below fires on the
+backlog rather than on the rate. The backlog alarm
 (`countAtRiskPermanentRecordings`, 72 h horizon) is the thing to watch, and it
 escalates at `error` level.
 

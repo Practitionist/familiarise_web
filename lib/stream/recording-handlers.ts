@@ -77,6 +77,32 @@ export interface StreamRecordingFailedEvent {
  * Throttled per call: a mis-keyed room emits one event per recording lifecycle
  * step, and a live session with a camera on produces a burst.
  */
+/**
+ * #1829 — a `created_at` we cannot parse.
+ *
+ * The route rejects an unparseable `created_at` before it reaches a handler, so
+ * this looks unreachable. It is not: the sweeper re-drives the STORED payload
+ * directly, bypassing the route entirely, and a payload persisted before that
+ * check existed carries whatever was in it.
+ *
+ * `new Date("nonsense")` is an Invalid Date, and an Invalid Date is not a small
+ * problem in either direction. Passed to Prisma it is rejected, so the write
+ * throws, the dispatch stamps an error, and the sweeper re-drives the row for the
+ * full 168-hour give-up window before discarding it. Used as a comparison bound it
+ * is `NaN`, so every `lt` / `gt` against it is false — which reads as "no
+ * update" rather than as a defect.
+ *
+ * The fallback is a real instant on purpose: the row gets stamped with something
+ * true and the event settles. A recording whose timestamp we cannot read is still
+ * a recording that happened, and losing it is worse than dating it approximately.
+ */
+function eventInstant(createdAt: string): Date {
+  const parsed = new Date(createdAt);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  streamLogger.warn("Unparseable created_at on a Stream event", { createdAt });
+  return new Date();
+}
+
 function reportOrphanedRecordingEvent(
   streamCallId: string,
   eventType: string,
@@ -163,7 +189,7 @@ export async function handleRecordingStarted(
     // flag the recording pipeline no longer depends on (#1615 made the ROUTE the
     // authority for the claim), and it is strictly better than the alternative of
     // never trusting the flag again.
-    const startedAt = new Date(created_at);
+    const startedAt = eventInstant(created_at);
     const { count } = await prisma.meeting.updateMany({
       where: {
         id: meeting.id,
@@ -686,7 +712,7 @@ export async function handleRecordingFailed(
           title: "Recording Failed",
           recordingUrl: "",
           durationInMinutes: 0,
-          recordedAt: new Date(created_at),
+          recordedAt: eventInstant(created_at),
           streamRecordingId: failureKey,
           streamCallId,
           status: RecordingStatus.FAILED,

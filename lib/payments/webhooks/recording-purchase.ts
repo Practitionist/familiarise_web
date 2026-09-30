@@ -178,13 +178,33 @@ export async function handleRecordingPurchaseRefund(params: {
     return true;
   }
 
+  // #1829 — the CAS has to cover BOTH live states, not just the settled one.
+  //
+  // Razorpay can deliver `refund.processed` BEFORE `payment.captured`. The row is
+  // then still PENDING, the old `status: "SUCCEEDED"` filter matched zero rows,
+  // and this function returned `true` all the same — which the dispatcher reads
+  // as "handled, do not cascade". The event was marked processed, the later
+  // capture settled the row to SUCCEEDED, and the buyer kept permanent replay
+  // access after a full refund. Nothing errored; the row simply read SUCCEEDED.
+  //
+  // Flipping PENDING → REFUNDED as well is the fix, and it is free: the settle
+  // path is itself CAS'd on `status: "PENDING"`, so a row already marked REFUNDED
+  // cannot be settled afterwards. The two orderings converge on the same state
+  // instead of one of them winning by arrival time.
   const revoked = await prisma.recordingPurchase.updateMany({
-    where: { id: purchase.id, status: "SUCCEEDED" },
+    where: { id: purchase.id, status: { in: ["SUCCEEDED", "PENDING"] } },
     data: { status: "REFUNDED" },
   });
   if (revoked.count > 0) {
     console.warn(
-      `[recording-purchase] refund revoked replay entitlement for order ${params.orderId}`,
+      `[recording-purchase] refund revoked replay entitlement for order ${params.orderId} (was ${purchase.status})`,
+    );
+  } else {
+    // Already terminal — a duplicate delivery, or a refund racing a previous
+    // one. Not an error, and worth a line because "refunded twice" and "refund
+    // matched nothing" are different facts.
+    console.warn(
+      `[recording-purchase] refund for ${params.orderId} matched no live row (status ${purchase.status})`,
     );
   }
   return true;

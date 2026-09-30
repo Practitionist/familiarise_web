@@ -293,22 +293,34 @@ export async function POST(req: NextRequest) {
       // are things an operator needs to see rather than infer from absent data.
       // The `permanent:` prefix comes from TERMINAL_ERROR_PREFIXES, so the
       // sweeper's selector treats it as terminal and never re-drives it.
-      await recordStreamEventReceipt(eventId, eventType, event, signature)
-        .then(() => markWebhookEventProcessed(eventId, tooOld))
-        .catch((persistError) => {
-          // Nothing was recorded and nothing was acted on, so this IS the case
-          // worth a retryable answer — the same reasoning as the receipt failure
-          // below. If the row never lands, the age is re-evaluated on
-          // redelivery and decided again.
-          streamLogger.error(
-            `Failed to persist out-of-window Stream event ${eventId}`,
-            persistError,
-          );
-          return NextResponse.json(
-            { error: "Could not record event" },
-            { status: 503 },
-          );
-        });
+      //
+      // try/catch, NOT `.then().catch()`. The promise form was a real bug and the
+      // shape of it is worth writing down, because it is the same class as the
+      // dedup defect this file exists to fix: a `return` inside a `.catch`
+      // callback resolves the CHAIN with that value, which the `await` then
+      // discards, and execution falls straight through to the 200 below. So a
+      // refusal whose row failed to persist answered 2xx — Stream treats 2xx as
+      // final, nothing was recorded, and the sweeper had no row to re-drive.
+      // The comment claimed "this IS the case worth a retryable answer" while
+      // the code did the opposite. The only defence is that the retryable answer
+      // is made in the same scope as the control flow that returns it.
+      try {
+        await recordStreamEventReceipt(eventId, eventType, event, signature);
+        await markWebhookEventProcessed(eventId, tooOld);
+      } catch (persistError) {
+        // Nothing was recorded and nothing was acted on, so this IS the case
+        // worth a retryable answer — the same reasoning as the receipt failure
+        // below. If the row never lands, the age is re-evaluated on redelivery
+        // and decided again.
+        streamLogger.error(
+          `Failed to persist out-of-window Stream event ${eventId}`,
+          persistError,
+        );
+        return NextResponse.json(
+          { error: "Could not record event" },
+          { status: 503 },
+        );
+      }
 
       streamLogger.warn(
         `Refused an out-of-window Stream delivery: ${tooOld} (${eventType})`,

@@ -742,6 +742,67 @@ describe("D6 — delete removes the object before the row, and always audits", (
       details: { recordingId: "rec_1", source: "operator-delete" },
     });
   });
+
+  // #1829 — the fence. The storage delete above is a NETWORK call against a
+  // value read before it, and a transfer can complete inside that window:
+  //
+  //   1. findUnique reads `storagePath: null` (a transfer is in flight).
+  //   2. The transfer's fenced success write sets `storagePath`, `PLATFORM` and
+  //      `AVAILABLE`, and the object is now in our bucket.
+  //   3. An id-only tombstone clears `storagePath` and writes EXPIRED.
+  //
+  // The object the transfer just uploaded is now unreachable: the row says
+  // there is nothing in storage, so no sweep will ever delete it, and it
+  // outlives whatever retention this delete was invoked to enforce. Same orphan
+  // class the retention sweep fix exists to close, reachable from another door.
+  it("fences the tombstone on the storagePath it READ, not the id alone", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "rec_1",
+      title: "Session",
+      storagePath: "recordings/2026/03/rec_1/recording.mp4",
+      streamCallId: null,
+      organizationId: "org_1",
+      meeting: { id: "m_1" },
+    });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    await RecordingTransferService.deleteRecording("rec_1");
+
+    // The exact value read, so a row that MOVED under us matches zero rows and
+    // the caller re-reads rather than tombstoning a row it no longer
+    // understands.
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: "rec_1",
+      storagePath: "recordings/2026/03/rec_1/recording.mp4",
+    });
+  });
+
+  it("fences on a NULL storagePath too — the in-flight-transfer case", async () => {
+    // A row with no path yet is exactly the one a transfer is about to fill in.
+    // `storagePath: null` in the WHERE is a real predicate in Prisma, so this
+    // reads as IS NULL and catches the row — but the point is that it is
+    // EXPLICIT: the id-only form would also match a row a transfer had just
+    // completed, which is the bug.
+    mockFindUnique.mockResolvedValue({
+      id: "rec_1",
+      title: "Session",
+      storagePath: null,
+      streamCallId: null,
+      organizationId: "org_1",
+      meeting: { id: "m_1" },
+    });
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    const res = await RecordingTransferService.deleteRecording("rec_1");
+
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: "rec_1",
+      storagePath: null,
+    });
+    // No object to delete, and the CAS matched nothing — so the row was NOT
+    // tombstoned and the audit records a delete that did not happen.
+    expect(res).toMatchObject({ success: false, storageDeleted: false });
+  });
 });
 
 describe("D5 — the policy filter covers all four plan arms", () => {

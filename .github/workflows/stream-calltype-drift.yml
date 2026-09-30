@@ -169,8 +169,13 @@ jobs:
         run: node_modules/.bin/tsx scripts/stream/ensure-webhook-subscription.ts --check
 
       - name: Report drift (non-blocking on a pull request)
-        # Always runs, so the log always states the verdict in one place rather
-        # than making a reader reconstruct it from three exit codes.
+        # `always()` is load-bearing. The step above this one is deliberately
+        # LEFT BLOCKING (`ensure-webhook-subscription.ts --check`, whose half of
+        # the config is already applied), and GitHub skips every subsequent step
+        # with no status function when an earlier step fails — so without this
+        # the summary that states the verdict in one place is exactly the step
+        # that disappears on the run where a human most needs to read it.
+        if: always()
         run: |
           s='${{ steps.settings.outputs.exit }}'
           g='${{ steps.grants.outputs.exit }}'

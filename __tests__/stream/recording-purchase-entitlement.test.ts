@@ -163,10 +163,56 @@ describe("refund revokes the entitlement", () => {
     });
 
     expect(handled).toBe(true);
+    // #1829 — the filter covers BOTH live states, not just the settled one.
+    //
+    // Razorpay can deliver `refund.processed` before `payment.captured`. With a
+    // SUCCEEDED-only filter the CAS matched zero rows on a still-PENDING row, the
+    // function returned `true` all the same (which the dispatcher reads as
+    // "handled, do not cascade"), the event was marked processed, and the later
+    // capture settled the row to SUCCEEDED — permanent replay access after a full
+    // refund, with nothing having errored.
     expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "rp_1", status: "SUCCEEDED" },
+      where: { id: "rp_1", status: { in: ["SUCCEEDED", "PENDING"] } },
       data: { status: "REFUNDED" },
     });
+  });
+
+  it("revokes a PENDING row, so a later capture cannot settle it", async () => {
+    // The ordering the CAS above exists for. The settle path is itself
+    // conditional on `status: "PENDING"`, so marking the row REFUNDED first makes
+    // the capture a no-op rather than a grant — both orderings converge instead
+    // of one winning by arrival time.
+    mockFindUnique.mockResolvedValue(purchase({ status: "PENDING" }));
+
+    const handled = await handleRecordingPurchaseRefund({
+      orderId: "order_1",
+      status: "processed",
+      amountPaise: 49900,
+    });
+
+    expect(handled).toBe(true);
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "rp_1", status: { in: ["SUCCEEDED", "PENDING"] } },
+        data: { status: "REFUNDED" },
+      }),
+    );
+  });
+
+  it("leaves an already-terminal row alone and still reports handled", async () => {
+    mockFindUnique.mockResolvedValue(purchase({ status: "REFUNDED" }));
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    const handled = await handleRecordingPurchaseRefund({
+      orderId: "order_1",
+      status: "processed",
+      amountPaise: 49900,
+    });
+
+    // A duplicate refund is not a failure, and returning false here would send
+    // the dispatcher into the B2C refund cascade, which would find no Payment and
+    // defer until the 168h give-up cap for a refund already handled.
+    expect(handled).toBe(true);
   });
 
   it("leaves the entitlement alone on a PARTIAL refund, and says so", async () => {

@@ -60,7 +60,11 @@ beforeEach(() => {
 
 describe("recordStreamOutage — transition-gated (#E6)", () => {
   it("writes one row for an outage start", async () => {
-    await recordStreamOutage({ unhealthy: true, reason: "UNREACHABLE" });
+    await recordStreamOutage({
+      probe: "reachability",
+      unhealthy: true,
+      reason: "UNREACHABLE",
+    });
 
     expect(mockRecordSystemErrorSafe).toHaveBeenCalledTimes(1);
     const row = lastRow()!;
@@ -76,9 +80,21 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
     // The whole reason it is gated. /api/health is polled every few minutes; a
     // row per poll would fill `system_events` with one fact and make the table
     // useless for the transitions it exists to record.
-    await recordStreamOutage({ unhealthy: true, reason: "UNREACHABLE" });
-    await recordStreamOutage({ unhealthy: true, reason: "UNREACHABLE" });
-    await recordStreamOutage({ unhealthy: true, reason: "UNREACHABLE" });
+    await recordStreamOutage({
+      probe: "reachability",
+      unhealthy: true,
+      reason: "UNREACHABLE",
+    });
+    await recordStreamOutage({
+      probe: "reachability",
+      unhealthy: true,
+      reason: "UNREACHABLE",
+    });
+    await recordStreamOutage({
+      probe: "reachability",
+      unhealthy: true,
+      reason: "UNREACHABLE",
+    });
 
     expect(mockRecordSystemErrorSafe).toHaveBeenCalledTimes(1);
   });
@@ -87,8 +103,16 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
     // Without this, an operator cannot tell an outage that ended from one that
     // is still open — and "when did it come back" is the first question asked
     // of an incident timeline.
-    await recordStreamOutage({ unhealthy: true, reason: "UNREACHABLE" });
-    await recordStreamOutage({ unhealthy: false, reason: "REACHABLE" });
+    await recordStreamOutage({
+      probe: "reachability",
+      unhealthy: true,
+      reason: "UNREACHABLE",
+    });
+    await recordStreamOutage({
+      probe: "reachability",
+      unhealthy: false,
+      reason: "REACHABLE",
+    });
 
     expect(mockRecordSystemErrorSafe).toHaveBeenCalledTimes(2);
     const row = lastRow()!;
@@ -101,6 +125,7 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
 
   it("carries the coarse facts in `context`, never the raw SDK error", async () => {
     await recordStreamOutage({
+      probe: "reachability",
       unhealthy: true,
       reason: "CIRCUIT_OPEN",
       context: { breakerState: "OPEN", breakerFailures: 5 },
@@ -122,6 +147,7 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
     // Chat and video bill and fail separately, and a dashboard that only shows
     // the category cannot tell a video-only outage from a chat one.
     await recordStreamOutage({
+      probe: "reachability",
       unhealthy: true,
       reason: "UNREACHABLE",
       category: VIDEO_EVENT_CATEGORY,
@@ -138,7 +164,11 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
     );
 
     await expect(
-      recordStreamOutage({ unhealthy: true, reason: "UNREACHABLE" }),
+      recordStreamOutage({
+        probe: "reachability",
+        unhealthy: true,
+        reason: "UNREACHABLE",
+      }),
     ).resolves.toBeUndefined();
   });
 });

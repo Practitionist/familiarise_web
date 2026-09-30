@@ -224,6 +224,7 @@ export async function getStreamStatus(): Promise<StreamHealth> {
   // monitoring write that could change a monitoring answer would be a new way
   // for the monitor to lie.
   await recordStreamOutage({
+    probe: "webhook-secret",
     unhealthy: webhookSecret.reason !== null,
     reason: webhookSecret.reason ?? "OK",
     context: {
@@ -274,6 +275,7 @@ export async function getStreamStatus(): Promise<StreamHealth> {
     // secret: one is a vendor being down, the other is a deployment that can
     // never have worked. Two rows, two different people who can fix them.
     await recordStreamOutage({
+      probe: "reachability",
       unhealthy: false,
       reason: "REACHABLE",
       context: { latencyMs: Date.now() - startedAt },
@@ -293,6 +295,7 @@ export async function getStreamStatus(): Promise<StreamHealth> {
     };
   } catch (error) {
     await recordStreamOutage({
+      probe: "reachability",
       unhealthy: true,
       // Classified into the three reasons an operator can act on, rather than
       // the raw error: a vendor outage, a fast-fail, and a slow answer are three

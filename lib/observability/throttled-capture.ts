@@ -62,6 +62,16 @@ function remember(key: string, now: number): void {
     const oldest = lastReportAtByKey.keys().next();
     if (!oldest.done) lastReportAtByKey.delete(oldest.value);
   }
+  // #1829 — delete before setting. `Map.set` on a key that is ALREADY present
+  // keeps that key's original insertion position, so a key reported on every
+  // poll sat permanently at the front of the map and was the one the eviction
+  // above removed next. The throttle therefore protected the quiet keys and
+  // sacrificed the loudest one — the exact inverse of what it is for, and
+  // invisible because the map still stayed under its cap.
+  //
+  // Delete-then-set makes the map an LRU ordered by last report, which is what
+  // "evict the oldest" has to mean for the claim to be true.
+  lastReportAtByKey.delete(key);
   lastReportAtByKey.set(key, now);
 }
 

@@ -512,6 +512,42 @@ describe("other route outcomes", () => {
     expect(mockRecordReceipt).not.toHaveBeenCalled();
   });
 
+  it("answers 503 when an OUT-OF-WINDOW receipt cannot be written", async () => {
+    // #1829 — the promise-form regression. The refusal path was
+    // `recordStreamEventReceipt(...).then(mark).catch(() => return
+    // NextResponse(503))`, and a `return` inside a `.catch` callback resolves
+    // the CHAIN with that value, which the `await` then discarded — so execution
+    // fell through to the 200 below. Stream treats 2xx as final, nothing was
+    // recorded, and the sweeper had no row to re-drive: the one shape where a
+    // failed write loses the event permanently, silently, while the comment
+    // directly above it claimed it was handled.
+    //
+    // The happy-path refusal case below passed the whole time, which is why a
+    // 44-case suite for this route did not catch it.
+    mockRecordReceipt.mockRejectedValue(new Error("pool exhausted"));
+    const body = callEndedEvent({
+      created_at: new Date(Date.now() - 30 * 24 * 3600_000).toISOString(),
+    });
+    const res = await deliver(body);
+    expect(res.status).toBe(503);
+  });
+
+  it("answers 503 when the out-of-window COMPLETION mark cannot be written", async () => {
+    // Same path, second write. Distinct because the first can succeed and the
+    // second fail, leaving a row in IN-PROGRESS that the sweeper would re-drive
+    // — for an event we deliberately refused. Terminal must mean terminal.
+    mockRecordReceipt.mockResolvedValue({
+      isNew: true,
+      claim: { claimedAt: null },
+    });
+    mockMarkProcessed.mockRejectedValue(new Error("connection reset"));
+    const body = callEndedEvent({
+      created_at: new Date(Date.now() - 30 * 24 * 3600_000).toISOString(),
+    });
+    const res = await deliver(body);
+    expect(res.status).toBe(503);
+  });
+
   it("answers 503 when the receipt cannot be written", async () => {
     // The one case that deserves a retryable answer, because nothing was
     // recorded so Stream's redelivery is the only remaining chance.
