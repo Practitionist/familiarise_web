@@ -263,6 +263,26 @@ const nextConfig = {
   // see, and the only traced import of `react` is the reconciler's, which
   // reaches the package root rather than that entrypoint. Ship the package.
   outputFileTracingIncludes: {
+    "/api/plans/**/brochure": [
+      "./public/fonts/**/*",
+      "./node_modules/react/**",
+    ],
+    "/api/plans/classes/[classPlanId]/brochure": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
+    "/api/plans/webinars/[webinarPlanId]/brochure": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
+    "/api/plans/consultations/[consultationPlanId]/brochure": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
+    "/api/plans/subscriptions/[subscriptionPlanId]/brochure": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
     "/api/payments/[paymentId]/invoice/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",

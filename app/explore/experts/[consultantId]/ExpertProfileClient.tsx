@@ -3,6 +3,7 @@
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { BookingCalendarLoadingGrid } from "@/components/booking/BookingCalendarLoadingGrid";
+import type { BookingMode } from "@prisma/client";
 import type { ConsultantDetailData } from "./types";
 import { TIntervalTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
@@ -25,9 +26,9 @@ import {
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
-import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
+import { PlanDetailsSnapshot } from "./components/PlanDetailsSnapshot";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
@@ -36,7 +37,12 @@ import {
   useAvailabilityMonth,
   useAvailabilityWindow,
 } from "./hooks/useAvailabilityWindow";
-import { durationDayMark, isSelectableDay } from "./day-state";
+import {
+  durationDayMark,
+  isSelectableDay,
+  type DayBookingKind,
+  type DayState,
+} from "./day-state";
 import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
@@ -47,12 +53,191 @@ interface ExpertProfileClientProps {
   reviewTracks: TReviewTrackPresence;
 }
 
+function getDayAvailabilityLabel(kind: DayBookingKind): string {
+  if (kind === "instant") return ", book-now times available";
+  if (kind === "request") return ", times available by request";
+  return "";
+}
+
+function getCalendarDayClassName(
+  isSelected: boolean,
+  kind: DayBookingKind,
+  state: DayState,
+  marksLoading: boolean,
+): string {
+  return cn(
+    "relative flex aspect-square w-full max-w-11 items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
+    isSelected &&
+      "bg-primary font-medium text-primary-foreground shadow-sm",
+    isSelected && kind && "ring-2 ring-offset-2 ring-offset-background",
+    isSelected && kind === "instant" && "ring-emerald-500",
+    isSelected && kind === "request" && "ring-amber-500",
+    !isSelected &&
+      kind === "instant" &&
+      "bg-emerald-500/10 font-semibold text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/50 hover:bg-emerald-500/20",
+    !isSelected &&
+      kind === "request" &&
+      "bg-amber-500/10 font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/50 hover:bg-amber-500/20",
+    !isSelected &&
+      (state === "unknown" || state === "today+unknown") &&
+      "font-medium text-foreground hover:bg-muted",
+    !isSelected &&
+      (state === "none" || state === "today+none") &&
+      "text-muted-foreground",
+    state === "past" && "opacity-40 text-muted-foreground",
+    marksLoading &&
+      state !== "past" &&
+      !isSelected &&
+      "motion-safe:animate-pulse",
+  );
+}
+
+function resolveInitialService(
+  action: string | null,
+): "subscriptions" | "consultations" | undefined {
+  if (action === "subscribe" || action === "trial") return "subscriptions";
+  if (action === "book") return "consultations";
+  return undefined;
+}
+
+interface BuildCalendarCellsParams {
+  currentDate: Date;
+  selectedDate: Date | null;
+  timezone: string | null | undefined;
+  durationInHours: number;
+  bookingMode: BookingMode;
+  acceptingRequests: boolean;
+  marks: Record<string, (TIntervalTiming & { isAllocated: boolean })[]> | null;
+  marksLoading: boolean;
+  marksError: boolean;
+  onSelectDate: (date: Date) => void;
+}
+
+function buildCalendarCells({
+  currentDate,
+  selectedDate,
+  timezone,
+  durationInHours,
+  bookingMode,
+  acceptingRequests,
+  marks,
+  marksLoading,
+  marksError,
+  onSelectDate,
+}: BuildCalendarCellsParams): JSX.Element[] {
+  if (marksLoading && !marks) {
+    return [
+      <BookingCalendarLoadingGrid
+        key="calendar-loading-grid"
+        month={currentDate}
+      />,
+    ];
+  }
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+  const days: JSX.Element[] = [];
+  const now = new Date();
+
+  for (let i = 0; i < adjustedFirstDay; i++) {
+    days.push(
+      <div
+        key={`empty-${year}-${month}-${i}`}
+        className="aspect-square w-full max-w-11"
+      />,
+    );
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, month, day);
+    const isSelected =
+      selectedDate?.getDate() === day &&
+      selectedDate?.getMonth() === month &&
+      selectedDate?.getFullYear() === year;
+    const key = timezone
+      ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
+      : null;
+    const daySlots = marks && key ? (marks[key] ?? []) : null;
+    const { state, kind } = durationDayMark(
+      date,
+      now,
+      daySlots,
+      durationInHours,
+      timezone || "UTC",
+      bookingMode,
+      acceptingRequests,
+    );
+    const isToday = state.startsWith("today");
+    const selectable = isSelectableDay(state);
+    const availabilityLabel = getDayAvailabilityLabel(kind);
+
+    days.push(
+      <button
+        key={`day-${year}-${month}-${day}`}
+        type="button"
+        disabled={!selectable}
+        aria-pressed={isSelected}
+        aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${availabilityLabel}`}
+        className={getCalendarDayClassName(
+          isSelected,
+          kind,
+          state,
+          marksLoading,
+        )}
+        onClick={() => onSelectDate(date)}
+      >
+        {day}
+        {isToday && (
+          <span
+            aria-hidden="true"
+            className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+          />
+        )}
+      </button>,
+    );
+  }
+
+  if (marksError) {
+    days.push(
+      <p
+        key="marks-error"
+        role="status"
+        className="col-span-7 pt-2 text-center text-xs text-muted-foreground"
+      >
+        Couldn&apos;t load availability marks — pick a day to see its times.
+      </p>,
+    );
+  }
+
+  return days;
+}
+
+function buildConsultationCheckoutUrl(
+  planId: string,
+  slot: TIntervalTiming,
+): string {
+  const params = new URLSearchParams();
+  const startsAt = new Date(slot.startsAt);
+  const endsAt = new Date(slot.endsAt);
+  const windowParam =
+    slot.type === "WEEKLY"
+      ? "availabilityWindowWeeklyId"
+      : "availabilityWindowCustomId";
+  params.append(windowParam, slot.availabilityWindowId);
+  params.append("startsAt", startsAt.toISOString());
+  params.append("endsAt", endsAt.toISOString());
+  return `/checkout/plans/consultation/${planId}?${params.toString()}`;
+}
+
 export function ExpertProfileClient({
   consultantDetails,
   userDetails,
   reviews,
   reviewTracks,
-}: ExpertProfileClientProps) {
+}: Readonly<ExpertProfileClientProps>) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { data: session } = useSession();
@@ -71,21 +256,9 @@ export function ExpertProfileClient({
   );
 
   const timezone = browserTimezone || userDetails?.timezone;
-
-  // #1591 J1-P1-04 — the grid answer is `private, max-age=30`, so a return
-  // after a checkout 409 re-read the stale green cell. Entered with
-  // `?conflict=1`, or restored from the back/forward cache, the next fetch
-  // bypasses the browser cache once.
   const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
 
-  // Pricing-day slots share the overview's week-window query: the week
-  // containing the selected day uses the same [start, end] computation as
-  // ConsultantAvailability's weekOffset, so an overlapping reader joins the
-  // single in-flight request instead of firing its own 1-day compute. Day
-  // clicks inside a loaded week cost zero requests (staleTime 30s).
   const todayStart = startOfDay(new Date());
-  // Calendar-day arithmetic: a DST transition makes seven days 167 or 169
-  // elapsed hours, which would park the selected day in the wrong week.
   const selectedWeekOffset = selectedDate
     ? Math.max(
         0,
@@ -96,27 +269,25 @@ export function ExpertProfileClient({
     : 0;
   const pricingWeekStart = addDays(todayStart, selectedWeekOffset * 7);
   const pricingWeekEnd = endOfDay(addDays(pricingWeekStart, 6));
+  const resolvedTimezone = isTimezoneLoading ? null : (timezone ?? null);
 
   const dayQuery = useAvailabilityWindow({
     consultantId: consultantDetails?.id,
     startUtc: selectedDate ? pricingWeekStart : null,
     endUtc: selectedDate ? pricingWeekEnd : null,
-    timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    timezone: resolvedTimezone,
     bypassRef: bypassCacheOnce,
   });
 
-  // #1785 L-4 — one read for the visible month drives the day marks. It is
-  // keyed on the month, so paging the calendar costs one request per month
-  // and re-opening the dialog on a loaded month costs none.
   const monthQuery = useAvailabilityMonth({
     consultantId: consultantDetails?.id,
     monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
-    timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    timezone: resolvedTimezone,
   });
 
   const selectedDateKey =
-    selectedDate && timezone && !isTimezoneLoading
-      ? formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd")
+    selectedDate && resolvedTimezone
+      ? formatInTimeZone(selectedDate, resolvedTimezone, "yyyy-MM-dd")
       : null;
   const slotTimings: TIntervalTiming[] =
     (selectedDateKey && dayQuery.data?.[selectedDateKey]) || [];
@@ -144,7 +315,6 @@ export function ExpertProfileClient({
     [queryClient, consultantDetails?.id],
   );
 
-  // Handle ?action=trial, ?action=book, or ?action=subscribe from explore/plan buttons
   useEffect(() => {
     const action = searchParams.get("action");
     if (!action) return;
@@ -173,6 +343,19 @@ export function ExpertProfileClient({
     return () => window.removeEventListener("pageshow", onPageShow);
   }, [refreshSlots]);
 
+  const navigateToCheckout = useCallback(
+    (checkoutUrl: string) => {
+      if (!session?.user?.id) {
+        router.push(
+          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
+        );
+        return;
+      }
+      router.push(checkoutUrl);
+    },
+    [session?.user?.id, router],
+  );
+
   const handleConsultationBooking = useCallback(
     async (consultationPlanId: string) => {
       if (!selectedSlot || !consultantDetails) {
@@ -189,36 +372,11 @@ export function ExpertProfileClient({
         return;
       }
 
-      const params = new URLSearchParams();
-      const startsAt = new Date(selectedSlot.startsAt);
-      const endsAt = new Date(selectedSlot.endsAt);
-      if (
-        (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
-          .type === "WEEKLY"
-      ) {
-        params.append(
-          "availabilityWindowWeeklyId",
-          selectedSlot.availabilityWindowId,
-        );
-      } else {
-        params.append(
-          "availabilityWindowCustomId",
-          selectedSlot.availabilityWindowId,
-        );
-      }
-      params.append("startsAt", startsAt.toISOString());
-      params.append("endsAt", endsAt.toISOString());
-
-      const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
-      if (!session?.user?.id) {
-        router.push(
-          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
-        );
-        return;
-      }
-      router.push(checkoutUrl);
+      navigateToCheckout(
+        buildConsultationCheckoutUrl(activePlan.id, selectedSlot),
+      );
     },
-    [selectedSlot, consultantDetails, session?.user?.id, router, toast],
+    [selectedSlot, consultantDetails, navigateToCheckout, toast],
   );
 
   const handleSubscriptionBooking = useCallback(
@@ -249,159 +407,34 @@ export function ExpertProfileClient({
         return;
       }
 
-      const schedulingPeriodStartsAt = schedulingPeriod.startDate.toISOString();
-      const schedulingPeriodEndsAt = schedulingPeriod.endDate.toISOString();
-
       const params = new URLSearchParams({
-        schedulingPeriodStartsAt,
-        schedulingPeriodEndsAt,
+        schedulingPeriodStartsAt: schedulingPeriod.startDate.toISOString(),
+        schedulingPeriodEndsAt: schedulingPeriod.endDate.toISOString(),
       });
-      const checkoutUrl = `/checkout/plans/subscription/${activePlan.id}?${params.toString()}`;
-      if (!session?.user?.id) {
-        router.push(
-          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
-        );
-        return;
-      }
-      router.push(checkoutUrl);
+      navigateToCheckout(
+        `/checkout/plans/subscription/${activePlan.id}?${params.toString()}`,
+      );
     },
-    [consultantDetails, session?.user?.id, router, toast],
+    [consultantDetails, navigateToCheckout, toast],
   );
 
-  // The date mark uses the active plan's duration so a 30-minute opening
-  // cannot promise a multi-hour consultation.
   const renderCalendar = useCallback(
-    (durationInHours = 1) => {
-      const daysInMonth = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth() + 1,
-        0,
-      ).getDate();
-      const firstDayOfMonth = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth(),
-        1,
-      ).getDay();
-
-      const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-      const days: JSX.Element[] = [];
-      const now = new Date();
-      const marks = monthQuery.data ?? null;
-      const marksLoading = monthQuery.isPending && !!timezone;
-
-      if (marksLoading && !marks) {
-        return [
-          <BookingCalendarLoadingGrid
-            key="calendar-loading-grid"
-            month={currentDate}
-          />,
-        ];
-      }
-
-      for (let i = 0; i < adjustedFirstDay; i++) {
-        days.push(
-          <div
-            key={`empty-${i}`}
-            className="aspect-square w-full max-w-11"
-          ></div>,
-        );
-      }
-
-      for (let i = 1; i <= daysInMonth; i++) {
-        const date = new Date(
-          currentDate.getFullYear(),
-          currentDate.getMonth(),
-          i,
-        );
-        const isSelected =
-          selectedDate?.getDate() === i &&
-          selectedDate?.getMonth() === currentDate.getMonth() &&
-          selectedDate?.getFullYear() === currentDate.getFullYear();
-        const key = timezone
-          ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
-          : null;
-        const { state, kind } = durationDayMark(
-          date,
-          now,
-          marks && key ? (marks[key] ?? []) : null,
-          durationInHours,
-          timezone || "UTC",
-          consultantDetails.bookingMode ?? "INSTANT",
-          consultantDetails.acceptingRequests !== false,
-        );
-        const isToday = state.startsWith("today");
-        const selectable = isSelectableDay(state);
-        const availabilityLabel =
-          kind === "instant"
-            ? ", book-now times available"
-            : kind === "request"
-              ? ", times available by request"
-              : "";
-
-        days.push(
-          <button
-            key={i}
-            type="button"
-            disabled={!selectable}
-            aria-pressed={isSelected}
-            aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${availabilityLabel}`}
-            className={cn(
-              "relative flex aspect-square w-full max-w-11 items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
-              isSelected &&
-                "bg-primary font-medium text-primary-foreground shadow-sm",
-              isSelected &&
-                kind &&
-                "ring-2 ring-offset-2 ring-offset-background",
-              isSelected && kind === "instant" && "ring-emerald-500",
-              isSelected && kind === "request" && "ring-amber-500",
-              !isSelected &&
-                kind === "instant" &&
-                "bg-emerald-500/10 font-semibold text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/50 hover:bg-emerald-500/20",
-              !isSelected &&
-                kind === "request" &&
-                "bg-amber-500/10 font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/50 hover:bg-amber-500/20",
-              !isSelected &&
-                (state === "unknown" || state === "today+unknown") &&
-                "font-medium text-foreground hover:bg-muted",
-              !isSelected &&
-                (state === "none" || state === "today+none") &&
-                "text-muted-foreground",
-              state === "past" && "opacity-40 text-muted-foreground",
-              marksLoading &&
-                state !== "past" &&
-                !isSelected &&
-                "motion-safe:animate-pulse",
-            )}
-            onClick={() => {
-              setSelectedDate(date);
-              setSelectedSlot(null);
-            }}
-          >
-            {i}
-            {isToday && (
-              <span
-                aria-hidden="true"
-                className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
-              />
-            )}
-          </button>,
-        );
-      }
-
-      if (monthQuery.isError) {
-        days.push(
-          <p
-            key="marks-error"
-            role="status"
-            className="col-span-7 pt-2 text-center text-xs text-muted-foreground"
-          >
-            Couldn&apos;t load availability marks — pick a day to see its times.
-          </p>,
-        );
-      }
-
-      return days;
-    },
+    (durationInHours = 1) =>
+      buildCalendarCells({
+        currentDate,
+        selectedDate,
+        timezone,
+        durationInHours,
+        bookingMode: consultantDetails.bookingMode ?? "INSTANT",
+        acceptingRequests: consultantDetails.acceptingRequests !== false,
+        marks: monthQuery.data ?? null,
+        marksLoading: monthQuery.isPending && !!timezone,
+        marksError: monthQuery.isError,
+        onSelectDate: (date) => {
+          setSelectedDate(date);
+          setSelectedSlot(null);
+        },
+      }),
     [
       currentDate,
       selectedDate,
@@ -456,17 +489,10 @@ export function ExpertProfileClient({
               certifications={userDetails.certifications || []}
             />
 
-            {/* Gated on timezone resolution: the overview used to fire
-                immediately with the "UTC" fallback and then refire with the
-                real zone — a third, wrong-zone allocation compute per visit.
-                One effect-tick delay is invisible inside the page fade-in. */}
-            {!isTimezoneLoading && timezone ? (
-              <ConsultantAvailability
-                consultantDetails={consultantDetails}
-                timezone={timezone}
-                bypassRef={bypassCacheOnce}
-              />
-            ) : null}
+            <PlanDetailsSnapshot
+              consultationPlans={consultantDetails.consultationPlans ?? []}
+              subscriptionPlans={consultantDetails.subscriptionPlans ?? []}
+            />
 
             <ClassesAndWebinars
               classPlans={consultantDetails.classPlans}
@@ -519,14 +545,7 @@ export function ExpertProfileClient({
               autoOpenTrial={autoOpenTrial}
               bookingRequest={bookingRequest}
               initialPlanId={searchParams.get("plan")}
-              initialService={
-                searchParams.get("action") === "subscribe" ||
-                searchParams.get("action") === "trial"
-                  ? "subscriptions"
-                  : searchParams.get("action") === "book"
-                    ? "consultations"
-                    : undefined
-              }
+              initialService={resolveInitialService(searchParams.get("action"))}
               slotsLoading={dayQuery.isFetching || isTimezoneLoading}
               slotsError={dayQuery.isError}
               onRefreshSlots={refreshSlots}

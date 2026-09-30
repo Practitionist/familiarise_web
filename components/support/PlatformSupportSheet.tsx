@@ -335,9 +335,8 @@ export function PlatformSupportSheet({
         >
           {!flowId &&
             (catalog.isLoading ? (
-              <div
+              <output
                 className="flex flex-col gap-2"
-                role="status"
                 aria-label="Loading support topics"
               >
                 {[0, 1, 2, 3].map((row) => (
@@ -346,7 +345,7 @@ export function PlatformSupportSheet({
                     className="h-14 w-full animate-pulse rounded-xl border border-border bg-muted/60"
                   />
                 ))}
-              </div>
+              </output>
             ) : catalog.isError ? (
               <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
                 {(catalog.error as Error)?.message ??

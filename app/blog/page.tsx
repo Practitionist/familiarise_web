@@ -117,10 +117,10 @@ const FEATURED_POST: BlogPost = {
 function EditorialPreviewCard({
   category,
   post,
-}: {
+}: Readonly<{
   category: string;
   post: BlogPost;
-}) {
+}>) {
   return (
     <article className="flex h-full flex-col justify-between rounded-2xl border border-border bg-card p-6 shadow-elevation-1 transition-all duration-200 hover:border-foreground/20 hover:shadow-elevation-2">
       <div>

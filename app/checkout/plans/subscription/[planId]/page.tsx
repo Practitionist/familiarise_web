@@ -1,8 +1,6 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
@@ -23,27 +21,26 @@ import {
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutConsultantHeader,
+  CheckoutErrorState,
+  CheckoutPaymentMethodsCard,
+  CheckoutPricingBreakdown,
+} from "@/app/checkout/components/CheckoutSharedSections";
 import {
   BillingStateSelect,
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { ConsultantProfile, SubscriptionPlan } from "@prisma/client";
-import { Check, CreditCard as CreditCardIcon, Lock } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
-  paymentGateways,
 } from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
+import { calculatePricing } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import {
@@ -487,41 +484,7 @@ export default function SubscriptionCheckoutPage({
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)] bg-muted/40 p-4">
-        <div
-          className="rounded-2xl border border-border bg-card p-8 shadow-elevation-2 text-card-foreground max-w-md w-full text-center"
-          role="alert"
-        >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
-            <svg
-              className="h-6 w-6 text-destructive"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
-              />
-            </svg>
-          </div>
-          <p className="font-semibold text-lg mb-2 text-foreground">
-            Unable to load checkout
-          </p>
-          <p className="text-muted-foreground text-sm">{error}</p>
-          <Button
-            variant="outline"
-            onClick={() => window.history.back()}
-            className="mt-5"
-          >
-            Go back
-          </Button>
-        </div>
-      </div>
-    );
+    return <CheckoutErrorState error={error} />;
   }
 
   const consultantDetails = planData?.data.consultantProfile;
@@ -530,47 +493,14 @@ export default function SubscriptionCheckoutPage({
   return (
     <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar className="w-12 h-12 border shrink-0">
-              <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
-              />
-              <AvatarFallback>
-                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">
-                {userDetails?.name || "Consultant Name"}
-              </div>
-              <div className="text-sm text-muted-foreground truncate">
-                {consultantDetails?.headline || "Consultant"}
-              </div>
-              {userDetails?.workExperiences &&
-                userDetails.workExperiences.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
-                        key={`checkout-sub-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={20}
-                        className="border-border"
-                      />
-                    ))}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="text-right min-w-0">
-            <div className="font-semibold">Subscription</div>
-            <div className="text-sm text-muted-foreground truncate">
-              {planData?.data?.title || "Monthly Plan"}
-            </div>
-          </div>
-        </div>
+        <CheckoutConsultantHeader
+          name={userDetails?.name}
+          image={userDetails?.image}
+          headline={consultantDetails?.headline}
+          workExperiences={userDetails?.workExperiences}
+          planTypeLabel="Subscription"
+          planTitle={planData?.data?.title || "Monthly Plan"}
+        />
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
@@ -745,228 +675,68 @@ export default function SubscriptionCheckoutPage({
         />
       </div>
       <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
-        <Card className="rounded-2xl border-border shadow-elevation-1">
-          <CardHeader>
-            <CardTitle className="text-foreground">
-              Subscription Pricing
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-3">
-              <div className="flex items-center justify-between">
-                <div className="text-muted-foreground">Monthly Fee</div>
-                <div className="font-medium">
-                  {formatPrice(planData?.data?.price || 100)}
-                </div>
-              </div>
-              <Separator className="bg-border" />
-              <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Includes
-                </div>
-                <ul className="space-y-1.5 text-sm text-foreground">
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>
-                      {planData?.data?.totalSessions ||
-                        (planData?.data?.sessionsPerWeek || 1) *
-                          (planData?.data?.durationInMonths || 1) *
-                          4}{" "}
-                      total sessions (
-                      {planData?.data?.totalHours ||
-                        (planData?.data?.sessionsPerWeek || 1) *
-                          (planData?.data?.durationInMonths || 1) *
-                          4 *
-                          (planData?.data?.sessionDurationInHours || 1)}{" "}
-                      hours)
-                    </span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>
-                      {planData?.data?.sessionsPerWeek || 1} sessions per week
-                    </span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>
-                      {planData?.data?.sessionDurationInHours || 1} hour
-                      sessions
-                    </span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>
-                      {planData?.data?.emailSupport || "General"} email support
-                    </span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>Learning materials</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-            <Separator className="bg-border" />
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Subtotal</div>
-                <div>{formatPrice(pricing.subtotal)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.discountAmount > 0 && (
-                <div className="flex items-center justify-between text-green-600">
-                  <div>
-                    Discount{" "}
-                    {pricing.discountPercent > 0 &&
-                      `(${formatPercentage(pricing.discountPercent)})`}
-                  </div>
-                  <div>-{formatPrice(pricing.discountAmount)}</div>
-                </div>
-              )}
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              {/* #1775 C-6 — plans are paid at purchase; the 48 h promise. */}
-              <p className="text-xs text-muted-foreground">
-                You pay {formatPrice(pricing.total)} now ·{" "}
-                {planData?.data?.consultantProfile?.user?.name ?? "Your expert"}{" "}
-                schedules your first week within 48 h or you&apos;re refunded in
-                full.
-              </p>
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border shadow-elevation-1">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base text-foreground">
-              Payment Method
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Select your preferred payment method
+        <CheckoutPricingBreakdown
+          title="Subscription Pricing"
+          feeLabel="Monthly Fee"
+          feeAmountPaise={planData?.data?.price || 100}
+          includes={[
+            `${
+              planData?.data?.totalSessions ||
+              (planData?.data?.sessionsPerWeek || 1) *
+                (planData?.data?.durationInMonths || 1) *
+                4
+            } total sessions (${
+              planData?.data?.totalHours ||
+              (planData?.data?.sessionsPerWeek || 1) *
+                (planData?.data?.durationInMonths || 1) *
+                4 *
+                (planData?.data?.sessionDurationInHours || 1)
+            } hours)`,
+            `${planData?.data?.sessionsPerWeek || 1} sessions per week`,
+            `${planData?.data?.sessionDurationInHours || 1} hour sessions`,
+            `${planData?.data?.emailSupport || "General"} email support`,
+            "Learning materials",
+          ]}
+          pricing={pricing}
+          formatPrice={formatPrice}
+          selectedOrganizationId={selectedOrganizationId}
+          afterTotalNotice={
+            <p className="text-xs text-muted-foreground">
+              You pay {formatPrice(pricing.total)} now ·{" "}
+              {planData?.data?.consultantProfile?.user?.name ?? "Your expert"}{" "}
+              schedules your first week within 48 h or you&apos;re refunded in
+              full.
             </p>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="divide-y divide-border">
-              {paymentGateways.map((gateway) => (
-                <div
-                  key={gateway.gateway}
-                  className="flex flex-wrap items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0"
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/50">
-                      <CreditCardIcon className="w-5 h-5 text-muted-foreground" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-sm text-foreground">
-                        {gateway.name}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {gateway.isActive ? (
-                    <div className="flex gap-2">
-                      {effectiveSearchParams?.schedulingPeriodStartsAt &&
-                      gateway.gateway === "RAZORPAY" ? (
-                        <RazorpayCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "RAZORPAY",
-                            schedulingPeriodStartsAt:
-                              effectiveSearchParams.schedulingPeriodStartsAt,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                          onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : effectiveSearchParams?.schedulingPeriodStartsAt &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "STRIPE",
-                            schedulingPeriodStartsAt:
-                              effectiveSearchParams.schedulingPeriodStartsAt,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : null}
-                      {process.env.NODE_ENV === "development" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
-                          }
-                        >
-                          {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                              Processing...
-                            </>
-                          ) : (
-                            `Mock Pay (${gateway.name})`
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                      Coming Soon
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
-              <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-              <span>
-                256-bit SSL encrypted checkout. Additional international
-                gateways coming soon.
-              </span>
-            </div>
-          </CardContent>
-        </Card>
+          }
+        />
+        <CheckoutPaymentMethodsCard
+          buildCheckoutData={(gateway) =>
+            effectiveSearchParams?.schedulingPeriodStartsAt
+              ? createCheckoutData({
+                  appointmentType: "SUBSCRIPTION",
+                  planId: planData?.data?.id || "",
+                  paymentGateway: gateway,
+                  schedulingPeriodStartsAt:
+                    effectiveSearchParams.schedulingPeriodStartsAt,
+                  discountCode: appliedDiscount?.code,
+                  displayCurrency: currency,
+                  useReferralCredits: selectedOrganizationId
+                    ? false
+                    : useReferralCredits,
+                  organizationId: selectedOrganizationId ?? undefined,
+                  ...billingState.bodyField,
+                })
+              : null
+          }
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={razorpayHandlers.onPaymentError}
+          onStripeSuccess={stripeHandlers.onPaymentSuccess}
+          onStripeError={stripeHandlers.onPaymentError}
+          onMockPay={(gateway) => handleCheckout(gateway, true)}
+          isCheckoutProcessing={isCheckoutProcessing}
+          processingGateway={processingGateway}
+          isMaintenanceBlocked={isMaintenanceBlocked}
+        />
       </div>
     </div>
   );

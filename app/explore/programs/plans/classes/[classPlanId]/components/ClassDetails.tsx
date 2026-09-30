@@ -16,13 +16,63 @@ import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
+import type { ICollaboratorInfo } from "../../../types";
 import type { TClassPlanDetailsData } from "../types";
 
 interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
 }
 
-export function ClassDetails({ plan }: ClassDetailsProps) {
+function isVerifiedCollaborator(collab: ICollaboratorInfo): boolean {
+  const profile = collab.consultantProfile as {
+    id: string;
+    verificationStatus?: string;
+  };
+  return Boolean(profile.id && profile.verificationStatus === "VERIFIED");
+}
+
+function CollaboratorItem({ collab }: Readonly<{ collab: ICollaboratorInfo }>) {
+  const verified = isVerifiedCollaborator(collab);
+  const content = (
+    <>
+      <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
+        <Image
+          src={collab.consultantProfile.user.image ?? "/placeholder-user.jpg"}
+          alt={collab.consultantProfile.user.name ?? "Co-instructor"}
+          fill
+          className="object-cover"
+        />
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-foreground">
+          {collab.consultantProfile.user.name}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {formatRole(collab.role)}
+        </p>
+      </div>
+    </>
+  );
+
+  if (verified) {
+    return (
+      <Link
+        href={`/explore/experts/${collab.consultantProfile.id}`}
+        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-3 rounded-lg p-2 -mx-2">
+      {content}
+    </div>
+  );
+}
+
+export function ClassDetails({ plan }: Readonly<ClassDetailsProps>) {
   const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
@@ -37,6 +87,13 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
         hostUserId,
       }),
     [plan, userTimeZone, hostUserId],
+  );
+
+  const durationLabel = `${plan.durationInMonths} ${plan.durationInMonths === 1 ? "month" : "months"}`;
+  const weeklyLabel = `${plan.sessionsPerWeek} ${plan.sessionsPerWeek === 1 ? "session/week" : "sessions/week"}`;
+  const instructor = plan.consultantProfile;
+  const isVerifiedInstructor = Boolean(
+    instructor?.id && instructor.verificationStatus === "VERIFIED",
   );
 
   return (
@@ -77,7 +134,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 {formatPrice(plan.price)}
               </span>
               <span className="text-white/60">•</span>
-              <span>{plan.durationInMonths} months</span>
+              <span>{durationLabel}</span>
             </div>
           </div>
         </div>
@@ -98,12 +155,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <FeatureItem
                 icon={<Calendar className="h-5 w-5" />}
                 label="Duration"
-                value={`${plan.durationInMonths} months`}
+                value={durationLabel}
               />
               <FeatureItem
                 icon={<Clock className="h-5 w-5" />}
                 label="Weekly"
-                value={`${plan.sessionsPerWeek} sessions`}
+                value={weeklyLabel}
               />
               <FeatureItem
                 icon={<Users className="h-5 w-5" />}
@@ -128,6 +185,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               whatsIncluded={plan.whatsIncluded}
               curriculum={plan.classContents}
               curriculumHeading="Course content"
+              brochure={{ planId: plan.id, planType: "classes" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
               faqs={plan.faqs}
@@ -157,50 +215,53 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <ClientClassRegistration
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
-                consultantUserId={plan.consultantProfile?.user?.id}
+                consultantUserId={instructor?.user?.id}
                 batch={cards.find((c) => c.canEnrol) ?? cards[0]}
               />
 
               {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Your Instructor</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border">
-                      <Image
-                        src={
-                          plan.consultantProfile?.user?.image ??
-                          "/placeholder-user.jpg"
-                        }
-                        alt={plan.consultantProfile?.user?.name ?? "Instructor"}
-                        fill
-                        className="object-cover"
-                      />
+              {instructor && (
+                <Card className="border-border shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg">Your Instructor</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border">
+                        <Image
+                          src={
+                            instructor.user?.image ?? "/placeholder-user.jpg"
+                          }
+                          alt={instructor.user?.name ?? "Instructor"}
+                          fill
+                          className="object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-foreground">
+                          {instructor.user?.name}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          Expert Instructor
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-foreground">
-                        {plan.consultantProfile?.user?.name}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Expert Instructor
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    An experienced professional dedicated to sharing knowledge
-                    and expertise.
-                  </p>
-                  <Link
-                    href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
-                  >
-                    View Full Profile
-                    <ArrowLeft className="w-4 h-4 rotate-180" />
-                  </Link>
-                </CardContent>
-              </Card>
+                    <p className="text-sm text-muted-foreground">
+                      An experienced professional dedicated to sharing knowledge
+                      and expertise.
+                    </p>
+                    {isVerifiedInstructor && (
+                      <Link
+                        href={`/explore/experts/${instructor.id}`}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                      >
+                        View Full Profile
+                        <ArrowLeft className="w-4 h-4 rotate-180" />
+                      </Link>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
@@ -213,34 +274,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {plan.collaborators.map((collab) => (
-                      <Link
-                        key={collab.id}
-                        href={`/explore/experts/${collab.consultantProfile.id}`}
-                        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
-                      >
-                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
-                          <Image
-                            src={
-                              collab.consultantProfile.user.image ??
-                              "/placeholder-user.jpg"
-                            }
-                            alt={
-                              collab.consultantProfile.user.name ??
-                              "Co-instructor"
-                            }
-                            fill
-                            className="object-cover"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {collab.consultantProfile.user.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatRole(collab.role)}
-                          </p>
-                        </div>
-                      </Link>
+                      <CollaboratorItem key={collab.id} collab={collab} />
                     ))}
                   </CardContent>
                 </Card>

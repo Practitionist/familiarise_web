@@ -30,6 +30,35 @@ export function ConsultationDetails({
   const { formatPrice } = useCurrency();
   const consultant = plan.consultantProfile;
   const expertName = consultant?.user?.name ?? "This expert";
+  const isVerifiedConsultant = Boolean(
+    consultant?.id && consultant.verificationStatus === "VERIFIED",
+  );
+  const expertBookingHref = isVerifiedConsultant
+    ? `/explore/experts/${consultant!.id}?action=book`
+    : "/explore/experts";
+
+  const expertCardContent = consultant ? (
+    <>
+      <div className="relative w-11 h-11 flex-shrink-0">
+        <Image
+          src={consultant.user?.image ?? "/placeholder-user.jpg"}
+          alt={expertName}
+          fill
+          className="rounded-xl object-cover"
+        />
+      </div>
+      <div className="min-w-0">
+        <p className="font-medium text-sm text-foreground group-hover:underline truncate">
+          {expertName}
+        </p>
+        {consultant.headline && (
+          <p className="text-xs text-muted-foreground truncate">
+            {consultant.headline}
+          </p>
+        )}
+      </div>
+    </>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -92,6 +121,7 @@ export function ConsultationDetails({
               learningOutcomes={plan.learningOutcomes}
               targetAudience={plan.targetAudience}
               whatsIncluded={plan.whatsIncluded}
+              brochure={{ planId: plan.id, planType: "consultations" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
               faqs={plan.faqs}
@@ -120,9 +150,7 @@ export function ConsultationDetails({
                 {/* Slot selection lives on the expert page, which owns the
                     availability calendar; this deep-links straight to it. */}
                 <Button asChild className="w-full h-11">
-                  <Link href={`/explore/experts/${consultant?.id}?action=book`}>
-                    Pick a slot
-                  </Link>
+                  <Link href={expertBookingHref}>Pick a slot</Link>
                 </Button>
 
                 {consultant && (
@@ -130,29 +158,18 @@ export function ConsultationDetails({
                     <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">
                       Your expert
                     </p>
-                    <Link
-                      href={`/explore/experts/${consultant.id}`}
-                      className="flex items-center gap-3 group"
-                    >
-                      <div className="relative w-11 h-11 flex-shrink-0">
-                        <Image
-                          src={consultant.user?.image ?? "/placeholder-user.jpg"}
-                          alt={expertName}
-                          fill
-                          className="rounded-xl object-cover"
-                        />
+                    {isVerifiedConsultant ? (
+                      <Link
+                        href={`/explore/experts/${consultant.id}`}
+                        className="flex items-center gap-3 group"
+                      >
+                        {expertCardContent}
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        {expertCardContent}
                       </div>
-                      <div className="min-w-0">
-                        <p className="font-medium text-sm text-foreground group-hover:underline truncate">
-                          {expertName}
-                        </p>
-                        {consultant.headline && (
-                          <p className="text-xs text-muted-foreground truncate">
-                            {consultant.headline}
-                          </p>
-                        )}
-                      </div>
-                    </Link>
+                    )}
                   </div>
                 )}
               </CardContent>

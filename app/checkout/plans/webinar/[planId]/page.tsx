@@ -1,9 +1,7 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
@@ -19,30 +17,29 @@ import {
   webinarSearchParamsSchema,
   type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
-import { Check, CreditCard as CreditCardIcon, Lock } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
-  paymentGateways,
   reportPaymentsError,
 } from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
+import { calculatePricing } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import {
+  CheckoutConsultantHeader,
+  CheckoutErrorState,
+  CheckoutPaymentMethodsCard,
+  CheckoutPricingBreakdown,
+} from "@/app/checkout/components/CheckoutSharedSections";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -550,41 +547,7 @@ export default function WebinarCheckoutPage({
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)] bg-muted/40 p-4">
-        <div
-          className="rounded-2xl border border-border bg-card p-8 shadow-elevation-2 text-card-foreground max-w-md w-full text-center"
-          role="alert"
-        >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
-            <svg
-              className="h-6 w-6 text-destructive"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
-              />
-            </svg>
-          </div>
-          <p className="font-semibold text-lg mb-2 text-foreground">
-            Unable to load checkout
-          </p>
-          <p className="text-muted-foreground text-sm">{error}</p>
-          <Button
-            variant="outline"
-            onClick={() => window.history.back()}
-            className="mt-5"
-          >
-            Go back
-          </Button>
-        </div>
-      </div>
-    );
+    return <CheckoutErrorState error={error} />;
   }
 
   const planDetails = planData?.data;
@@ -623,49 +586,16 @@ export default function WebinarCheckoutPage({
   return (
     <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar className="w-12 h-12 border shrink-0">
-              <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
-              />
-              <AvatarFallback>
-                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">
-                {userDetails?.name || "Consultant Name"}
-              </div>
-              <div className="text-sm text-muted-foreground truncate">
-                {consultantDetails?.headline ||
-                  consultantDetails?.domain?.name ||
-                  "Consultant"}
-              </div>
-              {userDetails?.workExperiences &&
-                userDetails.workExperiences.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
-                        key={`checkout-webinar-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={20}
-                        className="border-border"
-                      />
-                    ))}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="text-right min-w-0">
-            <div className="font-semibold">Webinar</div>
-            <div className="text-sm text-muted-foreground truncate">
-              {planDetails?.title || "Online Session"}
-            </div>
-          </div>
-        </div>
+        <CheckoutConsultantHeader
+          name={userDetails?.name}
+          image={userDetails?.image}
+          headline={
+            consultantDetails?.headline || consultantDetails?.domain?.name
+          }
+          workExperiences={userDetails?.workExperiences}
+          planTypeLabel="Webinar"
+          planTitle={planDetails?.title || "Online Session"}
+        />
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Webinar Details</div>
@@ -809,201 +739,56 @@ export default function WebinarCheckoutPage({
         />
       </div>
       <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
-        <Card className="rounded-2xl border-border shadow-elevation-1">
-          <CardHeader>
-            <CardTitle className="text-foreground">Webinar Pricing</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-3">
-              <div className="flex items-center justify-between">
-                <div className="text-muted-foreground">Registration Fee</div>
-                <div className="font-medium">
-                  {formatPrice(planDetails?.price || 0)}
-                </div>
-              </div>
-              <Separator className="bg-border" />
-              <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Includes
-                </div>
-                <ul className="space-y-1.5 text-sm text-foreground">
-                  {[
-                    "Live webinar access",
-                    "Q&A session",
-                    "Recording access",
-                    "Certificate of attendance",
-                  ].map((item) => (
-                    <li key={item} className="flex items-center gap-2">
-                      <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-            <Separator className="bg-border" />
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Subtotal</div>
-                <div>{formatPrice(pricing.subtotal)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.discountAmount > 0 && (
-                <div className="flex items-center justify-between text-green-600">
-                  <div>
-                    Discount{" "}
-                    {pricing.discountPercent > 0 &&
-                      `(${formatPercentage(pricing.discountPercent)})`}
-                  </div>
-                  <div>-{formatPrice(pricing.discountAmount)}</div>
-                </div>
-              )}
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              {/* #1780 D-6 — the host's free-cancellation window. */}
-              <FreeCancellationLine
-                startsAt={nextSession?.startsAt}
-                windowHours={planDetails?.refundWindowHours}
-                className="text-xs text-muted-foreground"
-              />
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border shadow-elevation-1">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base text-foreground">
-              Payment Method
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Select your preferred payment method
-            </p>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="divide-y divide-border">
-              {paymentGateways.map((gateway) => (
-                <div
-                  key={gateway.name}
-                  className="flex flex-wrap items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0"
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/50">
-                      <CreditCardIcon className="w-5 h-5 text-muted-foreground" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-sm text-foreground">
-                        {gateway.name}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {isSoldOut ? (
-                    <Button variant="outline" disabled>
-                      Sold out
-                    </Button>
-                  ) : gateway.isActive ? (
-                    <div className="flex gap-2">
-                      {validatedSearchParams &&
-                      gateway.gateway === "RAZORPAY" ? (
-                        <RazorpayCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
-                            planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
-                            paymentGateway: "RAZORPAY",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                          onPaymentError={razorpayHandlers.onPaymentError}
-                          onBeforeCheckout={revalidateSeatsBeforePayment}
-                          disabled={isMaintenanceBlocked || isSoldOut}
-                        />
-                      ) : validatedSearchParams &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
-                            planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
-                            paymentGateway: "STRIPE",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
-                          onBeforeCheckout={revalidateSeatsBeforePayment}
-                          disabled={isMaintenanceBlocked || isSoldOut}
-                        />
-                      ) : null}
-                      {process.env.NODE_ENV === "development" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
-                          }
-                        >
-                          {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                              Processing...
-                            </>
-                          ) : (
-                            `Mock Pay (${gateway.name})`
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                      Coming Soon
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
-              <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-              <span>
-                256-bit SSL encrypted checkout. Additional international
-                gateways coming soon.
-              </span>
-            </div>
-          </CardContent>
-        </Card>
+        <CheckoutPricingBreakdown
+          title="Webinar Pricing"
+          feeLabel="Registration Fee"
+          feeAmountPaise={planDetails?.price || 0}
+          includes={[
+            "Live webinar access",
+            "Q&A session",
+            "Recording access",
+            "Certificate of attendance",
+          ]}
+          pricing={pricing}
+          formatPrice={formatPrice}
+          selectedOrganizationId={selectedOrganizationId}
+          afterTotalNotice={
+            <FreeCancellationLine
+              startsAt={nextSession?.startsAt}
+              windowHours={planDetails?.refundWindowHours}
+              className="text-xs text-muted-foreground"
+            />
+          }
+        />
+        <CheckoutPaymentMethodsCard
+          buildCheckoutData={(gateway) =>
+            validatedSearchParams
+              ? createCheckoutData({
+                  appointmentType: "WEBINAR",
+                  planId: planDetails.id,
+                  eventId: validatedSearchParams.eventId,
+                  paymentGateway: gateway,
+                  discountCode: appliedDiscount?.code,
+                  displayCurrency: currency,
+                  useReferralCredits: selectedOrganizationId
+                    ? false
+                    : useReferralCredits,
+                  organizationId: selectedOrganizationId ?? undefined,
+                  ...billingState.bodyField,
+                })
+              : null
+          }
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={razorpayHandlers.onPaymentError}
+          onStripeSuccess={stripeHandlers.onPaymentSuccess}
+          onStripeError={stripeHandlers.onPaymentError}
+          onMockPay={(gateway) => handleCheckout(gateway, true)}
+          isCheckoutProcessing={isCheckoutProcessing}
+          processingGateway={processingGateway}
+          isMaintenanceBlocked={isMaintenanceBlocked}
+          isSoldOut={isSoldOut}
+          onBeforeCheckout={revalidateSeatsBeforePayment}
+        />
       </div>
     </div>
   );

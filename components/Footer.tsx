@@ -83,7 +83,7 @@ interface FooterLink {
   external?: boolean;
 }
 
-// Mirrors the Navbar's IA (Explore / Solutions / Enterprise / Company / Legal).
+// Mirrors the Navbar's IA (Explore / Solutions / Enterprise / Company).
 // Users who miss something in the nav look for it in the footer, so the two
 // disagreeing costs clicks.
 const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
@@ -117,7 +117,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
         label: "Corporate mentorship",
         href: "/enterprise/corporate-mentorship",
       },
-      { label: "Talk to sales", href: "/contactus" },
+      { label: "Talk to sales", href: "/contactus?subject=enterprise" },
     ],
   },
   {
@@ -129,15 +129,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "Blog", href: "/blog" },
       { label: "Pricing", href: "/pricing" },
       { label: "How it works", href: "/#how-it-works" },
-      { label: "Become an expert", href: "/become-an-expert", external: true },
-    ],
-  },
-  {
-    heading: "Legal",
-    links: [
-      { label: "Terms of Service", href: "/terms" },
-      { label: "Privacy Policy", href: "/privacy" },
-      { label: "Refund Policy", href: "/refund" },
+      { label: "Become an expert", href: "/become-an-expert" },
     ],
   },
 ];
@@ -288,13 +280,7 @@ const Footer: React.FC = () => {
             )}
 
             <p className="text-sm text-zinc-400 mt-4">
-              No spam, unsubscribe anytime.{" "}
-              <Link
-                href="/privacy"
-                className="underline hover:text-white transition-colors"
-              >
-                Privacy Policy
-              </Link>
+              We respect your privacy. Unsubscribe at any time.
             </p>
           </div>
         </div>
@@ -302,7 +288,7 @@ const Footer: React.FC = () => {
 
       {/* Main Footer Content */}
       <div className="container mx-auto px-4 md:px-6 py-16 md:py-20 relative z-10">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-8 lg:gap-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-10">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-block mb-6">
@@ -390,19 +376,13 @@ const Footer: React.FC = () => {
               href="/privacy"
               className="hover:text-white transition-colors"
             >
-              Privacy
+              Privacy Policy
             </Link>
             <Link href="/terms" className="hover:text-white transition-colors">
-              Terms
+              Terms of Service
             </Link>
             <Link href="/refund" className="hover:text-white transition-colors">
-              Refunds
-            </Link>
-            <Link
-              href="/support"
-              className="hover:text-white transition-colors"
-            >
-              Support
+              Refund Policy
             </Link>
           </div>
         </div>

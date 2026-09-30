@@ -234,8 +234,11 @@ export function HeroSection({
                   </div>
                 </div>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  Available
+                  <span
+                    aria-hidden="true"
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+                  />
+                  <span>Available</span>
                 </span>
               </div>
 

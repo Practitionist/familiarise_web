@@ -55,48 +55,73 @@ export function isSelectableDay(state: DayState): boolean {
 
 export type DayBookingKind = "instant" | "request" | null;
 
+type AllocatedSlot = TIntervalTiming & { isAllocated: boolean };
+
+function deriveWindowStatus(overlapping: readonly AllocatedSlot[]): {
+  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  isAllocated: boolean;
+} {
+  if (overlapping.length === 0) {
+    return { bookingStatus: "available", isAllocated: false };
+  }
+
+  const isAllocated = overlapping.some((s) => s.isAllocated);
+  if (overlapping.every((s) => s.bookingStatus === "fully-booked")) {
+    return { bookingStatus: "fully-booked", isAllocated };
+  }
+
+  const hasBookedSubSlot = overlapping.some(
+    (s) =>
+      s.bookingStatus === "fully-booked" ||
+      s.bookingStatus === "partially-booked",
+  );
+  return {
+    bookingStatus: hasBookedSubSlot ? "partially-booked" : "available",
+    isAllocated,
+  };
+}
+
+function coalesceAdjacentSpans(
+  slots: readonly AllocatedSlot[],
+): Array<{ startMs: number; endMs: number }> {
+  const sorted = slots
+    .map((s) => ({
+      startMs: new Date(s.startsAt).getTime(),
+      endMs: new Date(s.endsAt).getTime(),
+    }))
+    .sort((a, b) => a.startMs - b.startMs);
+
+  return sorted.reduce<Array<{ startMs: number; endMs: number }>>(
+    (acc, span) => {
+      const prev = acc.at(-1);
+      if (prev && prev.endMs === span.startMs) {
+        prev.endMs = span.endMs;
+      } else {
+        acc.push({ ...span });
+      }
+      return acc;
+    },
+    [],
+  );
+}
+
 function buildDurationWindowsForMarks(
-  apiSlots: readonly (TIntervalTiming & { isAllocated: boolean })[],
+  apiSlots: readonly AllocatedSlot[],
   durationInHours: number,
 ): Array<DayMarkSlot & { isAllocated: boolean }> {
   if (!apiSlots || apiSlots.length === 0) return [];
-  const sortedSlots = [...apiSlots].sort(
-    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-  );
 
-  // Merge consecutive unallocated slots so multi-hour consultations can span adjacent rows
-  const mergedSlots: Array<TIntervalTiming & { isAllocated: boolean }> = [];
-  let currentMerged = { ...sortedSlots[0] };
-  for (let i = 1; i < sortedSlots.length; i++) {
-    const currentSlot = sortedSlots[i];
-    const currentMergedEnd = new Date(currentMerged.endsAt).getTime();
-    const nextSlotStart = new Date(currentSlot.startsAt).getTime();
-    if (
-      currentMergedEnd === nextSlotStart &&
-      !currentMerged.isAllocated &&
-      !currentSlot.isAllocated
-    ) {
-      currentMerged = {
-        ...currentMerged,
-        endsAt: currentSlot.endsAt,
-      };
-    } else {
-      mergedSlots.push(currentMerged);
-      currentMerged = { ...currentSlot };
-    }
-  }
-  mergedSlots.push(currentMerged);
-
+  const mergedSpans = coalesceAdjacentSpans(apiSlots);
   const slidingIntervalMillis = 30 * 60 * 1000;
   const durationInMillis = durationInHours * 60 * 60 * 1000;
   const result: Array<DayMarkSlot & { isAllocated: boolean }> = [];
 
-  for (const slot of mergedSlots) {
-    const slotStart = new Date(slot.startsAt).getTime();
-    const slotEnd = new Date(slot.endsAt).getTime();
-
-    let windowStart = slotStart;
-    while (windowStart + durationInMillis <= slotEnd) {
+  for (const span of mergedSpans) {
+    for (
+      let windowStart = span.startMs;
+      windowStart + durationInMillis <= span.endMs;
+      windowStart += slidingIntervalMillis
+    ) {
       const windowEnd = windowStart + durationInMillis;
       const overlapping = apiSlots.filter((s) => {
         const sStart = new Date(s.startsAt).getTime();
@@ -104,44 +129,32 @@ function buildDurationWindowsForMarks(
         return sStart < windowEnd && sEnd > windowStart;
       });
 
-      let windowStatus: "available" | "partially-booked" | "fully-booked" =
-        "available";
-      let windowAllocated = false;
-
-      if (overlapping.length > 0) {
-        const hasFullyBooked = overlapping.some(
-          (s) => s.bookingStatus === "fully-booked",
-        );
-        const hasPartiallyBooked = overlapping.some(
-          (s) => s.bookingStatus === "partially-booked",
-        );
-        windowAllocated = overlapping.some((s) => s.isAllocated);
-
-        if (overlapping.every((s) => s.bookingStatus === "fully-booked")) {
-          windowStatus = "fully-booked";
-        } else if (hasFullyBooked || hasPartiallyBooked) {
-          windowStatus = "partially-booked";
-        }
-      }
-
+      const { bookingStatus, isAllocated } = deriveWindowStatus(overlapping);
       result.push({
         startsAt: new Date(windowStart).toISOString(),
-        bookingStatus: windowStatus,
-        isAllocated: windowAllocated,
+        bookingStatus,
+        isAllocated,
       });
-
-      windowStart += slidingIntervalMillis;
     }
   }
 
   return result;
 }
 
+function resolveDayBookingKind(
+  hasInstantWindow: boolean,
+  hasActionableWindows: boolean,
+): DayBookingKind {
+  if (hasInstantWindow) return "instant";
+  if (hasActionableWindows) return "request";
+  return null;
+}
+
 /** Match the date's mark and booking path to the duration windows in the picker. */
 export function durationDayMark(
   date: Date,
   now: Date,
-  daySlots: (TIntervalTiming & { isAllocated: boolean })[] | null,
+  daySlots: AllocatedSlot[] | null,
   durationInHours: number,
   _timezone: string,
   bookingMode: BookingMode,
@@ -176,10 +189,6 @@ export function durationDayMark(
 
   return {
     state: dayState(date, now, actionableWindows),
-    kind: hasInstantWindow
-      ? "instant"
-      : actionableWindows.length > 0
-        ? "request"
-        : null,
+    kind: resolveDayBookingKind(hasInstantWindow, actionableWindows.length > 0),
   };
 }

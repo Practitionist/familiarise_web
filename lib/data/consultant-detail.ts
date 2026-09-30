@@ -1,7 +1,10 @@
 import { cache } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import {
+  eventPlanDiscoverableWhere,
+  oneOnOnePlanDiscoverableWhere,
+} from "@/lib/api/plans/visibility";
 import type { TReviewTrackPresence } from "@/types/review";
 import {
   publicReviewSelect,
@@ -107,8 +110,8 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
           },
         },
       },
-      webinarPlans: true,
-      classPlans: true,
+      webinarPlans: { where: eventPlanDiscoverableWhere() },
+      classPlans: { where: eventPlanDiscoverableWhere() },
     },
   });
   if (!consultant) return null;

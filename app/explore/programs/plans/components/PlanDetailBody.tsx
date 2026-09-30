@@ -1,5 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PlanBrochureDownload } from "@/components/plans/PlanBrochureDownload";
+import type { BrochurePlanType } from "@/lib/pdf/plan-brochure-data";
 import {
   CurriculumOutline,
   PlanFaqAccordion,
@@ -33,6 +35,7 @@ export interface PlanDetailBodyProps {
   materialProvided?: string | null;
   faqs?: PlanFaqItem[] | null;
   topics?: { id: string; name: string }[];
+  brochure?: { planId: string; planType: BrochurePlanType };
 }
 
 function SectionCard({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -40,6 +43,38 @@ function SectionCard({ children }: Readonly<{ children: React.ReactNode }>) {
     <Card className="border-border shadow-sm">
       <CardContent className="p-6 md:p-8">{children}</CardContent>
     </Card>
+  );
+}
+
+function BrochureCallout({
+  brochure,
+  hasCurriculum,
+}: Readonly<{
+  brochure: { planId: string; planType: BrochurePlanType };
+  hasCurriculum: boolean;
+}>) {
+  return (
+    <div
+      className={
+        hasCurriculum
+          ? "mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5"
+          : "flex flex-wrap items-center justify-between gap-4"
+      }
+    >
+      <div className="min-w-0 max-w-sm">
+        <p className="text-sm font-medium text-foreground">
+          {hasCurriculum
+            ? "Take the curriculum with you"
+            : "Download plan brochure"}
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {hasCurriculum
+            ? "Save the curriculum and plan overview as a PDF for later or share it with someone helping you decide."
+            : "Save the full plan details as a PDF for later or share it with someone helping you decide."}
+        </p>
+      </div>
+      <PlanBrochureDownload {...brochure} />
+    </div>
   );
 }
 
@@ -55,13 +90,15 @@ export function PlanDetailBody({
   materialProvided,
   faqs,
   topics,
+  brochure,
 }: Readonly<PlanDetailBodyProps>) {
   // "None" is the historical default on prerequisites/materialProvided, so it
   // means "nothing to say" rather than a value worth giving a card to.
-  const hasPrerequisites = prerequisites && prerequisites !== "None";
-  const hasMaterials = materialProvided && materialProvided !== "None";
+  const hasPrerequisites = Boolean(prerequisites && prerequisites !== "None");
+  const hasMaterials = Boolean(materialProvided && materialProvided !== "None");
   const hasPositioning =
     (targetAudience?.length ?? 0) > 0 || (whatsIncluded?.length ?? 0) > 0;
+  const hasCurriculum = (curriculum?.length ?? 0) > 0;
 
   return (
     <>
@@ -104,9 +141,18 @@ export function PlanDetailBody({
         </SectionCard>
       )}
 
-      {(curriculum?.length ?? 0) > 0 && (
+      {hasCurriculum && (
         <SectionCard>
           <CurriculumOutline items={curriculum} title={curriculumHeading} />
+          {brochure && (
+            <BrochureCallout brochure={brochure} hasCurriculum={true} />
+          )}
+        </SectionCard>
+      )}
+
+      {!hasCurriculum && brochure && (
+        <SectionCard>
+          <BrochureCallout brochure={brochure} hasCurriculum={false} />
         </SectionCard>
       )}
 

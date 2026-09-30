@@ -32,6 +32,35 @@ export function SubscriptionDetails({
   const { formatPrice } = useCurrency();
   const consultant = plan.consultantProfile;
   const mentorName = consultant?.user?.name ?? "This expert";
+  const isVerifiedConsultant = Boolean(
+    consultant?.id && consultant.verificationStatus === "VERIFIED",
+  );
+  const subscribeHref = isVerifiedConsultant
+    ? `/explore/experts/${consultant!.id}?action=subscribe&plan=${plan.id}`
+    : "/explore/experts";
+
+  const mentorCardContent = consultant ? (
+    <>
+      <div className="relative w-11 h-11 flex-shrink-0">
+        <Image
+          src={consultant.user?.image ?? "/placeholder-user.jpg"}
+          alt={mentorName}
+          fill
+          className="rounded-xl object-cover"
+        />
+      </div>
+      <div className="min-w-0">
+        <p className="font-medium text-sm text-foreground group-hover:underline truncate">
+          {mentorName}
+        </p>
+        {consultant.headline && (
+          <p className="text-xs text-muted-foreground truncate">
+            {consultant.headline}
+          </p>
+        )}
+      </div>
+    </>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -96,6 +125,7 @@ export function SubscriptionDetails({
               whatsIncluded={plan.whatsIncluded}
               curriculum={plan.subscriptionContents}
               curriculumHeading="Your roadmap"
+              brochure={{ planId: plan.id, planType: "subscriptions" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
               faqs={plan.faqs}
@@ -140,15 +170,7 @@ export function SubscriptionDetails({
                 </div>
 
                 <Button asChild className="w-full h-11">
-                  <Link
-                    href={
-                      consultant?.id
-                        ? `/explore/experts/${consultant.id}?action=subscribe&plan=${plan.id}`
-                        : "/explore/experts"
-                    }
-                  >
-                    Subscribe
-                  </Link>
+                  <Link href={subscribeHref}>Subscribe</Link>
                 </Button>
 
                 {consultant && (
@@ -156,29 +178,18 @@ export function SubscriptionDetails({
                     <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">
                       Your mentor
                     </p>
-                    <Link
-                      href={`/explore/experts/${consultant.id}`}
-                      className="flex items-center gap-3 group"
-                    >
-                      <div className="relative w-11 h-11 flex-shrink-0">
-                        <Image
-                          src={consultant.user?.image ?? "/placeholder-user.jpg"}
-                          alt={mentorName}
-                          fill
-                          className="rounded-xl object-cover"
-                        />
+                    {isVerifiedConsultant ? (
+                      <Link
+                        href={`/explore/experts/${consultant.id}`}
+                        className="flex items-center gap-3 group"
+                      >
+                        {mentorCardContent}
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        {mentorCardContent}
                       </div>
-                      <div className="min-w-0">
-                        <p className="font-medium text-sm text-foreground group-hover:underline truncate">
-                          {mentorName}
-                        </p>
-                        {consultant.headline && (
-                          <p className="text-xs text-muted-foreground truncate">
-                            {consultant.headline}
-                          </p>
-                        )}
-                      </div>
-                    </Link>
+                    )}
                   </div>
                 )}
               </CardContent>

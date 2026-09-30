@@ -12,10 +12,10 @@ import type { IConsultantCardData } from "@/types/consultant";
 function ExpertCard({
   expert,
   index,
-}: {
+}: Readonly<{
   expert: IConsultantCardData;
   index: number;
-}) {
+}>) {
   const companies =
     expert.user.workExperiences
       ?.map((w) => w.company)
@@ -126,7 +126,7 @@ interface FeaturedExpertsSectionProps {
 export function FeaturedExpertsSection({
   experts,
   isLoading,
-}: FeaturedExpertsSectionProps) {
+}: Readonly<FeaturedExpertsSectionProps>) {
   const displayExperts = experts.slice(0, 8);
 
   return (

@@ -787,11 +787,11 @@ const Navbar = () => {
           />
 
           {/* Drawer */}
-          <div
-            role="dialog"
+          <dialog
+            open
             aria-modal="true"
             aria-label="Mobile navigation"
-            className="lg:hidden fixed left-0 w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl flex flex-col safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300"
+            className="lg:hidden fixed left-0 m-0 border-0 p-0 max-h-none w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl flex flex-col safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300"
             style={{
               top: "var(--maintenance-banner-height, 0px)",
               height: "calc(100dvh - var(--maintenance-banner-height, 0px))",
@@ -1004,7 +1004,7 @@ const Navbar = () => {
                 </div>
               )}
             </div>
-          </div>
+          </dialog>
         </>
       )}
     </>

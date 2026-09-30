@@ -10,10 +10,10 @@ import { TRUST_BADGES } from "./data";
 function TestimonialCard({
   review,
   index,
-}: {
+}: Readonly<{
   review: TPublicConsultantReview;
   index: number;
-}) {
+}>) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -71,7 +71,7 @@ interface TestimonialsSectionProps {
 export function TestimonialsSection({
   reviews,
   isLoading,
-}: TestimonialsSectionProps) {
+}: Readonly<TestimonialsSectionProps>) {
   // Deduplicate by id and take up to 6 unique reviews for a clean static grid
   const uniqueReviews = reviews.slice(0, 6);
   const featuredReview = uniqueReviews[0];

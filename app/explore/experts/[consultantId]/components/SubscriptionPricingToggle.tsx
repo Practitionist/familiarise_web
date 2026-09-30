@@ -3,6 +3,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { BookingSteps } from "@/components/booking/BookingSteps";
 import { BookingSummary } from "@/components/booking/BookingSummary";
+import { PlanBrochureDownload } from "@/components/plans/PlanBrochureDownload";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -72,6 +73,431 @@ interface SubscriptionPricingToggleProps {
   bookingRequest?: number;
 }
 
+interface TrialEligibilityState {
+  isEligible: boolean;
+  reason?: string;
+  isLoading: boolean;
+}
+
+const WEEKDAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] as const;
+const EMPTY_CELL_OFFSETS = [0, 1, 2, 3, 4, 5] as const;
+
+function getStartCalendarCellClass(
+  isSelected: boolean,
+  isPast: boolean,
+): string {
+  if (isSelected) {
+    return "bg-primary font-semibold text-primary-foreground shadow-sm";
+  }
+  if (isPast) {
+    return "opacity-40 text-muted-foreground";
+  }
+  return "text-foreground hover:bg-muted font-medium";
+}
+
+function getTrialButtonLabel(
+  isLoading: boolean,
+  isEligible: boolean,
+  trialCtaPrice: string,
+  trialDurationMinutes: number,
+): string {
+  if (isLoading) {
+    return "Checking trial eligibility…";
+  }
+  if (isEligible) {
+    return `Request a trial (${trialCtaPrice}, ${trialDurationMinutes} min)`;
+  }
+  return "Trial already requested";
+}
+
+async function fetchTrialEligibility(
+  userId: string,
+  consultantProfileId: string | undefined,
+  subscriptionPlanId: string,
+): Promise<TrialEligibilityState> {
+  try {
+    const profileResponse = await fetch(
+      `/api/profiles/consultee?userId=${userId}`,
+    );
+    if (!profileResponse.ok) {
+      return {
+        isEligible: false,
+        reason: "Could not verify profile",
+        isLoading: false,
+      };
+    }
+    const { data: consulteeProfile } = await profileResponse.json();
+    if (!consulteeProfile?.id) {
+      return { isEligible: true, isLoading: false };
+    }
+
+    const eligibilityResponse = await fetch(
+      `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`,
+    );
+    if (!eligibilityResponse.ok) {
+      return { isEligible: true, isLoading: false };
+    }
+
+    const { data } = await eligibilityResponse.json();
+    return {
+      isEligible: data.isEligible,
+      reason: data.reason,
+      isLoading: false,
+    };
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "client" } },
+    );
+    console.error("Error checking trial eligibility:", error);
+    return { isEligible: true, isLoading: false };
+  }
+}
+
+function useTrialEligibility(
+  userId: string | undefined,
+  consultantProfileId: string | undefined,
+  selectedPlanDetails: SubscriptionPlanDetails | null | undefined,
+): TrialEligibilityState {
+  const [trialEligibility, setTrialEligibility] =
+    useState<TrialEligibilityState>({
+      isEligible: true,
+      isLoading: false,
+    });
+
+  useEffect(() => {
+    if (
+      !userId ||
+      !selectedPlanDetails?.id ||
+      !selectedPlanDetails?.trialEnabled
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setTrialEligibility((prev) => ({ ...prev, isLoading: true }));
+
+    void fetchTrialEligibility(
+      userId,
+      consultantProfileId,
+      selectedPlanDetails.id,
+    ).then((nextState) => {
+      if (!cancelled) {
+        setTrialEligibility(nextState);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    userId,
+    selectedPlanDetails?.id,
+    selectedPlanDetails?.trialEnabled,
+    consultantProfileId,
+  ]);
+
+  return trialEligibility;
+}
+
+interface StartCalendarGridProps {
+  calendarMonth: Date;
+  schedulingStartDate: Date | null;
+  onSelectDate: (date: Date) => void;
+}
+
+function StartCalendarGrid({
+  calendarMonth,
+  schedulingStartDate,
+  onSelectDate,
+}: Readonly<StartCalendarGridProps>) {
+  const year = calendarMonth.getFullYear();
+  const month = calendarMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+  const today = startOfDay(new Date());
+  const dayNumbers = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
+
+  return (
+    <div className="grid grid-cols-7 gap-1">
+      {EMPTY_CELL_OFFSETS.slice(0, adjustedFirstDay).map((offset) => (
+        <div
+          key={`empty-${year}-${month}-${offset}`}
+          className="aspect-square w-full max-w-10"
+        />
+      ))}
+      {dayNumbers.map((day) => {
+        const date = new Date(year, month, day);
+        const isPast = startOfDay(date) < today;
+        const isSelected =
+          schedulingStartDate !== null && isSameDay(date, schedulingStartDate);
+        const isToday = isSameDay(date, today);
+
+        return (
+          <button
+            key={day}
+            type="button"
+            disabled={isPast}
+            aria-pressed={isSelected}
+            aria-label={format(date, "MMMM d, yyyy")}
+            className={cn(
+              "relative flex aspect-square w-full max-w-10 items-center justify-center rounded-full text-sm transition-colors",
+              getStartCalendarCellClass(isSelected, isPast),
+            )}
+            onClick={() => onSelectDate(date)}
+          >
+            {day}
+            {isToday && (
+              <span
+                aria-hidden="true"
+                className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface SubscriptionStartDateStepProps {
+  consultantId: string;
+  calendarMonth: Date;
+  schedulingStartDate: Date | null;
+  timezone: string;
+  onChangeCalendarMonth: (month: Date) => void;
+  onChangeSchedulingStartDate: (date: Date | null) => void;
+}
+
+function SubscriptionStartDateStep({
+  consultantId,
+  calendarMonth,
+  schedulingStartDate,
+  timezone,
+  onChangeCalendarMonth,
+  onChangeSchedulingStartDate,
+}: Readonly<SubscriptionStartDateStepProps>) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-border bg-muted/40 p-4">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <span className="font-semibold text-foreground">
+            {calendarMonth.toLocaleString("default", {
+              month: "long",
+              year: "numeric",
+            })}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                onChangeSchedulingStartDate(now);
+                onChangeCalendarMonth(
+                  new Date(now.getFullYear(), now.getMonth(), 1),
+                );
+              }}
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous month"
+              onClick={() =>
+                onChangeCalendarMonth(
+                  new Date(
+                    calendarMonth.getFullYear(),
+                    calendarMonth.getMonth() - 1,
+                    1,
+                  ),
+                )
+              }
+            >
+              &lt;
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Next month"
+              onClick={() =>
+                onChangeCalendarMonth(
+                  new Date(
+                    calendarMonth.getFullYear(),
+                    calendarMonth.getMonth() + 1,
+                    1,
+                  ),
+                )
+              }
+            >
+              &gt;
+            </Button>
+          </div>
+        </div>
+        <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
+          {WEEKDAY_LABELS.map((day) => (
+            <span key={day}>{day}</span>
+          ))}
+        </div>
+        <StartCalendarGrid
+          calendarMonth={calendarMonth}
+          schedulingStartDate={schedulingStartDate}
+          onSelectDate={onChangeSchedulingStartDate}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label
+          htmlFor={`subscription-start-${consultantId}`}
+          className="flex items-center gap-2 text-sm font-medium text-foreground"
+        >
+          <CalendarIcon className="h-4 w-4" />
+          Start date
+        </label>
+        <input
+          id={`subscription-start-${consultantId}`}
+          type="date"
+          value={
+            schedulingStartDate ? format(schedulingStartDate, "yyyy-MM-dd") : ""
+          }
+          min={format(new Date(), "yyyy-MM-dd")}
+          className="h-11 w-full rounded-xl border border-input bg-background px-4 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onChange={(event) => {
+            const [y, m, d] = event.target.value.split("-").map(Number);
+            if (event.target.value) {
+              const next = new Date(y, m - 1, d);
+              onChangeSchedulingStartDate(next);
+              onChangeCalendarMonth(new Date(y, m - 1, 1));
+            } else {
+              onChangeSchedulingStartDate(null);
+            }
+          }}
+        />
+        <p className="text-xs text-muted-foreground">Time zone: {timezone}</p>
+      </div>
+    </div>
+  );
+}
+
+interface SubscriptionOptionDetailsProps {
+  selectedOption: PricingOption;
+  selectedPlanDetails: SubscriptionPlanDetails | null | undefined;
+  monthsCount: number;
+  perMonthFormatted: string | null;
+  trialCtaPrice: string;
+  trialEligibility: TrialEligibilityState;
+  onChoosePlan: () => void;
+  onRequestTrial: () => void;
+}
+
+function SubscriptionOptionDetails({
+  selectedOption,
+  selectedPlanDetails,
+  monthsCount,
+  perMonthFormatted,
+  trialCtaPrice,
+  trialEligibility,
+  onChoosePlan,
+  onRequestTrial,
+}: Readonly<SubscriptionOptionDetailsProps>) {
+  return (
+    <>
+      <div>
+        <h3 className="text-lg font-semibold text-foreground">
+          {selectedOption.title}
+        </h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {selectedOption.description}
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-4xl font-semibold tracking-tight text-foreground break-all">
+            {formatCurrencyAmount(
+              selectedOption.price,
+              selectedOption.priceCurrency || "INR",
+            )}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            / {monthsCount > 1 ? `${monthsCount} months total` : "month"}
+          </span>
+        </div>
+        {monthsCount > 1 && perMonthFormatted && (
+          <p className="text-xs font-medium text-muted-foreground">
+            Equivalent to {perMonthFormatted} / month
+          </p>
+        )}
+      </div>
+
+      {!!selectedOption.features?.length && (
+        <ul className="space-y-2.5 text-sm text-foreground">
+          {selectedOption.features.map((feature) => (
+            <li key={feature} className="flex items-start gap-2">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              {feature}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-2.5">
+        <Button
+          className="h-12 w-full rounded-xl font-semibold"
+          onClick={onChoosePlan}
+        >
+          Choose a start date
+        </Button>
+
+        {selectedPlanDetails?.trialEnabled && (
+          <>
+            <Button
+              variant="outline"
+              className="h-auto min-h-11 w-full whitespace-normal rounded-xl"
+              disabled={
+                !trialEligibility.isEligible || trialEligibility.isLoading
+              }
+              onClick={onRequestTrial}
+            >
+              <Gift className="mr-2 h-4 w-4 shrink-0 text-emerald-600" />
+              {getTrialButtonLabel(
+                trialEligibility.isLoading,
+                trialEligibility.isEligible,
+                trialCtaPrice,
+                selectedPlanDetails.trialDurationMinutes ?? 0,
+              )}
+            </Button>
+            {!trialEligibility.isEligible && trialEligibility.reason && (
+              <p className="text-xs text-muted-foreground">
+                {trialEligibility.reason}
+              </p>
+            )}
+          </>
+        )}
+
+        <Button asChild variant="ghost" className="h-11 w-full rounded-xl">
+          <Link
+            href={`/explore/programs/plans/subscriptions/${selectedOption.id}`}
+          >
+            <BookOpen className="mr-2 h-4 w-4" />
+            Read plan details
+          </Link>
+        </Button>
+        <PlanBrochureDownload
+          planId={selectedOption.id}
+          planType="subscriptions"
+          className="w-full justify-center"
+        />
+      </div>
+    </>
+  );
+}
+
 export default function SubscriptionPricingToggle({
   subscriptionOptions,
   handleSubscriptionBooking,
@@ -108,11 +534,6 @@ export default function SubscriptionPricingToggle({
     trialPriceInPaise: number;
     priceCurrency: string;
   } | null>(null);
-  const [trialEligibility, setTrialEligibility] = useState<{
-    isEligible: boolean;
-    reason?: string;
-    isLoading: boolean;
-  }>({ isEligible: true, isLoading: false });
 
   useEffect(() => {
     if (bookingRequest > previousBookingRequest.current) {
@@ -146,69 +567,11 @@ export default function SubscriptionPricingToggle({
       : "Free";
   }, [selectedPlanDetails]);
 
-  // Check trial eligibility when plan changes
-  useEffect(() => {
-    const checkEligibility = async () => {
-      if (
-        !session?.user?.id ||
-        !selectedPlanDetails?.id ||
-        !selectedPlanDetails?.trialEnabled
-      ) {
-        return;
-      }
-
-      setTrialEligibility((prev) => ({ ...prev, isLoading: true }));
-
-      try {
-        const profileResponse = await fetch(
-          `/api/profiles/consultee?userId=${session.user.id}`,
-        );
-        if (!profileResponse.ok) {
-          setTrialEligibility({
-            isEligible: false,
-            reason: "Could not verify profile",
-            isLoading: false,
-          });
-          return;
-        }
-        const { data: consulteeProfile } = await profileResponse.json();
-
-        if (!consulteeProfile?.id) {
-          setTrialEligibility({ isEligible: true, isLoading: false });
-          return;
-        }
-
-        const eligibilityResponse = await fetch(
-          `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantDetails?.id}&subscriptionPlanId=${selectedPlanDetails.id}`,
-        );
-
-        if (eligibilityResponse.ok) {
-          const { data } = await eligibilityResponse.json();
-          setTrialEligibility({
-            isEligible: data.isEligible,
-            reason: data.reason,
-            isLoading: false,
-          });
-        } else {
-          setTrialEligibility({ isEligible: true, isLoading: false });
-        }
-      } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "client" } },
-        );
-        console.error("Error checking trial eligibility:", error);
-        setTrialEligibility({ isEligible: true, isLoading: false });
-      }
-    };
-
-    checkEligibility();
-  }, [
+  const trialEligibility = useTrialEligibility(
     session?.user?.id,
-    selectedPlanDetails?.id,
-    selectedPlanDetails?.trialEnabled,
     consultantDetails?.id,
-  ]);
+    selectedPlanDetails,
+  );
 
   // Auto-open trial modal when navigated with ?action=trial
   useEffect(() => {
@@ -270,6 +633,28 @@ export default function SubscriptionPricingToggle({
     setIsDialogOpen(true);
   };
 
+  const handleRequestTrial = () => {
+    if (!selectedPlanDetails) return;
+    if (!trialEligibility.isEligible) {
+      toast({
+        title: "Not Eligible",
+        description:
+          trialEligibility.reason ||
+          "You have already requested a trial with this consultant",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSelectedTrialPlan({
+      id: selectedPlanDetails.id,
+      title: selectedPlanDetails.title,
+      trialDurationMinutes: selectedPlanDetails.trialDurationMinutes ?? 0,
+      trialPriceInPaise: selectedPlanDetails.trialPriceInPaise ?? 0,
+      priceCurrency: selectedPlanDetails.priceCurrency ?? "INR",
+    });
+    setIsTrialModalOpen(true);
+  };
+
   const handleContinueToCheckout = () => {
     if (
       !validation.valid ||
@@ -292,69 +677,6 @@ export default function SubscriptionPricingToggle({
 
     setIsDialogOpen(false);
   };
-
-  const renderStartCalendar = useCallback(() => {
-    const daysInMonth = new Date(
-      calendarMonth.getFullYear(),
-      calendarMonth.getMonth() + 1,
-      0,
-    ).getDate();
-    const firstDayOfMonth = new Date(
-      calendarMonth.getFullYear(),
-      calendarMonth.getMonth(),
-      1,
-    ).getDay();
-    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-    const today = startOfDay(new Date());
-    const cells: JSX.Element[] = [];
-
-    for (let i = 0; i < adjustedFirstDay; i++) {
-      cells.push(
-        <div key={`empty-${i}`} className="aspect-square w-full max-w-10" />,
-      );
-    }
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(
-        calendarMonth.getFullYear(),
-        calendarMonth.getMonth(),
-        day,
-      );
-      const isPast = startOfDay(date) < today;
-      const isSelected =
-        schedulingStartDate !== null && isSameDay(date, schedulingStartDate);
-      const isToday = isSameDay(date, today);
-
-      cells.push(
-        <button
-          key={day}
-          type="button"
-          disabled={isPast}
-          aria-pressed={isSelected}
-          aria-label={format(date, "MMMM d, yyyy")}
-          className={cn(
-            "relative flex aspect-square w-full max-w-10 items-center justify-center rounded-full text-sm transition-colors",
-            isSelected
-              ? "bg-primary font-semibold text-primary-foreground shadow-sm"
-              : isPast
-                ? "opacity-40 text-muted-foreground"
-                : "text-foreground hover:bg-muted font-medium",
-          )}
-          onClick={() => setSchedulingStartDate(date)}
-        >
-          {day}
-          {isToday && (
-            <span
-              aria-hidden="true"
-              className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
-            />
-          )}
-        </button>,
-      );
-    }
-
-    return cells;
-  }, [calendarMonth, schedulingStartDate]);
 
   if (subscriptionOptions.length === 0) {
     return (
@@ -414,111 +736,16 @@ export default function SubscriptionPricingToggle({
       </Tabs>
 
       {selectedOption && (
-        <>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              {selectedOption.title}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {selectedOption.description}
-            </p>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <span className="text-4xl font-semibold tracking-tight text-foreground break-all">
-                {formatCurrencyAmount(
-                  selectedOption.price,
-                  selectedOption.priceCurrency || "INR",
-                )}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                / {monthsCount > 1 ? `${monthsCount} months total` : "month"}
-              </span>
-            </div>
-            {monthsCount > 1 && perMonthFormatted && (
-              <p className="text-xs font-medium text-muted-foreground">
-                Equivalent to {perMonthFormatted} / month
-              </p>
-            )}
-          </div>
-
-          {!!selectedOption.features?.length && (
-            <ul className="space-y-2.5 text-sm text-foreground">
-              {selectedOption.features.map((feature, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className="space-y-2.5">
-            <Button
-              className="h-12 w-full rounded-xl font-semibold"
-              onClick={handleChoosePlan}
-            >
-              Choose a start date
-            </Button>
-
-            {selectedPlanDetails?.trialEnabled && (
-              <>
-                <Button
-                  variant="outline"
-                  className="h-auto min-h-11 w-full whitespace-normal rounded-xl"
-                  disabled={
-                    !trialEligibility.isEligible || trialEligibility.isLoading
-                  }
-                  onClick={() => {
-                    if (!trialEligibility.isEligible) {
-                      toast({
-                        title: "Not Eligible",
-                        description:
-                          trialEligibility.reason ||
-                          "You have already requested a trial with this consultant",
-                        variant: "destructive",
-                      });
-                      return;
-                    }
-                    setSelectedTrialPlan({
-                      id: selectedPlanDetails.id,
-                      title: selectedPlanDetails.title,
-                      trialDurationMinutes:
-                        selectedPlanDetails.trialDurationMinutes ?? 0,
-                      trialPriceInPaise:
-                        selectedPlanDetails.trialPriceInPaise ?? 0,
-                      priceCurrency:
-                        selectedPlanDetails.priceCurrency ?? "INR",
-                    });
-                    setIsTrialModalOpen(true);
-                  }}
-                >
-                  <Gift className="mr-2 h-4 w-4 shrink-0 text-emerald-600" />
-                  {trialEligibility.isLoading
-                    ? "Checking trial eligibility…"
-                    : trialEligibility.isEligible
-                      ? `Request a trial (${trialCtaPrice}, ${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
-                      : "Trial already requested"}
-                </Button>
-                {!trialEligibility.isEligible && trialEligibility.reason && (
-                  <p className="text-xs text-muted-foreground">
-                    {trialEligibility.reason}
-                  </p>
-                )}
-              </>
-            )}
-
-            <Button asChild variant="ghost" className="h-11 w-full rounded-xl">
-              <Link
-                href={`/explore/programs/plans/subscriptions/${selectedOption.id}`}
-              >
-                <BookOpen className="mr-2 h-4 w-4" />
-                Read plan details
-              </Link>
-            </Button>
-          </div>
-        </>
+        <SubscriptionOptionDetails
+          selectedOption={selectedOption}
+          selectedPlanDetails={selectedPlanDetails}
+          monthsCount={monthsCount}
+          perMonthFormatted={perMonthFormatted}
+          trialCtaPrice={trialCtaPrice}
+          trialEligibility={trialEligibility}
+          onChoosePlan={handleChoosePlan}
+          onRequestTrial={handleRequestTrial}
+        />
       )}
 
       {/* Guided Start-Date & Review Dialog */}
@@ -546,114 +773,14 @@ export default function SubscriptionPricingToggle({
 
           <div className="space-y-5 p-6">
             {step === 0 ? (
-              <div className="space-y-4">
-                {/* Interactive month calendar */}
-                <div className="rounded-2xl border border-border bg-muted/40 p-4">
-                  <div className="mb-4 flex items-center justify-between gap-2">
-                    <span className="font-semibold text-foreground">
-                      {calendarMonth.toLocaleString("default", {
-                        month: "long",
-                        year: "numeric",
-                      })}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          const now = new Date();
-                          setSchedulingStartDate(now);
-                          setCalendarMonth(
-                            new Date(now.getFullYear(), now.getMonth(), 1),
-                          );
-                        }}
-                      >
-                        Today
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Previous month"
-                        onClick={() =>
-                          setCalendarMonth(
-                            new Date(
-                              calendarMonth.getFullYear(),
-                              calendarMonth.getMonth() - 1,
-                              1,
-                            ),
-                          )
-                        }
-                      >
-                        &lt;
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Next month"
-                        onClick={() =>
-                          setCalendarMonth(
-                            new Date(
-                              calendarMonth.getFullYear(),
-                              calendarMonth.getMonth() + 1,
-                              1,
-                            ),
-                          )
-                        }
-                      >
-                        &gt;
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
-                    {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => (
-                      <span key={day}>{day}</span>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-7 gap-1">
-                    {renderStartCalendar()}
-                  </div>
-                </div>
-
-                {/* Accessible date input fallback */}
-                <div className="space-y-2">
-                  <label
-                    htmlFor={`subscription-start-${consultantDetails.id}`}
-                    className="flex items-center gap-2 text-sm font-medium text-foreground"
-                  >
-                    <CalendarIcon className="h-4 w-4" />
-                    Start date
-                  </label>
-                  <input
-                    id={`subscription-start-${consultantDetails.id}`}
-                    type="date"
-                    value={
-                      schedulingStartDate
-                        ? format(schedulingStartDate, "yyyy-MM-dd")
-                        : ""
-                    }
-                    min={format(new Date(), "yyyy-MM-dd")}
-                    className="h-11 w-full rounded-xl border border-input bg-background px-4 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onChange={(event) => {
-                      const [y, m, d] = event.target.value
-                        .split("-")
-                        .map(Number);
-                      if (event.target.value) {
-                        const next = new Date(y, m - 1, d);
-                        setSchedulingStartDate(next);
-                        setCalendarMonth(new Date(y, m - 1, 1));
-                      } else {
-                        setSchedulingStartDate(null);
-                      }
-                    }}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Time zone: {timezone}
-                  </p>
-                </div>
-              </div>
+              <SubscriptionStartDateStep
+                consultantId={consultantDetails.id}
+                calendarMonth={calendarMonth}
+                schedulingStartDate={schedulingStartDate}
+                timezone={timezone}
+                onChangeCalendarMonth={setCalendarMonth}
+                onChangeSchedulingStartDate={setSchedulingStartDate}
+              />
             ) : (
               selectedOption && (
                 <BookingSummary

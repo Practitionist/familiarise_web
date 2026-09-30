@@ -8,6 +8,7 @@ import {
 import { BookingSteps } from "@/components/booking/BookingSteps";
 import { BookingSummary } from "@/components/booking/BookingSummary";
 import { CalendarIcon } from "@/assets/icons";
+import { PlanBrochureDownload } from "@/components/plans/PlanBrochureDownload";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -80,116 +81,473 @@ interface ConsultationPricingToggleProps {
   bookingRequest?: number;
 }
 
-export default function ConsultationPricingToggle({
-  consultationOptions,
-  handleConsultationBooking,
-  selectedDate,
-  setSelectedDate,
+const WEEKDAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] as const;
+
+function resolveInitialConsultationOption(
+  initialPlanId: string | null | undefined,
+  options: readonly PricingOption[],
+): string {
+  if (initialPlanId && options.some((o) => o.id === initialPlanId)) {
+    return initialPlanId;
+  }
+  return options[0]?.id ?? "";
+}
+
+function buildAvailableSlots(
+  slotTimings: readonly TIntervalTiming[] | undefined,
+  selectedDuration: number,
+  timezone: string,
+  selectedDate: Date | null,
+): SlotWithStatus[] {
+  if (
+    !slotTimings ||
+    slotTimings.length === 0 ||
+    !timezone ||
+    !selectedDate
+  ) {
+    return [];
+  }
+
+  const slotsWithAllocation = slotTimings.map((slot) => ({
+    ...slot,
+    isAllocated: slot.isAllocated || false,
+    bookingStatus: (slot.bookingStatus || "available") as
+      | "available"
+      | "partially-booked"
+      | "fully-booked",
+  }));
+
+  const brokenDownSlots = breakDownSlotsPreservingStatus(
+    slotsWithAllocation,
+    selectedDuration,
+    timezone,
+  );
+
+  const now = Date.now();
+  return brokenDownSlots.map((slot) => ({
+    ...slot,
+    _isPast:
+      new Date(slot.startsAt).getTime() < now + MINIMUM_BOOKING_LEAD_TIME_MS,
+  }));
+}
+
+function hasSlotMetadataDrifted(
+  currentSlot: SlotWithStatus,
+  selectedSlot: TIntervalTiming,
+): boolean {
+  return (
+    currentSlot.isAllocated !== selectedSlot.isAllocated ||
+    currentSlot.bookingStatus !== selectedSlot.bookingStatus ||
+    currentSlot.availabilityWindowId !== selectedSlot.availabilityWindowId ||
+    currentSlot.type !== selectedSlot.type
+  );
+}
+
+function isNonConsulteeRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  return ["consultant", "staff"].includes(role.toLowerCase());
+}
+
+function buildApprovalRequestBody(
+  consultantProfileId: string,
+  planId: string,
+  slot: TIntervalTiming,
+) {
+  const requestBody: {
+    consultantProfileId: string;
+    startsAt: string;
+    endsAt: string;
+    consultationPlanId: string;
+    availabilityWindowWeeklyId?: string;
+    availabilityWindowCustomId?: string;
+  } = {
+    consultantProfileId,
+    startsAt: slot.startsAt,
+    endsAt: slot.endsAt,
+    consultationPlanId: planId,
+  };
+
+  if (slot.type === "WEEKLY") {
+    requestBody.availabilityWindowWeeklyId = slot.availabilityWindowId;
+  } else {
+    requestBody.availabilityWindowCustomId = slot.availabilityWindowId;
+  }
+
+  return requestBody;
+}
+
+function SlotSectionContent({
+  slotsLoading,
+  slotsError,
+  availableSlots,
+  selectedSlot,
+  bookingMode,
+  onSelectSlot,
+}: Readonly<{
+  slotsLoading: boolean;
+  slotsError: boolean;
+  availableSlots: SlotWithStatus[];
+  selectedSlot: TIntervalTiming | null;
+  bookingMode: BookingMode;
+  onSelectSlot: (slot: SlotWithStatus) => void;
+}>) {
+  if (slotsLoading) {
+    return (
+      <output className="block py-6 text-sm text-muted-foreground">
+        Checking available times…
+      </output>
+    );
+  }
+
+  if (slotsError) {
+    return (
+      <p role="alert" className="py-6 text-sm text-destructive">
+        Couldn&apos;t load times. Refresh to try again.
+      </p>
+    );
+  }
+
+  return (
+    <SlotList
+      slots={availableSlots}
+      selectedSlot={selectedSlot as SlotWithStatus | null}
+      onSelect={onSelectSlot}
+      bookingMode={bookingMode}
+    />
+  );
+}
+
+function ConsultationDateAndTimePicker({
+  step,
   currentDate,
   setCurrentDate,
-  renderCalendar,
-  slotTimings,
-  selectedSlot,
-  setSelectedSlot,
+  selectedDate,
+  selectedDuration,
   timezone,
-  consultantDetails,
+  renderCalendar,
+  onBookToday,
   onRefreshSlots,
-  slotsLoading = false,
-  slotsError = false,
-  initialPlanId,
-  bookingRequest = 0,
-}: Readonly<ConsultationPricingToggleProps>) {
-  const { data: session } = useSession();
-  const router = useRouter();
-  const { toast } = useToast();
-  const { formatPrice } = useCurrency();
-  // Track the active plan by id so plans that share a duration (e.g. two
-  // 1-hour consultations) remain independently selectable and bookable.
-  const [activeConsultationOption, setActiveConsultationOption] =
-    useState<string>(() =>
-      initialPlanId && consultationOptions.some((o) => o.id === initialPlanId)
-        ? initialPlanId
-        : (consultationOptions[0]?.id ?? ""),
+  isRefreshing,
+  setIsRefreshing,
+  slotsLoading,
+  slotsError,
+  availableSlots,
+  selectedSlot,
+  bookingMode,
+  onSelectSlot,
+}: Readonly<{
+  step: number;
+  currentDate: Date;
+  setCurrentDate: (date: Date) => void;
+  selectedDate: Date | null;
+  selectedDuration: number;
+  timezone: string;
+  renderCalendar: (durationInHours: number) => JSX.Element[];
+  onBookToday: () => void;
+  onRefreshSlots?: () => void;
+  isRefreshing: boolean;
+  setIsRefreshing: (value: boolean) => void;
+  slotsLoading: boolean;
+  slotsError: boolean;
+  availableSlots: SlotWithStatus[];
+  selectedSlot: TIntervalTiming | null;
+  bookingMode: BookingMode;
+  onSelectSlot: (slot: SlotWithStatus) => void;
+}>) {
+  return (
+    <div className="grid gap-6 p-6 md:grid-cols-2">
+      <section
+        className={cn(step !== 0 && "hidden md:block")}
+        aria-label="Choose a date"
+      >
+        <h3 className="mb-4 flex items-center gap-2 font-semibold text-foreground">
+          <CalendarIcon className="h-4 w-4" />
+          Choose a date
+        </h3>
+        <div className="rounded-2xl border border-border bg-muted/40 p-4">
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <span className="font-semibold text-foreground">
+              {currentDate.toLocaleString("default", {
+                month: "long",
+                year: "numeric",
+              })}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onBookToday}
+              >
+                Today
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Previous month"
+                onClick={() =>
+                  setCurrentDate(
+                    new Date(
+                      currentDate.getFullYear(),
+                      currentDate.getMonth() - 1,
+                      1,
+                    ),
+                  )
+                }
+              >
+                &lt;
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Next month"
+                onClick={() =>
+                  setCurrentDate(
+                    new Date(
+                      currentDate.getFullYear(),
+                      currentDate.getMonth() + 1,
+                      1,
+                    ),
+                  )
+                }
+              >
+                &gt;
+              </Button>
+            </div>
+          </div>
+          <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
+            {WEEKDAY_LABELS.map((day) => (
+              <span key={day}>{day}</span>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {renderCalendar(selectedDuration)}
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Outlined days have available times for a {selectedDuration}-hour
+          session. Times shown in {timezone}.
+        </p>
+      </section>
+
+      <section
+        className={cn(step !== 1 && "hidden md:block")}
+        aria-label="Choose a time"
+      >
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 font-semibold text-foreground">
+            <ClockIcon className="h-4 w-4" />
+            Choose a time
+          </h3>
+          {onRefreshSlots && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh slot availability"
+              disabled={isRefreshing}
+              onClick={async () => {
+                setIsRefreshing(true);
+                try {
+                  await onRefreshSlots();
+                } finally {
+                  setIsRefreshing(false);
+                }
+              }}
+            >
+              <RefreshCw
+                className={cn("h-4 w-4", isRefreshing && "animate-spin")}
+              />
+            </Button>
+          )}
+        </div>
+        {selectedDate && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            {formatInTimeZone(selectedDate, timezone, "EEEE, MMMM d")}
+          </p>
+        )}
+        <div
+          className="max-h-80 space-y-2 overflow-y-auto"
+          aria-busy={slotsLoading}
+        >
+          <SlotSectionContent
+            slotsLoading={slotsLoading}
+            slotsError={slotsError}
+            availableSlots={availableSlots}
+            selectedSlot={selectedSlot}
+            bookingMode={bookingMode}
+            onSelectSlot={onSelectSlot}
+          />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConsultationReviewStep({
+  activePlanOption,
+  formattedPrice,
+  currentSlot,
+  timezone,
+  paused,
+  ctaHint,
+}: Readonly<{
+  activePlanOption: PricingOption;
+  formattedPrice: string;
+  currentSlot: SlotWithStatus | undefined;
+  timezone: string;
+  paused: boolean;
+  ctaHint?: string | null;
+}>) {
+  return (
+    <div className="p-6">
+      <BookingSummary
+        title={activePlanOption.description || activePlanOption.title}
+        price={formattedPrice}
+        unit="/ session"
+      >
+        {currentSlot && (
+          <p className="font-medium text-foreground">
+            {formatInTimeZone(
+              new Date(currentSlot.startsAt),
+              timezone,
+              "EEEE, MMMM d, yyyy",
+            )}
+            <br />
+            {formatInTimeZone(
+              new Date(currentSlot.startsAt),
+              timezone,
+              "h:mm a",
+            )}{" "}
+            –{" "}
+            {formatInTimeZone(new Date(currentSlot.endsAt), timezone, "h:mm a")}
+          </p>
+        )}
+        <p>Time zone: {timezone}</p>
+        <p>{activePlanOption.duration} consultation</p>
+        {(paused || ctaHint) && (
+          <p>{paused ? CONSULTANT_PAUSED_HINT : ctaHint}</p>
+        )}
+      </BookingSummary>
+    </div>
+  );
+}
+
+function ConsultationDialogFooterActions({
+  step,
+  selectedDate,
+  slotsLoading,
+  slotsError,
+  currentSlot,
+  paused,
+  isRequestingApproval,
+  ctaLabel,
+  setStep,
+  onConfirmStepTwo,
+}: Readonly<{
+  step: number;
+  selectedDate: Date | null;
+  slotsLoading: boolean;
+  slotsError: boolean;
+  currentSlot: SlotWithStatus | undefined;
+  paused: boolean;
+  isRequestingApproval: boolean;
+  ctaLabel: string;
+  setStep: (step: number) => void;
+  onConfirmStepTwo: () => void;
+}>) {
+  if (step === 0) {
+    return (
+      <>
+        <Button
+          className="md:hidden"
+          disabled={!selectedDate || slotsLoading || slotsError}
+          onClick={() => setStep(1)}
+        >
+          Choose time
+        </Button>
+        <Button
+          className="hidden md:inline-flex"
+          disabled={!currentSlot}
+          onClick={() => setStep(2)}
+        >
+          Review booking
+        </Button>
+      </>
     );
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const returnFocus = useRef<HTMLElement | null>(null);
-  const previousBookingRequest = useRef(bookingRequest);
-  const [step, setStep] = useState(0);
-  const [selectionNotice, setSelectionNotice] = useState("");
+  }
+
+  if (step === 1) {
+    return (
+      <Button disabled={!currentSlot} onClick={() => setStep(2)}>
+        Review booking
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      disabled={!currentSlot || paused || isRequestingApproval}
+      onClick={onConfirmStepTwo}
+    >
+      {isRequestingApproval ? "Submitting…" : ctaLabel}
+    </Button>
+  );
+}
+
+function useRestoreConsultationIntent({
+  userId,
+  consultantId,
+  consultationOptions,
+  activeConsultationOption,
+  setActiveConsultationOption,
+  selectedDate,
+  setSelectedDate,
+  setCurrentDate,
+  timezone,
+  slotsLoading,
+  slotsError,
+  availableSlots,
+  setSelectedSlot,
+  setDialogOpen,
+  setStep,
+  setSelectionNotice,
+  toast,
+}: {
+  userId: string | undefined;
+  consultantId: string;
+  consultationOptions: readonly PricingOption[];
+  activeConsultationOption: string;
+  setActiveConsultationOption: (id: string) => void;
+  selectedDate: Date | null;
+  setSelectedDate: (date: Date | null) => void;
+  setCurrentDate: (date: Date) => void;
+  timezone: string;
+  slotsLoading: boolean;
+  slotsError: boolean;
+  availableSlots: readonly SlotWithStatus[];
+  setSelectedSlot: (slot: TIntervalTiming | null) => void;
+  setDialogOpen: (open: boolean) => void;
+  setStep: (step: number) => void;
+  setSelectionNotice: (notice: string) => void;
+  toast: ReturnType<typeof useToast>["toast"];
+}) {
+  const purchaseIntentConsumedRef = useRef(false);
   const [pendingIntent, setPendingIntent] =
     useState<ReturnType<typeof consumePurchaseIntent>>(null);
 
   useEffect(() => {
-    if (bookingRequest > previousBookingRequest.current) {
-      returnFocus.current = document.activeElement as HTMLElement;
-      setStep(0);
-      setDialogOpen(true);
-    }
-    previousBookingRequest.current = bookingRequest;
-  }, [bookingRequest]);
-
-  const [isRequestingApproval, setIsRequestingApproval] = useState(false);
-  // #1778 — the window another learner holds, offered as "notify me".
-  const [heldWindow, setHeldWindow] = useState<BackupWindowRequest | null>(
-    null,
-  );
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const activePlanOption = useMemo(
-    () =>
-      consultationOptions.find((opt) => opt.id === activeConsultationOption),
-    [activeConsultationOption, consultationOptions],
-  );
-
-  const selectedDuration = activePlanOption?.durationInHours ?? 1;
-
-  const availableSlots = useMemo((): SlotWithStatus[] => {
-    if (
-      !slotTimings ||
-      slotTimings.length === 0 ||
-      !timezone ||
-      !selectedDate
-    ) {
-      return [];
-    }
-
-    const slotsWithAllocation = slotTimings.map((slot) => ({
-      ...slot,
-      isAllocated: slot.isAllocated || false,
-      bookingStatus: (slot.bookingStatus || "available") as
-        | "available"
-        | "partially-booked"
-        | "fully-booked",
-    }));
-
-    // Use breakDownSlotsPreservingStatus to create duration windows
-    // WITHOUT discarding the API-computed bookingStatus
-    const brokenDownSlots = breakDownSlotsPreservingStatus(
-      slotsWithAllocation,
-      selectedDuration,
-      timezone,
-    );
-
-    // Add client-side past-slot detection
-    const now = Date.now();
-    return brokenDownSlots.map((slot) => ({
-      ...slot,
-      _isPast:
-        new Date(slot.startsAt).getTime() < now + MINIMUM_BOOKING_LEAD_TIME_MS,
-    }));
-  }, [slotTimings, selectedDuration, timezone, selectedDate]);
-
-  // Restore the plan and day before matching against that day's fetched windows.
-  const purchaseIntentConsumedRef = useRef(false);
-  useEffect(() => {
-    if (purchaseIntentConsumedRef.current || !session?.user?.id) return;
+    if (purchaseIntentConsumedRef.current || !userId) return;
     purchaseIntentConsumedRef.current = true;
-    const intent = consumePurchaseIntent(consultantDetails.id);
+    const intent = consumePurchaseIntent(consultantId);
     if (
       !intent ||
       !consultationOptions.some((o) => o.id === intent.consultationPlanId)
-    )
+    ) {
       return;
+    }
     const date = new Date(intent.slot.startsAt);
     if (!Number.isFinite(date.getTime())) return;
     setActiveConsultationOption(intent.consultationPlanId);
@@ -199,11 +557,14 @@ export default function ConsultationPricingToggle({
     setDialogOpen(true);
     setStep(1);
   }, [
-    session?.user?.id,
-    consultantDetails.id,
+    userId,
+    consultantId,
     consultationOptions,
+    setActiveConsultationOption,
     setSelectedDate,
     setCurrentDate,
+    setDialogOpen,
+    setStep,
   ]);
 
   useEffect(() => {
@@ -213,18 +574,20 @@ export default function ConsultationPricingToggle({
       slotsError ||
       !selectedDate ||
       !timezone
-    )
+    ) {
       return;
-    if (
-      activeConsultationOption !== pendingIntent.consultationPlanId ||
-      formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd") !==
-        formatInTimeZone(
-          new Date(pendingIntent.slot.startsAt),
-          timezone,
-          "yyyy-MM-dd",
-        )
-    )
-      return;
+    }
+    const samePlan =
+      activeConsultationOption === pendingIntent.consultationPlanId;
+    const sameDay =
+      formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd") ===
+      formatInTimeZone(
+        new Date(pendingIntent.slot.startsAt),
+        timezone,
+        "yyyy-MM-dd",
+      );
+    if (!samePlan || !sameDay) return;
+
     const match = availableSlots.find(
       (slot) =>
         sameBookingWindow(slot, pendingIntent.slot) &&
@@ -252,30 +615,112 @@ export default function ConsultationPricingToggle({
     availableSlots,
     activeConsultationOption,
     setSelectedSlot,
+    setStep,
+    setSelectionNotice,
     toast,
   ]);
 
-  // A refreshed window can become booked or allocated while the dialog is open.
-  // Never retain yesterday's data during a fetch or submit a removed window.
-  const currentSlot =
-    selectedSlot && !slotsLoading && !slotsError
-      ? availableSlots.find(
-          (slot) =>
-            sameBookingWindow(slot, selectedSlot) &&
-            isCurrentBookingWindow(
-              slot,
-              Date.now(),
-              MINIMUM_BOOKING_LEAD_TIME_MS,
-            ),
-        )
-      : undefined;
+  return pendingIntent;
+}
 
-  // Use the live window's allocation, not the selection snapshot: a refresh
-  // must switch an INSTANT slot to approval before the next user interaction.
-  const cta = consultationCtaFor(
-    consultantDetails.bookingMode ?? "INSTANT",
-    currentSlot?.isAllocated ?? false,
+export default function ConsultationPricingToggle({
+  consultationOptions,
+  handleConsultationBooking,
+  selectedDate,
+  setSelectedDate,
+  currentDate,
+  setCurrentDate,
+  renderCalendar,
+  slotTimings,
+  selectedSlot,
+  setSelectedSlot,
+  timezone,
+  consultantDetails,
+  onRefreshSlots,
+  slotsLoading = false,
+  slotsError = false,
+  initialPlanId,
+  bookingRequest = 0,
+}: Readonly<ConsultationPricingToggleProps>) {
+  const { data: session } = useSession();
+  const router = useRouter();
+  const { toast } = useToast();
+  const { formatPrice } = useCurrency();
+
+  const [activeConsultationOption, setActiveConsultationOption] =
+    useState<string>(() =>
+      resolveInitialConsultationOption(initialPlanId, consultationOptions),
+    );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const previousBookingRequest = useRef(bookingRequest);
+  const [step, setStep] = useState(0);
+  const [selectionNotice, setSelectionNotice] = useState("");
+  const [isRequestingApproval, setIsRequestingApproval] = useState(false);
+  const [heldWindow, setHeldWindow] = useState<BackupWindowRequest | null>(
+    null,
   );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (bookingRequest > previousBookingRequest.current) {
+      returnFocus.current = document.activeElement as HTMLElement;
+      setStep(0);
+      setDialogOpen(true);
+    }
+    previousBookingRequest.current = bookingRequest;
+  }, [bookingRequest]);
+
+  const activePlanOption = useMemo(
+    () =>
+      consultationOptions.find((opt) => opt.id === activeConsultationOption),
+    [activeConsultationOption, consultationOptions],
+  );
+
+  const selectedDuration = activePlanOption?.durationInHours ?? 1;
+
+  const availableSlots = useMemo(
+    () =>
+      buildAvailableSlots(
+        slotTimings,
+        selectedDuration,
+        timezone,
+        selectedDate,
+      ),
+    [slotTimings, selectedDuration, timezone, selectedDate],
+  );
+
+  const pendingIntent = useRestoreConsultationIntent({
+    userId: session?.user?.id,
+    consultantId: consultantDetails.id,
+    consultationOptions,
+    activeConsultationOption,
+    setActiveConsultationOption,
+    selectedDate,
+    setSelectedDate,
+    setCurrentDate,
+    timezone,
+    slotsLoading,
+    slotsError,
+    availableSlots,
+    setSelectedSlot,
+    setDialogOpen,
+    setStep,
+    setSelectionNotice,
+    toast,
+  });
+
+  const currentSlot = useMemo(() => {
+    if (!selectedSlot || slotsLoading || slotsError) return undefined;
+    return availableSlots.find(
+      (slot) =>
+        sameBookingWindow(slot, selectedSlot) &&
+        isCurrentBookingWindow(slot, Date.now(), MINIMUM_BOOKING_LEAD_TIME_MS),
+    );
+  }, [selectedSlot, slotsLoading, slotsError, availableSlots]);
+
+  const bookingMode = consultantDetails.bookingMode ?? "INSTANT";
+  const cta = consultationCtaFor(bookingMode, currentSlot?.isAllocated ?? false);
   const paused =
     cta.action === "request" && consultantDetails.acceptingRequests === false;
 
@@ -287,10 +732,7 @@ export default function ConsultationPricingToggle({
       setSelectionNotice(
         "Availability changed. Please choose an available time.",
       );
-    } else if (
-      currentSlot.isAllocated !== selectedSlot.isAllocated ||
-      currentSlot.bookingStatus !== selectedSlot.bookingStatus
-    ) {
+    } else if (hasSlotMetadataDrifted(currentSlot, selectedSlot)) {
       setSelectedSlot(currentSlot);
     }
   }, [
@@ -323,12 +765,8 @@ export default function ConsultationPricingToggle({
         slot: {
           startsAt: selectedSlot.startsAt,
           endsAt: selectedSlot.endsAt,
-          type: (
-            selectedSlot as TIntervalTiming & { type?: "WEEKLY" | "CUSTOM" }
-          ).type,
-          availabilityWindowId: (
-            selectedSlot as TIntervalTiming & { availabilityWindowId?: string }
-          ).availabilityWindowId,
+          type: selectedSlot.type,
+          availabilityWindowId: selectedSlot.availabilityWindowId,
         },
       });
       const callbackUrl = `${window.location.pathname}${window.location.search}`;
@@ -339,8 +777,7 @@ export default function ConsultationPricingToggle({
     }
 
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan: { id: string; durationInHours: number }) =>
-        plan.id === activeConsultationOption,
+      (plan) => plan.id === activeConsultationOption,
     );
 
     if (!activePlan) {
@@ -349,35 +786,15 @@ export default function ConsultationPricingToggle({
     }
 
     setIsRequestingApproval(true);
-
     try {
-      const requestBody: {
-        consultantProfileId: string;
-        startsAt: string;
-        endsAt: string;
-        consultationPlanId: string;
-        availabilityWindowWeeklyId?: string;
-        availabilityWindowCustomId?: string;
-      } = {
-        consultantProfileId: consultantDetails.id,
-        startsAt: selectedSlot.startsAt,
-        endsAt: selectedSlot.endsAt,
-        consultationPlanId: activePlan.id,
-      };
-
-      if (selectedSlot.type === "WEEKLY") {
-        requestBody.availabilityWindowWeeklyId =
-          selectedSlot.availabilityWindowId;
-      } else {
-        requestBody.availabilityWindowCustomId =
-          selectedSlot.availabilityWindowId;
-      }
-
+      const requestBody = buildApprovalRequestBody(
+        consultantDetails.id,
+        activePlan.id,
+        selectedSlot,
+      );
       const response = await fetch("/api/scheduling/request-for-approval", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
       });
 
@@ -431,6 +848,29 @@ export default function ConsultationPricingToggle({
     setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
   };
 
+  const handleConfirmStepTwo = () => {
+    if (
+      !currentSlot ||
+      !isCurrentBookingWindow(
+        currentSlot,
+        Date.now(),
+        MINIMUM_BOOKING_LEAD_TIME_MS,
+      )
+    ) {
+      setSelectedSlot(null);
+      setStep(1);
+      setSelectionNotice(
+        "This time is no longer available. Please choose another.",
+      );
+      return;
+    }
+    if (cta.action === "request") {
+      void handleRequestForApproval();
+    } else if (activePlanOption) {
+      handleConsultationBooking(activePlanOption.id);
+    }
+  };
+
   if (consultationOptions.length === 0) {
     return (
       <div className="w-full p-8 text-center text-muted-foreground">
@@ -439,10 +879,7 @@ export default function ConsultationPricingToggle({
     );
   }
 
-  if (
-    session?.user?.role &&
-    ["consultant", "staff"].includes(session.user.role.toLowerCase())
-  ) {
+  if (isNonConsulteeRole(session?.user?.role)) {
     return (
       <div className="w-full p-8 text-center space-y-3">
         <h3 className="text-2xl font-medium tracking-tight text-foreground">
@@ -491,8 +928,8 @@ export default function ConsultationPricingToggle({
           </div>
           {!!activePlanOption.features?.length && (
             <ul className="space-y-2.5 text-sm text-foreground">
-              {activePlanOption.features.map((feature, i) => (
-                <li key={i} className="flex items-start gap-2">
+              {activePlanOption.features.map((feature) => (
+                <li key={feature} className="flex items-start gap-2">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                   {feature}
                 </li>
@@ -516,6 +953,11 @@ export default function ConsultationPricingToggle({
               Read session details
             </Link>
           </Button>
+          <PlanBrochureDownload
+            planId={activePlanOption.id}
+            planType="consultations"
+            className="w-full justify-center"
+          />
 
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogContent
@@ -552,199 +994,37 @@ export default function ConsultationPricingToggle({
               )}
 
               {step < 2 ? (
-                <div className="grid gap-6 p-6 md:grid-cols-2">
-                  <section
-                    className={cn(step !== 0 && "hidden md:block")}
-                    aria-label="Choose a date"
-                  >
-                    <h3 className="mb-4 flex items-center gap-2 font-semibold text-foreground">
-                      <CalendarIcon className="h-4 w-4" />
-                      Choose a date
-                    </h3>
-                    <div className="rounded-2xl border border-border bg-muted/40 p-4">
-                      <div className="mb-4 flex items-center justify-between gap-2">
-                        <span className="font-semibold text-foreground">
-                          {currentDate.toLocaleString("default", {
-                            month: "long",
-                            year: "numeric",
-                          })}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleBookNowClick}
-                          >
-                            Today
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Previous month"
-                            onClick={() =>
-                              setCurrentDate(
-                                new Date(
-                                  currentDate.getFullYear(),
-                                  currentDate.getMonth() - 1,
-                                  1,
-                                ),
-                              )
-                            }
-                          >
-                            &lt;
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Next month"
-                            onClick={() =>
-                              setCurrentDate(
-                                new Date(
-                                  currentDate.getFullYear(),
-                                  currentDate.getMonth() + 1,
-                                  1,
-                                ),
-                              )
-                            }
-                          >
-                            &gt;
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
-                        {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map(
-                          (day) => (
-                            <span key={day}>{day}</span>
-                          ),
-                        )}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1">
-                        {renderCalendar(selectedDuration)}
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Outlined days have available times for a{" "}
-                      {selectedDuration}-hour session. Times shown in {timezone}.
-                    </p>
-                  </section>
-
-                  <section
-                    className={cn(step !== 1 && "hidden md:block")}
-                    aria-label="Choose a time"
-                  >
-                    <div className="mb-4 flex items-center justify-between gap-2">
-                      <h3 className="flex items-center gap-2 font-semibold text-foreground">
-                        <ClockIcon className="h-4 w-4" />
-                        Choose a time
-                      </h3>
-                      {onRefreshSlots && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Refresh slot availability"
-                          disabled={isRefreshing}
-                          onClick={async () => {
-                            setIsRefreshing(true);
-                            try {
-                              await onRefreshSlots();
-                            } finally {
-                              setIsRefreshing(false);
-                            }
-                          }}
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "h-4 w-4",
-                              isRefreshing && "animate-spin",
-                            )}
-                          />
-                        </Button>
-                      )}
-                    </div>
-                    {selectedDate && (
-                      <p className="mb-3 text-sm text-muted-foreground">
-                        {formatInTimeZone(
-                          selectedDate,
-                          timezone,
-                          "EEEE, MMMM d",
-                        )}
-                      </p>
-                    )}
-                    <div
-                      className="max-h-80 space-y-2 overflow-y-auto"
-                      aria-busy={slotsLoading}
-                    >
-                      {slotsLoading ? (
-                        <p
-                          role="status"
-                          className="py-6 text-sm text-muted-foreground"
-                        >
-                          Checking available times…
-                        </p>
-                      ) : slotsError ? (
-                        <p
-                          role="alert"
-                          className="py-6 text-sm text-destructive"
-                        >
-                          Couldn&apos;t load times. Refresh to try again.
-                        </p>
-                      ) : (
-                        <SlotList
-                          slots={availableSlots}
-                          selectedSlot={selectedSlot as SlotWithStatus | null}
-                          onSelect={(slot) => {
-                            setSelectedSlot(slot);
-                            setSelectionNotice("");
-                          }}
-                          bookingMode={
-                            consultantDetails.bookingMode ?? "INSTANT"
-                          }
-                        />
-                      )}
-                    </div>
-                  </section>
-                </div>
+                <ConsultationDateAndTimePicker
+                  step={step}
+                  currentDate={currentDate}
+                  setCurrentDate={setCurrentDate}
+                  selectedDate={selectedDate}
+                  selectedDuration={selectedDuration}
+                  timezone={timezone}
+                  renderCalendar={renderCalendar}
+                  onBookToday={handleBookNowClick}
+                  onRefreshSlots={onRefreshSlots}
+                  isRefreshing={isRefreshing}
+                  setIsRefreshing={setIsRefreshing}
+                  slotsLoading={slotsLoading}
+                  slotsError={slotsError}
+                  availableSlots={availableSlots}
+                  selectedSlot={selectedSlot}
+                  bookingMode={bookingMode}
+                  onSelectSlot={(slot) => {
+                    setSelectedSlot(slot);
+                    setSelectionNotice("");
+                  }}
+                />
               ) : (
-                <div className="p-6">
-                  <BookingSummary
-                    title={
-                      activePlanOption.description || activePlanOption.title
-                    }
-                    price={formatPrice(activePlanOption.price)}
-                    unit="/ session"
-                  >
-                    {currentSlot && (
-                      <p className="font-medium text-foreground">
-                        {formatInTimeZone(
-                          new Date(currentSlot.startsAt),
-                          timezone,
-                          "EEEE, MMMM d, yyyy",
-                        )}
-                        <br />
-                        {formatInTimeZone(
-                          new Date(currentSlot.startsAt),
-                          timezone,
-                          "h:mm a",
-                        )}{" "}
-                        –{" "}
-                        {formatInTimeZone(
-                          new Date(currentSlot.endsAt),
-                          timezone,
-                          "h:mm a",
-                        )}
-                      </p>
-                    )}
-                    <p>Time zone: {timezone}</p>
-                    <p>{activePlanOption.duration} consultation</p>
-                    {(paused || cta.hint) && (
-                      <p>{paused ? CONSULTANT_PAUSED_HINT : cta.hint}</p>
-                    )}
-                  </BookingSummary>
-                </div>
+                <ConsultationReviewStep
+                  activePlanOption={activePlanOption}
+                  formattedPrice={formatPrice(activePlanOption.price)}
+                  currentSlot={currentSlot}
+                  timezone={timezone}
+                  paused={paused}
+                  ctaHint={cta.hint}
+                />
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/40 px-6 py-4">
@@ -757,54 +1037,18 @@ export default function ConsultationPricingToggle({
                   {step === 0 ? "Cancel" : "Back"}
                 </Button>
                 <div className="flex items-center gap-2">
-                  {step === 0 ? (
-                    <>
-                      <Button
-                        className="md:hidden"
-                        disabled={!selectedDate || slotsLoading || slotsError}
-                        onClick={() => setStep(1)}
-                      >
-                        Choose time
-                      </Button>
-                      <Button
-                        className="hidden md:inline-flex"
-                        disabled={!currentSlot}
-                        onClick={() => setStep(2)}
-                      >
-                        Review booking
-                      </Button>
-                    </>
-                  ) : step === 1 ? (
-                    <Button disabled={!currentSlot} onClick={() => setStep(2)}>
-                      Review booking
-                    </Button>
-                  ) : (
-                    <Button
-                      disabled={!currentSlot || paused || isRequestingApproval}
-                      onClick={() => {
-                        if (
-                          !currentSlot ||
-                          !isCurrentBookingWindow(
-                            currentSlot,
-                            Date.now(),
-                            MINIMUM_BOOKING_LEAD_TIME_MS,
-                          )
-                        ) {
-                          setSelectedSlot(null);
-                          setStep(1);
-                          setSelectionNotice(
-                            "This time is no longer available. Please choose another.",
-                          );
-                          return;
-                        }
-                        if (cta.action === "request")
-                          void handleRequestForApproval();
-                        else handleConsultationBooking(activePlanOption.id);
-                      }}
-                    >
-                      {isRequestingApproval ? "Submitting…" : cta.label}
-                    </Button>
-                  )}
+                  <ConsultationDialogFooterActions
+                    step={step}
+                    selectedDate={selectedDate}
+                    slotsLoading={slotsLoading}
+                    slotsError={slotsError}
+                    currentSlot={currentSlot}
+                    paused={paused}
+                    isRequestingApproval={isRequestingApproval}
+                    ctaLabel={cta.label}
+                    setStep={setStep}
+                    onConfirmStepTwo={handleConfirmStepTwo}
+                  />
                   {heldWindow &&
                     heldWindow.windowStart === selectedSlot?.startsAt && (
                       <NotifyWhenFreeButton window={heldWindow} />
