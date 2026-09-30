@@ -22,18 +22,24 @@ import {
   currentRoundProposedSlots,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
+import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 
 /**
  * The open reschedule proposal on an appointment, with its answers (#1163).
  *
  * Counterparty (session user ≠ initiator) gets Accept + Decline; the
- * initiator gets Withdraw. Decline confirms first, because its one surprise
- * is worth spelling out: the released times STAY with the consultant to
- * re-place — declining a proposal is not cancelling the booking.
+ * initiator gets Withdraw. Decline confirms first, because its one surprise is
+ * worth spelling out — and it is not "the times stay with the consultant": since
+ * #1846 a decline RESTORES the released sessions to their original times in the
+ * common case, and only parks the ones whose original time has since been
+ * booked. The dialog therefore describes both outcomes, because which one
+ * happens is not knowable before the server has read the rows back; the toast
+ * afterwards is driven by the `outcome` the route reports.
  *
  * Toasts relay the SERVER's message: accept runs the full allocator and
  * decline/withdraw are CAS transitions, so what actually happened is decided
- * there, not here.
+ * there, not here. That message is the outcome-specific sentence, which is why
+ * the title only has to carry the one case worth distinguishing.
  */
 
 type ProposalAnswer = "accept" | "decline" | "withdraw";
@@ -41,7 +47,7 @@ type ProposalAnswer = "accept" | "decline" | "withdraw";
 async function postAnswer(
   appointmentId: string,
   kind: ProposalAnswer,
-): Promise<{ message?: string }> {
+): Promise<{ message?: string; outcome?: RescheduleRespondCode }> {
   const url =
     kind === "withdraw"
       ? `/api/appointments/${appointmentId}/reschedule/withdraw`
@@ -53,6 +59,10 @@ async function postAnswer(
   });
   const data = (await res.json().catch(() => ({}))) as {
     message?: string;
+    // Type-only import of the policy module's own union, so the two routes and
+    // this card agree on the words; `RESCHEDULE_TERMINAL_EVENT_CODES` beside it
+    // is what says how they relate to the propose route's vocabulary.
+    outcome?: RescheduleRespondCode;
     error?: string;
   };
   if (!res.ok) {
@@ -96,7 +106,16 @@ export function RescheduleProposalCard({
     mutationFn: (kind: ProposalAnswer) => postAnswer(appointmentId, kind),
     onSuccess: (data, kind) => {
       setConfirmDecline(false);
-      toast({ title: ANSWER_TOAST_TITLE[kind], description: data.message });
+      toast({
+        title:
+          // The one outcome the fixed title would misdescribe: a decline that
+          // could not put every released session back leaves real work for the
+          // consultant, and "Proposal declined" reads as a clean settle.
+          kind === "decline" && data.outcome === "RELEASED"
+            ? "Sessions need new times"
+            : ANSWER_TOAST_TITLE[kind],
+        description: data.message,
+      });
       void queryClient.invalidateQueries({
         queryKey: ["appointment-detail", appointmentId],
       });
@@ -252,8 +271,8 @@ export function RescheduleProposalCard({
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {role === "consultee"
-                    ? "The sessions being moved stay with your consultant, who will place them at new times."
-                    : "The released sessions stay in your allocate queue to place at new times."}
+                    ? "Your original session times go back on your calendar. If one has been booked by somebody else in the meantime, your consultant places that session at a new time instead."
+                    : "The released sessions go back where they were. Any whose original time can no longer be restored stay in your allocate queue to place at new times."}
                 </p>
               </div>
             </AlertDialogDescription>
