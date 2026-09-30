@@ -150,10 +150,14 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: jest.fn(),
 }));
+// #1846 — the legacy event creators now replay the checkout capacity gate, and
+// the gate requires a real reading. A bare `jest.fn()` here reads as "no
+// reading", which the production code must NOT treat as "room available" — so
+// these answer with a room that has space, the way a live roster does.
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getWebinarCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
+  getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 
 import {

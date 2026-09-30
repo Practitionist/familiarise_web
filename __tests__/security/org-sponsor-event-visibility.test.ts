@@ -43,24 +43,38 @@ describe("the org list matches org-OWNED rows only (#1166 ORG-8)", () => {
     expect(w.OR).toBeUndefined();
   });
 
-  it("no longer matches funded-elsewhere rows through Payment", () => {
+  it("cannot match funded-elsewhere rows, because ownership is pinned first", () => {
     const w = buildWhere({
       scope: { kind: "org", orgId: "acme" },
       userId: "irrelevant",
     });
-    expect(JSON.stringify(w)).not.toContain("payment");
+    // The old widening was a DISJUNCT (`OR: [hosted-here, funded-here]`), so
+    // dropping the arm is what made funded-elsewhere unreachable. The arm now
+    // carries a funding clause, but it sits on top of `organizationId: "acme"`
+    // rather than beside it, so it narrows the owned set and cannot re-admit a
+    // row another org hosts.
+    expect(w).toMatchObject({
+      organizationId: "acme",
+      payment: {
+        some: { organizationId: "acme" },
+      },
+    });
   });
 });
 
 describe("but only the sponsor's OWN seats are returned", () => {
-  it("the payer include is filtered to the viewing org", () => {
+  it("the payer include is filtered to the viewing org AND to an org-funded rail", () => {
     // An unfiltered `payment: true` would hand a sponsor every registrant's
     // identity on a shared webinar — including other sponsors' employees and
-    // members of the public. The `where` is the whole guard.
-    expect(SRC).toContain("where: { organizationId: params.scope.orgId }");
+    // members of the public. The `where` is the whole guard, and the
+    // paymentMethod clause keeps a member's own-card row off a surface that
+    // presents payers as seats the org bought.
+    expect(SRC).toContain("organizationId: params.scope.orgId,");
 
     const start = SRC.indexOf("payment: {\n                where:");
     expect(start).toBeGreaterThan(-1);
+    const block = SRC.slice(start, start + 400);
+    expect(block).toContain("paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS }");
   });
 
   it("the payer include is attached ONLY on the org scope", () => {

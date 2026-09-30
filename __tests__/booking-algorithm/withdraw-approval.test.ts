@@ -14,6 +14,16 @@
  * that refund itself is pinned in `__tests__/payments/capture-amount-parity.test.ts`
  * ("claims an EXPIRED payment as SUCCEEDED by CAS and refunds through the
  * front door") and is not duplicated here.
+ *
+ * The REQUEST row is the one thing the two callers do not agree on, and this
+ * file must not blur them: the sweeps pass `PAYMENT_LAPSED` and land on
+ * EXPIRED, the consultant's Withdraw passes `WITHDRAWN_BY_CONSULTANT` and
+ * lands on CANCELLED. The Payment tombstone is EXPIRED either way — that is a
+ * Razorpay order fact, not a request-status word. The two-terminal-word
+ * invariant itself is pinned in `__tests__/booking/withdraw-approval-terminal-status.test.ts`
+ * (with the CANCELLABLE_FROM proof); what is pinned here is that this shared
+ * body still carries the guards on both edges and that the routes answer the
+ * word they wrote.
  */
 
 import "./setup";
@@ -145,6 +155,22 @@ describe("lapseApprovedRequest (B-1)", () => {
     expect(db.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
+  it("the sweeps' reason still lands on EXPIRED, the word doctrine rule 6 reserves for a lapsed window", async () => {
+    // The other caller of this body. If threading the terminal word ever drops
+    // the sweep back onto CANCELLED (or hardcodes either word), this fails.
+    db.consultation.updateMany.mockResolvedValue({ count: 1 });
+    const out = await lapseApprovedRequest(prisma, {
+      kind: "consultation",
+      id: "c-1",
+      reason: "PAYMENT_LAPSED",
+      actorUserId: null,
+    });
+    expect(out).toEqual({ moved: 1, appointmentId: "a-1" });
+    expect(db.consultation.updateMany.mock.calls[0][0].data.status).toBe(
+      "EXPIRED",
+    );
+  });
+
   it("a won CAS carries the money predicate in the WHERE, then tombstones the open order and releases the holds", async () => {
     db.subscription.updateMany.mockResolvedValue({ count: 1 });
     const out = await lapseApprovedRequest(prisma, {
@@ -157,6 +183,12 @@ describe("lapseApprovedRequest (B-1)", () => {
     const where = db.subscription.updateMany.mock.calls[0][0].where;
     expect(where.status).toEqual({ in: ["APPROVED_PENDING_PAYMENT"] });
     expect(JSON.stringify(where)).toContain('"paymentStatus":"SUCCEEDED"');
+    // A deliberate withdrawal is CANCELLED on the REQUEST row. The Payment
+    // tombstone below is still EXPIRED — an order a party let go of, whatever
+    // the request is now called.
+    expect(db.subscription.updateMany.mock.calls[0][0].data.status).toBe(
+      "CANCELLED",
+    );
     expect(db.payment.updateMany).toHaveBeenCalledWith({
       where: { appointmentId: "a-1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },
@@ -180,7 +212,7 @@ describe("POST …/withdraw-approval (B-2)", () => {
     expect(notifyConsulteeRequestExpired).not.toHaveBeenCalled();
   });
 
-  it("withdraw-then-capture: the request and its open order are EXPIRED under the appointment lock, the consultee is told", async () => {
+  it("withdraw-then-capture: the request is CANCELLED and its open order EXPIRED under the appointment lock, the consultee is told", async () => {
     db.subscription.findUnique.mockResolvedValue({
       ...consultationRow("APPROVED_PENDING_PAYMENT"),
       id: S_ID,
@@ -190,13 +222,16 @@ describe("POST …/withdraw-approval (B-2)", () => {
     const res = await post(withdrawSubscription, { subscriptionId: S_ID });
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ status: "EXPIRED" });
+    // The route answers the word it wrote, not the word the sweeps use.
+    expect(await res.json()).toEqual({ status: "CANCELLED" });
     expect(lockCalls).toEqual(["a-1"]);
-    // The tombstone a late capture lands on: the handler's EXPIRED→SUCCEEDED
-    // claim + front-door refund (capture-amount-parity.test.ts).
     expect(db.subscription.updateMany.mock.calls[0][0].data.status).toBe(
-      "EXPIRED",
+      "CANCELLED",
     );
+    // The tombstone a late capture lands on: the handler's EXPIRED→SUCCEEDED
+    // claim + front-door refund (capture-amount-parity.test.ts). This is the
+    // Payment row, so it is EXPIRED on BOTH paths — the EXPIRED→SUCCEEDED
+    // claim is exactly why the withdraw leaves one.
     expect(db.payment.updateMany).toHaveBeenCalledWith({
       where: { appointmentId: "a-1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },

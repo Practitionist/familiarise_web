@@ -60,7 +60,7 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     expect(JSON.stringify(w)).not.toContain("userId");
   });
 
-  it("org scope no longer matches funded-elsewhere rows (#1166 ORG-8)", () => {
+  it("org scope narrows to org-FUNDED rows, so funded-elsewhere stays out", () => {
     const w = buildWhere({
       scope: { kind: "org", orgId: "org1" },
       userId: "u1",
@@ -68,8 +68,17 @@ describe("buildWhere — personal scope (#org-appts)", () => {
 
     // A row hosted by another org but funded by org1 matched the old
     // `payment.some.organizationId` arm; the detail page then 404'd it.
-    // The predicate must not mention Payment at all any more.
-    expect(JSON.stringify(w)).not.toContain("payment");
+    // #1166 ORG-8 removed that arm, and the `organizationId: "org1"` pin at
+    // the top level is what keeps it out — the Payment clause below can only
+    // ever narrow an already-org1-owned set, never widen it.
+    expect(JSON.stringify(w)).toContain('"organizationId":"org1"');
+    // The funding half: `Appointment.organizationId` is a TAG that checkout
+    // also stamps for a `fundingSource: PERSONAL` booking, where the member's
+    // own card paid. Without this the org's "Everyone" feed published the
+    // amount of a member's personal purchase.
+    expect(JSON.stringify(w)).toContain(
+      '"paymentMethod":{"in":["WALLET","INVOICE","LICENSE"]}',
+    );
   });
 
   it("orgMember scope pins organizationId AND filters to the user's participation (#org-appts)", () => {
