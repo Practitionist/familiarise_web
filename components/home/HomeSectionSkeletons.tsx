@@ -1,47 +1,28 @@
-export function BenefitsSkeleton() {
+/** Suspense fallbacks for the landing sections; they mirror each section's
+ *  dark surface, heading block and grid so the page doesn't jump on resolve. */
+
+const block = "rounded bg-white/[0.06] animate-pulse";
+const card =
+  "rounded-2xl border border-white/[0.08] bg-white/[0.02] animate-pulse";
+
+function HeadingSkeleton() {
   return (
-    <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-100 to-white">
-      <div className="container mx-auto px-4 md:px-6">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
-          <div className="space-y-6">
-            <div className="h-6 w-24 bg-muted/50 rounded animate-pulse" />
-            <div className="h-10 w-3/4 bg-muted/50 rounded animate-pulse" />
-            <div className="space-y-3">
-              {[...Array(4)].map((_, i) => (
-                <div
-                  key={i}
-                  className="h-5 bg-muted/50 rounded animate-pulse"
-                  style={{ width: `${70 + i * 5}%` }}
-                />
-              ))}
-            </div>
-            <div className="flex gap-4 pt-2">
-              <div className="h-12 w-36 bg-muted/50 rounded-xl animate-pulse" />
-              <div className="h-12 w-36 bg-muted/50 rounded-xl animate-pulse" />
-            </div>
-          </div>
-          <div className="h-[400px] bg-muted/50 rounded-2xl animate-pulse" />
-        </div>
-      </div>
-    </section>
+    <div className="mb-14 space-y-4 md:mb-16">
+      <div className={`${block} h-3 w-28`} />
+      <div className={`${block} h-12 w-full max-w-md`} />
+      <div className={`${block} h-5 w-full max-w-lg`} />
+    </div>
   );
 }
 
 export function FeaturedExpertsSkeleton() {
   return (
-    <section className="py-20 md:py-28 bg-background">
-      <div className="container mx-auto px-4 md:px-6">
-        <div className="text-center mb-12 space-y-3">
-          <div className="h-6 w-28 bg-muted/50 rounded animate-pulse mx-auto" />
-          <div className="h-10 w-72 bg-muted/50 rounded animate-pulse mx-auto" />
-          <div className="h-5 w-96 bg-muted/50 rounded animate-pulse mx-auto" />
-        </div>
-        <div className="flex gap-6 overflow-hidden">
+    <section className="border-t border-white/[0.06] bg-black py-24 md:py-32">
+      <div className="mx-auto w-full max-w-6xl px-6 lg:px-8">
+        <HeadingSkeleton />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="flex-shrink-0 w-[300px] h-[220px] bg-muted/50 rounded-xl animate-pulse"
-            />
+            <div key={i} className={`${card} h-[260px]`} />
           ))}
         </div>
       </div>
@@ -51,31 +32,16 @@ export function FeaturedExpertsSkeleton() {
 
 export function TestimonialsSkeleton() {
   return (
-    <>
-      <section className="py-20 md:py-28 bg-gradient-to-b from-zinc-900 to-zinc-950">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="text-center mb-12 space-y-3">
-            <div className="h-6 w-28 bg-zinc-800 rounded animate-pulse mx-auto" />
-            <div className="h-10 w-72 bg-zinc-800 rounded animate-pulse mx-auto" />
-          </div>
-          <div className="flex gap-6 overflow-hidden">
-            {[...Array(3)].map((_, i) => (
-              <div
-                key={i}
-                className="flex-shrink-0 w-[350px] h-[180px] bg-zinc-800 rounded-xl animate-pulse"
-              />
-            ))}
-          </div>
+    <section className="border-t border-white/[0.06] bg-black py-24 md:py-32">
+      <div className="mx-auto w-full max-w-6xl px-6 lg:px-8">
+        <HeadingSkeleton />
+        <div className={`${card} h-[280px]`} />
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className={`${card} h-[180px]`} />
+          ))}
         </div>
-      </section>
-      <section className="py-20 bg-zinc-950">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="h-[320px] bg-zinc-800 rounded-xl animate-pulse" />
-            <div className="h-[320px] bg-zinc-800 rounded-xl animate-pulse" />
-          </div>
-        </div>
-      </section>
-    </>
+      </div>
+    </section>
   );
 }
