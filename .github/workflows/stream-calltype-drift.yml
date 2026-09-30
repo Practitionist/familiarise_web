@@ -122,20 +122,92 @@ jobs:
         # lifecycle scripts. Same posture as stream-webhook-drift.yml.
         run: npm ci --ignore-scripts
 
+      # REPORT on a pull request, BLOCK on the schedule. These are two different
+      # questions and conflating them makes the job useless in both directions.
+      #
+      # Before the hardening is applied, drift is the KNOWN, EXPECTED state — the
+      # `livestream` posture in the header comment is still true of the live app.
+      # A blocking check would make this PR — the one that reports the drift and
+      # adds the detector — permanently unmergeable.
+      #
+      # After the apply, a red SCHEDULED leg means somebody widened a grant or
+      # reset `max_participants` in the dashboard behind our back, which leaves no
+      # commit, no diff and no failing test anywhere else. That is the whole
+      # reason this file exists, and it is the case worth paging.
+      #
+      # The exit code is captured into an output rather than relying on step
+      # failure, because `continue-on-error` reports `conclusion: success`, which
+      # makes the `failure()` guard on the notification step below FALSE — the
+      # schedule leg would silently stop escalating, which is the one thing this
+      # job must never do. A single accumulating variable, then one explicit
+      # fail-if-drifted step, keeps both legs honest and independent.
       - name: Check call-type settings against the live types
-        # Exit 2 means real drift, exit 1 means the check could not run at all
-        # (missing credential). Both fail the job; the log says which.
-        run: node_modules/.bin/tsx scripts/stream/ensure-call-type-settings.ts --check
+        # Exit 2 = real drift. Exit 1 = the check could not run at all (missing
+        # credential). The log says which; both are drift-as-far-as-the-watchdog
+        # is concerned, because "could not check" is not "fine".
+        id: settings
+        run: |
+          set +e
+          node_modules/.bin/tsx scripts/stream/ensure-call-type-settings.ts --check
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
 
       - name: Check call-type grants against the live types
-        run: node_modules/.bin/tsx scripts/stream/ensure-call-type-grants.ts --check
+        id: grants
+        run: |
+          set +e
+          node_modules/.bin/tsx scripts/stream/ensure-call-type-grants.ts --check
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
 
       - name: Check the webhook subscription
         # The third of the three dashboard-configured documents, kept here so one
         # job answers "is the Stream config what this repository believes it is?"
         # rather than making that question depend on which workflow an operator
-        # remembers. It is also still run on its own schedule.
+        # remembers. It is also still run on its own schedule, and it is NOT
+        # wrapped in the drift accumulator: that script's half of the config is
+        # already applied and blocking, so a regression there should fail a pull
+        # request outright.
         run: node_modules/.bin/tsx scripts/stream/ensure-webhook-subscription.ts --check
+
+      - name: Report drift (non-blocking on a pull request)
+        # Always runs, so the log always states the verdict in one place rather
+        # than making a reader reconstruct it from three exit codes.
+        run: |
+          s='${{ steps.settings.outputs.exit }}'
+          g='${{ steps.grants.outputs.exit }}'
+          {
+            echo "### Stream call-type drift"
+            echo
+            echo "| check | exit | meaning |"
+            echo "|---|---|---|"
+            echo "| settings | \`$s\` | 0 = at the posture this repo requires |"
+            echo "| grants   | \`$g\` | 0 = grants are as this repo requires |"
+            echo
+            if [ "$s" = 0 ] && [ "$g" = 0 ]; then
+              echo "No drift. The live call types match what this repository believes."
+            else
+              echo "Drift is REPORTED here, not fixed. Applying is an operator action:"
+              echo
+              echo '```bash'
+              echo "node_modules/.bin/tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed"
+              echo "node_modules/.bin/tsx scripts/stream/ensure-call-type-settings.ts --apply"
+              echo '```'
+              echo
+              echo "Both require \`STREAM_TARGET_APP=<name>\`, because dev, preview and prod"
+              echo "share one Stream app and a test write is a production write."
+              echo "Checklist: docs/stream/99-runbook.md section 5."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on drift (scheduled leg only)
+        # The escalation, and the only place this job can go red. A pull-request
+        # leg stays green so the PR that introduces the detector can merge while
+        # the drift it reports is still open.
+        if: github.event_name == 'schedule' && (steps.settings.outputs.exit != '0' || steps.grants.outputs.exit != '0')
+        run: |
+          echo "::error::Stream call-type drift against the live app."
+          echo "settings exit=${{ steps.settings.outputs.exit }}  grants exit=${{ steps.grants.outputs.exit }}"
+          echo "See the step summary for the remediation commands."
+          exit 1
 
       - name: Notify on failure
         # Only on the scheduled leg: a pull-request failure is already visible to
