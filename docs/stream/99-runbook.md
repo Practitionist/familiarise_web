@@ -238,14 +238,14 @@ write.** None of them is applied by CI. A passing `--check` proves _parity with
 the script_, **not** that the hardening is on in production — the apply state is
 recorded nowhere in the repo, which is why the checklist below exists.
 
-| Script                                 | Changes                                                                                                                          | Guard                                                              |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `ensure-call-type-grants.ts`           | `join-call`, recording, transcription, broadcasting and noise-cancellation grants per role                                       | `--apply --routes-are-deployed`                                    |
-| `ensure-call-type-settings.ts`         | Noise cancellation, the three recording modes, ingress, inactivity timeout, `max_participants`, target resolution, transcription | pre-write recording guard                                          |
-| `harden-unused-call-types.ts`          | Strips `audio_room` / `development` / `livestream`                                                                               | dry-run                                                            |
-| `ensure-recording-external-storage.ts` | Registers R2/Supabase external storage for Stream recordings                                                                     | **no environment guard was added here — treat with the most care** |
-| `ensure-webhook-subscription.ts`       | The event subscription                                                                                                           | has a `--restore`                                                  |
-| `ensure-app-settings.ts`               | App-level flags                                                                                                                  | `--check` in CI                                                    |
+| Script                                 | Changes                                                                                                                          | Guard                                              |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `ensure-call-type-grants.ts`           | `join-call`, recording, transcription, broadcasting and noise-cancellation grants per role                                       | `--apply --routes-are-deployed`                    |
+| `ensure-call-type-settings.ts`         | Noise cancellation, the three recording modes, ingress, inactivity timeout, `max_participants`, target resolution, transcription | pre-write recording guard                          |
+| `harden-unused-call-types.ts`          | Strips `audio_room` / `development` / `livestream`                                                                               | dry-run                                            |
+| `ensure-recording-external-storage.ts` | Registers R2/Supabase external storage for Stream recordings                                                                     | `--apply` and `--delete` require `target-guard.ts` |
+| `ensure-webhook-subscription.ts`       | The event subscription                                                                                                           | has a `--restore`                                  |
+| `ensure-app-settings.ts`               | App-level flags                                                                                                                  | `--check` in CI                                    |
 
 ### Per-environment apply checklist
 

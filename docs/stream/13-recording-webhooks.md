@@ -1140,7 +1140,7 @@ signs the deliveries, and `STREAM_API_SECRET` is what verifies them.
 
 ### The scheduled fleet behind recordings
 
-Ten workflows touch the Stream pipeline. Each one runs as a bare
+Twelve workflows touch the Stream pipeline. Each one runs as a bare
 `node_modules/.bin/tsx jobs/...` process under GitHub Actions, takes the fleet
 cron lock so that a manual dispatch cannot race the schedule, and writes a
 `SystemJobExecution` row that the staff Jobs page reads.

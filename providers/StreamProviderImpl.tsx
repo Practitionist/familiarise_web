@@ -486,9 +486,10 @@ const StreamProviderImpl = ({
     //
     // `client.wsConnection` is the SDK's own liveness read; `connected` is
     // false from the moment the socket drops, so this gate is exactly the fact
-    // that was missing. When it is false we fall THROUGH to a real
-    // `connectUser` below — which stream-chat is happy to perform on a client
-    // whose socket is down, and which is the only thing that repairs it.
+    // that was missing. When it is false we fall THROUGH — and "fall through to
+    // connectUser" is what this comment used to claim, which was wrong in a way
+    // that mattered: `connectUser` is NOT the repair path for a client that
+    // already holds this userID. See the `openConnection` branch below.
     const adoptable = getGlobalChatClient();
     if (
       getCurrentStreamUserId() === userDetails.id &&
@@ -535,6 +536,44 @@ const StreamProviderImpl = ({
         streamLogger.debug("Adopting already-connected Stream Chat singleton", {
           userId: userDetails.id,
         });
+        setGlobalChatClient(client);
+        setCurrentStreamUserId(userDetails.id);
+        setChatConnected(true);
+        return client;
+      }
+
+      // #1829 — a client that already holds this user but whose socket is down.
+      //
+      // `connectUser` cannot repair it. In stream-chat@9.52.0:
+      //
+      //     if (this.userID === user.id && this.setUserPromise) {
+      //       console.warn("Consecutive calls to connectUser is detected…");
+      //       return this.setUserPromise;      // <-- resolved, no socket opened
+      //     }
+      //
+      // So the call resolved instantly against the FIRST connection's response,
+      // we fell straight through to `setChatConnected(true)`, and the store
+      // reported connected over a client that could not receive a packet — the
+      // precise failure #E7 fixed one layer up, reintroduced through the
+      // reconnect path. Nothing errored, so nothing alerted.
+      //
+      // `openConnection()` is the SDK's documented repair for exactly this state
+      // ("if the websocket connection is closed, … call client.openConnection to
+      // reconnect"). Guarded on `wsConnection.isConnecting` so a reconnect
+      // already in flight is adopted rather than duplicated, and it throws rather
+      // than resolving stale — so a genuine failure still lands in the catch
+      // below and is retried honestly.
+      if (client.userID && client.userID === userDetails.id) {
+        if (client.wsConnection?.isConnecting) {
+          streamLogger.debug("Chat socket already reconnecting, waiting", {
+            userId: userDetails.id,
+          });
+        } else {
+          streamLogger.info("Reopening chat socket for an existing user", {
+            userId: userDetails.id,
+          });
+          await client.openConnection();
+        }
         setGlobalChatClient(client);
         setCurrentStreamUserId(userDetails.id);
         setChatConnected(true);
@@ -668,16 +707,34 @@ const StreamProviderImpl = ({
     // dead client, `connectUser` never re-ran, and `videoConnected` stayed true
     // over a client that could not receive a single packet.
     const adoptable = getGlobalVideoClient();
-    if (
-      getCurrentStreamUserId() === userDetails.id &&
-      adoptable &&
-      isVideoClientLive(adoptable)
-    ) {
+    const sameUser = getCurrentStreamUserId() === userDetails.id;
+    if (sameUser && adoptable && isVideoClientLive(adoptable)) {
       streamLogger.debug("Adopting existing video client", {
         userId: userDetails.id,
       });
       setVideoConnected(true);
       return adoptable;
+    }
+
+    // #1829 — a client we are about to REPLACE must be released, not abandoned.
+    //
+    // `isVideoClientLive` returning false means the coordinator socket is down,
+    // but the client object is still holding that socket's reconnect machinery
+    // and the token provider's timers. `setGlobalVideoClient` further down
+    // overwrites the only reference to it, so nothing can ever disconnect it
+    // again: it sits on a timer, can reconnect behind the new client, and holds
+    // a SECOND WebSocket session for the same user — which the MAU meter would
+    // then have counted twice, had it been a chat mint.
+    //
+    // Every flap-and-recover cycle leaked one more client, so the leak is
+    // proportional to network quality rather than to load. Same-user only: a
+    // client belonging to a DIFFERENT user is not ours to tear down here.
+    //
+    // Best-effort by design. A client that is already dead may reject, and that
+    // must not be the reason a healthy session fails to connect — so the
+    // rejection is swallowed, exactly as in the failure path below.
+    if (sameUser && adoptable) {
+      await adoptable.disconnectUser().catch(() => undefined);
     }
 
     try {

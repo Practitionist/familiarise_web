@@ -40,27 +40,35 @@
  *
  * Per TICK, not per hour:
  *
- *   target invocations   4 on the heartbeat-only ticks, 20 on a 15-minute tick,
- *                        21 on a :00 tick, 22 on a :10 tick. Twelve ticks/hour,
- *                        so ≈12 × 20 = ~240/day.
+ *   target invocations   0 on the four heartbeat-only ticks, 19 on a 15-minute
+ *                        tick, 21 on a :00 or :30 tick (the 15-minute tier plus
+ *                        the 10-minute relay and the 30-minute canary), and 1 on
+ *                        a :10/:20/:40/:50 tick (the relay alone).
+ *
+ *                        21 + 0 + 1 + 19 + 1 + 0 + 21 + 0 + 1 + 19 + 1 + 0
+ *                        = 84 per hour, so ~2,016/day. That figure is derived
+ *                        from `TARGET_EVERY_MINUTES` by counting
+ *                        `minute % every < 5`; if you add a target, recount it
+ *                        rather than extrapolating from the tier it joins.
  *   per invocation       1 maintenance GET (two Upstash GETs behind one
  *                        `getMaintenanceState`, pipelined), 1 Redis health PING
  *                        (cached 30s per instance, so usually free), 1 lock
  *                        `SET NX PX` + 1 `releaseLock` Lua `EVAL`, and 1
  *                        heartbeat `SET` — all on Upstash. Say 5 commands
  *                        worst case, ~4 with the health cache warm.
- *   Redis total          ~240 invocations/day × ~4 = ~960 commands/day, or
- *                        ~29,000/month — about 5.8% of the 500k free-tier cap
+ *   Redis total          ~2,016 invocations/day × ~4 = ~8,000 commands/day, or
+ *                        ~243,000/month — about 49% of the 500k free-tier cap
  *                        that production and every deploy-preview share (#1792,
  *                        #1822).
  *   Sentry                exactly ONE check-in per tick (288/day) plus at most
  *                        one failed-targets event per tick, and never both for
  *                        the canary. See `reportableToSentry`.
  *
- * So the cadence is still affordable, but it is not free and the margin is not
- * large: adding one target to the 15-minute tier costs ~96 invocations/day, or
- * ~2,900 commands/month, for ~0.6% of the cap. Adding one to the DEFAULT tier
- * (i.e. forgetting the `TARGET_EVERY_MINUTES` entry) costs 4× that. Budget
+ * So the cadence is affordable, but the margin is no longer generous: at ~49% of
+ * the shared cap, adding one target to the 15-minute tier costs ~96
+ * invocations/day — ~2,900 commands/month, ~0.6% of the cap — and adding one to
+ * the DEFAULT tier (i.e. forgetting the `TARGET_EVERY_MINUTES` entry) costs 4×
+ * that. Two defaults added by accident is most of what is left. Budget
  * accordingly, and prefer a 15-minute slot plus an Actions twin over a
  * five-minute slot.
  *

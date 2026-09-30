@@ -62,7 +62,7 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
-import { requireNamedTargetApp } from "./target-guard";
+import { PRODUCTION_APP_NAME, requireNamedTargetApp } from "./target-guard";
 // One implementation of the drift comparison, not three. This file,
 // ensure-call-type-settings.ts and ensure-app-settings.ts each had their own;
 // they must agree, because this is the check that decides whether an operator
@@ -841,8 +841,14 @@ async function applyPlanTo(
     annotate(
       `Stream call-type grants drift on \`${plan.name}\`: ${lines.length} ` +
         `change(s) pending, including revocations an ordinary role should not ` +
+        // #1829 — the command has to be one that CAN run. Every `--apply` goes
+        // through `requireNamedTargetApp`, which refuses a bare command, so the
+        // annotation used to spell out a remediation that was guaranteed to be
+        // rejected. An operator who trusted it would conclude the guard is
+        // broken. The point of printing the full command is that nobody has to
+        // reconstruct it.
         `hold. Run: npx tsx scripts/stream/ensure-call-type-grants.ts --apply ` +
-        `--routes-are-deployed`,
+        `--routes-are-deployed --target-app ${PRODUCTION_APP_NAME}`,
     );
   }
 

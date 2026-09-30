@@ -230,7 +230,7 @@ import { canonical } from "@/lib/stream/config-fingerprint";
 // env var would let the grants script and this one harden DIFFERENT call
 // types, which is the divergence class this subsystem keeps repeating.
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
-import { requireNamedTargetApp } from "./target-guard";
+import { PRODUCTION_APP_NAME, requireNamedTargetApp } from "./target-guard";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -713,7 +713,10 @@ async function applyPlan(
     annotate(
       `Stream call-type settings drift on \`${plan.name}\`: ${pending.length} ` +
         `field(s) are not at the posture this app requires — ${pending.join("; ")}. ` +
-        `Run scripts/stream/ensure-call-type-settings.ts --apply.`,
+        // #1829 — same gap as the grants annotation: a bare `--apply` is refused
+        // by `requireNamedTargetApp`, so the printed remediation could not run.
+        `Run: npx tsx scripts/stream/ensure-call-type-settings.ts --apply ` +
+        `--target-app ${PRODUCTION_APP_NAME}.`,
     );
     console.log(`\n(check mode — no write; the job exits ${DRIFT_EXIT_CODE})`);
     return DRIFT_EXIT_CODE;
@@ -880,16 +883,32 @@ export async function ensureCallTypeSettings(
     return 1;
   }
 
+  // Two different rules, and the previous code applied the apply-mode rule to
+  // both — which is why the comment below it contradicted the line above.
   let worst = 0;
+  let failed = false;
   for (const plan of PLANS) {
     const code = await applyPlan(client, plan, opts);
-    if (code === 1) return 1;
+    if (code === 1) {
+      failed = true;
+      // `--apply` stops here, and it must: `default` is first in PLANS, so a
+      // failure on it means the load-bearing call type is not in the posture
+      // this script exists to enforce, and continuing would write
+      // `livestream` over the top of a half-applied run.
+      if (opts.apply) return 1;
+      // `--check` does NOT stop, because the comment below is right and the
+      // code was wrong: a per-type failure must not hide the other type. The
+      // failure is recorded and the loop continues, so the operator gets the
+      // whole picture — including the case where `livestream` has drift the
+      // daily job would otherwise never mention, because `default` happened to
+      // fail first. A read-only job that reports one of two problems is
+      // indistinguishable from a job that found one.
+    }
     if (code === DRIFT_EXIT_CODE) worst = DRIFT_EXIT_CODE;
-    // A per-type failure must not stop the other type being reported: the
-    // operator needs the whole picture, and the second type's recording guard
-    // can fire independently of the first's.
   }
-  return worst;
+  // A failure outranks drift in the exit code: 1 is a runner problem a human
+  // must see, and `worst` would otherwise hide it behind a drift result.
+  return failed ? 1 : worst;
 }
 
 if (require.main === module) {

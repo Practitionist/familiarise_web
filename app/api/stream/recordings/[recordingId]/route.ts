@@ -318,6 +318,41 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
 
     const { recordingId } = await params;
 
+    // #1829 — refuse to delete bytes a buyer has already paid for.
+    //
+    // `deleteRecording` tombstones the row (EXPIRED, storagePath null) and
+    // deletes the object. The `RecordingPurchase` row is NOT deleted — the
+    // relation is `onDelete: Cascade`, but nothing here deletes the Recording,
+    // so the purchase outlives the recording with a SUCCEEDED status and no
+    // recording behind it.
+    //
+    // The buyer keeps a paid entitlement to something that no longer exists, and
+    // the failure is silent in both directions: the purchase still reads
+    // SUCCEEDED, and the recording still reads as a row. Nothing errors, nothing
+    // alerts, and the only symptom is a support ticket of the form "I paid for
+    // this and it 404s" with no record anywhere that money was taken.
+    //
+    // 409 rather than an automatic refund, deliberately. Refunding is a money
+    // movement and belongs to the refund front door, not to a DELETE handler
+    // that any operator with `recordings.play` can call; the operator decides
+    // and runs the refund, then the delete succeeds because the purchase is no
+    // longer SUCCEEDED. The check is a read, so a lost race is caught again by
+    // the tombstone's own CAS.
+    const livePurchase = await prisma.recordingPurchase.findFirst({
+      where: { recordingId, status: "SUCCEEDED" },
+      select: { id: true, buyerId: true },
+    });
+    if (livePurchase) {
+      return NextResponse.json(
+        {
+          error:
+            "This recording has a successful purchase. Refund it before deleting.",
+          purchaseId: livePurchase.id,
+        },
+        { status: 409 },
+      );
+    }
+
     const result = await RecordingTransferService.deleteRecording(recordingId);
 
     if (!result.success) {

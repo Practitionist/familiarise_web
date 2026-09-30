@@ -107,3 +107,85 @@ describe("the bounded wait for the video client", () => {
     expect(timerStart).toBeGreaterThan(effectStart);
   });
 });
+
+/**
+ * #1829 — two provider-level defects, both about what the code BELIEVED about a
+ * client rather than what the client was.
+ *
+ * They are asserted against the source because the behaviour lives in the
+ * branching, and the SDK is the thing that has to be trusted about its own
+ * contract: `connectUser` on a client that already holds this userID returns the
+ * previous `setUserPromise` without reopening the socket (stream-chat@9.52.0),
+ * so "awaited without throwing" proves nothing about liveness. A mock that
+ * behaves correctly would test the mock.
+ */
+describe("#1829 — chat reconnect must reopen the socket, not re-await connectUser", () => {
+  /** The offset of the `openConnection` repair branch, or -1. */
+  const repairOffset = (): number =>
+    provider.indexOf("await client.openConnection()");
+  const connectOffset = (): number =>
+    provider.indexOf("await client.connectUser(");
+
+  it("repairs a matching-user client with openConnection BEFORE calling connectUser", () => {
+    expect(repairOffset()).toBeGreaterThan(-1);
+    // Order is the whole fix. `connectUser` on a client that already holds the
+    // userID short-circuits, so reaching it first reintroduces the bug.
+    expect(repairOffset()).toBeLessThan(connectOffset());
+  });
+
+  it("gates the repair on the userID matching, not merely on the client existing", () => {
+    // An unconditional openConnection would run for a client belonging to a
+    // different user — a client this function has no business touching.
+    const branch = provider.slice(
+      provider.lastIndexOf("if (client.userID", repairOffset()),
+      repairOffset(),
+    );
+    expect(branch).toContain("client.userID === userDetails.id");
+  });
+
+  it("adopts a reconnect already in flight rather than duplicating it", () => {
+    const branch = provider.slice(
+      provider.lastIndexOf("if (client.userID", repairOffset()),
+      repairOffset(),
+    );
+    expect(branch).toContain("isConnecting");
+  });
+
+  it("documents the SDK short-circuit it works around", () => {
+    // A future SDK upgrade could remove the short-circuit and this branch
+    // would become redundant. The comment is the tripwire for that review.
+    expect(provider).toContain("Consecutive calls to connectUser");
+  });
+});
+
+describe("#1829 — a replaced video client is disconnected, not abandoned", () => {
+  it("disconnects the dead same-user client before overwriting the global", () => {
+    const disconnect = provider.indexOf(
+      "await adoptable.disconnectUser().catch(() => undefined)",
+    );
+    const overwrite = provider.indexOf("setGlobalVideoClient(client)");
+    expect(disconnect).toBeGreaterThan(-1);
+    // Before the overwrite, or the old client loses its last reference and
+    // nothing can ever disconnect it again.
+    expect(disconnect).toBeLessThan(overwrite);
+  });
+
+  it("scopes the teardown to the same user", () => {
+    // Tearing down a client belonging to a DIFFERENT user would kill a session
+    // this function was never asked to end.
+    const branch = provider.slice(
+      provider.indexOf("if (sameUser && adoptable)"),
+      provider.indexOf("if (sameUser && adoptable)") + 200,
+    );
+    expect(branch).toContain("sameUser && adoptable");
+  });
+
+  it("swallows the rejection — a dead client must not fail a live connect", () => {
+    const disconnect = provider.indexOf(
+      "await adoptable.disconnectUser().catch(() => undefined)",
+    );
+    expect(provider.slice(disconnect, disconnect + 90)).toContain(
+      ".catch(() => undefined)",
+    );
+  });
+});

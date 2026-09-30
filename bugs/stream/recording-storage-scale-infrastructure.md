@@ -87,7 +87,8 @@ the OOM failure mode is gone. The throughput ceiling is not gone — see the
 Cron + GH Actions is fine for **design-partner volume**. It remains a
 **data-loss machine at marketplace scale**, for a different reason than it was
 in July 2026: not per-file memory, but total throughput. The cron still moves
-roughly 40 files/day and the runner is still capped at 15 minutes. The mitigation
+roughly 100 files/day — 25 per run at four runs a day, since D7 raised the
+per-run batch from 10 — and the runner is still capped at 15 minutes. The mitigation
 that exists is the **72-hour backlog alert**, which pages before the bytes lapse
 rather than discovering the loss afterwards.
 
@@ -150,7 +151,7 @@ Egress dominates if many users rewatch (or if our transfer pipeline downloads fr
 | Scale                                                       | Verdict                                                                                                   |
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Design partners / low hundreds of permanent recordings/week | **Yes**, with monitoring and a smaller transfer window (or immediate enqueue).                            |
-| Thousands of permanent recordings/day                       | **No** — 40/day ceiling and 15-min runners will lose data.                                                |
+| Thousands of permanent recordings/day                       | **No** — ~100/day ceiling and 15-min runners will lose data.                                              |
 | Hundreds of thousands of concurrent events                  | **Definitely no** — need durable orchestration + horizontal workers + preferably Stream external storage. |
 
 Cron is a **scheduler**, not a **workflow engine**. It cannot resume mid-download after OOM, cannot fairly share capacity across tenants, and cannot express “must finish 48h before Stream deletes.”
