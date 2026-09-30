@@ -7,20 +7,27 @@
  * `clientId` or `clientSecret` locks users out), so the UX is
  * delete-and-recreate.
  *
- * The URL path uses the human `providerId` slug, not the internal row
- * uuid, to match the IdP-side setup flow (admins copy the slug into their
- * IdP's metadata).
+ * The URL path uses the `providerId` slug, not the internal row uuid, to
+ * match the IdP-side setup flow (the slug is part of the redirect URI).
+ *
+ * The IdP client secret is write-only: no role ever gets it back. It is
+ * entered once at create and a mistake is fixed by delete-and-recreate, so
+ * returning it serves no flow and only widens what a hijacked OWNER session
+ * or a logged response can leak.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
+import { redactOidcConfig } from "@/lib/sso/redact-oidc-config";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
-import { SecretPayloadError, type SecretPayloadFailure } from "@/lib/sso/secret-crypto";
+import {
+  SecretPayloadError,
+  type SecretPayloadFailure,
+} from "@/lib/sso/secret-crypto";
 
 /**
  * The message an OWNER sees when their provider's config cannot be read.
@@ -48,7 +55,7 @@ export async function GET(
 ) {
   const { orgId, providerId } = await params;
   // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
-  // floor that admitted BILLING_ADMIN; secrets stay OWNER-only below.
+  // floor that admitted BILLING_ADMIN. Both roles get the same redacted view.
   const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
@@ -82,12 +89,13 @@ export async function GET(
     // The shape is fixed and the ids are route params, so a placeholder row
     // is enough to keep the response identical to the readable case. The
     // config is `null` below, so a failed read can never leak a partial
-    // config into the MAINTAINER branch either.
+    // config either.
     provider = {
       id: "",
       providerId,
       issuer: "",
       domain: "",
+      domainVerified: false,
       oidcConfig: null,
     };
   }
@@ -99,10 +107,6 @@ export async function GET(
     );
   }
 
-  // Only identity.manage (OWNER) gets the full config JSON in the payload.
-  // Everyone else sees redacted markers — client-secret values would leak
-  // sensitive IdP credentials otherwise.
-  const isOwner = hasOrgPermission(access.member.role, "identity.manage");
   const type: "oidc" | null = provider.oidcConfig ? "oidc" : null;
 
   // A provider row with no config is a half-written record. Fabricating a
@@ -111,41 +115,16 @@ export async function GET(
   // incomplete" state correctly.
   const callbackUrl = type ? deriveCallbackUrl(provider.providerId) : null;
 
-  if (!isOwner) {
-    return NextResponse.json({
-      provider: {
-        id: provider.id,
-        providerId: provider.providerId,
-        issuer: provider.issuer,
-        domain: provider.domain,
-        providerType: type,
-        callbackUrl,
-        // A MAINTAINER's rank stops at `identity.read`; the client secret
-        // stays with OWNER. Reported as present, not shown.
-        oidcConfig: provider.oidcConfig ? "[redacted]" : null,
-      },
-    });
-  }
-
   return NextResponse.json({
     provider: {
       id: provider.id,
       providerId: provider.providerId,
       issuer: provider.issuer,
       domain: provider.domain,
+      domainVerified: provider.domainVerified,
       providerType: type,
       callbackUrl,
-      // The parsed config object, verbatim. The settings form pre-fills
-      // from it and `clientSecret` is in here in cleartext — that is the
-      // existing contract for `identity.manage`, unchanged by this route.
-      //
-      // They are passed through rather than validated or rebuilt on
-      // purpose. This view exists so an admin can SEE the config that is
-      // actually stored, including the field that is wrong; a
-      // reconstruct-from-schema response would show them a well-formed
-      // config that differs from the real one, which is the opposite of
-      // useful when they are mid-repair.
-      oidcConfig: provider.oidcConfig,
+      oidcConfig: redactOidcConfig(provider.oidcConfig),
       ...(configError
         ? {
             providerMisconfigured: true,
@@ -174,6 +153,7 @@ function findProvider(providerId: string, orgId: string) {
       providerId: true,
       issuer: true,
       domain: true,
+      domainVerified: true,
       oidcConfig: true,
     },
   });
@@ -251,22 +231,26 @@ export async function DELETE(
     notifyOrgSsoProviderDeleted(orgId, {
       orgName: access.org.name,
       providerId,
-      deletedByName:
-        access.session.user.name ?? access.session.user.email,
+      deletedByName: access.session.user.name ?? access.session.user.email,
       dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
     }).catch((err) => {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "organizations" } },
+      );
       console.error("[notifyOrgSsoProviderDeleted] failed:", err);
     });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }
