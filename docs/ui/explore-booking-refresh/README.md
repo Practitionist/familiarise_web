@@ -4,16 +4,16 @@ This is a presentation and booking-journey update against `dev`. No schema, avai
 
 ## Design decisions
 
-| Decision               | Chosen direction                                                                          | Tradeoff                                                                                                 |
-| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Theme                  | Light Explore and pricing surfaces; retain existing dark tokens and unrelated dark routes | One consistent discovery experience, without a new app-wide theme switch                                 |
-| Visual language        | Warm white, black primary actions, restrained lilac/peach/sky accents                     | More expressive than pure monochrome; accents do not replace semantic status colors                      |
-| Discovery              | Curated content first, with a direct “Find” anchor to the catalog                         | Browsing comes first; filters remain one action away                                                     |
-| Consultation booking   | Date and time together on desktop; Date → Time → Review on mobile                         | An explicit review adds a step before the existing checkout/approval action                              |
-| Mentorship             | Start date → cycle review → existing checkout                                             | Makes the first-cycle boundary visible before payment                                                    |
-| Mentorship price label | Total plan price, not “per month”                                                         | Matches the existing one-time `plan.price` checkout; no billing change or monthly-equivalent calculation |
-| Group programs         | Registration review before the existing sign-in/checkout handoff                          | Adds confirmation while retaining capacity, event ids, cancellation disclosures, and callbacks           |
-| Carousel               | Manual navigation                                                                         | Stable content while reading; viewing another featured item takes a click                                |
+| Decision               | Chosen direction                                                                                         | Tradeoff                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Theme                  | Enterprise-style charcoal Explore heroes, with light content and booking surfaces; pricing remains light | Stronger dark/light separation without introducing an app-wide dark-mode switch                          |
+| Visual language        | White hero headings/actions, neutral gray supporting text, warm-white content and restrained accents     | Keeps the refreshed layouts rather than restoring the older designs; semantic status colors stay intact  |
+| Discovery              | Curated content first, with a direct “Find” anchor to the catalog                                        | Browsing comes first; filters remain one action away                                                     |
+| Consultation booking   | Date and time together on desktop; Date → Time → Review on mobile                                        | An explicit review adds a step before the existing checkout/approval action                              |
+| Mentorship             | Start date → cycle review → existing checkout                                                            | Makes the first-cycle boundary visible before payment                                                    |
+| Mentorship price label | Total plan price, not “per month”                                                                        | Matches the existing one-time `plan.price` checkout; no billing change or monthly-equivalent calculation |
+| Group programs         | Registration review before the existing sign-in/checkout handoff                                         | Adds confirmation while retaining capacity, event ids, cancellation disclosures, and callbacks           |
+| Carousel               | Manual navigation                                                                                        | Stable content while reading; viewing another featured item takes a click                                |
 
 ## Scope
 
@@ -39,6 +39,24 @@ The live expert-detail route encountered database connection timeouts. Isolated,
 
 Fixtures use synthetic people/programs, placeholder imagery, and intercepted read-only API responses. They exercise the production components, not a separate mockup. Counts in the live expert-directory capture are actual catalog data from that read; counts in fixture captures are fixture values.
 
+### Current charcoal heroes
+
+The follow-up replaces the lilac Explore hero treatments with the enterprise hero's `zinc-950` background. Local hero tokens also invert badges, borders, and actions; they do not darken the content cards or booking dialogs. Pricing's existing hero is not changed by this follow-up.
+
+These are isolated production-header previews, not full directory/detail-page integration captures. The subscription preview renders the full production subscription component. Desktop is 1440px and mobile is 390px. Browser checks verify heading/supporting-text contrast, light content cards, no horizontal overflow, and a keyboard-accessible primary link with visible focus. Nine discovery/booking suites (35 tests), ESLint, formatting, and a focused TypeScript check also pass for the follow-up.
+
+| Header         | Desktop                                   | Mobile                                   |
+| -------------- | ----------------------------------------- | ---------------------------------------- |
+| Experts        | [Capture](black-experts-desktop.png)      | [Capture](black-experts-mobile.png)      |
+| Programs       | [Capture](black-programs-desktop.png)     | [Capture](black-programs-mobile.png)     |
+| Expert profile | [Capture](black-expert-desktop.png)       | [Capture](black-expert-mobile.png)       |
+| Group program  | [Capture](black-class-desktop.png)        | [Capture](black-class-mobile.png)        |
+| Subscription   | [Capture](black-subscription-desktop.png) | [Capture](black-subscription-mobile.png) |
+
+### Initial iteration and booking references
+
+The captures below predate the charcoal-hero revision. Their hero colors are superseded by the current previews above; the unchanged booking/calendar flows remain useful references.
+
 | Surface              | Desktop                                                | Mobile                                            | Data                    |
 | -------------------- | ------------------------------------------------------ | ------------------------------------------------- | ----------------------- |
 | Expert directory     | [Capture](experts-desktop.png)                         | [Capture](experts-mobile.png)                     | Live read               |
@@ -52,3 +70,11 @@ Fixtures use synthetic people/programs, placeholder imagery, and intercepted rea
 | Pricing page         | —                                                      | [Capture](pricing-mobile.png)                     | Existing static content |
 
 Live detail-page integration and a production build remain follow-up verification for an environment with a working database and sufficient build memory. No before/after equivalence or end-to-end payment result is claimed by these screenshots.
+
+## Curriculum PDF decision (not implemented)
+
+The subscription page currently renders `subscriptionContents` as its roadmap. It does not render attached `PlanMaterial` files. The existing materials-management API is authenticated and owner/org-management scoped, and the material model has no public-brochure designation. A PDF attachment must not automatically become public just because it is a PDF.
+
+Recommended follow-up: explicitly public curriculum brochures alongside a short accessible on-page summary. Show a labelled “View curriculum brochure (PDF)” card with filename/size and open it in a new tab; avoid an embedded PDF viewer on mobile. If only the PDF exists, the card replaces the absent roadmap; if both exist, keep the roadmap and show the brochure beneath it; if neither exists, omit the empty section. Do not claim a PDF is available before an actual public brochure is configured.
+
+Choice to confirm: public brochure + summary (better pre-booking evaluation, requires explicit upload/visibility support), learner-only PDF (protects curriculum, less information before booking), or a separate brochure PR (keeps this UI iteration focused). Existing learner materials are not newly exposed by this PR.

@@ -47,7 +47,7 @@ export function ExploreHero({ kind, stats }: ExploreHeroProps) {
               <ArrowDown className="h-4 w-4" />
             </a>
             <Link
-              className="inline-flex items-center gap-2 px-3 py-3 text-sm font-medium"
+              className="inline-flex items-center gap-2 rounded-xl px-3 py-3 text-sm font-medium text-zinc-300 hover:bg-white/5 hover:text-white"
               href={experts ? "/explore/programs" : "/explore/experts"}
             >
               {experts ? "Explore programs" : "Meet the experts"}
@@ -64,18 +64,20 @@ export function ExploreHero({ kind, stats }: ExploreHeroProps) {
               ? "A good conversation can change your direction."
               : "Small beginnings. Lasting possibilities."}
           </p>
-          <div className="flex flex-wrap gap-x-8 gap-y-4 border-t border-black/10 pt-5">
+          <div className="flex flex-wrap gap-x-8 gap-y-4 border-t border-white/10 pt-5">
             {stats.length ? (
               stats.map((stat) => (
                 <div key={stat.key}>
                   <p className="text-2xl font-semibold tabular-nums">
                     {stat.display}
                   </p>
-                  <p className="mt-1 text-xs text-zinc-600">{stat.label}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {stat.label}
+                  </p>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-zinc-600">
+              <p className="text-sm text-muted-foreground">
                 {experts
                   ? "Discover newly verified experts."
                   : "Discover new classes and webinars."}

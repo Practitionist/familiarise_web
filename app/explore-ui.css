@@ -30,8 +30,6 @@
 .explore-hero {
   padding-block: clamp(3rem, 7vw, 6.5rem);
   border-bottom: 1px solid hsl(var(--border));
-  background:
-    radial-gradient(ellipse at 15% 10%, #eee7fb88, transparent 55%), #faf9f6;
 }
 .explore-eyebrow {
   display: inline-flex;
@@ -43,19 +41,14 @@
   text-transform: uppercase;
 }
 .explore-highlight {
-  background: linear-gradient(
-    transparent 68%,
-    #ded1f2 68%,
-    #ded1f2 92%,
-    transparent 92%
-  );
+  color: #d4d4d8;
 }
 .explore-hero-note {
   position: relative;
   padding: clamp(1.5rem, 4vw, 3rem);
-  border: 1px solid #ded4e8;
+  border: 1px solid hsl(var(--border));
   border-radius: 1.5rem;
-  background: #eee6f7;
+  background: #18181b99;
 }
 .explore-primary-link {
   display: inline-flex;
@@ -64,13 +57,17 @@
   gap: 0.75rem;
   border-radius: 0.85rem;
   padding: 0.9rem 1.25rem;
-  background: #171717;
-  color: white;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 0.875rem;
   font-weight: 500;
 }
 .explore-primary-link:hover {
-  background: #333;
+  background: #e4e4e7;
+}
+.explore-hero a:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 4px;
 }
 .explore-card {
   border-radius: 1.25rem;
@@ -89,9 +86,6 @@
   max-width: 1440px;
   margin-inline: auto;
 }
-.explore-profile-header {
-  background: linear-gradient(110deg, #eee6f744, #fff 65%);
-}
 .explore-page [id],
 .explore-page [data-booking-panel] {
   scroll-margin-top: calc(
@@ -103,6 +97,28 @@
   border: 1px solid hsl(var(--border));
   border-radius: 1.5rem;
   background: linear-gradient(115deg, #eee6f7, #f8efe6 85%);
+}
+/* Dark editorial headers are local surfaces, not an app-wide dark mode. */
+.explore-hero,
+.explore-profile-header,
+.explore-page .explore-plan-header {
+  --background: 240 10% 4%;
+  --foreground: 0 0% 98%;
+  --card: 240 6% 10%;
+  --card-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 10% 4%;
+  --secondary: 240 4% 16%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 4% 16%;
+  --muted-foreground: 240 5% 65%;
+  --border: 240 4% 16%;
+  --input: 240 4% 16%;
+  --ring: 0 0% 98%;
+  --accent: 240 4% 16%;
+  --accent-foreground: 0 0% 98%;
+  background: #09090b;
+  color: hsl(var(--foreground));
 }
 .explore-booking-panel {
   border: 1px solid hsl(var(--border));
