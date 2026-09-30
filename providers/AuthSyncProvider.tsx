@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { getSession, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import {
   forgetAuthState,
   postAuthSync,
@@ -150,6 +150,27 @@ function handleAccountSwitch(
   }
 }
 
+type ProbeState = "active" | "revoked" | "unknown";
+
+/**
+ * One authoritative, three-state answer from `/api/user/sessions/current`.
+ * Only 401 (no session) and 403 (suspended) mean "revoked"; a 503, any other
+ * status or a network error is "unknown" and must never sign anyone out.
+ */
+async function probeSession(): Promise<ProbeState> {
+  try {
+    const res = await fetch("/api/user/sessions/current", {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (res.ok) return "active";
+    if (res.status === 401 || res.status === 403) return "revoked";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export default function AuthSyncProvider() {
   const { data: session, isPending, refetch } = useSession();
   // In-memory fallback for the previous authed state, used when the cross-tab
@@ -169,29 +190,24 @@ export default function AuthSyncProvider() {
    *
    * - error (network/503) → could-not-ask, NOT a revocation: refetch
    *   through the normal path and stay put.
-   * - user present → the null was a cookie-cache race: refetch to recover.
-   * - confirmed null while we believed we were authed → clean sign-out:
+   * - 200 → the null was transient: refetch to recover.
+   * - 401/403 while we believed we were authed → clean sign-out:
    *   drop the remembered identity, tear down Stream sockets, and land
    *   on sign-in with the reason so the page can say why.
+   *
+   * Asks `/api/user/sessions/current`, NOT `getSession`: BetterAuth's
+   * customSession answers `200 null` for a failed lookup as well as a
+   * missing session, so reading that null as "revoked" signed every open
+   * tab out during a database blip.
    */
   const classifyUnexpectedSignOut = useCallback(async () => {
     if (!previousAuthedRef.current) return;
     // Capture the account this check is FOR: a same-profile sign-in as a
-    // different account mid-check must not let a stale null for the OLD
+    // different account mid-check must not let a stale answer for the OLD
     // account sign out the NEW one. Compared again before signing out.
     const checkedUserId = previousUserIdRef.current;
-    let result: Awaited<ReturnType<typeof getSession>>;
-    try {
-      result = await getSession({ query: { disableCookieCache: true } });
-    } catch {
-      refetch?.();
-      return;
-    }
-    if (result.error) {
-      refetch?.();
-      return;
-    }
-    if (result.data?.user) {
+    const state = await probeSession();
+    if (state !== "revoked") {
       refetch?.();
       return;
     }
