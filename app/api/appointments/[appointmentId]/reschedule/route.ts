@@ -19,8 +19,10 @@ import type {
 import { RescheduleProposalSchema } from "@/schemas/appointments";
 import {
   computeProposalExpiry,
-  proposalCountMatches,
+  proposalCoverageMatches,
+  releasedAtomCount,
   rescheduleNotificationVariant,
+  rescheduleProposeOutcome,
   supportsProposals,
 } from "@/lib/booking/reschedule-proposals";
 import {
@@ -336,21 +338,27 @@ export async function POST(
 
           // #1554 — a subscription or class is ONE wrapper, so every session
           // of the programme is already on `appointment.occurrences`.
-          let allSubscriptionSlots: typeof appointment.occurrences =
-            derivedType === "SUBSCRIPTION" || derivedType === "CLASS"
-              ? appointment.occurrences
-              : [];
-
-          // E2E-audit fix — whole-series flows must act on LIVE slots only.
-          // The 24-hour gate and the proposal-count check used to iterate every
-          // historical row (COMPLETED/CANCELLED sessions included), so any
-          // past session made hoursUntilSlot negative and the aggregate
-          // reschedule was bricked with a guaranteed 400 after the first
-          // delivery. SLOT_RESCHEDULABLE_FROM is the canonical live set — a
-          // requested-but-completed id now correctly reports as missing.
-          allSubscriptionSlots = allSubscriptionSlots.filter((s) =>
+          //
+          // E2E-audit fix — flows must act on LIVE slots only. The 24-hour gate
+          // and the proposal-count check used to iterate every historical row
+          // (COMPLETED/CANCELLED sessions included), so any past session made
+          // hoursUntilSlot negative and the aggregate reschedule was bricked
+          // with a guaranteed 400 after the first delivery.
+          // SLOT_RESCHEDULABLE_FROM is the canonical live set — a requested-but-
+          // completed id now correctly reports as missing.
+          //
+          // The filter is on the SOURCE, not on the SUBSCRIPTION/CLASS branch,
+          // because the other half of that branch fell through to the
+          // unfiltered list: a CONSULTATION (and a WEBINAR) took every
+          // historical row, so `slotsToReschedule` — and the proposal's
+          // `releasedOccurrenceIds` — named rows the release never touched.
+          const liveOccurrences = appointment.occurrences.filter((s) =>
             (SLOT_RESCHEDULABLE_FROM as string[]).includes(s.completionStatus),
           );
+          const allSubscriptionSlots: typeof appointment.occurrences =
+            derivedType === "SUBSCRIPTION" || derivedType === "CLASS"
+              ? liveOccurrences
+              : [];
 
           // Determine which slots will be affected
           // For multi-appointment types (SUBSCRIPTION, CLASS) without slotIds, check all slots
@@ -359,7 +367,7 @@ export async function POST(
             (!slotIds || slotIds.length === 0) &&
             allSubscriptionSlots.length > 0
               ? allSubscriptionSlots
-              : appointment.occurrences;
+              : liveOccurrences;
 
           // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
           // slots. CLASS previously fell through to the whole-class branch, so
@@ -573,17 +581,27 @@ export async function POST(
             initiatorRole &&
             supportsProposals(derivedType)
           ) {
+            // Atoms on both sides, not rows. A released occurrence is one whole
+            // session of `slotsPerSession` atoms and a proposed row is exactly
+            // one, so a 1-hour session is two proposed rows against one released
+            // row — and the old row-count comparison made that shape a permanent
+            // `PROPOSAL_COUNT_MISMATCH`, so such a booking could be rescheduled
+            // and released but never accepted or auto-confirmed (the allocator
+            // separately demands multiples of `slotsPerCall`, which the 1-atom
+            // shape that did pass can never be). The coverage comparison is the
+            // same rule the allocator applies downstream, so a proposal that
+            // passes here is not refused there for being the wrong size.
             if (
               proposedSlots?.length &&
-              !proposalCountMatches(
-                slotsToReschedule.length,
-                proposedSlots.length,
-              )
+              !proposalCoverageMatches(slotsToReschedule, proposedSlots)
             ) {
               throw Object.assign(
                 new Error(
-                  `Proposed ${proposedSlots.length} time(s) for ${slotsToReschedule.length} released slot(s). ` +
-                    `A reschedule replaces slots one for one; changing the count would change what was paid for.`,
+                  `Proposed ${proposedSlots.length} 30-minute time(s) for ` +
+                    `${slotsToReschedule.length} released session(s) covering ` +
+                    `${releasedAtomCount(slotsToReschedule)} minute-block(s). ` +
+                    `A reschedule replaces the same total coverage it released; ` +
+                    `changing it would change what was paid for.`,
                 ),
                 { httpStatus: 400, code: "PROPOSAL_COUNT_MISMATCH" },
               );
@@ -980,15 +998,18 @@ export async function POST(
       console.error("[reschedule] Failed to send notification:", error);
     }
 
-    // The three outcomes read very differently to a user — you're moved, we've
-    // asked, or nothing was proposed — so they must not collapse into one line.
-    const resultMessage = () => {
-      if (autoConfirmed) return "Your new time is confirmed.";
-      if (result.rescheduleRequestId) {
-        return "Your requested time has been sent to the consultant.";
-      }
-      return result.message;
-    };
+    // The outcomes read very differently to a user — you're moved, we've asked,
+    // we could not place that time, or nothing was proposed — and the previous
+    // two-branch version answered "sent to the consultant" for every one of
+    // them, asserting a cause the server had just detected was something else.
+    // The policy module owns the mapping so the code and the sentence cannot
+    // disagree.
+    const outcome = rescheduleProposeOutcome({
+      autoConfirmed,
+      hasProposal: Boolean(result.rescheduleRequestId),
+      autoConfirmReason,
+      releaseMessage: result.message,
+    });
 
     return NextResponse.json({
       ...result,
@@ -996,13 +1017,23 @@ export async function POST(
       // #FAMILIARISE_WEB-2W — the refusal reason travels with the outcome so
       // a green-slot auto-confirm failure is diagnosable from the response.
       autoConfirmReason,
-      // The two outcomes read very differently to a user — "you're moved" versus
-      // "we've asked" — so the client must be able to tell them apart rather
-      // than inferring it from the proposal's presence.
-      message: resultMessage(),
+      // The stable half of the answer: a client branches on this and never on
+      // the sentence beside it. The proposal's own status is not on the wire,
+      // so before this there was nothing to branch on that could tell "waiting
+      // for the consultant" from "nothing is pending any more".
+      outcome: outcome.code,
+      message: outcome.message,
     });
   } catch (error) {
     // A typed refusal (the reschedule window) answers with its own status.
+    //
+    // This is the only path of the four reschedule refusals that does not
+    // return its own `NextResponse`: `apiError` serialises a `Refusal` as
+    // `{ error, errorType, code }`, so `RESCHEDULE_WINDOW` still reaches the
+    // client as a branchable code. The other three are the explicit branches
+    // below (`RESCHEDULE_ALREADY_OPEN`) or the `httpStatus`/`code` pair thrown
+    // inside the transaction (`PROPOSAL_COUNT_MISMATCH`,
+    // `PROPOSAL_WINDOW_CLOSED`).
     if (isRefusal(error)) {
       return apiError({ tag: "[Reschedule.POST]", error });
     }

@@ -519,11 +519,19 @@ async function claimConsultantNoShow(
   return true;
 }
 
-// Full refund, reusing B1's refundPayment path (#990). Idempotent:
-// refundPayment's refundable-balance guard throws if already refunded, so even a
-// stale re-entry cannot double-refund. On failure we surface for ops (the
-// cancellation stands) rather than silently swallowing. Returns the refunded
-// amount, whether refundPayment succeeded, and the payment (for notifications).
+/**
+ * Full refund, reusing B1's refundPayment path (#990). Idempotent on a key the
+ * unique index enforces: without one, the only guard was refundPayment's
+ * re-derivation of the refundable balance inside its own Serializable
+ * transaction, which is a read-then-write — two concurrent unkeyed runs (an
+ * expired `cron:lock:` grant lets exactly that) both read `refundable = amount`,
+ * both pass, and both create a Refund row, because Refund is unique on nothing
+ * but `dedupeKey`. with-cron-lock calls the CAS guards the correctness backstop;
+ * the claim that held the balance re-derivation could not is why the key is
+ * here (#P0-4). On failure we surface for ops (the cancellation stands) rather
+ * than silently swallowing. Returns the refunded amount, whether refundPayment
+ * succeeded, and the payment (for notifications).
+ */
 async function refundNoShowConsultation(
   consultation: NoShowCandidate,
   errors: string[],
@@ -552,6 +560,12 @@ async function refundNoShowConsultation(
       paymentId: paidPayment.id,
       reason: "consultant no-show (#471)",
       initiatedByUserId: null,
+      // #P0-4 — the arm's own name and the payment, so a lost lock's second
+      // run answers with the first run's refund instead of moving money twice.
+      // Distinct from every expiry arm's key, so a later refund of the same
+      // payment for a different reason is a real ALREADY_FULLY_REFUNDED and
+      // not this sweep's own key coming back.
+      dedupeKey: `consultant-no-show:${paidPayment.id}`,
     });
     console.log(`   💸 Refunded ${r.amountRefundedPaise}p via ${r.rail}`);
     return {

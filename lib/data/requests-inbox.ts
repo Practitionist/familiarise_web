@@ -93,9 +93,23 @@ const INBOX_APPOINTMENT_SELECT = {
     },
     payment: { select: BUYER_PAYMENT_DISPLAY_SELECT },
     organization: { select: { name: true } },
+    // #1760 — the EXPIRED edge tells a lapsed pay link from an unanswered
+    // request. #1846 added the second arm: a consultant's withdraw-approval now
+    // ends in CANCELLED rather than EXPIRED, so the `toStatus: "EXPIRED"` filter
+    // alone would drop the edge that says WHO ended the booking. Added, not
+    // substituted — the EXPIRED edge is still what proves a pay link lapsed, and
+    // narrowing this select would silently un-prove it.
     statusHistory: {
-      where: { toStatus: "EXPIRED" as const },
-      select: { fromStatus: true, toStatus: true },
+      where: {
+        OR: [
+          { toStatus: "EXPIRED" as const },
+          {
+            toStatus: "CANCELLED" as const,
+            reason: "WITHDRAWN_BY_CONSULTANT",
+          },
+        ],
+      },
+      select: { fromStatus: true, toStatus: true, reason: true },
     },
   },
 } as const;

@@ -871,7 +871,24 @@ async function stageDeclineHoldNotices(
 }
 
 /**
- * Check if payment exists for this consultation
+ * Does this consultation carry money that has actually landed?
+ *
+ * SUCCEEDED and nothing else. The old predicate was
+ * `in: [SUCCEEDED, PENDING]`, which let a pay-link order nobody has paid count
+ * as a payment: approval then took the settled branch, CONFIRMED the occurrence
+ * (`isTentative: false`) and returned without minting anything, leaving wrapper
+ * APPROVED + a confirmed slot + a PENDING/EXPIRED Payment and no pay link. No
+ * sweep can reap that shape — every cohort needs a tentative occurrence or an
+ * APPROVED_PENDING_PAYMENT/PENDING request — so the consultant-minute was
+ * blocked by the GiST exclusion forever, with a buyer who never paid holding a
+ * confirmed slot.
+ *
+ * A PENDING order is a hold, not a payment, so it now falls through to the
+ * unpaid arm below: the request lands in APPROVED_PENDING_PAYMENT, the hold
+ * stays tentative, and the pay-link mint runs. This is the same predicate
+ * `SETTLED_CONSULTATION` gives the subscription twin, which reads it as a CAS
+ * WHERE rather than a read.
+ *
  * Uses transaction client to maintain serializable isolation
  */
 async function checkConsultationPayment(
@@ -885,9 +902,7 @@ async function checkConsultationPayment(
         include: {
           payment: {
             where: {
-              paymentStatus: {
-                in: [PaymentStatus.SUCCEEDED, PaymentStatus.PENDING],
-              },
+              paymentStatus: PaymentStatus.SUCCEEDED,
             },
           },
         },

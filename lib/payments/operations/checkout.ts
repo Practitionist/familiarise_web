@@ -15,6 +15,7 @@ import {
   linkParticipantsToPayment,
   liveParticipant,
   recordParticipants,
+  releaseParticipant,
   transitionParticipant,
 } from "@/lib/booking/participants";
 import {
@@ -585,10 +586,16 @@ export async function findReusablePendingOrderPayment(
  * throws `IllegalTransitionError`, which is caught per appointment so the rest
  * of the release still commits.
  *
- * Group events are deliberately untouched: their slots are shared between
- * attendees, so releasing a seat is a disconnect rather than a status move and
- * belongs to `cancelPendingCheckout`, which owns that shape. No event checkout
- * is blocked by a per-buyer hold, so nothing here depends on it.
+ * Group events mint no per-buyer occurrence: a webinar or class seat is the
+ * buyer's participant row on the event's own appointment. Superseding the
+ * order without giving that row back is a permanent loss, not a temporary wall
+ * — `isAlreadyRegistered` / `isUserEnrolled` read `liveParticipant`, which
+ * counts HELD, so every later attempt by this buyer is refused over a seat
+ * whose payment is EXPIRED. And no sweep reclaims it: the abandoned-payment
+ * sweep cohorts on `paymentStatus: PENDING`, which this row no longer is. So
+ * the event runs one seat short with nothing left to release it. The seat is
+ * released here, in the same transaction that stops the payment being payable,
+ * and only for this buyer's own row — other attendees' seats are not ours.
  */
 async function releaseSupersededHolds(params: {
   paymentIds: string[];
@@ -622,7 +629,17 @@ async function releaseSupersededHolds(params: {
     });
 
     for (const appointment of appointments) {
-      if (appointment.webinarId || appointment.classId) continue;
+      if (appointment.webinarId || appointment.classId) {
+        // The seat, not an occurrence, is what this buyer gave up. Scoped to
+        // their own row on this event, and a CAS on the live statuses, so a
+        // second pass — or a capture that confirmed the seat first — matches
+        // zero rows and changes nothing.
+        await releaseParticipant(tx, {
+          appointmentId: appointment.id,
+          userId: params.userId,
+        });
+        continue;
+      }
 
       // #1778 — the superseded hold frees its times: tell anyone waiting.
       await stageNoticesForAppointmentHolds(tx, appointment.id);
@@ -2011,15 +2028,101 @@ async function verifyPlanExistsInsideLock(
 }
 
 /**
+ * The invariant: one consultee, one live session per moment of their calendar.
+ *
+ * The contention key is the consulee's User id plus the requested window, and
+ * nothing in the database enforces it. `occurrence_no_confirmed_overlap` is
+ * keyed on `consultantProfileId`, so a learner who books two DIFFERENT
+ * consultants for the same hour is invisible to the only DB-level backstop in
+ * the system. This predicate is therefore load-bearing, and it holds only for
+ * as long as it is read inside a transaction that WRITES the window: read in a
+ * different, already-committed transaction it closes no race, because the rows
+ * it refused on are not the rows the next transaction locks.
+ *
+ * Occupancy is defined by buildOccupiedAppointmentFilter so the answer matches
+ * validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
+ */
+async function assertConsulteeHasNoOverlappingSession(
+  tx: Tx,
+  window: {
+    userId: string;
+    startsAt: string;
+    endsAt: string;
+    /** #1463 — the buyer's own open order for exactly this window. */
+    selfHoldAppointmentIds: string[];
+  },
+): Promise<void> {
+  const conflict = await tx.appointment.findFirst({
+    where: {
+      AND: [
+        { OR: buildOccupiedAppointmentFilter() },
+        // #1319 — parity with step 1 of validateSlotAvailability.
+        { NOT: buildDeadHoldFilter(new Date()) },
+        // #1463 — the buyer's own open order for this exact window is the thing
+        // they are trying to finish paying for, not a competing session on their
+        // calendar. Without this the availability fix would only move the wall
+        // one query to the right.
+        ...(window.selfHoldAppointmentIds.length > 0
+          ? [{ NOT: { id: { in: window.selfHoldAppointmentIds } } }]
+          : []),
+        // userId (User.id) is the right scope — the roster keys on User, not
+        // ConsulteeProfile, so this catches conflicts from any org and from
+        // marketplace bookings with no org at all.
+        { participants: { some: liveParticipant(window.userId) } },
+        {
+          occurrences: {
+            some: {
+              AND: [
+                { startsAt: { lt: new Date(window.endsAt) } },
+                { endsAt: { gt: new Date(window.startsAt) } },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  if (conflict) {
+    throw new Error("You already have a session booked during this time.");
+  }
+}
+
+/**
  * Re-validate availability inside the lock
  * Critical for preventing TOCTOU race conditions
  */
-/** What the pre-lock org gate chain resolved; re-asserted under the lock. */
+/**
+ * What the pre-lock org gate chain resolved; re-asserted under the lock.
+ *
+ * `billingAccountId` is here because the lock must pin the account the rail
+ * came FROM, not merely "some account of this org": the wallet debit and the
+ * Payment's `billingAccountId` both address that exact row, and a rail decision
+ * read off a different account than the one charged is the axis collapse this
+ * module is guarded against.
+ */
 interface OrgFundingContext {
   organizationId: string;
   callerMembershipId: string;
   programAssignmentId: string | null;
   appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+  billingAccountId: string | null;
+}
+
+/**
+ * The org money state RE-READ under the lock. Everything rail-dependent is
+ * derived from this, never from the pre-lock value: `PATCH
+ * /api/organizations/[orgId]/billing-account` can flip `fundingSource` and
+ * resize `creditLimit` at any moment behind a FINANCE_MUTATORS permission, with
+ * no coordination with a checkout in flight.
+ */
+interface OrgFundingRead {
+  /** The rail as it stands under the lock; "PERSONAL" when there is no account. */
+  fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE";
+  /** The account actually read — null once the org has none. */
+  billingAccountId: string | null;
+  /** INVOICE credit ceiling folded with the unverified-org governance cap. */
+  creditEffectiveLimit: number | null;
 }
 
 async function revalidateInsideLock(
@@ -2029,10 +2132,10 @@ async function revalidateInsideLock(
   // PERSONAL/marketplace checkouts. Drives the curated-panel check.
   programId: string | null = null,
   orgContext: OrgFundingContext | null = null,
-): Promise<void> {
+): Promise<OrgFundingRead | null> {
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
@@ -2096,6 +2199,17 @@ async function revalidateInsideLock(
     // withdrawn between the gate and the write still got sponsored. Re-assert
     // the resolved rows by id under the lock; the credit limit is re-checked
     // inside the Serializable booking tx already.
+    //
+    // #1854 — and now the RAIL too. `Organization.status`, `canSponsor` and the
+    // rest are re-read here, but `BillingAccount` used not to be read at all
+    // outside the pre-lock gate, so `fundingSource` stayed whatever it was
+    // seconds earlier. The dangerous direction is LICENSE → WALLET: `isOrgLicensedPayment`
+    // stays true, so the leg is written as a 0-value LICENSE leg while
+    // `Payment.amount` holds the full price — and `payment_legs_sum_to_amount`
+    // explicitly carves that shape out, so the booking commits, earnings accrue
+    // at full value and the org is never charged. Everything below is derived
+    // from what this read returns.
+    let freshOrgFunding: OrgFundingRead | null = null;
     if (orgContext) {
       const now = new Date();
       const org = await tx.organization.findUnique({
@@ -2121,6 +2235,45 @@ async function revalidateInsideLock(
           { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
         );
       }
+      // The rail, re-read. `ownerOrgId` is the canonical 1:1, so this resolves
+      // the account even if one appeared (or vanished) between the two reads.
+      const billingAccount = await tx.billingAccount.findFirst({
+        where: { ownerOrgId: orgContext.organizationId },
+        select: { id: true, fundingSource: true, creditLimit: true },
+      });
+      // An account that was there pre-lock and is gone now (sponsorship turned
+      // off mid-flight) would otherwise leave the caller debiting and stamping
+      // an id no row carries. Refuse, and let the buyer retry against the
+      // configuration as it now stands. `ORG_CANNOT_SPONSOR` rather than a new
+      // code: it is the registered answer for "this org is not set up to
+      // sponsor right now", and its userMessage already points the buyer at the
+      // billing admin or at booking the session themselves.
+      if (orgContext.billingAccountId !== (billingAccount?.id ?? null)) {
+        throw Object.assign(
+          new Error(
+            "This organization's billing account changed while this booking was in progress. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
+        );
+      }
+      // Same fold as the pre-lock gate (#687): the explicit ceiling, capped by
+      // the governance ceiling while the org is unverified. Recomputed rather
+      // than carried, because `creditLimit` is editable at any moment too — and
+      // the in-transaction re-check compares the org's accrual against exactly
+      // this number, so a stale one is a credit-limit hole, not a cosmetic one.
+      const freshGovernanceLimit =
+        org.status === "ACTIVE" ? null : getInvoiceCreditLimitPaise();
+      const freshExplicitLimit = billingAccount?.creditLimit ?? null;
+      freshOrgFunding = {
+        fundingSource: billingAccount?.fundingSource ?? "PERSONAL",
+        billingAccountId: billingAccount?.id ?? null,
+        creditEffectiveLimit:
+          freshExplicitLimit === null
+            ? freshGovernanceLimit
+            : freshGovernanceLimit === null
+              ? freshExplicitLimit
+              : Math.min(freshExplicitLimit, freshGovernanceLimit),
+      };
       const membership = await tx.membership.findUnique({
         where: { id: orgContext.callerMembershipId },
         select: { status: true },
@@ -2291,47 +2444,19 @@ async function revalidateInsideLock(
           // multi-org membership increases the probability because the learner
           // has multiple "free" billing paths with no payment step to slow them.
           //
-          // We run this query inside the distributed lock and inside the
-          // Serializable transaction (TOCTOU-safe). We reuse
-          // buildOccupiedAppointmentFilter so the occupancy definition matches
-          // validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
-          const consulteeConflict = await tx.appointment.findFirst({
-            where: {
-              AND: [
-                { OR: buildOccupiedAppointmentFilter() },
-                // #1319 — parity with step 1 of validateSlotAvailability.
-                { NOT: buildDeadHoldFilter(new Date()) },
-                // #1463 — and parity with its self-hold exclusion: the buyer's
-                // own open order for this exact window is not a competing
-                // session on their calendar, it is the thing they are trying to
-                // finish paying for. Without this the availability fix above
-                // would only move the wall one query to the right.
-                ...(selfHoldAppointmentIds.length > 0
-                  ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
-                  : []),
-                // userId (User.id) is the right scope — the roster keys on
-                // User, not ConsulteeProfile, so this catches conflicts from
-                // any org and from marketplace bookings with no org at all.
-                { participants: { some: liveParticipant(userId) } },
-                {
-                  occurrences: {
-                    some: {
-                      AND: [
-                        { startsAt: { lt: new Date(data.endsAt!) } },
-                        { endsAt: { gt: new Date(data.startsAt!) } },
-                      ],
-                    },
-                  },
-                },
-              ],
-            },
-            select: { id: true },
+          // This call is the CHEAP EARLY EXIT and nothing more: it runs under
+          // the distributed consultee lock, in a transaction that COMMITS before
+          // the booking is written. The authoritative re-assertion is the same
+          // predicate read again inside the Serializable transaction that
+          // creates the occurrence, where a rw-dependency forms and SSI aborts
+          // one of a racing pair. See the arm in handleCheckout and
+          // assertConsulteeHasNoOverlappingSession.
+          await assertConsulteeHasNoOverlappingSession(tx, {
+            userId,
+            startsAt: data.startsAt!,
+            endsAt: data.endsAt!,
+            selfHoldAppointmentIds,
           });
-          if (consulteeConflict) {
-            throw new Error(
-              "You already have a session booked during this time.",
-            );
-          }
         }
         break;
       }
@@ -2358,37 +2483,14 @@ async function revalidateInsideLock(
           // Same reasoning as the CONSULTATION case above — a subscription
           // booked with an explicit slot window must not overlap an existing
           // consultee appointment, regardless of which org or marketplace
-          // context that prior appointment came from.
-          const subscriptionConsulteeConflict = await tx.appointment.findFirst({
-            where: {
-              AND: [
-                { OR: buildOccupiedAppointmentFilter() },
-                // #1319 — parity with step 1 of validateSlotAvailability.
-                { NOT: buildDeadHoldFilter(new Date()) },
-                // #1463 — same self-hold exclusion as the consultation arm.
-                ...(selfHoldAppointmentIds.length > 0
-                  ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
-                  : []),
-                { participants: { some: liveParticipant(userId) } },
-                {
-                  occurrences: {
-                    some: {
-                      AND: [
-                        { startsAt: { lt: new Date(data.endsAt!) } },
-                        { endsAt: { gt: new Date(data.startsAt!) } },
-                      ],
-                    },
-                  },
-                },
-              ],
-            },
-            select: { id: true },
+          // context that prior appointment came from. This is the under-lock
+          // early exit only, exactly as above.
+          await assertConsulteeHasNoOverlappingSession(tx, {
+            userId,
+            startsAt: data.startsAt!,
+            endsAt: data.endsAt!,
+            selfHoldAppointmentIds,
           });
-          if (subscriptionConsulteeConflict) {
-            throw new Error(
-              "You already have a session booked during this time.",
-            );
-          }
         }
         break;
       }
@@ -2482,6 +2584,13 @@ async function revalidateInsideLock(
       default:
         throw new Error("Invalid appointment type");
     }
+
+    // The org money state as it stood when the lock was taken. Read fresh at
+    // the point of use rather than hoisted: the caller re-binds its locals to
+    // this, so every rail decision downstream (skip the gateway, debit the
+    // wallet, the PaymentLeg source, whose cancellation ladder binds) reads
+    // the value this transaction saw rather than the one it hoped for.
+    return freshOrgFunding;
   });
 }
 
@@ -3551,7 +3660,7 @@ export async function handleCheckout(
     );
 
     // STEP 3: RE-VALIDATE INSIDE LOCK (critical for preventing TOCTOU race conditions)
-    await revalidateInsideLock(
+    const freshOrgFunding = await revalidateInsideLock(
       validatedData,
       userId,
       fundingProgramId,
@@ -3561,9 +3670,19 @@ export async function handleCheckout(
             callerMembershipId,
             programAssignmentId,
             appointmentType,
+            billingAccountId,
           }
         : null,
     );
+    // Re-bind the rail from the locked read. This is the only place
+    // fundingSource becomes authoritative, and it sits above every derivation
+    // rather than inside any of them — a rail that moved mid-checkout is read
+    // once, here, instead of being re-asked at each use.
+    if (freshOrgFunding) {
+      fundingSource = freshOrgFunding.fundingSource;
+      billingAccountId = freshOrgFunding.billingAccountId;
+      creditEffectiveLimit = freshOrgFunding.creditEffectiveLimit;
+    }
 
     console.log(
       JSON.stringify({
@@ -3573,10 +3692,19 @@ export async function handleCheckout(
       }),
     );
 
-    // Enterprise funding derived from BillingAccount.fundingSource +
-    // ProgramAssignment (both resolved above). These booleans gate the
-    // "skip the gateway entirely" path — org-funded bookings never go
-    // through Stripe/Razorpay at checkout time.
+    // Enterprise funding derived from BillingAccount.fundingSource (as
+    // RE-READ under the lock above) + ProgramAssignment. These booleans gate
+    // the "skip the gateway entirely" path — org-funded bookings never go
+    // through Stripe/Razorpay at checkout time — and they also decide the
+    // PaymentLeg source, the wallet debit and whose cancellation ladder binds,
+    // all of which are computed further down inside the booking transaction.
+    //
+    // The `!!programAssignmentId` conjunct is the fail-closed half, and it is
+    // why a mid-flight rail change is safe in the direction it is: a fresh rail
+    // of WALLET/INVOICE/LICENSE on a booking resolved under PERSONAL carries no
+    // assignment (the pre-lock gate only resolves one for a non-PERSONAL rail),
+    // so the booking is not treated as sponsored and the buyer is charged
+    // rather than the org being charged for an entitlement nobody verified.
     const isOrgWalletPayment =
       fundingSource === "WALLET" && !!programAssignmentId;
     const isOrgInvoicedPayment =
@@ -3869,6 +3997,39 @@ export async function handleCheckout(
             // Create appointment based on type (with isTentative flag)
             switch (validatedData.appointmentType) {
               case "CONSULTATION": {
+                // The authoritative consultee-conflict re-assertion, on the tx
+                // that is about to write the occurrence. This is the only place
+                // the predicate can close the race: read here, before the
+                // write, it leaves a predicate read that a concurrent twin's
+                // insert antidepends on, so SSI aborts one of the pair and
+                // withSerializableRetry replays the loser — whose second run
+                // sees the winner's committed row and refuses with the same
+                // message. The under-lock check in revalidateInsideLock reads a
+                // transaction that has already committed and cannot do this.
+                if (validatedData.startsAt && validatedData.endsAt) {
+                  await assertConsulteeHasNoOverlappingSession(tx, {
+                    userId,
+                    startsAt: validatedData.startsAt!,
+                    endsAt: validatedData.endsAt!,
+                    // #1463 — resolved here, on the same tx and window the
+                    // handler's own availability check will use, so the buyer's
+                    // open order for this exact window is excluded rather than
+                    // read back as a competing session.
+                    selfHoldAppointmentIds: await findSelfHoldAppointmentIds(
+                      tx,
+                      {
+                        buyerUserId: userId,
+                        appointmentType: validatedData.appointmentType,
+                        planId: validatedData.planId,
+                        paymentGateway: validatedData.paymentGateway,
+                        organizationId,
+                        slotStart: new Date(validatedData.startsAt),
+                        slotEnd: new Date(validatedData.endsAt),
+                        now: new Date(),
+                      },
+                    ),
+                  });
+                }
                 const consultationResult = await handleConsultationCheckout(
                   tx,
                   validatedData,
@@ -3884,6 +4045,13 @@ export async function handleCheckout(
               }
 
               case "SUBSCRIPTION": {
+                // No consultee-conflict re-assertion here, and the asymmetry
+                // with the arm above is deliberate: this handler writes a
+                // slot-less placeholder appointment, so a window predicate read
+                // on this tx would antidepend on nothing this transaction
+                // writes and back no invariant. The session it eventually
+                // books is allocated later, where the allocator's own
+                // availability check is the gate.
                 const subscriptionResult = await handleSubscriptionCheckout(
                   tx,
                   validatedData,
@@ -3986,6 +4154,24 @@ export async function handleCheckout(
                   consulteeBillingStateCode ??
                   null,
                 // Enterprise (Arch 4): org tag for reporting / billing.
+                //
+                // #1854 — `organizationId` and `billingAccountId` are
+                // INDEPENDENT columns and no DB constraint ties them, which is
+                // deliberate rather than an oversight: a `PERSONAL`-rail org
+                // booking carries BOTH (the org is tagged for reporting, and
+                // the account is on file) while the money came from the
+                // member's card, so any constraint equating "has an account"
+                // with "the org paid" would reject a legitimate row. Which is
+                // exactly why they must not be read interchangeably, and they
+                // were. Every consumer of "did the org fund this" now reads the
+                // money column: `sponsoredSeatsWhere` and `org-actor.ts` filter
+                // on `Payment.organizationId` + `paymentMethod`, the refund rail
+                // routes on `Payment.billingAccountId`, and the org appointments
+                // list requires a funded Payment. `organizationId` is a TAG (who
+                // to report the session to); `billingAccountId` plus the method
+                // is the money. Treat the tag as a label and the method as the
+                // truth, or a member's own-card purchase becomes an org-funded
+                // one and the org is invoiced for a seat it did not buy.
                 organizationId,
                 billingAccountId,
               },

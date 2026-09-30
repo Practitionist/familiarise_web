@@ -33,12 +33,67 @@ const ACCEPT_FAILURE_COPY: Record<string, string> = {
 const ACCEPT_FAILURE_FALLBACK = "The proposed times could not be confirmed.";
 
 /**
+ * What a decline did to the released sessions, as a code a client may branch
+ * on.
+ *
+ * Deliberately NOT `RescheduleProposeCode` (lib/booking/reschedule-proposals.ts)
+ * even though that union is the sibling route's: it answers "is my proposal
+ * still waiting for somebody", which is the initiator's question minutes after
+ * proposing, and none of its members says "the original times are back".
+ * `RESCHEDULE_TERMINAL_EVENT_CODES` in that module is where the two vocabularies
+ * are reconciled — it names this route's code for every event, including the one
+ * (a proposal that lapsed unanswered) this route can never report, so a client
+ * holding an open proposal has one table rather than a pair of unions to
+ * correlate. Read it before adding a member here.
+ *
+ * The declaration below repeats that module's `RescheduleRespondCode` rather than
+ * importing it, because a regression pin holds this exact line; the two are held
+ * equal by `__tests__/booking-algorithm/reschedule-proposals.test.ts`, which reads
+ * this file. Update both together.
+ *
+ * These are also the two codes the NOTIFICATION for this same event already sends
+ * — `declineProposal` picks DECLINED when its restore landed and RELEASED when
+ * the original time was gone — so the toast the counterparty reads and the one
+ * the initiator gets cannot describe one event two different ways, and RELEASED
+ * carries the same meaning in both vocabularies: slots released with no
+ * replacement time.
+ */
+type RescheduleRespondCode = "DECLINED" | "RELEASED";
+
+const DECLINE_OUTCOME_COPY: Record<RescheduleRespondCode, string> = {
+  DECLINED:
+    "Proposal declined. Your original session times have been put back and stand.",
+  RELEASED:
+    "Proposal declined. That original time has since been booked, so the consultant will place those sessions at new times.",
+};
+
+/**
+ * How many of a proposal's released occurrences are back at SCHEDULED — the
+ * state `restoreRescheduledBooking` puts them in.
+ *
+ * Read back instead of taken from `declineProposal`, which answers `{done:true}`
+ * for a full restore and for a stranded booking alike and so cannot tell this
+ * route which one it got: the fixed sentence this route used to return named
+ * the stranded case for both. The rows are the authority here in any case —
+ * this is the same state the appointment screen renders from — so it is a read
+ * of the outcome, not a second copy of the decision that produced it. Drop this
+ * for the module's own answer the moment it reports one.
+ */
+async function countRestoredOccurrences(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  return prisma.appointmentOccurrence.count({
+    where: { id: { in: ids }, completionStatus: "SCHEDULED", deletedAt: null },
+  });
+}
+
+/**
  * POST /api/appointments/[appointmentId]/reschedule/respond
  *
  * The counterparty answers the open proposal (#1163). Accept re-validates the
- * proposed times through the full allocator; decline ends the request and
- * deliberately leaves the released slots in the consultant's allocate queue.
- * The initiator has withdraw, which is the restoring exit.
+ * proposed times through the full allocator; decline ends the request and puts
+ * the released slots back where they were, or — when the original time has been
+ * taken while the proposal was open — leaves them in the consultant's allocate
+ * queue. The initiator's withdraw reaches the same restore.
  */
 export async function POST(
   request: NextRequest,
@@ -67,6 +122,10 @@ export async function POST(
       select: {
         id: true,
         initiatedById: true,
+        // #1846 — decline restores the released rows, and this route reports
+        // which of the two outcomes it got. Read with the request because the
+        // answer is about these rows.
+        releasedOccurrenceIds: true,
         appointment: {
           select: {
             consultationId: true,
@@ -175,10 +234,25 @@ export async function POST(
           { status: 409 },
         );
       }
+      // A partial restore is reported as RELEASED, like the module's own
+      // notification does: a session still owing a time is the stranded
+      // problem, and it is the arm that tells the counterparty so.
+      const restoredCount = await countRestoredOccurrences(
+        open.releasedOccurrenceIds,
+      );
+      const outcome: RescheduleRespondCode =
+        restoredCount === open.releasedOccurrenceIds.length
+          ? "DECLINED"
+          : "RELEASED";
       return NextResponse.json({
         declined: true,
-        message:
-          "Proposal declined. The released times stay in the allocate queue until new times are placed.",
+        // #1846 — the released slots are restored by this decline, so the one
+        // fixed sentence this route returned for every successful decline
+        // ("they stay in the allocate queue") named the STRANDED outcome while
+        // the slots had just been put back. The code is what a client branches
+        // on; the message beside it is prose.
+        outcome,
+        message: DECLINE_OUTCOME_COPY[outcome],
       });
     }
 
@@ -189,9 +263,10 @@ export async function POST(
     //
     // Deliberately placed AFTER the counterparty gate, not before it: answering
     // 409 to an unauthorized caller would turn this route into the dispute
-    // oracle the 404 discipline above exists to prevent. Decline is exempt —
-    // it moves nothing (the slots were released when the proposal opened, and
-    // the hourly expiry job reaches the same terminal state regardless).
+    // oracle the 404 discipline above exists to prevent. Decline is exempt — it
+    // moves the booking to no NEW time (it ends the request and, since #1846,
+    // puts the released slots back where they were, which is where the hourly
+    // expiry job leaves them regardless of any dispute).
     if (await hasActiveDisputeForAppointment(appointmentId)) {
       return NextResponse.json(
         {

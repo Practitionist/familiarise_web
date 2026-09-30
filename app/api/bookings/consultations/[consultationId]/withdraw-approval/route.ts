@@ -10,9 +10,14 @@ import { withdrawApproval } from "@/lib/booking/lapse-approved-request";
  * POST /api/bookings/consultations/[consultationId]/withdraw-approval (#1775)
  *
  * The consultant takes back an approval nobody has paid for:
- * `APPROVED_PENDING_PAYMENT → EXPIRED` by CAS, the held times released, the
- * open pay order tombstoned. 200 `{ status: "EXPIRED" }`, or 409
+ * `APPROVED_PENDING_PAYMENT → CANCELLED` by CAS, the held times released, the
+ * open pay order tombstoned. 200 `{ status: "CANCELLED" }`, or 409
  * `REQUEST_CHANGED_ELSEWHERE` when a capture moved the request first.
+ *
+ * The released holds stay released — there is nothing to put back, because an
+ * unpaid approval's occurrences were tentative in the first place. CANCELLED and
+ * not EXPIRED because a consultant with standing ended a live booking, where
+ * EXPIRED is reserved for a pay-link that ran out.
  */
 export async function POST(
   _request: NextRequest,

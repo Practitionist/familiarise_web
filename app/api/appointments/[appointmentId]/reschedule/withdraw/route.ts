@@ -13,9 +13,11 @@ import {
  * POST /api/appointments/[appointmentId]/reschedule/withdraw
  *
  * The initiator takes back their own open reschedule. The other party has
- * Decline, which ends the same request with a different meaning: a withdrawal
- * restores the booking, a decline leaves the slots released for the consultant
- * to re-place.
+ * Decline, which ends the same request the same way — both restore the released
+ * sessions, so the booking ends up where it started either way. What differs is
+ * who may do it and what a refusal means: only the initiator may withdraw, and
+ * a withdrawal blocked because the original time was taken is a 409 that leaves
+ * the proposal OPEN to be answered (#1846), not a settled request.
  */
 export async function POST(
   _request: NextRequest,

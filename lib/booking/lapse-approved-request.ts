@@ -30,8 +30,26 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
  * tombstoned by status — Razorpay orders cannot be voided, and a capture that
  * lands on an EXPIRED Payment takes the handler's `captured_after_release`
  * refund arm — and the tentative holds are released by status, never deleted.
+ *
+ * The two reasons SHARE this body but not their terminal word. A window that
+ * ran out is EXPIRED. A consultant deliberately taking back a live, still-payable
+ * approval is a party with standing ending a booking, which is CANCELLED —
+ * reporting it as EXPIRED told the buyer "Expired" on a badge whose own reason
+ * string said "The expert withdrew the approval". REJECTED is the consultant
+ * *declining*, which this is not, so CANCELLED is the only honest third option.
  */
 export type LapseReason = "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT";
+
+/**
+ * The terminal status each reason earns. EXPIRED is reserved for a lapsed
+ * window (doctrine rule 6); WITHDRAWN_BY_CONSULTANT is a deliberate act and is
+ * CANCELLED. Both are legal from APPROVED_PENDING_PAYMENT — the map's
+ * CANCELLABLE_FROM includes it — so this chooses a word, never a new edge.
+ */
+const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
+  PAYMENT_LAPSED: AppointmentStatus.EXPIRED,
+  WITHDRAWN_BY_CONSULTANT: AppointmentStatus.CANCELLED,
+};
 
 export interface LapseApprovedRequestArgs {
   kind: "consultation" | "subscription";
@@ -59,7 +77,9 @@ export async function lapseApprovedRequest(
   const meta = {
     actorUserId: args.actorUserId,
     reason: args.reason,
-    to: AppointmentStatus.EXPIRED,
+    to: LAPSED_TO[args.reason],
+    // Narrower than either target's map: only the live, still-payable shape
+    // moves, so a withdrawal can never reach a paid or already-terminal row.
     fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
     data: { pendingPaymentUrl: null },
   };
@@ -184,6 +204,10 @@ function isTypedHttpError(
  * request first through the single writer) — nothing was written then. Lock
  * outcomes keep their 423 / 503 codes. `next/server` and the Redis lock stay
  * out of this module so the sweeps that share the core still load under jsdom.
+ *
+ * Answers `{ status: "CANCELLED" }`: a consultant with standing ended a live
+ * booking, which is what the row now says too. It used to answer — and write —
+ * `EXPIRED`, which is reserved for a window that ran out.
  */
 /** #1775 — the ownership read: the row and its plan, or a 404 / 403 refusal. */
 async function readOwnedRequest(
@@ -233,7 +257,7 @@ export async function withdrawApproval(args: {
   id: string;
   actor: WithdrawActor;
   lock: AppointmentLock;
-}): Promise<{ status: "EXPIRED" }> {
+}): Promise<{ status: "CANCELLED" }> {
   const { row, plan } = await readOwnedRequest(args.kind, args.id, args.actor);
 
   const run = () =>
@@ -295,5 +319,5 @@ export async function withdrawApproval(args: {
       reason: WITHDRAWN_BY_CONSULTANT_REASON,
     });
   }
-  return { status: "EXPIRED" };
+  return { status: "CANCELLED" };
 }

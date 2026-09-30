@@ -10,8 +10,10 @@ import { withdrawApproval } from "@/lib/booking/lapse-approved-request";
  * POST /api/bookings/subscriptions/[subscriptionId]/withdraw-approval (#1775)
  *
  * The subscription twin of the consultation route: the consultant's
- * `APPROVED_PENDING_PAYMENT → EXPIRED` by CAS; 200 `{ status: "EXPIRED" }`
- * or 409 `REQUEST_CHANGED_ELSEWHERE`.
+ * `APPROVED_PENDING_PAYMENT → CANCELLED` by CAS; 200 `{ status: "CANCELLED" }`
+ * or 409 `REQUEST_CHANGED_ELSEWHERE`. The held times stay released — a
+ * subscription's wrapper may have no appointment yet (#1554), and either way an
+ * unpaid approval's occurrences were tentative, so there is nothing to restore.
  */
 export async function POST(
   _request: NextRequest,

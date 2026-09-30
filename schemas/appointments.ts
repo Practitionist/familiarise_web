@@ -28,9 +28,16 @@ export const RescheduleProposalSchema = z
           // Exactly one atom per row, not merely "ends after it starts".
           // Auto-confirm hands the allocator `startsAt` alone, and manual mode
           // reads each string as ONE 30-minute start — so a 60-minute row is
-          // silently booked as 30. The count check downstream still passes
-          // (one row per released slot), which is what makes it invisible: the
-          // consultee asks to move a 1-hour session and gets half of one.
+          // silently booked as 30.
+          //
+          // The count check downstream is NOT one row per released session, and
+          // that is the point: a released session is a whole `AppointmentOccurrence`
+          // covering `slotsPerSession` atoms, while this payload is the atom the
+          // allocator consumes, so a 1-hour session is legitimately proposed as
+          // two rows. One row = one atom is what lets the allocator be handed a
+          // multi-atom block; `proposalCoverageMatches` then compares ATOM
+          // COUNTS on both sides, so the two measures are commensurable and the
+          // same total coverage is required of both.
           .refine(
             (s) => new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime() === SLOT_MS,
             { message: "Each proposed time must be exactly one 30-minute slot" },

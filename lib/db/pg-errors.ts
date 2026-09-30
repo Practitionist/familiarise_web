@@ -19,7 +19,10 @@
 
 type MaybePgError = {
   code?: unknown;
-  meta?: { code?: unknown };
+  meta?: {
+    code?: unknown;
+    driverAdapterError?: { cause?: { originalCode?: unknown } };
+  };
   message?: unknown;
 };
 
@@ -27,6 +30,19 @@ type MaybePgError = {
 function sqlState(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
   const code = (error as MaybePgError).meta?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * The Postgres SQLSTATE as the driver adapter reports it: the pg adapter
+ * classifies what it recognises and carries the untouched driver error under
+ * `meta.driverAdapterError.cause`, with the code as `originalCode`. This is the
+ * only structured route to a SQLSTATE the adapter has no Prisma mapping for.
+ */
+function adapterCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as MaybePgError).meta?.driverAdapterError?.cause
+    ?.originalCode;
   return typeof code === "string" ? code : undefined;
 }
 
@@ -55,6 +71,24 @@ export function isExclusionViolation(error: unknown): boolean {
   return (
     msg.includes("23P01") || msg.includes("occurrence_no_confirmed_overlap")
   );
+}
+
+/**
+ * Postgres 40P01 — deadlock detected.
+ *
+ * Unlike 23P01, this one is not Prisma's modelling gap: upstream Prisma maps
+ * 40P01 alongside 40001. The pinned driver adapter does not, so a row-lock
+ * deadlock lands in its generic `kind: "postgres"` fall-through and reaches us
+ * with no Prisma code to key on — hence its own predicate, and hence the text
+ * probe below. The probe is on the SQLSTATE token and not on the prose: "40P01"
+ * is the SQL-standard code for deadlock_detected and nothing else, so unlike a
+ * phrase match it cannot promote a business rejection into a retry.
+ */
+export function isDeadlock(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if (sqlState(error) === "40P01") return true;
+  if (adapterCode(error) === "40P01") return true;
+  return message(error).includes("40P01");
 }
 
 /**

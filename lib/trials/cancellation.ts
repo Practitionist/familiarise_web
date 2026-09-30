@@ -38,6 +38,13 @@ import {
 export type TrialRefundOutcome = {
   refundPct: number;
   amountRefundedPaise: number;
+  /**
+   * Which rail returned the money, or null when nothing moved. A trial can be
+   * funded through any of the three, and only the gateway rail reaches the
+   * buyer — a credit restoration is invisible as a rupee amount, so without this
+   * the response reads as a refund of nothing.
+   */
+  rail?: FundingRail | null;
   /** Set when the gateway leg failed; the cancellation still stands. */
   failed?: boolean;
 };
@@ -114,6 +121,19 @@ export interface TrialRefundQuote {
   /** Null when the trial has no session yet, which reads as full notice. */
   hoursUntilNextSession: number | null;
   prorated: false;
+  /**
+   * #1500 — this trial was funded entirely by referral credit, so the refund
+   * IS the credit restoration and it is all-or-nothing. `estimatedRefundPaise`
+   * reads 0 on this shape because no card was charged, so the dialog needs this
+   * flag to say "your credits come back" instead of "you get nothing back".
+   */
+  creditRestoresInFull: boolean;
+  /**
+   * The policy tier's own percentage, unrounded up. `refundPct` is the effective
+   * answer (100 on a credit restore), and the refund's audit reason quotes this
+   * one, so the money trail never claims a tier the policy did not set.
+   */
+  tierRefundPct: number;
 }
 
 /**
@@ -135,7 +155,13 @@ export async function quoteTrialRefund(args: {
     where: {
       deletedAt: null,
       paymentStatus: PaymentStatus.SUCCEEDED,
-      amount: { gt: 0 },
+      // #1161 — NO `amount: { gt: 0 }` here. That filter made a credit-funded
+      // trial (a `free_` intent, `Payment.amount === 0`) unquotable, so the
+      // cancel dialog read "nothing was paid for this" and `refundCancelledTrial`
+      // returned before ever touching the credits rail: the referral credits the
+      // buyer spent were consumed and never restored. The filter is exactly the
+      // population whose value is NOT card money, which is the one population
+      // `refundBookingPayment` settles most cheaply and most correctly.
       ...(paymentId
         ? { id: paymentId }
         : appointmentId
@@ -181,18 +207,39 @@ export async function quoteTrialRefund(args: {
   );
   const grossPaise = Number(payment.amount);
   const refundablePaise = refundableBalancePaise(grossPaise, payment);
+  // #1500 — a fully-credit-funded trial. The rail alone is not enough: a `free_`
+  // intent with a non-zero amount is a mixed payment that settles on the money
+  // arm, so both halves of the predicate are load-bearing. The credits rail
+  // refuses a partial `amountPaise` outright, so a tier above 0% restores the
+  // credit in full and a 0% tier restores nothing — a late cancel bites a credit
+  // buyer exactly as it bites a card buyer.
+  const isFreeCreditFunded =
+    fundingRailForIntent(payment.paymentIntent) === "CREDITS" && grossPaise === 0;
+  const creditRestoresInFull = isFreeCreditFunded && refundPct > 0;
+  // #1396 — `refundPct` may carry two decimals (a policy can say 12.5%), so
+  // multiplying paise by the float first put a binary rounding error inside a
+  // money amount before the floor ever ran. Scale to integer basis points and
+  // divide once, exactly as `quoteBookingRefund` in cancellation-policy and
+  // `refundRemovedAttendeeSeat` in event-refunds do; BigInt because the
+  // intermediate product leaves the safe-integer range long before the amounts
+  // stop being real money. BigInt division truncates toward zero and both
+  // operands are non-negative, so this floors — the same rounding direction as
+  // every other rail, which is what keeps a quote and a charge from disagreeing.
+  const policyRefundPaise = Number(
+    (BigInt(grossPaise) * BigInt(Math.round(refundPct * 100))) / BigInt(10_000),
+  );
   // Clamp to the remaining balance, as the cancel and seat-refund paths do. A
   // percentage of the gross overshoots a payment that has already given some
   // back, `refundPayment` rejects the whole request, and the catch below turns
   // that into "refunded 0" — the buyer loses the remainder they were owed.
   const estimatedRefundPaise = Math.max(
     0,
-    Math.min(Math.floor((grossPaise * refundPct) / 100), refundablePaise),
+    Math.min(policyRefundPaise, refundablePaise),
   );
 
   return {
     paymentId: payment.id,
-    refundPct,
+    refundPct: creditRestoresInFull ? 100 : refundPct,
     estimatedRefundPaise,
     grossPaise,
     refundablePaise,
@@ -202,6 +249,8 @@ export async function quoteTrialRefund(args: {
       ? hoursUntilStart
       : null,
     prorated: false,
+    creditRestoresInFull,
+    tierRefundPct: refundPct,
   };
 }
 
@@ -266,16 +315,40 @@ export async function refundCancelledTrial(args: {
   if (!quote) return null;
 
   const { refundPct, estimatedRefundPaise: amountPaise } = quote;
-  if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };
 
   try {
     // Audit B-P1-07 — route through the booking front door so org-funded and
     // free_ trials hit the correct rail (in-ledger reversal / credit restore)
     // instead of throwing UNKNOWN_GATEWAY on the raw gateway path.
+    //
+    // #1500 — a credit restore is the one shape that must arrive here: the
+    // credits rail refuses a partial `amountPaise` with INVALID_AMOUNT, so
+    // passing this quote's ₹0 would be refused and the credits the buyer spent
+    // would be consumed for good. Omitting the amount is the front door's
+    // documented "restore in full" call. A 0% tier never reaches it — a late
+    // cancel bites a credit buyer exactly as it bites a card buyer.
+    if (quote.creditRestoresInFull) {
+      const restored = await refundBookingPayment({
+        paymentId: quote.paymentId,
+        reason: `trial cancellation (credit-funded trial, credit restored in full from the ${quote.tierRefundPct}% tier, ${
+          args.isConsultantInitiated ? "consultant" : "consultee"
+        }-initiated)`,
+        initiatedByUserId,
+      });
+      return {
+        refundPct,
+        // The Refund row is ₹0 by construction; the value that came back is the
+        // restored credit, which is why `rail` rides alongside the amount.
+        amountRefundedPaise: restored.amountRefundedPaise,
+        rail: restored.rail,
+      };
+    }
+    if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0, rail: null };
+
     const result = await refundBookingPayment({
       paymentId: quote.paymentId,
       amountPaise,
-      reason: `trial cancellation (${refundPct}% per booking-time policy, ${
+      reason: `trial cancellation (${quote.tierRefundPct}% per booking-time policy, ${
         args.isConsultantInitiated ? "consultant" : "consultee"
       }-initiated)`,
       initiatedByUserId,
@@ -283,6 +356,7 @@ export async function refundCancelledTrial(args: {
     return {
       refundPct,
       amountRefundedPaise: result.amountRefundedPaise,
+      rail: result.rail,
     };
   } catch (error) {
     Sentry.captureException(
@@ -296,6 +370,6 @@ export async function refundCancelledTrial(args: {
       `[Trials] refund failed for payment ${quote.paymentId}:`,
       error,
     );
-    return { refundPct, amountRefundedPaise: 0, failed: true };
+    return { refundPct, amountRefundedPaise: 0, rail: null, failed: true };
   }
 }

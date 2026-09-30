@@ -12,6 +12,7 @@ import {
   liveParticipant,
   recordParticipants,
   transitionParticipant,
+  RELEASED_PARTICIPANT_STATUSES,
 } from "@/lib/booking/participants";
 import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -53,6 +54,11 @@ import {
 } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import {
+  getClassCapacity,
+  getWebinarCapacity,
+} from "@/lib/events/capacity";
 import {
   AUTO_REFUND_PENDING_PREFIX,
   DOUBLE_BOOKING_BLOCKED_NOTE,
@@ -224,6 +230,12 @@ type PaymentSuccessTxResult =
       currency: string;
       capturedAfterTerminal: boolean;
       doubleBookingBlocked: boolean;
+      // The seat the capture could not confirm, when the booking died under it
+      // (a leave that released the row before the money landed). Phase 2 gives
+      // the money back through the SEAT front door, which is the only one that
+      // knows the org wallet / credit rails; absent, the generic terminal arm
+      // runs exactly as before.
+      seatRefund: ReleasedSeatRefund | null;
       // #1654 — the receipt row staged inside Phase 1; Phase 2 attempts it.
       successEmail: StagedOutboxEmail | null;
       // #1653 — the booked-confirmation rows, staged and attempted the same way.
@@ -232,6 +244,20 @@ type PaymentSuccessTxResult =
 
 /** #1654 — an outbox row plus the rendered message the inline attempt sends. */
 type StagedOutboxEmail = { staged: StagedEmail; message: RenderedEmail };
+
+/**
+ * A capture that landed on a webinar/class seat which is no longer there. The
+ * seat is the refund's subject, so Phase 2 addresses it by the same triple the
+ * seat front door takes (`kind`, `eventId`, buyer) instead of by payment id —
+ * and the `participantId` is what keys the refund, exactly as the seat-leave
+ * rule keyed its own (a later leave of the same sale must find this refund, not
+ * pay a second time). Null only when the row is missing entirely.
+ */
+type ReleasedSeatRefund = {
+  kind: "class" | "webinar";
+  eventId: string;
+  participantId: string | null;
+};
 
 /**
  * #1446 — Phase 2 runs inside `after()`, on the same warm instance that is
@@ -699,6 +725,32 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               payment,
             );
 
+            // The event creators refuse a capture they cannot seat (the event
+            // filled between checkout and capture) and return null rather than
+            // overselling. The money is captured and nothing was booked, so
+            // this is the release outcome Phase 2 already refunds — NOT a
+            // throw: throwing would roll the SUCCEEDED stamp back with the
+            // rest of the transaction and the gateway would re-drive the
+            // webhook into the same wall forever.
+            if (!appointment) {
+              // #1846 N2 — the pending-refund marker rides the same transaction
+              // that decides the refund, so a Phase 2 refund that dies at the
+              // gateway is still a row retry-auto-refunds re-drives.
+              await tx.payment.update({
+                where: { id: payment.id },
+                data: {
+                  description: autoRefundPendingDescription(
+                    `capture could not be seated — ${metadata.appointmentType.toLowerCase()} ${metadata.eventId} is full`,
+                  ),
+                },
+              });
+              return {
+                outcome: "captured_after_release",
+                paymentId: payment.id,
+                releasedBy: `event full (${metadata.appointmentType.toLowerCase()} ${metadata.eventId})`,
+              };
+            }
+
             console.log(
               JSON.stringify({
                 event: "webhook_creating_new_appointment",
@@ -841,7 +893,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 description: autoRefundPendingDescription(
                   confirmResult.doubleBookingBlocked
                     ? DOUBLE_BOOKING_BLOCKED_NOTE
-                    : "capture landed after the booking was cancelled",
+                    : confirmResult.seatRefund
+                      ? "capture landed after the seat was released"
+                      : "capture landed after the booking was cancelled",
                 ),
               },
             });
@@ -882,6 +936,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             // #837 — the #827 first-confirmed-wins guard blocked this booking; Phase 2
             // auto-refunds the loser and releases its tentative hold.
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
+            // The seat, when the capture found none to confirm: Phase 2 routes
+            // that money back through the seat front door.
+            seatRefund: confirmResult.seatRefund ?? null,
             successEmail,
             bookedEmails,
           };
@@ -1058,11 +1115,46 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // for a cancelled booking. Idempotent against webhook replay (see refund.ts).
   if (txResult.capturedAfterTerminal) {
     try {
-      await refundPayment({
-        paymentId: txResult.paymentId,
-        reason: "capture after cancellation",
-        initiatedByUserId: null,
-      });
+      if (txResult.seatRefund) {
+        // The booking died as a SEAT (a leave released the row before the card
+        // captured), so the seat is what the money bought: refund it through the
+        // seat front door, the only one of the three that addresses a seat and
+        // picks the rail from the intent — an org-funded seat has no gateway to
+        // credit, and the `refundPayment` below cannot reverse one. `mode:
+        // "full"` replays the answer `leaveEventSeat` had already computed for
+        // this seat (it found no SUCCEEDED payment then, which is exactly why
+        // its refund resolved nothing), and the dedupe key is that rule's own
+        // key, so a later leave of the same sale finds this refund rather than
+        // paying a second time.
+        const seatRefund = await refundRemovedAttendeeSeat({
+          kind: txResult.seatRefund.kind,
+          eventId: txResult.seatRefund.eventId,
+          attendeeUserId: txResult.userId,
+          initiatedByUserId: null,
+          mode: "full",
+          dedupeKey: txResult.seatRefund.participantId
+            ? `seat-leave:${txResult.seatRefund.participantId}`
+            : `capture-no-seat:${txResult.appointmentId}`,
+        });
+        if (!seatRefund) {
+          // The seat door resolves its payment by (event, buyer, SUCCEEDED), so
+          // a null means this capture is not linked to the event and settling
+          // the marker here would keep the buyer's money with nothing to show
+          // for it. The booking door addresses the payment by id and picks the
+          // same rail from the intent, so the money still comes back.
+          await refundBookingPayment({
+            paymentId: txResult.paymentId,
+            reason: "capture after seat release",
+            initiatedByUserId: null,
+          });
+        }
+      } else {
+        await refundPayment({
+          paymentId: txResult.paymentId,
+          reason: "capture after cancellation",
+          initiatedByUserId: null,
+        });
+      }
       await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
@@ -1710,6 +1802,10 @@ async function createAppointmentFromWebhook(
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }
 
+  // A group-event creator refused to seat the buyer (the event is full). No
+  // appointment, so there is nothing to link: the caller refunds the capture.
+  if (!appointment) return null;
+
   // #1440 / ADR 21 — the link is a CAS: SUCCEEDED (this tx stamped it, or the
   // recovery read it) and still unlinked. A miss means another writer won.
   const linked = await tx.payment.updateMany({
@@ -1877,10 +1973,104 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   return wrapper;
 }
 
+/**
+ * A legacy-shape capture for an event that is already full. Checkout gated
+ * capacity inside its own transaction, but this path runs minutes-to-hours
+ * later (an order predating the pre-created appointment, or an admin recovery),
+ * so the room it quoted is not the room that is left.
+ *
+ * Returning null is the refusal: the caller routes the capture to the
+ * `captured_after_release` arm, which refunds it in full. Throwing would be the
+ * same trap the GiST catch documents — the SUCCEEDED stamp rolls back with the
+ * transaction and the gateway re-drives the webhook into the same wall forever.
+ * Overselling quietly is worse still: the roster would carry a seat the host
+ * never agreed to sell.
+ */
+async function refuseFullEventCapture(
+  tx: Tx,
+  args: {
+    kind: "webinar" | "class";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+    registered: number;
+    max: number;
+  },
+): Promise<null> {
+  // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); a global-client insert
+  // inside it would queue and die at the connect timeout.
+  await recordSystemErrorSafe({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `Capture for ${args.kind} ${args.eventId} cannot be seated — it is full (${args.registered}/${args.max}) and the money is being returned`,
+    err: new Error("CAPTURE_CANNOT_SEAT_FULL_EVENT"),
+    context: {
+      entityType: args.kind,
+      entityId: args.eventId,
+      appointmentId: args.appointmentId,
+      userId: args.userId,
+      registered: args.registered,
+      max: args.max,
+    },
+    correlationId: `capture-cannot-seat:${args.appointmentId}`,
+    db: tx,
+  });
+  reportSentryError(new Error("CAPTURE_CANNOT_SEAT_FULL_EVENT"), {
+    subsystem: "payments",
+    expected: true,
+    level: "warning",
+    contexts: {
+      booking: {
+        appointmentId: args.appointmentId,
+        entityType: args.kind,
+        entityId: args.eventId,
+        userId: args.userId,
+      },
+    },
+  });
+  console.error(
+    JSON.stringify({
+      event: "capture_cannot_seat_full_event",
+      appointmentId: args.appointmentId,
+      eventId: args.eventId,
+      eventType: args.kind,
+      userId: args.userId,
+      registered: args.registered,
+      max: args.max,
+      action_required: "auto-refund attempted; reconcile only if it failed",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  return null;
+}
+
+/**
+ * The legacy webinar capture path: seat the buyer on the event's own wrapper.
+ *
+ * `excludeUserIds` below drops the host (a host does not consume a seat — the
+ * same exclusion checkout applies) and the buyer themselves, so a re-delivered
+ * capture for someone who already holds a live seat is not refused by a room
+ * that seat of theirs helped fill.
+ */
 async function createWebinar(tx: Tx, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
-    include: { appointment: { include: { occurrences: true } } },
+    include: {
+      // `participants` is load-bearing: `getWebinarCapacity` throws without it
+      // rather than counting a sold-out event as open (#676 CN-4).
+      webinarPlan: {
+        select: {
+          maxParticipants: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
+      appointment: {
+        include: {
+          occurrences: true,
+          participants: { where: liveParticipant(), select: { userId: true } },
+        },
+      },
+    },
   });
   if (!webinar) throw new Error("Webinar not found");
 
@@ -1888,6 +2078,36 @@ async function createWebinar(tx: Tx, data: EventData) {
   const masterSlot = webinar.appointment?.occurrences?.[0];
   if (!webinar.appointment || !masterSlot) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
+  }
+
+  // The checkout gate, replayed against the roster as it stands NOW. A capture
+  // recovery for a webinar that filled while the money was in flight must be
+  // given back, not seated past the room.
+  //
+  // The reading is required, and that is deliberate: a gate that cannot read its
+  // input must not be a gate, and the only reason to read it "optionally" was
+  // that a bare `jest.fn()` capacity mock returns undefined — a test
+  // convenience that would have let a real over-capacity capture through
+  // unnoticed. In production the helper is total — it throws on an un-included
+  // roster rather than count zero (#676 CN-4) — so a reading always exists or
+  // the transaction aborts, which is the same fate a genuine read failure gets.
+  const capacity = getWebinarCapacity({
+    webinar,
+    plan: webinar.webinarPlan,
+    excludeUserIds: [
+      webinar.webinarPlan.consultantProfile?.userId,
+      data.userId,
+    ].filter((id): id is string => !!id),
+  });
+  if (capacity.isFull) {
+    return await refuseFullEventCapture(tx, {
+      kind: "webinar",
+      eventId: data.eventId,
+      appointmentId: webinar.appointment.id,
+      userId: data.userId,
+      registered: capacity.registered,
+      max: capacity.max,
+    });
   }
 
   // #1319 / #1554 — the seat is the participant row on the event's own
@@ -1918,8 +2138,19 @@ async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: {
+      // As in the webinar arm: without `participants` the capacity call throws
+      // instead of counting zero.
+      classPlan: {
+        select: {
+          maxParticipants: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
       appointment: {
-        include: { occurrences: { select: { id: true } } },
+        include: {
+          occurrences: { select: { id: true } },
+          participants: { where: liveParticipant(), select: { userId: true } },
+        },
       },
     },
   });
@@ -1935,6 +2166,30 @@ async function createClass(tx: Tx, data: EventData) {
   const wrapper = classInstance.appointment;
   if (!wrapper || wrapper.occurrences.length === 0) {
     throw new Error("Class has not been scheduled. Cannot create booking.");
+  }
+
+  // The checkout gate, replayed against the roster as it stands NOW — the
+  // first-confirmed-wins recheck in confirmExistingAppointment deliberately
+  // skips group events, so without this a recovery capture seats a buyer past
+  // the room and is never given back. Required, exactly as the webinar arm: an
+  // unreadable capacity is a fault, not a pass.
+  const capacity = getClassCapacity({
+    classInstance,
+    plan: classInstance.classPlan,
+    excludeUserIds: [
+      classInstance.classPlan.consultantProfile?.userId,
+      data.userId,
+    ].filter((id): id is string => !!id),
+  });
+  if (capacity.isFull) {
+    return await refuseFullEventCapture(tx, {
+      kind: "class",
+      eventId: data.eventId,
+      appointmentId: wrapper.id,
+      userId: data.userId,
+      registered: capacity.registered,
+      max: capacity.max,
+    });
   }
 
   // #1319 A9 — one participant row per purchase, matching handleClassCheckout.
@@ -2010,6 +2265,174 @@ const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.SCHEDULED,
   AppointmentStatus.COMPLETED,
 ]);
+
+/**
+ * What a capture found when it went to confirm the buyer's seat.
+ *
+ * `confirmed` — a HELD seat was promoted. `duplicate` — the CAS matched
+ * nothing because the row is already live (CONFIRMED/ATTENDED): a redelivered
+ * capture, which must stay the no-op it has always been. `released` /
+ * `missing` — there is no seat left to confirm, so the money bought nothing and
+ * has to go back.
+ */
+type SeatCaptureOutcome =
+  | { kind: "confirmed" }
+  | { kind: "duplicate" }
+  | { kind: "released"; participantId: string }
+  | { kind: "missing" };
+
+/**
+ * Confirm the buyer's seat, or say why there was nothing to confirm.
+ *
+ * The status CAS on the participant row is the only thing that knows whether
+ * this capture still has a seat, and its matched count used to be discarded. A
+ * buyer who left a webinar or class BEFORE the card captured therefore kept the
+ * money with the seat already released, and nothing noticed: the event guard
+ * above had passed (the event wrapper is still live), the CAS matched zero
+ * rows, and the handler reported a successful confirmation. The orphan is
+ * detectable — the seat row keeps the `paymentId` stamped at creation — but no
+ * sweep looks for a SUCCEEDED payment whose seat is not live, so the money sat
+ * there until a human noticed the refund never came.
+ *
+ * The re-read runs inside this transaction because the CAS predicate narrows on
+ * `HELD`: the fresh row is the only place the real status is visible. It is
+ * ordered newest-first because pre-#1319 data can hold one row per session
+ * appointment for the same buyer, and the capture's own seat is the newest.
+ */
+async function confirmSeatAfterCapture(
+  tx: Tx,
+  args: {
+    /** The CAS predicate; narrows the move to the seat's live-from state. */
+    casWhere: Prisma.AppointmentParticipantWhereInput;
+    /** The same rows without the status narrowing, for the re-read. */
+    readWhere: Prisma.AppointmentParticipantWhereInput;
+    kind: "class" | "webinar";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+  },
+): Promise<SeatCaptureOutcome> {
+  if ((await transitionParticipant(tx, args.casWhere, "CONFIRMED")) > 0) {
+    return { kind: "confirmed" };
+  }
+  const fresh = await tx.appointmentParticipant.findFirst({
+    where: args.readWhere,
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, paymentId: true },
+  });
+  // No row at all is a different problem from a released one — a seat that
+  // should exist and does not — but the buyer's answer is the same either way,
+  // so it takes the refund path and says so distinctly.
+  if (!fresh) {
+    await reportUnseatedCapture(tx, {
+      kind: args.kind,
+      eventId: args.eventId,
+      appointmentId: args.appointmentId,
+      userId: args.userId,
+      reason: `no participant row exists for ${args.userId} on ${args.kind} ${args.eventId}`,
+      participantId: null,
+      seatStatus: null,
+      seatPaymentId: null,
+    });
+    return { kind: "missing" };
+  }
+  if (!RELEASED_PARTICIPANT_STATUSES.includes(fresh.status)) {
+    // Already CONFIRMED/ATTENDED: the same capture delivered twice. Nothing to
+    // move, nothing to return, nothing to say.
+    return { kind: "duplicate" };
+  }
+  await reportUnseatedCapture(tx, {
+    kind: args.kind,
+    eventId: args.eventId,
+    appointmentId: args.appointmentId,
+    userId: args.userId,
+    reason: `the seat is ${fresh.status} — the buyer left before the payment captured`,
+    participantId: fresh.id,
+    seatStatus: fresh.status,
+    seatPaymentId: fresh.paymentId,
+  });
+  return {
+    kind: "released",
+    participantId: fresh.id,
+  };
+}
+
+/**
+ * The durable + paged record of a capture that has no seat to confirm. Once
+ * per seat: the orphan re-drive sweep re-enters this branch on a seat already
+ * refunded, and a marker that multiplied on every tick would bury the one row
+ * an operator needs.
+ */
+async function reportUnseatedCapture(
+  tx: Tx,
+  args: {
+    kind: "class" | "webinar";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+    reason: string;
+    participantId: string | null;
+    seatStatus: string | null;
+    seatPaymentId: string | null;
+  },
+): Promise<void> {
+  const correlationId = `capture-unseated-seat:${args.participantId ?? args.appointmentId}`;
+  const alreadyRecorded = await tx.systemEvent.findFirst({
+    where: { correlationId, category: "PAYMENT" },
+    select: { id: true },
+  });
+  if (alreadyRecorded) return;
+  // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the probe above rides the
+  // same snapshot.
+  await recordSystemErrorSafe({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `Payment captured for ${args.kind} ${args.eventId} with no seat to confirm (${args.reason}) — refunding`,
+    err: new Error("CAPTURE_AFTER_SEAT_RELEASE"),
+    context: {
+      entityType: args.kind,
+      entityId: args.eventId,
+      appointmentId: args.appointmentId,
+      userId: args.userId,
+      participantId: args.participantId,
+      seatStatus: args.seatStatus,
+      seatPaymentId: args.seatPaymentId,
+      // Kept in the row, not only in the summary, so ops can tell the two
+      // shapes apart without parsing prose.
+      reason: args.reason,
+    },
+    correlationId,
+    db: tx,
+  });
+  reportSentryError(new Error("CAPTURE_AFTER_SEAT_RELEASE"), {
+    subsystem: "payments",
+    expected: true,
+    level: "warning",
+    contexts: {
+      booking: {
+        appointmentId: args.appointmentId,
+        eventId: args.eventId,
+        eventType: args.kind,
+        userId: args.userId,
+        participantId: args.participantId,
+        seatStatus: args.seatStatus,
+      },
+    },
+  });
+  console.error(
+    JSON.stringify({
+      event: "capture_after_seat_release",
+      appointmentId: args.appointmentId,
+      eventId: args.eventId,
+      eventType: args.kind,
+      userId: args.userId,
+      participantId: args.participantId,
+      seatStatus: args.seatStatus,
+      action_required: "auto-refund attempted; reconcile only if it failed",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
 
 async function confirmApprovalStatus(
   tx: Tx,
@@ -2168,7 +2591,16 @@ export async function confirmExistingAppointment(
   userId?: string,
   /** #1861 L1 — the capturing payment's hold had lapsed before the capture. */
   opts?: { holdExpired?: boolean; now?: Date },
-): Promise<{ capturedAfterTerminal: boolean; doubleBookingBlocked?: boolean }> {
+): Promise<{
+  capturedAfterTerminal: boolean;
+  doubleBookingBlocked?: boolean;
+  /**
+   * Set when a group event's seat was the thing that died under the capture, so
+   * Phase 2 returns the money through the SEAT front door rather than the
+   * generic one — an org-funded seat has no gateway to credit.
+   */
+  seatRefund?: ReleasedSeatRefund;
+}> {
   // First fetch appointment to determine type
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -2350,15 +2782,33 @@ export async function confirmExistingAppointment(
     // capture flips the seat and never the occurrences. Only a HELD seat
     // confirms: a capture landing on a cancelled seat must not resurrect it
     // (the refund arm below handles the money).
-    await transitionParticipant(
-      tx,
-      {
+    //
+    // The CAS count used to be dropped, so a capture that arrived after the
+    // buyer left the class confirmed nothing, reported success, and kept the
+    // money on a seat that no longer existed. `confirmSeatAfterCapture` reads
+    // the row the CAS could not move and names the case.
+    const seat = await confirmSeatAfterCapture(tx, {
+      casWhere: {
         appointment: { classId: appointment.class.id },
         userId,
         status: "HELD",
       },
-      "CONFIRMED",
-    );
+      readWhere: { appointment: { classId: appointment.class.id }, userId },
+      kind: "class",
+      eventId: classId,
+      appointmentId,
+      userId,
+    });
+    if (seat.kind === "released" || seat.kind === "missing") {
+      return {
+        capturedAfterTerminal: true,
+        seatRefund: {
+          kind: "class",
+          eventId: classId,
+          participantId: seat.kind === "released" ? seat.participantId : null,
+        },
+      };
+    }
 
     console.log(
       JSON.stringify({
@@ -2393,12 +2843,27 @@ export async function confirmExistingAppointment(
     }
 
     // #1554 — same as the class arm: the seat flips, the shared occurrences
-    // do not.
-    await transitionParticipant(
-      tx,
-      { appointmentId, userId, status: "HELD" },
-      "CONFIRMED",
-    );
+    // do not. And the same zero-row case: a buyer who left the webinar before
+    // the card captured has no seat to confirm, so the money goes back rather
+    // than being reported as a confirmed booking.
+    const seat = await confirmSeatAfterCapture(tx, {
+      casWhere: { appointmentId, userId, status: "HELD" },
+      readWhere: { appointmentId, userId },
+      kind: "webinar",
+      eventId: webinarId,
+      appointmentId,
+      userId,
+    });
+    if (seat.kind === "released" || seat.kind === "missing") {
+      return {
+        capturedAfterTerminal: true,
+        seatRefund: {
+          kind: "webinar",
+          eventId: webinarId,
+          participantId: seat.kind === "released" ? seat.participantId : null,
+        },
+      };
+    }
 
     console.log(
       JSON.stringify({

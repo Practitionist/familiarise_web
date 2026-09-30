@@ -129,6 +129,31 @@ const NO_LIVE_SESSION = {
   },
 } satisfies Prisma.SubscriptionWhereInput;
 
+// P0-3 — no released occurrence still waiting for its replacement. A reschedule
+// releases a slot IN PLACE (isTentative: true + RESCHEDULED) and a DECLINE
+// deliberately leaves it released: the consultee still wants to move, the
+// consultant has not agreed a time, so the booking goes back to the allocate
+// queue. A whole-booking reschedule also leaves the parent PENDING, which is
+// exactly the shape the 48 h arm below selects — so a paid plan parked by a
+// decline (or by a restore that could not finish, because the original time was
+// taken while the proposal was open) was EXPIRED and refunded in full with
+// nobody having cancelled it. Stated on the LIVE SLOT rather than on the parent
+// status, because the status is the reschedule work's decision to make and the
+// slot says the same thing under any of them: a RESCHEDULED occurrence is a
+// session that has not been re-placed, so a human owns this booking.
+const NO_UNPLACED_SLOT = {
+  NOT: {
+    appointment: {
+      occurrences: {
+        some: {
+          completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
+          deletedAt: null,
+        },
+      },
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
+
 /** A SUCCEEDED payment on the wrapper, captured before `cutoff` (#1775 C-3). */
 function paidCapturedBefore(cutoff: Date): Prisma.SubscriptionWhereInput {
   return {
@@ -176,6 +201,40 @@ export interface ExpireStaleRequestsResult {
 }
 
 /**
+ * The three arms that refund an expired engagement, by name. The name IS half
+ * the dedupe key, and the wrapper it used to carry cannot be that half: two of
+ * the three arms are subscription arms, so a key built from the wrapper would
+ * let one arm's refund read back as another arm's already-done work — the
+ * second arm would report "issued" while moving no money. The wrapper is
+ * derived from the arm rather than passed beside it, so no caller can pair an
+ * arm with the wrong relation.
+ */
+type ExpiredRefundArm =
+  | "pending-consultation"
+  | "pending-subscription"
+  | "approved-unallocated";
+
+const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
+  "pending-consultation": "consultation",
+  "pending-subscription": "subscription",
+  "approved-unallocated": "subscription",
+};
+
+/**
+ * P0-4 — the one refund this arm owes this payment, and the unique index on
+ * `Refund.dedupeKey` is what enforces "one". Unkeyed, the only guard left was
+ * refundPayment's re-derivation of the refundable balance inside its own
+ * Serializable transaction: a read-then-write, which two concurrent unkeyed
+ * runs (exactly what an expired `cron:lock:` grant allows) both pass, because
+ * `Refund` has no unique constraint on paymentId. with-cron-lock states that
+ * the CAS guards, not the lock, are the correctness backstop; an unkeyed
+ * refund was the one place that claim was false. Nothing here varies per run,
+ * so a re-run produces the identical string and the index actually dedupes.
+ */
+const expiredRefundKey = (arm: ExpiredRefundArm, paymentId: string) =>
+  `${arm}:${paymentId}`;
+
+/**
  * Refund every SUCCEEDED payment attached to the given expired engagement's
  * appointments. Booking-journey audit gap #1: the sweep used to flip PAID
  * rows to EXPIRED with no money movement and no trace — buyer paid, got
@@ -184,11 +243,12 @@ export interface ExpireStaleRequestsResult {
  * must drain the cohort even when one gateway call fails).
  */
 async function refundPaymentsForExpired(
-  kind: "consultation" | "subscription",
+  arm: ExpiredRefundArm,
   expiredIds: string[],
 ): Promise<{ issued: number; failures: number; failureMsgs: string[] }> {
   if (expiredIds.length === 0)
     return { issued: 0, failures: 0, failureMsgs: [] };
+  const kind = ARM_WRAPPER[arm];
   const rel = kind === "consultation" ? "consultationId" : "subscriptionId";
   const appointments = await prisma.appointment.findMany({
     where: { [rel]: { in: expiredIds } },
@@ -209,6 +269,7 @@ async function refundPaymentsForExpired(
           paymentId: pay.id,
           reason: `${kind} expired unallocated/unanswered — automatic full refund`,
           initiatedByUserId: null,
+          dedupeKey: expiredRefundKey(arm, pay.id),
         });
         issued += 1;
       } catch (err) {
@@ -357,7 +418,10 @@ async function expirePendingConsultations(): Promise<{
       `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} moved on before the write)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-    const refunds = await refundPaymentsForExpired("consultation", expiredIds);
+    const refunds = await refundPaymentsForExpired(
+      "pending-consultation",
+      expiredIds,
+    );
     errors.push(...refunds.failureMsgs);
 
     return { expired: expiredIds.length, slotsReleased, ...refunds, errors };
@@ -471,7 +535,10 @@ async function expirePendingSubscriptions(): Promise<{
         (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
+    const refunds = await refundPaymentsForExpired(
+      "pending-subscription",
+      expiredIds,
+    );
     errors.push(...refunds.failureMsgs);
 
     return {
@@ -702,7 +769,10 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
         (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
+    const refunds = await refundPaymentsForExpired(
+      "approved-unallocated",
+      expiredIds,
+    );
     errors.push(...refunds.failureMsgs);
 
     return {
@@ -817,7 +887,15 @@ async function refundUnallocatedPlans(subscriptionIds: string[]) {
 function unallocatedCohort() {
   const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
   return {
-    AND: [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore(cutoff)],
+    // Narrowest guard last, and every one of them rides the CAS WHERE as well
+    // as this read: a booking whose slot was released between the two matches
+    // zero rows and is left for the reschedule machine.
+    AND: [
+      NO_LIVE_SESSION,
+      noLiveProposal(),
+      paidCapturedBefore(cutoff),
+      NO_UNPLACED_SLOT,
+    ],
   } satisfies Prisma.SubscriptionWhereInput;
 }
 

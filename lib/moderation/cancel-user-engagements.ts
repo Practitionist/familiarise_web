@@ -30,7 +30,10 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
-import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
+import {
+  classSeriesLedgers,
+  refundWholeEventPayments,
+} from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
@@ -621,12 +624,50 @@ async function casCancelGroupEvent(
   return eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel();
 }
 
+/**
+ * #1780 D-5 — the class ledger for the refund, or `null` when it could not be
+ * read. `null` is the whole-balance answer every door used before #1780, so a
+ * transient read failure degrades to the old behaviour instead of losing the
+ * refunds; the failure is recorded so the over-refund is visible rather than
+ * silent.
+ */
+async function readClassSeriesLedgers(
+  classId: string,
+  ctx: { summary: BulkCancelSummary },
+): Promise<ReturnType<typeof classSeriesLedgers> | null> {
+  try {
+    return await classSeriesLedgers(classId);
+  } catch (error) {
+    ctx.summary.failures.push({
+      kind: "refund",
+      id: classId,
+      error: `class series ledger unreadable, refunding every seat in full: ${errMsg(error)}`,
+    });
+    captureModerationError(error);
+    return null;
+  }
+}
+
 async function cancelGroupEvent(
   kind: "webinar-event" | "class-event",
   eventId: string,
   ctx: { initiatedByUserId: string; summary: BulkCancelSummary },
 ) {
   const isWebinar = kind === "webinar-event";
+
+  // #1780 D-5 — each class seat's ledger, read BEFORE `casCancelGroupEvent`
+  // releases the sessions: `seatLedger` counts only rows with `deletedAt: null`,
+  // so a read taken after the release sees an empty series and every seat looks
+  // as though it was owed a full refund. A webinar still refunds every seat in
+  // full, so there is no ledger to read for it.
+  //
+  // A failed read must not cost the ban its refunds, so it falls back to the
+  // whole-balance behaviour this door always had — and says so in the summary,
+  // because that fallback over-refunds a partly-delivered class. Stranding the
+  // attendees' money would be the worse of the two.
+  const seriesLedgers = isWebinar
+    ? null
+    : await readClassSeriesLedgers(eventId, ctx);
 
   const moved = await casCancelGroupEvent(
     isWebinar,
@@ -646,6 +687,7 @@ async function cancelGroupEvent(
     eventId,
     "moderation (100% — platform-initiated cancellation)",
     ctx.initiatedByUserId,
+    { ledgers: seriesLedgers ?? undefined },
   );
   ctx.summary.refundsIssued += eventRefund.refundsIssued;
   ctx.summary.refundedPaise += eventRefund.refundedPaise;

@@ -32,13 +32,13 @@ import {
   transitionRescheduleRequest,
 } from "@/lib/booking/transitions";
 import {
+  isRestoreMiss,
   reportPartialRestore,
   restoreRescheduledBooking,
   type RestorableRequest,
 } from "@/lib/booking/reschedule-restore";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { reportSentryError } from "@/lib/observability/report";
 import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
@@ -88,19 +88,6 @@ function expireProposal(tx: Tx, id: string, now: Date): Promise<void> {
     whereAnd: { expiresAt: { lt: now } },
     reason: EXPIRY_REASON,
   });
-}
-
-/**
- * A restore that cannot land: the overlap constraint, or a parent request CAS
- * that missed. The proposal's own CAS miss is not one — that means it was
- * answered, and the answer wins.
- */
-function isRestoreMiss(error: unknown): boolean {
-  if (isExclusionViolation(error)) return true;
-  return (
-    error instanceof IllegalTransitionError &&
-    error.entity !== "RescheduleRequest"
-  );
 }
 
 /**

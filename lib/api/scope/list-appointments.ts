@@ -21,7 +21,19 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
-import { assertNeverScope } from "./parse";
+import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
+
+/**
+ * The rails on which an ORG's money paid — the same three values
+ * `isOrgFundedPaymentMethod` (lib/data/org-sponsored-seats.ts) accepts, which
+ * is the predicate `sponsoredSeatsWhere` already filters the sponsor view by.
+ *
+ * Duplicated as a literal because a Prisma `in` filter needs the values at
+ * query-build time and that tuple is module-private there;
+ * `__tests__/security/org-funded-predicate.test.ts` pins the two lists together
+ * so they cannot drift. Derive a FOURTH copy instead of importing this one.
+ */
+const ORG_FUNDED_PAYMENT_METHODS = ["WALLET", "INVOICE", "LICENSE"];
 
 export interface ListAppointmentsParams {
   scope: Scope;
@@ -51,8 +63,12 @@ export interface ListAppointmentsResult {
  *     consultant (owns the linked plan). Both sides are covered (#674): a
  *     consultant's own B2C sessions appear in their personal list; org-hosted
  *     sessions carry an organizationId and fall under `org` scope instead.
- *   - `org`: rows where `organizationId = orgId`. No user filter —
- *     MANAGER+ sees the org's full activity.
+ *   - `org`: rows where `organizationId = orgId` AND this org's money paid
+ *     them (`payment.paymentMethod ∈ {WALLET, INVOICE, LICENSE}`) AND the org
+ *     is still readable. No user filter — MANAGER+ sees the org's funded
+ *     activity. The funding clause is load-bearing, not belt-and-braces:
+ *     `organizationId` is a tag checkout stamps for a `PERSONAL`-rail booking
+ *     too, where the member's own card paid.
  *   - `all`: no scope filter; admin-only.
  */
 export function buildWhere(
@@ -151,9 +167,36 @@ export function buildWhere(
     // click could not open. Cross-org funding visibility (seats this org paid
     // for in another org's event) is the money views' responsibility now, not
     // this list's — the invoice/payments surfaces already carry those rows.
+    //
+    // …and org-FUNDED rows only, which the `organizationId` tag alone never
+    // established. Checkout stamps `Appointment.organizationId` (and
+    // `Payment.organizationId`) for ANY `organizationId` in the request body,
+    // including `fundingSource === "PERSONAL"` — where the member's own card
+    // paid and the org only gets reporting credit. Filtering on the tag alone
+    // therefore published the AMOUNT of a member's personal purchase to every
+    // MANAGER+ in the org's "Everyone" feed. The funding half of the predicate
+    // is `sponsoredSeatsWhere`'s, applied here so the two surfaces answer
+    // "whose session is this" the same way.
     return {
       ...base,
       organizationId: params.scope.orgId,
+      payment: {
+        some: {
+          organizationId: params.scope.orgId,
+          paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
+        },
+      },
+      // Read-level twin of the DEACTIVATED refusal in resolveOrgScope, for the
+      // same reason that one is opt-in: this query has no org row in scope to
+      // test. A DEACTIVATED org is "treated as non-existent"
+      // (lib/enterprise/org-status.ts) and `requireOrgAccess` 403s it, so its
+      // rows must not be served here either — and unlike the resolver this costs
+      // the caller nothing, because it rides the WHERE rather than a new field.
+      // SUSPENDED stays: its bookings keep running and its OWNER must be able
+      // to read them while they fix whatever suspended it. The `all` arm is
+      // deliberately NOT filtered — an ADMIN/STAFF reading a DEACTIVATED org is
+      // how the teardown gets verified.
+      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
     };
   }
 
@@ -186,10 +229,17 @@ export async function listAppointmentsScoped(
         // sponsor is entitled to see the five people it paid for — not the
         // twenty it did not. Empty for 1:1 kinds, where `getMember` already
         // names the counterpart, and empty for a hosted-but-not-funded event.
+        //
+        // The paymentMethod clause mirrors the WHERE above rather than repeating
+        // the reasoning: a payer card row merely tagged to this org is not this
+        // org's money, so it must not be presented as a seat this org bought.
         ...(params.scope.kind === "org"
           ? {
               payment: {
-                where: { organizationId: params.scope.orgId },
+                where: {
+                  organizationId: params.scope.orgId,
+                  paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
+                },
                 select: {
                   id: true,
                   user: { select: { id: true, name: true, email: true } },
