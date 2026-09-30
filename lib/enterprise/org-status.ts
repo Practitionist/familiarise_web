@@ -16,7 +16,17 @@
  * filters at call sites — the rules for "is this org billable" or
  * "should this cron skip this org" should change in one place, not 17.
  */
-import { OrgStatus } from "@prisma/client";
+// TYPE-ONLY, and the status names below are string literals rather than enum
+// member accesses. This module is reachable from `"use client"` components (via
+// `lib/api/scope/parse` → ChatSidebar), and a VALUE import of `@prisma/client`
+// drags the Prisma engine runtime into the browser bundle — which is also what
+// made three jsdom suites die on a missing `TextEncoder`.
+//
+// The literals stay compile-checked: every tuple below is annotated
+// `OrgStatus[]`, so a renamed or misspelled status is still a type error here.
+// That is the anti-drift property this module exists to provide, and nothing is
+// lost by not reading the generated enum object at runtime.
+import type { OrgStatus } from "@prisma/client";
 
 /**
  * Statuses that count as "the org exists and may transact".
@@ -24,8 +34,8 @@ import { OrgStatus } from "@prisma/client";
  * is in PENDING_VERIFICATION (see lib/enterprise/governance.ts).
  */
 export const OPERATIONAL_ORG_STATUSES: OrgStatus[] = [
-  OrgStatus.PENDING_VERIFICATION,
-  OrgStatus.ACTIVE,
+  "PENDING_VERIFICATION",
+  "ACTIVE",
 ];
 
 /**
@@ -33,7 +43,7 @@ export const OPERATIONAL_ORG_STATUSES: OrgStatus[] = [
  * SUSPENDED (billing freeze) and DEACTIVATED (terminal). Used by
  * subscription-invoice + consolidated-invoice rollup crons.
  */
-export const BILLABLE_ORG_STATUSES: OrgStatus[] = [OrgStatus.ACTIVE];
+export const BILLABLE_ORG_STATUSES: OrgStatus[] = ["ACTIVE"];
 
 /**
  * Statuses where outbound notifications + dashboard access are still
@@ -41,9 +51,9 @@ export const BILLABLE_ORG_STATUSES: OrgStatus[] = [OrgStatus.ACTIVE];
  * can resolve the suspension cause.
  */
 export const ADDRESSABLE_ORG_STATUSES: OrgStatus[] = [
-  OrgStatus.PENDING_VERIFICATION,
-  OrgStatus.ACTIVE,
-  OrgStatus.SUSPENDED,
+  "PENDING_VERIFICATION",
+  "ACTIVE",
+  "SUSPENDED",
 ];
 
 /**
@@ -52,7 +62,7 @@ export const ADDRESSABLE_ORG_STATUSES: OrgStatus[] = [
  * invite link is clicked.
  */
 export function isOnboardingBlocked(status: OrgStatus): boolean {
-  return status === OrgStatus.SUSPENDED || status === OrgStatus.DEACTIVATED;
+  return status === "SUSPENDED" || status === "DEACTIVATED";
 }
 
 /**
