@@ -283,9 +283,9 @@ function inList(
   status: EarningsLostWhere["status"],
   actual: EarningStatus,
 ): boolean {
-  if (!status) return true;
-  if ("in" in status) return status.in.includes(actual);
-  return status === actual;
+  // Delegate rather than duplicate: the `in` operator rejects a `string`
+  // operand outright, so this cannot narrow the union itself.
+  return statusMatches(status, actual);
 }
 
 interface TxStub {

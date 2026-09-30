@@ -504,14 +504,15 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
       where: Record<string, unknown>;
       data: Record<string, unknown>;
     }> = [];
+    // The stub's `updateMany` is declared over `..._a: unknown[]`, so the
+    // implementation has to take that shape and narrow inside — a typed
+    // destructured parameter is contravariantly incompatible.
     tx.organizationEarnings.updateMany.mockImplementation(
-      async ({
-        where,
-        data,
-      }: {
-        where: Record<string, unknown>;
-        data: Record<string, unknown>;
-      }) => {
+      async (...args: unknown[]) => {
+        const { where, data } = (args[0] ?? {}) as {
+          where: Record<string, unknown>;
+          data: Record<string, unknown>;
+        };
         orgEarningUpdates.push({ where, data });
         return { count: 1 };
       },
