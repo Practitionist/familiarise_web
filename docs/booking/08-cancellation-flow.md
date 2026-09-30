@@ -1016,7 +1016,7 @@ sequenceDiagram
     Novu->>Alice: Cancellation notification<br/>(email/in-app/push)
 ```
 
-**Mechanism**: Novu (`lib/novu.ts` -> `notifyAppointmentCancelled`)
+**Mechanism**: Novu (`lib/novu/service.ts` -> `notifyAppointmentCancelled`)
 
 **Who receives notifications**: Both the consultant and the consultee. The user IDs are collected into an array and filtered to remove any `undefined` values (which can happen if relations are broken or missing):
 

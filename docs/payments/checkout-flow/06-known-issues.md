@@ -662,7 +662,7 @@ export async function confirmEventSlot(
 ### Issue #6: Payment Intent Expiration Mismatch
 
 **Severity:** High
-**Location:** `lib/payments/operations/checkout.ts` vs `jobs/cleanup-abandoned-payments.ts`
+**Location:** `lib/payments/operations/checkout.ts` vs `scripts/payments/cleanup-abandoned-payments.ts`
 
 #### Problem Description
 
@@ -681,7 +681,7 @@ createdAt: { lt: new Date(Date.now() - 30 * 60 * 1000) },  // 30 min fallback
 Add 5-minute buffer to cleanup job:
 
 ```typescript
-// jobs/cleanup-abandoned-payments.ts
+// scripts/payments/cleanup-abandoned-payments.ts
 {
   createdAt: {
     lt: new Date(Date.now() - 35 * 60 * 1000),  // 35 min buffer
@@ -766,7 +766,7 @@ console.error(
 ### Issue #10: Cleanup Job Race with Payment Completion
 
 **Severity:** High
-**Location:** `jobs/cleanup-abandoned-payments.ts`
+**Location:** `scripts/payments/cleanup-abandoned-payments.ts`
 
 #### Problem Description
 
@@ -782,7 +782,7 @@ Cleanup job can race with webhook:
 Add fresh status check before cleanup:
 
 ```typescript
-// jobs/cleanup-abandoned-payments.ts - Inside transaction
+// scripts/payments/cleanup-abandoned-payments.ts - Inside transaction
 
 // Re-check payment status before cleanup (prevents race with webhook)
 for (const payment of appointment.payment) {
@@ -965,17 +965,17 @@ private async validateNoConflicts(
 
 ## Implementation Status
 
-| Issue | Severity | Status     | File(s) Modified                                |
-| ----- | -------- | ---------- | ----------------------------------------------- |
-| #1    | Critical | Acceptable | (logging only)                                  |
-| #2    | Critical | FIXED      | `utils/appointmentlock.ts`                      |
-| #3    | Critical | FIXED      | `utils/appointmentlock.ts`                      |
-| #4    | Critical | FIXED      | `lib/payments/operations/checkout.ts`           |
-| #5    | Critical | FIXED      | `utils/appointmentlock.ts`                      |
-| #6    | High     | FIXED      | `jobs/cleanup-abandoned-payments.ts`            |
-| #8    | High     | FIXED      | `lib/payments/webhooks/handlers.ts`             |
-| #10   | High     | FIXED      | `jobs/cleanup-abandoned-payments.ts`            |
-| #12   | High     | FIXED      | `lib/redis.ts`                                  |
+| Issue | Severity | Status     | File(s) Modified                                 |
+| ----- | -------- | ---------- | ------------------------------------------------ |
+| #1    | Critical | Acceptable | (logging only)                                   |
+| #2    | Critical | FIXED      | `utils/appointmentlock.ts`                       |
+| #3    | Critical | FIXED      | `utils/appointmentlock.ts`                       |
+| #4    | Critical | FIXED      | `lib/payments/operations/checkout.ts`            |
+| #5    | Critical | FIXED      | `utils/appointmentlock.ts`                       |
+| #6    | High     | FIXED      | `scripts/payments/cleanup-abandoned-payments.ts` |
+| #8    | High     | FIXED      | `lib/payments/webhooks/handlers.ts`              |
+| #10   | High     | FIXED      | `scripts/payments/cleanup-abandoned-payments.ts` |
+| #12   | High     | FIXED      | `lib/redis.ts`                                   |
 | #11   | Medium   | FIXED      | `utils/scheduling-engine/ScheduleValidationService.ts` |
 
 ---

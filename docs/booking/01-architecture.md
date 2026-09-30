@@ -142,7 +142,7 @@ Central React hook (exported as `useEventSlotAllocation`) managing slot selectio
 
 **Key behaviors**:
 
-- `toggleSlot()` -- event-specific interactive blocking: weekly limits (subscription), daily session limits (class), consecutive enforcement, delegated to the pure rules in `lib/scheduling/slotSelectionValidation.ts`
+- `toggleSlot()` -- event-specific interactive blocking: weekly limits (subscription), daily session limits (class), consecutive enforcement, delegated to the pure rules in `lib/scheduling/intervalSelectionValidation.ts`
 - Auto-expansion -- when selecting a slot, auto-select consecutive adjacent slots to fill `slotsPerSession`
 - Progress tracking -- scheduled/required/remaining calls
 - Submission for manual and requested modes goes through `lib/scheduling/allocationAlgorithms.ts` (`AllocationAlgorithms.manualAllocate` / `allocateRequestedSlots`); auto mode just posts `isAuto: true` and lets the server pick

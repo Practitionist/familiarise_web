@@ -14,7 +14,7 @@ Bookings and payments are tightly coupled through a **two-phase commit pattern**
 
 | File                                  | Role                                               |
 | ------------------------------------- | -------------------------------------------------- |
-| `actions/checkout.action.ts`          | Server action entry point (auth + validation)      |
+| `app/api/checkout/route.ts`           | Route handler entry point (auth + validation)      |
 | `lib/payments/operations/checkout.ts` | Core checkout logic, appointment creation, locking |
 | `lib/payments/webhooks/handlers.ts`   | Webhook handlers for payment success/failure       |
 | `schemas/checkout.ts`                 | Zod validation schema for checkout input           |
@@ -27,7 +27,7 @@ Bookings and payments are tightly coupled through a **two-phase commit pattern**
 sequenceDiagram
     participant User
     participant Frontend
-    participant Action as checkoutAction
+    participant Route as POST /api/checkout
     participant Checkout as handleCheckout
     participant Redis as Distributed Lock
     participant DB as PostgreSQL
@@ -36,10 +36,10 @@ sequenceDiagram
     participant Novu as Novu Notifications
 
     User->>Frontend: Select event/plan
-    Frontend->>Action: Submit checkout data
-    Action->>Action: Authenticate session
-    Action->>Action: Validate with checkoutSchema
-    Action->>Checkout: Validated CheckoutInput + userId
+    Frontend->>Route: Submit checkout data
+    Route->>Route: Authenticate session
+    Route->>Route: Validate with checkoutSchema
+    Route->>Checkout: Validated CheckoutInput + userId
 
     Note over Checkout: Phase 1 - Checkout
     Checkout->>DB: calculateAmountAndValidate (pricing, discounts)
@@ -71,19 +71,16 @@ sequenceDiagram
 
 ## Checkout Entry Point
 
-### Server Action
+### Route Handler
 
-**File**: `actions/checkout.action.ts`
+**File**: `app/api/checkout/route.ts`
 
 ```typescript
-export async function checkoutAction(
-  data: CheckoutInput,
-  isMockPayment: boolean = false,
-);
+export async function POST(req: NextRequest);
 ```
 
-1. Authenticates the session via `getSession()`
-2. Validates input with `checkoutSchema.parse(data)`
+1. Authenticates the session via `requireApiAuth()`
+2. Validates input with `checkoutSchema.parse(body)`
 3. Delegates to `handleCheckout(validatedData, userId, isMockPayment)`
 4. Classifies and logs errors via `classifyError()` on failure
 

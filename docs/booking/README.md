@@ -75,19 +75,19 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 
 ### Frontend Utilities (`lib/scheduling/`)
 
-| File                         | Purpose                                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `allocationService.ts`       | API client wrapper for the allocation/validation endpoints                                              |
-| `allocationAlgorithms.ts`    | Client-side pre-validation + submission for manual and requested allocation modes only (no auto engine) |
-| `allocationMessages.ts`      | Single catalog of user-facing allocation messages, bucketed by the event's scheduling timezone          |
-| `availabilityPolling.ts`     | Pure poll-decision logic for the availability heatmap (60s interval; polling, not push, by design)      |
-| `calendarUtils.ts`           | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay                       |
-| `schedulingTimezone.ts`      | Resolves the scheduling timezone stamped on a Subscription/Class, from the consultant's `User.timezone` |
-| `slotSelectionValidation.ts` | Pure client-side selection rules for the Allocate Slots calendar, unit-testable apart from the hook     |
-| `slot-status-tokens.ts`      | Single colour vocabulary for slot availability states, shared by every calendar/grid surface            |
-| `slot-picker-focus.ts`       | Where the slot picker should be scrolled/focused when it opens, for every surface that places slots     |
-| `slot-picker-subject.ts`     | Turns one appointment into what the reschedule page's slot picker needs                                 |
-| `manage-timings-subject.ts`  | Turns a consultation/subscription/webinar/class into what the "manage timings" page needs               |
+| File                             | Purpose                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `allocationService.ts`           | API client wrapper for the allocation/validation endpoints                                              |
+| `allocationAlgorithms.ts`        | Client-side pre-validation + submission for manual and requested allocation modes only (no auto engine) |
+| `allocationMessages.ts`          | Single catalog of user-facing allocation messages, bucketed by the event's scheduling timezone          |
+| `availabilityPolling.ts`         | Pure poll-decision logic for the availability heatmap (60s interval; polling, not push, by design)      |
+| `calendarUtils.ts`               | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay                       |
+| `schedulingTimezone.ts`          | Resolves the scheduling timezone stamped on a Subscription/Class, from the consultant's `User.timezone` |
+| `intervalSelectionValidation.ts` | Pure client-side selection rules for the Allocate Slots calendar, unit-testable apart from the hook     |
+| `slot-status-tokens.ts`          | Single colour vocabulary for slot availability states, shared by every calendar/grid surface            |
+| `slot-picker-focus.ts`           | Where the slot picker should be scrolled/focused when it opens, for every surface that places slots     |
+| `time-picker-subject.ts`         | Turns one appointment into what the reschedule page's slot picker needs                                 |
+| `manage-timings-subject.ts`      | Turns a consultation/subscription/webinar/class into what the "manage timings" page needs               |
 
 ### Frontend Components (`components/scheduling/`)
 
