@@ -1,27 +1,40 @@
 # Recordings & Webhooks
 
+> **⚠️ HISTORICAL SNAPSHOT — read the code, not this file.**
+> This dossier was triaged on **2026-07-12** and the verdict tables below record
+> the state _at that date_. Several "LEGIT-DEFERRED" verdicts have since been
+> fixed and several "Known gaps" have since been closed, so a reader who treats
+> this page as a description of the current system will be misled.
+>
+> Canonical and current: `docs/stream/` (start at `docs/stream/README.md`).
+> Where this file and the code disagree, the code is correct and this file is
+> the bug. Superseded claims are struck through or annotated inline; the verdict
+> table is left as-written because it is the historical record.
+
 ## Context
 
-Webhook route verifies HMAC; handles recording lifecycle, session end, participant join/leave, moderation flags. Recordings start on STREAM_S3 (URL expiry ~14 days) and transfer to Supabase per plan. Jobs transfer expiring, mark expired, cleanup old. Slot completion updated on session/call end.
+Webhook route verifies the signature with the SDK's `verifySignature` using the **API secret** (there is no separate signing secret); handles recording lifecycle, session end, participant join/leave, moderation flags. Recordings start on `STREAM_S3` (URL expiry ~14 days) and transfer to our own bucket per plan.
+
+_(Corrected 2026-09-30: the dedup key is `sha256(body)`, not the `X-Webhook-ID` header — Stream signs the body and not the header. And the storage enum is `PLATFORM`, renamed from `SUPABASE`; see `docs/stream/recordings-marketplace.md`.)_ Jobs transfer expiring, mark expired, cleanup old. Slot completion updated on session/call end.
 
 ## Triage verdict (2026-07-12)
 
 Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
 
-| Claim (short) | Verdict |
-|---|---|
-| Consultation/subscription recording disabled by design — expectation mismatch | 🟡 LEGIT-DEFERRED (product-policy) |
-| Transfer failures alert after retries; files `>500MB` unsupported | ✅ FIXED-BY #983 (streaming upload; enqueue-on-ready) |
-| Missing MeetingSession for webhook → logged no-op (orphan calls invisible) | 🟡 accurate caveat (by-design) |
-| #471/#472 no-show/overrun may not fully consume attendance | ✅ FIXED-BY #992 (no-show automation, consultations) |
-| Org calls export DB-backed; live Stream query for orphans incomplete | 🟡 LEGIT-DEFERRED |
-| Webhook sweeper parity with Razorpay | 🟡 LEGIT-DEFERRED (#899) |
+| Claim (short)                                                                 | Verdict                                                                                                               |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Consultation/subscription recording disabled by design — expectation mismatch | 🟡 LEGIT-DEFERRED (product-policy)                                                                                    |
+| Transfer failures alert after retries; files `>500MB` unsupported             | ✅ FIXED-BY #983 (streaming upload; enqueue-on-ready)                                                                 |
+| Missing MeetingSession for webhook → logged no-op (orphan calls invisible)    | 🟡 accurate caveat (by-design)                                                                                        |
+| #471/#472 no-show/overrun may not fully consume attendance                    | ✅ FIXED-BY #992 (no-show automation, consultations)                                                                  |
+| Org calls export DB-backed; live Stream query for orphans incomplete          | 🟡 LEGIT-DEFERRED                                                                                                     |
+| Webhook sweeper parity with Razorpay                                          | 🟡 LEGIT-DEFERRED (#899) — **since fixed**; `sweep-stuck-webhook-events.yml` now covers Stream on a 10-minute cadence |
 
 ## Known gaps / bugs
 
 - Consultation/subscription recording often disabled by design — product expectation mismatch.
-- Transfer failures alert after retries; files >500MB unsupported.
-- Missing MeetingSession for webhook → logged no-op (orphan calls invisible).
+- ~~Transfer failures alert after retries; files >500MB unsupported.~~ **CLOSED by #983** — the transfer streams, so there is no in-memory 500MB ceiling, and failures alert after retries.
+- Missing `Meeting` row for a webhook → logged no-op (orphan calls invisible). _(The model was renamed from the slot-era `MeetingSession`.)_ `reconcile-orphaned-recordings.yml` recovers lost recording events, and `reconcile-orphaned-sessions.yml` is the backstop for a lost `call.session_ended`.
 - #471/#472 no-show/overrun may not fully consume attendance yet.
 - Org calls export DB-backed; live Stream query for orphans incomplete.
 
@@ -33,33 +46,36 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Questions (handled?)
 
-1. **Enable 1:1 recording with explicit consent?**  
-   - A) Opt-in per session  
-   - B) Plan flag only for webinar/class  
-   - C) Org-policy forced recording  
+1. **Enable 1:1 recording with explicit consent?**
+   - A) Opt-in per session
+   - B) Plan flag only for webinar/class
+   - C) Org-policy forced recording
 
-**Recommendation: A.** Opt-in per session with clear Setup consent matches DPDP expectations and dispute needs.  
-- Not B: Leaves 1:1 users surprised when they need evidence.  
+**Recommendation: A.** Opt-in per session with clear Setup consent matches DPDP expectations and dispute needs.
+
+- Not B: Leaves 1:1 users surprised when they need evidence.
 - Not C: Forced org recording without consent UX is a privacy landmine.
 
-2. **Dispute evidence retention default?**  
-   - A) Align with `streamRecordingRetentionDays` + legal hold  
-   - B) 14 days max always  
-   - C) Transfer-all immediately  
+2. **Dispute evidence retention default?**
+   - A) Align with `streamRecordingRetentionDays` + legal hold
+   - B) 14 days max always
+   - C) Transfer-all immediately
 
-**Recommendation: A.** One retention story in product + legal hold for open disputes beats ad-hoc Stream expiry.  
-- Not B: 14 days is Stream URL life, not our policy promise.  
+**Recommendation: A.** One retention story in product + legal hold for open disputes beats ad-hoc Stream expiry.
+
+- Not B: 14 days is Stream URL life, not our policy promise.
 - Not C: Transfer-all burns storage before we know what matters.
 
-> 🎯 Locked: Recording rows expire at `now() + 14d`; Supabase remains the permanent store.
+> 🎯 Locked: Recording rows expire at `now() + 14d`; our own bucket remains the permanent store. _(The store is vendor-neutral: `RecordingStorageType` is `PLATFORM` and the columns are `storageUrl`/`storagePath`.)_
 
-3. **Webhook sweeper for Stream (parity with Razorpay)?**  
-   - A) Replay unprocessed  
-   - B) Rely on Stream retries only  
-   - C) Nightly reconcile vs Stream API  
+3. **Webhook sweeper for Stream (parity with Razorpay)?**
+   - A) Replay unprocessed
+   - B) Rely on Stream retries only
+   - C) Nightly reconcile vs Stream API
 
-**Recommendation: A.** Replay unprocessed events mirrors Razorpay discipline and catches missed recording/session ends.  
-- Not B: Vendor retries alone leave orphan MeetingSession gaps silent.  
+**Recommendation: A.** Replay unprocessed events mirrors Razorpay discipline and catches missed recording/session ends.
+
+- Not B: Vendor retries alone leave orphan `Meeting`-row gaps silent.
 - Not C: Nightly reconcile is slower for live-call state than event replay.
 
 ## High concurrency / multi-device

@@ -42,12 +42,23 @@ that user — so an `iat`-less token plus one ban equals a permanent lockout. Un
 
 **Video tokens are APP-WIDE, by decision.** This rule used to say "scope video tokens to the call
 with `generateCallToken({ call_cids })`". That wrapper was written and then deliberately removed —
-`lib/stream-client.ts:117-122` explains why: the video client is an app-wide singleton holding one
+`lib/stream-client.ts` explains why: the video client is an app-wide singleton holding one
 user token, so per-call tokens would mean a second client per meeting. Access control is instead
-call-type grants (`user`/`guest` do not hold `join-call`, `call_member` does) plus the server-side
-membership `POST /api/meetings/[meetingId]/join` writes after `resolveMeetingAccess` passes.
-**Always pass `iat`**, per the rule above. App-side checks alone are not access control; Stream's
-server API deliberately bypasses its own permission system.
+call-type grants plus the server-side membership `POST /api/meetings/[meetingId]/join` writes after
+`resolveMeetingAccess` passes. **Always pass `iat`**, per the rule above. App-side checks alone are
+not access control; Stream's server API deliberately bypasses its own permission system.
+
+**The call-type grants are an OPERATOR ACTION, not a done change.** The `call_member` hardening
+(`join-call` and recording control moved off the roles the join route hands to every participant)
+exists as a _remediation script_ and a _detector_, not as applied state:
+`scripts/stream/ensure-call-type-grants.ts` is dry-run by default, and
+`.github/workflows/stream-calltype-drift.yml` runs every script in `--check` mode, which never
+writes. Applying is deliberately left to a human — `--apply` mutates a shared production Stream app
+with no rehearsal environment and additionally demands `--routes-are-deployed`, an assertion about
+this repo's deploy a job cannot make. So a green drift check means "the live call type matches the
+script", **not** "the hardening has been applied". Run
+`backfill-call-member-role.ts` first; the grants pre-flight refuses to apply until an open call
+actually holds a `call_member` member.
 
 **Webhooks must ack first.** Stream retries within a **15-second total budget** (6s per attempt) and
 then drops the event forever. Verify the signature, persist the `WebhookEvent` receipt, acknowledge,
@@ -57,8 +68,13 @@ then process in `after()`. Stream signs with the **API secret**; there is no sep
 not covered by the signature — Stream signs the body only — so one captured `(body, signature)` pair
 replays under N invented header values and mints N dispatches from one verified delivery. The body
 hash collapses genuine retries (byte-identical) and separates genuine events (they differ somewhere),
-which is everything the header was wanted for. See `app/api/stream/webhooks/route.ts:183-201`;
-Razorpay made the same trade for the same reason.
+which is everything the header was wanted for. The derivation is
+`app/api/stream/webhooks/route.ts:254-274`; the dedup gate that consumes `isNew` is at `:380-391`;
+and the deviation is pinned by `__tests__/stream/webhook-dedup-and-replay.test.ts` ("derives the key
+from the body, not from a header", "collapses a byte-identical replay under N DIFFERENT webhook
+ids"), so reverting it means deleting a test that explains why. Razorpay refuses
+`x-razorpay-event-id` for the same underlying reason but prefers a business-entity id from the
+payload over a body hash.
 
 **Use the SDK's `verifySignature(body, signature, secret)`**, not a hand-rolled `createHmac` +
 `timingSafeEqual`. Do **not** reach for `verifyAndParseWebhook`: it returns only the parsed `Event`
@@ -75,8 +91,22 @@ that get recorded as `UNVERIFIED` completions.
 dependency of the video SDK and is already on disk, so background blur needs no install; only
 `@stream-io/audio-filters-web` does, and that one is a **paid** add-on billed per participant-minute.
 `noise_cancellation` on the `default` call type is **`available`**, not `auto-on` — #1285 changed it
-precisely so that shipping Krisp does not start the meter by itself. Deliberate version holds are
-recorded in **#1283** (`node-sdk` 0.8.x, `stream-chat-react` v14, `stream-chat` v10).
+precisely so that shipping Krisp does not start the meter by itself.
+
+**What is actually installed** (read `package.json`; do not trust a version list in prose, and
+treat any "#NNNN records a deliberate hold" claim you cannot find in the repo as unverified —
+nothing in this repository mentions #1283):
+
+| Package                      | Installed |
+| ---------------------------- | --------- |
+| `@stream-io/node-sdk`        | `0.7.64`  |
+| `@stream-io/video-react-sdk` | `1.42.0`  |
+| `stream-chat`                | `9.52.0`  |
+| `stream-chat-react`          | `13.14.6` |
+
+`@stream-io/video-filters-web` is **not** a direct dependency; it is on disk at `0.8.7` as a
+transitive dep of the video SDK, which is why background blur needs no install. That is also the
+reason to treat the transitive version as a courtesy rather than a pin — an SDK bump can move it.
 
 **The CSP blocker for filters is `connect-src`, not `worker-src`.** Both filter
 packages fetch WASM and models from `unpkg.com` at runtime unless `basePath` is
@@ -85,24 +115,32 @@ under `script-src`.
 
 ## Where things live
 
-| Concern                                                | File                                                                                                                                                                                                                               |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server clients + tokens + Stream's OWN circuit breaker | `lib/stream-client.ts`                                                                                                                                                                                                             |
-| Token server actions (session-bound)                   | `actions/stream/chat/stream.action.ts`                                                                                                                                                                                             |
-| Channel create / membership                            | `actions/stream/chat/channel.action.ts`                                                                                                                                                                                            |
-| Lazy channel sync + reconcile                          | `actions/stream/chat/event-channel.action.ts`                                                                                                                                                                                      |
-| Channel ID derivation                                  | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`                                                                                                                                                                                 |
-| Call creation                                          | `lib/meeting.ts`, `actions/stream/meetings/meeting.action.ts`                                                                                                                                                                      |
-| Client connection (store, not wrapper)                 | `providers/StreamProviderImpl.tsx`, `lib/stream/connection-store.ts`                                                                                                                                                               |
-| Webhooks                                               | `app/api/stream/webhooks/route.ts` → `lib/stream/webhook-dispatch.ts` → `lib/stream/{session,recording}-handlers.ts`                                                                                                               |
-| Recordings                                             | `lib/stream/recording-service.ts`, `recording-transfer-service.ts`                                                                                                                                                                 |
-| Replay marketplace (#366)                              | `lib/data/recordings-explore.ts`, `app/api/stream/recordings/[recordingId]/{publish,preview}`, `app/api/recordings/[recordingId]/purchase`, `lib/payments/webhooks/recording-purchase.ts`, `docs/stream/recordings-marketplace.md` |
-| Media teardown                                         | `lib/stream/media-teardown.ts`                                                                                                                                                                                                     |
-| Crons                                                  | `.github/workflows/stream-sync.yml`, `mark-expired-recordings.yml`, `transfer-expiring-recordings.yml`, `cleanup-old-stream-recordings.yml`                                                                                        |
+| Concern                                                | File                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server clients + tokens + Stream's OWN circuit breaker | `lib/stream-client.ts`                                                                                                                                                                                                                                                                                                                                                         |
+| Token server actions (session-bound)                   | `actions/stream/chat/stream.action.ts`                                                                                                                                                                                                                                                                                                                                         |
+| Channel create / membership                            | `actions/stream/chat/channel.action.ts`                                                                                                                                                                                                                                                                                                                                        |
+| Lazy channel sync + reconcile                          | `actions/stream/chat/event-channel.action.ts`                                                                                                                                                                                                                                                                                                                                  |
+| Channel ID derivation                                  | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`                                                                                                                                                                                                                                                                                                                             |
+| Call creation                                          | `lib/meeting.ts`, `actions/stream/meetings/meeting.action.ts`                                                                                                                                                                                                                                                                                                                  |
+| Client connection (store, not wrapper)                 | `providers/StreamProviderImpl.tsx`, `lib/stream/connection-store.ts`                                                                                                                                                                                                                                                                                                           |
+| Webhooks                                               | `app/api/stream/webhooks/route.ts` → `lib/stream/webhook-dispatch.ts` → `lib/stream/{session,recording}-handlers.ts`                                                                                                                                                                                                                                                           |
+| Recordings                                             | `lib/stream/recording-service.ts`, `recording-transfer-service.ts`                                                                                                                                                                                                                                                                                                             |
+| Replay marketplace (#366)                              | `lib/data/recordings-explore.ts`, `app/api/stream/recordings/[recordingId]/{publish,preview}`, `app/api/recordings/[recordingId]/purchase`, `lib/payments/webhooks/recording-purchase.ts`, `docs/stream/recordings-marketplace.md`                                                                                                                                             |
+| Media teardown                                         | `lib/stream/media-teardown.ts`                                                                                                                                                                                                                                                                                                                                                 |
+| Crons (10 workflows)                                   | `.github/workflows/` — `stream-sync.yml`, `stream-webhook-drift.yml`, `stream-calltype-drift.yml`, `mark-expired-recordings.yml`, `transfer-expiring-recordings.yml`, `cleanup-old-stream-recordings.yml`, `reconcile-orphaned-recordings.yml`, `reconcile-orphaned-sessions.yml`, `expire-event-channels.yml`, `sweep-stuck-webhook-events.yml`, `archive-webhook-events.yml` |
 
-Prisma: `Meeting` (1:1 with `AppointmentOccurrence`, `streamCallId` unique),
-`MeetingAttendance` (unique on session+user), `Recording`. **No chat state is stored in Postgres** —
-channels live only on Stream, which is why a bad channel-ID derivation is unrecoverable data loss.
+Prisma: `Meeting` (1:1 with `AppointmentOccurrence` via `appointmentOccurrenceId @unique`,
+`streamCallId` unique, denormalized `organizationId`), `MeetingAttendance` (unique on meeting+user),
+`MeetingPresence` (per-device join/leave intervals, #1569), `Recording`, `RecordingConsent` (#1134
+P1-7). **No chat state is stored in Postgres** — channels live only on Stream, which is why a bad
+channel-ID derivation is unrecoverable data loss.
+
+**The room id is derived, not generated:** `occurrence-<occurrenceId>`, or
+`occurrence-<occurrenceId>-r<base36>` after a #1607 pre-start-end rebuild. Build and parse in
+`lib/meetings/room-id.ts`. `appointmentOccurrenceId` is the durable key; the room id can change
+under an open tab. Live calls minted before the rename still carry legacy `slot-<uuid>` ids and
+nothing backfills them — treat those as legacy, not as a second live format.
 
 ## Traps that have bitten before
 
@@ -130,6 +168,11 @@ channels live only on Stream, which is why a bad channel-ID derivation is unreco
 
 ## Docs
 
-`docs/stream/` — 19 files. `03-provider-authentication.md` and `troubleshooting.md` are the freshest
-and most reliable. Several others still describe NextAuth and a `streamCallId` format that has not
-been used for months; #1134 PR J fixes them. Trust the code over the docs until then.
+`docs/stream/` — 22 markdown files plus `stream-ecosystem.mmd`. `README.md` is the index and states
+the house rule: where a document and the code disagree, the code is correct and the document is a bug
+worth fixing in place. `troubleshooting.md` and `13-recording-webhooks.md` are the densest.
+
+Two traps that cost a full outage each, both of which these docs used to teach: Stream signs webhooks
+with the **API secret** (there is no dashboard "signing secret"), and the dedup key is
+`sha256(body)`, not `X-Webhook-ID`. If you are reading a page that says otherwise, that page is
+stale — fix it rather than following it.

@@ -221,31 +221,72 @@ await channel.create({
 
 #### Problem Description
 
-The daily sync job hard-deletes users from Stream who don't exist in Prisma. This could accidentally delete users being registered or temporarily removed from DB.
+The daily sync job deletes users from Stream who don't exist in Prisma. This could
+accidentally delete users being registered or temporarily removed from DB.
+
+**The deletion is a SOFT delete, not a hard one.** The `hard_delete: true` this
+section used to describe is not what the job does.
 
 #### Location
 
-**File:** `jobs/stream-sync.ts`
-**Scheduled:** Daily at 03:30 UTC (09:00 AM IST)
+**File:** `scripts/stream/stream-sync.ts` — the implementation.
+**Wrapper:** `jobs/stream/stream-sync.ts` — GitHub Actions outputs and Sentry.
+**Workflow:** `.github/workflows/stream-sync.yml`, daily at `40 3 * * *` UTC
+(09:10 IST).
+
+There is no `jobs/stream-sync.ts`; other documents in this set have pointed at
+that path.
 
 #### Current Behavior
 
 ```typescript
-// Delete users immediately if not in Prisma
-for (const streamUser of staleUsers) {
-  await chatClient.deleteUser(streamUser.id, {
-    delete_conversation_channels: true, // Deletes ALL messages
-    hard_delete: true, // Permanent deletion
-  });
+// scripts/stream/stream-sync.ts — soft-deletes BOTH the user and their messages
+const deleteResponse = await serverStreamClient.deleteUsers(staleUsers, {
+  user: "soft",
+  messages: "soft",
+});
+```
+
+Stream keeps a 30-day grace period on a soft-deleted user, which is what bounds
+this failure mode: a wrongly-soft-deleted user is restorable, and the job
+streams back the per-user failures Stream reports
+(`failed_delete_users`) rather than pretending the batch succeeded.
+
+Two guards still apply before that call:
+
+- `getExcludedUserIds()` builds the exclusion set from `["system"]` **plus**
+  whatever is in the `STREAM_SYNC_EXCLUDED_USERS` env var (comma-separated). It
+  is not a hard-coded array.
+- `SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"]` excludes those two
+  prefixes.
+
+```typescript
+// the real exclusion logic
+const SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"];
+
+function getExcludedUserIds(): Set<string> {
+  const envExcluded = process.env.STREAM_SYNC_EXCLUDED_USERS || "";
+  const excluded = new Set(["system"]);
+  if (envExcluded) {
+    envExcluded.split(",").forEach((id) => {
+      const trimmed = id.trim();
+      if (trimmed) excluded.add(trimmed);
+    });
+  }
+  return excluded;
 }
 ```
+
+The job also holds a distributed lock for 40 minutes
+(`SYNC_LOCK_TTL`), matched to the workflow's own `timeout-minutes`. It was 10,
+which is shorter than the run it guards.
 
 #### Impact
 
 1. **Data Loss Risk:**
-   - User and all their messages deleted permanently
-   - No recovery possible
-   - Conversation history lost
+   - User and their messages soft-deleted, with Stream's 30-day grace period
+   - Restorable within that window; not permanent
+   - Conversation history retained by Stream for the grace period
 
 2. **Timing Issues:**
    - User being registered during sync window
@@ -254,33 +295,16 @@ for (const streamUser of staleUsers) {
 
 #### Recommended Fix
 
-**Option 1: Grace Period** (Recommended)
-
-```typescript
-// Add "deletedAt" timestamp to Stream user metadata
-await chatClient.upsertUser({
-  id: userId,
-  deleted_at: new Date().toISOString(),
-});
-
-// Delete only after 7 days
-const gracePeriod = 7 * 24 * 60 * 60 * 1000;
-if (Date.now() - deletedAt > gracePeriod) {
-  await deleteUser(userId);
-}
-```
+**Already done, as far as the code goes:** the delete is soft, the exclusions are
+env-configurable, the per-user failures are reported, and the lock outlives the
+run. A grace-period _column_ on our side (stamping `deleted_at` and deleting only
+after seven days) is still not implemented — Stream's own 30-day grace period is
+what the design currently leans on.
 
 #### Current Workaround
 
-Exclusion list:
-
-```typescript
-const EXCLUDED_USERS = ["system", "teetangh" /* others */];
-const shouldSkip =
-  EXCLUDED_USERS.includes(streamUser.id) ||
-  streamUser.id.startsWith("system-") ||
-  streamUser.id.startsWith("recording-egress-");
-```
+Add a user id to `STREAM_SYNC_EXCLUDED_USERS` in the repository secrets. No code
+change is needed.
 
 ---
 
@@ -1756,4 +1780,5 @@ If you're still experiencing issues:
 
 ---
 
-**Last Updated:** 2025-01-22
+**Last Updated:** 2026-09-30 (#1829 — corrected against the code on this branch;
+prior self-dates of 2025 predated the fixes below and were wrong)

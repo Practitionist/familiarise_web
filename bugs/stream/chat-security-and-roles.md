@@ -1,5 +1,16 @@
 # Chat Security & Roles
 
+> **⚠️ HISTORICAL SNAPSHOT — read the code, not this file.**
+> This dossier was triaged on **2026-07-12** and the verdict tables below record
+> the state _at that date_. Several "LEGIT-DEFERRED" verdicts have since been
+> fixed and several "Known gaps" have since been closed, so a reader who treats
+> this page as a description of the current system will be misled.
+>
+> Canonical and current: `docs/stream/` (start at `docs/stream/README.md`).
+> Where this file and the code disagree, the code is correct and this file is
+> the bug. Superseded claims are struck through or annotated inline; the verdict
+> table is left as-written because it is the historical record.
+
 ## Context
 
 Channels: DMs (`dm-…`), webinar/class team channels, collab channels, legacy consultation/subscription names. Server creates/syncs channels; org tagging on custom data. DPDP consent gates Stream user upsert. Unread badges read client singleton.
@@ -8,13 +19,13 @@ Channels: DMs (`dm-…`), webinar/class team channels, collab channels, legacy c
 
 Triaged 2026-07-12 against real code (3 verifier agents cross-checked every claim); fix wave PRs #981–#994 shipped. This dossier's claims map as follows:
 
-| Claim (short) | Verdict |
-|---|---|
-| `chatTokenProvider` not proving `session.user.id === userId` (#400) | ✅ FIXED-BY #981 (session-bind) |
-| `mapRoleToStream()` maps everyone → Stream `admin` | ✅ FIXED-BY #981 (demote to `user`; STAFF/ADMIN admin; channel-scoped consultant grants) |
-| Consultee↔consultee / consultant↔consultant chat policy incomplete | 🟡 LEGIT-DEFERRED |
-| Docs claim token issuance verifies user existence; code may not | ✅ FIXED-BY #981 (session-bound issuance) |
-| In-memory server caches ineffective across serverless instances (perf) | 🟡 LEGIT-DEFERRED (perf, not auth) |
+| Claim (short)                                                          | Verdict                                                                                  |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `chatTokenProvider` not proving `session.user.id === userId` (#400)    | ✅ FIXED-BY #981 (session-bind)                                                          |
+| `mapRoleToStream()` maps everyone → Stream `admin`                     | ✅ FIXED-BY #981 (demote to `user`; STAFF/ADMIN admin; channel-scoped consultant grants) |
+| Consultee↔consultee / consultant↔consultant chat policy incomplete     | 🟡 LEGIT-DEFERRED                                                                        |
+| Docs claim token issuance verifies user existence; code may not        | ✅ FIXED-BY #981 (session-bound issuance)                                                |
+| In-memory server caches ineffective across serverless instances (perf) | 🟡 LEGIT-DEFERRED (perf, not auth)                                                       |
 
 ## Known gaps / bugs
 
@@ -32,31 +43,34 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Questions (handled?)
 
-1. **Stream role model?**  
-   - A) `user` / channel_member with typed grants  
-   - B) Keep admin for simplicity (reject)  
-   - C) Separate Stream apps for consult vs org  
+1. **Stream role model?**
+   - A) `user` / channel_member with typed grants
+   - B) Keep admin for simplicity (reject)
+   - C) Separate Stream apps for consult vs org
 
-**Recommendation: A.** Demote everyone off Stream `admin` and grant channel-scoped permissions by product role.  
-- Not B: Admin-for-all is an explicit reject — any member can escalate channel powers.  
+**Recommendation: A.** Demote everyone off Stream `admin` and grant channel-scoped permissions by product role.
+
+- Not B: Admin-for-all is an explicit reject — any member can escalate channel powers.
 - Not C: Two Stream apps double ops cost before we fix the mapping bug.
 
-2. **Consultee↔consultee messaging?**  
-   - A) Forbid  
-   - B) Allow in class/webinar only  
-   - C) Allow DMs with report button  
+2. **Consultee↔consultee messaging?**
+   - A) Forbid
+   - B) Allow in class/webinar only
+   - C) Allow DMs with report button
 
-**Recommendation: B.** Class/webinar channels need peer chat; open DMs wait until abuse reporting exists.  
-- Not A: Breaks cohort/classroom product expectations.  
+**Recommendation: B.** Class/webinar channels need peer chat; open DMs wait until abuse reporting exists.
+
+- Not A: Breaks cohort/classroom product expectations.
 - Not C: Broad DM graph without report tooling invites harassment and support load.
 
-3. **Token API shape?**  
-   - A) Authenticated route; ignore body userId  
-   - B) Server action with assertSession  
-   - C) Short-lived call-scoped tokens only  
+3. **Token API shape?**
+   - A) Authenticated route; ignore body userId
+   - B) Server action with assertSession
+   - C) Short-lived call-scoped tokens only
 
-**Recommendation: A.** Session-bound route that ignores client-supplied `userId` closes #400 cleanly for chat and video.  
-- Not B: Assert helps but still tempts “pass userId” call sites to drift.  
+**Recommendation: A.** Session-bound route that ignores client-supplied `userId` closes #400 cleanly for chat and video.
+
+- Not B: Assert helps but still tempts “pass userId” call sites to drift.
 - Not C: Call-scoped alone does not fix chat token minting.
 
 ## High concurrency / multi-device

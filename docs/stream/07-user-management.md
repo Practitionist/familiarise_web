@@ -151,7 +151,7 @@ someone next looks at this:
    special client-side role at all, and every moderation or support action would
    go through the server clients in `lib/stream-client.ts`, which present the
    API secret and bypass Stream's permission system anyway — so nothing is lost
-   operationally *unless* a support surface needs to read channels directly in
+   operationally _unless_ a support surface needs to read channels directly in
    the browser. This is the least-privilege answer and removes the skeleton key
    entirely. It is the option to take if a staff account is ever compromised, or
    before the platform holds conversations it would be damaging to leak in bulk.
@@ -382,8 +382,8 @@ name: Sync Stale Stream Users
 
 on:
   schedule:
-    # Runs at 03:30 UTC (9:00 AM IST) every day
-    - cron: "30 3 * * *"
+    # Runs at 03:40 UTC (9:10 AM IST) every day
+    - cron: "40 3 * * *"
   workflow_dispatch: # Allows manual triggering
 
 jobs:
@@ -405,7 +405,9 @@ jobs:
 
 The `performStreamUserSync` function implements the core synchronization logic.
 
-**Location:** `/jobs/stream-sync.ts` (lines 42-175)
+**Location:** `scripts/stream/stream-sync.ts` — the implementation, wrapped by
+`jobs/stream/stream-sync.ts` for GitHub Actions. There is no
+`jobs/stream-sync.ts`; `09-background-sync.md` used to point at that path.
 
 **Function Signature:**
 
@@ -538,7 +540,7 @@ There is no hard-delete follow-up job yet — the `TODO` in
 **What that means concretely, for a DPDP §12 erasure request.**
 `lib/compliance/erasure/scrub-user.ts` pseudonymises the local `User` row and
 makes no Stream call at all. Stream-side removal is therefore incidental: the
-nightly reaper notices the local row is gone and issues a *soft* delete, which
+nightly reaper notices the local row is gone and issues a _soft_ delete, which
 is the state the data then stays in.
 
 - **Retention window:** the soft delete is described in the code as a 30-day

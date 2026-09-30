@@ -1140,17 +1140,56 @@ signs the deliveries, and `STREAM_API_SECRET` is what verifies them.
 
 ### The scheduled fleet behind recordings
 
-Four scheduled workflows keep the recording pipeline honest. Each one runs as a
-bare `npx tsx jobs/...` process under GitHub Actions, takes the fleet cron lock
-so that a manual dispatch cannot race the schedule, and writes a
+Ten workflows touch the Stream pipeline. Each one runs as a bare
+`node_modules/.bin/tsx jobs/...` process under GitHub Actions, takes the fleet
+cron lock so that a manual dispatch cannot race the schedule, and writes a
 `SystemJobExecution` row that the staff Jobs page reads.
 
-| Workflow                            | Schedule (UTC)         | What it does                                                                                                                                                                                                                                                        |
-| ----------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `transfer-expiring-recordings.yml`  | Every six hours at :58 | Copies every `PERMANENT` recording out of Stream's S3 before the fourteen-day URL lapses, warns consultants whose `STREAM_ONLY` recordings are about to expire, and pages when a permanent recording is within seventy-two hours of expiry and still untransferred. |
-| `mark-expired-recordings.yml`       | Daily at 03:20         | Flips `STREAM_S3` recordings whose `streamUrlExpiresAt` has passed to `EXPIRED`, so the dashboard stops offering a URL that no longer resolves.                                                                                                                     |
-| `cleanup-old-stream-recordings.yml` | Daily at 03:00         | Deletes the Supabase object and tombstones the row for every recording past its organization's `streamRecordingRetentionDays`. This is the erasure half of the retention promise, so a failure here is a compliance problem rather than an untidy database.         |
-| `reconcile-orphaned-recordings.yml` | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                                                                                                                |
+**These schedules are ground truth — read them from the workflow files, not from
+a doc.** They are all in `.github/workflows/`:
+
+| Workflow                            | Schedule (UTC)    | What it does                                                                                                                                                                                                                                                         |
+| ----------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reconcile-orphaned-sessions.yml`   | `25,55 * * * *`   | **Twice an hour.** The only backstop for a `call.session_ended` that never arrived. Without it a lost session-end leaves a `Meeting` open forever.                                                                                                                   |
+| `sweep-stuck-webhook-events.yml`    | `4-59/10 * * * *` | Re-drives `WebhookEvent` rows stuck `IN-PROGRESS` or retryable — every ten minutes. This is the sweeper that now covers Stream, and it is what makes the ack-first design safe.                                                                                      |
+| `transfer-expiring-recordings.yml`  | `58 */6 * * *`    | Copies every `PERMANENT` recording out of Stream's S3 before the fourteen-day URL lapses, warns consultants whose `STREAM_ONLY` recordings are about to expire, and pages when a permanent recording is within seventy-two hours of expiry and still untransferred.  |
+| `mark-expired-recordings.yml`       | `21 3 * * *`      | Flips `STREAM_S3` recordings whose `streamUrlExpiresAt` has passed to `EXPIRED`, so the dashboard stops offering a URL that no longer resolves. **03:21, not 03:20** — the minute is offset from the hour so this job does not co-start with the 03:00 cleanup.      |
+| `cleanup-old-stream-recordings.yml` | `0 3 * * *`       | Deletes the object in our own bucket and tombstones the row for every recording past its organization's `streamRecordingRetentionDays`. This is the erasure half of the retention promise, so a failure here is a compliance problem rather than an untidy database. |
+| `reconcile-orphaned-recordings.yml` | `0 5 * * *`       | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                                                                                                                 |
+| `stream-webhook-drift.yml`          | `15 5 * * *`      | Runs `ensure-webhook-subscription.ts --check` against the live app and fails on drift, so a webhook silently unsubscribed in the dashboard cannot go unnoticed for a month.                                                                                          |
+| `stream-calltype-drift.yml`         | `40 6 * * *`      | Runs the call-type and app-settings scripts in `--check` mode, plus on any PR touching them. Never writes — see the operator-action note below.                                                                                                                      |
+| `expire-event-channels.yml`         | `35 4 * * *`      | Expires chat event channels past their window.                                                                                                                                                                                                                       |
+| `archive-webhook-events.yml`        | `25 0 * * 0`      | Weekly. Archives `WebhookEvent` rows out of the hot table.                                                                                                                                                                                                           |
+| `stream-sync.yml`                   | `40 3 * * *`      | The daily Stream user sync — `jobs/stream/stream-sync.ts`, described in `09-background-sync.md`.                                                                                                                                                                     |
+
+**Two of these are load-bearing and are the ones most often left out of a list:
+`reconcile-orphaned-sessions.yml` and `sweep-stuck-webhook-events.yml`.** The
+first is the only thing that recovers a lost `call.session_ended`; the second is
+the only thing that re-drives an event the webhook route acknowledged but could
+not finish. A Stream pipeline described without them is not describing a
+self-healing pipeline.
+
+### Call-type grants: an operator action, not a completed change
+
+`ensure-call-type-grants.ts` is the remediation script, and
+`stream-calltype-drift.yml` is the **detector**. The workflow runs every script
+in `--check` mode, which never writes, and applying is deliberately left to a
+human — `--apply` calls `updateCallType` on a shared production Stream app that
+has no rehearsal environment, and additionally demands `--routes-are-deployed`,
+an assertion about this repository's deploy that a job cannot make on anyone's
+behalf.
+
+So a green drift check means "the live call type matches the script", not "the
+hardening has been applied". To apply:
+
+```bash
+npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
+```
+
+Note also that `scripts/stream/backfill-call-member-role.ts` must have run
+**before** the grants are applied: calls minted before that change named their
+members `host`/`user`, neither of which survives the write, and the pre-flight
+refuses to apply until at least one member of an open call holds `call_member`.
 
 ### Recovering a recording whose webhook never arrived
 
@@ -1279,9 +1318,11 @@ streamLogger.error("Transfer failed", error, { recordingId });
 
 ---
 
-## Correction — 2026-09-01
+## Corrections — 2026-09-01, updated 2026-09-30
 
-**The transfer pipeline described above has never executed once.** Measured
+### Correction of 2026-09-01
+
+**The transfer pipeline described above had never executed once.** Measured
 against the live database on 2026-08-30: 191 `Recording` rows, every one of them
 `READY` / `STREAM_S3`, and `transferAttempts = 0` across the board. Not "runs and
 sometimes fails" — never started.
@@ -1293,23 +1334,47 @@ in #1136), and the six-hourly backstop cron is one of the eight that could not
 start at all because `lib/auth-server.ts` called React 18's absent `cache()` at
 module scope (fixed in #1281).
 
-The section above is left in place rather than deleted because it still
-describes the design accurately, and because #1284 has since **decoupled new
-recordings from that pipeline entirely** in favour of Stream's external storage —
-writing straight to our own bucket, which removes the download-reupload hop, the
-fourteen-day race, the size cap and the cron together. That work is tracked in
-#1280 and is not yet shipped, so the transfer service and its workflow are still
-in the tree.
+### Update of 2026-09-30 — what the code does now
 
-Separately, #1280 catalogues four correctness defects that would have bitten had
-it ever run: a 500MB size cap below a normal 60-minute recording, a success gate
-that never verifies the uploaded bytes (a zero-byte MP4 can become the permanent
-record of a paid session), a non-CAS status write that lets two concurrent
-transfers permanently strand a recording, and a random path per retry that makes
-orphaned objects impossible to collect.
+Three of the four defects listed below are fixed in the code, and the section
+above is no longer a description of a never-run pipeline. **Whether the pipeline
+has actually run in production is a database question this document cannot
+answer** — count `Recording` rows where `storageType = 'PLATFORM'`, or read
+`transferredAt`; do not take a claim from here.
 
-**Do not read the section above as a description of production behaviour.**
+| Defect (as catalogued 2026-09-01)                                     | State in the code                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 500 MB size cap below a normal 60-minute recording                    | **Fixed.** `RECORDING_MAX_OBJECT_BYTES`, default **5 GiB**, overridable per environment, enforced by a byte-counting `TransformStream`. It is still **inert on the Supabase free plan**, which clamps every object to 50 MB globally regardless of the bucket setting (#1314) |
+| Success gate never verifies the uploaded bytes                        | **Partly addressed** — `fileSizeLimit` is passed to the upload and a ceiling breach is tagged `RECORDING_OBJECT_CEILING` so it is distinguishable from a storage fault                                                                                                        |
+| Non-CAS status write lets two concurrent transfers strand a recording | **Fixed.** Transfers are fenced on `status: READY` + `storageType: STREAM_S3` before the write                                                                                                                                                                                |
+| Random path per retry makes orphaned objects uncollectable            | **Fixed** — the path is derived from the recording, not the attempt                                                                                                                                                                                                           |
+
+**The webhook cause is gone and the transfer is kicked on ready.** The secret
+fix removed the 500, and `lib/stream/recording-handlers.ts:485-495` now calls
+`queueRecordingTransfer` from the `recording_ready` handler, gated on the
+appointment's resolved storage policy being `PERMANENT`. The cron remains a
+backstop sweeper at concurrency 3. See
+[the scheduled fleet](#the-scheduled-fleet-behind-recordings).
+
+### External storage: an operator action, not a shipped fact
+
+#1280 decoupled new recordings from the transfer hop by registering our bucket
+with Stream as recording **external storage**, so Stream writes into it directly
+and there is no download-reupload hop, no fourteen-day race, no size cap and no
+cron. The script that does it is
+`scripts/stream/ensure-recording-external-storage.ts` — and like the call-type
+grants, it is **dry-run by default**: `--apply` and `--delete` must both name the
+target app (`target-guard.ts`), because the write is to the shared production app
+and the S3 credentials handed to Stream are long-lived with no documented
+rotation path.
+
+`--list` and `--check` are the honest way to find out whether it has been applied
+in any given environment. Do not read this document as evidence either way.
+
+**Do not read the section above as a description of production behaviour, and do
+not read this correction section as evidence that it now has run** — that is a
+`SELECT`, not a document.\*\*
 
 ---
 
-**Last Updated:** 2026-09-01
+**Last Updated:** 2026-09-30

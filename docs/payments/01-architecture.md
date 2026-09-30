@@ -260,7 +260,7 @@ AppointmentStatus:
 | File                                               | Schedule       | Purpose                  |
 | -------------------------------------------------- | -------------- | ------------------------ |
 | `.github/workflows/cleanup-abandoned-payments.yml` | `*/15 * * * *` | Cleanup stale payments   |
-| `.github/workflows/stream_sync.yml`                | `30 3 * * *`   | Sync Stream Chat users   |
+| `.github/workflows/stream-sync.yml`                | `40 3 * * *`   | Sync Stream Chat users   |
 | `.github/workflows/race-condition-tests.yml`       | On push to dev | Test concurrent payments |
 | `.github/workflows/quality-checks.yaml`            | On PR          | CI/CD checks             |
 

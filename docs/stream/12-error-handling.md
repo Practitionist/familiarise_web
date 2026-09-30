@@ -53,7 +53,31 @@ The Stream integration uses a multi-layered error handling approach:
 
 ## Server-Side Circuit Breaker (#473)
 
-The error boundary and retry mechanisms below protect the browser. As of #473, the server-side hot paths that call Stream are additionally wrapped in the shared circuit breaker (`withCircuitBreaker`, the same primitive already used for Redis) through `withStreamCircuitBreaker` in `lib/stream-client.ts`. Without it, a Stream outage made every authenticated dashboard load wait out the full thirty-second client timeout on each Stream call and cascade, because chat and video are touched on nearly every load. With the breaker, once Stream has failed enough times the breaker opens and subsequent calls fail in under a millisecond instead of hanging.
+The error boundary and retry mechanisms below protect the browser. As of #473, the server-side hot paths that call Stream are additionally wrapped in a circuit breaker through `withStreamCircuitBreaker` in `lib/stream-client.ts`.
+
+**Stream's breaker is its OWN. It is not `withCircuitBreaker`, and must not be made one.** The two used to be the same object (`lib/stream-client.ts:316-323`):
+
+```typescript
+/**
+ * #1280 2.1 — Stream's OWN breaker, not Redis's.
+ *
+ * These used to be the same object. Five Stream failures opened it and booking
+ * locks went through it too, so a video-vendor outage stopped checkout; in the
+ * other direction a Redis outage told users "Video is temporarily unavailable"
+ * and pointed `/api/health` at the wrong vendor.
+ */
+const streamCircuitBreaker = createCircuitBreaker("stream");
+
+/** Exposed so /api/health can report Stream's breaker rather than Redis's. */
+export function getStreamCircuitStatus() {
+  return streamCircuitBreaker.status();
+}
+```
+
+Both failure directions were real. Take an instance from
+`createCircuitBreaker(name)` for any new backing service; `withCircuitBreaker`
+remains Redis's. `getStreamCircuitStatus()` is what `/api/health` reads, so the
+health endpoint reports the vendor that actually failed. Without it, a Stream outage made every authenticated dashboard load wait out the full thirty-second client timeout on each Stream call and cascade, because chat and video are touched on nearly every load. With the breaker, once Stream has failed enough times the breaker opens and subsequent calls fail in under a millisecond instead of hanging.
 
 Closed-breaker behaviour is identical to calling Stream directly, so a genuine Stream error still propagates unchanged. Only when the breaker is already open does a wrapped call short-circuit: a caller that supplied a fallback degrades gracefully — the channel queries return an empty list so the dashboard still renders — while a caller without one receives a typed `StreamUnavailableError` so it can branch on "Stream is down" rather than misread the outage as "no data". The wrapped hot paths today are the channel queries, the channel membership upserts, and the user connect and upsert calls.
 
@@ -897,4 +921,5 @@ function categorizeError(error: Error): ErrorCategory {
 
 ---
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2026-09-30 (#1829 — corrected against the code on this branch;
+prior self-dates of 2025 predated the fixes below and were wrong)

@@ -98,7 +98,12 @@ The sync job uses pagination to process all Stream users efficiently, checking e
 
 ### Core Function
 
-**Location:** `/jobs/stream-sync.ts`
+**Location:** `scripts/stream/stream-sync.ts` — the implementation.
+**Wrapper:** `jobs/stream/stream-sync.ts` — GitHub Actions outputs, Sentry, and
+the maintenance abort.
+
+There is no `jobs/stream-sync.ts`. The workflow runs
+`node_modules/.bin/tsx jobs/stream/stream-sync.ts`.
 
 **Function Signature:**
 
@@ -154,7 +159,8 @@ function getStreamClient() {
 #### 2. Paginate Through Stream Users
 
 ```typescript
-const streamPageLimit = 100;
+// `pageLimit` is a destructured option defaulting to 100 — there is no
+// module-level `streamPageLimit` constant.
 let lastStreamUserId: string | undefined = undefined;
 
 while (true) {
@@ -165,7 +171,7 @@ while (true) {
   const streamUsersResponse = await serverStreamClient.queryUsers(
     lastStreamUserId ? { id: { $gt: lastStreamUserId } } : {},
     { id: 1 }, // Sort by ID for consistent pagination
-    { limit: streamPageLimit, presence: false },
+    { limit: pageLimit, presence: false },
   );
 
   const currentStreamPageUsers = streamUsersResponse.users;
@@ -370,29 +376,46 @@ if (!streamUserId.startsWith("recording-egress-")) {
 
 **Purpose:** Stream creates these accounts automatically for recording and storage operations. Deleting them breaks recording functionality.
 
-### Hardcoded Exclusions
+### Exclusions
 
-**Location:** `/jobs/stream-sync.ts` (line 23)
+**Location:** `scripts/stream/stream-sync.ts:57-73`
+
+**The exclusion set is NOT hard-coded.** It is `["system"]` plus whatever is in
+the `STREAM_SYNC_EXCLUDED_USERS` environment variable, comma-separated. An
+earlier version of this document hard-coded a second id that no longer appears
+anywhere in the code.
 
 ```typescript
-const EXCLUDED_USER_IDS = new Set(["system", "teetangh"]);
+function getExcludedUserIds(): Set<string> {
+  const envExcluded = process.env.STREAM_SYNC_EXCLUDED_USERS || "";
+  const excluded = new Set(["system"]);
+
+  if (envExcluded) {
+    envExcluded.split(",").forEach((id) => {
+      const trimmed = id.trim();
+      if (trimmed) excluded.add(trimmed);
+    });
+  }
+
+  return excluded;
+}
+
+// Separate, and also applied: the two system-id prefixes.
+const SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"];
 ```
 
 **Currently Excluded Users:**
 
-1. `system` - Core system account
-2. `teetangh` - Administrator account
+1. `system` - Core system account (always)
+2. anything listed in `STREAM_SYNC_EXCLUDED_USERS` - operator-configured
+3. any id starting with `system-` or `recording-egress-` (by prefix)
 
-**Adding New Exclusions:**
+**Adding New Exclusions:** set `STREAM_SYNC_EXCLUDED_USERS` in the repository
+secrets to a comma-separated list. There is nothing to edit, and no code change
+is needed to exclude a new account:
 
-```typescript
-const EXCLUDED_USER_IDS = new Set([
-  "system",
-  "teetangh",
-  "admin",
-  "support-bot",
-  "demo-user",
-]);
+```
+STREAM_SYNC_EXCLUDED_USERS=admin,support-bot,demo-user
 ```
 
 **When to Add Exclusions:**
@@ -642,7 +665,7 @@ The following flowchart illustrates the complete background sync process.
 
 ```mermaid
 flowchart TD
-    Start([GitHub Actions Trigger<br/>Daily at 03:30 UTC]) --> CheckEnv{Environment<br/>Variables Set?}
+    Start([GitHub Actions Trigger<br/>Daily at 03:40 UTC]) --> CheckEnv{Environment<br/>Variables Set?}
 
     CheckEnv -->|No| ErrorExit1[Exit with Error Code 1]
     CheckEnv -->|Yes| InitClient[Initialize Stream Client<br/>timeout: 30s]
@@ -843,8 +866,18 @@ await metrics.record({
 
 1. **Reduce Page Size:**
 
+   There is no `streamPageLimit` constant. `pageLimit` is a **default value on
+   the destructured `SyncOptions`** — pass it to the function rather than editing
+   a constant:
+
    ```typescript
-   const streamPageLimit = 50; // Reduced from 100
+   // scripts/stream/stream-sync.ts:186-191
+   const {
+     pageLimit = 100, // the real default
+     dryRun = false,
+     excludeUserIds = [],
+     batchDelayMs = 500,
+   } = options;
    ```
 
 2. **Increase Timeout:**
@@ -991,11 +1024,21 @@ await metrics.record({
    }
    ```
 
-2. **Reduce Batch Size:**
+2. **Reduce the delete batch.**
+
+   There is no `maxBatchSize` constant. Each delete call takes exactly the stale
+   users found in one page, so the batch size is bounded by `pageLimit` — reduce
+   `pageLimit` (option 1) rather than looking for a second knob. The pacing
+   between batches is `batchDelayMs`, which does exist:
 
    ```typescript
-   // Delete in smaller batches
-   const maxBatchSize = 25; // Reduced from 100
+   // Delete the page's stale users, softly, in one call
+   await serverStreamClient.deleteUsers(staleUsers, {
+     user: "soft",
+     messages: "soft",
+   });
+   // then pace
+   if (batchDelayMs > 0) await sleep(batchDelayMs); // default 500ms
    ```
 
 3. **Add Delays Between Batches:**

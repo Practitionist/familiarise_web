@@ -880,4 +880,5 @@ function useStreamWithErrorContext(userId: string) {
 
 ---
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2026-09-30 (#1829 — corrected against the code on this branch;
+prior self-dates of 2025 predated the fixes below and were wrong)
