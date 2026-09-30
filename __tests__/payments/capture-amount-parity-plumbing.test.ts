@@ -62,8 +62,14 @@ const paymentUpdateMany = jest.fn(
     };
   }) => ({ count: 1 }),
 );
-const paymentFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
-const appointmentFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
+const paymentFindUnique = jest.fn(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+);
+const appointmentFindUnique = jest.fn(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+);
 const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
 const trialFindUnique = jest.fn((..._a: unknown[]): unknown => undefined);
@@ -98,7 +104,10 @@ jest.mock("../../lib/payments/payouts", () => ({
   createEarningsFromPayment: (...a: unknown[]) =>
     createEarningsFromPayment(...a),
 }));
-const refundPayment = jest.fn((..._a: unknown[]): unknown => undefined);
+const refundPayment = jest.fn(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+);
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => refundPayment(...a),
 }));
