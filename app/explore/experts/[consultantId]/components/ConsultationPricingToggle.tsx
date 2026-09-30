@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OfferingPlanSelector } from "./OfferingPlanSelector";
 import {
   ClockIcon,
   CheckCircle2,
@@ -85,7 +85,9 @@ interface ConsultationPricingToggleProps {
   slotsError?: boolean;
   calendarLoading?: boolean;
   calendarError?: boolean;
-  initialPlanId?: string | null;
+  selectedPlanId: string;
+  onPlanChange: (id: string) => void;
+  onCalendarOpenChange?: (open: boolean) => void;
   bookingRequest?: number;
 }
 
@@ -107,28 +109,35 @@ export default function ConsultationPricingToggle({
   slotsError = false,
   calendarLoading = false,
   calendarError = false,
-  initialPlanId,
+  selectedPlanId: activeConsultationOption,
+  onPlanChange: setActiveConsultationOption,
+  onCalendarOpenChange,
   bookingRequest = 0,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const router = useRouter();
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
-  // Track the active plan by id so plans that share a duration (e.g. two
-  // 1-hour consultations) remain independently selectable and bookable.
-  const [activeConsultationOption, setActiveConsultationOption] =
-    useState<string>(
-      consultationOptions.some((o) => o.id === initialPlanId)
-        ? initialPlanId!
-        : (consultationOptions[0]?.id ?? ""),
-    );
   const [dialogOpen, setDialogOpen] = useState(false);
+  useEffect(() => {
+    onCalendarOpenChange?.(dialogOpen);
+    return () => onCalendarOpenChange?.(false);
+  }, [dialogOpen, onCalendarOpenChange]);
   const returnFocus = useRef<HTMLElement | null>(null);
   const previousBookingRequest = useRef(bookingRequest);
   const [step, setStep] = useState(0);
   const [selectionNotice, setSelectionNotice] = useState("");
   const [pendingIntent, setPendingIntent] =
     useState<ReturnType<typeof consumePurchaseIntent>>(null);
+  const previousPlan = useRef(activeConsultationOption);
+  useEffect(() => {
+    if (previousPlan.current === activeConsultationOption) return;
+    previousPlan.current = activeConsultationOption;
+    if (pendingIntent) return;
+    setStep(0);
+    setSelectionNotice("");
+    setHeldWindow(null);
+  }, [activeConsultationOption, pendingIntent]);
   useEffect(() => {
     if (bookingRequest > previousBookingRequest.current) {
       returnFocus.current = document.activeElement as HTMLElement;
@@ -213,6 +222,7 @@ export default function ConsultationPricingToggle({
     consultationOptions,
     setSelectedDate,
     setCurrentDate,
+    setActiveConsultationOption,
   ]);
 
   useEffect(() => {
@@ -315,6 +325,7 @@ export default function ConsultationPricingToggle({
     setHeldWindow(null);
     setStep(0);
     setSelectionNotice("");
+    setPendingIntent(null);
   };
 
   const handleRequestForApproval = async () => {
@@ -479,18 +490,12 @@ export default function ConsultationPricingToggle({
 
   return (
     <div className="space-y-5">
-      <Tabs value={activeConsultationOption} onValueChange={choosePlan}>
-        <TabsList
-          className="pricing-segments w-full"
-          aria-label="Consultation plan"
-        >
-          {consultationOptions.map((option) => (
-            <TabsTrigger key={option.id} value={option.id}>
-              {option.title}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      <OfferingPlanSelector
+        options={consultationOptions}
+        value={activeConsultationOption}
+        onChange={choosePlan}
+        label="Consultation plan"
+      />
       {activePlanOption && (
         <>
           <div>

@@ -148,8 +148,8 @@ export async function renderPlanBrochure(
           </Fragment>
         )}
         <Text style={styles.note}>
-          Your curriculum guide, prepared on {generated}. Explore this programme
-          online for the latest pricing, available dates, and booking options.
+          Prepared on {generated}. For the latest prices, session dates and
+          booking information, visit the plan page.
         </Text>
         <Link style={styles.link} src={data.planUrl}>
           View programme &amp; booking details

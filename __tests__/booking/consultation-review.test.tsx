@@ -83,9 +83,12 @@ function Harness({
   const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
     null,
   );
+  const [selectedPlanId, onPlanChange] = useState(options[0].id);
   return (
     <ConsultationPricingToggle
       consultationOptions={options}
+      selectedPlanId={selectedPlanId}
+      onPlanChange={onPlanChange}
       consultantDetails={{
         id: "expert",
         bookingMode: mode,
@@ -168,12 +171,10 @@ it("requires a time, preserves it on Back, and checks out the selected duplicate
   await click("Back");
   await click("Cancel");
   await act(async () => {
-    const tab = document.querySelector<HTMLButtonElement>(
-      '[role="tab"][data-state="inactive"]',
+    const radio = document.querySelector<HTMLButtonElement>(
+      '[role="radio"][data-state="unchecked"]',
     )!;
-    tab.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, button: 0 }),
-    );
+    radio.click();
   });
   await review();
   await click("Continue to Checkout");

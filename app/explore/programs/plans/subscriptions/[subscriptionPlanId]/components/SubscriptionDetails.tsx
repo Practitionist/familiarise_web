@@ -88,6 +88,11 @@ export function SubscriptionDetails({
               />
             </div>
 
+            <p className="text-sm text-muted-foreground">
+              Your plan includes {plan.totalSessions} sessions. Session dates
+              are arranged with your expert after purchase.
+            </p>
+
             <PlanDetailBody
               aboutHeading="About this programme"
               description={plan.description}

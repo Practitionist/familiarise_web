@@ -43,12 +43,13 @@ export function loadScript(src: string): Promise<boolean> {
 }
 
 // Common error handling logic for checkout pages
-interface CheckoutApiError {
+export interface CheckoutApiError {
   error?: string;
   errorType?: string;
   message?: string;
   /** Machine-readable limiter code (RATE_LIMITED on 429s). */
   code?: string;
+  yourCardWasNotCharged?: boolean;
 }
 
 function isCheckoutApiError(value: unknown): value is CheckoutApiError {

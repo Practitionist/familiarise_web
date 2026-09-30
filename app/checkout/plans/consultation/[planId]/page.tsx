@@ -42,7 +42,16 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
-import { createHandleApiError, paymentGateways } from "../../utils";
+import { AvailabilityRecovery } from "../../../components/AvailabilityRecovery";
+import {
+  consultationRecoveryHref,
+  isAvailabilityRefusal,
+} from "@/lib/booking/checkout-recovery";
+import {
+  createHandleApiError,
+  paymentGateways,
+  type CheckoutApiError,
+} from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
@@ -116,6 +125,8 @@ export default function ConsultationCheckoutPage({
       checkoutTaxContext.referralCreditsPaise,
     );
   const [slotPassedError, setSlotPassedError] = useState<string | null>(null);
+  const [availabilityRefusal, setAvailabilityRefusal] =
+    useState<CheckoutApiError | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   // #828 — useState's lazy initializer runs once per mount.
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
@@ -329,7 +340,14 @@ export default function ConsultationCheckoutPage({
   // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const toastApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleApiError = useCallback(
+    (error: CheckoutApiError) => {
+      if (isAvailabilityRefusal(error)) setAvailabilityRefusal(error);
+      else toastApiError(error);
+    },
+    [toastApiError],
+  );
 
   // Common API request logic
   const makeCheckoutRequest = useCallback(
@@ -872,6 +890,15 @@ export default function ConsultationCheckoutPage({
           </CardContent>
         </Card>
         <div className="grid gap-4">
+          {availabilityRefusal && eventData?.data.consultantProfileId && (
+            <AvailabilityRecovery
+              href={consultationRecoveryHref(
+                eventData.data.consultantProfileId,
+                resolvedParams.planId,
+              )}
+              notCharged={availabilityRefusal.yourCardWasNotCharged === true}
+            />
+          )}
           <div className="grid gap-2">
             <div className="font-semibold">Payment</div>
             <div className="text-muted-foreground">
@@ -928,12 +955,15 @@ export default function ConsultationCheckoutPage({
                             createRazorpayCheckoutHandlers(toast)
                               .onPaymentSuccess
                           }
-                          disabled={isMaintenanceBlocked}
+                          disabled={
+                            isMaintenanceBlocked || !!availabilityRefusal
+                          }
                           onPaymentError={(error: {
                             description?: string;
                             code?: string;
                             reason?: string;
                             message?: string;
+                            yourCardWasNotCharged?: boolean;
                           }) =>
                             handleApiError({
                               error:
@@ -941,6 +971,8 @@ export default function ConsultationCheckoutPage({
                                 error.message ??
                                 error.reason,
                               errorType: error.code,
+                              yourCardWasNotCharged:
+                                error.yourCardWasNotCharged,
                             })
                           }
                         />
@@ -969,15 +1001,24 @@ export default function ConsultationCheckoutPage({
                           onPaymentSuccess={
                             createStripeCheckoutHandlers(toast).onPaymentSuccess
                           }
-                          disabled={isMaintenanceBlocked}
+                          disabled={
+                            isMaintenanceBlocked || !!availabilityRefusal
+                          }
                           onPaymentError={(error: {
                             message?: string;
                             description?: string;
                             errorType?: string;
+                            error?: string;
+                            yourCardWasNotCharged?: boolean;
                           }) =>
                             handleApiError({
-                              error: error.message ?? error.description,
+                              error:
+                                error.error ??
+                                error.message ??
+                                error.description,
                               errorType: error.errorType,
+                              yourCardWasNotCharged:
+                                error.yourCardWasNotCharged,
                             })
                           }
                         />
@@ -988,7 +1029,9 @@ export default function ConsultationCheckoutPage({
                           variant="secondary"
                           onClick={() => handleCheckout(gateway.gateway, true)}
                           disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
+                            isCheckoutProcessing ||
+                            isMaintenanceBlocked ||
+                            !!availabilityRefusal
                           }
                         >
                           {isCheckoutProcessing &&

@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OfferingPlanSelector } from "./OfferingPlanSelector";
 import { CalendarIcon, CheckCircle2, Gift, BookOpen } from "lucide-react";
 import { BookingSteps } from "@/components/booking/BookingSteps";
 import { BookingSummary } from "@/components/booking/BookingSummary";
@@ -70,7 +70,8 @@ interface SubscriptionPricingToggleProps {
   ) => void;
   timezone: string;
   autoOpenTrial?: boolean;
-  initialPlanId?: string | null;
+  selectedPlanId: string;
+  onPlanChange: (id: string) => void;
   bookingRequest?: number;
 }
 
@@ -80,19 +81,12 @@ export default function SubscriptionPricingToggle({
   timezone,
   consultantDetails,
   autoOpenTrial,
-  initialPlanId,
+  selectedPlanId: activeSubscriptionOption,
+  onPlanChange: setActiveSubscriptionOption,
   bookingRequest = 0,
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
-  // Track the active plan by id so plans that share a duration (e.g. two
-  // 3-month subscriptions) remain independently selectable and bookable.
-  const [activeSubscriptionOption, setActiveSubscriptionOption] =
-    useState<string>(
-      subscriptionOptions.some((o) => o.id === initialPlanId)
-        ? initialPlanId!
-        : (subscriptionOptions[0]?.id ?? ""),
-    );
   const [step, setStep] = useState(0);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -113,6 +107,14 @@ export default function SubscriptionPricingToggle({
     reason?: string;
     isLoading: boolean;
   }>({ isEligible: true, isLoading: false });
+  const previousPlan = useRef(activeSubscriptionOption);
+  useEffect(() => {
+    if (previousPlan.current === activeSubscriptionOption) return;
+    previousPlan.current = activeSubscriptionOption;
+    setStep(0);
+    setSchedulingStartDate(null);
+    setIsTrialModalOpen(false);
+  }, [activeSubscriptionOption]);
 
   const selectedOption = useMemo(() => {
     return subscriptionOptions.find(
@@ -326,24 +328,16 @@ export default function SubscriptionPricingToggle({
 
   return (
     <div className="space-y-5">
-      <Tabs
+      <OfferingPlanSelector
+        options={subscriptionOptions}
         value={activeSubscriptionOption}
-        onValueChange={(id) => {
+        onChange={(id) => {
           setActiveSubscriptionOption(id);
           setStep(0);
+          setSchedulingStartDate(null);
         }}
-      >
-        <TabsList
-          className="pricing-segments w-full"
-          aria-label="Mentorship plan"
-        >
-          {subscriptionOptions.map((option) => (
-            <TabsTrigger key={option.id} value={option.id}>
-              {option.title}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+        label="Mentorship plan"
+      />
       {selectedOption && (
         <>
           <div>
@@ -374,6 +368,10 @@ export default function SubscriptionPricingToggle({
           <Button className="h-12 w-full rounded-xl" onClick={handleChoosePlan}>
             Choose a start date
           </Button>
+          <p className="text-sm text-muted-foreground">
+            Your plan includes {selectedOption.totalSessions} sessions. Session
+            dates are arranged with your expert after purchase.
+          </p>
           {selectedPlanDetails?.trialEnabled && (
             <>
               <Button
@@ -435,7 +433,8 @@ export default function SubscriptionPricingToggle({
                 : "Review your mentorship"}
             </DialogTitle>
             <DialogDescription>
-              Your consultant schedules one cycle at a time.
+              Choose when you’d like to begin. Session dates are arranged with
+              your expert after purchase.
             </DialogDescription>
           </DialogHeader>
           <BookingSteps steps={["Start date", "Review"]} current={step} />

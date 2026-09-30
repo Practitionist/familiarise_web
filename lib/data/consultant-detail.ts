@@ -104,6 +104,9 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
         include: {
           subscriptionContents: {
             orderBy: { order: "asc" as const },
+            take: 3,
+            // Public offering preview, not the learner's lesson resources.
+            select: { id: true, title: true, order: true, outcomes: true },
           },
         },
       },

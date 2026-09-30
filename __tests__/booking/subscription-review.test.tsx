@@ -56,6 +56,8 @@ it("reviews the first cycle, retains the start date on Back, and preserves the c
     root.render(
       <SubscriptionPricingToggle
         subscriptionOptions={options}
+        selectedPlanId={options[0].id}
+        onPlanChange={jest.fn()}
         consultantDetails={{ id: "expert" }}
         handleSubscriptionBooking={checkout}
         timezone="Asia/Kolkata"
@@ -89,6 +91,8 @@ it("reviews the first cycle, retains the start date on Back, and preserves the c
 it("only opens for a new booking request, not a service-tab remount", async () => {
   const props = {
     subscriptionOptions: options,
+    selectedPlanId: options[0].id,
+    onPlanChange: jest.fn(),
     consultantDetails: { id: "expert" },
     handleSubscriptionBooking: checkout,
     timezone: "Asia/Kolkata",

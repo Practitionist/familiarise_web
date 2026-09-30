@@ -30,6 +30,7 @@ interface RazorpayPaymentError {
   code?: string;
   reason?: string;
   message?: string;
+  yourCardWasNotCharged?: boolean;
 }
 
 interface RazorpayFailedResponse {
@@ -195,6 +196,7 @@ export default function RazorpayCheckout({
       onPaymentError({
         description: errorData.error || "Payment request failed",
         code: errorData.errorType,
+        yourCardWasNotCharged: errorData.yourCardWasNotCharged === true,
       });
       return null;
     }
