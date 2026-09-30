@@ -60,6 +60,10 @@ import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
+// #1846 N1 — the org rail classifies submission failures on the HTTP status
+// through the SAME gate the consultant rail uses (payout-service.ts:1362), so
+// the two rails cannot disagree about when an error is definitive.
+import { isDefinitiveGatewayRejection } from "./razorpay-payouts";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 // #1354 — the org rail now writes the same TDSRecord audit trail the consultant
@@ -802,8 +806,9 @@ export async function processOrgPayout(payoutId: string): Promise<{
       // Post-tx submission: actual RazorpayX call. Idempotency key is
       // deterministic (`payout_<id>`) so a cron retry of the same payout
       // never creates a second gateway transfer (mandatory since
-      // 2025-03-15 per RazorpayX). 4xx → mark FAILED + release earnings.
-      // 5xx / network error → throw so the cron retries with the same key.
+      // 2025-03-15 per RazorpayX). A definitive 4xx (400/401/403/422 — NOT
+      // 408/409/429) → mark FAILED + release earnings. 5xx, 408/409/429 or an
+      // unrecognised error → throw so the cron retries with the same key.
       try {
         await submitOrgPayoutToGateway(payoutId);
         return {
@@ -815,6 +820,17 @@ export async function processOrgPayout(payoutId: string): Promise<{
         const cls = classifyGatewaySubmissionError(err);
         if (cls === "PERMANENT_4XX") {
           // Gateway declined the submission — an answer, not a fault.
+          //
+          // The invariant this branch buys: only a definitive gateway
+          // rejection may fail a payout and release its earnings
+          // (`isDefinitiveGatewayRejection`). markPayoutFailedFromSubmission
+          // releases BATCHED earnings to READY, and the next
+          // createOrgPayoutBatch re-claims them under a NEW payout row with a
+          // NEW idempotencyKey — which RazorpayX reads as a different payout
+          // and processes alongside the one that may still be in flight. So a
+          // wrong classification here is not a stuck row, it is a double
+          // payment to the organization. Anything the gate does not recognise
+          // must fall through to the re-throw below.
           reportSentryError(err, { subsystem: "payments", expected: true });
           await markPayoutFailedFromSubmission(
             payoutId,
@@ -935,29 +951,38 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
 }
 
 /**
- * Classify a RazorpayX SDK error as permanent (4xx — bank/data
- * rejection, never retry) vs transient (5xx / network — let the cron
- * retry with the same idempotency key).
+ * Classify a RazorpayX submission error as permanent (the gateway
+ * definitively refused, so no transfer exists) vs transient/unknown (the
+ * transfer may exist at RazorpayX, so the row must stay PROCESSING with its
+ * earnings BATCHED and the cron retries under the SAME idempotency key).
  *
- * The SDK wraps fetch and throws a generic Error without HTTP-status
- * detail, so we sniff the message. Default is TRANSIENT so we never
- * silently drop a legitimate retry.
+ * #1846 N1 — this used to string-sniff the message for "400"/"401"/"403"/
+ * "422"/"invalid"/"bad request", which cannot tell a rejection from a
+ * throttle: a 429, 408 or 409 whose description happens to contain the word
+ * "invalid", and every 5xx, all read as permanent. That released the org's
+ * earnings back to READY, so `createOrgPayoutBatch` re-claimed them under a
+ * NEW row with a NEW `idempotencyKey` (`opts.idempotencyKey ??
+ * randomUUID()`) — and RazorpayX treats a fresh key as a different payout
+ * ("Do not retry the same payout using a fresh Idempotency Key when the first
+ * attempt is still processing… will process both resulting in duplication").
+ * A misclassified transient was therefore a double payment to the org.
+ *
+ * `isDefinitiveGatewayRejection` is the right tool and was already written and
+ * shipped for the consultant rail: `RazorpayXHttpError` carries the gateway's
+ * own `httpStatus` (razorpay-payouts.ts:316), thrown from the non-2xx branch
+ * of `apiRequest` (razorpay-payouts.ts:451), so classification is a status
+ * comparison rather than a guess at prose. It also honours the
+ * NON_DEFINITIVE_4XX set (408/409/429) and defaults everything else —
+ * timeouts, socket errors, unreadable bodies, 5xx, unknown — to NOT
+ * definitive, which is the only safe default when a failed submission may
+ * still have moved money.
  */
-function classifyGatewaySubmissionError(
+export function classifyGatewaySubmissionError(
   err: unknown,
 ): "PERMANENT_4XX" | "TRANSIENT_OR_UNKNOWN" {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  if (
-    msg.includes("400") ||
-    msg.includes("401") ||
-    msg.includes("403") ||
-    msg.includes("422") ||
-    msg.includes("invalid") ||
-    msg.includes("bad request")
-  ) {
-    return "PERMANENT_4XX";
-  }
-  return "TRANSIENT_OR_UNKNOWN";
+  return isDefinitiveGatewayRejection(err)
+    ? "PERMANENT_4XX"
+    : "TRANSIENT_OR_UNKNOWN";
 }
 
 /**
