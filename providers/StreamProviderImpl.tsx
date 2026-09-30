@@ -38,8 +38,77 @@ import * as Sentry from "@sentry/nextjs";
 /** Backoff attempts for a RETRYABLE connect failure; a non-retryable one stops at 1. */
 const MAX_CONNECT_ATTEMPTS = 5;
 
+/**
+ * #E7 — how long a dropped socket is given to come back on its own before the
+ * app tries to reconnect it itself.
+ *
+ * stream-chat reconnects internally, and it is good at it: a brief flap on a
+ * laptop lid close recovers on its own in a second or two. A reconnect fired
+ * the instant `connection.changed(offline)` arrived would therefore RACE the
+ * SDK's own recovery, and the loser is whichever one tears the socket down
+ * mid-handshake — which produces a second, worse flap and, on the video client,
+ * a `disconnectUser` racing an in-flight `connectUser`.
+ *
+ * So the app-level reconnect is deliberately SLOWER than the SDK's: eight
+ * seconds of continuous offline is not a lid close, it is a tunnel, a captive
+ * portal, or a dropped mobile connection — cases where the SDK's own retry has
+ * already given up and where the user's next action (navigating, opening chat,
+ * pressing the retry button) will be far enough away to notice.
+ */
+const RECONNECT_GRACE_MS = 8_000;
+
 const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
   result.status === "fulfilled" ? result.value : null;
+
+/**
+ * #E7 — is the chat client's socket actually up?
+ *
+ * `wsConnection` is a `StableWSConnection`, and `connected` is its own
+ * liveness read: false from the moment the socket drops, and NOT merely
+ * "a connect was attempted". It is declared in the SDK's client type but not
+ * re-exported through the v9 typings this file already casts around, so the
+ * access is narrowed here — one cast, one place, with the reason — rather than
+ * sprinkled at each of the two call sites.
+ *
+ * A MISSING `wsConnection` reads as NOT live, deliberately. That is the
+ * fail-closed direction: an unknown socket state must send us through a real
+ * `connectUser`, and the cost of being wrong there is one redundant connect
+ * (idempotent) while the cost of guessing "live" is the bug this whole change
+ * exists to fix.
+ */
+function isChatClientLive(client: StreamChat): boolean {
+  const ws = (
+    client as unknown as {
+      wsConnection?: { connected?: boolean };
+    }
+  ).wsConnection;
+  return ws?.connected === true;
+}
+
+/**
+ * #E7 — the video SDK's equivalent of {@link isChatClientLive}.
+ *
+ * `client.state.connectedUser` is part of the SDK's public read-only state store
+ * and is documented as "the current user connected over WS to the coordinator
+ * server" — the handshake's own outcome, cleared on disconnect. Reading it is
+ * a plain synchronous property access, so it is safe to call from a retry
+ * decision.
+ *
+ * Deliberately a POLL rather than a subscription. `client.on(...)` is a typed
+ * overload over Stream's generated event union, and pinning this app to the
+ * exact event names that union happens to expose is a worse dependency than
+ * asking the SDK for its state. The read happens on exactly the two occasions
+ * where the answer changes something — the initial connect and every retry —
+ * and the chat client's `connection.changed` subscription (below) is what makes
+ * a mid-session flap reach a retry in the first place.
+ */
+function isVideoClientLive(client: StreamVideoClient): boolean {
+  // Truthiness rather than `!= null`: `connectedUser` is an object when
+  // connected and `undefined` when not, so the check is exact, and it keeps the
+  // repo's `eqeqeq` rule satisfied without a disable comment for what is not
+  // really a comparison.
+  return Boolean(client.state?.connectedUser);
+}
 
 /**
  * The token action answered "no session" — a state to show, not an outage to
@@ -405,8 +474,27 @@ const StreamProviderImpl = ({
     if (!enableChat || !userDetails || !apiKey) return null;
 
     // Check if we already have a global client for this user - adopt it
+    //
+    // #E7 — "already have a client" is no longer the same question as "the
+    // socket is up", and conflating them is what made every retry a no-op.
+    // `connectUser` cannot be re-run on a client that already has a `userID`, so
+    // the adopt branch returned the ADOPTED client, `connectServices` saw a
+    // fulfilled promise, reset its attempt counter, and published
+    // `chatConnected: true` over a client that had been sitting disconnected
+    // since the network dropped. The store therefore reported connected, no
+    // channel was ever refetched, and the only way out was a full page reload.
+    //
+    // `client.wsConnection` is the SDK's own liveness read; `connected` is
+    // false from the moment the socket drops, so this gate is exactly the fact
+    // that was missing. When it is false we fall THROUGH to a real
+    // `connectUser` below — which stream-chat is happy to perform on a client
+    // whose socket is down, and which is the only thing that repairs it.
     const adoptable = getGlobalChatClient();
-    if (getCurrentStreamUserId() === userDetails.id && adoptable) {
+    if (
+      getCurrentStreamUserId() === userDetails.id &&
+      adoptable &&
+      isChatClientLive(adoptable)
+    ) {
       streamLogger.debug("Adopting existing chat client", {
         userId: userDetails.id,
       });
@@ -433,7 +521,17 @@ const StreamProviderImpl = ({
 
       // If the singleton is already connected to this user (e.g. StreamVideoClient
       // connected it internally), adopt it directly without calling connectUser again.
-      if (client.userID && client.userID === userDetails.id) {
+      //
+      // #E7 — same fix as the adopt branch above, and for the same reason: a
+      // matching `userID` is a fact about identity, not about liveness. The
+      // video client connects the chat singleton internally, so a video-first
+      // dashboard settles this way routinely — and it kept doing so after the
+      // socket had dropped, which is how a dead chat client survived a retry.
+      if (
+        client.userID &&
+        client.userID === userDetails.id &&
+        isChatClientLive(client)
+      ) {
         streamLogger.debug("Adopting already-connected Stream Chat singleton", {
           userId: userDetails.id,
         });
@@ -559,8 +657,22 @@ const StreamProviderImpl = ({
     if (!enableVideo || !userDetails || !apiKey) return null;
 
     // Check if we already have a global client for this user - adopt it
+    //
+    // #E7 — `state.connectedUser` is the video SDK's own reactive truth: it is
+    // set only after the coordinator WebSocket has completed a handshake and it
+    // is cleared the moment the socket drops. It is the video counterpart of
+    // `wsConnection.connected` on the chat client, and it was never read — the
+    // gate below was `getCurrentStreamUserId() === userDetails.id && adoptable`,
+    // which is true for a client that connected an hour ago and has been
+    // offline since. So a video reconnect after a mid-session flap adopted the
+    // dead client, `connectUser` never re-ran, and `videoConnected` stayed true
+    // over a client that could not receive a single packet.
     const adoptable = getGlobalVideoClient();
-    if (getCurrentStreamUserId() === userDetails.id && adoptable) {
+    if (
+      getCurrentStreamUserId() === userDetails.id &&
+      adoptable &&
+      isVideoClientLive(adoptable)
+    ) {
       streamLogger.debug("Adopting existing video client", {
         userId: userDetails.id,
       });
@@ -840,6 +952,104 @@ const StreamProviderImpl = ({
       failure,
     });
   }, [clients, chatConnected, videoConnected, isConnecting, error, failure]);
+
+  // #E7 — the app LEARNS about a mid-session flap, and repairs it.
+  //
+  // This file had no `client.on(...)` anywhere, so the only signal the provider
+  // ever had about the connection was the one it produced itself at mount. A
+  // laptop that slept, a tunnel, a phone that changed network: the SDK retried
+  // quietly underneath, and when its retries ran out nothing above it noticed.
+  // The store kept saying `chatConnected: true`, the sidebar kept showing
+  // channels whose state had stopped updating, and the user was told chat was
+  // fine by every surface that reads the store. The single recovery was a
+  // reload — and even a reload was not guaranteed, because the ADOPTED client
+  // is a module-level singleton, so a fresh page adopted the same dead socket.
+  // That second half is why this is not only an event subscription: the liveness
+  // gates in `connectChat` / `connectVideo` are what make the retry that this
+  // subscription triggers actually do something.
+  //
+  // Three steps, in order:
+  //
+  //   1. On `offline`, publish the truth immediately. A user should see "chat is
+  //      reconnecting" the moment it happens, not after a 5-attempt ladder has
+  //      given up. Nothing is thrown and nothing is reported: a dropped socket
+  //      is a network event, not a fault, and a Sentry event per flap is the
+  //      firehose the Sentry infra throttle exists to stop.
+  //   2. Wait {@link RECONNECT_GRACE_MS} of CONTINUOUS offline before acting, so
+  //      the SDK's own reconnect wins the race for a brief flap. A fresh
+  //      `connection.changed(online)` cancels the timer; that is what makes the
+  //      grace a grace rather than a delay.
+  //   3. Then run the real `connectServices`, which resets the attempt counter
+  //      and goes through the same backoff ladder, the same classification and
+  //      the same reporting as a cold connect. Clearing the sync guard first is
+  //      the part that makes the reconnect worth anything: without it the
+  //      channel sync is skipped for the tab's life (`sessionStorage` says
+  //      "done") and the user reconnects to an empty sidebar.
+  useEffect(() => {
+    const chat = clients?.chat;
+    if (!chat) return;
+
+    let graceTimeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
+    const cancelGrace = () => {
+      if (graceTimeout !== undefined) {
+        clearTimeout(graceTimeout);
+        graceTimeout = undefined;
+      }
+    };
+
+    const handler = chat.on((event) => {
+      if (event.type !== "connection.changed") return;
+
+      if (event.online) {
+        cancelGrace();
+        // The socket came back on its own. Clearing the sync guard is what makes
+        // the NEXT connect re-reconcile; the sidebar refetch happens inside
+        // `connectChat`, which the retry below runs.
+        streamLogger.debug("Chat socket recovered", {
+          userId: userDetails?.id,
+        });
+        setChatConnected(true);
+        return;
+      }
+
+      // Offline. Report the state, then start (or restart) the grace timer.
+      streamLogger.warn("Chat socket dropped; waiting to reconnect", {
+        userId: userDetails?.id,
+      });
+      setChatConnected(false);
+      cancelGrace();
+      graceTimeout = setTimeout(() => {
+        if (cancelled || signedOutRef.current) return;
+        streamLogger.info(
+          "Chat still offline after the grace window; reconnecting",
+          {
+            userId: userDetails?.id,
+          },
+        );
+        if (userDetails?.id) {
+          // Undo the "sync kicked" marks so the reconnect actually reconciles
+          // channels instead of adopting a session that says it already did.
+          markSyncIncomplete(userDetails.id, `stream_sync_${userDetails.id}`);
+        }
+        // The same path a cold connect takes, so the backoff ladder, the failure
+        // classification and the reporting are all shared rather than a second
+        // copy that can drift.
+        void connectServices().catch(() => {
+          // `connectServices` handles its own failures (classify, report, retry)
+          // and resolves; the catch is here so a future edit that makes it
+          // reject cannot become an unhandled rejection from a timer.
+        });
+      }, RECONNECT_GRACE_MS);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelGrace();
+      handler.unsubscribe();
+    };
+  }, [clients?.chat, userDetails?.id, connectServices]);
 
   // The shell exposes `retryConnection` without importing the SDK bundle, so it
   // asks for a retry by event rather than by calling into here directly.

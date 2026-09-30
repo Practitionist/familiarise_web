@@ -219,6 +219,62 @@ describe("queryChannelsPaged", () => {
       calls.every((c) => c.offset <= STREAM_QUERY_CHANNELS_MAX_OFFSET),
     ).toBe(true);
   });
+
+  /**
+   * #E7 — the optional `maxChannels`, added for the CONSUMERS that want a
+   * prefix rather than the whole list (a sidebar badge, a directory page).
+   *
+   * The distinction that makes it safe is asserted below: a capped walk is NOT
+   * `truncated`. Conflating the two would make a deliberately-capped badge look
+   * like a reconcile that failed at Stream's offset ceiling, and the two mean
+   * opposite things to whoever reads the flag.
+   */
+  describe("maxChannels", () => {
+    it("stops at the cap and does NOT call it truncated", async () => {
+      const { calls, fetchPage } = streamLike(5000);
+
+      const { channels, truncated } = await queryChannelsPaged(fetchPage, 90);
+
+      expect(channels).toHaveLength(90);
+      // 0, 30, 60 → three pages, then stop. Not a fourth wasted request.
+      expect(calls.map((c) => c.offset)).toEqual([0, 30, 60]);
+      expect(truncated).toBe(false);
+    });
+
+    it("asks for no more than the cap even mid-page", async () => {
+      const { calls, fetchPage } = streamLike(5000);
+
+      // A cap that is not a multiple of the page size: the last request must be
+      // narrowed, or the walk returns more than the caller asked for.
+      await queryChannelsPaged(fetchPage, 40);
+
+      expect(calls.map((c) => c.limit)).toEqual([30, 10]);
+    });
+
+    it("makes no request at all when the cap is already spent", async () => {
+      const { calls, fetchPage } = streamLike(5000);
+
+      const { channels, truncated } = await queryChannelsPaged(fetchPage, 0);
+
+      expect(calls).toHaveLength(0);
+      expect(channels).toEqual([]);
+      expect(truncated).toBe(false);
+    });
+
+    it("is still bounded by Stream's own offset ceiling", async () => {
+      // A cap LARGER than Stream will serve must not make the walk unbounded —
+      // the offset ceiling is Stream's, not the caller's.
+      const { fetchPage } = streamLike(5000);
+
+      const { channels, truncated } = await queryChannelsPaged(
+        fetchPage,
+        100_000,
+      );
+
+      expect(truncated).toBe(true);
+      expect(channels.length).toBeGreaterThan(STREAM_QUERY_CHANNELS_MAX_OFFSET);
+    });
+  });
 });
 
 describe("createMemberChunk / addRemainingMembers", () => {

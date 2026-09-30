@@ -126,13 +126,35 @@ export const STREAM_QUERY_CHANNELS_MAX_OFFSET = 1000;
  */
 export async function queryChannelsPaged<T>(
   fetchPage: (opts: { limit: number; offset: number }) => Promise<T[]>,
+  /**
+   * Stop after this many channels, whatever Stream would serve.
+   *
+   * Optional, and off by default: the reconcilers want the WHOLE list, and a
+   * cap there would silently reintroduce the under-revocation this helper exists
+   * to fix. It exists for the CONSUMERS with a different contract — a sidebar
+   * badge, a directory page — where walking 1,000 channels to draw a number is
+   * both a latency problem and a billable-API problem, and where stopping early
+   * is simply "we showed you the first N".
+   *
+   * A capped walk is NOT truncated in Stream's sense: `truncated` stays false
+   * because the result is not a partial view of a list we claimed to have read,
+   * it is the requested prefix. The two are different facts and conflating them
+   * would make a capped badge look like a failed reconcile.
+   */
+  maxChannels?: number,
 ): Promise<{ channels: T[]; truncated: boolean }> {
   const channels: T[] = [];
   let offset = 0;
 
   for (;;) {
+    const remaining =
+      maxChannels === undefined
+        ? STREAM_QUERY_CHANNELS_LIMIT
+        : maxChannels - channels.length;
+    if (remaining <= 0) return { channels, truncated: false };
+
     const page = await fetchPage({
-      limit: STREAM_QUERY_CHANNELS_LIMIT,
+      limit: Math.min(STREAM_QUERY_CHANNELS_LIMIT, remaining),
       offset,
     });
     channels.push(...page);
@@ -144,7 +166,7 @@ export async function queryChannelsPaged<T>(
 
     // A short page is the end of the list. A full page at the offset ceiling
     // is the end of what Stream will serve.
-    if (page.length < STREAM_QUERY_CHANNELS_LIMIT) {
+    if (page.length < Math.min(STREAM_QUERY_CHANNELS_LIMIT, remaining)) {
       return { channels, truncated: false };
     }
     if (offset > STREAM_QUERY_CHANNELS_MAX_OFFSET) {

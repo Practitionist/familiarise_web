@@ -637,6 +637,13 @@ export async function syncUserEventChannels(
   channelsSynced?: number;
   failed?: number;
   staleChannelsRemoved?: number;
+  /**
+   * #E7 — the stale-reconciliation pass examined NOTHING because Stream's
+   * circuit breaker was open, so `staleChannelsRemoved: 0` means "nothing was
+   * found" and not "nothing needed removing". Optional so an older caller
+   * compiling against this type keeps working; absent means not degraded.
+   */
+  degraded?: boolean;
   durationMs?: number;
 }> {
   userIdSchema.parse(userId);
@@ -817,11 +824,28 @@ export async function syncUserEventChannels(
     // `last_message_at` — which moves while we walk, so an active channel can
     // jump from page three to page one and push an unread one off the end.
     // A channel's creation time never changes.
+    // #E7 — the breaker fallback SWALLOWED the failure.
+    //
+    // `withStreamCircuitBreaker(op, () => [])` returns `[]` whether the page came
+    // back empty or the breaker refused without ever calling Stream. This was
+    // the ONE Stream call site in the codebase using a fallback rather than
+    // catching, so it was also the only one where the `catch` that records the
+    // failure never ran. The result: a breaker-open reconcile reported
+    // `success: true` having examined ZERO channels, with `staleChannelsRemoved:
+    // 0` and `failed: 0` — a shape indistinguishable from "this user has no
+    // stale memberships", which is the answer the operator wants. It also
+    // marked the sync complete for the session
+    // (`initialSyncCompletedUsers.add`), so the partial result was not retried.
+    //
+    // The fix is not to remove the fallback — degrading instead of blocking the
+    // dashboard on a dead Stream backend is right, and #473 is correct about
+    // that — but to make the degradation VISIBLE. `degraded` is set whenever the
+    // fallback fired, is logged, and is returned so a caller can tell a clean
+    // sweep from a skipped one. The stale-removal pass is skipped in BOTH cases,
+    // so behaviour is unchanged; only the report is.
+    let degraded = false;
     const { channels: streamChannels, truncated } = await queryChannelsPaged(
       (opts) =>
-        // #473 — breaker-open returns [] so reconciliation simply skips the
-        // stale-cleanup pass this run rather than blocking the sync on a dead
-        // Stream backend.
         withStreamCircuitBreaker(
           () =>
             client.queryChannels(
@@ -829,9 +853,21 @@ export async function syncUserEventChannels(
               { created_at: 1 },
               opts,
             ),
-          () => [],
+          () => {
+            // Runs ONLY on the fast-fail path (breaker OPEN, operation never
+            // attempted). A genuinely empty page does not come through here.
+            degraded = true;
+            return [];
+          },
         ),
     );
+
+    if (degraded) {
+      streamLogger.warn(
+        "Reconciliation degraded — Stream circuit open, no memberships examined",
+        { userId, truncated },
+      );
+    }
 
     // Stream stops serving past offset 1000, so a user with more memberships
     // than that gets a partial reconcile. Under-revoking is the safe direction
@@ -891,6 +927,7 @@ export async function syncUserEventChannels(
       expectedChannels: expectedChannelIds.size,
       staleChannelsRemoved: staleRemovedCount,
       staleFailed: staleFailCount,
+      degraded,
       durationMs: duration,
     });
 
@@ -905,6 +942,12 @@ export async function syncUserEventChannels(
       channelsSynced: expectedChannelIds.size,
       failed: staleFailCount,
       staleChannelsRemoved: staleRemovedCount,
+      // #E7 — `success: true` still describes "the sync ran to completion", and
+      // it should: the caller is a dashboard load and must not fail because
+      // Stream is down. `degraded` is the separate fact that it examined
+      // nothing, and a caller that cares (the admin reconcile surface, a test,
+      // a future repair job) now has a way to see it.
+      degraded,
       durationMs: duration,
     };
   } catch (error) {

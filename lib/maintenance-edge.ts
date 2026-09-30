@@ -18,10 +18,57 @@ import { REDIS_KEYS } from "./maintenance-keys";
 // (#776) as dead code. If they ship, add the org-scoped read here (org key first,
 // fall back to platform) and a matching writer in the admin maintenance route.
 
-// Routes exempt from maintenance mode
+// Routes exempt from maintenance mode.
+//
+// ## A trailing slash in this list is a silent, total 503 — read this before editing
+//
+// `isMaintenanceExempt` (below) used to match with a bare
+// `pathname.startsWith(prefix)`. That is only correct for entries that NAME A
+// DIRECTORY, and a directory prefix needs the slash to say so. An entry that
+// names a LEAF route is the opposite: it must carry NO trailing slash, because
+// `"/api/stream/webhooks".startsWith("/api/stream/webhooks/")` is false.
+//
+// The list shipped `"/api/webhooks/"` — a directory — which was right by
+// accident, and nothing else. Adding a leaf route with a trailing slash looks
+// correct to every human reviewer and matches every other webhook entry in the
+// list, so it is exactly the edit someone would make again. It is therefore
+// load-bearing that the leaf entries below carry no slash, and that
+// `isMaintenanceExempt` now matches on a SEGMENT BOUNDARY so a future entry
+// cannot silently regress into either failure.
+//
+// ## Why `/api/stream/webhooks` is exempt at all (2026-08-12, then again later)
+//
+// Stream's total retry budget is FIFTEEN SECONDS: ~6 s per attempt, five
+// attempts, no backoff, `Retry-After` ignored. Once that budget is spent the
+// event is DROPPED FOREVER — there is no dead-letter and no replay we control.
+// A maintenance window that answers the endpoint 503 therefore does not defer
+// the event, it destroys it.
+//
+// The events lost are the ones nothing else can recover: `call.recording_ready`
+// (the recording never reaches `Recording`, never gets transferred, never gets
+// published), `call.ended` (the `Meeting` row never closes, so the session looks
+// live forever and the slot can never settle), and every
+// `session_participant_*` (no `MeetingAttendance` row, which is precisely the
+// #1134 signature: zero attendance rows and a fully green dashboard).
+//
+// It is safe to exempt because the endpoint is not open: it verifies an HMAC
+// signature before doing any work and 401s anything unsigned (see
+// `app/api/stream/webhooks/route.ts`). The signature is the gate. Note this is
+// also why the edge rate limiter excludes the same path — see the `stream: api`
+// rule in `middleware.ts` and `__tests__/stream/webhook-not-rate-limited.test.ts`,
+// which pins both exemptions for the same reason.
+//
+// The sibling vendor webhooks under `/api/webhooks/**` (Razorpay, Stripe,
+// Resend, Directus) are exempt for the identical reason and are the entry the
+// trailing-slash convention was written for. `/api/csp-report` is a browser
+// beacon — exempting it would add an unauthenticated POST during a window,
+// which is not worth the availability, so it is deliberately absent.
 const EXEMPT_PREFIXES = [
-  "/api/webhooks/",
+  // Leaf routes — NO trailing slash. See the note above.
+  "/api/stream/webhooks",
   "/api/health",
+  // Directory routes — trailing slash optional; the matcher strips it either way.
+  "/api/webhooks/",
   "/api/auth/",
   "/api/admin/maintenance",
   "/maintenance",
@@ -176,10 +223,40 @@ export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 /**
  * Check if a route is exempt from maintenance mode.
+ *
+ * ## Why the matcher is boundary-aware and not a bare `startsWith`
+ *
+ * The two directions of bug are both silent, and this list contains an entry
+ * that fell into each:
+ *
+ *   - A prefix WITH a trailing slash that names a leaf route under-matches. That
+ *     is the `/api/stream/webhooks` defect above: a raw `startsWith` said the
+ *     route was NOT exempt, and during an OFFLINE window every Stream delivery
+ *     got a 503 it had no budget left to survive.
+ *   - A prefix WITHOUT a trailing slash that names a directory over-matches.
+ *     `/api/health` also matched `/api/healthcheck` and `/api/healthz`;
+ *     `/maintenance` also matched `/maintenance-mode-preview`. Those are
+ *     hand-written exemptions for endpoints that then serve a 503 page to
+ *     whoever is meant to be verifying the window.
+ *
+ * So the rule is: match the entry exactly, or match it plus a `/` — the same
+ * segment-boundary rule `middleware.ts`'s `matchesAnyPrefix` already uses for
+ * its route groups, and the same one `matchesBlockedPattern` (further down this
+ * file) uses for the DEGRADED write list. Three lists, one rule; the earlier
+ * divergence between the exempt list and the other two is what let the trailing
+ * slash hide.
+ *
+ * Entries in {@link EXEMPT_PREFIXES} are audited under this rule as of the fix:
+ * no entry can over-match a sibling route name, because every one of them is
+ * either a leaf with no further segments or a directory whose children are all
+ * genuinely in scope.
  */
 export function isMaintenanceExempt(pathname: string): boolean {
   if (HAS_FILE_EXTENSION.test(pathname)) return true;
-  return EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  return EXEMPT_PREFIXES.some((prefix) => {
+    const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+    return pathname === base || pathname.startsWith(`${base}/`);
+  });
 }
 
 // Transactional write routes to block during DEGRADED maintenance.

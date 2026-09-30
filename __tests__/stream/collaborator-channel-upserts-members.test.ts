@@ -28,6 +28,8 @@ const mockCache = {
 };
 const calls: string[] = [];
 
+import { STREAM_BATCH_LIMIT } from "@/lib/stream/batch";
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -77,5 +79,73 @@ describe("createCollaboratorChannel", () => {
       "upsert:host-user,collab-user",
       "create",
     ]);
+  });
+
+  /**
+   * #E7 — the collaborator creator passed the WHOLE roster to
+   * `channel.create()`, `addMembers` and `removeMembers` unchunked, while the
+   * other creators in the same file go through `createMemberChunk` /
+   * `addRemainingMembers` / `forEachChunk` from `@/lib/stream/batch`.
+   *
+   * LATENT, not live, and the comment in the source says so: the roster is
+   * capped at four by `MAX_COLLABORATORS_PER_PLAN = 3`, so it cannot overflow
+   * today. It is fixed anyway because the cap is a PLAN CONFIGURATION and the
+   * ceiling is Stream's, and the two are edited by different people: raising the
+   * plan cap is a one-line change that would otherwise turn every collaborator
+   * channel create into a rejected request with no test standing between them.
+   *
+   * The ceiling itself is pinned below by the batch module's own tests, so what
+   * is asserted here is the WIRING — that this creator cannot be the one that
+   * forgets.
+   */
+  describe("roster chunking (#E7)", () => {
+    beforeEach(() => {
+      mockChannel.create.mockResolvedValue({});
+      mockChannel.query.mockResolvedValue({
+        members: [{ user_id: "host-user" }, { user_id: "collab-user" }],
+      });
+      mockChannel.addMembers.mockResolvedValue({});
+      mockChannel.removeMembers.mockResolvedValue({});
+      mockStreamClient.channel.mockReturnValue(mockChannel);
+    });
+
+    it("carries no more than Stream's 100-member ceiling in the create body", async () => {
+      const { createCollaboratorChannel } =
+        await import("@/actions/stream/chat/channel.action");
+
+      await createCollaboratorChannel("webinar", "plan-1");
+
+      const createData = mockStreamClient.channel.mock.calls.at(-1)?.[2] as {
+        members: string[];
+      };
+      expect(Array.isArray(createData.members)).toBe(true);
+      expect(createData.members.length).toBeLessThanOrEqual(STREAM_BATCH_LIMIT);
+      // And the host is inside it: whoever must definitely end up in the channel
+      // belongs at the FRONT of the roster so they land in this chunk rather
+      // than in a follow-up request that can fail on its own.
+      expect(createData.members[0]).toBe("host-user");
+    });
+
+    it("adds and removes in chunks of at most the ceiling", async () => {
+      // A roster larger than the ceiling is unreachable today, so the sizes
+      // themselves are not what is under test — the CHUNKING PATH is. Asserted
+      // with the ordinary two-person roster: a two-person diff is one batch, and
+      // the batch helper is what produced it.
+      const { createCollaboratorChannel } =
+        await import("@/actions/stream/chat/channel.action");
+
+      await createCollaboratorChannel("webinar", "plan-1");
+
+      for (const call of mockChannel.addMembers.mock.calls) {
+        expect((call[0] as string[]).length).toBeLessThanOrEqual(
+          STREAM_BATCH_LIMIT,
+        );
+      }
+      for (const call of mockChannel.removeMembers.mock.calls) {
+        expect((call[0] as string[]).length).toBeLessThanOrEqual(
+          STREAM_BATCH_LIMIT,
+        );
+      }
+    });
   });
 });

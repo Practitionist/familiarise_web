@@ -25,11 +25,23 @@ jest.mock("../../lib/prisma", () => ({
   default: mockPrisma,
 }));
 
+// #E7 — a mutable delegate, so a case can drive the breaker's FALLBACK without
+// the default pass-through hiding it. Every existing case above keeps the
+// closed-breaker behaviour (run the operation, ignore the fallback), which is
+// the right default: the assertions are about the Stream calls, not the
+// degrade path.
+let mockBreakerFiresFallback = false;
+const mockWithStreamCircuitBreaker = jest.fn(
+  (op: () => unknown, fallback?: () => unknown) =>
+    mockBreakerFiresFallback && fallback ? fallback() : op(),
+);
+
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(() => mockStreamClient),
   // #473 — pass-through breaker (closed-state behaviour): run the operation
   // directly so existing assertions on the Stream calls still hold.
-  withStreamCircuitBreaker: jest.fn((op: () => unknown) => op()),
+  withStreamCircuitBreaker: (op: () => unknown, fallback?: () => unknown) =>
+    mockWithStreamCircuitBreaker(op, fallback),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
   isExpectedStreamError: jest.fn(() => false),
 }));
@@ -70,6 +82,7 @@ describe("Event Channel Actions", () => {
     mockGetSession.mockResolvedValue({
       user: { id: "staff-user", role: "ADMIN" },
     });
+    mockBreakerFiresFallback = false;
   });
 
   describe("checkEventChannelExists", () => {
@@ -1123,6 +1136,76 @@ describe("Event Channel Actions", () => {
       // One failed probe, and no follow-up: chunking must not cost an extra
       // request on the shape every channel actually has.
       expect(mockChannel.addMembers).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * #E7 — the breaker fallback SWALLOWED the failure.
+   *
+   * `withStreamCircuitBreaker(op, () => [])` returns `[]` whether the page came
+   * back empty or the breaker refused without ever calling Stream, and this was
+   * the ONE call site in the codebase using a fallback rather than a catch — so
+   * it was also the only one where the `catch` that records the failure never
+   * ran. A breaker-open reconcile reported `success: true` having examined ZERO
+   * channels, with `staleChannelsRemoved: 0` and `failed: 0`: a shape
+   * indistinguishable from "this user has no stale memberships", which is the
+   * answer an operator wants. It also marked the sync complete for the session,
+   * so the partial result was not retried.
+   *
+   * The fix is not to remove the fallback — degrading rather than blocking a
+   * dashboard load on a dead Stream backend is right, and #473 is correct about
+   * that — but to make the degradation VISIBLE. Behaviour is unchanged: the
+   * stale-removal pass is skipped either way.
+   */
+  describe("syncUserEventChannels — a breaker-open reconcile says so (#E7)", () => {
+    const seatOneConsultant = () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        consultantProfileId: null,
+        consulteeProfileId: "consultee-123",
+      });
+      mockPrisma.webinar.findMany.mockResolvedValue([]);
+      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.consultation.findMany.mockResolvedValue([]);
+      mockPrisma.subscription.findMany.mockResolvedValue([]);
+    };
+
+    it("reports degraded and examines nothing when the breaker fast-fails", async () => {
+      seatOneConsultant();
+      mockBreakerFiresFallback = true;
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      const result = await syncUserEventChannels("flaky-user");
+
+      // `success` still describes "the sync ran to completion" and should — the
+      // caller is a dashboard load and must not fail because Stream is down.
+      expect(result.success).toBe(true);
+      // The separate fact it used to lose.
+      expect(result.degraded).toBe(true);
+      expect(result.staleChannelsRemoved).toBe(0);
+      expect(mockStreamClient.queryChannels).not.toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Reconciliation degraded"),
+        expect.objectContaining({ userId: "flaky-user" }),
+      );
+    });
+
+    it("reports NOT degraded when Stream answered with a genuinely empty list", async () => {
+      // The other half, and the reason the flag is a flag rather than an
+      // assumption: a real empty page is the common case for most users, and
+      // marking those degraded would make the signal useless within a day.
+      seatOneConsultant();
+      mockStreamClient.queryChannels.mockResolvedValue([]);
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      const result = await syncUserEventChannels("clean-user");
+
+      expect(result.success).toBe(true);
+      expect(result.degraded).toBe(false);
+      expect(mockStreamClient.queryChannels).toHaveBeenCalled();
     });
   });
 });

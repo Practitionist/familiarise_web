@@ -7,6 +7,7 @@ import * as Sentry from "@sentry/nextjs";
 import { StreamChat } from "stream-chat";
 import { StreamClient } from "@stream-io/node-sdk";
 import { createCircuitBreaker } from "@/lib/redis";
+import { Refusal } from "@/lib/errors/refusal";
 
 // Environment validation
 const STREAM_API_KEY = process.env.NEXT_PUBLIC_STREAM_API_KEY;
@@ -91,11 +92,11 @@ export function getStreamApiKey(): string {
 /**
  * Generate a chat token for a user
  * @param userId The user ID to generate token for
- * @param expirationTime Optional expiration time in seconds (default: 1 hour)
+ * @param expirationTime Token lifetime in SECONDS. REQUIRED — see below.
  */
 export function generateChatToken(
   userId: string,
-  expirationTime?: number,
+  expirationTime: number,
 ): string {
   const client = getStreamChatClient();
 
@@ -106,12 +107,24 @@ export function generateChatToken(
   // too, forever. Match generateVideoToken's 60s skew allowance.
   const issued = Math.floor(Date.now() / 1000) - 60;
 
-  if (expirationTime) {
-    const exp = Math.floor(Date.now() / 1000) + expirationTime;
-    return client.createToken(userId, exp, issued);
-  }
-
-  return client.createToken(userId, undefined, issued);
+  // #1134 P0-4 follow-up — `expirationTime` was OPTIONAL and
+  // `createToken(userId, undefined, issued)` minted a token with NO `exp`. That
+  // path was latent (both production callers passed the shared
+  // `STREAM_TOKEN_TTL_SECONDS`) and it was pinned by a test asserting the
+  // no-expiry behaviour, which is what kept it alive through every refactor: a
+  // test named "should generate token without expiration" reads as a contract,
+  // not as a snapshot of an accident.
+  //
+  // A non-expiring token is not merely untidy. It is a credential that never
+  // ages out, so the ONLY way to revoke it is `revoke_tokens_issued_before` —
+  // the same mechanism that, once set, is global for the user. A leaked or
+  // over-minted token therefore has no per-token remedy at all, and a user who
+  // was ever suspended cannot be given a working token again without an
+  // explicit `revokeUserToken(id, null)` that a caller will not remember to
+  // make. Requiring the TTL makes the expiry a property of the CALL SITE, which
+  // is the only place that knows how long the token is needed for.
+  const exp = Math.floor(Date.now() / 1000) + expirationTime;
+  return client.createToken(userId, exp, issued);
 }
 
 // #1134 P0-1 — a `generateCallToken` wrapper (a token carrying a `call_cids`
@@ -249,6 +262,57 @@ export function isStreamBillingError(error: unknown): boolean {
 }
 
 /**
+ * How long a caller should wait before retrying after a Stream 429.
+ *
+ * Deliberately 60 s. A 429 means an app-wide per-minute budget is spent, so the
+ * budget resets on the provider's minute boundary; retrying sooner is the same
+ * request failing again, and a user who retries a join button every 2 s is
+ * spending the budget that the rest of the app needs. One minute is also what a
+ * reasonable client-side backoff lands on, so a caller that just honours the
+ * header and a caller with its own ladder agree.
+ */
+export const STREAM_QUOTA_RETRY_AFTER_SECONDS = 60;
+
+/**
+ * The typed refusal a route should answer with when a Stream call 429s.
+ *
+ * Exists because the two most important Stream call sites — the meeting join
+ * door and the recording start door — both answered 500 and reported the error
+ * to Sentry, which is wrong twice over. A 429 is self-inflicted quota
+ * exhaustion, not a fault: reporting it spends error quota on a fact Stream has
+ * already alerted us about (see the capture suppression in
+ * {@link withStreamCircuitBreaker}), and a 500 tells the user — and every
+ * retry-on-5xx client, and every 5xx-bucket dashboard — that we broke something
+ * we did not break.
+ *
+ * It is a `Refusal` rather than a bare object so the shape cannot drift from the
+ * house pattern: `code` is what a client branches on, `userMessage` is the
+ * sentence a toast shows, and `devMessage` is all Sentry and the logs get. No
+ * Stream error text reaches any of the three, which is what "a typed code with a
+ * face, never raw backend text" means in practice.
+ *
+ * Returned, not thrown: the call site has the error in hand and is already in
+ * its catch block, and `apiError`'s refusal branch records a 5xx refusal as an
+ * `info` event rather than a fault.
+ */
+export function streamQuotaRefusal(): Refusal {
+  return new Refusal({
+    code: "STREAM_QUOTA",
+    // 503, not 429: the 429 was OURS to fix, not the caller's request. The
+    // distinction matters to every client that retries on 5xx but should not
+    // retry on 429, and to any monitor that counts 4xx as a bad request.
+    httpStatus: 503,
+    userMessage: "Video is busy right now. Please wait a moment and try again.",
+    devMessage: `Stream rate limit (HTTP 429) — the app-level per-minute budget for this endpoint is spent. Retry-After: ${STREAM_QUOTA_RETRY_AFTER_SECONDS}s.`,
+  });
+}
+
+/** True when `error` is a Stream 429 — the one case a route must not report. */
+export function isStreamQuotaError(error: unknown): boolean {
+  return isRateLimitError(error);
+}
+
+/**
  * #1280 2.1 — Stream's OWN breaker, not Redis's.
  *
  * These used to be the same object. Five Stream failures opened it and booking
@@ -262,6 +326,63 @@ const streamCircuitBreaker = createCircuitBreaker("stream");
 export function getStreamCircuitStatus() {
   return streamCircuitBreaker.status();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Why the breaker state is NOT in Redis — read this before "fixing" it
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The obvious repair for a breaker that barely works on serverless is to move
+// its state into Redis (`SET breaker:stream OPEN EX 30`) and gate every call on
+// it. That was evaluated and rejected. Four reasons, in order of how much they
+// would have cost:
+//
+//  1. **It is the largest new Upstash line item available.** Gating means a GET
+//     on the way into EVERY Stream call — and Stream calls are the hot path
+//     here: `upsertUsersToStream` on dashboard loads, `queryChannels` for the
+//     sidebar and the unread badge, channel opens, member diffs. The Upstash
+//     500k-command cap has already been hit twice (#1792 at 696k, #1822), and
+//     `.env.sample` records the standing discipline that command COUNT is the
+//     budget, not dollar spend. Spending ~7% of the remaining cap to make a
+//     breaker accurate is a bad trade, and it is exactly the kind of burn the
+//     cron-tick cadence work (#1686/#1792) was done to remove.
+//
+//  2. **It re-couples Stream to Redis, which is the thing #1280 2.1 removed.**
+//     A Redis-backed gate must be READ on the Stream path, so a Redis outage
+//     degrades Stream calls, and the fast-fail reason becomes "Redis is down"
+//     rather than "Stream is down". That is the precise mis-attribution that
+//     issue was filed to end: `/api/health` blamed Stream for a Redis outage
+//     and sent whoever was on call to the wrong vendor. The gate would also have
+//     to fail open (restoring a 30-second stall per call during the outage) or
+//     fail closed (declaring Stream down when it is fine). Both are worse than
+//     the in-memory breaker.
+//
+//  3. **A shared OPEN has a larger blast radius than the failure it describes.**
+//     Today an open breaker refuses one warm instance for 30 s. A shared key
+//     would let a single instance's socket blip — a cold start, one DNS
+//     hiccup, an idle container's first TLS handshake — fast-fail EVERY instance
+//     in the fleet for the full 30 s. Converting a local symptom into a global
+//     one is not obviously an improvement, and the 5-failures-to-open threshold
+//     was tuned (per #1280 Bucket 4) against exactly that kind of cascade.
+//
+//  4. **Half the value is not the fast-fail at all — it is the KNOWLEDGE that a
+//     fast-fail happened.** That is cheap and is implemented instead: the
+//     breaker's state is exposed through `getStreamCircuitStatus()` and reported
+//     by `/api/health` (which did not call it until now, so a Stream outage
+//     was invisible), and the Sentry trickle in `sentry.shared.config.ts` means
+//     the storm of `StreamUnavailableError`s a long outage produces costs one
+//     event per window instead of thousands. The 2026-09-21 Upstash incident
+//     showed this project will spend a whole error quota on a single dependency;
+//     the breaker is the noisiest producer in that shape, and that is a
+//     reporting problem, not a state-placement problem.
+//
+// What this DOES mean, stated plainly so nobody is surprised: on a cold instance
+// the breaker starts CLOSED and has to accumulate five consecutive failures
+// before it refuses anything, so it protects the second probe of an outage and
+// essentially none of the first. The thresholds are deliberately not touched
+// (#1280 Bucket 4), and no caller should come to depend on a fast-fail as a
+// correctness mechanism — every Stream call site is required to handle a
+// rejected call on its own terms anyway.
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * #473 — wrap a hot-path Stream network call in Stream's circuit breaker so a

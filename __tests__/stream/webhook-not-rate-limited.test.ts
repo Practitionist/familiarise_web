@@ -32,10 +32,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const middleware = readFileSync(
-  join(process.cwd(), "middleware.ts"),
-  "utf8",
-);
+const middleware = readFileSync(join(process.cwd(), "middleware.ts"), "utf8");
 
 /** The `stream: api` rule's match predicate, lifted from the source. */
 function streamApiMatches(pathname: string): boolean {
@@ -74,5 +71,114 @@ describe("the stream: api rate-limit rule", () => {
     // cookie-presence only, with no DB hit and no JWT parsing.
     expect(middleware).not.toContain("keyed per user by the shared");
     expect(middleware).toContain("Keyed by IP, NOT by user");
+  });
+});
+
+/**
+ * #E7 — the OTHER half of "never throttle the Stream webhook", and the half
+ * that was actually broken.
+ *
+ * This file above pins the RATE LIMITER's exclusion of `/api/stream/webhooks`.
+ * The maintenance gate had no such exclusion working, because of a single
+ * character: `EXEMPT_PREFIXES` carried `"/api/webhooks/"` — a directory prefix,
+ * correct for Razorpay/Stripe/Resend/Directus — and the Stream endpoint is a
+ * LEAF, at `/api/stream/webhooks`. So:
+ *
+ *   "/api/stream/webhooks".startsWith("/api/webhooks/") === false
+ *
+ * and during an OFFLINE maintenance window the middleware answered 503 to every
+ * Stream delivery. That is not a deferral. Stream's total retry budget is
+ * FIFTEEN SECONDS (6 s per attempt, 5 attempts, no backoff, `Retry-After`
+ * ignored) and then the event is dropped forever. Every `call.recording_ready`,
+ * `call.ended` and `session_participant_*` emitted inside the window was lost —
+ * which is the 2026-08-12 signature (a green platform and zero `WebhookEvent`
+ * rows) arriving through a completely different door.
+ *
+ * So this asserts the MAINTENANCE EXEMPTION, and it is asserted against
+ * `lib/maintenance-edge.ts` — the module that owns the list, evaluated by
+ * `middleware.ts` via `isMaintenanceExempt`. The matcher is tested directly
+ * rather than through the middleware, because the middleware pulls in the edge
+ * runtime and the exempt function is the whole of the behaviour under test.
+ */
+
+describe("maintenance exemption — the Stream webhook route", () => {
+  const STREAM_WEBHOOK = "/api/stream/webhooks";
+
+  it("is exempt from maintenance mode, so an OFFLINE window cannot 503 it", async () => {
+    const { isMaintenanceExempt } = await import("../../lib/maintenance-edge");
+    // The assertion that would have failed before #E7. It is written as the
+    // literal `startsWith` comparison the old matcher performed, so a reader can
+    // see exactly why a trailing slash was fatal.
+    expect(STREAM_WEBHOOK.startsWith("/api/webhooks/")).toBe(false);
+    expect(isMaintenanceExempt(STREAM_WEBHOOK)).toBe(true);
+  });
+
+  it("covers the whole subtree, in case a future route nests under it", async () => {
+    const { isMaintenanceExempt } = await import("../../lib/maintenance-edge");
+    expect(isMaintenanceExempt(`${STREAM_WEBHOOK}/ingest`)).toBe(true);
+  });
+
+  it("does not over-match a sibling whose name merely starts the same", async () => {
+    // The other direction of the same bug, and the reason the matcher is
+    // boundary-aware: `/api/stream/webhooksomething` is not the webhook route
+    // and must not inherit its exemption.
+    const { isMaintenanceExempt } = await import("../../lib/maintenance-edge");
+    expect(isMaintenanceExempt(`${STREAM_WEBHOOK}-archive`)).toBe(false);
+    // Nor may the webhook exemption leak out of `/api/stream/`.
+    expect(isMaintenanceExempt("/api/stream/recordings/start")).toBe(false);
+  });
+
+  it("still exempts the vendor webhooks the trailing-slash entry was for", async () => {
+    const { isMaintenanceExempt } = await import("../../lib/maintenance-edge");
+    for (const p of [
+      "/api/webhooks/razorpay",
+      "/api/webhooks/stripe",
+      "/api/webhooks/resend",
+      "/api/webhooks/directus",
+    ]) {
+      expect(isMaintenanceExempt(p)).toBe(true);
+    }
+    // The entry is a directory, so the bare path is now exempt too. No such
+    // route exists, and the boundary rule is what makes that safe rather than a
+    // new hole.
+    expect(isMaintenanceExempt("/api/webhooks")).toBe(true);
+  });
+
+  it("keeps every other exemption, and stops the ones that over-matched", async () => {
+    const { isMaintenanceExempt } = await import("../../lib/maintenance-edge");
+    for (const p of [
+      "/api/health",
+      "/api/health/redis",
+      "/api/auth/sign-in/email",
+      "/api/admin/maintenance",
+      "/maintenance",
+      "/_next/static/chunk.js",
+      "/favicon.ico",
+    ]) {
+      expect(isMaintenanceExempt(p)).toBe(true);
+    }
+    // `/api/health` used to exempt `/api/healthcheck` and `/api/healthz` by
+    // virtue of a raw `startsWith`. Nothing routes there, so this fixes a hole
+    // rather than closing one.
+    expect(isMaintenanceExempt("/api/healthcheck")).toBe(false);
+    expect(isMaintenanceExempt("/api/healthz")).toBe(false);
+    // `/api/auth/` must not exempt a hypothetical `/api/authentic-anything`.
+    expect(isMaintenanceExempt("/api/authentic-anything")).toBe(false);
+  });
+
+  it("is wired through the boundary-aware matcher, not a bare startsWith", async () => {
+    // Pins the SHAPE of the fix, because the shape is the durable part: a
+    // future entry with a trailing slash on a leaf route is then a
+    // no-op rather than a silent 503, and a directory entry keeps working.
+    const source = readFileSync(
+      join(process.cwd(), "lib", "maintenance-edge.ts"),
+      "utf8",
+    );
+    expect(source).toContain(
+      "pathname === base || pathname.startsWith(`${base}/`)",
+    );
+    expect(source).not.toContain(
+      "EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix))",
+    );
   });
 });

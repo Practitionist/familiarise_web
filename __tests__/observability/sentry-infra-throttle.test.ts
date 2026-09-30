@@ -67,13 +67,109 @@ describe("infraThrottleKey", () => {
      * one is cheap in events and expensive in attention: the new class stops
      * being distinguishable from a real fault, or starts hiding a real fault.
      *
-     * 3 as of #1868, which added `/\[system-events\] write failed/` for the
-     * failed-`SystemEvent`-write report. That one is keyed on an explicit
-     * marker rather than on a database-error pattern, precisely so it cannot
-     * swallow genuine data faults — see
-     * `__tests__/observability/system-event-write-throttle.test.ts` for the
-     * negative cases that hold it to that.
+     * 4 as of #E4, which added `/Stream circuit breaker is OPEN/`. That entry is
+     * separate from the `subsystem: stream` rule below on purpose: "the breaker
+     * is refusing" and "Stream returned a 5xx" have different causes and fixing
+     * one is not fixing the other, so they must not share a window.
      */
-    expect(INFRA_TRANSIENT_PATTERNS).toHaveLength(3);
+    expect(INFRA_TRANSIENT_PATTERNS).toHaveLength(4);
+  });
+});
+
+/**
+ * #E4 — a Stream vendor incident must cost a TRICKLE, not the error quota.
+ *
+ * The 2026-09-21 Upstash incident burned 80% of the 5,000-error allowance
+ * reporting one dependency being down. Stream has the same shape and a longer
+ * tail: `withStreamCircuitBreaker` raises a `StreamUnavailableError` on EVERY
+ * Stream call while the breaker is open, and those calls are on the request
+ * path, so a ten-minute outage on a modest site is hundreds of identical
+ * events. Keying on the `subsystem` TAG rather than the message is what makes
+ * this hold for call sites that did not exist when the rule was written.
+ */
+describe("infraThrottleKey — subsystem: stream (#E4)", () => {
+  test("a Stream 5xx trickles", () => {
+    expect(
+      infraThrottleKey({
+        message: "Stream 503 — getOrCreateCall failed",
+        tags: { subsystem: "stream" },
+      }),
+    ).toBe("stream.subsystem");
+  });
+
+  test("a Stream 429 trickles — self-inflicted quota is not a fault", () => {
+    expect(
+      infraThrottleKey({
+        exception: {
+          values: [
+            {
+              type: "Error",
+              value: "StreamChat error code 29: too many requests (429)",
+            },
+          ],
+        },
+        tags: { subsystem: "stream", op: "meetings.join" },
+      }),
+    ).toBe("stream.subsystem");
+  });
+
+  test("the breaker fast-fail keys on its OWN class, not the subsystem rule", () => {
+    // Both checks could match; the more specific class has to win, or clearing
+    // a Stream 5xx and clearing the breaker become one indistinguishable issue.
+    const key = infraThrottleKey({
+      message:
+        "Stream circuit breaker is OPEN — Stream temporarily unavailable",
+      tags: { subsystem: "stream" },
+    });
+    expect(key).toBe(INFRA_TRANSIENT_PATTERNS[3].source);
+    expect(key).not.toBe("stream.subsystem");
+  });
+
+  test("a SUSPENDED APP still pages — it is not an outage and not transient", () => {
+    // Stream code 99, tagged `stream.billing` by `withStreamCircuitBreaker`. It
+    // does not self-resolve, it has exactly one human action, and folding it
+    // into the vendor trickle is how "we owe Stream money" gets lost.
+    expect(
+      infraThrottleKey({
+        exception: {
+          values: [
+            { type: "Error", value: "App suspended" },
+            { type: "Error", value: "stream unavailable" },
+          ],
+        },
+        tags: { subsystem: "stream", reason: "stream.billing" },
+      }),
+    ).toBeNull();
+  });
+
+  test("a non-transient Stream event is NOT throttled by its tag alone", () => {
+    // The negative case that holds the rule honest. If `subsystem: "stream"` on
+    // its own were enough, a genuine one-off defect of ours would be suppressed
+    // for ten minutes after the first event of the day, and fixing it would
+    // look like the throttle ate it.
+    expect(
+      infraThrottleKey({
+        exception: {
+          values: [
+            {
+              type: "TypeError",
+              value: "Cannot read properties of undefined (reading 'cid')",
+            },
+          ],
+        },
+        tags: { subsystem: "stream" },
+      }),
+    ).toBeNull();
+  });
+
+  test("an ordinary non-Stream event with a transient-looking message is untouched", () => {
+    expect(
+      infraThrottleKey({
+        exception: {
+          values: [{ type: "FetchError", value: "socket hang up" }],
+        },
+        tags: { subsystem: "api" },
+      }),
+    ).toBeNull();
   });
 });
