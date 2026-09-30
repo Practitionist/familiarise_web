@@ -88,7 +88,7 @@ No room exists at booking. First Join mints deterministically: `slot-<anchorSlot
 
 | Layer | Contract | Notes |
 |---|---|---|
-| Webhook route | SDK `verifySignature` over the **uncompressed** body, secret = `STREAM_WEBHOOK_SECRET \|\| STREAM_API_SECRET`; persist receipt **before** 200; handler in `after()`; dedup on **`sha256(body)`**, not `X-Webhook-ID` (corrected 2026-09-30 — the header is not signature-covered, so a captured `(body, signature)` pair replays under N invented ids and mints N dispatches; `route.ts:254-274`, pinned by `__tests__/stream/webhook-dedup-and-replay.test.ts`) | 10 event types handled; compile-time exhaustive dispatch |
+| Webhook route | SDK `verifySignature` over the **uncompressed** body, secret = `STREAM_WEBHOOK_SECRET \|\| STREAM_API_SECRET`; persist receipt **before** 200; handler in `after()`; dedup on **`sha256(body)`**, not `X-Webhook-ID` (corrected 2026-09-30 — the header is not signature-covered, so a captured `(body, signature)` pair replays under N invented ids and mints N dispatches; `route.ts:254-274`, pinned by `__tests__/stream/webhook-dedup-and-replay.test.ts`) | **8** event types handled, not 10 (`user.flagged` / `message.flagged` were removed deliberately — the in-app report button already writes the `ModerationReport`); compile-time exhaustive dispatch |
 | Circuit breaker | **RESOLVED 2026-09-30 (#1280).** Stream has its own; Redis's is separate. The shared breaker described here no longer exists. | `lib/stream-client.ts:316-323` — `createCircuitBreaker("stream")`. They were one object, so five Stream failures opened the breaker booking-lock acquisition also went through, and a Redis outage reported as "Video is temporarily unavailable" |
 | Server actions | `upsertUserToStream` cached 5min; creators stamp `organization_id`; `removeUserFromEventChannel` returns `{success:false}` instead of throwing | Several exports have **no session gate** — F-HIGH-1/F-MED-6 |
 | Client store | Module snapshot + `useSyncExternalStore`; stable server snapshot; bail-on-no-op writes | Prevents SSR skip + element-type-change remounts |
@@ -119,7 +119,7 @@ Two simultaneous first joins both miss `addMembers`, both build roster and call 
 - **F-MED-5 · `getChannelTypeFromId` misclassifies `dmo-`/`dmh-` as `team`**, and `dmh-` isn't in MANAGED prefixes → hashed DM memberships never swept; `addMemberToChannel` default type wrong for those ids.
 - **F-MED-6 · `syncUserEventChannels(userId, force)` remotely invocable with arbitrary userId** (no session check) — repeatable Stream spend + forced reconciliation keyed off guessed ids.
 - **F-MED-7 · Privileged `addMemberToChannel` bare-create lacks `created_by_id`** — documented server-side requirement; likely throws on nonexistent channel. Dead export today; fix or delete.
-- **F-MED-8 · Ops/config posture:** no startup config validation (preview deploys fail at first user action, not deploy); Stream cron jobs absent from `MONEY_CRITICAL_JOBS` (Slack-only outage degrades them to unreadable logs); broken `package.json` `stream-sync` script path (`jobs/stream-sync.ts` doesn't exist).
+- **F-MED-8 · Ops/config posture:** no startup config validation (preview deploys fail at first user action, not deploy) — **still open**, and `docs/stream/02-setup-configuration.md` now says so rather than inventing a validator; Stream cron jobs absent from `MONEY_CRITICAL_JOBS` (Slack-only outage degrades them to unreadable logs) — **superseded**: that constant no longer exists anywhere in the repo, and the "nobody noticed" failure it worried about is now covered by `scripts/ci/check-cron-heartbeat.ts`, a dead-man's switch that fails when a scheduled workflow has not started for implausibly long (the failure pager only fires on runs that *fail*, so it cannot see a job that never ran); broken `package.json` `stream-sync` script path (`jobs/stream-sync.ts` doesn't exist) — **RESOLVED**, the script is `npx tsx jobs/stream/stream-sync.ts`.
 - **F-MED-9 · Non-consenting users dropped from upsert but still listed as members** in atomic creates — one withdrawn-consent attendee can fail creation for an entire webinar cohort.
 
 ### LOW / INFO (condensed)
@@ -132,7 +132,7 @@ Ack-first webhook durability with claim semantics + sweeper; the #1134 P0 series
 
 ### Docs debt
 
-`docs/stream/02` (phantom `STREAM_SYNC_SECRET`), `05` (old `streamCallId` format, removed client-side getOrCreate), `09/10` (dead paths/routes, NextAuth remnants), `13` (wrong signing-secret story — Stream signs with API secret; handler table lists 6/10 events). README self-aware ("code is correct, docs drifted").
+`docs/stream/02` (phantom `STREAM_SYNC_SECRET`), `05` (old `streamCallId` format, removed client-side getOrCreate), `09/10` (dead paths/routes, NextAuth remnants), `13` (wrong signing-secret story — Stream signs with API secret; handler table listed 6 of 8 events). README self-aware ("code is correct, docs drifted").
 
 ---
 

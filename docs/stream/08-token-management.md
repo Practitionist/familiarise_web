@@ -195,7 +195,7 @@ export async function chatTokenProvider(userId: string) {
 }
 ```
 
-The token itself is minted by `generateChatToken` in `lib/stream-client.ts:98-127`,
+The token itself is minted by `generateChatToken` in `lib/stream-client.ts:97-127`,
 which always passes **both** `exp` and `iat`:
 
 ```typescript

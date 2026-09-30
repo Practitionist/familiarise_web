@@ -92,14 +92,14 @@ graph TB
 
 #### Server Components
 
-| Component           | Location                                    | Purpose                              |
-| ------------------- | ------------------------------------------- | ------------------------------------ |
-| **Token Providers** | `actions/stream/chat/stream.action.ts`      | Generate JWT tokens for auth         |
-| **User Actions**    | `actions/stream/chat/user.action.ts`        | User upsert, search, sync            |
-| **Channel Actions** | `actions/stream/chat/channel.action.ts`     | Channel creation & management        |
-| **Meeting Actions** | `actions/stream/meetings/meeting.action.ts` | Meeting session operations           |
-| **Sync Job**        | `jobs/stream-sync.ts`                       | Daily user cleanup                   |
-| **API Endpoints**   | `app/api/stream/`                           | REST endpoints for Stream operations |
+| Component           | Location                                                                   | Purpose                                                             |
+| ------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Token Providers** | `actions/stream/chat/stream.action.ts`                                     | Generate JWT tokens for auth                                        |
+| **User Actions**    | `actions/stream/chat/user.action.ts`                                       | User upsert, search, sync                                           |
+| **Channel Actions** | `actions/stream/chat/channel.action.ts`                                    | Channel creation & management                                       |
+| **Meeting Actions** | `actions/stream/meetings/meeting.action.ts`                                | Meeting session operations                                          |
+| **Sync Job**        | `scripts/stream/stream-sync.ts`<br>(wrapper: `jobs/stream/stream-sync.ts`) | Daily user cleanup — see [Background Sync](./09-background-sync.md) |
+| **API Endpoints**   | `app/api/stream/`                                                          | REST endpoints for Stream operations                                |
 
 ---
 
