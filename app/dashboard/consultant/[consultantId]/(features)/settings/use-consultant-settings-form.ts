@@ -10,7 +10,10 @@ import {
   validateTimeSlot,
   validateAllSlotsDetailed,
 } from "@/utils/scheduling-engine/interval-validation";
-import { formatSlotsForApi } from "@/utils/schedule/formatting";
+import {
+  formatSlotsForApi,
+  normaliseSlotToSchedulingGrid,
+} from "@/utils/schedule/formatting";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   isExpectedRefusal,
@@ -273,9 +276,21 @@ export function useConsultantSettingsForm(
           scheduleType === ScheduleType.WEEKLY
             ? setWeeklySlots
             : setCustomSlots;
-        const updatedSlot = { ...currentSlots[day][index], [field]: value };
+        // Snap BEFORE validating, so the row that gets validated is the row that
+        // will be published. The picker steps by 15 minutes but publication is
+        // on the 30-minute grid, and whether a 15-minute value is already on it
+        // depends on the consultant's offset — 09:00 is 03:30Z in IST and
+        // 03:15Z in Kathmandu. Normalising here rather than only at the save
+        // means the input itself shows the published time the moment it is
+        // picked, instead of the consultant watching it change under a refetch.
+        // Both boundaries move by the same delta, so the duration they typed is
+        // preserved exactly.
+        const editedSlot = normaliseSlotToSchedulingGrid(
+          { ...currentSlots[day][index], [field]: value },
+          timezone || "UTC",
+        );
         const validationResult = validateTimeSlot(
-          updatedSlot,
+          editedSlot,
           currentSlots[day]?.filter((_, i) => i !== index) || [],
         );
         setSlots((prev) => ({
@@ -288,7 +303,7 @@ export function useConsultantSettingsForm(
         }));
       });
     },
-    [scheduleType, weeklySlots, customSlots],
+    [scheduleType, weeklySlots, customSlots, timezone],
   );
 
   const handleDeleteSlot = useCallback(

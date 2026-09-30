@@ -724,6 +724,7 @@ export function UnifiedCalendar({
     subscriptionMeta,
     loading,
     error,
+    availabilityFreshness: freshness,
     refetch,
     refetchEventSlots,
     refetchAvailability,
@@ -2168,6 +2169,31 @@ export function UnifiedCalendar({
             <span title={footerZone.limits.title}>
               {" · "}
               {footerZone.limits.label}
+            </span>
+          )}
+          {/* #1863 — the same footer carries how old the cells are. Silent when
+              fresh (the overwhelming majority of the time) so it is not noise
+              the consultant learns to skip, and loud when it is not: amber for
+              ageing, red for a grid that has stopped updating. Purely
+              informational — the allocator re-validates server-side, so this
+              never gates a click, it only stops a refusal arriving with no
+              explanation of what the consultant was looking at. */}
+          {freshness.label && (
+            <span
+              className={cn(
+                "ml-1 font-medium",
+                freshness.failed || freshness.freshness === "stale"
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-amber-700 dark:text-amber-400",
+              )}
+              title={
+                freshness.failed
+                  ? "The background refresh is failing. The cells below are the last ones that loaded — reload or retry in a moment."
+                  : "This grid refreshes about once a minute. Times are re-checked when you save them, so a stale cell can cost a click but cannot double-book."
+              }
+            >
+              {" · "}
+              {freshness.label}
             </span>
           )}
         </div>

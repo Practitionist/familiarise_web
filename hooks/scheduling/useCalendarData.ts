@@ -18,6 +18,10 @@ import {
   type PollFetchOutcome,
 } from "@/lib/scheduling/availabilityPolling";
 import { ApiResponseError } from "@/lib/fetch-helpers";
+import {
+  availabilityFreshness,
+  FRESHNESS_TICK_MS,
+} from "@/lib/labels/availability-freshness";
 import { cellInstant, dayRangeBounds } from "@/lib/time/grid-zone";
 import { gridTimeZone } from "@/lib/scheduling/time-picker-focus";
 import { INTERVALS } from "@/utils/scheduling-engine/interval-meta";
@@ -342,6 +346,36 @@ export function useCalendarData(
   // by the poll timer to schedule the next tick and by the return-to-tab
   // listeners to decide between refetch-now and re-arm.
   const availabilityFetchedAtRef = useRef(Number.NaN);
+  // #1863 — the two halves of "how old are these cells", published to the
+  // component so it can say so. `availabilityFetchedAtRef` alone is invisible:
+  // it is read only by the poller for timing, so a grid that had not updated
+  // in forty minutes looked exactly like one that had updated a second ago.
+  // Consecutive FAILURES matter separately from age, because background poll
+  // failures are silent by design (#1164) and silence plus a frozen picture is
+  // indistinguishable from a healthy grid unless something says otherwise.
+  const [availabilityFreshnessState, setAvailabilityFreshnessState] = useState<
+    ReturnType<typeof availabilityFreshness>
+  >({ freshness: "unknown", label: null, failed: false });
+  const availabilityFailedPollsRef = useRef(0);
+  // Re-render the badge on a timer rather than only on fetch settle, so the age
+  // it prints keeps moving while the grid sits untouched — a badge frozen at
+  // "2 min ago" on a grid that is now ten minutes old is its own lie. 15 s is
+  // frequent enough to read smoothly and cheap: it is a `setState` on one
+  // number, not a request.
+  useEffect(() => {
+    if (!autoLoad || !consultantId) return;
+    const tick = () =>
+      setAvailabilityFreshnessState(
+        availabilityFreshness(
+          availabilityFetchedAtRef.current,
+          Date.now(),
+          availabilityFailedPollsRef.current,
+        ),
+      );
+    tick();
+    const id = setInterval(tick, FRESHNESS_TICK_MS);
+    return () => clearInterval(id);
+  }, [autoLoad, consultantId, rawAvailabilitySlots, error]);
   // The availability fetch currently in flight, or null. A poll must not start
   // one while a NAVIGATION fetch is still running: the poll bumps the request
   // id, and the navigation's own `finally` is id-guarded, so it would skip its
@@ -515,6 +549,11 @@ export function useCalendarData(
         // Stamped only once the body validated — a tag paired with a payload we
         // rejected would 304 the next poll into keeping the rejected state.
         availabilityEtagRef.current = data.etag ?? null;
+        // #1863 — a success ends the failure run. Reset here rather than in a
+        // `finally` so a fetch that both failed and settled is not counted as
+        // a success (the `finally` below stamps time for failures too, which
+        // is correct for poll timing and would be wrong here).
+        availabilityFailedPollsRef.current = 0;
         setRawAvailabilitySlots(validatedData);
       } catch (error) {
         // A stale request's failure must not clobber the error state of
@@ -534,6 +573,11 @@ export function useCalendarData(
         // A 429 is the exception: it hands the poller the server's Retry-After
         // so the retry waits it out instead of re-tripping the limiter (#1697).
         if (options?.background) {
+          // #1863 — counted, not surfaced. Silence stays the right default for
+          // the transient case, but three failures in a row is a grid that has
+          // stopped updating rather than a flaky minute, and the freshness
+          // indicator is what says so.
+          availabilityFailedPollsRef.current += 1;
           if (error instanceof ApiResponseError && error.status === 429) {
             return {
               rateLimitedForMs:
@@ -1054,6 +1098,10 @@ export function useCalendarData(
     subscriptionMeta,
     loading,
     error,
+    // #1863 — how old the cells on screen are, and whether the poll behind them
+    // is still answering. Purely informational: the allocator re-validates
+    // server-side whatever this says, so nothing here gates an action.
+    availabilityFreshness: availabilityFreshnessState,
 
     // Actions - ENHANCEMENT: Granular refetch control
     refetch: fetchAllData,

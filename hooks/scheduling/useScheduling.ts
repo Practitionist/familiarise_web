@@ -47,7 +47,6 @@ import {
   allocatedElsewhere,
   requestChangedElsewhere,
   rateLimited,
-  isPreservedAllocationMessage,
   schedulingDayBucket,
   schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
@@ -74,19 +73,27 @@ export type { ValidationResult, EventConstraints, SlotLimits };
  * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
  * illegal transition, transient lock) and must neither close the dialog
  * nor say that they did.
+ *
+ * `stay-open-refresh` and `stay-open-raw-refresh` used to be two names for
+ * the same toast plus refetch, distinguishable only by a regex over the
+ * server's PROSE (`isPreservedAllocationMessage`). Rewording a message three
+ * files from here silently changed whether the dialog closed on a slot
+ * conflict, which is not a thing a copy edit should be able to do. The two are
+ * collapsed: the branch is the structured `errorCode` alone.
  */
 type AllocationFailureAction =
   | "rate-limited"
   | "allocated-elsewhere"
   | "request-changed"
   | "stay-open-refresh"
-  | "stay-open-raw-refresh"
   | "key-reset"
   | "generic";
 
+/** @param result the failed attempt, with the server's `errorCode` when it sent
+ * one. The message is deliberately NOT a parameter: it is a sentence, and a
+ * sentence must never decide what the UI does. */
 function classifyAllocationFailure(
   result: AllocationResult,
-  errorMessage: string,
 ): AllocationFailureAction {
   if (result.httpStatus === 429) return "rate-limited";
   if (
@@ -106,14 +113,26 @@ function classifyAllocationFailure(
     case "ILLEGAL_TRANSITION":
     case "RESCHEDULE_STATE_CHANGED":
       return "request-changed";
+    // #1132 — the SLOT went to somebody else, so the request is still
+    // allocatable at a different time: keep the dialog open, refetch both
+    // grids so the next pick is made against cells that include the loss, and
+    // let the server's own sentence (which names the time) be the description.
     case "SLOT_TAKEN":
-      return "stay-open-raw-refresh";
+    // #1863 — the co-host and the transient lock are the same shape of
+    // answer for this decision: nothing was allocated, the request stands.
     case "COLLABORATOR_UNAVAILABLE":
     case "LOCK_CONTENTION":
     default:
-      return isPreservedAllocationMessage(errorMessage)
-        ? "stay-open-raw-refresh"
-        : "stay-open-refresh";
+      // DEFAULT, AND THE WHOLE POINT: an unknown or absent code — a 409 whose
+      // body was not JSON, a proxy's own 409, a code added server-side after
+      // this deploy — stays open. Closing the dialog is the irreversible half
+      // (it drops the row out of the consultant's queue and the request has to
+      // be rediscovered), and it is the half a guess can get wrong: a genuine
+      // ALREADY_ALLOCATED that we failed to recognise is recoverable by
+      // refreshing, whereas an allocatable request closed on a mis-read 409
+      // is a booking the consultant believes they scheduled and nobody did.
+      // The cost of being wrong this way is one dismissible toast.
+      return "stay-open-refresh";
   }
 }
 
@@ -659,7 +678,7 @@ export function useEventSlotAllocation(
       setAllocationError(errorMessage);
       // A stay-open failure means the grid cells just proved stale: the host
       // refetches so the next pick is made against fresh data.
-      switch (classifyAllocationFailure(result, errorMessage)) {
+      switch (classifyAllocationFailure(result)) {
         case "rate-limited":
           // Rate limited — back off, don't resubmit into it.
           toast(rateLimited());
@@ -675,13 +694,10 @@ export function useEventSlotAllocation(
           onConflict?.();
           break;
         case "stay-open-refresh":
-          toast(allocationFailedWithCode(errorMessage, result.errorCode));
-          onStaleData?.();
-          break;
-        case "stay-open-raw-refresh":
-          // Slot conflict — the server's wording names the taken time, so
-          // it rides as the description under the code's title; the dialog
-          // stays open and refetches so the retry sees the taken slot (#1132).
+          // #1132 — nothing was allocated away, so the dialog stays open and
+          // the grid refetches so the retry is picked fresh. The server's
+          // wording rides as the description under the code's title, which is
+          // how a lost time still gets named ("that time", not "something").
           toast(allocationFailedWithCode(errorMessage, result.errorCode));
           onStaleData?.();
           break;
