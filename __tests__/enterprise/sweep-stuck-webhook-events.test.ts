@@ -66,40 +66,123 @@ const stuckRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/**
+ * #1829 — the sweeper writes through BOTH prisma shapes: `updateMany(where, data)`
+ * and `update({ where, data })`. A helper that destructures the second
+ * positional argument matches the first shape and silently misses the second,
+ * which reads as "the code never ran" rather than "the assertion looked in the
+ * wrong place". Both shapes are flattened to `{ where, data }` here so the
+ * assertions below do not have to care.
+ */
+const writeOf = (call: unknown[]) => {
+  const args = call as unknown[];
+  const asOne = args[0] as
+    | { where?: Record<string, unknown>; data?: Record<string, unknown> }
+    | undefined;
+  const asTwo = args[1] as { data?: Record<string, unknown> } | undefined;
+  return {
+    where: asOne?.where ?? {},
+    data: asOne?.data ?? asTwo?.data ?? {},
+  };
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockWe.update.mockResolvedValue({});
 });
 
 describe("sweepStuckWebhookEvents (#785)", () => {
-  it("a LOST claim (claimedAt raced) skips the re-drive entirely (#1205-triage)", async () => {
+  // #1829 — this test used to assert that the sweeper's own pre-claim CAS lost
+  // a race and skipped the re-drive. The pre-claim is GONE, deliberately, and
+  // the reason is worth keeping here where the old assertion lived:
+  //
+  // Claiming before the re-drive stamped `claimedAt = now()`, and
+  // `logWebhookEvent` — which the dispatchers call to do their own bookkeeping —
+  // then ran its staleness escape ("in progress for more than five minutes ⇒
+  // abandoned") against a claim aged ZERO, returned `isNew: false`, and the
+  // dispatcher returned having done nothing. So the sweeper could not re-drive
+  // the one row shape it exists to rescue: acknowledged by the route, `after()`
+  // never completed. Every such row was re-claimed and re-refused for 168 hours
+  // and then discarded forever.
+  //
+  // The exclusion the pre-claim was buying is not lost. `logWebhookEvent`'s own
+  // claim is a conditional `updateMany` scoped to the exact `claimedAt` the
+  // caller read, so of two racing drivers exactly one write lands — and that is
+  // covered where it now lives, in
+  // `__tests__/stream/webhook-event-log-claim.test.ts` ("moves claimedAt forward
+  // and leaves receivedAt alone", and the stale-takeover case at :116).
+  //
+  // What this file now pins is the half that is still the sweeper's: it does not
+  // write a claim of its own, and it always attempts the re-drive. The
+  // dispatcher is mocked here, so the exclusion is necessarily invisible at this
+  // layer — which is exactly why the re-drive assertion moved to
+  // `__tests__/stream/webhook-sweeper-redrive.test.ts`, where the dispatcher is
+  // real and the staleness arithmetic is modelled rather than stubbed.
+  it("does NOT pre-claim the row, so the dispatcher's staleness escape can fire", async () => {
     const ev = stuckRow();
-    (mockWe.findMany as jest.Mock).mockResolvedValue([ev]);
-    // Another driver claimed between selection and claim: CAS misses.
-    (mockWe.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-
-    const result = await sweepStuckWebhookEvents({ staleMinutes: 6 });
-
-    expect(processRazorpayWebhookEvent).not.toHaveBeenCalled();
-    expect(result.recovered).toBe(0);
-  });
-
-  it("the claim CAS keys on claimedAt, not receivedAt (age must survive re-drives)", async () => {
-    const ev = stuckRow();
-    (mockWe.findMany as jest.Mock).mockResolvedValue([ev]);
-    (mockWe.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    mockWe.findMany.mockResolvedValue([ev]);
+    mockWe.updateMany.mockResolvedValue({ count: 0 });
+    mockProcess.mockResolvedValue(undefined);
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
 
     await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
-    const [claim] = (mockWe.updateMany as jest.Mock).mock.calls;
-    expect(claim[0].where).toMatchObject({
-      eventId: ev.eventId,
-      OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
-    });
-    expect(claim[0].data.claimedAt).toBeInstanceOf(Date);
-    // receivedAt untouched — the give-up cap ages on it.
-    expect(claim[0].where.receivedAt).toBeUndefined();
-    expect(claim[0].data.receivedAt).toBeUndefined();
+    const claimWrites = (mockWe.updateMany as jest.Mock).mock.calls.filter(
+      (c: unknown[]) => "claimedAt" in writeOf(c).data,
+    );
+    expect(claimWrites).toHaveLength(0);
+  });
+
+  it("always attempts the re-drive, and counts it as recovered", async () => {
+    const ev = stuckRow();
+    mockWe.findMany.mockResolvedValue([ev]);
+    mockProcess.mockResolvedValue(undefined);
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
+
+    const result = await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    expect(processRazorpayWebhookEvent).toHaveBeenCalledTimes(1);
+    expect(result.recovered).toBe(1);
+  });
+
+  // #1829 — the give-up window still ages on `receivedAt`, which is the property
+  // this test existed to protect and which survives the pre-claim's removal.
+  // The claim CAS itself moved into `logWebhookEvent` (see the note above and
+  // `__tests__/stream/webhook-event-log-claim.test.ts`), so the sweeper's own
+  // contribution is now narrower and is asserted narrowly: it writes an attempts
+  // counter and nothing else that touches the aging columns.
+  it("never touches receivedAt, so the give-up cap cannot be reset by a re-drive", async () => {
+    const ev = stuckRow();
+    mockWe.findMany.mockResolvedValue([ev]);
+    mockProcess.mockResolvedValue(undefined);
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
+
+    await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    const writes = [
+      ...(mockWe.updateMany as jest.Mock).mock.calls,
+      ...(mockWe.update as jest.Mock).mock.calls,
+    ];
+    expect(writes.length).toBeGreaterThan(0); // otherwise the loop proves nothing
+    for (const call of writes as unknown[][]) {
+      const { where, data } = writeOf(call);
+      expect(data.receivedAt).toBeUndefined();
+      expect(where.receivedAt).toBeUndefined();
+    }
+  });
+
+  it("bumps the attempts counter, so a churning row is observable (#1829)", async () => {
+    const ev = stuckRow();
+    mockWe.findMany.mockResolvedValue([ev]);
+    mockProcess.mockResolvedValue(undefined);
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
+
+    await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    const bump = (mockWe.update as jest.Mock).mock.calls
+      .map((c: unknown[]) => writeOf(c).data)
+      .find((d) => d && "attempts" in d);
+    expect(bump).toEqual({ attempts: { increment: 1 } });
   });
 
   it("re-drives a stuck event and reconstructs the full envelope", async () => {
@@ -206,7 +289,25 @@ describe("sweepStuckWebhookEvents (#785)", () => {
       deferred: 1,
       gaveUp: 0,
     });
-    expect(mockWe.update).not.toHaveBeenCalled();
+    // "Not terminally marked" — which used to be asserted as "no write at all".
+    // That was sound while the sweeper's only write was the give-up stamp; since
+    // #1829 it also bumps the attempts counter, so the bare
+    // `expect(mockWe.update).not.toHaveBeenCalled()` would now fail on correct
+    // behaviour. Assert the intent instead: no write carries a terminal marker.
+    //
+    // Getting this wrong in the other direction is worse than the test it
+    // replaces — a deferred row stamped `gave up:` inside the 168h window would
+    // abandon a payment that had not arrived yet, which is precisely what the
+    // window exists to prevent.
+    const terminalWrites = (mockWe.update as jest.Mock).mock.calls.filter(
+      (c: unknown[]) => {
+        const { data } = writeOf(c);
+        return (
+          typeof data.error === "string" && data.error.startsWith("gave up:")
+        );
+      },
+    );
+    expect(terminalWrites).toHaveLength(0);
   });
 
   it("a deferred event past the give-up cap is terminally marked + counted", async () => {

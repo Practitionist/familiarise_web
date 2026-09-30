@@ -53,6 +53,18 @@ const LOCK_EXEMPT: Record<string, string> = {
   // extra API call, so a lock would buy nothing and would give a read-only
   // guard a hard dependency on Redis.
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // #1829 — the same shape, for the call-type config. Runs the grants and
+  // settings scripts in `--check` mode, which is three `getCallType` reads and no
+  // write of any kind. A lock would cost a Redis round trip per run to
+  // serialise two reads, and would make a read-only detector depend on the
+  // infrastructure it reports on — the same reason as the row above.
+  //
+  // What it deliberately does NOT do is write. The drift it reports is only
+  // closed by an operator running `--apply` against the shared app, which is
+  // gated on STREAM_TARGET_APP and, for the grants, on --routes-are-deployed.
+  // A CI job that could fix drift would be a CI job that could silently change
+  // production call permissions.
+  "stream-calltype-drift.yml": "deliberately unlocked — read-only drift check",
 };
 
 interface Row {
