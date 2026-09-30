@@ -189,3 +189,60 @@ describe("#1829 — a replaced video client is disconnected, not abandoned", () 
     );
   });
 });
+
+/**
+ * #1827 — a reconnect must RECONCILE, not merely reopen.
+ *
+ * `markSyncIncomplete` in the grace timer clears the "sync kicked" guard so the
+ * reconnect can act on it. It previously did not: `connectChat` returned out of
+ * the `openConnection()` branch before reaching the block that read the guard, so
+ * every mid-session flap reopened the socket and left every channel membership
+ * exactly as it was when the network dropped. Three comments asserted otherwise.
+ *
+ * The same guard is why the full-connect and live-adopt branches have to kick too:
+ * a live socket is not evidence the sync ran, and the grace timer may have
+ * cleared the guard deliberately.
+ */
+describe("#1829 — every connect path that resolves a client also kicks the sync", () => {
+  it("kicks from the openConnection reconnect branch", () => {
+    // The branch a mid-session flap lands on: `connectUser` is not re-runnable on
+    // a client that already holds the userID, so this is not an edge case.
+    // Read forward from the reopen to the return, in source order.
+    const open = provider.indexOf("await client.openConnection()");
+    const ret = provider.indexOf("return client;", open);
+    expect(open).toBeGreaterThan(-1);
+    expect(ret).toBeGreaterThan(open);
+    expect(provider.slice(open, ret)).toContain(
+      "kickChannelSync(userDetails.id)",
+    );
+  });
+
+  it("kicks from the full connectUser path", () => {
+    const n = (provider.match(/kickChannelSync\(userDetails\.id\)/g) ?? [])
+      .length;
+    // Reconnect branch + live-adopt branch + full connect path.
+    expect(n).toBe(3);
+  });
+
+  it("no connect path returns a client without kicking or skipping deliberately", () => {
+    // Each `return client;` in connectChat must be preceded by a kick, or be one
+    // of the two pre-connect bail-outs (concurrent-connect skip, not-found).
+    const after = provider.indexOf("const connectChat = useCallback(");
+    const body = provider.slice(
+      after,
+      provider.indexOf("const connectVideo", after),
+    );
+    // Use each match's own `index`, not a fresh `indexOf` — the latter finds the
+    // FIRST occurrence, so every iteration after the first inspected the same
+    // window and the loop was decorative.
+    const returns = [...body.matchAll(/^(\s*)return client;$/gm)];
+    expect(returns.length).toBeGreaterThan(0);
+    for (const match of returns) {
+      const idx = match.index;
+      const before = body.slice(Math.max(0, idx - 400), idx);
+      expect(before).toMatch(
+        /kickChannelSync\(userDetails\.id\)|isChatConnectingRef|adoptable|getGlobalChatClient/,
+      );
+    }
+  });
+});

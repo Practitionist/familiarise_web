@@ -193,8 +193,12 @@ jobs:
               echo "Drift is REPORTED here, not fixed. Applying is an operator action:"
               echo
               echo '```bash'
-              echo "node_modules/.bin/tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed"
-              echo "node_modules/.bin/tsx scripts/stream/ensure-call-type-settings.ts --apply"
+              # #1829 — the printed remediation carries --target-app, because every
+              # `--apply` goes through requireNamedTargetApp and a bare command is
+              # refused. Printing one that cannot run is how an operator concludes
+              # the guard is broken.
+              echo "node_modules/.bin/tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed --target-app Familiarise"
+              echo "node_modules/.bin/tsx scripts/stream/ensure-call-type-settings.ts --apply --target-app Familiarise"
               echo '```'
               echo
               echo "Both require \`STREAM_TARGET_APP=<name>\`, because dev, preview and prod"

@@ -372,9 +372,15 @@ export async function GET(request: Request) {
         // timestamp reads exactly like a live one.
         computedAt: usage.snapshot?.computedAt ?? null,
       },
-      // The shape, not the value: how many days into the window, so a reader can
-      // tell a month-to-date figure from a final one without learning the total.
+      // The WINDOW, not progress through it. The comment this replaces claimed
+      // this was "how many days into the window", which would let a reader tell
+      // a month-to-date figure from a final one — but it is a constant 30 and
+      // says nothing about progress, so that was a claim the field cannot keep.
+      // What a reader can actually derive is the bucket: month-to-date, which is
+      // what a cap alarm needs. `computedAt` is the timestamp that tells them
+      // how stale it is.
       windowDays: usage.meters.mau ? 30 : null,
+      windowKind: "calendar-month" as const,
       redacted: true,
     },
     betterstack,

@@ -319,10 +319,49 @@ describe("the replay window", () => {
     });
     await deliver(body);
     expect(mockRecordReceipt).toHaveBeenCalledTimes(1);
+    // The claim is passed through, so the stamp is CAS'd on the row this
+    // delivery actually created rather than an unfenced `update` by eventId.
     expect(mockMarkProcessed).toHaveBeenCalledWith(
       expect.any(String),
       expect.stringContaining("permanent: replay_window_exceeded"),
+      { claimedAt: null },
     );
+  });
+
+  // #1829 — a REPLAY of a delivery that was already recorded must not rewrite
+  // that row. `isNew: false` means the exact body was seen before, typically
+  // fully processed; stamping it unfenced relabelled a handled delivery as a
+  // permanent failure in the row an operator and an auditor read.
+  it("leaves an already-recorded delivery's row untouched on a replay", async () => {
+    mockRecordReceipt.mockResolvedValue({
+      isNew: false,
+      claim: { claimedAt: null },
+    });
+    const body = callEndedEvent({
+      created_at: new Date(Date.now() - 30 * 24 * 3600_000).toISOString(),
+    });
+
+    const res = await deliver(body);
+
+    // Still refused, still terminal — the delivery is genuinely out of window.
+    expect(res.status).toBe(200);
+    expect(mockMarkProcessed).not.toHaveBeenCalled();
+  });
+
+  it("does not stamp the refusal when the receipt itself reports a duplicate", async () => {
+    // Same guard, asserted through the argument list rather than the response,
+    // so a future refactor that keeps the status but drops the guard fails here.
+    mockRecordReceipt.mockResolvedValue({
+      isNew: false,
+      claim: { claimedAt: null },
+    });
+    const body = callEndedEvent({
+      created_at: new Date(Date.now() - 30 * 24 * 3600_000).toISOString(),
+    });
+
+    await deliver(body);
+
+    expect(mockMarkProcessed).not.toHaveBeenCalled();
   });
 
   it("marks a refusal terminal so the sweeper never re-drives it", async () => {

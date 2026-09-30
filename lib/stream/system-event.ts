@@ -202,9 +202,20 @@ export async function recordStreamOutage(params: {
   try {
     await recordStreamSystemError({
       category: params.category ?? STREAM_EVENT_CATEGORY,
+      // #1829 — the summary names the PROBE, not just the state.
+      //
+      // The health route runs two independent probes per poll (`webhook-secret`
+      // and `reachability`), and keying state per probe is what stopped them
+      // writing a false recovery for each other. The prose still lost the
+      // distinction: a corrected secret wrote "Stream integration reachable
+      // again", telling whoever reads `system_events` when the dashboards are
+      // quiet that the VENDOR came back, when a config value was edited. `reason`
+      // carried the truth but only in the JSON `context` column.
+      //
+      // So the probe is in the sentence, and a recovery says what recovered.
       summary: recovering
-        ? "Stream integration reachable again"
-        : `Stream integration unreachable (${params.reason})`,
+        ? `Stream integration recovered (${params.probe})`
+        : `Stream integration problem (${params.probe}: ${params.reason})`,
       // The reason doubles as the error object: `SystemEvent.message` is the
       // prose an operator reads and `context` carries the machine facts. A
       // synthetic Error keeps the two channels the same shape as every other

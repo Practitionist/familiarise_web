@@ -246,14 +246,19 @@ export async function cleanupOldStreamRecordings(): Promise<StreamRetentionResul
  * (a no-op that reports success), so it happened to converge — but only by
  * accident, and with a full day of latency per attempt.
  *
- * Paging fixes the memory shape and `PER_ORG_PAGE_CAP` bounds the time. The
- * cap is deliberately not a silent truncation: `result.errors` records that the
- * org still has candidates, so an org permanently over the cap is visible
- * rather than quietly retried forever at the same ceiling.
+ * Paging fixes the memory shape and `PER_ORG_PAGE_CAP` bounds the time. The cap
+ * is deliberately not a silent truncation: `result.errors` records that the last
+ * page read came back FULL — so an org still over the cap is visible rather than
+ * quietly retried forever at the same ceiling.
+ *
+ * #1829 — the signal is the full final page, not the candidate total. A derived
+ * `PER_ORG_CANDIDATE_CAP` (200 × 5 = 1000) was the old test, and an org with
+ * EXACTLY 1000 stale rows drained every one of them and was then reported as a
+ * failure — a false page on the job that enforces a DPDP obligation, which would
+ * also have cleared itself the next day.
  */
 const CANDIDATE_PAGE_SIZE = 200;
 const PER_ORG_PAGE_CAP = 5;
-const PER_ORG_CANDIDATE_CAP = CANDIDATE_PAGE_SIZE * PER_ORG_PAGE_CAP;
 
 async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResult> {
   const result: StreamRetentionResult = {
@@ -289,6 +294,10 @@ async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResu
     // while this run is still walking, so an offset cursor would skip rows.
     const candidates: RecordingCandidate[] = [];
     let cursor: { createdAt: Date; id: string } | null = null;
+    // Whether a row BEYOND the last one we processed exists — i.e. "is there more
+    // past this page?". Distinct from both the candidate total and "the last page
+    // was full", and the distinction is the whole fix below.
+    let hasMore = false;
 
     for (let page = 0; page < PER_ORG_PAGE_CAP; page++) {
       const batch: (RecordingCandidate & { createdAt: Date })[] =
@@ -308,21 +317,54 @@ async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResu
           },
           select: { id: true, storagePath: true, createdAt: true },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          take: CANDIDATE_PAGE_SIZE,
+          // #1829 — one row MORE than a page, as a lookahead. That extra row is
+          // never processed; it exists only to answer "is there a next page?"
+          // with certainty instead of by inference.
+          //
+          // Inference was the bug: "the last page came back full" cannot tell an
+          // org with exactly 1000 stale rows (which drains completely) from one
+          // with 1001 (which does not), because the walk is cut off at the cap
+          // and the two look identical. With the lookahead they do not: the
+          // 1000-row org's fifth page returns exactly 200 and stops, the 1001-row
+          // org's returns 201 and the 201st row proves a sixth page exists.
+          take: CANDIDATE_PAGE_SIZE + 1,
         });
 
-      candidates.push(...batch);
-      if (batch.length < CANDIDATE_PAGE_SIZE) break;
-      const last = batch[batch.length - 1];
+      // Only the page itself is processed — the lookahead row is a probe.
+      const page = batch.slice(0, CANDIDATE_PAGE_SIZE);
+      hasMore = batch.length > CANDIDATE_PAGE_SIZE;
+      candidates.push(...page);
+      // No next page, so the walk is finished and this org genuinely drained.
+      if (!hasMore) break;
+      // Advance from the last PROCESSED row, not the probe, or the probe would be
+      // re-read as the first row of the next page and nothing would advance.
+      const last = page[page.length - 1];
       cursor = { createdAt: last.createdAt, id: last.id };
     }
 
-    if (candidates.length >= PER_ORG_CANDIDATE_CAP) {
-      // Reported, never silent: an org that can never drain under the cap needs
-      // a human to raise it, and "0 expired" would otherwise read as healthy.
+    // #1829 — the condition is "the last page came back FULL", not "we collected
+    // the cap".
+    //
+    // An org with EXACTLY 1000 stale recordings (CANDIDATE_PAGE_SIZE 200 ×
+    // PER_ORG_PAGE_CAP 5) runs all five pages, tombstones every one, drains
+    // completely — and was then reported as `success: false`, which the job
+    // turns into `process.exitCode = 1` and the workflow's `if: failure()` step
+    // turns into a Slack page and a Sentry event. A clean drain paged as a
+    // failure, on the job that enforces a DPDP obligation, and it would
+    // self-clear the next day, which is the worst combination: a real signal
+    // nobody can reproduce.
+    //
+    // A full final page is the honest question — "is there a sixth page?" — and
+    // it is strictly more accurate: an org at 1001 rows also drains all 1001
+    // here, but it is genuinely at the cap and genuinely needs a human.
+    if (hasMore) {
+      // Reported, never silent: an org that cannot drain under the cap needs a
+      // human to raise it, and "0 expired" would otherwise read as healthy. The
+      // count is what was PROCESSED, and the lookahead is what proves there is
+      // more — so the message is true in both halves.
       result.success = false;
       result.errors.push(
-        `org=${org.id}: ${PER_ORG_CANDIDATE_CAP}+ recordings past retention — raise PER_ORG_PAGE_CAP or the window is not being worked off`,
+        `org=${org.id}: ${candidates.length}+ recordings past retention and more remain after ${PER_ORG_PAGE_CAP} pages — raise PER_ORG_PAGE_CAP or the window is not being worked off`,
       );
     }
 

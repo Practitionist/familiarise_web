@@ -435,6 +435,7 @@ describe("GET /api/health", () => {
           computedAt: null,
         },
         windowDays: null,
+        windowKind: "calendar-month",
         redacted: true,
       });
       expect(body.status).toBe("healthy");
@@ -470,6 +471,10 @@ describe("GET /api/health", () => {
       expect(body.usage.alert).toBe(0.6);
       expect(body.usage.quality.computedAt).toBe("2026-09-29T04:20:00.000Z");
       expect(body.usage.redacted).toBe(true);
+      // The MAU window is the CALENDAR month (Stream resets it monthly), and the
+      // redacted block says so — a reader needs to know which bucket a figure
+      // would have belonged to in order to interpret any future figure.
+      expect(body.usage.windowKind).toBe("calendar-month");
 
       // Neither the usage nor either cap, as a value or a digit sequence.
       for (const secret of [

@@ -377,9 +377,17 @@ export async function handleRecordingReady(
       return;
     }
 
-    // Calculate duration in minutes
-    const startDate = new Date(start_time);
-    const endDate = new Date(end_time);
+    // Calculate duration in minutes.
+    //
+    // #1829 — `eventInstant`, not `new Date`, for the same reason `created_at`
+    // gets it. An Invalid Date is worse than a wrong date here: `duration` is
+    // persisted (Prisma rejects it), and `generateRecordingTitle` calls
+    // `toLocaleDateString` on the value, which THROWS a RangeError on an Invalid
+    // Date. So a single unparseable `start_time` failed the write rather than
+    // dating it approximately — and the sweeper would re-drive the event for the
+    // full 168-hour give-up window before discarding it.
+    const startDate = eventInstant(start_time);
+    const endDate = eventInstant(end_time);
     const durationInMinutes = Math.round(
       (endDate.getTime() - startDate.getTime()) / (1000 * 60),
     );

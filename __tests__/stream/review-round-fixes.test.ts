@@ -174,7 +174,13 @@ describe("the Stream outage ledger is keyed per probe", () => {
     // with different fixes. Folding them into one ledger is what made the table
     // unreadable — one alternating pair of rows per poll.
     expect(written).toHaveLength(2);
-    expect(written.some((w) => /reachable again/i.test(w.summary))).toBe(true);
+    // And the recovery names WHICH probe recovered, so a config fix is never
+    // read as the vendor coming back.
+    expect(
+      written.some(
+        (w) => /recovered/i.test(w.summary) && /webhook-secret/.test(w.summary),
+      ),
+    ).toBe(true);
   });
 
   it("suppresses repeats of an unchanged state", async () => {

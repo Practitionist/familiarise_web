@@ -378,6 +378,87 @@ describe("Stream Client Module", () => {
 
   // #899 — a Stream "channel not found" (code 16 / HTTP 404) is the EXPECTED
   // lazy create-or-join miss; it must not trip the breaker nor reach Sentry.
+  // #1829 — the classifier must read the shape the SDK ACTUALLY throws.
+  //
+  // These cases previously modelled a Stream 429/404 as a plain object carrying
+  // `.status`, which is what `stream-chat`'s `ErrorFromResponse` sets and what
+  // `@stream-io/node-sdk` does NOT. The SDK's own throw site and `.d.ts`:
+  //
+  //   throw new StreamError(`Stream error code ${error.code}: …`, metadata, error.code)
+  //   where metadata = { clientRequestId, responseHeaders, responseCode: response.status, rateLimit }
+  //
+  // so a video error carries the HTTP status at `metadata.responseCode` and its
+  // own enumerable keys are `["metadata", "code"]`. A classifier reading only
+  // `.status` therefore works for chat and is permanently false for video —
+  // which is why the STREAM_QUOTA door this PR added was unreachable in
+  // production while its test passed.
+  describe("#1829 — streamHttpStatus reads both SDK error shapes", () => {
+    it.each([
+      [
+        "stream-chat ErrorFromResponse (.status)",
+        Object.assign(new Error("rate limited"), { status: 429 }),
+        429,
+      ],
+      [
+        "@stream-io/node-sdk StreamError (metadata.responseCode)",
+        Object.assign(new Error("rate limited"), {
+          metadata: { responseCode: 429, responseHeaders: new Map() },
+        }),
+        429,
+      ],
+      [
+        "StreamError with a non-JSON body (code carries the HTTP status)",
+        Object.assign(new Error("Stream error: 404 - Not Found"), {
+          metadata: { responseCode: 404, responseHeaders: new Map() },
+          code: 404,
+        }),
+        404,
+      ],
+      ["Razorpay/Stripe shape (.statusCode)", { statusCode: 429 }, 429],
+      ["a bare Error", new Error("boom"), null],
+      ["a string", "boom", null],
+      ["null", null, null],
+      ["undefined", undefined, null],
+    ])("%s -> %p", async (_label, thrown, expected) => {
+      const { streamHttpStatus } = await import("@/lib/stream-client");
+      expect(streamHttpStatus(thrown)).toBe(expected);
+    });
+
+    it("classifies a REAL video 429 as a rate limit, not an outage", async () => {
+      const { isRateLimitError } = await import("@/lib/stream-client");
+      // Shaped exactly as @stream-io/node-sdk throws it.
+      const videoError = Object.assign(new Error("rate limit"), {
+        metadata: { responseCode: 429, responseHeaders: new Map() },
+        code: 4,
+      });
+      expect(isRateLimitError(videoError)).toBe(true);
+    });
+
+    it("classifies a REAL video 404 as expected, not as an outage", async () => {
+      const { isExpectedStreamError } = await import("@/lib/stream-client");
+      const videoError = Object.assign(new Error("call not found"), {
+        metadata: { responseCode: 404, responseHeaders: new Map() },
+        code: 16,
+      });
+      expect(isExpectedStreamError(videoError)).toBe(true);
+    });
+
+    it("does NOT read a Stream body code as an HTTP status", async () => {
+      const { isExpectedStreamError } = await import("@/lib/stream-client");
+      // `code` is Stream's own error code. Code 16 means "not found", and
+      // treating an arbitrary code as a status would make `code === 429`
+      // indistinguishable from an HTTP 429.
+      expect(
+        isExpectedStreamError(
+          Object.assign(new Error("boom"), {
+            metadata: { responseCode: 500, responseHeaders: new Map() },
+            code: 429,
+          }),
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe("isExpectedStreamError", () => {
     it.each([
       ["code 16 (channel not found)", { code: 16 }, true],

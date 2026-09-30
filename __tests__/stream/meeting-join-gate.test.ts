@@ -60,6 +60,19 @@ jest.mock("../../lib/meetings/access", () => ({
 // jest.mock is hoisted above every const in this file, so the class has to be
 // built INSIDE the factory and read back off the mocked module below.
 jest.mock("../../lib/stream-client", () => ({
+  // #1829 — the REAL classifier, not a mock of it.
+  //
+  // The previous version hand-wrote `isStreamQuotaError` as `.status === 429` and
+  // fed the route an error built the same way, so the mock and the fiction
+  // cancelled and the test passed. `@stream-io/node-sdk` throws `StreamError`,
+  // whose own keys are `["metadata", "code"]` — the HTTP status is at
+  // `metadata.responseCode` and there is no `.status` at all — so against the
+  // real function and a real error shape this door is finally testable.
+  //
+  // `requireActual` is spread FIRST so the client/breaker stubs below still win;
+  // it carries a real `getStreamVideoClient` that would otherwise try to open a
+  // live Stream client mid-test.
+  ...jest.requireActual("../../lib/stream-client"),
   isStreamConfigured: jest.fn(() => true),
   StreamUnavailableError: class StreamUnavailableError extends Error {
     constructor() {
@@ -68,13 +81,6 @@ jest.mock("../../lib/stream-client", () => ({
     }
   },
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
-  // #1829 — the join door now classifies a Stream 429 and answers 503 +
-  // Retry-After instead of reporting it to Sentry as a fault. Modelled as the
-  // real shape: a thrown error with a 429 `status` on it, because the point of
-  // the change is that the ROUTE can tell a quota from a fault, and a mock that
-  // returned a boolean would assert nothing.
-  isStreamQuotaError: (e: unknown) =>
-    (e as { status?: number } | null)?.status === 429,
   STREAM_QUOTA_RETRY_AFTER_SECONDS: 60,
   getStreamVideoClient: jest.fn(() => ({
     video: {
@@ -751,5 +757,44 @@ describe("POST /api/meetings/[meetingId]/join addresses the RESOLVED room (C8)",
     // Never a cid: `client.call(type, id)` with a colon in the id mints a
     // different call than the one membership was granted on.
     expect((await res.json()).callId).toBe("slot-abc");
+  });
+});
+
+/**
+ * #1829 — the STREAM_QUOTA door, exercised with a REAL video error.
+ *
+ * The 503 + Retry-After behaviour was added with a hand-written mock of the
+ * classifier AND a hand-built error, both using `.status` — a field
+ * `@stream-io/node-sdk` does not set. So the door this file was written to
+ * protect was unreachable in production while the test beside it passed.
+ *
+ * The classifier is now the real one, so the error shape is the only thing this
+ * test controls, and it is the shape the SDK actually throws.
+ */
+describe("a real Stream 429 is answered as a quota, not a fault (#1829)", () => {
+  /** Exactly as `@stream-io/node-sdk` throws it: status at metadata.responseCode. */
+  const videoRateLimit = () =>
+    Object.assign(new Error("Stream error code 4: rate limited"), {
+      metadata: { responseCode: 429, responseHeaders: new Map() },
+      code: 4,
+    });
+
+  it("answers 503 with Retry-After, and does not report a fault", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      message: "Access granted as participant",
+      reason: "granted",
+      streamCallId: "occurrence-slot-abc",
+    });
+    // Fail the Stream call the way a real quota does.
+    mockGetOrCreate.mockRejectedValue(videoRateLimit());
+
+    const res = await POST(req, {
+      params: Promise.resolve({ meetingId: "slot-abc" }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBeTruthy();
   });
 });

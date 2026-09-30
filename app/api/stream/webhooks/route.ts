@@ -25,8 +25,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { gunzip as gunzipCb } from "node:zlib";
-import { promisify } from "node:util";
 import { z } from "zod";
 import { verifySignature } from "stream-chat";
 import { streamLogger } from "@/lib/stream-logger";
@@ -38,6 +36,11 @@ import {
   streamBaseEventSchema,
 } from "@/lib/stream/webhook-dispatch";
 import { readBodyBytesWithinCap } from "@/lib/webhooks/read-body";
+import {
+  gunzipWithin,
+  MAX_DECOMPRESSED_BYTES,
+  WebhookPayloadTooLargeError,
+} from "@/lib/webhooks/bounded-inflate";
 import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import {
   markWebhookEventProcessed,
@@ -45,17 +48,20 @@ import {
 } from "@/lib/webhooks/event-log";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
-const gunzip = promisify(gunzipCb);
-
 /**
  * Read the delivery body as the bytes Stream SIGNED.
  *
  * Stream computes its HMAC over the UNCOMPRESSED payload, then optionally gzips
  * it on the wire. `enable_hook_payload_compression` defaults to **true** for
  * apps created after 2026-05-07, with a 256-byte threshold that every recording
- * and session event clears. This app currently has it unset — verified against
- * the live settings — so today the body arrives as plain text and `req.text()`
- * was right by accident.
+ * and session event clears.
+ *
+ * On the compression flag specifically: the field is NOT present in this app's
+ * `getApp` response at all (checked 2026-09-30), so the honest statement is that
+ * we cannot observe it — not that we verified it off. A previous version of
+ * this comment said "verified against the live settings", which asserted a fact
+ * about a default we have no way to read. So the branch below exists because the
+ * flag may be on, not because we know it is.
  *
  * The accident is not worth relying on. If a gzipped body ever arrives, the
  * signature computed over the compressed bytes cannot match, this route answers
@@ -86,7 +92,41 @@ async function readSignedBody(req: NextRequest): Promise<string | null> {
   const isGzipped = raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b;
   if (!isGzipped) return Buffer.from(raw).toString("utf8");
 
-  const decompressed = await gunzip(raw);
+  // #1829 — the inflate needs its OWN bound, not just the request cap.
+  //
+  // `readBodyBytesWithinCap` caps the COMPRESSED input at 256 KiB, and DEFLATE's
+  // maximum ratio is 1032:1. Measured here: 254 MiB of zeroes gzips to 252.8 KiB
+  // and fits under the cap with room to spare. So the cap bounds the envelope
+  // and not the payload, and the envelope is the part an attacker controls for
+  // free.
+  //
+  // That matters more than usual on this route specifically, because it is
+  // deliberately unprotected on two axes: `middleware.ts` exempts
+  // `/api/stream/webhooks` from the edge rate limiter (a webhook cannot present
+  // a session), and it is exempt from maintenance 503s. Nothing stands between
+  // an anonymous caller and this allocation.
+  //
+  // And the order is wrong without it: the body is inflated at :87 and the
+  // signature is only verified at :194, so the allocation happens BEFORE a single
+  // byte is authenticated. 16 MiB is Stream's own ceiling for this
+  // (`MAX_DECOMPRESSED_BYTES` in getstream's own webhook helpers) and is ~40x
+  // the largest realistic call payload.
+  let decompressed: Buffer;
+  try {
+    decompressed = await gunzipWithin(raw, MAX_DECOMPRESSED_BYTES);
+  } catch (err) {
+    if (err instanceof WebhookPayloadTooLargeError) {
+      // Same answer as a request that blew the compressed cap, and for the same
+      // reason: a payload this large is not one we could ever have verified, so
+      // a 5xx would spend Stream's retries on a body that cannot succeed.
+      streamLogger.warn("Stream webhook payload exceeded the inflate ceiling", {
+        compressedBytes: raw.length,
+        limitBytes: err.limitBytes,
+      });
+      return null;
+    }
+    throw err;
+  }
   streamLogger.debug("Decompressed a gzipped Stream webhook payload", {
     compressedBytes: raw.length,
     decompressedBytes: decompressed.length,
@@ -305,8 +345,36 @@ export async function POST(req: NextRequest) {
       // the code did the opposite. The only defence is that the retryable answer
       // is made in the same scope as the control flow that returns it.
       try {
-        await recordStreamEventReceipt(eventId, eventType, event, signature);
-        await markWebhookEventProcessed(eventId, tooOld);
+        // #1829 — the receipt is not discarded here.
+        //
+        // An `isNew: false` receipt means this exact delivery was already
+        // recorded — typically PROCESSED on its first arrival. Stamping
+        // `markWebhookEventProcessed` with no claim takes the unfenced
+        // `update({ where: { eventId } })` branch, which rewrites `error` and
+        // `processedAt` on that existing row. So replaying a captured
+        // (body, signature) pair eight days later relabels a delivery that was
+        // fully handled as `permanent: replay_window_exceeded`.
+        //
+        // No double-processing follows (the `permanent:` prefix keeps the sweeper
+        // away) and no money moves, but `WebhookEvent` is the row an operator and
+        // an auditor read, and a misstatement written there is unrecoverable. The
+        // fix this file is proudest of — `if (!receipt.isNew)` on the dispatch
+        // path — simply was not applied to this branch, and the claim is what
+        // makes the stamp safe to attempt at all.
+        const receipt = await recordStreamEventReceipt(
+          eventId,
+          eventType,
+          event,
+          signature,
+        );
+        if (receipt.isNew) {
+          await markWebhookEventProcessed(eventId, tooOld, receipt.claim);
+        } else {
+          streamLogger.warn(
+            "Out-of-window replay of an already-recorded delivery — leaving its row untouched",
+            { eventId, eventType },
+          );
+        }
       } catch (persistError) {
         // Nothing was recorded and nothing was acted on, so this IS the case
         // worth a retryable answer — the same reasoning as the receipt failure

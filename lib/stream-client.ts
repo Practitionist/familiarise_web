@@ -193,8 +193,62 @@ export class StreamUnavailableError extends Error {
  */
 export function isExpectedStreamError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const e = error as { code?: number | null; status?: number };
-  return e.code === 16 || e.status === 404;
+  return streamErrorCode(error) === 16 || streamHttpStatus(error) === 404;
+}
+
+/**
+ * #1829 — the HTTP status of a Stream error, across BOTH SDKs.
+ *
+ * There is no single place either SDK puts it, and reading the wrong one makes a
+ * classifier silently always-false rather than throwing:
+ *
+ *   `@stream-io/node-sdk` (video/live-streaming) throws `StreamError`, whose own
+ *   enumerable keys are `["metadata", "code"]`. The status is at
+ *   `metadata.responseCode`, built from `response.status`. There is NO `.status`
+ *   and NO `.statusCode` — the class does not define them.
+ *
+ *   `stream-chat` throws `ErrorFromResponse`, which DOES set `.status` (and
+ *   `.code` from the body).
+ *
+ * So a classifier reading only `.status` works for chat and is dead for every
+ * video call, with nothing to indicate which. `isRateLimitError` was exactly
+ * that, which made the STREAM_QUOTA path unreachable from the two routes that
+ * document it and let a 429 trip the circuit breaker — the opposite of the
+ * intent, and the 2026-08-23 incident this file's docblock claims to have fixed.
+ *
+ * Order matters: `metadata.responseCode` is authoritative for the video SDK
+ * because it is set from the response itself, whereas `code` is the body's
+ * `code` field and is a Stream error code (16 = not-found), not an HTTP status.
+ * `status` is checked first because for `stream-chat` it is the direct value.
+ */
+export function streamHttpStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const e = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    metadata?: { responseCode?: unknown };
+  };
+  // `stream-chat`'s ErrorFromResponse.
+  if (typeof e.status === "number") return e.status;
+  // `@stream-io/node-sdk`'s StreamError — the HTTP response status.
+  if (typeof e.metadata?.responseCode === "number")
+    return e.metadata.responseCode;
+  // Razorpay/Stripe-shaped, kept because sibling code in this repo is written
+  // against it and a shared helper that silently drops those would be its own
+  // regression.
+  if (typeof e.statusCode === "number") return e.statusCode;
+  return null;
+}
+
+/**
+ * The Stream error `code` from a response BODY (`16` = not found), or the HTTP
+ * status when the body was not JSON — the SDK passes `response.status` into the
+ * `code` slot on that path, so the two overlap harmlessly.
+ */
+export function streamErrorCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "number" ? code : null;
 }
 
 /**
@@ -209,8 +263,7 @@ export function isExpectedStreamError(error: unknown): boolean {
  */
 export function isRateLimitError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const e = error as { status?: number };
-  return e.status === 429;
+  return streamHttpStatus(error) === 429;
 }
 
 /**

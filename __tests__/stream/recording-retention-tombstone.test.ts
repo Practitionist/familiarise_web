@@ -191,7 +191,10 @@ describe("D7 — the candidate query is bounded and paged", () => {
     await cleanupOldStreamRecordings();
 
     const first = mockRecordingFindMany.mock.calls[0][0];
-    expect(first.take).toBe(200);
+    // #1829 — a page PLUS ONE row, as a lookahead probe. Bounded either way;
+    // the extra row is what makes "is there a next page?" a certainty rather
+    // than an inference.
+    expect(first.take).toBe(201);
     // A `select`, not the whole row.
     expect(first.select).toEqual({
       id: true,
@@ -214,7 +217,10 @@ describe("D7 — the candidate query is bounded and paged", () => {
   });
 
   it("walks the next page with a keyset cursor rather than a skip offset", async () => {
-    const full = Array.from({ length: 200 }, (_, i) => ({
+    // 201 rows: a full page plus the lookahead probe. The probe is what tells
+    // the walk a second page exists, so a 200-row first page now correctly ends
+    // the walk — this fixture has to carry the extra row to reach page two.
+    const full = Array.from({ length: 201 }, (_, i) => ({
       id: `rec_${i}`,
       storagePath: null,
       createdAt: OLD,
@@ -226,10 +232,110 @@ describe("D7 — the candidate query is bounded and paged", () => {
     await cleanupOldStreamRecordings();
 
     const second = mockRecordingFindMany.mock.calls[1][0];
-    expect(second.take).toBe(200);
+    expect(second.take).toBe(201);
     // `skip` would be wrong: rows tombstoned by page 1 leave the `notIn` filter
     // while this run is still walking, so an offset cursor would skip rows.
     expect(second.skip).toBeUndefined();
     expect(JSON.stringify(second.where.OR)).toContain("rec_199");
+  });
+});
+
+/**
+ * #1829 — the "there may be more" signal must not fire on a clean drain.
+ *
+ * `PER_ORG_CANDIDATE_CAP` is CANDIDATE_PAGE_SIZE (200) × PER_ORG_PAGE_CAP (5) =
+ * 1000. An org with exactly 1000 stale recordings runs all five pages,
+ * tombstones every one, and empties completely — and the old check
+ * (`candidates.length >= PER_ORG_CANDIDATE_CAP`) reported that as a failure,
+ * which the job turns into a non-zero exit and the workflow's `if: failure()`
+ * step turns into a Slack page and a Sentry event.
+ *
+ * So a perfectly successful run paged, on the job that enforces a DPDP
+ * obligation, and it would clear itself the next day. A real signal that cannot
+ * be reproduced is worse than no signal, because it trains the reader to ignore
+ * this job.
+ */
+describe("the candidate-cap signal (#1829)", () => {
+  /**
+   * A queue of exactly `total` rows, served the way the script paginates.
+   *
+   * Keyset, not offset: the script asks for `CANDIDATE_PAGE_SIZE + 1` and then
+   * processes at most `CANDIDATE_PAGE_SIZE`, advancing its cursor from the last
+   * PROCESSED row. So each call must serve the rows after the cursor, one page
+   * plus the lookahead probe — and the probe is never handed back as a
+   * candidate.
+   */
+  const queue = (total: number) => {
+    let served = 0;
+    mockRecordingFindMany.mockImplementation(async () => {
+      const remaining = total - served;
+      const n = Math.min(201, remaining);
+      const rows = Array.from({ length: n }, (_, i) =>
+        candidate(`rec_${served + i}`, null),
+      );
+      // Mirror the script: keep a full page, and treat a 201st row as proof that
+      // another page exists without consuming it.
+      const consumed = Math.min(200, n);
+      served += consumed;
+      return rows;
+    });
+  };
+
+  it("drains exactly PER_ORG_CANDIDATE_CAP rows WITHOUT reporting a failure", async () => {
+    // 200 x 5 = 1000. Every one of these rows is tombstoned and this org is
+    // completely drained by the end of the run — so reporting a failure here is a
+    // lie, and the job turns that lie into a non-zero exit and the workflow's
+    // `if: failure()` step into a Slack page and a Sentry event.
+    //
+    // This case is only expressible because the page walk reads ONE ROW BEYOND a
+    // full page. Without that lookahead, "the last page came back full" is
+    // equally true for 1000 and 1001 rows, so the two cannot be told apart and
+    // no test can pin the correct one.
+    queue(1000);
+    const result = await cleanupOldStreamRecordings();
+
+    expect(result.errors.join(" ")).not.toContain("past retention");
+    expect(result.success).toBe(true);
+    // And it really did collect and process all of them.
+    expect(result.scanned).toBe(1000);
+  });
+
+  it("reports a failure when rows genuinely remain past the cap", async () => {
+    // One row more. The lookahead is what makes this distinguishable from the
+    // 1000-row case above, and the message must say more REMAINS rather than
+    // quoting a fixed cap, because the count is what was processed.
+    queue(1001);
+    const result = await cleanupOldStreamRecordings();
+
+    expect(result.errors.join(" ")).toContain("past retention");
+    expect(result.errors.join(" ")).toContain("more remain");
+    expect(result.scanned).toBe(1000);
+  });
+
+  it("is silent below the cap", async () => {
+    queue(137);
+    const result = await cleanupOldStreamRecordings();
+
+    expect(result.errors.join(" ")).not.toContain("past retention");
+    expect(result.success).toBe(true);
+    expect(result.scanned).toBe(137);
+  });
+
+  it("is silent on an empty queue", async () => {
+    queue(0);
+    const result = await cleanupOldStreamRecordings();
+
+    expect(result.errors.join(" ")).not.toContain("past retention");
+  });
+
+  it("asks for one row beyond a page, and never processes the probe", async () => {
+    queue(3);
+    await cleanupOldStreamRecordings();
+
+    const call = mockRecordingFindMany.mock.calls[0][0];
+    expect(call.take).toBe(201);
+    // With 3 rows the single page returns 3 — under the page size, so nothing
+    // was sliced off and no row is lost to the probe.
+    expect(mockRecordingFindMany.mock.calls[0][0].take).toBe(201);
   });
 });

@@ -69,7 +69,11 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
     expect(mockRecordSystemErrorSafe).toHaveBeenCalledTimes(1);
     const row = lastRow()!;
     expect(row.category).toBe(STREAM_EVENT_CATEGORY);
-    expect(row.summary).toContain("unreachable");
+    // The failure side names the probe AND the reason, so "problem" is never a
+    // bare unexplained row in the table an operator reads.
+    expect(row.summary).toContain("problem");
+    expect(row.summary).toContain("reachability");
+    expect(row.summary).toContain("UNREACHABLE");
     expect(row.summary).toContain("UNREACHABLE");
     // `recordSystemError` has no `op` parameter, so the operation name travels
     // in `context` — recorded, not silently dropped.
@@ -116,7 +120,11 @@ describe("recordStreamOutage — transition-gated (#E6)", () => {
 
     expect(mockRecordSystemErrorSafe).toHaveBeenCalledTimes(2);
     const row = lastRow()!;
-    expect(row.summary).toContain("reachable again");
+    // The probe is named: a webhook-secret recovery is not the vendor coming
+    // back, and the prose is the column a human reads. This case is the
+    // `reachability` probe, so that is what the sentence must say.
+    expect(row.summary).toContain("recovered");
+    expect(row.summary).toContain("reachability");
     expect(row.context).toMatchObject({
       recovering: true,
       reason: "REACHABLE",

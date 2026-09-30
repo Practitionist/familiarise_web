@@ -32,6 +32,7 @@ import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
+  streamHttpStatus,
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "../../lib/stream/call-cid";
@@ -98,8 +99,15 @@ const MAX_STREAM_LOOKUPS = 200;
  * timestamp onto a call that was still billing.
  */
 function isCallMissing(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  return (error as { statusCode?: unknown }).statusCode === 404;
+  // #1829 — this read `.statusCode`, which is a Razorpay/Stripe-shaped field. A
+  // `call.get()` on a deleted call throws `StreamError` from @stream-io/node-sdk,
+  // whose own keys are `["metadata", "code"]`: the status is at
+  // `metadata.responseCode` and there is no `statusCode` at all. So the check was
+  // always false, the 404 branch was dead code, and a call Stream has genuinely
+  // deleted kept `endedAt: null` forever — re-selected and re-asked on every
+  // 30-minute run, with the `streamNotFound` counter permanently 0, which is the
+  // exact distinction this counter was added to report.
+  return streamHttpStatus(error) === 404;
 }
 
 // #476 — entry-level cron lock; fail-open (repeat-safe side effects).

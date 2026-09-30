@@ -60,7 +60,17 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
 }));
 
+// #1829 — the REAL error classifiers, not a mock of them. This suite's whole
+// point is the structured 404 check, and mocking the classifier is what let
+// `isCallMissing` read a field the video SDK does not have while the test
+// modelled the same wrong field: two errors cancelling, so the branch read as
+// covered when it was dead code in production.
+//
+// The actual module is spread FIRST so the client/breaker stubs below win —
+// requireActual carries a real `getStreamVideoClient` that would otherwise open
+// a live Stream client mid-test.
 jest.mock("../../lib/stream-client", () => ({
+  ...jest.requireActual("../../lib/stream-client"),
   isStreamConfigured: () => mockStreamConfigured,
   withStreamCircuitBreaker: <T>(fn: () => T | Promise<T>) => fn(),
   getStreamVideoClient: () => ({
@@ -74,6 +84,19 @@ import {
 } from "../../jobs/meetings/reconcile-orphaned-sessions";
 
 const SLOT_END = new Date("2026-09-13T11:00:00.000Z");
+
+/**
+ * An error shaped exactly as `@stream-io/node-sdk` throws one.
+ *
+ * From the SDK's own throw site: `new StreamError(message, metadata, code)`
+ * where `metadata.responseCode` is `response.status`. `StreamError` defines only
+ * `metadata` and `code`, so there is no `status` and no `statusCode`.
+ */
+const streamError = (responseCode: number, code?: number) =>
+  Object.assign(new Error(`Stream error: ${responseCode}`), {
+    metadata: { responseCode, responseHeaders: new Map() },
+    ...(code === undefined ? {} : { code }),
+  });
 
 const session = (id: string) => ({
   id,
@@ -182,9 +205,7 @@ describe("a confirmed end is still stamped", () => {
 
   it("closes a row whose call is definitively gone (404)", async () => {
     mockFindMany.mockResolvedValue([session("ms-1")]);
-    mockCallGet.mockRejectedValue(
-      Object.assign(new Error("not found"), { statusCode: 404 }),
-    );
+    mockCallGet.mockRejectedValue(streamError(404));
 
     const result = await run();
 
@@ -197,6 +218,45 @@ describe("a confirmed end is still stamped", () => {
     });
     expect(result.streamNotFound).toBe(1);
     expect(result.unconfirmed).toBe(0);
+  });
+
+  // #1829 — this suite exercises the REAL `isCallMissing` (it does not mock
+  // `lib/stream-client`), so the error it throws has to be the error the video
+  // SDK actually throws. It modelled a 404 as `{ statusCode: 404 }`, which is
+  // the Razorpay/Stripe idiom, and the classifier read that same field — so the
+  // two mistakes cancelled and the test passed. Against a real `StreamError`
+  // neither field exists and the whole branch was dead code in production.
+  it("recognises a 404 in the shape @stream-io/node-sdk really throws", async () => {
+    mockFindMany.mockResolvedValue([session("ms-1")]);
+    const thrown = streamError(404);
+
+    // Belt and braces: assert the fixture is what we claim it is, so a future
+    // edit to the helper cannot quietly turn this back into a passing fiction.
+    expect(thrown).not.toHaveProperty("status");
+    expect(thrown).not.toHaveProperty("statusCode");
+    expect(
+      (thrown as { metadata: { responseCode: number } }).metadata.responseCode,
+    ).toBe(404);
+
+    mockCallGet.mockRejectedValue(thrown);
+
+    const result = await run();
+
+    expect(result.streamNotFound).toBe(1);
+  });
+
+  it("does NOT close a row on an error that is not a 404", async () => {
+    // A 500 is not evidence the call is gone, and writing a past `endedAt` on
+    // one would close a live call's row — the over-eager behaviour this
+    // structured check was introduced to prevent.
+    mockFindMany.mockResolvedValue([session("ms-1")]);
+    mockCallGet.mockRejectedValue(streamError(500, 4));
+
+    const result = await run();
+
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(result.streamNotFound).toBe(0);
+    expect(result.unconfirmed).toBe(1);
   });
 });
 

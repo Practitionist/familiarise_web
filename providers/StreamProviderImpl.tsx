@@ -470,6 +470,69 @@ const StreamProviderImpl = ({
   // connectChat/connectVideo RESOLVE to their client (or null) instead of each
   // setting its own state, so the caller can commit both at once and the tree
   // changes shape a single time. See SettledStreamClients.
+  /**
+   * #1829 — kick the channel sync for a connected user, unless it is already
+   * done for this tab.
+   *
+   * Extracted from `connectChat` because the same-user RECONNECT path needs it
+   * too, and did not have it. The `openConnection()` branch above returns
+   * before the block this used to live in, so every mid-session flap — which
+   * lands on that branch, since `connectUser` is not re-runnable on a client
+   * that already holds the userID — cleared the "sync kicked" guard in the
+   * grace timer and then never acted on it. Three comments asserted the
+   * reconnect re-reconciled; the code did not.
+   *
+   * Not awaited, for the same reason as ever: the sync costs
+   * `1 + W + C + D + ceil(N/100)` round-trips and must not sit on the connect
+   * path. Eventual correctness on a partial failure belongs to the reconcile
+   * cron, not to the critical path of a dashboard load.
+   */
+  const kickChannelSync = useCallback((userId: string): void => {
+    const syncKey = `stream_sync_${userId}`;
+    const alreadySynced =
+      clientSyncCompletedUsers.has(userId) ||
+      (typeof sessionStorage !== "undefined" &&
+        sessionStorage.getItem(syncKey) === "1");
+
+    if (alreadySynced) {
+      streamLogger.debug("Skipping channel sync (already completed)", {
+        userId,
+      });
+      return;
+    }
+
+    streamLogger.info("Starting initial channel sync (background)", {
+      userId,
+    });
+    // Marked BEFORE the call, not after: this flag means "we have kicked the
+    // sync for this user", and marking on completion let a re-render start a
+    // second one while the first was still in flight.
+    clientSyncCompletedUsers.add(userId);
+    void syncUserEventChannels(userId)
+      .then((result) => {
+        // `syncUserEventChannels` reports failure by RESOLVING with
+        // `{ success: false }` rather than rejecting, so a `.then` that
+        // ignores its argument treats a failed sync as a completed one — and
+        // `sessionStorage` then suppresses the retry for the rest of the tab's
+        // life. The `.catch` below only ever saw the thrown case.
+        if (!result?.success) {
+          markSyncIncomplete(userId, syncKey);
+          streamLogger.warn("Channel sync reported failure", {
+            userId,
+            error: result?.error,
+          });
+          return;
+        }
+        if (typeof sessionStorage !== "undefined") {
+          sessionStorage.setItem(syncKey, "1");
+        }
+      })
+      .catch((error) => {
+        markSyncIncomplete(userId, syncKey);
+        streamLogger.error("Channel sync failed", { userId, error });
+      });
+  }, []);
+
   const connectChat = useCallback(async () => {
     if (!enableChat || !userDetails || !apiKey) return null;
 
@@ -539,6 +602,11 @@ const StreamProviderImpl = ({
         setGlobalChatClient(client);
         setCurrentStreamUserId(userDetails.id);
         setChatConnected(true);
+        // #1829 — a LIVE socket is not proof the sync ran. The video client
+        // connects the chat singleton internally, so this branch also serves a
+        // reconnect that landed while the socket happened to be up, and the
+        // guard may have been cleared for exactly that reason.
+        kickChannelSync(userDetails.id);
         return client;
       }
 
@@ -577,6 +645,12 @@ const StreamProviderImpl = ({
         setGlobalChatClient(client);
         setCurrentStreamUserId(userDetails.id);
         setChatConnected(true);
+        // #1829 — the reconnect reconciles channels. This branch returns before
+        // the block that used to hold the sync, so a mid-session flap reopened
+        // the socket and left every membership exactly as it was at the moment
+        // the network went away. The grace timer clears the "sync kicked" guard
+        // precisely so this can act on it, and it was not.
+        kickChannelSync(userDetails.id);
         return client;
       }
 
@@ -613,73 +687,10 @@ const StreamProviderImpl = ({
 
       setChatConnected(true);
 
-      // Initial channel sync — once per user per browser session.
-      // The in-memory Set resets on page reload (client module re-evaluation),
-      // so we persist to sessionStorage to survive refreshes within the same tab.
-      const syncKey = `stream_sync_${userDetails.id}`;
-      const alreadySynced =
-        clientSyncCompletedUsers.has(userDetails.id) ||
-        (typeof sessionStorage !== "undefined" &&
-          sessionStorage.getItem(syncKey) === "1");
-
-      if (!alreadySynced) {
-        // #1134 P1-19 — NOT awaited. This used to block the connect: the sync
-        // costs roughly `1 + W + C + D + ceil(N/100)` Stream round-trips in
-        // batches of five, so a consultant with 200 clients waited 8-20 seconds
-        // with chat apparently dead before `chatConnected` ever went true.
-        //
-        // Chat is usable the moment the socket is up; channels stream into the
-        // sidebar as they land, because it already re-renders on Stream events.
-        // A tab closed mid-sync is caught by the reconcile cron, which is where
-        // eventual correctness belongs — not on the critical path of every
-        // dashboard load.
-        streamLogger.info("Starting initial channel sync (background)", {
-          userId: userDetails.id,
-        });
-        // Marked BEFORE the call, not after: this flag means "we have kicked
-        // the sync for this user", and marking on completion let a re-render
-        // start a second one while the first was still in flight.
-        clientSyncCompletedUsers.add(userDetails.id);
-        void syncUserEventChannels(userDetails.id)
-          .then((result) => {
-            // `syncUserEventChannels` reports failure by RESOLVING with
-            // `{ success: false }` rather than rejecting, so a `.then` that
-            // ignores its argument treats a failed sync as a completed one —
-            // and `sessionStorage` then suppresses the retry for the rest of
-            // the tab's life. The `.catch` below only ever saw the thrown case.
-            if (!result?.success) {
-              markSyncIncomplete(userDetails.id, syncKey);
-              streamLogger.warn("Channel sync reported failure", {
-                userId: userDetails.id,
-                error: result?.error,
-              });
-              return;
-            }
-            if (typeof sessionStorage !== "undefined") {
-              sessionStorage.setItem(syncKey, "1");
-            }
-            streamLogger.info("Initial channel sync completed", {
-              userId: userDetails.id,
-            });
-          })
-          .catch((syncError) => {
-            // Deliberately not persisted to sessionStorage, so the next load
-            // retries rather than assuming this user is reconciled.
-            markSyncIncomplete(userDetails.id, syncKey);
-            streamLogger.warn("Channel sync failed", {
-              userId: userDetails.id,
-              error: syncError,
-            });
-          });
-      } else {
-        streamLogger.debug("Skipping channel sync (already completed)", {
-          userId: userDetails.id,
-        });
-      }
-
-      streamLogger.info("Chat connection established", {
-        userId: userDetails.id,
-      });
+      // Initial channel sync — once per user per browser session. The in-memory
+      // Set resets on page reload (client module re-evaluation), so `sessionStorage`
+      // is what carries the "already did this" fact across a refresh in one tab.
+      kickChannelSync(userDetails.id);
       return client;
     } catch (error) {
       streamLogger.warn("Chat connection failed (will retry)", {
@@ -690,7 +701,9 @@ const StreamProviderImpl = ({
     } finally {
       isChatConnectingRef.current = false;
     }
-  }, [enableChat, userDetails, getCachedToken]);
+    // kickChannelSync is a stable useCallback([]) reading only module-level state,
+    // so listing it costs nothing and keeps the hook honest.
+  }, [enableChat, userDetails, getCachedToken, kickChannelSync]);
 
   const connectVideo = useCallback(async () => {
     if (!enableVideo || !userDetails || !apiKey) return null;
@@ -1061,9 +1074,12 @@ const StreamProviderImpl = ({
 
       if (event.online) {
         cancelGrace();
-        // The socket came back on its own. Clearing the sync guard is what makes
-        // the NEXT connect re-reconcile; the sidebar refetch happens inside
-        // `connectChat`, which the retry below runs.
+        // The socket came back on its own, so no reconnect is needed and
+        // `connectChat` does not run — which means the sync guard is NOT
+        // cleared here. That is correct: a self-recovered socket did not lose
+        // the channel list, and the SDK restores `activeChannels` on reopen.
+        // The grace timer below is the path that needs the guard cleared, and
+        // that is the one that goes through `connectChat`.
         streamLogger.debug("Chat socket recovered", {
           userId: userDetails?.id,
         });
@@ -1088,6 +1104,11 @@ const StreamProviderImpl = ({
         if (userDetails?.id) {
           // Undo the "sync kicked" marks so the reconnect actually reconciles
           // channels instead of adopting a session that says it already did.
+          //
+          // #1829 — this only works because the reconnect path now KICKS the
+          // sync. It previously cleared the guard and then returned out of
+          // `connectChat` before the block that would have used it, so every
+          // mid-session flap reopened the socket and reconciled nothing.
           markSyncIncomplete(userDetails.id, `stream_sync_${userDetails.id}`);
         }
         // The same path a cold connect takes, so the backoff ladder, the failure
