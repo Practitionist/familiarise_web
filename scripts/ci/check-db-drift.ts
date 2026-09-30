@@ -61,9 +61,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  const known: KnownEntry[] = JSON.parse(
-    fs.readFileSync(KNOWN_DRIFT, "utf8"),
-  ).enumLabelsInDbNotInSchema;
+  // Both allowlists feed the same `KnownEntry` shape; which one applies is
+  // decided by the direction of the drift, not by the lookup.
+  const driftFile = JSON.parse(fs.readFileSync(KNOWN_DRIFT, "utf8"));
+  const known: KnownEntry[] = [
+    ...(driftFile.enumLabelsInDbNotInSchema ?? []),
+    ...(driftFile.enumLabelsInSchemaNotInDb ?? []),
+  ];
 
   // `now` is only used to expire allowlist entries; a stale allowlist must not
   // outlive its own deadline.
