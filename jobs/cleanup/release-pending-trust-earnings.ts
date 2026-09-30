@@ -16,6 +16,27 @@
  * Designed to be safe to run alongside the existing
  * `release-earnings.ts` cron — they touch disjoint rows (PENDING_TRUST
  * here, PENDING with `holdUntil <= now` there).
+ *
+ * ## The park has no timeout — so this job also WATCHES it
+ *
+ * The release above is condition-driven only. A sponsor that is never verified
+ * and never pays an invoice parks its consultant's earnings forever: no row
+ * ages out, no timer fires, and the amount is excluded from
+ * `EarningsSummary.totalEarnings`, so the revenue is invisible as well as owed.
+ * That is the gap this half of the job closes — it grades every parked row by
+ * age and escalates, WITHOUT ever releasing on age. Releasing because a row got
+ * old would hand the money straight back to the invoice-fraud case the park
+ * exists to prevent, so the severity ladder below is detect-only and the two
+ * concerns share no code path.
+ *
+ * Grades (thresholds + the pure grader live in the reconciler, which owns the
+ * PENDING_TRUST_PARK_STALE finding kind, so the alert and the report can never
+ * disagree on what "stale" means):
+ *   ≥24h → SystemEvent WARN + a non-paging Sentry message
+ *   ≥72h → SystemEvent ERROR + `reportSentryError`, which pages
+ *
+ * The hourly cadence is the throttle: a row crosses each rung once, so there is
+ * no dedupe state to keep and nothing to migrate.
  */
 
 // Why: tsx does not auto-load .env when this script runs outside the
@@ -31,11 +52,187 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
+import { sumPaise } from "@/lib/payments/utils/money";
+import {
+  groupPendingTrustParks,
+  PENDING_TRUST_PARK_PAGE_MS,
+  PENDING_TRUST_PARK_WARN_MS,
+  type PendingTrustParkRow,
+} from "../../scripts/reconcile/reconcile-ledgers";
 
 export interface ReleasePendingTrustResult {
   scanned: number;
   released: number;
   errors: string[];
+  /** Rows still parked after this run's release pass (unlocked sponsors). */
+  stillParked: number;
+  /** Sponsors parked past PENDING_TRUST_PARK_WARN_MS — the operator's to fix. */
+  stalledOrgs: number;
+  /** Sponsors past PENDING_TRUST_PARK_PAGE_MS; these are the ones that paged. */
+  pagedOrgs: number;
+  /** Paise still withheld across every stalled sponsor. */
+  stalledPaise: number;
+}
+
+/**
+ * Every currently-parked row, normalised across the two earnings tables so the
+ * grader can group it by the sponsor that can unblock it.
+ *
+ * The park keys on `payment.organizationId` (the org that OWES the invoice),
+ * not the expert's host org, so the consultant side joins through the payment —
+ * the same join the release pass below uses.
+ */
+async function readParkedRows(): Promise<PendingTrustParkRow[]> {
+  const [consultantParks, orgParks] = await Promise.all([
+    prisma.consultantEarnings.findMany({
+      where: { status: EarningStatus.PENDING_TRUST },
+      select: {
+        id: true,
+        consultantSharePaise: true,
+        createdAt: true,
+        payment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.organizationEarnings.findMany({
+      where: { status: EarningStatus.PENDING_TRUST },
+      select: {
+        id: true,
+        organizationId: true,
+        orgSharePaise: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+  const rows: PendingTrustParkRow[] = [];
+  for (const ce of consultantParks) {
+    if (!ce.payment.organizationId) continue;
+    rows.push({
+      earningId: ce.id,
+      table: "ConsultantEarnings",
+      sponsorOrganizationId: ce.payment.organizationId,
+      amountPaise: sumPaise(ce.consultantSharePaise),
+      createdAt: ce.createdAt,
+    });
+  }
+  for (const oe of orgParks) {
+    rows.push({
+      earningId: oe.id,
+      table: "OrganizationEarnings",
+      sponsorOrganizationId: oe.organizationId,
+      amountPaise: sumPaise(oe.orgSharePaise),
+      createdAt: oe.createdAt,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Grade the parked rows by age and escalate.
+ *
+ * Writes ONE SystemEvent per stalled sponsor (the operator's durable row, on
+ * the same `PAYOUT` category the payout service uses) and one Sentry report
+ * per group. NONE of this can release anything: it runs before the release
+ * pass, reads a snapshot, and only ever calls observability helpers.
+ */
+async function auditStalledParks(
+  result: ReleasePendingTrustResult,
+  now: Date,
+): Promise<void> {
+  const rows = await readParkedRows();
+  result.stillParked = rows.length;
+
+  const stalled = groupPendingTrustParks(rows, now).filter(
+    (g) => g.severity !== "NONE",
+  );
+  if (stalled.length === 0) return;
+
+  result.stalledOrgs = stalled.length;
+  for (const g of stalled) {
+    if (g.severity === "ERROR") result.pagedOrgs += 1;
+    result.stalledPaise += g.parkedPaise;
+  }
+
+  // Batched, not per-group fire-and-forget: the deploy env is documented at
+  // PG_POOL_MAX=1 (lib/prisma.ts), so one unbounded burst of inserts queues
+  // behind each other and loses rows to the connect timeout — and `*Safe`
+  // resolves even when the insert fails, which would report success having
+  // recorded nothing. Same treatment as sweep-abandoned-overage-charges.
+  const WRITE_BATCH = 10;
+  const pending: Promise<void>[] = [];
+  for (const g of stalled) {
+    const ageHours = Math.round(
+      (now.getTime() - g.oldestCreatedAt.getTime()) / (60 * 60 * 1000),
+    );
+    const message =
+      `PENDING_TRUST park stale: sponsor ${g.organizationId} is withholding ` +
+      `${g.earningCount} earning(s) worth ${g.parkedPaise}p for ${ageHours}h ` +
+      `(warn at ${PENDING_TRUST_PARK_WARN_MS / 3_600_000}h, page at ` +
+      `${PENDING_TRUST_PARK_PAGE_MS / 3_600_000}h). Not auto-released by age — ` +
+      `the anti-invoice-fraud guard still holds. Unblock by verifying the org ` +
+      `(status=ACTIVE) or having it pay one invoice.`;
+    const context = {
+      sponsorOrganizationId: g.organizationId,
+      earningCount: g.earningCount,
+      parkedPaise: g.parkedPaise,
+      oldestCreatedAt: g.oldestCreatedAt.toISOString(),
+      ageHours,
+      severity: g.severity,
+      sampleEarningIds: g.sampleEarningIds,
+      warnAfterMs: PENDING_TRUST_PARK_WARN_MS,
+      pageAfterMs: PENDING_TRUST_PARK_PAGE_MS,
+    };
+    // Awaited per batch so the rows are durable before `$disconnect()`.
+    pending.push(
+      recordSystemEventSafe({
+        organizationId: g.organizationId,
+        category: "PAYOUT",
+        severity: g.severity === "ERROR" ? "ERROR" : "WARN",
+        message,
+        context,
+      }),
+    );
+    if (g.severity === "ERROR") {
+      // expected:false leaves the level unset so Sentry's own error level
+      // applies and an alert rule fires — this is the page.
+      reportSentryError(new Error(message), {
+        subsystem: "jobs",
+        op: "pending-trust-park-stale",
+        expected: false,
+        extra: context,
+      });
+    } else {
+      // A 24h park is a real but not-yet-escalated condition: keep it
+      // findable at warning level without opening an incident for it.
+      reportSentryMessage("PENDING_TRUST_PARK_STALE", {
+        subsystem: "jobs",
+        op: "pending-trust-park-stale",
+        expected: true,
+        level: "warning",
+        extra: context,
+      });
+    }
+    if (pending.length >= WRITE_BATCH) {
+      await Promise.all(pending);
+      pending.length = 0;
+    }
+  }
+  if (pending.length > 0) await Promise.all(pending);
+
+  console.log(
+    `[release-pending-trust-earnings] STALLED PENDING_TRUST parks: ` +
+      `${stalled.length} sponsor(s) withholding ${result.stalledPaise}p ` +
+      `(${result.pagedOrgs} paging) — see SystemEvent category=PAYOUT`,
+  );
+  Sentry.logger.warn("job:release-pending-trust-earnings stalled parks", {
+    stalledOrgs: stalled.length,
+    pagedOrgs: result.pagedOrgs,
+    stalledPaise: result.stalledPaise,
+  });
 }
 
 // #476 — fail-closed: the CAS updateMany below is the correctness layer; this
@@ -54,7 +251,18 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
     scanned: 0,
     released: 0,
     errors: [],
+    stillParked: 0,
+    stalledOrgs: 0,
+    pagedOrgs: 0,
+    stalledPaise: 0,
   };
+
+  // Step 0: WATCH the park before anything can return early. `unlockedOrgIds`
+  // is empty precisely when no sponsor has verified or paid — which is the
+  // stalled case, so any check placed after that short-circuit would never
+  // fire in the one situation it exists for.
+  const now = new Date();
+  await auditStalledParks(result, now);
 
   // Step 1: orgs that are now ACTIVE (admin verified them).
   const verifiedOrgIds = (
@@ -78,6 +286,7 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
   );
 
   if (unlockedOrgIds.length === 0) {
+    // Nothing unlocked, so nothing was released: the snapshot count stands.
     return result;
   }
 
@@ -105,7 +314,6 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
   if (result.scanned === 0) {
     return result;
   }
-
   // CAS on status inside each updateMany so a concurrent refund/hold that
   // moved a row out of PENDING_TRUST between the scan and the write is not
   // clobbered back to PENDING.
@@ -138,12 +346,19 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
     });
   }
 
+  // The watchdog read every parked row before the release pass; the rows this
+  // run released were all in that set, so the remainder is what stayed parked.
+  result.stillParked = Math.max(0, result.stillParked - result.released);
+
   console.log(
-    `[release-pending-trust-earnings] scanned=${result.scanned} released=${result.released} errors=${result.errors.length}`,
+    `[release-pending-trust-earnings] scanned=${result.scanned} released=${result.released} still_parked=${result.stillParked} stalled_orgs=${result.stalledOrgs} paged=${result.pagedOrgs} errors=${result.errors.length}`,
   );
   Sentry.logger.info("job:release-pending-trust-earnings finished", {
     scanned: result.scanned,
     released: result.released,
+    stillParked: result.stillParked,
+    stalledOrgs: result.stalledOrgs,
+    pagedOrgs: result.pagedOrgs,
     errors: result.errors.length,
   });
   return result;
