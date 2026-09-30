@@ -117,10 +117,33 @@ async function main(): Promise<void> {
     }
 
     if (schemaOnly.length > 0) {
-      errors.push(
-        `${name}: schema has label(s) the database does not: ${schemaOnly.join(", ")}. ` +
-          `Any write using one will fail. Run \`npm run db:push\`.`,
-      );
+      // #1896 — a schema AHEAD of the database is the NORMAL state of any
+      // pre-merge schema PR, because the sanctioned workflow pushes the DB
+      // AFTER merge (one `db push` per merged PR, never two schema-bearing PRs
+      // at once). Without an allowlist here, no PR can ever add an enum label:
+      // the rehearsal database this guard runs against is created fresh, so it
+      // always lags the branch's schema. The `dbOnly` direction already had an
+      // escape hatch; this makes the pair symmetric rather than loosening the
+      // check — an entry still needs a reason, a tracking reference and an
+      // EXPIRY, and past that date this fails again. Use a short window: the
+      // drift should disappear the moment `db push` runs.
+      const entry = known.find((k) => k.enum === name);
+      const covered =
+        entry && schemaOnly.every((l) => entry.labels.includes(l)) ? entry : null;
+      if (covered && covered.expires >= today) {
+        tolerated.push(
+          `${name}: schema-only ${schemaOnly.join(", ")} — known drift, tracked by ${covered.trackedBy}, expires ${covered.expires}`,
+        );
+      } else if (covered) {
+        errors.push(
+          `${name}: schema-only label(s) ${schemaOnly.join(", ")} — the allowlist entry EXPIRED on ${covered.expires} (tracked by ${covered.trackedBy}). Either run \`npm run db:push\` or re-review the entry.`,
+        );
+      } else {
+        errors.push(
+          `${name}: schema has label(s) the database does not: ${schemaOnly.join(", ")}. ` +
+            `Any write using one will fail. Run \`npm run db:push\`.`,
+        );
+      }
     }
   }
 

@@ -10,10 +10,29 @@
     "",
     "Remove an entry the moment its fix lands. Do not add one to make CI green.",
     "",
+    "`enumLabelsInSchemaNotInDb` covers the OTHER direction: a label the schema has",
+    "and the database does not. That is the normal state of any pre-merge schema",
+    "PR, because the sanctioned workflow pushes the DB after merge and this guard",
+    "runs against a freshly-created rehearsal database that always lags the branch.",
+    "Without it, no PR can add an enum label at all. Same discipline as the",
+    "db-only direction — reason, tracking reference, and a SHORT expiry, because the",
+    "drift should vanish the moment `npm run db:push` runs.",
+    "",
     "`destructiveStatementsAllowed` gates `npm run db:preflight`, which runs ahead of",
     "every `db:push`. Entries are exact `prisma migrate diff --script` statements,",
     "whitespace-insensitive. The reset is the only occasion that should add any."
   ],
   "enumLabelsInDbNotInSchema": [],
+  "enumLabelsInSchemaNotInDb": [
+    {
+      "enum": "LedgerAccountKind",
+      "labels": [
+        "CONSULTANT_RECEIVABLE"
+      ],
+      "reason": "W1a (#1896) adds the consultant payout-clawback receivable. The DB push is a post-merge step in this repo's runbook, and this guard's rehearsal database is created fresh, so the enum is legitimately ahead of it for the life of the PR. A write using this label fails until `npm run db:push` runs \u2014 the clawback only writes on a lost dispute against an already-PAID ConsultantPayout, so the exposure is that path alone. Remove this entry in the same PR that runs the push.",
+      "trackedBy": "#1896",
+      "expires": "2026-10-07"
+    }
+  ],
   "destructiveStatementsAllowed": []
 }
