@@ -7,6 +7,7 @@ import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import {
   notifyRecordingAvailable,
@@ -17,8 +18,10 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import {
   generateRecordingTitle,
   getEventAttendeeIds,
+  streamUrlExpiresAt,
 } from "@/lib/stream/recording-utils";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { resolveAppointmentStoragePolicy } from "@/lib/stream/recording-storage-policy";
 import { toCallId } from "@/lib/stream/call-cid";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 
@@ -62,6 +65,35 @@ export interface StreamRecordingFailedEvent {
 }
 
 /**
+ * #1829 — a recording event for a call we have no `Meeting` row for.
+ *
+ * The same defect, and the same consequence, as the session handlers: a bare
+ * `streamLogger.warn` is `console.warn`, which the function log strips. A
+ * `recording_ready` that finds no room means the recording exists on Stream and
+ * will be DELETED there in 14 days with nothing in Postgres to prove it ever
+ * existed — the silent data-loss shape the whole transfer pipeline exists to
+ * prevent, reported by a line nobody can see.
+ *
+ * Throttled per call: a mis-keyed room emits one event per recording lifecycle
+ * step, and a live session with a camera on produces a burst.
+ */
+function reportOrphanedRecordingEvent(
+  streamCallId: string,
+  eventType: string,
+): void {
+  captureThrottled(
+    `stream:no-meeting-row:${streamCallId}`,
+    `Recording event for a call with no Meeting row — the recording will expire on Stream unrecorded (${eventType})`,
+    {
+      subsystem: "stream",
+      level: "error",
+      op: "webhook.no-meeting-row",
+      extra: { streamCallId, eventType },
+    },
+  );
+}
+
+/**
  * Handle call.recording_started event
  * Updates Meeting to mark recording as active
  */
@@ -87,6 +119,7 @@ export async function handleRecordingStarted(
     });
 
     if (!meeting) {
+      reportOrphanedRecordingEvent(streamCallId, "call.recording_started");
       streamLogger.warn(
         "Meeting session not found for recording started event",
         {
@@ -195,6 +228,7 @@ export async function handleRecordingStopped(
     });
 
     if (!meeting) {
+      reportOrphanedRecordingEvent(streamCallId, "call.recording_stopped");
       streamLogger.warn(
         "Meeting session not found for recording stopped event",
         {
@@ -310,6 +344,7 @@ export async function handleRecordingReady(
     });
 
     if (!meeting) {
+      reportOrphanedRecordingEvent(streamCallId, "call.recording_ready");
       streamLogger.warn("Meeting session not found for recording ready event", {
         streamCallId,
       });
@@ -326,9 +361,18 @@ export async function handleRecordingReady(
     const appointment = meeting.occurrence.appointment;
     const title = generateRecordingTitle(appointment, startDate);
 
-    // Calculate Stream URL expiration (2 weeks from now)
-    const streamUrlExpiresAt = new Date();
-    streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+    // #1829 — the expiry clock, from the call rather than from the row write.
+    //
+    // Stream's own retention is 14 days measured from the CALL, and the app's
+    // `cdn_expiration_seconds` is 1209600 to match. This used to be `now() + 14d`,
+    // which is right for the webhook path (the skew is seconds) and badly wrong
+    // for the orphan reconciler: a recording recovered on day 10 got an expiry of
+    // day 24 while Stream deleted the bytes at day 14, so for ten days
+    // `GET /api/stream/recordings/[recordingId]` passed its 410 gate and handed
+    // the user a dead Stream URL. The helper takes the earlier of the two
+    // bounds, so a fresh delivery is unchanged and a late recovery is capped to
+    // what Stream will actually still have.
+    const expiresAt = streamUrlExpiresAt(startDate);
 
     // Check if recording already exists (idempotency)
     const existingRecording = await prisma.recording.findFirst({
@@ -374,7 +418,7 @@ export async function handleRecordingReady(
           streamCallId,
           storageType: "STREAM_S3",
           status: "READY",
-          streamUrlExpiresAt,
+          streamUrlExpiresAt: expiresAt,
           meetingId: meeting.id,
           organizationId: appointment?.organizationId ?? null,
         },
@@ -424,9 +468,19 @@ export async function handleRecordingReady(
     // response returns, which would drop the kick; `after()` keeps it alive past
     // the response. The 6-hourly cron sweep still backstops any kick that dies
     // with the function.
-    const storagePolicy =
-      appointment?.webinar?.webinarPlan?.recordingStoragePolicy ??
-      appointment?.class?.classPlan?.recordingStoragePolicy;
+    // #1829 — all four plan arms, through the one resolver.
+    //
+    // This chain read only the `webinar` and `class` arms, while
+    // `recordingStoragePolicy` exists on all four plan models and the MANUAL
+    // transfer route already resolved all four through
+    // `resolveAppointmentStoragePolicy`. So a PERMANENT consultation or
+    // subscription plan was never auto-transferred here, was never counted by
+    // the backlog alert (which reads the same filter), and WAS still flipped to
+    // EXPIRED by `markExpiredRecordings` — which has no policy filter at all.
+    // A customer who paid for permanent storage silently lost it, and the
+    // console said the row was fine.
+    const { policy: storagePolicy } =
+      resolveAppointmentStoragePolicy(appointment);
     if (storagePolicy === "PERMANENT") {
       // #1589 M-P0-04 — inline when re-driven outside a request scope.
       await runAfterOrInline(() =>
@@ -564,6 +618,7 @@ export async function handleRecordingFailed(
     });
 
     if (!meeting) {
+      reportOrphanedRecordingEvent(streamCallId, "call.recording_failed");
       streamLogger.warn(
         "Meeting session not found for recording failed event",
         {

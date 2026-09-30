@@ -4,6 +4,8 @@ import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
+  isStreamQuotaError,
+  STREAM_QUOTA_RETRY_AFTER_SECONDS,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
@@ -157,6 +159,30 @@ export async function POST(
       return NextResponse.json(
         { error: "Video is temporarily unavailable. Please try again." },
         { status: 503 },
+      );
+    }
+
+    // #1829 — a Stream 429 is quota exhaustion, not a fault, and must not reach
+    // Sentry or the 500.
+    //
+    // The breaker already classifies it correctly: `shouldTrip` excludes 429, and
+    // `withStreamCircuitBreaker` deliberately skips capturing it ("already
+    // alerted on by Stream itself"). The caller re-added it — every error that
+    // was not `StreamUnavailableError` went to `reportSentryError` and out as a
+    // 500, so a full per-minute budget on `GetOrCreateCall` or `JoinCall`
+    // presented to the user as "something went wrong" AND spent Sentry quota
+    // saying the same thing once per attempt. The system now trickles Stream
+    // transients, which covers the volume; this covers the answer.
+    if (isStreamQuotaError(error)) {
+      return NextResponse.json(
+        {
+          error: "Video is busy right now. Please wait a moment and try again.",
+          code: "STREAM_QUOTA",
+        },
+        {
+          status: 503,
+          headers: { "Retry-After": String(STREAM_QUOTA_RETRY_AFTER_SECONDS) },
+        },
       );
     }
 

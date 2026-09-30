@@ -5,6 +5,7 @@
 
 import {
   getStreamVideoClient,
+  isStreamQuotaError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
@@ -93,7 +94,17 @@ export class RecordingService {
   static async startRecording(
     streamCallId: string,
     userId: string,
-  ): Promise<{ success: boolean; error?: string }> {
+    /**
+     * #1829 — `cause` is why this is not just `{ error: string }` any more.
+     *
+     * A Stream 429 used to arrive here as a message and leave as a 500, because
+     * the catch flattened the error to text and the route had nothing to
+     * classify. That is the same defect the meeting-join door had, in the one
+     * place where it also burns a Sentry event per attempt: quota exhaustion is
+     * not a fault, and a full per-minute budget on `StartRecording` should tell
+     * the user to wait rather than tell them we broke.
+     */
+  ): Promise<{ success: boolean; error?: string; cause?: unknown }> {
     try {
       const client = getStreamVideoClient();
 
@@ -124,6 +135,17 @@ export class RecordingService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to start recording";
+      // #1829 — a 429 is quota, not a fault. `streamLogger.error` reaches
+      // `Sentry.captureException`, and this call is on the retry path a user
+      // drives, so a spent budget produced one event per attempt. The class is
+      // handed to the caller instead, which answers 503 + Retry-After.
+      if (isStreamQuotaError(error)) {
+        streamLogger.warn("Recording start hit the Stream quota", {
+          streamCallId,
+          userId,
+        });
+        return { success: false, error: errorMessage, cause: error };
+      }
       streamLogger.error("Failed to start recording", error, {
         streamCallId,
         userId,

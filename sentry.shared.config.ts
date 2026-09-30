@@ -5,7 +5,6 @@
 // centralizes the one config so a sampling/PII/env tweak lands in one place. (#913)
 
 import * as Sentry from "@sentry/nextjs";
-
 import { isExpectedError } from "@/lib/observability/expected";
 import {
   scrubSentryBreadcrumb,
@@ -217,14 +216,14 @@ export const SENTRY_DATA_COLLECTION: NonNullable<
   // Dropping either key is a regression; `__tests__/observability/sentry-data-collection.test.ts`
   // fails if one goes.
   queryParams: false,
-  // `urlQueryParams` is the v11 spelling and is NOT in the installed SDK's type
-  // yet (node_modules is on 10.59.0 while package.json pins ^10.75.3 — the
-  // lockfile is behind, so this resolves to a shape the compiler cannot see).
-  // It is kept deliberately, per the comment above: drop it and a v11 upgrade
-  // silently resumes shipping query strings, because v11 has no fallback and its
-  // default is `true`. The paired test fails loudly if either spelling is
-  // removed, so this is belt-and-braces on a privacy control rather than a way
-  // to silence a real error.
+  // `urlQueryParams` is the v11 spelling and is NOT declared by the installed
+  // SDK's type — node_modules sits on 10.59.0 while package.json pins ^10.75.3,
+  // so the lockfile resolves to a shape the compiler cannot see. It is kept on
+  // purpose, per the comment above: v11 reads it with NO fallback and its default
+  // is `true`, so dropping it silently resumes shipping query strings. The
+  // paired test in `__tests__/observability/sentry-data-collection.test.ts` fails
+  // loudly if either spelling is removed, and the cast below is what lets this
+  // forward-pin survive typecheck rather than being "fixed" away.
   urlQueryParams: false,
   // No request or response bodies, in either direction.
   httpBodies: [],
@@ -233,10 +232,9 @@ export const SENTRY_DATA_COLLECTION: NonNullable<
   // No generative-AI prompt or completion content. This app issues no
   // model calls today; pinned so adding one cannot start shipping them.
   genAI: { inputs: false, outputs: false },
-  // The one cast in this file, and it is load-bearing. `urlQueryParams` is a
-  // forward-pin for a v11 key the installed SDK's type does not declare, so the
-  // object is widened to a plain record at exactly the point the pin lives —
-  // everywhere else stays type-checked against the real shape.
+  // The one cast in this file, and it is load-bearing rather than cosmetic: the
+  // object is widened to a plain record at exactly the point the v11 forward-pin
+  // lives, so every other key in it stays type-checked against the real shape.
 } as Record<string, unknown>;
 
 export function initSentry(overrides?: Partial<SentryInitOptions>): void {

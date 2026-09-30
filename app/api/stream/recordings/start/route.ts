@@ -16,6 +16,10 @@ import { RecordingConsentDecision } from "@prisma/client";
 import { getMeetingOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
+import {
+  isStreamQuotaError,
+  STREAM_QUOTA_RETRY_AFTER_SECONDS,
+} from "@/lib/stream-client";
 
 import { getSession } from "@/lib/auth-server";
 const startRecordingSchema = z.object({
@@ -215,15 +219,42 @@ export async function POST(req: NextRequest) {
     );
 
     if (!result.success) {
-      // Revert the DB state since Stream API failed
-      await prisma.meeting.update({
-        where: { id: meetingId },
+      // Revert the DB state since Stream API failed.
+      //
+      // #1829 — a conditional update, not an unconditional one. The claim
+      // `isRecording: true` is taken conditionally a few lines above, so a stop
+      // that lands inside this window would be clobbered by a bare `update`: the
+      // row would read "not recording, never stopped" with no recordingStartedAt,
+      // which is a state the consent gate and the recorder both misread.
+      await prisma.meeting.updateMany({
+        where: { id: meetingId, isRecording: true },
         data: {
           isRecording: false,
           recordingStartedAt: null,
           recordingStartedBy: null,
         },
       });
+
+      // A spent Stream budget is not a 500. 503 + Retry-After tells the client
+      // this is worth retrying and keeps it out of the bucket that means "we
+      // broke something"; the typed code is what the UI needs in order to say
+      // "video is busy" rather than "something went wrong".
+      if (result.cause !== undefined && isStreamQuotaError(result.cause)) {
+        return NextResponse.json(
+          {
+            error:
+              "Video is busy right now. Please wait a moment and try again.",
+            code: "STREAM_QUOTA",
+          },
+          {
+            status: 503,
+            headers: {
+              "Retry-After": String(STREAM_QUOTA_RETRY_AFTER_SECONDS),
+            },
+          },
+        );
+      }
+
       return NextResponse.json(
         { error: result.error || "Failed to start recording" },
         { status: 500 },

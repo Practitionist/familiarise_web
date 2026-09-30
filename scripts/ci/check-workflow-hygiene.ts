@@ -164,7 +164,9 @@ const POOL_BUDGET_MINUTES = 10;
 const declaredRuntime = new Map<string, number>();
 for (const file of files) {
   const raw = fs.readFileSync(path.join(WORKFLOW_DIR, file), "utf8");
-  const matches = Array.from(raw.matchAll(/#\s*cron-runtime-minutes:\s*(\S+)/g));
+  const matches = Array.from(
+    raw.matchAll(/#\s*cron-runtime-minutes:\s*(\S+)/g),
+  );
   if (matches.length === 0) continue;
   const valid = new Set<number>();
   for (const m of matches) {
@@ -386,6 +388,13 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "sso-cert-expiry-alert.yml": "scheduled",
   "stream-sync.yml": "scheduled",
   "stream-calltype-drift.yml": "scheduled",
+  // #1829 — nightly usage meter: counts Stream MAU / participant-minutes /
+  // peak concurrency from state we already hold and alarms at 60/80/90% of the
+  // plan caps, so the Maker-tier HARD PAUSE is seen coming rather than read
+  // about afterwards. Scheduled, and deliberately NOT on the 5-minute ticker: it
+  // is a nightly aggregate, and a per-tick target would spend Upstash commands to
+  // recompute the same number.
+  "stream-usage-meter.yml": "scheduled",
   "stream-webhook-drift.yml": "scheduled",
   "sweep-abandoned-overage-charges.yml": "scheduled",
   "sweep-orphaned-topup-captures.yml": "scheduled",
@@ -512,17 +521,11 @@ for (const file of files) {
     errors.push(`${file} [${tier}]: missing top-level \`concurrency:\``);
   }
   // Bounded jobs: an unbounded default (6h) masks hangs and bills minutes.
-  if (
-    needs(["scheduled", "manual"]) &&
-    !/timeout-minutes:\s*\d+/.test(body)
-  ) {
+  if (needs(["scheduled", "manual"]) && !/timeout-minutes:\s*\d+/.test(body)) {
     errors.push(`${file} [${tier}]: no \`timeout-minutes:\` on jobs`);
   }
   // A scheduled job with no failure pager fails silently (the pre-#709 shape).
-  if (
-    tier === "scheduled" &&
-    !body.includes("notify-ops-failure.sh")
-  ) {
+  if (tier === "scheduled" && !body.includes("notify-ops-failure.sh")) {
     errors.push(
       `${file} [scheduled]: no \`Notify on failure\` step ` +
         `(bash scripts/ci/notify-ops-failure.sh "<job>")`,

@@ -14,6 +14,7 @@ import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import { toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 // Types for Stream webhook payloads
 export interface StreamSessionEndedEvent {
@@ -101,6 +102,7 @@ export async function handleSessionEnded(
     });
 
     if (!meeting) {
+      reportOrphanedStreamEvent(streamCallId, "call.session_ended");
       streamLogger.warn("Meeting session not found for session ended event", {
         streamCallId,
       });
@@ -206,6 +208,7 @@ export async function handleCallEnded(
     });
 
     if (!meeting) {
+      reportOrphanedStreamEvent(streamCallId, "call.ended");
       streamLogger.warn("Meeting session not found for call ended event", {
         streamCallId,
       });
@@ -314,6 +317,43 @@ function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
 }
 
 /**
+ * #1829 — an event for a call we have no `Meeting` row for.
+ *
+ * This was a bare `streamLogger.warn`, and `streamLogger.warn` is
+ * `console.warn` — which `lib/health/probe.ts` documents is STRIPPED from the
+ * function log. So the single most diagnostic Stream event in the system was
+ * invisible in production, and the only evidence it ever fired was the absence of
+ * the thing it was reporting.
+ *
+ * That absence is the 2026-08-12 outage, exactly: 0 rows in `WebhookEvent` for
+ * provider 'stream', 0 in `MeetingAttendance`, and 1,663 meetings that never
+ * ended. A mis-set webhook secret, a `streamCallId` derivation that does not
+ * match, or a rebuild that orphaned a room all land here, and all three read as
+ * a healthy run.
+ *
+ * Throttled, because a mis-keyed call is not one event — it is every
+ * `session_participant_joined` and `_left` for that call, on a live session,
+ * which is the shape that empties a 5,000-error quota. Keyed by call so two
+ * different broken rooms are two different issues rather than one that
+ * suppresses the other.
+ */
+function reportOrphanedStreamEvent(
+  streamCallId: string,
+  eventType: string,
+): void {
+  captureThrottled(
+    `stream:no-meeting-row:${streamCallId}`,
+    `Stream event for a call with no Meeting row — attendance is not being recorded (${eventType})`,
+    {
+      subsystem: "stream",
+      level: "error",
+      op: "webhook.no-meeting-row",
+      extra: { streamCallId, eventType },
+    },
+  );
+}
+
+/**
  * STR-4 — Handle call.session_participant_joined.
  * Upserts a MeetingAttendance row per (session, app user). First join stamps
  * firstJoinedAt; a rejoin increments joinCount. Unblocks #471 (no-show) and
@@ -336,6 +376,10 @@ export async function handleSessionParticipantJoined(
   try {
     const meeting = await resolveMeeting(streamCallId);
     if (!meeting) {
+      reportOrphanedStreamEvent(
+        streamCallId,
+        "call.session_participant_joined",
+      );
       streamLogger.warn("Meeting not found for participant joined", {
         streamCallId,
         userId,
@@ -439,6 +483,7 @@ export async function handleSessionParticipantLeft(
   try {
     const meeting = await resolveMeeting(streamCallId);
     if (!meeting) {
+      reportOrphanedStreamEvent(streamCallId, "call.session_participant_left");
       streamLogger.warn("Meeting not found for participant left", {
         streamCallId,
         userId,

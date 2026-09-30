@@ -68,6 +68,14 @@ jest.mock("../../lib/stream-client", () => ({
     }
   },
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
+  // #1829 — the join door now classifies a Stream 429 and answers 503 +
+  // Retry-After instead of reporting it to Sentry as a fault. Modelled as the
+  // real shape: a thrown error with a 429 `status` on it, because the point of
+  // the change is that the ROUTE can tell a quota from a fault, and a mock that
+  // returned a boolean would assert nothing.
+  isStreamQuotaError: (e: unknown) =>
+    (e as { status?: number } | null)?.status === 429,
+  STREAM_QUOTA_RETRY_AFTER_SECONDS: 60,
   getStreamVideoClient: jest.fn(() => ({
     video: {
       call: () => ({

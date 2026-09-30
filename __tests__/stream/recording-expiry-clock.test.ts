@@ -104,26 +104,39 @@ describe("the writers that consume it", () => {
     );
   });
 
-  // Cross-bucket, and deliberately skipped rather than silently passing.
+  // #1829 — the second writer, un-skipped. This test was written and skipped
+  // rather than deleted, because `lib/stream/recording-handlers.ts` belonged to
+  // another bucket's worktree while this one was being built. It is live now.
   //
-  // `lib/stream/recording-handlers.ts` is owned by another agent's worktree, so
-  // the D4 fix could not be applied here. On the webhook path the skew is
-  // minutes and no user is harmed, which is why it is the lower half of the fix
-  // and not urgent — but the two writers must not compute the value two
-  // different ways, or the next reader has to work out which is authoritative.
-  //
-  // What that agent must change, in `handleRecordingReady`:
-  //   1. add `streamUrlExpiresAt` to the existing
-  //      `import { generateRecordingTitle, getEventAttendeeIds } from
-  //      "@/lib/stream/recording-utils"` block;
-  //   2. replace
-  //        // Calculate Stream URL expiration (2 weeks from now)
-  //        const streamUrlExpiresAt = new Date();
-  //        streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
-  //      with `const expiresAt = streamUrlExpiresAt(startDate);`
-  //   3. pass `streamUrlExpiresAt: expiresAt` to the `recording.create` call
-  //      (the local name shadows the imported helper, hence the rename).
-  it.skip("recording-handlers still computes now() + 14d inline — see the note above", () => {
-    expect(read("lib/stream/recording-handlers.ts")).not.toMatch(INLINE_14D);
+  // The value exists in ONE helper for a reason: a webhook-path write and a
+  // reconciler-path write computing it two different ways is precisely how a
+  // ten-day window appeared in which the 410 gate passed and every viewer got a
+  // dead Stream URL. The two writers must not be able to drift again, so the
+  // assertion is on the SOURCE, not on a re-implementation of the arithmetic.
+  it("recording-handlers derives it from the call's start time too", () => {
+    const source = read("lib/stream/recording-handlers.ts");
+    expect(source).toContain("streamUrlExpiresAt(startDate)");
+    expect(source).not.toMatch(INLINE_14D);
+  });
+
+  it("recording-handlers imports the helper rather than redeclaring it", () => {
+    // The rename (`expiresAt` for the local, `streamUrlExpiresAt` for the
+    // column) exists because the local shadowed the import. Asserting the import
+    // catches a future copy-paste that reintroduces the shadow.
+    const source = read("lib/stream/recording-handlers.ts");
+    expect(source).toMatch(/import\s*\{[^}]*streamUrlExpiresAt[^}]*\}/);
+  });
+
+  // D5, the other half of the cross-bucket handoff: the ready-time kick read
+  // only the webinar and class arms, so a PERMANENT consultation or
+  // subscription plan was never auto-transferred — and was still EXPIRED by the
+  // unfiltered mark-expired sweep, which is how a paying customer silently lost
+  // storage they had bought.
+  it("recording-handlers resolves the storage policy through the one resolver", () => {
+    const source = read("lib/stream/recording-handlers.ts");
+    expect(source).toContain("resolveAppointmentStoragePolicy(appointment)");
+    expect(source).not.toMatch(
+      /webinar\?\.webinarPlan\?\.recordingStoragePolicy/,
+    );
   });
 });

@@ -60,6 +60,24 @@ jest.mock("../../lib/novu/service", () => ({
 jest.mock("../../lib/stream/recording-utils", () => ({
   generateRecordingTitle: () => "A recorded session",
   getEventAttendeeIds: (...a: unknown[]) => mockGetEventAttendeeIds(...a),
+  // #1829 — the handler now derives `streamUrlExpiresAt` from the call's start
+  // time through the shared helper rather than `now() + 14d` inline. Real
+  // arithmetic, not a constant: this suite asserts on what the handler WRITES,
+  // and a mock returning a fixed date would make the value irrelevant.
+  streamUrlExpiresAt: (recordedAt: Date) => {
+    const out = new Date(recordedAt.getTime());
+    out.setUTCDate(out.getUTCDate() + 14);
+    return out;
+  },
+}));
+
+// #1829 — the ready-time kick resolves the storage policy through the one
+// four-arm resolver, so a PERMANENT consultation plan is transferred too.
+jest.mock("../../lib/stream/recording-storage-policy", () => ({
+  resolveAppointmentStoragePolicy: () => ({
+    policy: "STREAM_ONLY",
+    ownerProfileId: null,
+  }),
 }));
 
 jest.mock("../../lib/stream/recording-transfer-service", () => ({
