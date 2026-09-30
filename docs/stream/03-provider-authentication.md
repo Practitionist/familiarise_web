@@ -37,13 +37,31 @@ const [clients, setClients] = useState<SettledStreamClients | null>(null);
 
 This is the most important thing to understand before changing this file, because the obvious refactor — a `useState` per client — is the bug.
 
-The provider wraps its children in `<Chat>` and `<StreamVideo>` only once a client exists. With two independent states set by two async connects that race, the element occupying that wrapper slot changed **type** between renders: `children`, then `<StreamVideo>`, then `<Chat>`, in whichever order the sockets happened to settle. React cannot reconcile a change of element type in place — it unmounts the old tree and mounts a new one — and the subtree here is the entire dashboard.
+**This is now a historical constraint, kept for a different reason.** The
+original defect was that the provider wrapped its children in `<Chat>` and
+`<StreamVideo>` only once a client existed. With two independent states set by
+two async connects that race, the element occupying that wrapper slot changed
+**type** between renders: `children`, then `<StreamVideo>`, then `<Chat>`, in
+whichever order the sockets happened to settle. React cannot reconcile a change
+of element type in place — it unmounts the old tree and mounts a new one — and
+the subtree was the entire dashboard.
 
-The user-visible symptom was a join button that appeared to do nothing: the click started a join, the dashboard remounted underneath it as the second client connected, and the in-flight join was destroyed. People pressed it repeatedly.
+The user-visible symptom was a join button that appeared to do nothing: the click
+started a join, the dashboard remounted underneath it as the second client
+connected, and the in-flight join was destroyed. People pressed it repeatedly
+(#248).
 
-Committing both clients in one `setClients` makes the tree shape a pure function of one value, so it changes exactly once per session: unwrapped while connecting, then wrapped once both connects settle. A connect that genuinely _fails_ can still cost a second change if a later retry succeeds; that is accepted, because withholding the client that did connect would break the sidebar's chat-unread badge on every route (#248).
+The provider no longer wraps `children` at all (see
+[Component Structure](#component-structure)), so the remount is gone by
+construction. The single committed value is still the right shape: it keeps the
+two connects from producing two renders, and it means every downstream effect
+that reads `clients` sees a consistent pair. A connect that genuinely _fails_ can
+still cost a second commit if a later retry succeeds; that is accepted, because
+withholding the client that did connect would break the sidebar's chat-unread
+badge on every route.
 
-The nesting order is fixed — `<Chat>` outside, `<StreamVideo>` inside — for the same reason. Order must not depend on arrival order.
+Do not reintroduce per-client state, and do not reintroduce wrapper elements
+around `children`.
 
 #### 1. Chat Client (`StreamChat`)
 
@@ -115,66 +133,80 @@ const client = new StreamVideoClient({
 
 ### Component Structure
 
+**The provider renders `children` DIRECTLY, and mounts the connector as a
+SIBLING.** It does not wrap children in `<Chat>` and `<StreamVideo>`, and it does
+not hold the clients or the token cache in its own state.
+
+There are two files, and the split is the point:
+
+| File                               | Contains                                                                                                                                                                     |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `providers/StreamProvider.tsx`     | The **SDK-free shell.** Renders `children`; owns the connection-state context; publishes to a store. Imports no Stream SDK.                                                  |
+| `providers/StreamProviderImpl.tsx` | The **heavy connector.** Holds the SDK clients, the websocket lifecycle, `getCachedToken`, and the sync effect. Renders nothing. Loaded with `dynamic(..., { ssr: false })`. |
+
 ```typescript
-export default function StreamProvider({
-  children,
-  userId,
-  enableChat = true,
-  enableVideo = true,
-}: StreamProviderProps) {
-  // Connection state — both clients in ONE value, see "Why one state and not two"
-  const [clients, setClients] = useState<SettledStreamClients | null>(null);
-  const [chatConnected, setChatConnected] = useState(false);
-  const [videoConnected, setVideoConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [connectionAttempts, setConnectionAttempts] = useState(0);
-  const [hasInitialSyncCompleted, setHasInitialSyncCompleted] = useState(false);
+// providers/StreamProvider.tsx — the whole shape
+const StreamConnector = dynamic(() => import("@/providers/StreamProviderImpl"), {
+  ssr: false,
+});
 
-  // Token cache
-  const [tokenCache, setTokenCache] = useState<{
-    chatToken?: string;
-    videoToken?: string;
-    expiresAt?: number;
-  }>({});
+const StreamProvider = ({ children, ...connectorProps }: StreamProviderProps) => {
+  const snapshot = useSyncExternalStore(
+    subscribeStreamConnection,
+    getStreamConnectionSnapshot,
+    getStreamConnectionServerSnapshot,
+  );
 
-  // Connection logic (see below)
-  useEffect(() => {
-    if (!isLoading && userDetails && apiKey) {
-      connectServices();
-    }
-    return () => {
-      disconnect();
-    };
-  }, [userDetails, isLoading, apiKey]);
-
-  // Built up in a fixed order from the single settled value, so the tree shape
-  // never depends on which socket connected first.
-  let content = children;
-  if (clients?.video) {
-    content = <StreamVideo client={clients.video}>{content}</StreamVideo>;
-  }
-  if (clients?.chat) {
-    content = <Chat client={clients.chat}>{content}</Chat>;
-  }
+  const retryConnection = useCallback(() => {
+    // The connector owns the retry loop; it listens for this event so the
+    // shell does not have to import anything from the SDK bundle to expose it.
+    window.dispatchEvent(new CustomEvent("stream:retry-connection"));
+  }, []);
 
   return (
-    <StreamErrorBoundary onError={handleError} enableRetry={true}>
-      <StreamConnectionContext.Provider value={connectionState}>
-        {content}
-      </StreamConnectionContext.Provider>
-    </StreamErrorBoundary>
+    <StreamConnectionContext.Provider value={connectionStateFrom(snapshot)}>
+      {children}
+      <StreamConnector {...connectorProps} />
+    </StreamConnectionContext.Provider>
   );
-}
+};
 ```
 
-**Nested Provider Pattern:**
+#### Why not wrap `children` — two measured bugs
 
-- Outermost: `StreamErrorBoundary` (error handling)
-- Middle: `StreamConnectionContext` (connection state)
-- Inner: `Chat` → `StreamVideo` → `children` (SDK providers)
+1. **`ssr: false` skips server rendering for the component AND its children.**
+   While the connector wrapped the dashboard, no dashboard markup reached the
+   HTML: `<h1` never appeared in the document and FCP sat at ~6s regardless of
+   what happened on the server (#1102 measurements A/B/C). Because children now
+   sit in a fixed position, `ssr: false` costs only the connector.
+2. **Changing the element type at a position remounts that subtree.** The
+   connector used to swap the wrapper set once the sockets settled
+   (`children` → `<StreamVideo>` → `<Chat>`), which is the storm behind "I
+   pressed Join ten times" (#248).
 
-Note that the connection _flags_ (`chatConnected`, `videoConnected`, `isConnecting`) are still separate state. That is fine and intentional: they feed the context value, which changes what consumers render but not the shape of the tree above them.
+The SDK's own `<Chat>` / `<StreamVideo>` contexts are mounted by the surfaces that
+actually consume them — the Messages tabs and `/meetings` — not here.
+
+#### Consequences worth knowing
+
+- **`useStreamConnection()` does not throw outside the provider.** The context is
+  created with a `DEFAULT_CONNECTION_STATE` and the hook is a plain
+  `useContext`, so a consumer rendered outside the tree reads
+  `{ chatConnected: false, videoConnected: false, isConnecting: false, error: null, failure: null, retryConnection: noop }`.
+- **`getCachedToken` lives in `StreamProviderImpl.tsx`**, not the shell. So does
+  the token cache state. The shell re-exports `disconnectStreamClients` from
+  `@/lib/stream/disconnect` purely so existing importers of that path keep
+  working.
+- **`dynamic()` has no `loading` prop here.** There is no spinner, because the
+  connector renders nothing — there is nothing to display a loading state for.
+  `isConnecting` on the context is what a surface should render.
+- The shell exists partly so SDK-free consumers can import the context without
+  pulling the SDK: `components/chat/DebugDialog.tsx` does exactly that.
+
+Note that the connection _flags_ (`chatConnected`, `videoConnected`,
+`isConnecting`) come from `useSyncExternalStore` over a module-level store, not
+from `useState` in the provider. That is what lets the connector's writes reach
+consumers without the shell re-rendering the tree it wraps.
 
 ---
 
@@ -211,8 +243,8 @@ sequenceDiagram
         alt Token cached and valid
             ChatToken-->>Provider: Cached chat token
         else Token expired or missing
-            ChatToken->>StreamAPI: createToken(userId)
-            StreamAPI-->>ChatToken: JWT token (1hr validity)
+            ChatToken->>StreamAPI: createToken(userId, exp, iat)
+            StreamAPI-->>ChatToken: JWT token (1hr validity, iat present)
             ChatToken->>ChatToken: Cache token (50min expiry)
             ChatToken-->>Provider: New chat token
         end
@@ -297,83 +329,85 @@ const user = await prisma.user.findUnique({
 });
 ```
 
-#### Step 2: Token Cache Check (Lines 76-121)
+#### Step 2: Token Cache Check (`providers/StreamProviderImpl.tsx`)
+
+**The cache is a `useRef`, not `useState`.** With `useState`, every token fetch
+produced a new `tokenCache` object, which changed `getCachedToken`'s identity,
+which re-fired `connectChat` → `connectServices`, which re-fired the
+`connectUser` effect — producing _"Consecutive calls to connectUser"_ warnings.
+A ref mutates without rendering.
+
+It is also **identity-scoped** and carries a **per-type** expiry, so a token
+minted for a previous user can never satisfy the current one even while
+unexpired, and a chat fetch cannot clobber the video window (or vice versa):
 
 ```typescript
-const [tokenCache, setTokenCache] = useState<{
+const tokenCacheRef = useRef<{
+  userId?: string;
   chatToken?: string;
+  chatExpiresAt?: number;
   videoToken?: string;
-  expiresAt?: number;
+  videoExpiresAt?: number;
 }>({});
 
 const isTokenValid = useCallback(
-  (type: "chat" | "video") => {
-    const token =
-      type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
-    const expiresAt = tokenCache.expiresAt;
-
+  (type: "chat" | "video", forUserId: string) => {
+    const cache = tokenCacheRef.current;
+    if (cache.userId !== forUserId) return false;
+    const token = type === "chat" ? cache.chatToken : cache.videoToken;
+    const expiresAt =
+      type === "chat" ? cache.chatExpiresAt : cache.videoExpiresAt;
     if (!token || !expiresAt) return false;
-
-    // Check if token expires within next 5 minutes
+    // Treat as stale 5 minutes early, so a token cannot expire mid-handshake.
     return Date.now() < expiresAt - 5 * 60 * 1000;
   },
-  [tokenCache],
-);
-
-const getCachedToken = useCallback(
-  async (type: "chat" | "video"): Promise<string> => {
-    if (isTokenValid(type)) {
-      return type === "chat" ? tokenCache.chatToken! : tokenCache.videoToken!;
-    }
-
-    // Generate new token
-    const newToken =
-      type === "chat"
-        ? await chatTokenProvider(userId)
-        : await tokenProvider(userId);
-
-    // Cache with 50-minute expiry (tokens usually last 1 hour)
-    const expiresAt = Date.now() + 50 * 60 * 1000;
-
-    setTokenCache((prev) => ({
-      ...prev,
-      [`${type}Token`]: newToken,
-      expiresAt,
-    }));
-
-    return newToken;
-  },
-  [userId, tokenCache, isTokenValid],
+  [],
 );
 ```
+
+The connector also gates on the client-side session (`signedOutRef`) before
+minting: the token action refuses without a server session, and a tab whose
+cookie expired while it sat open used to keep calling it, producing a stream of
+401s nobody was there to read. `isPending` counts as allowed on purpose —
+blocking the first mint on the session round trip would put a serial wait back
+on the join path.
 
 **Token Generation (Server Actions):**
 
 ```typescript
 // actions/stream/chat/stream.action.ts
 
+// Neither provider calls createToken() itself. Both delegate to
+// lib/stream-client.ts, which always supplies exp AND iat.
+
 // Chat token
 export const chatTokenProvider = async (userId: string) => {
-  const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-  const token = serverClient.createToken(userId);
+  // #899 session bind, then the shared TTL (STREAM_TOKEN_TTL_SECONDS = 3600)
+  const token = generateChatToken(userId, STREAM_TOKEN_TTL_SECONDS);
   return token;
 };
 
 // Video token
 export const tokenProvider = async (userId: string) => {
-  const client = new StreamClient(apiKey, apiSecret);
-  const exp = Math.round(Date.now() / 1000) + 60 * 60; // 1 hour
-  const issued = Math.round(Date.now() / 1000) - 60; // 1 minute ago
-
-  const token = client.generateUserToken({
-    user_id: userId,
-    exp,
-    iat: issued,
-  });
-
+  const token = generateVideoToken(userId, STREAM_TOKEN_TTL_SECONDS);
   return token;
 };
 ```
+
+**`iat` is not optional, and a chat token without one is a lockout, not a
+short-lived token.** Stream treats a token with no `iat` as _invalid_ once
+`revoke_tokens_issued_before` is set for that user, and that flag persists until
+someone explicitly clears it. So a token minted without `iat` plus a single
+7-day suspension revoked every future token too, forever (#1134 P0-4). Both
+generators pass `iat` with a 60-second skew allowance. Un-revoking is explicit:
+`revokeUserToken(id, null)`, and a deactivated user also needs
+`reactivateUser(id)`.
+
+The `expirationTime` argument is **required** on both generators. The chat one
+used to be optional, and `createToken(userId, undefined, iat)` minted a token
+with no `exp` — a credential that never ages out, whose only revocation is the
+same global flag that then blocks every future token. That path is still callable
+but **no production caller uses it**; do not reintroduce it.
 
 #### Step 3: Chat Client Connection (Lines 128-189)
 
@@ -756,98 +790,55 @@ if (error && connectionAttempts >= 5) {
 - ✅ Auto-refresh before expiry
 - ✅ Reduced API calls by ~98%
 
-### Cache Implementation (Lines 76-121)
+### Cache Implementation
 
-```typescript
-const [tokenCache, setTokenCache] = useState<{
-  chatToken?: string;
-  videoToken?: string;
-  expiresAt?: number;
-}>({});
+The cache is a `useRef` in `providers/StreamProviderImpl.tsx`, **not `useState`**,
+and it is identity-scoped with a per-type expiry. See
+[Step 2](#step-2-token-cache-check-providersstreamproviderimpltsx) for the code
+and the reason — with `useState`, each fetch changed `getCachedToken`'s identity
+and re-fired the connect effect.
 
-const isTokenValid = useCallback(
-  (type: "chat" | "video") => {
-    const token =
-      type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
-    const expiresAt = tokenCache.expiresAt;
-
-    if (!token || !expiresAt) return false;
-
-    // Check if token expires within next 5 minutes
-    return Date.now() < expiresAt - 5 * 60 * 1000;
-  },
-  [tokenCache],
-);
-
-const getCachedToken = useCallback(
-  async (type: "chat" | "video"): Promise<string> => {
-    if (isTokenValid(type)) {
-      console.log(`Using cached ${type} token`);
-      return type === "chat" ? tokenCache.chatToken! : tokenCache.videoToken!;
-    }
-
-    // Generate new token
-    console.log(`Generating new ${type} token`);
-    const newToken =
-      type === "chat"
-        ? await chatTokenProvider(userId)
-        : await tokenProvider(userId);
-
-    // Cache with 50-minute expiry (tokens usually last 1 hour)
-    const expiresAt = Date.now() + 50 * 60 * 1000;
-
-    setTokenCache((prev) => ({
-      ...prev,
-      [`${type}Token`]: newToken,
-      expiresAt,
-    }));
-
-    return newToken;
-  },
-  [userId, tokenCache, isTokenValid],
-);
-```
+The prefetch that seeds it lives in `lib/stream/initial-tokens.ts` and uses
+`STREAM_TOKEN_CACHE_MS` (50 minutes) as the window.
 
 ### Token Lifecycle Timeline
+
+Two independent windows are in play: the **cache** window
+(`STREAM_TOKEN_CACHE_MS` = 50 min) and the **staleness margin** inside
+`isTokenValid` (5 min). A cached token is therefore treated as stale at
+**0:45**, not at 0:50.
 
 ```
 Time    Event                     Token State
 -----   -------------------------  ------------------
 0:00    Token generated           Valid (expires 1:00)
-0:00    Cached                    Cached (expires 0:50)
+0:00    Cached                    Cache window expires 0:50
 0:30    Token requested           ✅ Cached token used
-0:49    Token requested           ✅ Cached token used
-0:50    Cache expires             ⚠️ Generate new token
-0:50    New token generated       Valid (expires 1:50)
-0:50    New token cached          Cached (expires 1:40)
-1:00    Old token expires         (Already replaced at 0:50)
+0:45    Staleness margin reached  ⚠️ Treated as stale; next request re-mints
+0:45    New token generated       Valid (expires 1:45)
+0:45    New token cached          Cache window expires 1:35
+1:00    Old token expires         (already replaced at 0:45)
 ```
 
 ### Why 50 Minutes (Not 60)?
 
-**Token Validity:** 1 hour (3600 seconds)
-**Cache Duration:** 50 minutes (3000 seconds)
-**Safety Buffer:** 10 minutes (600 seconds)
+**Token Validity:** 1 hour (`STREAM_TOKEN_TTL_SECONDS` = 3600)
+**Cache Duration:** 50 minutes (`STREAM_TOKEN_CACHE_MS` = 3000 s)
+**Staleness margin:** 5 minutes, applied on top
 
 **Reasoning:**
 
-1. **Prevents mid-operation expiry**
-   - Token refreshed before critical operations
-   - No connection drops during long sessions
+1. **Prevents mid-operation expiry.** A token cannot expire during a
+   handshake, because the cache stops offering it 15 minutes before the token
+   itself dies (5 minutes of margin, on a 50-minute cache inside a 60-minute
+   lifetime).
+2. **Handles clock drift.** Server/client time differences and network latency.
+3. **Covers edge cases.** Slow connections and validation delays.
 
-2. **Handles clock drift**
-   - Server/client time differences
-   - Network latency tolerance
+There is a known open item on the token-expiry path — see
+[Troubleshooting - Token Expiry Race Condition](./troubleshooting.md#token-expiry-race-condition-medium).
 
-3. **Covers edge cases**
-   - Slow network connections
-   - Token validation delays
-   - Race conditions
-
-⚠️ **Known Issue:** 10-minute buffer may not be enough for some edge cases.
-See: [Troubleshooting - Token Expiry Race Condition](./troubleshooting.md#token-expiry-race-condition-medium)
-
-### Cache Invalidation (Lines 276-298)
+### Cache Invalidation
 
 Disconnection is **not** owned by the provider and does **not** happen on unmount. The clients live in module-level refs in `lib/stream/disconnect.ts` — an SDK-free module so that callers which only need to disconnect (Navbar, UserDropdown, the org/admin/staff layouts) do not statically link the heavy SDK into their bundles.
 

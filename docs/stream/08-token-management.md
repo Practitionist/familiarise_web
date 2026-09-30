@@ -26,7 +26,9 @@ Stream uses JWT (JSON Web Tokens) for authentication. The application implements
 
 **SDK:** `stream-chat` (StreamChat)
 
-**Validity:** 1 hour (default, no explicit expiration set)
+**Validity:** 1 hour — `STREAM_TOKEN_TTL_SECONDS = 3600` (`lib/stream/token-ttl.ts`). The TTL is
+an explicit, **required** argument to `generateChatToken`, and the token carries both `exp` and
+`iat`.
 
 **Use Cases:**
 
@@ -164,38 +166,49 @@ The `iat` is set to 1 minute in the past to account for clock skew between clien
 **Function Signature:**
 
 ```typescript
-export const chatTokenProvider = async (userId: string): Promise<string>
+export async function chatTokenProvider(
+  userId: string,
+): Promise<ActionResult<string>>;
 ```
 
-**Implementation:**
+**Implementation** (`actions/stream/chat/stream.action.ts:101-140`):
 
 ```typescript
-export const chatTokenProvider = async (userId: string) => {
+export async function chatTokenProvider(userId: string) {
+  const validatedUserId = userIdSchema.parse(userId);
+
+  // Session bind (#899): mint only for the authenticated session user
+  // (staff/admins may mint for anyone). Returns a typed refusal, not a throw.
+  const refused = await assertCanMintToken(validatedUserId);
+  if (refused) return refusalResult(refused);
+
+  if (!isStreamConfigured()) throw new Error("Stream API is not configured");
+
   try {
-    // 0. Session bind (#899): mint only for the authenticated session user
-    //    (staff/admins may mint for anyone).
-    await assertCanMintToken(userId);
-
-    // 1. Validate API credentials
-    if (!apiKey) throw new Error("Stream API key not configured");
-    if (!apiSecret) throw new Error("Stream API secret not configured");
-
-    // 2. Verify user exists in database
-    const userDetails = await fetchUserDetails(userId);
-    if (!userDetails) throw new Error("User not found");
-
-    // 3. Initialize Stream Chat server client
-    const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-
-    // 4. Create token (no explicit expiration)
-    const token = serverClient.createToken(userDetails.id);
-
-    return token;
+    // The TTL is REQUIRED and comes from the call site, not a default.
+    const token = generateChatToken(validatedUserId, STREAM_TOKEN_TTL_SECONDS);
+    await noteStreamTokenMint(validatedUserId);
+    return okResult(token);
   } catch (error) {
-    console.error("Error generating chat token:", error);
-    throw error;
+    // Sentry + streamLogger, then rethrow
   }
-};
+}
+```
+
+The token itself is minted by `generateChatToken` in `lib/stream-client.ts:98-127`,
+which always passes **both** `exp` and `iat`:
+
+```typescript
+export function generateChatToken(
+  userId: string,
+  expirationTime: number,
+): string {
+  const client = getStreamChatClient();
+  // 60s of skew allowance, matching generateVideoToken.
+  const issued = Math.floor(Date.now() / 1000) - 60;
+  const exp = Math.floor(Date.now() / 1000) + expirationTime;
+  return client.createToken(userId, exp, issued);
+}
 ```
 
 **Example Usage:**
@@ -215,10 +228,27 @@ try {
 
 **Key Differences from Video Token:**
 
-- No explicit expiration time
-- No issued-at claim
-- Simpler generation using `createToken()`
-- Default Stream Chat token behavior
+- **An `iat` claim is always present.** A chat token with no `iat` is treated as
+  **invalid** by Stream once `revoke_tokens_issued_before` is set for that user,
+  and that flag persists until explicitly cleared — so an `iat`-less token plus
+  one ban equals a **permanent lockout** (#1134 P0-4). Every chat token this
+  module mints carries `iat`.
+- `expirationTime` is a **required** parameter, not an optional one with a
+  default. It used to be optional, and `createToken(userId, undefined, issued)`
+  minted a token with **no `exp` at all** — a credential that never ages out, so
+  the only way to revoke it is the same global `revoke_tokens_issued_before` that,
+  once set, blocks every future token for that user. That path was latent (both
+  production callers passed the shared `STREAM_TOKEN_TTL_SECONDS`) and it was kept
+  alive by a test named _"should generate token without expiration"_, which reads
+  as a contract rather than a snapshot of an accident. Requiring the TTL makes the
+  expiry a property of the call site, the only place that knows how long the
+  token is needed for.
+
+  **No production caller uses the non-expiring form.** It survives only as a
+  documented dead path; do not reintroduce it.
+
+- Both tokens go through the same 60-second `iat` skew allowance, and both carry
+  the same claim set — the only difference is which SDK client mints them.
 
 ---
 

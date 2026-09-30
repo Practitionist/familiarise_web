@@ -313,27 +313,30 @@ console.log("Chat connection failed:", {
 Implement structured logging:
 
 ```typescript
-import { logger } from "@/lib/logger";
+// There is no `@/lib/logger`. The Stream subsystem's logger is `streamLogger`
+// from `@/lib/stream-logger`, and it is environment-aware: `debug` is suppressed
+// outside development, so a diagnostic you can only see locally needs `info` or
+// above (or a Sentry capture) to be worth anything.
+import { streamLogger } from "@/lib/stream-logger";
 
-logger.error("stream.chat.connection_failed", {
-  userId,
-  error,
-  context: {
-    /* additional context */
-  },
-});
+streamLogger.error("Chat connection failed", error, { userId, attemptNumber });
 ```
+
+Note that `console.*` is **not** a substitute here. The Netlify function log
+strips `console.*` (see `lib/health/probe.ts`), so a bare `console.warn` in a
+server path can produce a total, silent failure — which is precisely how a
+signature failure used to pass unnoticed.
 
 ---
 
 ### Workarounds Summary
 
-| Issue           | Workaround                   | Effectiveness | Notes                            |
-| --------------- | ---------------------------- | ------------- | -------------------------------- |
+| Issue           | Workaround                   | Effectiveness | Notes                                     |
+| --------------- | ---------------------------- | ------------- | ----------------------------------------- |
 | Admin role bug  | Resolved in #899             | Fixed         | Least-privilege role mapping now in place |
-| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops           |
-| Race conditions | Atomic creation              | Moderate      | Race window still exists         |
-| User cleanup    | Exclusion list               | Good          | Manual maintenance required      |
+| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops                    |
+| Race conditions | Atomic creation              | Moderate      | Race window still exists                  |
+| User cleanup    | Exclusion list               | Good          | Manual maintenance required               |
 
 ---
 
@@ -403,7 +406,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
 
 #### Cause
 
-The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed *type* between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
+The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed _type_ between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
 
 #### Fix
 

@@ -28,10 +28,13 @@ STREAM_API_SECRET=your_stream_api_secret_here
 
 # Database Connection (Required for user sync)
 DATABASE_URL=postgresql://user:password@host:5432/database
-
-# Optional: Background Sync Job Protection
-STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 ```
+
+There is **no `STREAM_SYNC_SECRET`**. The background user sync is a GitHub Actions
+job (`jobs/stream/stream-sync.ts`), not an HTTP endpoint, so there is no route to
+protect and no module in this repository reads the variable. The only Stream
+webhooks secret-shaped value is `STREAM_API_SECRET`, and Stream signs webhooks
+with it — see `docs/stream/13-recording-webhooks.md`.
 
 ### Variable Breakdown
 
@@ -40,7 +43,10 @@ STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 | `NEXT_PUBLIC_STREAM_API_KEY` | Public (Client)  | Identifies your Stream app      | Public     |
 | `STREAM_API_SECRET`          | Private (Server) | Authenticates server operations | **SECRET** |
 | `DATABASE_URL`               | Private (Server) | User data for token generation  | **SECRET** |
-| `STREAM_SYNC_SECRET`         | Private (Server) | Protects sync API endpoint      | **SECRET** |
+
+These three, plus `STREAM_USAGE_METER_ENABLED`, are the only `STREAM_*` variables
+in `.env.sample`. `STREAM_WEBHOOK_SECRET` and `STREAM_SYNC_EXCLUDED_USERS` are
+read by code but are optional and deliberately not in the sample.
 
 ⚠️ **Security Warning:**
 
@@ -90,7 +96,6 @@ DATABASE_URL=postgresql://...
 NEXT_PUBLIC_STREAM_API_KEY=prod_key
 STREAM_API_SECRET=prod_secret
 DATABASE_URL=postgresql://...
-STREAM_SYNC_SECRET=random_secure_string
 ```
 
 ### Environment File Template
@@ -100,20 +105,19 @@ Create `.env.example` in your project root:
 ```env
 # Stream API Credentials
 NEXT_PUBLIC_STREAM_API_KEY=""
-STREAM_API_KEY=""
 STREAM_API_SECRET=""
-STREAM_SYNC_SECRET=""
 
 # Database
 DATABASE_URL=""
 DIRECT_URL=""
 
-# Better Auth
-NEXTAUTH_SECRET=""
-NEXTAUTH_URL=""
-
 # Other services...
 ```
+
+**Auth is Better Auth, not NextAuth.** There is no `NEXTAUTH_SECRET` and no
+`NEXTAUTH_URL`; the only `NEXTAUTH` string in the repository is a row in the root
+`README.md`. Session secrets and URLs are configured through Better Auth in
+`lib/auth.ts` (see `docs/authentication/betterauth/`).
 
 ---
 
@@ -537,7 +541,14 @@ npm install @stream-io/node-sdk @stream-io/video-react-sdk stream-chat stream-ch
 
 ### 3. Create Test Page
 
-**File:** `app/stream-test/page.tsx`
+**There is no `app/stream-test/page.tsx` in this repository**, and no
+`/stream-test` route. The pattern below is something you would create yourself to
+smoke-test a connection. The real in-repo equivalent of this readout is
+`components/chat/DebugDialog.tsx`, which consumes the same context and is
+deliberately written to import from the SDK-free shell
+(`providers/StreamProvider.tsx`) so it does not pull the SDK bundle.
+
+Create the page if you want one:
 
 ```typescript
 "use client";
@@ -605,97 +616,54 @@ Video connection successful for user user_123
 
 ## Environment Validation
 
-### Validation Function
+**There is no `lib/env-validation.ts` and no `scripts/check-stream-env.ts`.**
+Neither file exists, and there is no startup env-validation script for Stream.
+The checks that do exist are two small predicates at the top of the server client
+module.
 
-Create a helper to validate environment variables at runtime:
-
-**File:** `lib/env-validation.ts`
+**File:** `lib/stream-client.ts:27-45`
 
 ```typescript
-export function validateStreamEnv() {
-  const errors: string[] = [];
-
-  // Check public API key
-  const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-  if (!apiKey) {
-    errors.push("NEXT_PUBLIC_STREAM_API_KEY is not set");
-  } else if (apiKey.length < 10) {
-    errors.push("NEXT_PUBLIC_STREAM_API_KEY appears invalid (too short)");
-  }
-
-  // Check secret (server-side only)
-  if (typeof window === "undefined") {
-    const apiSecret = process.env.STREAM_API_SECRET;
-    if (!apiSecret) {
-      errors.push("STREAM_API_SECRET is not set");
-    } else if (apiSecret.length < 20) {
-      errors.push("STREAM_API_SECRET appears invalid (too short)");
-    }
-
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl) {
-      errors.push("DATABASE_URL is not set (required for user sync)");
-    }
-  }
-
-  if (errors.length > 0) {
+/**
+ * Validates that Stream API credentials are configured
+ * @throws Error if credentials are missing
+ */
+export function validateStreamConfig(): void {
+  if (!STREAM_API_KEY) {
     throw new Error(
-      `Stream environment validation failed:\n${errors.join("\n")}`,
+      "NEXT_PUBLIC_STREAM_API_KEY is not configured. Please set it in your environment variables.",
     );
   }
+  if (!STREAM_API_SECRET) {
+    throw new Error(
+      "STREAM_API_SECRET is not configured. Please set it in your environment variables.",
+    );
+  }
+}
 
-  return {
-    apiKey,
-    apiSecret: process.env.STREAM_API_SECRET,
-    databaseUrl: process.env.DATABASE_URL,
-  };
+/**
+ * Check if Stream is properly configured
+ */
+export function isStreamConfigured(): boolean {
+  return !!(STREAM_API_KEY && STREAM_API_SECRET);
 }
 ```
 
-### Usage in Provider
+**When each is used:**
 
-```typescript
-// providers/StreamProvider.tsx
-import { validateStreamEnv } from "@/lib/env-validation";
+- `isStreamConfigured()` is the **refuse-rather-than-throw** form. Call sites that
+  want a typed refusal instead of a 500 check it first —
+  `provisionAppointmentMeeting` returns
+  `{ ok: false, refusal: "Video is not available right now." }` when it is false,
+  which is what keeps a missing key from surfacing as an opaque server-action
+  error digest.
+- `validateStreamConfig()` throws, and runs inside `getStreamChatClient()` and the
+  video client getters. A missing key therefore fails at the first Stream
+  operation, not at boot.
 
-export default function StreamProvider({ children, userId }: Props) {
-  useEffect(() => {
-    try {
-      validateStreamEnv();
-    } catch (error) {
-      console.error("Environment validation failed:", error);
-      setError(error.message);
-    }
-  }, []);
-
-  // Rest of provider code...
-}
-```
-
-### Startup Check Script
-
-**File:** `scripts/check-stream-env.ts`
-
-```typescript
-import { validateStreamEnv } from "../lib/env-validation";
-
-try {
-  console.log("Checking Stream environment variables...");
-  const env = validateStreamEnv();
-  console.log("✅ All Stream environment variables are valid");
-  console.log(`   API Key: ${env.apiKey.substring(0, 10)}...`);
-} catch (error) {
-  console.error("❌ Environment validation failed:");
-  console.error(error.message);
-  process.exit(1);
-}
-```
-
-Run before deployment:
-
-```bash
-npx tsx scripts/check-stream-env.ts
-```
+**A known posture gap, not a solved one:** a preview deploy with no Stream keys
+builds and deploys cleanly and fails at the first user action. There is no
+startup validation to catch that earlier.
 
 ---
 
@@ -871,11 +839,14 @@ has been blocked by CORS policy
 
    ```typescript
    // ❌ Wrong (importing server code in client)
-   import { tokenProvider } from "@/actions/stream.action";
+   import { tokenProvider } from "@/actions/stream/chat/stream.action";
 
    // ✅ Correct (use as callback)
    tokenProvider: () => tokenProvider(userId);
    ```
+
+   The server-action module is `@/actions/stream/chat/stream.action` — there is no
+   `@/actions/stream.action`.
 
 ### Error 6: "Token Expired"
 
@@ -1040,7 +1011,6 @@ DATABASE_URL=postgresql://localhost:5432/familiarise_dev
 NEXT_PUBLIC_STREAM_API_KEY=prod_key_789
 STREAM_API_SECRET=prod_secret_012
 DATABASE_URL=postgresql://prod-host:5432/familiarise
-STREAM_SYNC_SECRET=random_secure_64_char_string
 ```
 
 **Security Checklist:**
@@ -1048,7 +1018,7 @@ STREAM_SYNC_SECRET=random_secure_64_char_string
 - [ ] Different API keys for dev/prod
 - [ ] API secret never exposed to client
 - [ ] HTTPS enforced
-- [ ] Sync endpoint protected with secret
+- [ ] Background sync confirmed as a GitHub Actions job, not an HTTP route
 - [ ] Rate limiting enabled
 - [ ] Error monitoring configured (Sentry)
 - [ ] Token expiry appropriate (1 hour)

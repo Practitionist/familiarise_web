@@ -76,14 +76,16 @@ Most endpoints require an authenticated Better Auth session.
 
 **How it Works:**
 
-```typescript
-import { headers } from "next/headers";
+The app uses **Better Auth** (`lib/auth.ts`). There is no NextAuth and no
+`app/api/auth/[...nextauth]/options` — that path does not exist. Routes call the
+memoized helper from `@/lib/auth-server`, which wraps `auth.api.getSession({ headers })`
+once per request:
 
-import { auth } from "@/lib/auth";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
+```typescript
+import { getSession } from "@/lib/auth-server";
 
 // In API route
-const session = await auth.api.getSession({ headers: await headers() });
+const session = await getSession();
 
 if (!session?.user?.id) {
   return NextResponse.json(
@@ -92,6 +94,11 @@ if (!session?.user?.id) {
   );
 }
 ```
+
+`getSession(true)` disables the cookie cache, which freshness-sensitive routes
+(recording start/stop, consent) pass. `getCachedSession()` is the 5-minute-cached
+twin. The raw `auth.api.getSession({ headers: await headers() })` form still works;
+it just skips the memo, so a render path that calls both pays for two sessions.
 
 **Client-Side Request:**
 
@@ -102,22 +109,15 @@ const response = await fetch("/api/stream/search?term=john");
 
 ### Secret-Based Authentication
 
-Some endpoints use a secret query parameter for server-to-server authentication.
+**No Stream endpoint authenticates with a `?secret=` query parameter**, and
+`STREAM_SYNC_SECRET` is read by nothing in the codebase — it is not in
+`.env.sample` and no module reads it. The one route that takes a secret does so
+as a _second_ factor on top of a session, and against its own variable:
+`/api/stream/debug` requires `STREAM_DEBUG_SECRET` and fails closed when it is
+unset (`app/api/stream/debug/route.ts:52-65`).
 
-**Example:**
-
-```typescript
-const secret = searchParams.get("secret");
-if (secret !== process.env.STREAM_SYNC_SECRET) {
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-}
-```
-
-**Usage:**
-
-```bash
-curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-secret-here"
-```
+The background user sync is **not an HTTP endpoint at all** — it is a GitHub
+Actions job (see [Synchronization](#synchronization) below).
 
 ---
 
@@ -660,249 +660,53 @@ console.log(result);
 
 ## Synchronization
 
-### POST /api/stream/sync/manual
+### There is no `/api/stream/sync/*` endpoint
 
-Manually triggers Stream user synchronization (same logic as background job).
+`POST /api/stream/sync/manual` and `POST /api/stream/sync/background` **do not
+exist**, and `STREAM_SYNC_SECRET` is not a variable anything reads. The Stream
+user sync is a **GitHub Actions job**, not an HTTP route.
 
-**Location:** `/app/api/stream/sync/manual/route.ts`
+**The real chain:**
 
-**Authentication:** Secret-based (query parameter)
-
-**Query Parameters:**
-
-- `secret` (required): Must match `STREAM_SYNC_SECRET` environment variable
-
-**Response (Success - 200):**
-
-```typescript
-{
-  message: string,
-  activePrismaUsers: number,
-  totalStreamUsers: number,
-  staleUsersIdentified: number,
-  staleUsersTargetedForDeletion: number,
-  failedDeletionAttempts: Array<{
-    id: string,
-    error: string
-  }>,
-  details: {
-    staleUserIdsAttempted: string[]
-  }
-}
-```
-
-**Response (Error - 401/500):**
-
-```typescript
-{
-  error: string,
-  details?: string
-}
-```
-
-#### Example Request
-
-**Request:**
+| Layer          | Path                                                                             |
+| -------------- | -------------------------------------------------------------------------------- |
+| Workflow       | `.github/workflows/stream-sync.yml` — daily at `40 3 * * *` UTC                  |
+| Job wrapper    | `jobs/stream/stream-sync.ts` — GitHub Actions outputs, Sentry, maintenance abort |
+| Implementation | `scripts/stream/stream-sync.ts` — `performStreamUserSync()`                      |
 
 ```bash
-curl -X POST "https://your-domain.com/api/stream/sync/manual?secret=your-sync-secret"
+# what the workflow actually runs
+node_modules/.bin/tsx jobs/stream/stream-sync.ts
 ```
-
-**Request (JavaScript):**
 
 ```typescript
-const secret = process.env.STREAM_SYNC_SECRET;
-
-const response = await fetch(`/api/stream/sync/manual?secret=${secret}`, {
-  method: "POST",
-});
-
-const result = await response.json();
-console.log(result);
+// what the wrapper calls
+import {
+  performStreamUserSync,
+  printSyncSummary,
+} from "../../scripts/stream/stream-sync";
 ```
 
-**Response:**
+**Authentication:** the workflow's own `GITHUB_TOKEN` and the repository secrets
+it declares. There is no shared secret to configure, which is why adding
+`STREAM_SYNC_SECRET` to an environment is a no-op and why the pre-production
+checklists that asked for it were wrong.
 
-```json
-{
-  "message": "Stream user synchronization process initiated.",
-  "activePrismaUsers": 1247,
-  "totalStreamUsers": 1270,
-  "staleUsersIdentified": 23,
-  "staleUsersTargetedForDeletion": 22,
-  "failedDeletionAttempts": [
-    {
-      "id": "user-xyz",
-      "error": "User is owner of channel 'room-123'"
-    }
-  ],
-  "details": {
-    "staleUserIdsAttempted": [
-      "deleted-user-1",
-      "deleted-user-2",
-      "test-user-123",
-      "user-xyz"
-    ]
-  }
-}
-```
+**Paging:** `scripts/ci/notify-ops-failure.sh "stream-sync"` runs in the
+workflow's failure path.
 
-#### Error Cases
-
-**Unauthorized:**
-
-```json
-{
-  "error": "Unauthorized"
-}
-```
-
-**Internal Error:**
-
-```json
-{
-  "error": "Internal Server Error",
-  "details": "Database connection failed"
-}
-```
-
-#### Differences from Background Sync
-
-**Manual Sync (`/api/stream/sync/manual`):**
-
-- Fetches ALL users at once (not paginated)
-- Faster for small user bases
-- May timeout on large datasets
-- Returns detailed results immediately
-
-**Background Sync (`/api/stream/sync/background`):**
-
-- Uses pagination (100 users per page)
-- Scalable for large user bases
-- More robust error handling
-- Suitable for cron jobs
-
-### POST /api/stream/sync/background
-
-Triggers the paginated background sync process (used by GitHub Actions cron job).
-
-**Location:** `/app/api/stream/sync/background/route.ts`
-
-**Authentication:** Secret-based (query parameter)
-
-**Query Parameters:**
-
-- `secret` (required): Must match `STREAM_SYNC_SECRET` environment variable
-
-**Response (Success - 200):**
-
-```typescript
-{
-  message: string,
-  summary: {
-    totalStreamUsersProcessed: number,
-    totalStaleUsersIdentified: number,
-    totalStaleUsersDeleted: number,
-    totalFailedDeletions: number,
-    failedDeletionDetails: Array<{
-      id: string,
-      error: string
-    }>
-  }
-}
-```
-
-**Response (Error - 401/500):**
-
-```typescript
-{
-  error: string,
-  details?: string
-}
-```
-
-#### Example Request
-
-**Request:**
+**To run it by hand**, invoke the script directly rather than looking for a
+route:
 
 ```bash
-curl -X POST "https://your-domain.com/api/stream/sync/background?secret=your-sync-secret"
+npx tsx jobs/stream/stream-sync.ts
 ```
 
-**Request (JavaScript):**
+The one HTTP route in this neighbourhood is **`POST /api/stream/recordings/sync`**,
+which is unrelated: it syncs _recordings_ for the caller's own sessions, takes a
+Better Auth session, and is rate-limited per user.
 
-```typescript
-const secret = process.env.STREAM_SYNC_SECRET;
-
-const response = await fetch(`/api/stream/sync/background?secret=${secret}`, {
-  method: "POST",
-});
-
-const result = await response.json();
-console.log(result);
-```
-
-**Response:**
-
-```json
-{
-  "message": "Stream user background synchronization triggered and completed.",
-  "summary": {
-    "totalStreamUsersProcessed": 5247,
-    "totalStaleUsersIdentified": 87,
-    "totalStaleUsersDeleted": 85,
-    "totalFailedDeletions": 2,
-    "failedDeletionDetails": [
-      {
-        "id": "user-abc",
-        "error": "User is owner of channel 'consulting-room-xyz'"
-      },
-      {
-        "id": "user-def",
-        "error": "User has active session"
-      }
-    ]
-  }
-}
-```
-
-#### Error Cases
-
-**Unauthorized:**
-
-```json
-{
-  "error": "Unauthorized"
-}
-```
-
-**Internal Error:**
-
-```json
-{
-  "error": "Internal Server Error during background sync via API call",
-  "details": "Stream API timeout"
-}
-```
-
-#### GitHub Actions Integration
-
-**Workflow File:** `/.github/workflows/stream_sync.yml`
-
-```yaml
-- name: Run Stream User Sync Script
-  run: |
-    echo "Running Stream user sync script..."
-    npm run scripts:stream-sync
-```
-
-**The script directly executes `/jobs/stream-sync.ts`, not the API endpoint.**
-
-**API Endpoint Use Case:**
-
-- External cron services (Vercel Cron, AWS EventBridge)
-- Manual triggering from external systems
-- Monitoring/alerting integrations
+See `09-background-sync.md` for what the job does and how it is tuned.
 
 ---
 

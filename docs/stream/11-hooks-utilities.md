@@ -30,27 +30,31 @@ Comprehensive guide to custom hooks and utilities for Stream Chat and Video inte
 
 ### useGetCallById
 
-The `useGetCallById` hook fetches or creates a Stream Video call by its ID. It handles both existing and new calls seamlessly.
+The `useGetCallById` hook resolves a Stream Video call for a meeting id **through the server**.
+It **does not create anything.** Room creation is server-side and entitlement-gated, behind
+`POST /api/meetings/[id]/join`, which is the only grantor of Stream call membership.
 
 #### Location
 
 ```
-/app/meetings/[id]/hooks/useGetCallById.ts
+app/meetings/[id]/hooks/useGetCallById.ts
 ```
 
 #### Parameters
 
-| Parameter | Type     | Required | Description                    |
-| --------- | -------- | -------- | ------------------------------ |
-| `callId`  | `string` | Yes      | Unique identifier for the call |
+| Parameter | Type     | Required | Description                                                                                         |
+| --------- | -------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `callId`  | `string` | Yes      | The meeting's room id — `occurrence-<occurrenceId>`, or the `-r<suffix>` form after a #1607 rebuild |
 
 #### Return Values
 
-| Property        | Type            | Description                                      |
-| --------------- | --------------- | ------------------------------------------------ |
-| `call`          | `Call \| null`  | Stream Video call instance or null if not loaded |
-| `isCallLoading` | `boolean`       | Loading state indicator                          |
-| `error`         | `Error \| null` | Error object if call fetch/creation failed       |
+| Property        | Type                          | Description                                                           |
+| --------------- | ----------------------------- | --------------------------------------------------------------------- |
+| `call`          | `Call \| null`                | Stream Video call instance, or null                                   |
+| `isCallLoading` | `boolean`                     | Loading state indicator                                               |
+| `error`         | `Error \| null`               | A **failure**, not a refusal — see below                              |
+| `access`        | `MeetingAccessResult \| null` | `{ hasAccess, role, message }` — a refusal lands here, not in `error` |
+| `rejoin`        | `() => void`                  | Manual recovery from `RECONNECTING_FAILED` and `LEFT`                 |
 
 #### Implementation
 
@@ -58,19 +62,12 @@ The `useGetCallById` hook fetches or creates a Stream Video call by its ID. It h
 import { useGetCallById } from '@/app/meetings/[id]/hooks/useGetCallById';
 
 function MeetingPage({ callId }: { callId: string }) {
-  const { call, isCallLoading, error } = useGetCallById(callId);
+  const { call, isCallLoading, error, access, rejoin } = useGetCallById(callId);
 
-  if (isCallLoading) {
-    return <LoadingSpinner />;
-  }
-
-  if (error) {
-    return <ErrorDisplay error={error} />;
-  }
-
-  if (!call) {
-    return <div>No call found</div>;
-  }
+  if (isCallLoading) return <LoadingSpinner />;
+  if (error) return <ErrorDisplay error={error} onRetry={rejoin} />;
+  if (access && !access.hasAccess) return <AccessDenied message={access.message} />;
+  if (!call) return <div>No call found</div>;
 
   return <StreamCall call={call}>{/* Meeting UI */}</StreamCall>;
 }
@@ -78,35 +75,70 @@ function MeetingPage({ callId }: { callId: string }) {
 
 #### How It Works
 
-The hook performs the following steps:
+1. **Waits for the video client.** The provider mounts the video client lazily, so
+   `useStreamVideoClient()` returning `undefined` is the normal cold-load state,
+   not a failure. The hook stays in `loading` and re-runs when the client lands.
+   Surfacing an error there produced a visible "Video client not available" flash
+   on every cold open.
 
-1. **Validates Prerequisites**
-   - Checks if `StreamVideoClient` is available
-   - Validates that `callId` is provided
+   Because the client may _never_ arrive (Stream unconfigured, a token fetch that
+   keeps failing), that wait is bounded by `CLIENT_WAIT_TIMEOUT_MS = 45_000`,
+   sized against the provider's own ladder: `StreamProviderImpl` retries up to five
+   times with `min(1000 * 2^n, 30_000)` backoff, so it may legitimately take ~30s
+   plus connect attempts. A shorter bound would fire while the provider was still
+   going to succeed, and an unbounded one left the page rendering a skeleton with
+   no error and no way out.
 
-2. **Query First Approach**
+2. **Asks the server.** One `POST /api/meetings/${encodeURIComponent(callId)}/join`
+   resolves access, provisions the room if it does not exist, and grants membership:
 
    ```typescript
-   // First, attempts to find existing call
-   const { calls } = await client.queryCalls({
-     filter_conditions: { id: callId },
-   });
+   const response = await fetch(
+     `/api/meetings/${encodeURIComponent(callId)}/join`,
+     {
+       method: "POST",
+     },
+   );
+   // → { callType, callId, role: "host" | "participant" }
    ```
 
-3. **Fallback Creation**
+3. **Constructs a local handle.** `client.call(data.callType, data.callId)` only
+   builds the object in memory — it performs no network write, so nothing is
+   created for a caller who got this far. `await callInstance.get()` then fetches
+   the existing call.
 
-   ```typescript
-   // If no call found, creates new call with default type
-   if (calls.length === 0) {
-     const callInstance = client.call("default", callId);
-     await callInstance.getOrCreate();
-   }
-   ```
+4. **Does not join on the first resolve.** Joining is the lobby's decision, and
+   that is where the recording notice is consented to. A **rejoin** does join, and
+   restores the microphone and camera to the state the participant left them in —
+   a fresh `Call` instance starts from the call type's defaults.
 
-4. **Error Handling**
-   - Sets error state for missing client
-   - Sets error state for missing call ID
-   - Catches and logs all fetch/creation errors
+5. **Separates refusal from failure.** Only `401`, `403` and `404` set
+   `access.hasAccess = false`. Everything else — Stream down (503), a server fault
+   (500), a bad id (400) — is thrown, so it lands in `error` and gets the retry
+   affordance. Rendering a 503 as "You are not authorized to join this meeting"
+   told legitimate participants they had been refused when the truth was an outage.
+
+6. **Releases media it never handed over.** `callInstance.get()` applies the call
+   type's `camera_default_on`/`mic_default_on`, so the devices are live from that
+   line on. Every exit that does not hand the instance to state — a `cancelled`
+   bail, a throw, an unmount mid-flight — used to drop the only reference and
+   leave the camera light on for the life of the tab. A `finally` releases it.
+
+#### Why the client stopped creating calls (#1270)
+
+This hook used to `client.queryCalls()` and, on a miss,
+`client.call("default", callId).getOrCreate()`. That ran **in parallel with** the
+access check on the page, so any signed-in user who opened `/meetings/<anything>`
+minted a billable Stream call and became its `created_by` before being shown
+"Access Denied". Two such ghost calls — `default:smoke-test-nonexistent` and
+`default:test-meeting` — were still sitting in the production app months later.
+
+There is also a billing reason: `getOrCreate` applies the call type's device
+settings, so merely minting a room opened the camera and microphone on the
+**dashboard**. A room minted server-side cannot open them at all.
+
+Note that `join-call` has since moved to the `call_member` role, so a
+non-participant holding a call handle could not join even if they obtained one.
 
 #### Error States
 
@@ -459,6 +491,13 @@ function VideoComponent() {
   return <button onClick={createCall}>Create Call</button>;
 }
 ```
+
+> ⚠️ `getOrCreate()` is the SDK's API, shown here so the shape is recognisable.
+> **Do not call it from this app's client.** Meeting rooms are created
+> server-side by `provisionAppointmentMeeting` and reached through
+> `POST /api/meetings/[id]/join`; a browser-side `getOrCreate` is what let any
+> signed-in user mint a billable call before the access check ran. See
+> [useGetCallById](#usegetcallbyid).
 
 ### useChatContext
 
