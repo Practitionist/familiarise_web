@@ -616,8 +616,10 @@ export function ConnectedAccountsSection({
     void load();
   }, [load]);
 
-  const unlink = async (providerId: string) => {
-    const { error } = await authClient.unlinkAccount({ providerId });
+  // BetterAuth 1.7 selects the account by its local row id (from
+  // listAccounts), not by provider.
+  const unlink = async (accountId: string) => {
+    const { error } = await authClient.unlinkAccount({ accountId });
     if (error) {
       // BEFORE: `throw new Error(error.message || …)`, and ConfirmDialog
       // renders a thrown message *verbatim* inside the dialog — so this was
@@ -669,7 +671,9 @@ export function ConnectedAccountsSection({
           )}
           {AUTH_PROVIDERS.map((provider) => {
             const Icon = PROVIDER_ICONS[provider.id];
-            const linked = accounts.some((a) => a.provider === provider.id);
+            const linkedAccount = accounts.find(
+              (a) => a.provider === provider.id,
+            );
             return (
               <li
                 key={provider.id}
@@ -681,7 +685,7 @@ export function ConnectedAccountsSection({
                     {provider.label}
                   </span>
                 </span>
-                {linked ? (
+                {linkedAccount ? (
                   <span className="flex items-center gap-2">
                     <StatusBadge label="Connected" tone="success" size="sm" />
                     {canUnlink && (
@@ -699,7 +703,7 @@ export function ConnectedAccountsSection({
                         description={`You'll no longer be able to sign in with ${provider.label}.`}
                         confirmLabel="Disconnect"
                         tone="destructive"
-                        onConfirm={() => unlink(provider.id)}
+                        onConfirm={() => unlink(linkedAccount.id)}
                       />
                     )}
                   </span>

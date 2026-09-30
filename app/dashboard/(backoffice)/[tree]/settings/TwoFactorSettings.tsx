@@ -63,7 +63,9 @@ export function TwoFactorSettings() {
 
   const refresh = useCallback(async () => {
     try {
-      const { data } = await authClient.getSession({ query: { disableCookieCache: true } });
+      const { data } = await authClient.getSession({
+        query: { disableCookieCache: true },
+      });
       setEnabled(data?.user?.twoFactorEnabled === true);
     } catch {
       // A session that cannot be read is the `SESSION_LOOKUP_FAILED` case,
@@ -110,11 +112,16 @@ export function TwoFactorSettings() {
       return;
     }
     const ok = await run(async () => {
-      const result = await authClient.twoFactor.enable({ password });
-      if (result.data) {
+      const result = await authClient.twoFactor.enable({
+        password,
+        method: "totp",
+      });
+      // 1.7 discriminates on `method`; only the TOTP branch carries the
+      // secret URI and backup codes.
+      if (result.data?.method === "totp") {
         setSetup({
           totpURI: result.data.totpURI,
-          backupCodes: result.data.backupCodes ?? [],
+          backupCodes: result.data.backupCodes,
         });
         setPhase("enrolling");
       }
@@ -131,7 +138,10 @@ export function TwoFactorSettings() {
   async function confirmEnrolment() {
     if (!setup) return;
     const ok = await run(async () => {
-      const result = await authClient.twoFactor.verifyTotp({ code, trustDevice: true });
+      const result = await authClient.twoFactor.verifyTotp({
+        code,
+        trustDevice: true,
+      });
       return { error: result.error as never };
     });
     if (!ok) return;
@@ -149,7 +159,9 @@ export function TwoFactorSettings() {
       return;
     }
     const ok = await run(async () => {
-      const result = await authClient.twoFactor.generateBackupCodes({ password });
+      const result = await authClient.twoFactor.generateBackupCodes({
+        password,
+      });
       if (result.data?.backupCodes) setBackupCodes(result.data.backupCodes);
       return { error: result.error as never };
     });
@@ -170,13 +182,19 @@ export function TwoFactorSettings() {
       setPassword("");
       setEnabled(false);
       setBackupCodes(null);
-      toast({ title: "Two-factor authentication is off", variant: "destructive" });
+      toast({
+        title: "Two-factor authentication is off",
+        variant: "destructive",
+      });
     }
   }
 
   if (phase === "loading") {
     return (
-      <section aria-busy="true" className="rounded-lg border border-neutral-800 p-6">
+      <section
+        aria-busy="true"
+        className="rounded-lg border border-neutral-800 p-6"
+      >
         <p className="text-sm text-neutral-400">Loading security settings…</p>
       </section>
     );
@@ -188,14 +206,19 @@ export function TwoFactorSettings() {
   if (!enabled && !setup) {
     return (
       <section className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-6">
-        <h2 className="text-lg font-semibold text-white">Two-factor authentication</h2>
+        <h2 className="text-lg font-semibold text-white">
+          Two-factor authentication
+        </h2>
         <p className="mt-2 text-sm text-neutral-300">
           Your staff account is not protected by a second factor. Until it is,
           back-office tools that move money and change people&apos;s access will
           refuse every request.
         </p>
         <div className="mt-4 space-y-3">
-          <label className="block text-sm text-neutral-300" htmlFor="tfa-enable-password">
+          <label
+            className="block text-sm text-neutral-300"
+            htmlFor="tfa-enable-password"
+          >
             Confirm your password to continue
           </label>
           <input
@@ -215,7 +238,11 @@ export function TwoFactorSettings() {
             {busy ? "Working…" : "Set up two-factor"}
           </button>
         </div>
-        {error ? <p role="alert" className="mt-3 text-sm text-red-400">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="mt-3 text-sm text-red-400">
+            {error}
+          </p>
+        ) : null}
       </section>
     );
   }
@@ -253,7 +280,11 @@ export function TwoFactorSettings() {
             {busy ? "Verifying…" : "Verify"}
           </button>
         </div>
-        {error ? <p role="alert" className="mt-3 text-sm text-red-400">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="mt-3 text-sm text-red-400">
+            {error}
+          </p>
+        ) : null}
       </section>
     );
   }
@@ -261,8 +292,12 @@ export function TwoFactorSettings() {
   /* Enrolled. */
   return (
     <section className="rounded-lg border border-neutral-800 p-6">
-      <h2 className="text-lg font-semibold text-white">Two-factor authentication</h2>
-      <p className="mt-1 text-sm text-emerald-400">On — your account requires a second factor.</p>
+      <h2 className="text-lg font-semibold text-white">
+        Two-factor authentication
+      </h2>
+      <p className="mt-1 text-sm text-emerald-400">
+        On — your account requires a second factor.
+      </p>
 
       {backupCodes ? (
         <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
@@ -278,7 +313,10 @@ export function TwoFactorSettings() {
       ) : null}
 
       <div className="mt-4 space-y-3">
-        <label className="block text-sm text-neutral-300" htmlFor="tfa-password">
+        <label
+          className="block text-sm text-neutral-300"
+          htmlFor="tfa-password"
+        >
           Confirm your password to change anything
         </label>
         <input
@@ -312,7 +350,11 @@ export function TwoFactorSettings() {
           back-office tool, including issuing refunds.
         </p>
       </div>
-      {error ? <p role="alert" className="mt-3 text-sm text-red-400">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="mt-3 text-sm text-red-400">
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }

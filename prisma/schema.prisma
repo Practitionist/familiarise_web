@@ -968,6 +968,11 @@ model Organization {
   name String
   slug String @unique
 
+  // Unused by the app; BetterAuth 1.7's organization plugin schema check
+  // requires them. They go when the organization plugin is removed.
+  logo     String?
+  metadata String?
+
   status    OrgStatus @default(PENDING_VERIFICATION)
   /// Optimistic-lock clock for owner-editable settings. The PATCH CASes on the
   /// client's expectedVersion and increments, so a stale tab gets a 409 instead
@@ -7232,6 +7237,12 @@ model TwoFactor {
   // Comma-separated, hashed (or encrypted) by the plugin per
   // `backupCodeOptions.storeBackupCodes`. Never selected.
   backupCodes String
+
+  // BetterAuth 1.7 twoFactor columns. `verified` stays false until the first
+  // TOTP code proves enrolment; the counter and lock throttle code guessing.
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
