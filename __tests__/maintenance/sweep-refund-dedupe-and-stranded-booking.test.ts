@@ -23,12 +23,19 @@
  *
  * P0-3 — the paid-but-unallocated 48 h arm refuses a booking parked by a
  * declined reschedule. A reschedule releases a slot IN PLACE
- * (`isTentative: true` + `RESCHEDULED`) and a decline deliberately leaves it
- * released; a whole-booking reschedule also leaves the parent PENDING, which is
- * precisely the shape that arm selects. Without the exclusion a paid booking was
- * EXPIRED and fully refunded with nobody having cancelled it. The predicate is
- * stated on the LIVE SLOT, so it holds whatever parent status the reschedule work
- * chooses, and it rides the CAS WHERE as well as the cohort read.
+ * (`isTentative: true` + `RESCHEDULED`), and a decline PUTS IT BACK — the
+ * restore is withdraw's and expiry's path, so the released rows go back to
+ * SCHEDULED and the parent leaves PENDING. Only when the original time was
+ * taken while the proposal was open does the decline park the parent (settled
+ * to its origin) with the sessions still released and a human to place them.
+ * That parked booking is the shape this arm must refuse: a whole-booking
+ * reschedule also leaves the parent PENDING, which is exactly what the 48 h
+ * arm selects, so a paid plan parked by a decline (or by a restore that could
+ * not finish) was EXPIRED and refunded in full with nobody having cancelled it.
+ * The predicate is stated on the LIVE SLOT, so it holds whatever parent status
+ * the reschedule work chooses — a restored decline has no RESCHEDULED row left
+ * and is an ordinary booking again — and it rides the CAS WHERE as well as the
+ * cohort read.
  */
 
 import { AppointmentStatus, PaymentStatus } from "@prisma/client";
