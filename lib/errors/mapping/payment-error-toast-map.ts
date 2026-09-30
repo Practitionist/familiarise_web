@@ -223,6 +223,75 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Another booking is already in progress on your account. Finish or wait for it, then retry — your card was not charged.",
   },
+  // #1319 — the server spent its Serializable budget (P2034 ×4) and the
+  // transaction never committed. It ships `retryAfter: 2` and the client waits
+  // and retries ONCE, so this entry is what the SECOND attempt reads; the
+  // first already toasted the during-wait notice. Not a fault and nothing was
+  // charged, so the copy says the retry is worth making rather than "went wrong".
+  [ErrorTypes.SERIALIZATION_CONFLICT]: {
+    title: "The Booking System Was Busy",
+    description:
+      "Another booking was being written at the same time. Your card was not charged — please try again in a moment.",
+  },
+  // B4 — the optimistic capacity pre-check. Terminal until someone cancels, so
+  // this is deliberately NOT a "wait and retry" and points at the two ways out
+  // (a different time, or the waitlist) exactly like the #1757 EVENT_FULL row.
+  [ErrorTypes.EVENT_SOLD_OUT]: {
+    title: "This Session Is Full",
+    description:
+      "This session is full — pick another time or join the waitlist. Your card was not charged.",
+  },
+  // The two fail-closed lock refusals (CN-1, #1169 PR 1). Distinct from the
+  // BUSY rows above on purpose: nobody holds the lock, the locking service
+  // itself is unreachable, so the booking was refused rather than delayed. Same
+  // action though — wait and retry — so the copy says exactly that and never
+  // implies the buyer did anything.
+  [ErrorTypes.EVENT_CHECKOUT_LOCK_UNAVAILABLE]: {
+    title: "The Booking System Is Briefly Busy",
+    description:
+      "We couldn't secure a place for you in the queue for this session. Your card was not charged — please try again in a moment.",
+  },
+  [ErrorTypes.BOOKING_LOCK_UNAVAILABLE]: {
+    title: "The Booking System Is Briefly Busy",
+    description:
+      "We couldn't take the booking safely just now. Your card was not charged — please try again in a moment.",
+  },
+  // #1583 E-P1-03 — the client's own start instant, refused at the Zod edge
+  // 400ms after the page rendered. The server's sentence is the good one here
+  // (it names the minutes left and the lead time), so the description passes it
+  // through and only the title is added: a learner who sat on the pay page was
+  // never told the listing stopped being available, only that their chosen
+  // minute had passed.
+  [ErrorTypes.SLOT_TOO_SOON]: {
+    title: "That Time Is Now Too Close",
+    description: null, // The server names how many minutes are left; keep its words.
+  },
+  [ErrorTypes.SLOT_NOT_ON_GRID]: {
+    title: "That Time Isn't Bookable",
+    description: null, // "Times start on the hour or half hour" — already exact.
+  },
+};
+
+// ============================================================================
+// Typed `code` → toast, for codes that ride BESIDE an errorType
+// ============================================================================
+
+/**
+ * #1583 E-P1-03 — some routes answer a typed refusal as `{ error, code,
+ * errorType }` where `errorType` is a coarse bucket (`AVAILABILITY_ERROR`)
+ * and `code` is the specific reason. Resolving on `errorType` alone is what
+ * titled a lead-time refusal "No Longer Available"; the `code` is the half of
+ * the answer that knows what actually happened, so `getErrorToast` reads it
+ * first when a caller has it.
+ *
+ * Kept beside the refund map rather than folded into `ERROR_TOAST_MAP` because
+ * these are the SAME values as ErrorTypes entries — the map is looked up by
+ * string precisely because the caller cannot know which key a given route
+ * chose to send.
+ */
+const TYPED_CODE_TOAST_MAP: Record<string, ToastMessage> = {
+  [ErrorTypes.SLOT_TOO_SOON]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TOO_SOON],
+  [ErrorTypes.SLOT_NOT_ON_GRID]: ERROR_TOAST_MAP[ErrorTypes.SLOT_NOT_ON_GRID],
 };
 
 // ============================================================================
@@ -275,12 +344,20 @@ const FALLBACK_DESCRIPTIONS: Partial<Record<ErrorType, string>> = {
  * `errorType` is a string rather than the `ErrorType` union because API routes
  * also return gateway-minted `RefundError.code` values here (#1352); those are
  * matched first, then the classified error types, then the UNKNOWN fallback.
+ *
+ * `typedCode` is the `{ code }` half of an answer that also carries a coarse
+ * `errorType` (#1583 E-P1-03). It is consulted BEFORE `errorType` and only when
+ * the body actually typed the refusal — a generic code must never outrank a
+ * specific errorType.
  */
 export function getErrorToast(
   errorType: string,
   serverMessage?: string,
+  typedCode?: string | null,
 ): { title: string; description: string } {
+  const typedEntry = typedCode ? TYPED_CODE_TOAST_MAP[typedCode] : undefined;
   const entry =
+    typedEntry ??
     REFUND_CODE_TOAST_MAP[errorType] ??
     ERROR_TOAST_MAP[errorType as ErrorType] ??
     ERROR_TOAST_MAP[ErrorTypes.UNKNOWN];
@@ -288,7 +365,7 @@ export function getErrorToast(
   const description =
     entry.description ??
     serverMessage ??
-    FALLBACK_DESCRIPTIONS[errorType as ErrorType] ??
+    FALLBACK_DESCRIPTIONS[typedCode ?? (errorType as ErrorType)] ??
     FALLBACK_DESCRIPTIONS[ErrorTypes.UNKNOWN]!;
 
   return { title: entry.title, description };

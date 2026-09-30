@@ -99,27 +99,40 @@ export async function handleAllocate(
       );
 
       // LAYER 2: Business Logic Validation & Allocation
-      const result = await SchedulingService.allocate({
-        eventType,
-        eventId,
-        mode,
-        slots: body.slots,
-        // #837 — client dedupe key; a double-submit with the same value returns
-        // the first batch instead of allocating twice.
-        idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
-        initialAllocation: body.initialAllocation,
-        expectedTentativeSlotCount: body.expectedTentativeSlotCount,
-        // Honoured only for the consultant (or ADMIN/STAFF): accepting a
-        // time outside the published availability is the consultant's call,
-        // not something a consultee may assert about someone else's schedule.
-        override: body.override === true && canOverride,
-        // #1206 — only the consultant (or a privileged caller) may decide to
-        // schedule fewer sessions than the plan sold.
-        allowPartial: body.allowPartial === true && canOverride,
-        // #1206 — top up the sessions an earlier partial allocation left
-        // unplaced instead of deleting the confirmed ones and re-planning.
-        topUp: body.topUp === true && canOverride,
-      });
+      //
+      // #1846 — the allocation itself, as a span. This is the single most
+      // expensive operation on the booking funnel (a Serializable transaction
+      // that may re-validate conflicts, absorb the #440 GiST constraint and
+      // write N occurrences), and with no metrics emission anywhere in the repo
+      // its latency was unmeasurable. `Sentry.startSpan` is the same idiom
+      // lib/payments/core/razorpay.ts uses for its gateway call — no new
+      // dependency, no exporter — and it puts the number in the same trace as
+      // the request that produced it.
+      const result = await Sentry.startSpan(
+        { op: "booking.allocate", name: `allocate.${eventType}` },
+        () =>
+          SchedulingService.allocate({
+            eventType,
+            eventId,
+            mode,
+            slots: body.slots,
+            // #837 — client dedupe key; a double-submit with the same value returns
+            // the first batch instead of allocating twice.
+            idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
+            initialAllocation: body.initialAllocation,
+            expectedTentativeSlotCount: body.expectedTentativeSlotCount,
+            // Honoured only for the consultant (or ADMIN/STAFF): accepting a
+            // time outside the published availability is the consultant's call,
+            // not something a consultee may assert about someone else's schedule.
+            override: body.override === true && canOverride,
+            // #1206 — only the consultant (or a privileged caller) may decide to
+            // schedule fewer sessions than the plan sold.
+            allowPartial: body.allowPartial === true && canOverride,
+            // #1206 — top up the sessions an earlier partial allocation left
+            // unplaced instead of deleting the confirmed ones and re-planning.
+            topUp: body.topUp === true && canOverride,
+          }),
+      );
 
       const duration = Date.now() - startTime;
       if (!result.success) {

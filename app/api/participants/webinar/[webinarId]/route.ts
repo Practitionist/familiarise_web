@@ -78,7 +78,11 @@ export async function GET(
             id: true,
             participants: {
               where: liveParticipant(),
-              select: { user: { select: PARTICIPANT_USER_SELECT } },
+              select: {
+                status: true,
+                role: true,
+                user: { select: PARTICIPANT_USER_SELECT },
+              },
             },
           },
         },
@@ -89,12 +93,18 @@ export async function GET(
       return new NextResponse("Webinar not found", { status: 404 });
     }
 
-    // Get unique participants by user ID
+    // Get unique participants by user ID. The seat's own status rides along
+    // additively on the user object — see the class route for why the row's
+    // status cannot be reconstructed anywhere else.
     const participants = Array.from(
       new Map(
         webinarEvent.appointment?.participants.map((participant) => [
           participant.user.id,
-          participant.user,
+          {
+            ...participant.user,
+            participantStatus: participant.status,
+            participantRole: participant.role,
+          },
         ]) || [],
       ).values(),
     );

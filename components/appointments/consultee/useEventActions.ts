@@ -9,7 +9,8 @@ import {
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/hooks/use-toast";
-import { useParams } from "next/navigation";
+import { ToastAction } from "@/components/ui/toast";
+import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import type { AppointmentOccurrence } from "@prisma/client";
 import {
@@ -163,6 +164,7 @@ export function useEventActions({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
+  const router = useRouter();
   // Caller's resolved id first: on the org detail route the param is absent,
   // and trusting it alone made every invalidation there a silent no-op. #1163
   const consulteeId = consulteeIdOverride || params?.consulteeId;
@@ -279,13 +281,48 @@ export function useEventActions({
     } catch (error) {
       reportActionFailure(error, "appointment.reschedule");
       console.error("Error requesting reschedule:", error);
+      const code =
+        error instanceof ApiResponseError ? error.code : undefined;
+      // #1863 — RESCHEDULE_ALREADY_OPEN is the one refusal here that is not a
+      // dead end: the request they just made DID land, the first click won, and
+      // the proposal is sitting on the appointment detail page waiting for an
+      // answer. Toasting a bare "already open" left the user with no way to
+      // reach it from the reschedule page they were standing on.
+      const alreadyOpen = code === "RESCHEDULE_ALREADY_OPEN";
       toast({
-        title: "Couldn't request reschedule",
-        description:
-          error instanceof Error
+        title: alreadyOpen
+          ? "You already have a reschedule open"
+          : "Couldn't request reschedule",
+        description: alreadyOpen
+          ? "Your first request went through — open it to withdraw it or see the new times."
+          : error instanceof Error
             ? error.message
             : "Failed to request reschedule",
-        variant: "destructive",
+        // NOT destructive when one is already open: nothing failed. Their first
+        // click is sitting there waiting for an answer, and a red toast saying
+        // "couldn't" is the wrong story about their own booking.
+        ...(alreadyOpen
+          ? {}
+          : { variant: "destructive" as const }),
+        // The proposal card is rendered by the appointment detail client, so
+        // that is where "open it" goes — and only where the id is known, since
+        // the org detail route resolves it differently and has no such card.
+        ...(alreadyOpen && appointmentId && consulteeId
+          ? {
+              action: (
+                <ToastAction
+                  altText="Open this booking to see the open reschedule request"
+                  onClick={() =>
+                    router.push(
+                      `/dashboard/consultee/${consulteeId}/appointments/${appointmentId}`,
+                    )
+                  }
+                >
+                  View request
+                </ToastAction>
+              ),
+            }
+          : {}),
       });
       return false;
     } finally {

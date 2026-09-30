@@ -44,6 +44,21 @@ import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 
 type ProposalAnswer = "accept" | "decline" | "withdraw";
 
+/**
+ * Codes the propose route can answer, and what each one means for the person
+ * who clicked. Only codes that change what the user does get an entry; the
+ * rest fall back to the generic title with the server's sentence as the
+ * description, which is still an answer.
+ */
+const PROPOSAL_REFUSAL_TITLE: Record<string, string> = {
+  RESCHEDULE_ALREADY_OPEN: "You already have a reschedule open",
+  PROPOSAL_COUNT_MISMATCH: "The proposed times changed",
+  PROPOSAL_WINDOW_CLOSED: "The answer window has closed",
+  RESCHEDULE_WINDOW: "Too close to the meeting to reschedule",
+  BOOKING_LOCK_UNAVAILABLE: "The booking system is briefly busy",
+  SESSION_NOT_CANCELLABLE: "This session can no longer be rescheduled",
+};
+
 async function postAnswer(
   appointmentId: string,
   kind: ProposalAnswer,
@@ -64,9 +79,24 @@ async function postAnswer(
     // is what says how they relate to the propose route's vocabulary.
     outcome?: RescheduleRespondCode;
     error?: string;
+    // #1863 — the refusal's stable half. Every branch of the propose route
+    // sends it alongside the sentence: the `Refusal` serialisation
+    // (RESCHEDULE_WINDOW), the unique-violation branch
+    // (RESCHEDULE_ALREADY_OPEN), the in-transaction pair
+    // (PROPOSAL_COUNT_MISMATCH / PROPOSAL_WINDOW_CLOSED) and the typed lock
+    // error (BOOKING_LOCK_UNAVAILABLE).
+    code?: string;
   };
   if (!res.ok) {
-    throw new Error(data.error || "The request could not be completed.");
+    // #1863 — the sentence was always on the wire; what was thrown away was
+    // `code`, which is what distinguishes "you already have one open" from "the
+    // window closed" from a lock outage. Carried on the Error rather than
+    // flattened into its message, so the toast can title it by code and still
+    // relay the server's own sentence as the description.
+    throw Object.assign(
+      new Error(data.error || "The request could not be completed."),
+      { code: data.code },
+    );
   }
   return data;
 }
@@ -124,8 +154,9 @@ export function RescheduleProposalCard({
     },
     onError: (error: Error) => {
       setConfirmDecline(false);
+      const code = (error as Error & { code?: string }).code;
       toast({
-        title: "Error",
+        title: (code && PROPOSAL_REFUSAL_TITLE[code]) || "Error",
         description: error.message,
         variant: "destructive",
       });
@@ -206,7 +237,17 @@ export function RescheduleProposalCard({
 
       <p className="mt-2 text-xs text-muted-foreground">
         {isInitiator ? "Expires" : "Needs an answer by"}{" "}
-        {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a")}
+        {/* #1863 — `zzz` was missing and the requests inbox has always labelled
+            the same deadline for the same booking (InboxRow.formatDateTime).
+            Unlabelled, a deadline read on a laptop in a different zone from the
+            one the page resolved is indistinguishable from a deadline in the
+            viewer's own, and this is the line they act on: miss it and the
+            proposal closes. Rendered in the SAME provider zone as the times
+            above it, so the card never shows two zones. */}
+        {format(
+          new Date(proposal.expiresAt),
+          "EEE, d MMM yyyy · h:mm a zzz",
+        )}
       </p>
 
       {readOnly && (
