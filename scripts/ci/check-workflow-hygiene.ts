@@ -366,6 +366,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "prune-system-events.yml": "scheduled",
   "prune-system-job-executions.yml": "scheduled",
   "purge-deleted-documents.yml": "scheduled",
+  "reconcile-booking-consistency.yml": "scheduled",
   "reconcile-disputes.yml": "scheduled",
   "reconcile-document-storage.yml": "scheduled",
   "reconcile-ledgers.yml": "scheduled",
