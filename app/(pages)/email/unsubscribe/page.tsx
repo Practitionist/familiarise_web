@@ -113,11 +113,13 @@ export default async function EmailUnsubscribePage({
                 )}
                 {!done && valid && (
                   <p className="text-muted-foreground leading-relaxed">
-                    This turns off all optional email notifications for your
-                    account, such as booking updates, receipts and reminders.
-                    Required account notices, like a security alert or an
-                    invitation you must answer, still arrive. Notifications in
-                    the app are not affected.
+                    This turns off general email notifications, reminders, and
+                    updates for your account — including booking updates,
+                    payment and receipt notifications, appointment reminders,
+                    support updates, and feedback requests. Critical security
+                    and account verification emails, invitations that require
+                    your response, and in-app dashboard notifications remain
+                    active.
                   </p>
                 )}
                 {!done && !valid && (
@@ -141,9 +143,9 @@ export default async function EmailUnsubscribePage({
                   <span>What this turns off</span>
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Optional email notifications including booking updates,
-                  appointment reminders, feedback requests, and marketing
-                  digests.
+                  General email notifications, reminders, and updates —
+                  including booking updates, payment and receipt notifications,
+                  appointment reminders, support updates, and feedback requests.
                 </p>
               </div>
 
@@ -156,9 +158,9 @@ export default async function EmailUnsubscribePage({
                   <span>What still arrives</span>
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Essential security alerts, sign-in verifications, and
-                  invitations that require your response. In-app notifications
-                  remain active.
+                  Critical security alerts, sign-in and account verification
+                  emails, and invitations that require your response. In-app
+                  dashboard notifications remain accessible.
                 </p>
               </div>
             </div>

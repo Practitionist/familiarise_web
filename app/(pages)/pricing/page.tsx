@@ -34,7 +34,7 @@ const SESSION_FORMATS = [
     highlights: [
       "Direct 1-on-1 video call with screen sharing",
       "Transparent per-session rate set by the expert",
-      "Free reschedule up to 24 hours before start",
+      "Full consultant-fee refund ≥24h before 1:1 sessions (50% for 12–24h)",
     ],
     href: "/explore/experts",
     cta: "Find an Expert",
@@ -303,8 +303,8 @@ export default function PricingPage() {
                       <strong className="text-foreground">
                         Clear cancellation windows:
                       </strong>{" "}
-                      Cancel or reschedule online from your dashboard with
-                      transparent time-based eligibility.
+                      Tiered cancellation windows for classes, webinars, and
+                      subscriptions per our Refund Policy.
                     </p>
                   </div>
                   <div className="flex items-start gap-3">

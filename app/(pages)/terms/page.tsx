@@ -386,7 +386,11 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
           <li>Cancellation rules vary by service type</li>
           <li>Refunds are processed based on timing of cancellation</li>
           <li>Platform may charge cancellation fees in certain cases</li>
-          <li>Refunds are processed within 5-7 business days</li>
+          <li>
+            Refunds are processed within 7–14 business days total (2–3 business
+            days review, 5–7 business days processor transfer, and 2–4 business
+            days bank credit)
+          </li>
         </ul>
       </>
     ),

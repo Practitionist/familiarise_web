@@ -13,7 +13,7 @@ import {
 
 /**
  * Server-side data access for the expert detail page.
- * Uses the public access pattern (verified only, public user fields).
+ * Uses the public access pattern (non-rejected, non-deleted, public user fields).
  */
 
 export const getConsultantDetail = cache(async (consultantId: string) => {
@@ -27,7 +27,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
   const consultant = await prisma.consultantProfile.findUnique({
     where: {
       id: consultantId,
-      verificationStatus: "VERIFIED",
+      verificationStatus: { not: "REJECTED" },
       // #781 §B — soft-deleted profiles leave public surfaces (treated as not-found)
       deletedAt: null,
     },

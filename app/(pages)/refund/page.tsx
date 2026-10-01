@@ -20,7 +20,7 @@ const REFUND_HIGHLIGHTS: readonly LegalHighlight[] = [
     label: "1:1 Consultations",
     title: "100% >24h · 50% 12–24h",
     description:
-      "Cancel more than 24 hours before a 1:1 consultation for a full refund, or reschedule once for free more than 24 hours ahead.",
+      "Cancel >24h before for a 100% consultant-fee refund, or 12–24h prior for 50% (platform & gateway fees excluded).",
   },
   {
     icon: ShieldCheck,
@@ -31,10 +31,10 @@ const REFUND_HIGHLIGHTS: readonly LegalHighlight[] = [
   },
   {
     icon: Clock,
-    label: "5–7 Business Days",
-    title: "Original payment method",
+    label: "Refund Processing",
+    title: "7–14 Business Days",
     description:
-      "Approved refunds are initiated within 24–48 hours back to your original UPI, card, net banking, or wallet payment method.",
+      "2–3 business days review, 5–7 days processor transfer, plus 2–4 days bank credit.",
   },
   {
     icon: RefreshCw,

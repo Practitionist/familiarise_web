@@ -165,9 +165,9 @@ export const HOW_IT_WORKS = [
   {
     step: 2,
     number: "02",
-    title: "Book a Time Slot with Escrow Protection",
+    title: "Book a Time Slot with Protected Payments",
     description:
-      "Pick a 1:1 consultation, mentorship subscription, cohort class, or live webinar in your local timezone. Your payment is held safely until the session completes.",
+      "Pick a 1:1 consultation, mentorship subscription, cohort class, or live webinar in your local timezone. Payouts are held until sessions take place, backed by our transparent cancellation and no-show refund policy.",
   },
   {
     step: 3,
@@ -223,9 +223,9 @@ export const PLATFORM_FEATURES = [
   },
   {
     icon: Lock,
-    title: "Escrow-Protected Payments",
+    title: "Protected Payments",
     description:
-      "Checkout in local or global currencies via Stripe & Razorpay with automatic no-show protection.",
+      "Payouts are held until sessions take place, backed by our transparent cancellation and no-show refund policy.",
   },
   {
     icon: Video,
@@ -291,13 +291,14 @@ export const TRUST_BADGES = [
   },
   {
     icon: Lock,
-    label: "Escrow Protection",
-    description: "Funds are held securely until session completion",
+    label: "Session-Backed Protection",
+    description:
+      "Payouts are held until sessions take place, backed by our transparent cancellation and no-show refund policy.",
   },
   {
     icon: Clock,
-    label: "Automatic No-Show Remedy",
-    description: "Instant refund or free make-up if a host is absent",
+    label: "No-Show Refund Protection",
+    description: "Full refund protection if an expert misses a session",
   },
   {
     icon: Award,

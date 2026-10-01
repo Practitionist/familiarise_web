@@ -442,6 +442,24 @@ export default function WebinarCheckoutPage({
       queryClient.setQueryData(checkoutPlanKey, fresh);
 
       if (
+        freshWebinar.status === "COMPLETED" ||
+        freshWebinar.status === "CANCELLED"
+      ) {
+        toast({
+          title:
+            freshWebinar.status === "COMPLETED"
+              ? "This webinar has ended"
+              : "This webinar has been cancelled",
+          description:
+            freshWebinar.status === "COMPLETED"
+              ? "This webinar has already ended, so we stopped the payment before you were charged."
+              : "This webinar has been cancelled, so we stopped the payment before you were charged.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      if (
         getWebinarCapacity({
           webinar: freshWebinar,
           plan: { maxParticipants: fresh.data.maxParticipants },
@@ -761,23 +779,29 @@ export default function WebinarCheckoutPage({
           }
         />
         <CheckoutPaymentMethodsCard
-          buildCheckoutData={(gateway) =>
-            validatedSearchParams
-              ? createCheckoutData({
-                  appointmentType: "WEBINAR",
-                  planId: planDetails.id,
-                  eventId: validatedSearchParams.eventId,
-                  paymentGateway: gateway,
-                  discountCode: appliedDiscount?.code,
-                  displayCurrency: currency,
-                  useReferralCredits: selectedOrganizationId
-                    ? false
-                    : useReferralCredits,
-                  organizationId: selectedOrganizationId ?? undefined,
-                  ...billingState.bodyField,
-                })
-              : null
-          }
+          buildCheckoutData={(gateway) => {
+            if (
+              !validatedSearchParams ||
+              !targetWebinar ||
+              targetWebinar.status === "COMPLETED" ||
+              targetWebinar.status === "CANCELLED"
+            ) {
+              return null;
+            }
+            return createCheckoutData({
+              appointmentType: "WEBINAR",
+              planId: planDetails.id,
+              eventId: validatedSearchParams.eventId,
+              paymentGateway: gateway,
+              discountCode: appliedDiscount?.code,
+              displayCurrency: currency,
+              useReferralCredits: selectedOrganizationId
+                ? false
+                : useReferralCredits,
+              organizationId: selectedOrganizationId ?? undefined,
+              ...billingState.bodyField,
+            });
+          }}
           onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
           onRazorpayError={razorpayHandlers.onPaymentError}
           onStripeSuccess={stripeHandlers.onPaymentSuccess}
@@ -785,7 +809,12 @@ export default function WebinarCheckoutPage({
           onMockPay={(gateway) => handleCheckout(gateway, true)}
           isCheckoutProcessing={isCheckoutProcessing}
           processingGateway={processingGateway}
-          isMaintenanceBlocked={isMaintenanceBlocked}
+          isMaintenanceBlocked={
+            isMaintenanceBlocked ||
+            !targetWebinar ||
+            targetWebinar.status === "COMPLETED" ||
+            targetWebinar.status === "CANCELLED"
+          }
           isSoldOut={isSoldOut}
           onBeforeCheckout={revalidateSeatsBeforePayment}
         />

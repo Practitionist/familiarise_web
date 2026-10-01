@@ -55,7 +55,15 @@ export function isSelectableDay(state: DayState): boolean {
 
 export type DayBookingKind = "instant" | "request" | null;
 
-type AllocatedSlot = TIntervalTiming & { isAllocated: boolean };
+export type AllocatedSlot = TIntervalTiming & {
+  isAllocated: boolean;
+  bookingStatus?: "available" | "partially-booked" | "fully-booked";
+  availabilityWindowIds?: string[];
+};
+
+export type DurationWindowSlot = AllocatedSlot & {
+  bookingStatus: "available" | "partially-booked" | "fully-booked";
+};
 
 function deriveWindowStatus(overlapping: readonly AllocatedSlot[]): {
   bookingStatus: "available" | "partially-booked" | "fully-booked";
@@ -81,45 +89,67 @@ function deriveWindowStatus(overlapping: readonly AllocatedSlot[]): {
   };
 }
 
-function coalesceAdjacentSpans(
+function mergeConsecutiveUnallocatedSlots(
   slots: readonly AllocatedSlot[],
-): Array<{ startMs: number; endMs: number }> {
-  const sorted = slots
-    .map((s) => ({
-      startMs: new Date(s.startsAt).getTime(),
-      endMs: new Date(s.endsAt).getTime(),
-    }))
-    .sort((a, b) => a.startMs - b.startMs);
-
-  return sorted.reduce<Array<{ startMs: number; endMs: number }>>(
-    (acc, span) => {
-      const prev = acc.at(-1);
-      if (prev && prev.endMs === span.startMs) {
-        prev.endMs = span.endMs;
-      } else {
-        acc.push({ ...span });
-      }
-      return acc;
-    },
-    [],
+): AllocatedSlot[] {
+  const sortedSlots = [...slots].sort(
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
+  const mergedSlots: AllocatedSlot[] = [];
+  let currentMerged: AllocatedSlot = { ...sortedSlots[0] };
+
+  for (let i = 1; i < sortedSlots.length; i++) {
+    const currentSlot = sortedSlots[i];
+    const isConsecutive =
+      new Date(currentMerged.endsAt).getTime() ===
+      new Date(currentSlot.startsAt).getTime();
+    if (
+      isConsecutive &&
+      !currentMerged.isAllocated &&
+      !currentSlot.isAllocated
+    ) {
+      const ids = new Set([
+        ...(currentMerged.availabilityWindowIds ?? [
+          currentMerged.availabilityWindowId,
+        ]),
+        ...(currentSlot.availabilityWindowIds ?? [
+          currentSlot.availabilityWindowId,
+        ]),
+      ]);
+      currentMerged = {
+        ...currentMerged,
+        endsAt: currentSlot.endsAt,
+        localEndTime: currentSlot.localEndTime,
+        availabilityWindowIds: [...ids],
+      };
+    } else {
+      mergedSlots.push(currentMerged);
+      currentMerged = { ...currentSlot };
+    }
+  }
+
+  mergedSlots.push(currentMerged);
+  return mergedSlots;
 }
 
-function buildDurationWindowsForMarks(
+export function buildDurationWindowStarts(
   apiSlots: readonly AllocatedSlot[],
   durationInHours: number,
-): Array<DayMarkSlot & { isAllocated: boolean }> {
+): DurationWindowSlot[] {
   if (!apiSlots || apiSlots.length === 0) return [];
 
-  const mergedSpans = coalesceAdjacentSpans(apiSlots);
+  const mergedSlots = mergeConsecutiveUnallocatedSlots(apiSlots);
   const slidingIntervalMillis = 30 * 60 * 1000;
   const durationInMillis = durationInHours * 60 * 60 * 1000;
-  const result: Array<DayMarkSlot & { isAllocated: boolean }> = [];
+  const result: DurationWindowSlot[] = [];
 
-  for (const span of mergedSpans) {
+  for (const slot of mergedSlots) {
+    const slotStart = new Date(slot.startsAt).getTime();
+    const slotEnd = new Date(slot.endsAt).getTime();
+
     for (
-      let windowStart = span.startMs;
-      windowStart + durationInMillis <= span.endMs;
+      let windowStart = slotStart;
+      windowStart + durationInMillis <= slotEnd;
       windowStart += slidingIntervalMillis
     ) {
       const windowEnd = windowStart + durationInMillis;
@@ -131,14 +161,19 @@ function buildDurationWindowsForMarks(
 
       const { bookingStatus, isAllocated } = deriveWindowStatus(overlapping);
       result.push({
+        ...slot,
+        slotId: `${slot.availabilityWindowId}-${windowStart}`,
         startsAt: new Date(windowStart).toISOString(),
+        endsAt: new Date(windowEnd).toISOString(),
         bookingStatus,
         isAllocated,
       });
     }
   }
 
-  return result;
+  return result.sort(
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+  );
 }
 
 function resolveDayBookingKind(
@@ -167,7 +202,7 @@ export function durationDayMark(
     return { state: dayState(date, now, null), kind: null };
   }
 
-  const windows = buildDurationWindowsForMarks(daySlots, durationInHours);
+  const windows = buildDurationWindowStarts(daySlots, durationInHours);
   const cutoff = now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS;
   const actionableWindows = windows.filter((slot) => {
     if (

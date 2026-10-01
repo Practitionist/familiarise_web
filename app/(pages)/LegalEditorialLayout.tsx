@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -88,6 +88,134 @@ export function LegalEditorialLayout({
   sections,
   closingNotice,
 }: Readonly<LegalEditorialLayoutProps>) {
+  const sectionItems = useMemo(
+    () =>
+      sections.map((section, index) => ({
+        ...section,
+        resolvedId: section.id ?? `section-${index + 1}`,
+        numberBadge: String(index + 1).padStart(2, "0"),
+      })),
+    [sections],
+  );
+
+  const [activeSectionId, setActiveSectionId] = useState<string>(
+    () => sectionItems[0]?.resolvedId ?? "section-1",
+  );
+  const tocNavRef = useRef<HTMLElement | null>(null);
+  const clickLockUntilRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (sectionItems.length === 0) return;
+
+    const sectionIds = sectionItems.map((item) => item.resolvedId);
+    const elements = sectionIds
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => el !== null);
+
+    if (elements.length === 0) return;
+
+    const computeActiveFromScroll = () => {
+      if (Date.now() < clickLockUntilRef.current) return;
+
+      const scrollOffset = 160;
+      let currentId = sectionIds[0];
+
+      for (const el of elements) {
+        const rect = el.getBoundingClientRect();
+        if (rect.top <= scrollOffset) {
+          currentId = el.id;
+        } else {
+          break;
+        }
+      }
+
+      if (
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 32
+      ) {
+        currentId = elements[elements.length - 1]?.id ?? currentId;
+      }
+
+      setActiveSectionId((prev) => (prev === currentId ? prev : currentId));
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (Date.now() < clickLockUntilRef.current) return;
+        const intersecting = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort(
+            (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
+          );
+        if (intersecting.length > 0) {
+          const targetId = intersecting[0].target.id;
+          if (targetId) {
+            setActiveSectionId((prev) => (prev === targetId ? prev : targetId));
+            return;
+          }
+        }
+        computeActiveFromScroll();
+      },
+      {
+        rootMargin: "-120px 0px -65% 0px",
+        threshold: [0, 0.1, 0.5, 1],
+      },
+    );
+
+    for (const el of elements) {
+      observer.observe(el);
+    }
+
+    const handleHashChange = () => {
+      const hashId = window.location.hash.replace(/^#/, "");
+      if (hashId && sectionIds.includes(hashId)) {
+        clickLockUntilRef.current = Date.now() + 700;
+        setActiveSectionId(hashId);
+      }
+    };
+
+    if (window.location.hash) {
+      handleHashChange();
+    } else {
+      computeActiveFromScroll();
+    }
+
+    window.addEventListener("scroll", computeActiveFromScroll, {
+      passive: true,
+    });
+    window.addEventListener("hashchange", handleHashChange);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", computeActiveFromScroll);
+      window.removeEventListener("hashchange", handleHashChange);
+    };
+  }, [sectionItems]);
+
+  useEffect(() => {
+    const nav = tocNavRef.current;
+    if (!nav || !activeSectionId) return;
+    const activeLink = nav.querySelector<HTMLElement>(
+      `[data-toc-id="${activeSectionId}"]`,
+    );
+    if (!activeLink) return;
+
+    const navRect = nav.getBoundingClientRect();
+    const linkRect = activeLink.getBoundingClientRect();
+    if (linkRect.top < navRect.top + 8 || linkRect.bottom > navRect.bottom - 8) {
+      const targetScrollTop =
+        linkRect.top -
+        navRect.top +
+        nav.scrollTop -
+        nav.clientHeight / 2 +
+        linkRect.height / 2;
+      nav.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: "smooth",
+      });
+    }
+  }, [activeSectionId]);
+
   return (
     <main className="min-h-screen w-full bg-background">
       {/* Full-Bleed Dark Hero */}
@@ -209,21 +337,37 @@ export function LegalEditorialLayout({
                   On this page
                 </p>
                 <nav
+                  ref={tocNavRef}
                   aria-label="Table of contents"
-                  className="max-h-[52vh] overflow-y-auto pr-1"
+                  className="max-h-[60vh] overflow-y-auto pr-1"
                 >
                   <ol className="space-y-1">
-                    {sections.map((section, index) => {
-                      const sectionId = section.id ?? `section-${index + 1}`;
-                      const numberBadge = String(index + 1).padStart(2, "0");
+                    {sectionItems.map((section) => {
+                      const isActive = activeSectionId === section.resolvedId;
                       return (
-                        <li key={sectionId}>
+                        <li key={section.resolvedId}>
                           <a
-                            href={`#${sectionId}`}
-                            className="group flex items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            href={`#${section.resolvedId}`}
+                            data-toc-id={section.resolvedId}
+                            aria-current={isActive ? "location" : undefined}
+                            onClick={() => {
+                              clickLockUntilRef.current = Date.now() + 700;
+                              setActiveSectionId(section.resolvedId);
+                            }}
+                            className={`group flex items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+                              isActive
+                                ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 font-medium shadow-2xs"
+                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                            }`}
                           >
-                            <span className="font-mono text-[11px] font-semibold text-muted-foreground/70 group-hover:text-foreground">
-                              {numberBadge}
+                            <span
+                              className={`inline-flex h-4 min-w-5 shrink-0 items-center justify-center rounded px-1 font-mono text-[11px] font-semibold transition-colors ${
+                                isActive
+                                  ? "bg-white/20 text-white dark:bg-zinc-900/15 dark:text-zinc-900"
+                                  : "text-muted-foreground/70 group-hover:text-foreground"
+                              }`}
+                            >
+                              {section.numberBadge}
                             </span>
                             <span className="leading-snug">{section.title}</span>
                           </a>
@@ -283,18 +427,16 @@ export function LegalEditorialLayout({
 
             {/* Right Column: Editorial Section Cards */}
             <div className="space-y-6">
-              {sections.map((section, index) => {
-                const sectionId = section.id ?? `section-${index + 1}`;
-                const numberBadge = String(index + 1).padStart(2, "0");
+              {sectionItems.map((section) => {
                 return (
                   <article
-                    key={sectionId}
-                    id={sectionId}
+                    key={section.resolvedId}
+                    id={section.resolvedId}
                     className="rounded-2xl border border-border bg-card p-6 md:p-8 shadow-elevation-1 space-y-4 scroll-mt-28"
                   >
                     <div className="flex items-start gap-3.5 border-b border-border pb-4">
                       <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-950 font-mono text-xs font-semibold text-white dark:bg-white dark:text-zinc-950">
-                        {numberBadge}
+                        {section.numberBadge}
                       </span>
                       <h2 className="text-xl md:text-2xl font-bold tracking-tight text-foreground pt-0.5">
                         {section.title}

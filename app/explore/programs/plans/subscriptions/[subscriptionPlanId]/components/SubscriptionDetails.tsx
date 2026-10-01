@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { BackNavigationButton } from "@/components/navigation/BackNavigationButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,10 +33,8 @@ export function SubscriptionDetails({
   const { formatPrice } = useCurrency();
   const consultant = plan.consultantProfile;
   const mentorName = consultant?.user?.name ?? "This expert";
-  const isVerifiedConsultant = Boolean(
-    consultant?.id && consultant.verificationStatus === "VERIFIED",
-  );
-  const subscribeHref = isVerifiedConsultant
+  const hasConsultantProfile = Boolean(consultant?.id);
+  const subscribeHref = hasConsultantProfile
     ? `/explore/experts/${consultant!.id}?action=subscribe&plan=${plan.id}`
     : "/explore/experts";
 
@@ -65,13 +64,11 @@ export function SubscriptionDetails({
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Link
-          href="/explore/experts"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to experts
-        </Link>
+        <BackNavigationButton
+          fallbackHref="/explore/programs"
+          label="Back to Programs"
+          className="mb-6"
+        />
 
         <div className="mb-8">
           <Badge className="bg-muted text-muted-foreground mb-3">
@@ -178,13 +175,22 @@ export function SubscriptionDetails({
                     <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">
                       Your mentor
                     </p>
-                    {isVerifiedConsultant ? (
-                      <Link
-                        href={`/explore/experts/${consultant.id}`}
-                        className="flex items-center gap-3 group"
-                      >
-                        {mentorCardContent}
-                      </Link>
+                    {hasConsultantProfile ? (
+                      <>
+                        <Link
+                          href={`/explore/experts/${consultant.id}`}
+                          className="flex items-center gap-3 group"
+                        >
+                          {mentorCardContent}
+                        </Link>
+                        <Link
+                          href={`/explore/experts/${consultant.id}`}
+                          className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                        >
+                          View Full Profile
+                          <ArrowLeft className="w-4 h-4 rotate-180" />
+                        </Link>
+                      </>
                     ) : (
                       <div className="flex items-center gap-3">
                         {mentorCardContent}

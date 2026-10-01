@@ -82,7 +82,9 @@ function ExpertCard({
             )}
             {expert.domain?.name && (
               <>
-                <span>•</span>
+                {((expert.rating ?? 0) > 0 || (expert.experience ?? 0) > 0) && (
+                  <span aria-hidden="true">•</span>
+                )}
                 <span className="truncate">{expert.domain.name}</span>
               </>
             )}

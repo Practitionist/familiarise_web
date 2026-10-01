@@ -70,6 +70,8 @@ interface SubscriptionPricingToggleProps {
   timezone: string;
   autoOpenTrial?: boolean;
   initialPlanId?: string | null;
+  selectedPlanId?: string;
+  onSelectPlanId?: (planId: string) => void;
   bookingRequest?: number;
 }
 
@@ -505,16 +507,29 @@ export default function SubscriptionPricingToggle({
   consultantDetails,
   autoOpenTrial,
   initialPlanId,
+  selectedPlanId,
+  onSelectPlanId,
   bookingRequest = 0,
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
-  const [activeSubscriptionOption, setActiveSubscriptionOption] =
+  const [internalSubscriptionOption, setInternalSubscriptionOption] =
     useState<string>(() =>
       initialPlanId && subscriptionOptions.some((o) => o.id === initialPlanId)
         ? initialPlanId
         : (subscriptionOptions[0]?.id ?? ""),
     );
+  const activeSubscriptionOption =
+    selectedPlanId && subscriptionOptions.some((o) => o.id === selectedPlanId)
+      ? selectedPlanId
+      : internalSubscriptionOption;
+  const setActiveSubscriptionOption = useCallback(
+    (id: string) => {
+      setInternalSubscriptionOption(id);
+      onSelectPlanId?.(id);
+    },
+    [onSelectPlanId],
+  );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [step, setStep] = useState(0);
   const returnFocus = useRef<HTMLElement | null>(null);

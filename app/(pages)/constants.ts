@@ -2,7 +2,7 @@
 export const COMPANY_NAME = "Familiarise";
 export const CONTACT_EMAIL = "hello@familiarise.com";
 export const SUPPORT_EMAIL = "support@familiarise.com";
-export const PHONE = "+91 (800) 123-4567";
+export const PHONE = "";
 export const ADDRESS = "Bengaluru, Karnataka, India";
 export const JURISDICTION = "Bengaluru, Karnataka, India";
 export const LAST_UPDATED = "September 2026";

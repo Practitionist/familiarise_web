@@ -295,10 +295,10 @@ const NAV_GROUPS: NavDropdownGroup[] = [
 function DropdownLink({
   item,
   onClose,
-}: {
+}: Readonly<{
   item: NavDropdownItem;
   onClose: () => void;
-}) {
+}>) {
   const Icon = item.icon;
   return (
     <Link
@@ -336,11 +336,11 @@ function DesktopDropdownPanel({
   group,
   onClose,
   panelId,
-}: {
+}: Readonly<{
   group: NavDropdownGroup;
   onClose: () => void;
   panelId: string;
-}) {
+}>) {
   const isMega = group.variant === "mega";
   const isWide = group.columns.length > 2;
   const panelWidth = isMega ? (isWide ? "w-[860px]" : "w-[620px]") : "w-80";
@@ -353,7 +353,10 @@ function DesktopDropdownPanel({
       // trigger (absolute left-0) — an 860px panel hung off a narrow left-side
       // trigger reads as badly misaligned, while inset-x-0 mx-auto on a list
       // panel overflows narrow triggers.
-      className={`rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-xl shadow-elevation-3 z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 before:content-[''] before:absolute before:-top-3 before:inset-x-0 before:h-3 ${
+      // Solid `bg-popover` (no alpha / backdrop-blur): `<nav>` already applies
+      // `backdrop-blur-xl`, which creates a CSS Backdrop Root clipped to the
+      // 80px navbar bar and prevents child panels from blurring page content.
+      className={`rounded-2xl border border-border bg-popover text-popover-foreground shadow-elevation-3 z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 before:content-[''] before:absolute before:-top-3 before:inset-x-0 before:h-3 ${
         isMega
           ? `fixed inset-x-0 mx-auto max-w-[calc(100vw-2rem)] ${panelWidth}`
           : `absolute left-0 top-full mt-2 ${panelWidth}`
@@ -387,7 +390,7 @@ function DesktopDropdownPanel({
 
       {/* Category chips */}
       {group.categoryChips && group.categoryChips.length > 0 && (
-        <div className="border-t border-border px-4 py-3">
+        <div className="border-t border-border bg-muted/60 px-4 py-3 rounded-b-2xl">
           <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
             By Category
           </p>
@@ -414,10 +417,10 @@ function DesktopDropdownPanel({
 function DesktopNavItem({
   group,
   showDarkStyle,
-}: {
+}: Readonly<{
   group: NavDropdownGroup;
   showDarkStyle: boolean;
-}) {
+}>) {
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -523,6 +526,9 @@ const Navbar = () => {
   const isAuthedView = authView.mode === "authed";
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileDialogRef = useRef<HTMLDialogElement>(null);
+  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
   const { currency, symbol, setCurrency, isEstimate } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
 
@@ -544,15 +550,63 @@ const Navbar = () => {
     if (!isOpen) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const handleMediaChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
         setIsOpen(false);
       }
     };
+    mql.addEventListener("change", handleMediaChange);
+
+    const rafId = window.requestAnimationFrame(() => {
+      mobileCloseButtonRef.current?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = mobileDialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(
+        (el) =>
+          !el.hasAttribute("disabled") &&
+          el.getAttribute("aria-hidden") !== "true" &&
+          el.offsetParent !== null,
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (!active || !dialog.contains(active) || active === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (!active || !dialog.contains(active) || active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener("keydown", handleKeyDown);
+    const toggleButton = mobileToggleRef.current;
     return () => {
+      window.cancelAnimationFrame(rafId);
       document.body.style.overflow = prevOverflow;
+      mql.removeEventListener("change", handleMediaChange);
       document.removeEventListener("keydown", handleKeyDown);
+      if (toggleButton && toggleButton.offsetParent !== null) {
+        toggleButton.focus();
+      }
     };
   }, [isOpen]);
 
@@ -753,7 +807,10 @@ const Navbar = () => {
 
             {/* Mobile Menu Toggle */}
             <button
+              ref={mobileToggleRef}
+              type="button"
               onClick={toggleMenu}
+              aria-expanded={isOpen}
               aria-label="Toggle Navigation"
               className={`lg:hidden p-2 rounded-lg transition-colors ${
                 showDarkStyle
@@ -788,6 +845,7 @@ const Navbar = () => {
 
           {/* Drawer */}
           <dialog
+            ref={mobileDialogRef}
             open
             aria-modal="true"
             aria-label="Mobile navigation"
@@ -809,6 +867,7 @@ const Navbar = () => {
                 />
               </div>
               <button
+                ref={mobileCloseButtonRef}
                 type="button"
                 aria-label="Close menu"
                 onClick={closeMenu}

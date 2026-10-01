@@ -77,15 +77,17 @@ export default function ContactUsPage() {
                     {COMPANY_INFO.supportEmail}
                   </a>
                 </p>
-                <p className="flex items-center gap-2">
-                  <Phone className="h-4 w-4 shrink-0 text-foreground" />
-                  <a
-                    href={getTelLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.phone}
-                  </a>
-                </p>
+                {COMPANY_INFO.phone ? (
+                  <p className="flex items-center gap-2">
+                    <Phone className="h-4 w-4 shrink-0 text-foreground" />
+                    <a
+                      href={getTelLink()}
+                      className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                    >
+                      {COMPANY_INFO.phone}
+                    </a>
+                  </p>
+                ) : null}
               </div>
             </div>
 

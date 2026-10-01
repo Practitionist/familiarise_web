@@ -23,10 +23,10 @@ import { useSession } from "@/lib/auth-client";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TIntervalTiming } from "@/types/slots";
-import { breakDownSlotsPreservingStatus } from "@/utils/scheduling-engine/intervals";
+import { buildDurationWindowStarts } from "../day-state";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
   consumePurchaseIntent,
@@ -78,6 +78,8 @@ interface ConsultationPricingToggleProps {
   slotsLoading?: boolean;
   slotsError?: boolean;
   initialPlanId?: string | null;
+  selectedPlanId?: string;
+  onSelectPlanId?: (planId: string) => void;
   bookingRequest?: number;
 }
 
@@ -117,18 +119,22 @@ function buildAvailableSlots(
       | "fully-booked",
   }));
 
-  const brokenDownSlots = breakDownSlotsPreservingStatus(
+  const brokenDownSlots = buildDurationWindowStarts(
     slotsWithAllocation,
     selectedDuration,
-    timezone,
   );
 
   const now = Date.now();
-  return brokenDownSlots.map((slot) => ({
-    ...slot,
-    _isPast:
-      new Date(slot.startsAt).getTime() < now + MINIMUM_BOOKING_LEAD_TIME_MS,
-  }));
+  return brokenDownSlots.map((slot) => {
+    const startDate = new Date(slot.startsAt);
+    const endDate = new Date(slot.endsAt);
+    return {
+      ...slot,
+      localStartTime: formatInTimeZone(startDate, timezone, "h:mm a"),
+      localEndTime: formatInTimeZone(endDate, timezone, "h:mm a"),
+      _isPast: startDate.getTime() < now + MINIMUM_BOOKING_LEAD_TIME_MS,
+    };
+  });
 }
 
 function hasSlotMetadataDrifted(
@@ -640,6 +646,8 @@ export default function ConsultationPricingToggle({
   slotsLoading = false,
   slotsError = false,
   initialPlanId,
+  selectedPlanId,
+  onSelectPlanId,
   bookingRequest = 0,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
@@ -647,10 +655,21 @@ export default function ConsultationPricingToggle({
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
 
-  const [activeConsultationOption, setActiveConsultationOption] =
+  const [internalConsultationOption, setInternalConsultationOption] =
     useState<string>(() =>
       resolveInitialConsultationOption(initialPlanId, consultationOptions),
     );
+  const activeConsultationOption =
+    selectedPlanId && consultationOptions.some((o) => o.id === selectedPlanId)
+      ? selectedPlanId
+      : internalConsultationOption;
+  const setActiveConsultationOption = useCallback(
+    (id: string) => {
+      setInternalConsultationOption(id);
+      onSelectPlanId?.(id);
+    },
+    [onSelectPlanId],
+  );
   const [dialogOpen, setDialogOpen] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
   const previousBookingRequest = useRef(bookingRequest);

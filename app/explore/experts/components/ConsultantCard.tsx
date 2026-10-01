@@ -245,7 +245,7 @@ function StartingOfferingCard({
           variant="outline"
           className="w-full h-10 rounded-xl text-sm font-medium border-border"
         >
-          <Link href={profileHref}>Book 1:1 Session</Link>
+          <Link href={profileHref}>Explore Class</Link>
         </Button>
       </div>
     );

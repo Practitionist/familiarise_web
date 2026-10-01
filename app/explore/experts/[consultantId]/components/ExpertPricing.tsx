@@ -50,6 +50,12 @@ interface ExpertPricingProps {
   slotsError?: boolean;
   initialPlanId?: string | null;
   initialService?: "consultations" | "subscriptions";
+  activeServiceTab?: "consultations" | "subscriptions";
+  onServiceTabChange?: (tab: "consultations" | "subscriptions") => void;
+  selectedConsultationPlanId?: string;
+  onSelectConsultationPlanId?: (planId: string) => void;
+  selectedSubscriptionPlanId?: string;
+  onSelectSubscriptionPlanId?: (planId: string) => void;
   bookingRequest?: number;
 }
 
@@ -72,23 +78,36 @@ export function ExpertPricing({
   slotsError,
   initialPlanId,
   initialService,
+  activeServiceTab: controlledServiceTab,
+  onServiceTabChange,
+  selectedConsultationPlanId,
+  onSelectConsultationPlanId,
+  selectedSubscriptionPlanId,
+  onSelectSubscriptionPlanId,
   bookingRequest = 0,
 }: Readonly<ExpertPricingProps>) {
   const reduceMotion = useReducedMotion();
-  const [activeServiceTab, setActiveServiceTab] = useState<
+  const [internalServiceTab, setInternalServiceTab] = useState<
     "consultations" | "subscriptions"
   >(
     initialService ??
       (autoOpenTrial ? "subscriptions" : "consultations"),
   );
+  const activeServiceTab = controlledServiceTab ?? internalServiceTab;
+  const handleServiceTabChange = (tab: "consultations" | "subscriptions") => {
+    setInternalServiceTab(tab);
+    onServiceTabChange?.(tab);
+  };
 
   useEffect(() => {
     if (initialService) {
-      setActiveServiceTab(initialService);
+      setInternalServiceTab(initialService);
+      onServiceTabChange?.(initialService);
     } else if (autoOpenTrial) {
-      setActiveServiceTab("subscriptions");
+      setInternalServiceTab("subscriptions");
+      onServiceTabChange?.("subscriptions");
     }
-  }, [initialService, autoOpenTrial]);
+  }, [initialService, autoOpenTrial, onServiceTabChange]);
 
   const formatPricingOptions = (
     // Rows from the detail fetcher, not raw Prisma types — keeps price: number (#780)
@@ -244,7 +263,7 @@ export function ExpertPricing({
           <Tabs
             value={activeServiceTab}
             onValueChange={(v) =>
-              setActiveServiceTab(v as "consultations" | "subscriptions")
+              handleServiceTabChange(v as "consultations" | "subscriptions")
             }
             className="w-full"
           >
@@ -301,6 +320,8 @@ export function ExpertPricing({
                 slotsLoading={slotsLoading}
                 slotsError={slotsError}
                 initialPlanId={initialPlanId}
+                selectedPlanId={selectedConsultationPlanId}
+                onSelectPlanId={onSelectConsultationPlanId}
                 bookingRequest={bookingRequest}
               />
             </TabsContent>
@@ -312,6 +333,8 @@ export function ExpertPricing({
                 timezone={timezone}
                 autoOpenTrial={autoOpenTrial}
                 initialPlanId={initialPlanId}
+                selectedPlanId={selectedSubscriptionPlanId}
+                onSelectPlanId={onSelectSubscriptionPlanId}
                 bookingRequest={bookingRequest}
               />
             </TabsContent>
@@ -334,6 +357,8 @@ export function ExpertPricing({
             slotsLoading={slotsLoading}
             slotsError={slotsError}
             initialPlanId={initialPlanId}
+            selectedPlanId={selectedConsultationPlanId}
+            onSelectPlanId={onSelectConsultationPlanId}
             bookingRequest={bookingRequest}
           />
         ) : hasSubscriptions ? (
@@ -344,6 +369,8 @@ export function ExpertPricing({
             timezone={timezone}
             autoOpenTrial={autoOpenTrial}
             initialPlanId={initialPlanId}
+            selectedPlanId={selectedSubscriptionPlanId}
+            onSelectPlanId={onSelectSubscriptionPlanId}
             bookingRequest={bookingRequest}
           />
         ) : (

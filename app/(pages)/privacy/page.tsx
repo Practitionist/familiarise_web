@@ -24,9 +24,9 @@ const PRIVACY_HIGHLIGHTS: readonly LegalHighlight[] = [
   {
     icon: Lock,
     label: "PCI-DSS & Encryption",
-    title: "Encrypted in transit & rest",
+    title: "Sensitive data encrypted",
     description:
-      "Payments are processed via PCI-DSS compliant Razorpay, and platform data is protected with strict access controls.",
+      "All sensitive data is encrypted in transit and at rest, payments are processed via PCI-DSS compliant Razorpay, and access is strictly controlled.",
   },
   {
     icon: UserCheck,

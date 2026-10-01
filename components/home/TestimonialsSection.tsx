@@ -73,10 +73,13 @@ export function TestimonialsSection({
   isLoading,
 }: Readonly<TestimonialsSectionProps>) {
   // Deduplicate by id and take up to 6 unique reviews for a clean static grid
-  const uniqueReviews = reviews.slice(0, 6);
-  const featuredReview = uniqueReviews[0];
+  const uniqueReviews = Array.from(
+    new Map(reviews.map((r) => [r.id, r])).values(),
+  );
+  const displayReviews = uniqueReviews.slice(0, 6);
+  const featuredReview = displayReviews[0];
   const gridReviews =
-    uniqueReviews.length > 3 ? uniqueReviews.slice(1, 7) : uniqueReviews;
+    displayReviews.length > 3 ? displayReviews.slice(1) : displayReviews;
 
   return (
     <section className="py-20 md:py-28 bg-zinc-950 text-white relative overflow-hidden">
@@ -114,7 +117,7 @@ export function TestimonialsSection({
         ) : (
           <>
             {/* Featured Highlight Quote when we have enough reviews */}
-            {featuredReview && uniqueReviews.length > 3 && (
+            {featuredReview && displayReviews.length > 3 && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}

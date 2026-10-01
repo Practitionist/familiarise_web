@@ -328,6 +328,8 @@ export default function ConsultationCheckoutPage({
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const stripeHandlers = createStripeCheckoutHandlers(toast);
+  const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
   const makeCheckoutRequest = useCallback(
@@ -762,22 +764,10 @@ export default function ConsultationCheckoutPage({
                 })
               : null
           }
-          onRazorpaySuccess={
-            createRazorpayCheckoutHandlers(toast).onPaymentSuccess
-          }
-          onRazorpayError={(error) =>
-            handleApiError({
-              error: error.description ?? error.message ?? error.reason,
-              errorType: error.code,
-            })
-          }
-          onStripeSuccess={createStripeCheckoutHandlers(toast).onPaymentSuccess}
-          onStripeError={(error) =>
-            handleApiError({
-              error: error.message ?? error.description,
-              errorType: error.errorType,
-            })
-          }
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={razorpayHandlers.onPaymentError}
+          onStripeSuccess={stripeHandlers.onPaymentSuccess}
+          onStripeError={stripeHandlers.onPaymentError}
           onMockPay={(gateway) => handleCheckout(gateway, true)}
           isCheckoutProcessing={isCheckoutProcessing}
           processingGateway={processingGateway}

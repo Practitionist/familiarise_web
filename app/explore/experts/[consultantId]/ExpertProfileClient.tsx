@@ -11,12 +11,10 @@ import type {
   TPublicConsultantReview,
   TReviewTrackPresence,
 } from "@/types/review";
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
 import {
   addDays,
   differenceInCalendarDays,
@@ -24,6 +22,7 @@ import {
   startOfDay,
 } from "date-fns";
 import { useSession } from "@/lib/auth-client";
+import { BackNavigationButton } from "@/components/navigation/BackNavigationButton";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { ExperienceSection } from "./components/ExperienceSection";
@@ -249,6 +248,57 @@ export function ExpertProfileClient({
   const [autoOpenTrial, setAutoOpenTrial] = useState(false);
   const [bookingRequest, setBookingRequest] = useState(0);
 
+  const sortedConsultations = useMemo(
+    () =>
+      [...(consultantDetails.consultationPlans ?? [])].sort(
+        (a, b) => a.durationInHours - b.durationInHours,
+      ),
+    [consultantDetails.consultationPlans],
+  );
+  const sortedSubscriptions = useMemo(
+    () =>
+      [...(consultantDetails.subscriptionPlans ?? [])].sort(
+        (a, b) => a.durationInMonths - b.durationInMonths,
+      ),
+    [consultantDetails.subscriptionPlans],
+  );
+
+  const initialAction = searchParams.get("action");
+  const initialPlanParam = searchParams.get("plan");
+
+  const [activeServiceTab, setActiveServiceTab] = useState<
+    "consultations" | "subscriptions"
+  >(() => {
+    const resolved = resolveInitialService(initialAction);
+    if (resolved) return resolved;
+    if (
+      initialPlanParam &&
+      sortedSubscriptions.some((p) => p.id === initialPlanParam)
+    ) {
+      return "subscriptions";
+    }
+    if (sortedConsultations.length === 0 && sortedSubscriptions.length > 0) {
+      return "subscriptions";
+    }
+    return "consultations";
+  });
+
+  const [selectedConsultationPlanId, setSelectedConsultationPlanId] =
+    useState<string>(() =>
+      initialPlanParam &&
+      sortedConsultations.some((p) => p.id === initialPlanParam)
+        ? initialPlanParam
+        : (sortedConsultations[0]?.id ?? ""),
+    );
+
+  const [selectedSubscriptionPlanId, setSelectedSubscriptionPlanId] =
+    useState<string>(() =>
+      initialPlanParam &&
+      sortedSubscriptions.some((p) => p.id === initialPlanParam)
+        ? initialPlanParam
+        : (sortedSubscriptions[0]?.id ?? ""),
+    );
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
@@ -317,6 +367,23 @@ export function ExpertProfileClient({
 
   useEffect(() => {
     const action = searchParams.get("action");
+    const planParam = searchParams.get("plan");
+    if (
+      planParam &&
+      sortedConsultations.some((p) => p.id === planParam)
+    ) {
+      setSelectedConsultationPlanId(planParam);
+    }
+    if (
+      planParam &&
+      sortedSubscriptions.some((p) => p.id === planParam)
+    ) {
+      setSelectedSubscriptionPlanId(planParam);
+    }
+    const nextService = resolveInitialService(action);
+    if (nextService) {
+      setActiveServiceTab(nextService);
+    }
     if (!action) return;
 
     const timer = setTimeout(() => {
@@ -331,7 +398,7 @@ export function ExpertProfileClient({
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [searchParams]);
+  }, [searchParams, sortedConsultations, sortedSubscriptions]);
 
   useEffect(() => {
     const onPageShow = (event: PageTransitionEvent) => {
@@ -452,13 +519,10 @@ export function ExpertProfileClient({
       {/* Back Navigation */}
       <div className="bg-card border-b border-border">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
-          <Link
-            href="/explore/experts"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Experts
-          </Link>
+          <BackNavigationButton
+            fallbackHref="/explore/experts"
+            label="Back to Experts"
+          />
         </div>
       </div>
 
@@ -492,6 +556,12 @@ export function ExpertProfileClient({
             <PlanDetailsSnapshot
               consultationPlans={consultantDetails.consultationPlans ?? []}
               subscriptionPlans={consultantDetails.subscriptionPlans ?? []}
+              activeServiceTab={activeServiceTab}
+              onServiceTabChange={setActiveServiceTab}
+              selectedConsultationPlanId={selectedConsultationPlanId}
+              onSelectConsultationPlanId={setSelectedConsultationPlanId}
+              selectedSubscriptionPlanId={selectedSubscriptionPlanId}
+              onSelectSubscriptionPlanId={setSelectedSubscriptionPlanId}
             />
 
             <ClassesAndWebinars
@@ -546,6 +616,12 @@ export function ExpertProfileClient({
               bookingRequest={bookingRequest}
               initialPlanId={searchParams.get("plan")}
               initialService={resolveInitialService(searchParams.get("action"))}
+              activeServiceTab={activeServiceTab}
+              onServiceTabChange={setActiveServiceTab}
+              selectedConsultationPlanId={selectedConsultationPlanId}
+              onSelectConsultationPlanId={setSelectedConsultationPlanId}
+              selectedSubscriptionPlanId={selectedSubscriptionPlanId}
+              onSelectSubscriptionPlanId={setSelectedSubscriptionPlanId}
               slotsLoading={dayQuery.isFetching || isTimezoneLoading}
               slotsError={dayQuery.isError}
               onRefreshSlots={refreshSlots}

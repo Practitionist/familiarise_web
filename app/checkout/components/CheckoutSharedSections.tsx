@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Check, CreditCard as CreditCardIcon, Lock } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -286,6 +286,31 @@ export function CheckoutPaymentMethodsCard({
   isSoldOut = false,
   onBeforeCheckout,
 }: Readonly<CheckoutPaymentMethodsCardProps>) {
+  const [isCheckingSlot, setIsCheckingSlot] = useState(false);
+  const checkingSlotRef = useRef(false);
+
+  const handleMockPay = async (gateway: SupportedCheckoutGateway) => {
+    if (
+      checkingSlotRef.current ||
+      isCheckoutProcessing ||
+      isMaintenanceBlocked
+    ) {
+      return;
+    }
+    checkingSlotRef.current = true;
+    setIsCheckingSlot(true);
+    try {
+      if (onBeforeCheckout) {
+        const canProceed = await onBeforeCheckout();
+        if (!canProceed) return;
+      }
+      onMockPay(gateway);
+    } finally {
+      checkingSlotRef.current = false;
+      setIsCheckingSlot(false);
+    }
+  };
+
   const renderGatewayCheckout = (
     gateway: SupportedCheckoutGateway,
   ): ReactNode => {
@@ -301,7 +326,7 @@ export function CheckoutPaymentMethodsCard({
           onPaymentSuccess={onRazorpaySuccess}
           onPaymentError={onRazorpayError}
           onBeforeCheckout={onBeforeCheckout}
-          disabled={isMaintenanceBlocked || isSoldOut}
+          disabled={isMaintenanceBlocked || isSoldOut || isCheckingSlot}
         />
       );
     }
@@ -312,7 +337,7 @@ export function CheckoutPaymentMethodsCard({
         onPaymentSuccess={onStripeSuccess}
         onPaymentError={onStripeError}
         onBeforeCheckout={onBeforeCheckout}
-        disabled={isMaintenanceBlocked || isSoldOut}
+        disabled={isMaintenanceBlocked || isSoldOut || isCheckingSlot}
       />
     );
   };
@@ -345,8 +370,10 @@ export function CheckoutPaymentMethodsCard({
         {process.env.NODE_ENV === "development" && (
           <Button
             variant="secondary"
-            onClick={() => onMockPay(gateway.gateway)}
-            disabled={isCheckoutProcessing || isMaintenanceBlocked}
+            onClick={() => void handleMockPay(gateway.gateway)}
+            disabled={
+              isCheckoutProcessing || isMaintenanceBlocked || isCheckingSlot
+            }
           >
             {isMockSpinning ? (
               <>

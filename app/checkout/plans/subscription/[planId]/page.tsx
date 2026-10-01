@@ -431,7 +431,7 @@ export default function SubscriptionCheckoutPage({
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
-    const basePrice = planData?.data?.price || 0;
+    const basePrice = planData?.data?.price ?? 0;
     let discountPercent = 0;
     let discountAmount = 0;
     if (appliedDiscount) {
@@ -678,7 +678,7 @@ export default function SubscriptionCheckoutPage({
         <CheckoutPricingBreakdown
           title="Subscription Pricing"
           feeLabel="Monthly Fee"
-          feeAmountPaise={planData?.data?.price || 100}
+          feeAmountPaise={planData?.data?.price ?? 0}
           includes={[
             `${
               planData?.data?.totalSessions ||
@@ -710,24 +710,29 @@ export default function SubscriptionCheckoutPage({
           }
         />
         <CheckoutPaymentMethodsCard
-          buildCheckoutData={(gateway) =>
-            effectiveSearchParams?.schedulingPeriodStartsAt
-              ? createCheckoutData({
-                  appointmentType: "SUBSCRIPTION",
-                  planId: planData?.data?.id || "",
-                  paymentGateway: gateway,
-                  schedulingPeriodStartsAt:
-                    effectiveSearchParams.schedulingPeriodStartsAt,
-                  discountCode: appliedDiscount?.code,
-                  displayCurrency: currency,
-                  useReferralCredits: selectedOrganizationId
-                    ? false
-                    : useReferralCredits,
-                  organizationId: selectedOrganizationId ?? undefined,
-                  ...billingState.bodyField,
-                })
-              : null
-          }
+          buildCheckoutData={(gateway) => {
+            if (
+              !planData?.data?.id ||
+              !effectiveSearchParams?.schedulingPeriodStartsAt ||
+              (firstCycle && firstCycle.end.getTime() < Date.now())
+            ) {
+              return null;
+            }
+            return createCheckoutData({
+              appointmentType: "SUBSCRIPTION",
+              planId: planData.data.id,
+              paymentGateway: gateway,
+              schedulingPeriodStartsAt:
+                effectiveSearchParams.schedulingPeriodStartsAt,
+              discountCode: appliedDiscount?.code,
+              displayCurrency: currency,
+              useReferralCredits: selectedOrganizationId
+                ? false
+                : useReferralCredits,
+              organizationId: selectedOrganizationId ?? undefined,
+              ...billingState.bodyField,
+            });
+          }}
           onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
           onRazorpayError={razorpayHandlers.onPaymentError}
           onStripeSuccess={stripeHandlers.onPaymentSuccess}

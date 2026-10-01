@@ -18,6 +18,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
+import { BackNavigationButton } from "@/components/navigation/BackNavigationButton";
 import { formatRole } from "@/components/collaborators/format";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
@@ -32,16 +33,8 @@ interface WebinarDetailsProps {
   readonly webinarId?: string;
 }
 
-function isVerifiedCollaborator(collab: ICollaboratorInfo): boolean {
-  const profile = collab.consultantProfile as {
-    id: string;
-    verificationStatus?: string;
-  };
-  return Boolean(profile.id && profile.verificationStatus === "VERIFIED");
-}
-
 function CollaboratorItem({ collab }: Readonly<{ collab: ICollaboratorInfo }>) {
-  const verified = isVerifiedCollaborator(collab);
+  const collaboratorId = collab.consultantProfile?.id;
   const content = (
     <>
       <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
@@ -53,7 +46,7 @@ function CollaboratorItem({ collab }: Readonly<{ collab: ICollaboratorInfo }>) {
         />
       </div>
       <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground">
+        <p className="text-sm font-medium text-foreground group-hover:underline truncate">
           {collab.consultantProfile.user.name}
         </p>
         <p className="text-xs text-muted-foreground">
@@ -63,11 +56,11 @@ function CollaboratorItem({ collab }: Readonly<{ collab: ICollaboratorInfo }>) {
     </>
   );
 
-  if (verified) {
+  if (collaboratorId) {
     return (
       <Link
-        href={`/explore/experts/${collab.consultantProfile.id}`}
-        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
+        href={`/explore/experts/${collaboratorId}`}
+        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors group"
       >
         {content}
       </Link>
@@ -159,9 +152,7 @@ export function WebinarDetails({
 
   const durationLabel = `${plan.durationInHours} ${plan.durationInHours === 1 ? "hour" : "hours"}`;
   const host = plan.consultantProfile;
-  const isVerifiedHost = Boolean(
-    host?.id && host.verificationStatus === "VERIFIED",
-  );
+  const hasHostProfile = Boolean(host?.id);
 
   return (
     <main className="min-h-screen bg-muted">
@@ -179,13 +170,11 @@ export function WebinarDetails({
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
+            <BackNavigationButton
+              fallbackHref="/explore/programs"
+              label="Back to Programs"
+              className="text-white/80 hover:text-white"
+            />
           </div>
         </div>
 
@@ -311,29 +300,53 @@ export function WebinarDetails({
                     <CardTitle className="text-lg">Your Host</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="flex items-center gap-4 mb-4">
-                      <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border">
-                        <Image
-                          src={host.user?.image ?? "/placeholder-user.jpg"}
-                          alt={host.user?.name ?? "Host"}
-                          fill
-                          className="object-cover"
-                        />
+                    {hasHostProfile ? (
+                      <Link
+                        href={`/explore/experts/${host.id}`}
+                        className="flex items-center gap-4 mb-4 group"
+                      >
+                        <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border shrink-0">
+                          <Image
+                            src={host.user?.image ?? "/placeholder-user.jpg"}
+                            alt={host.user?.name ?? "Host"}
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-foreground group-hover:underline truncate">
+                            {host.user?.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            Expert Host
+                          </p>
+                        </div>
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-4 mb-4">
+                        <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border shrink-0">
+                          <Image
+                            src={host.user?.image ?? "/placeholder-user.jpg"}
+                            alt={host.user?.name ?? "Host"}
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-foreground truncate">
+                            {host.user?.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            Expert Host
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-foreground">
-                          {host.user?.name}
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          Expert Host
-                        </p>
-                      </div>
-                    </div>
+                    )}
                     <p className="text-sm text-muted-foreground">
                       An experienced professional dedicated to sharing knowledge
                       and expertise.
                     </p>
-                    {isVerifiedHost && (
+                    {hasHostProfile && (
                       <Link
                         href={`/explore/experts/${host.id}`}
                         className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
