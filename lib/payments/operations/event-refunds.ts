@@ -176,6 +176,15 @@ export async function refundWholeEventPayments(
         paymentId: p.id,
         reason,
         initiatedByUserId,
+        // #1859 M-P0-09 — this loop is the one caller of the credits rail that
+        // omitted the key, so `withDedupe` short-circuited and the zero-amount
+        // Refund row was persisted with a null dedupeKey, outside the unique
+        // index (Postgres treats NULLs as distinct). The in-tx `findFirst` claim
+        // is then only safe by Serializable retry ordering, not by a DB
+        // guarantee. Scoped per (event, payment) so a payment covering two
+        // events still refunds each one — a key on `p.id` alone would let the
+        // second cancel replay the first as an already-spent claim.
+        dedupeKey: `event-cancel:${eventId}:pay:${p.id}`,
       });
       summary.refundsIssued += 1;
       summary.childRefundIds.push(r.refundId);

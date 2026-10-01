@@ -14,6 +14,10 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     payment: { findMany: jest.fn() },
+    // #1859 M-P0-09 — the credits loop reads the seat's claim + remaining usage
+    // before refunding, so a free_ seat needs both mocked.
+    refund: { findFirst: jest.fn() },
+    referralCreditUsage: { findMany: jest.fn() },
     $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn({})),
   },
 }));
@@ -39,6 +43,20 @@ jest.mock("../../lib/payments/operations/refund", () => ({
     }
   },
 }));
+// #1859 M-P0-09 — the credits rail is spied, not executed: this suite asserts
+// the key the whole-event loop hands it, which is the credits rail's only
+// guard against a double-posted PLATFORM_PROMO journal. The rail's own
+// behaviour stays pinned in __tests__/payments/free-credit-refund.test.ts.
+jest.mock("../../lib/payments/operations/booking-refund", () => {
+  const actual = jest.requireActual(
+    "../../lib/payments/operations/booking-refund",
+  );
+  return {
+    ...actual,
+    refundBookingPayment: jest.fn(),
+  };
+});
+
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/enterprise/system-events", () => {
   const recordSystemError = jest.fn().mockResolvedValue(undefined);
@@ -51,18 +69,36 @@ jest.mock("../../lib/enterprise/system-events", () => {
 import prisma from "../../lib/prisma";
 import { applyReversal } from "../../lib/payments/operations/reversal-engine";
 import { refundPayment } from "../../lib/payments/operations/refund";
+import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 
 const findMany = (prisma as unknown as { payment: { findMany: jest.Mock } })
   .payment.findMany;
 const applyReversalMock = applyReversal as jest.Mock;
 const refundPayment_ = refundPayment as jest.Mock;
+const refundBookingPayment_ = refundBookingPayment as jest.Mock;
+type CreditsSeatPrisma = {
+  refund: { findFirst: jest.Mock };
+  referralCreditUsage: { findMany: jest.Mock };
+};
+const creditsPrisma = prisma as unknown as CreditsSeatPrisma;
+const refundFindFirst = creditsPrisma.refund.findFirst;
+const usageFindMany = creditsPrisma.referralCreditUsage.findMany;
 
 beforeEach(() => {
   balances = {};
   findMany.mockReset();
   applyReversalMock.mockReset();
-  refundPayment_.mockReset();
+  refundBookingPayment_.mockReset();
+  refundBookingPayment_.mockResolvedValue({
+    refundId: "rc1",
+    amountRefundedPaise: 0,
+    rail: "CREDITS",
+  });
+  refundFindFirst.mockReset();
+  refundFindFirst.mockResolvedValue(null);
+  usageFindMany.mockReset();
+  usageFindMany.mockResolvedValue([]);
   refundPayment_.mockResolvedValue({
     refundId: "r1",
     amountRefundedPaise: 1000,
@@ -72,6 +108,66 @@ beforeEach(() => {
     cascades: [],
     childRefundIds: [],
     clawbackPosted: false,
+  });
+});
+
+// #1859 M-P0-09 — the credits loop is the one caller of the credits rail that
+// used to omit dedupeKey. With no key `withDedupe` returns immediately, so the
+// zero-amount Refund row persisted a NULL dedupeKey, which sits outside the
+// unique index (Postgres NULLs are distinct) and left the PLATFORM_PROMO
+// journal resting on Serializable retry ordering instead of a DB guarantee.
+describe("refundWholeEventPayments — credits rail keying (#1859 M-P0-09)", () => {
+  it("hands the credits rail a dedupeKey scoped to the event and the seat", async () => {
+    findMany.mockResolvedValue([
+      { id: "pay_free_1", amount: 0, paymentIntent: "free_ref_1" },
+    ]);
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "admin1",
+    );
+
+    expect(refundBookingPayment_).toHaveBeenCalledTimes(1);
+    const arg = refundBookingPayment_.mock.calls[0][0];
+    expect(arg.paymentId).toBe("pay_free_1");
+    expect(arg.dedupeKey).toBe("event-cancel:cls1:pay:pay_free_1");
+    expect(summary.failures).toHaveLength(0);
+  });
+
+  it("gives two seats in one event two different keys", async () => {
+    findMany.mockResolvedValue([
+      { id: "pay_free_1", amount: 0, paymentIntent: "free_ref_1" },
+      { id: "pay_free_2", amount: 0, paymentIntent: "free_ref_2" },
+    ]);
+
+    await refundWholeEventPayments("class", "cls1", "cancel", "admin1");
+
+    const keys = refundBookingPayment_.mock.calls.map((c) => c[0].dedupeKey);
+    expect(keys).toEqual([
+      "event-cancel:cls1:pay:pay_free_1",
+      "event-cancel:cls1:pay:pay_free_2",
+    ]);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("keys by event as well as seat, so one payment across two events refunds twice", async () => {
+    // The regression a `p.id`-only key would cause: cancelling a second event
+    // that shares a seat's payment would be refused as an already-spent claim
+    // and the second event would keep the credits.
+    findMany.mockResolvedValue([
+      { id: "pay_free_1", amount: 0, paymentIntent: "free_ref_1" },
+    ]);
+
+    await refundWholeEventPayments("class", "cls1", "cancel", "admin1");
+    await refundWholeEventPayments("webinar", "web1", "cancel", "admin1");
+
+    const keys = refundBookingPayment_.mock.calls.map((c) => c[0].dedupeKey);
+    expect(keys).toEqual([
+      "event-cancel:cls1:pay:pay_free_1",
+      "event-cancel:web1:pay:pay_free_1",
+    ]);
   });
 });
 
