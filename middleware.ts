@@ -23,15 +23,10 @@ import {
   isBypassableIp,
   streamJoinLimiter,
   streamApiLimiter,
-  isRateLimitDegraded,
-  RATE_LIMIT_DEGRADED_HEADER,
 } from "@/lib/rate-limit";
 import {
-  RATE_POLICIES,
   RATE_SCOPE,
   limiterFor,
-  tokenKey,
-  type RateDimension,
   type RateScope,
 } from "@/lib/rate-limit/policies";
 import { Ratelimit } from "@upstash/ratelimit";
@@ -242,17 +237,15 @@ function handleMaintenance(
 //   - `limiter`       : the shared bucket (defined in lib/rate-limit.ts).
 //   - `key`           : bucket identifier; defaults to client IP. Return null to
 //                       skip (e.g. a per-org bucket when the orgId can't be parsed).
-//                       May be async — per-token buckets have to hash, and
-//                       hashing is Web Crypto, which is promise-returning.
 //   - `skipLocalhost` : when true, dev/localhost requests bypass this limiter so
 //                       local + e2e flows aren't blocked. PRESERVE the original
 //                       per-rule value — it is intentionally inconsistent (the
 //                       public read endpoints rate-limit even on localhost; the
 //                       auth + enterprise write endpoints do not).
 //
-// The AUTH rules are not written here at all. They are generated from
-// `POLICY_ROUTES` (below) so that a rule cannot name a budget the policy table
-// does not declare. See the block comment there for why.
+// BetterAuth endpoints under /api/auth/* are NOT limited here: BetterAuth's own
+// limiter (lib/auth/rate-limit.ts) counts them, path-accurately and including
+// plugin paths. Only app routes that BetterAuth never sees belong here.
 // ─────────────────────────────────────────────────────────────────────────────
 type RateRule = {
   label: string;
@@ -264,240 +257,36 @@ type RateRule = {
    * cannot drift from the limiter that produced it.
    */
   scope?: RateScope;
-  key?: (
-    pathname: string,
-    clientIp: string,
-  ) => string | null | Promise<string | null>;
+  key?: (pathname: string, clientIp: string) => string | null;
   skipLocalhost: boolean;
 };
 
-/**
- * Which policy covers which edge path.
- *
- * The number, the window, the `scope` string the 429 reports and the Redis
- * prefix all come from `lib/rate-limit/policies.ts`. This list contributes only
- * the one thing a budget cannot know about itself: the route.
- *
- * ## The path list is now the only place a path can be wrong
- *
- * It used to be one of three. The bug this replaced: the auth rule matched
- * `/api/auth/forget-password`, and BetterAuth has never had an endpoint by that
- * name — it is `/api/auth/request-password-reset` (`password.mjs:20`). The
- * prefix silently never matched, so the whole forgot-password flow ran
- * unthrottled, including the response that distinguishes a registered address
- * from an unregistered one. Endpoint names below are quoted from
- * `node_modules/better-auth/dist/api/routes/*.mjs` and
- * `node_modules/@better-auth/sso/dist/`; a typo here is a silent hole again, so
- * a rename upstream has to be reflected in this list on purpose.
- *
- * The matchers are deliberately **disjoint** — each is a full sub-path, not a
- * shared prefix. `/api/auth/sign-in` is three different budgets (`/email`,
- * `/social`, `/sso`), so an overlapping matcher would spend two counters on one
- * request and return whichever of the two verdicts came first.
- *
- * ## What is still deliberately NOT covered
- *
- * Carried over verbatim from the #1856 rule this replaces: **not** `sign-out`,
- * `update-user`, `link-social`, `unlink-account` or `revoke-other-sessions`.
- * All are session-bound with no guessable secret, and throttling sign-out is
- * actively harmful — it strands a user on a device they are trying to
- * decommission, which is the one moment a limit is most likely to cost a
- * compromised account its owner. `isBypassableIp` returns false in production
- * for every value including the `unknown_ip` sentinel, so a misconfigured proxy
- * or a stripped header in prod still pays the full penalty on every rule here.
- *
- * ## Which dimensions the edge can spend, and which it cannot
- *
- * The edge sees the method, the path and a few headers. It **cannot read the
- * request body** — consuming the stream in middleware strands the handler, and
- * `NextRequest` offers no rewind. BetterAuth puts its secrets in JSON bodies:
- * `sign-in/email` `{email, password}`, `sign-up/email`, `request-password-reset`
- * `{email}`, `send-verification-email` `{email}`, `reset-password`
- * `{newPassword, token}` (`password.mjs:120`), and the invite `invitationId`.
- *
- * So the rules below spend **only the `ip` dimension**, with one exception, and
- * the per-account and per-token budgets the policies declare are spent by the
- * handlers that parse those bodies:
- *
- *     limiterFor(RATE_SCOPE.AUTH_SIGN_IN, "account")
- *     limiterFor(RATE_SCOPE.AUTH_PASSWORD_RESET_SUBMIT, "token")
- *     limiterFor(RATE_SCOPE.INVITE_ACCEPT, "token")
- *
- * The exception is `GET /api/auth/reset-password/:token`, which carries its
- * secret in the path and therefore is keyable here. It is the one budget worth
- * having at the edge: a reset token is a bearer credential, and a per-token
- * bucket is what turns a leaked link into a bounded number of attempts rather
- * than an open door.
- *
- * Hashing for that key is Web Crypto (`crypto.subtle.digest` in `policies.ts`),
- * not `node:crypto` — which does not exist in the Edge runtime, so importing it
- * here would fail the build outright rather than degrade gracefully.
- */
-type PolicyRoute = {
-  scope: RateScope;
-  match: (pathname: string, method: string) => boolean;
-  /** Which declared budget to spend. Defaults to `ip`. */
-  dimension?: RateDimension;
-  key?: (
-    pathname: string,
-    clientIp: string,
-  ) => string | null | Promise<string | null>;
-};
-
-const POLICY_ROUTES: PolicyRoute[] = [
+const RATE_LIMIT_RULES: RateRule[] = [
   {
-    // sign-in.mjs:9 — `method: "POST"`.
-    scope: RATE_SCOPE.AUTH_SIGN_IN,
-    match: (p, m) => m === "POST" && p.startsWith("/api/auth/sign-in/email"),
-  },
-  {
-    // sign-up.mjs:4 — `method: "POST"`.
-    scope: RATE_SCOPE.AUTH_SIGN_UP,
-    match: (p, m) => m === "POST" && p.startsWith("/api/auth/sign-up/email"),
-  },
-  {
-    // password.mjs:20 — `method: "POST"`, body `{ email, redirectTo }`.
-    // The route the old `forget-password` prefix was reaching for. Its response
-    // is deliberately uniform, but only the budget is uniform; three an hour
-    // per address is what makes an address-list walk expensive.
-    scope: RATE_SCOPE.AUTH_PASSWORD_RESET_REQUEST,
-    match: (p, m) =>
-      m === "POST" && p.startsWith("/api/auth/request-password-reset"),
-  },
-  {
-    // password.mjs:120 — `method: "POST"`, body `{ newPassword, token }`. The
-    // token may also arrive as a query param, but keying on it *only when
-    // present* would be a bypass: drop the query and the budget reverts to the
-    // IP one. So this rule is IP-keyed and the per-token budget is spent by
-    // the handler that actually holds the body.
-    scope: RATE_SCOPE.AUTH_PASSWORD_RESET_SUBMIT,
-    match: (p, m) => m === "POST" && p.startsWith("/api/auth/reset-password"),
-  },
-  {
-    // password.mjs:83 — `method: "GET"`, token in the path. The one auth secret
-    // the edge can key on, and the one where it matters most: a reset token is a
-    // bearer credential, so this bucket is what turns a leaked link from a
-    // takeover into ten uses an hour. Hashed, never the token itself — Redis
-    // keys are plaintext at rest and visible in MONITOR.
-    scope: RATE_SCOPE.AUTH_PASSWORD_RESET_SUBMIT,
-    dimension: "token",
-    match: (p, m) => m === "GET" && p.startsWith("/api/auth/reset-password/"),
-    key: (p) => {
-      const token = p.split("/")[4];
-      return token ? tokenKey(token) : null;
-    },
-  },
-  {
-    // email-verification.mjs — `method: "POST"`, body `{ email, callbackURL }`.
-    // Was unthrottled entirely: one POST per call, addressed to anyone, at our
-    // sending reputation and bounce rate.
-    scope: RATE_SCOPE.AUTH_SEND_VERIFICATION,
-    match: (p, m) =>
-      m === "POST" && p.startsWith("/api/auth/send-verification-email"),
-  },
-  {
-    // email-verification.mjs:109 — `method: "GET"`, `?token=` in the query.
-    scope: RATE_SCOPE.AUTH_VERIFY_EMAIL,
-    match: (p, m) => m === "GET" && p.startsWith("/api/auth/verify-email"),
-  },
-  {
-    // sign-in.mjs — `/sign-in/social` POST (out to the IdP) and
-    // `callback.mjs` — `/callback/:id` GET (the redirect landing). Both halves
-    // of one round-trip, and a user on a flaky connection retries several times
-    // inside one window, which is why the policy is IP-only and generous.
-    scope: RATE_SCOPE.AUTH_SOCIAL,
-    match: (p, m) =>
-      (m === "POST" && p.startsWith("/api/auth/sign-in/social")) ||
-      (m === "GET" && p.startsWith("/api/auth/callback/")),
-  },
-  {
-    // @better-auth/sso — `/sign-in/sso` POST. The redirect out to the
-    // corporate IdP; the per-account half of the policy is handler-enforced,
-    // since an unauthenticated caller may not know which address they are yet.
-    scope: RATE_SCOPE.AUTH_SSO_START,
-    match: (p, m) => m === "POST" && p.startsWith("/api/auth/sign-in/sso"),
-  },
-  {
-    // @better-auth/sso — the OIDC redirect landing,
-    //   GET /api/auth/sso/callback[/:providerId]
-    // IP-keyed because it is the *user's browser* arriving from their IdP, so
-    // the address is the person's, not the provider's — the same shape as the
-    // OIDC sign-in that has always been keyed this way. SSO is OIDC-only; the
-    // plugin's SAML endpoints are 404'd by `hooks.before` in lib/auth.ts.
-    scope: RATE_SCOPE.AUTH_SSO_CALLBACK,
-    match: (p, m) => m === "GET" && p.startsWith("/api/auth/sso/callback"),
-  },
-  {
-    // account.mjs — `method: "POST"`, session-bound and gated on the CURRENT
-    // password, so a stolen session turns it into a guessing surface.
-    scope: RATE_SCOPE.AUTH_CHANGE_PASSWORD,
-    match: (p, m) => m === "POST" && p.startsWith("/api/auth/change-password"),
-  },
-  {
-    // Pre-login and returns `enforceSSO` + org name for any recognised domain,
-    // so hit in a loop it enumerates the whole enterprise customer base. On the
-    // critical path of every corporate sign-in, hence the raise to 120/hr for
-    // shared-office NATs. Disjoint from the callback rule above: `domain-check`
-    // is not a `callback` prefix.
-    scope: RATE_SCOPE.SSO_DOMAIN_CHECK,
+    // An app route, so BetterAuth's limiter never sees it. Pre-login and
+    // returns `enforceSSO` + org name for any recognised domain, so hit in a
+    // loop it enumerates the enterprise customer base.
+    label: `policy: ${RATE_SCOPE.SSO_DOMAIN_CHECK}`,
     match: (p, m) => m === "GET" && p.startsWith("/api/auth/sso/domain-check"),
+    limiter: limiterFor(RATE_SCOPE.SSO_DOMAIN_CHECK),
+    scope: RATE_SCOPE.SSO_DOMAIN_CHECK,
+    skipLocalhost: true,
   },
   {
     // Credential stuffing against stolen invite links. `invitationId` is in the
-    // POST body, so this rule spends the IP budget and the per-invitation one
-    // is handler-enforced.
-    scope: RATE_SCOPE.INVITE_ACCEPT,
+    // POST body, which the edge cannot read, so this spends the IP budget only.
+    label: `policy: ${RATE_SCOPE.INVITE_ACCEPT}`,
     match: (p, m) =>
       m === "POST" && p === "/api/organizations/invitations/accept",
+    limiter: limiterFor(RATE_SCOPE.INVITE_ACCEPT),
+    scope: RATE_SCOPE.INVITE_ACCEPT,
+    skipLocalhost: true,
   },
-];
-
-const POLICY_RATE_LIMIT_RULES: RateRule[] = POLICY_ROUTES.map((route) => ({
-  label: `policy: ${route.scope}`,
-  match: route.match,
-  limiter: limiterFor(route.scope, route.dimension ?? "ip"),
-  scope: route.scope,
-  key: route.key,
-  // Uniform across the whole table, and matching every auth/enterprise rule
-  // this replaces. The deliberate inconsistency in the wider table (public
-  // reads limit even on localhost) is preserved on the hand-written rules
-  // below; none of them govern a credential path, where a developer running
-  // `npm run dev` behind the same IP as their other services should not be able
-  // to lock themselves out of signing in.
-  skipLocalhost: true,
-}));
-
-/**
- * Every declared policy must be reachable from `POLICY_ROUTES`, or it is dead
- * configuration that reads as protection.
- *
- * The mirror image of the bug this file replaced, and the reason it is worth
- * the four lines: that rule was not missing from the *table*, it was missing
- * from the *matcher*, which is exactly the kind of gap that survives review and
- * a test that only asserts the limiter exists. Warned rather than thrown
- * because a hard failure here would take the whole edge down over a
- * bookkeeping slip; a declared-but-unwired budget is an under-enforcement, not
- * an outage, and the log is where that belongs.
- */
-const UNWIRED_SCOPES = (Object.keys(RATE_POLICIES) as RateScope[]).filter(
-  (scope) => !POLICY_ROUTES.some((route) => route.scope === scope),
-);
-if (UNWIRED_SCOPES.length > 0) {
-  console.error(
-    `[middleware] rate-limit policies declared but never matched at the ` +
-      `edge, so no budget is being spent on them: ${UNWIRED_SCOPES.join(", ")}. ` +
-      `Either add a POLICY_ROUTES entry or drop the policy.`,
-  );
-}
-
-const RATE_LIMIT_RULES: RateRule[] = [
-  ...POLICY_RATE_LIMIT_RULES,
   {
-    // #1856 — session/device management. Own limiter, not the auth budget:
-    // the device list reloads after every revoke and none of that
-    // traffic may eat the AUTH_SIGN_IN budget. IP-keyed (middleware is
-    // cookie-presence only and cannot resolve a user id — see the
-    // meeting-join rule).
+    // #1856 — session/device management, an app route rather than a
+    // BetterAuth one. Generous because the device list reloads after every
+    // revoke. IP-keyed (middleware is cookie-presence only and cannot
+    // resolve a user id — see the meeting-join rule).
     //
     // The liveness probe (`/current`) is EXEMPT: every open tab calls it
     // on focus, and it must not spend the device list's budget. It needs
@@ -611,58 +400,26 @@ const RATE_LIMIT_RULES: RateRule[] = [
   },
 ];
 
-type RateLimitOutcome = {
-  /** A 429 to return immediately, or null to continue. */
-  limited: NextResponse | null;
-  /**
-   * True when a limiter check in this request failed because the store was
-   * unreachable, so the budgets that would otherwise have applied were not
-   * enforced. See `RATE_LIMIT_DEGRADED_HEADER` in lib/rate-limit.ts for what a
-   * consumer is meant to do about it — the short version is "raise the price of
-   * a guess, do not lock the site down".
-   */
-  degraded: boolean;
-};
-
 /**
  * Apply the first matching edge rate-limit rule. Returns a 429 response when a
- * limit is exceeded, else null. (Rules match disjoint paths, so at most one
- * applies per request; the loop still honours array order if that ever changes.)
- *
- * Two policies deliberately spend two budgets on one request — the two halves
- * of the password-reset token flow — so the loop does not stop at the first
- * rule that matches; it stops at the first rule that actually 429s. That keeps a
- * caller from skipping the second bucket by tripping the first.
+ * limit is exceeded, else null. Rules match disjoint paths, so at most one
+ * applies per request.
  */
 async function applyEdgeRateLimits(
   req: NextRequest,
   pathname: string,
-): Promise<RateLimitOutcome> {
+): Promise<NextResponse | null> {
   const clientIp = getClientIp(req);
   const isLocalhost = isBypassableIp(clientIp);
-  let limited: NextResponse | null = null;
 
   for (const rule of RATE_LIMIT_RULES) {
     if (rule.skipLocalhost && isLocalhost) continue;
     if (!rule.match(pathname, req.method)) continue;
-    // `key` may be async: the per-token buckets hash the secret, and hashing is
-    // Web Crypto. `applyRateLimit`'s scope argument is what puts the policy's
-    // stable identifier in the 429 body, so a client can tell which budget it
-    // spent without string-matching the error sentence.
-    const id = rule.key ? await rule.key(pathname, clientIp) : clientIp;
-    if (id === null) continue;
-    const verdict = await applyRateLimit(rule.limiter, id, rule.scope);
-    if (verdict && !limited) limited = verdict;
+    const id = rule.key ? rule.key(pathname, clientIp) : clientIp;
+    if (id === null) return null;
+    return applyRateLimit(rule.limiter, id, rule.scope);
   }
-
-  const degraded = isRateLimitDegraded();
-  // Also on the 429, so the client can see *why* it was refused: "over quota"
-  // and "we could not check your quota" are different support conversations,
-  // and only the second is worth waking someone for.
-  if (limited && degraded) {
-    limited.headers.set(RATE_LIMIT_DEGRADED_HEADER, "1");
-  }
-  return { limited, degraded };
+  return null;
 }
 
 /**
@@ -716,40 +473,18 @@ async function routeRequest(
   pathname: string,
 ): Promise<NextResponse> {
   // 3. Edge rate limiting.
-  const { limited: rateLimited, degraded } = await applyEdgeRateLimits(
-    req,
-    pathname,
-  );
+  const rateLimited = await applyEdgeRateLimits(req, pathname);
   if (rateLimited) return rateLimited;
 
-  // Carry the degradation flag to whatever runs next.
-  //
-  // `isRateLimitDegraded()` cannot be read from the handler: middleware and
-  // route handlers are separate isolates with separate module graphs, so a
-  // module-level flag set in here is always `false` over there. The request
-  // header is the only channel across that boundary, which makes this the
-  // single point where it has to be stamped.
-  //
-  // Only forwarded when degraded, and only on branches that actually have a
-  // downstream consumer — a 401 or a redirect has no handler to inform, and
-  // `NextResponse.next({request:{headers}})` is not free to set up on a path
-  // that never needs it.
-  const degradedForward: Record<string, string> = degraded
-    ? { [RATE_LIMIT_DEGRADED_HEADER]: "1" }
-    : {};
-
-  /** Pass-through, forwarding the degradation flag when one is set. */
+  /** Pass-through, adding request headers for the handler when given. */
   const next = (extra?: Record<string, string>): NextResponse => {
     // `x-pathname` is set only by the protected-page branch below; a copy the
     // client sent must never reach a server guard that reads it.
     const spoofedPath = req.headers.has("x-pathname");
-    if (!degraded && !extra && !spoofedPath) return NextResponse.next();
+    if (!extra && !spoofedPath) return NextResponse.next();
     const requestHeaders = new Headers(req.headers);
     requestHeaders.delete("x-pathname");
-    for (const [key, value] of Object.entries({
-      ...degradedForward,
-      ...extra,
-    })) {
+    for (const [key, value] of Object.entries(extra ?? {})) {
       requestHeaders.set(key, value);
     }
     return NextResponse.next({ request: { headers: requestHeaders } });
@@ -759,8 +494,6 @@ async function routeRequest(
 
   // Public API routes first (most common; no auth) — must precede the
   // authenticated-prefix check so public sub-routes shadow their private parent.
-  // This is the branch that matters for the flag: it is where
-  // /api/auth/[...all] lands.
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_API_PREFIXES)) {
     return next();
   }

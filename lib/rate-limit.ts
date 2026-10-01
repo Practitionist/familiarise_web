@@ -2,7 +2,6 @@
  * Shared rate limiters for API routes.
  *
  * Rate limit profiles:
- * - authLimiter:            10/15min per IP  — POST /api/auth/sign-in, sign-up, forget-password (brute-force)
  * - checkoutLimiter:        5/min per user   — POST /api/checkout (fraud)
  * - discountLimiter:        10/min per user  — POST /api/payments/discounts/validate (brute-force)
  * - waitlistLimiter:        3/hr per IP      — POST /api/waitlist (newsletter signup spam)
@@ -25,14 +24,10 @@
  * - sessionMgmtLimiter:     120/15min per IP  — /api/user/sessions* except the liveness probe (see middleware)
  * - sessionMgmtUserLimiter: 60/15min per user — same three routes, keyed past requireApiAuth (the precise gate)
  *
- * The auth surface is NOT listed here because it is no longer configured here.
- * Every auth budget, its per-account and per-token dimensions, and the `scope`
- * its 429 reports come from one table in `lib/rate-limit/policies.ts`, and the
- * edge rules are generated from it. That indirection is the fix for the bug
- * that motivated it: this file used to name `/api/auth/forget-password`, which
- * is not a BetterAuth endpoint (it is `/api/auth/request-password-reset`), and
- * nothing noticed because the limiter name, the path list and the 429 label
- * were three unrelated pieces of text.
+ * BetterAuth endpoints (`/api/auth/*`) are limited by BetterAuth itself; see
+ * `lib/auth/rate-limit.ts`. The app routes on the auth path (SSO domain check,
+ * invite accept, staff onboarding) take their budgets from
+ * `lib/rate-limit/policies.ts`.
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -63,20 +58,6 @@ export function makeLimiter(
     timeout: LIMITER_TIMEOUT_MS,
   });
 }
-
-/**
- * 10 per 15 minutes — the original catch-all auth bucket (sign-in, sign-up,
- * forget-password).
- *
- * SUPERSEDED for the edge by `lib/rate-limit/policies.ts`, which is now the
- * single declaration for every auth budget — its per-scope numbers, and the
- * per-account and per-token dimensions this bucket never had, are what the
- * middleware actually spends. Kept exported and unchanged because it is a
- * stable, widely-referenced name in this repo's docs and comments; anything
- * that still points at it is on the coarse 10/15m, which is the safe direction
- * to be wrong in.
- */
-export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
 
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");
@@ -294,57 +275,20 @@ export const verificationSubmitLimiter = makeLimiter(
 );
 
 // ============================================================================
-// Enterprise (arch-4) — per-org / per-IP buckets for org-specific surfaces.
-//
-// These are narrower than the global authLimiter because an org-scoped
-// attacker (e.g. credential-stuffing against a single tenant's SSO) can
-// keep the global IP counter fresh by rotating source IPs. Adding an
-// org-scoped bucket catches single-tenant floods that wouldn't trip the
-// global bucket.
+// Enterprise (arch-4) — per-org buckets for org-specific surfaces. Org-keyed so
+// one tenant's burst cannot crowd out another's, and rotating source IPs does
+// not reset the count.
 // ============================================================================
-
-/**
- * 30 per hour — POST /api/organizations/invitations/accept (IP-based; org-level identity only available post-token-lookup, which middleware can't do)
- *
- * SUPERSEDED by `RATE_POLICIES[RATE_SCOPE.INVITE_ACCEPT]`, which the middleware
- * now uses: 60/hr (the same shared-NAT correction applied to the SSO
- * domain-check) plus a per-invitation bucket. Left at 30/hr so a stale caller
- * gets the tighter, not the looser, budget. Shares the `rl:org-invite-accept`
- * prefix, so the two are the same bucket rather than two that can both be
- * spent.
- */
-export const orgInviteAcceptLimiter = makeLimiter(
-  30,
-  "1 h",
-  "rl:org-invite-accept",
-);
-
-/**
- * 60 per hour — GET /api/auth/sso/domain-check (IP-based, prevents org-existence enumeration)
- *
- * SUPERSEDED by `RATE_POLICIES[RATE_SCOPE.SSO_DOMAIN_CHECK]`, which the
- * middleware now uses at 120/hr — a shared-office NAT is one IP for a whole
- * floor and 60/hr was locking out offices on the critical path of every
- * corporate sign-in. Shares the `rl:sso-domain-check` prefix, so the two are
- * the same bucket rather than two that can both be spent.
- */
-export const ssoDomainCheckLimiter = makeLimiter(
-  60,
-  "1 h",
-  "rl:sso-domain-check",
-);
 
 /**
  * 120 per 15 minutes per IP — /api/user/sessions* except the signal
  * poll (#1856, exempt there).
  *
- * Deliberately NOT authLimiter: session traffic (a device list that
- * reloads after every revoke) must never exhaust the 10/15m sign-in
- * budget and lock a legitimate user out of signing in. IP-keyed
+ * Generous because a device list reloads after every revoke. IP-keyed
  * because middleware is cookie-presence-only — so one office NAT
- * shares this bucket, which is why it is generous AND paired with the
- * per-user limiter below (a single NAT office revoking devices must
- * not lock itself out; the per-user bucket is the precise gate).
+ * shares this bucket, which is why it is paired with the per-user
+ * limiter below (a single NAT office revoking devices must not lock
+ * itself out; the per-user bucket is the precise gate).
  */
 export const sessionMgmtLimiter = makeLimiter(120, "15 m", "rl:session-mgmt");
 
@@ -447,68 +391,6 @@ export function retryAfterSeconds(
   return Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000));
 }
 
-/* -------------------------------------------------------------------------- */
-/* Degradation under store failure                                            */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Set when the limiter store could not be reached, cleared on the next
- * successful check. Module-scope on purpose: when the shared state is down
- * there is no shared state left to coordinate through (same reasoning as the
- * `captureThrottled` note below).
- */
-let rateLimitStoreDegraded = false;
-
-/**
- * The header `applyEdgeRateLimits` stamps on the request when the limiter store
- * was unreachable, and the header a 429 carries alongside it.
- *
- * ## Why a header and not only the predicate below
- *
- * The two answer the same question about the same failure, but they reach
- * different processes. Edge middleware and the route handler are separate
- * isolates with separate module graphs, so a module-level flag set in the
- * middleware is **always `false`** when read from inside a handler. A handler
- * that called the predicate in-process would be deaf to precisely the outage
- * it is asking about.
- *
- * The contract, then: **consumers inside a handler read the request header.**
- * `isRateLimitDegraded()` is for callers in the same isolate, and for tests.
- *
- * ## What a consumer should do with it
- *
- * Under store failure the budgets are not being enforced. The fail-open in
- * `applyRateLimit` is correct and stays — a Redis outage must not log every
- * paying customer out of their own account. What fail-open leaves behind is a
- * *silent* hole on exactly the credential endpoints where the human at the
- * keyboard is the last remaining line. So a consumer that can raise the price
- * of a guess — captcha, step-up challenge, email confirmation — should raise it
- * precisely when this header is present. Degrade toward a second line, not
- * toward open.
- *
- * Deliberately NOT a signal to lock down: turning an Upstash blip into a global
- * 503 would be a self-inflicted outage, which is the failure this design exists
- * to avoid.
- */
-export const RATE_LIMIT_DEGRADED_HEADER = "x-rate-limit-degraded";
-
-/**
- * True when the most recent limiter check failed because the store was
- * unreachable — not because the caller was over quota.
- *
- * The distinction is the whole point. An exhausted budget is a `success: false`
- * return, never an exception, so it does not set this flag; only a thrown
- * store error does. A consumer branching on this is therefore saying "we have
- * no working limiter right now", which is a very different message from "you
- * are being rate limited", and the two must never be conflated into one boolean.
- *
- * See `RATE_LIMIT_DEGRADED_HEADER` for the cross-isolate version of the same
- * fact, and for what a consumer is expected to do with it.
- */
-export function isRateLimitDegraded(): boolean {
-  return rateLimitStoreDegraded;
-}
-
 /**
  * Apply rate limit to a request.
  * Returns a 429 NextResponse if exceeded, otherwise null.
@@ -531,10 +413,6 @@ export async function applyRateLimit(
 ): Promise<NextResponse | null> {
   try {
     const { success, remaining, reset } = await limiter.limit(identifier);
-    // A completed check is proof the store is reachable again, so the degraded
-    // flag is cleared here rather than on a timer — a caller that gets a verdict
-    // can rely on that verdict being a real measurement.
-    rateLimitStoreDegraded = false;
     if (!success) {
       const retryAfter = retryAfterSeconds(reset);
       return NextResponse.json(
@@ -567,7 +445,6 @@ export async function applyRateLimit(
     }
     return null;
   } catch (error) {
-    rateLimitStoreDegraded = true;
     // Fail open is deliberate (#1125) — but a Redis outage silently disables
     // every rate limiter in the app, so it must be reported, not swallowed.
     //
