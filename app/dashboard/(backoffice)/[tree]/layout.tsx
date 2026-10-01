@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
 import { BackofficeCapabilityProvider } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { OperatorConsentGate } from "@/components/dashboard/backoffice/OperatorConsentGate";
 import { OperatorDashboardShell } from "@/components/dashboard/OperatorDashboardShell";
 import { requireOperator } from "@/lib/auth-guard";
 import {
@@ -9,6 +10,7 @@ import {
   resolveBackofficeCapability,
 } from "@/lib/backoffice/capability";
 import { staffTwinHref } from "@/lib/backoffice/legacy-routes";
+import { operatorHasBeenAskedForConsent } from "@/lib/compliance/operator-consent";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 
 /**
@@ -35,6 +37,9 @@ export default async function BackofficeLayout({
     // Only STAFF on the admin tree reach here; middleware sets x-pathname.
     redirect(staffTwinHref((await headers()).get("x-pathname")));
   }
+  // Operators are created by an admin, so nobody has consented for them; the
+  // first sign-in asks (lib/compliance/operator-consent.ts).
+  const askConsent = !(await operatorHasBeenAskedForConsent(session.user.id));
 
   return (
     <BackofficeCapabilityProvider value={cap} viewerId={session.user.id}>
@@ -45,6 +50,7 @@ export default async function BackofficeLayout({
         showTds={ENABLE_TDS_ADMIN_VIEW}
       >
         {children}
+        {askConsent ? <OperatorConsentGate /> : null}
       </OperatorDashboardShell>
     </BackofficeCapabilityProvider>
   );
