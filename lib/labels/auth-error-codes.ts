@@ -97,7 +97,7 @@ export type TwoFactorPluginErrorCode =
 
 /**
  * `have-i-been-pwned` plugin.
- * @see node_modules/better-auth/dist/plugins/haveibeenpwned/index.mjs
+ * Our own plugin, lib/auth/password-policy.ts.
  */
 export type HaveIBeenPwnedErrorCode = "PASSWORD_COMPROMISED";
 
