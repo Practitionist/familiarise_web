@@ -91,14 +91,14 @@ every receiver.
 
 | Event | Triggered from | Payload highlights |
 |---|---|---|
-| `member.added` | `POST /api/organizations/[orgId]/members` (in-app invite accept) AND SCIM upsert (Batch 4) | `{ membershipId, userId, role, departmentLabel }` |
-| `member.removed` | `DELETE /api/organizations/[orgId]/members/[memberId]` AND SCIM deprovision | `{ membershipId, userId, role, previousStatus }` |
+| `member.added` | `POST /api/organizations/[orgId]/members` (in-app invite accept) | `{ membershipId, userId, role, departmentLabel }` |
+| `member.removed` | `DELETE /api/organizations/[orgId]/members/[memberId]` | `{ membershipId, userId, role, previousStatus }` |
 | `invoice.issued` | `POST .../billing-account/invoices` when `issueImmediately=true` | `{ invoiceId, invoiceNumber, totalPaise, displayCurrency, dueDate, purchaseOrderId?, contractId? }` |
 | `invoice.paid` | Razorpay payment webhook flips invoice status to `PAID` | `{ invoiceId, invoiceNumber, paidPaise, paymentId, settledAt }` |
 | `payout.completed` | RazorpayX `payout.processed` webhook → status PAID | `{ payoutId, totalPaise, currency, payoutReference, settledAt }` |
 | `payout.failed` | RazorpayX `payout.failed` OR `payout.reversed` webhook | `{ payoutId, reason, lastError }` |
 | `contract.signed` | Contract status transition `DRAFT → ACTIVE` | `{ contractId, status, effectiveFrom, totalAmountPaise? }` |
-| `program.assigned` | `ProgramAssignment.create` (in-app + SCIM-driven) | `{ programId, membershipId, periodStart, periodEnd }` |
+| `program.assigned` | `ProgramAssignment.create` | `{ programId, membershipId, periodStart, periodEnd }` |
 
 ## Receiver contract
 

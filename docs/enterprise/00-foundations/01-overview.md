@@ -534,9 +534,8 @@ flowchart TD
     end
     subgraph IAM["Identity & Access"]
         Membership["Membership\nrole · status"]
-        Member["Member (BetterAuth)"]
         Invitation["Invitation"]
-        SSOSettings["OrganizationSSOSettings\nenforceSSO · breakGlassUntil"]
+        SSOSettings["OrganizationSSOSettings\nenforceSSO · defaultRoleForAutoJoin"]
         DomainClaim["OrgDomainClaim"]
         SsoProvider["SsoProvider"]
     end
