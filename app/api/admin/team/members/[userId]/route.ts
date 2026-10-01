@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   applyBestEffortEffects,
   applyTransactionalEffects,
@@ -153,21 +152,21 @@ export const PATCH = withOpsAction(
             notes: body.reason,
             suspensionDays: body.suspensionDays,
           });
-        // Post-commit, like every other call site of these two phases
-        // (lib/moderation/side-effects.ts's own docblock): the bulk-cancel
-        // leg opens its own transaction and cannot join this one.
-        scheduleAfter(() =>
-          runBestEffort(
-            {
-              actionType: "USER_SUSPENDED",
-              report,
-              staffUserId: actor.userId,
-              notes: body.reason,
-            },
-            transactional,
-          ),
-        );
         return {
+          // Post-commit, like every other call site of these two phases
+          // (lib/moderation/side-effects.ts's own docblock): the bulk-cancel
+          // leg opens its own transaction and cannot join this one, and a
+          // rolled-back suspension must not cancel anyone's bookings.
+          afterCommit: () =>
+            runBestEffort(
+              {
+                actionType: "USER_SUSPENDED",
+                report,
+                staffUserId: actor.userId,
+                notes: body.reason,
+              },
+              transactional,
+            ),
           target: { kind: "User", id: target.id },
           correlationId: `user:${target.id}`,
           before: { banned: target.banned, banExpires: null },
@@ -193,16 +192,15 @@ export const PATCH = withOpsAction(
         where: { id: target.id, banned: true },
         data: { banned: false, banReason: null, banExpires: null },
       });
-      scheduleAfter(() =>
-        restoreStreamAccess(target.id).catch((error: unknown) => {
-          reportSentryError(error, {
-            subsystem: "moderation",
-            op: "team.reactivate:stream",
-            expected: true,
-          });
-        }),
-      );
       return {
+        afterCommit: () =>
+          restoreStreamAccess(target.id).catch((error: unknown) => {
+            reportSentryError(error, {
+              subsystem: "moderation",
+              op: "team.reactivate:stream",
+              expected: true,
+            });
+          }),
         target: { kind: "User", id: target.id },
         correlationId: `user:${target.id}`,
         before: { banned: target.banned, banExpires: target.banExpires },

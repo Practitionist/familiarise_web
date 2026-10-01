@@ -217,25 +217,6 @@ export async function PUT(
       );
     }
 
-    // Update staff profile
-    await prisma.staffProfile.update({
-      where: { id: id },
-      data: {
-        department: body.department,
-        position: body.position,
-      },
-      include: {
-        user: {
-          include: {
-            notificationPreferences: true,
-            cookiePreferences: true,
-          },
-        },
-      },
-    });
-
-    // Also update user fields if provided.
-    //
     // #1927 — the email is EXCLUDED from this write, deliberately and with no
     // replacement path, because the alternative is worse than a refusal. The
     // bug this fixes is the one named in this file's own header: `PUT` used to
@@ -277,6 +258,24 @@ export async function PUT(
       );
     }
 
+    // Update staff profile
+    await prisma.staffProfile.update({
+      where: { id: id },
+      data: {
+        department: body.department,
+        position: body.position,
+      },
+      include: {
+        user: {
+          include: {
+            notificationPreferences: true,
+            cookiePreferences: true,
+          },
+        },
+      },
+    });
+
+    // Also update user fields if provided (never the email, see above).
     if (
       body.name ||
       body.phone ||

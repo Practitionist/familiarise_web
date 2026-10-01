@@ -104,20 +104,19 @@ export async function GET(_req: NextRequest) {
     },
   });
 
-  // Newest-first, so the first row per user is their last activity. Session
-  // `updatedAt` moves on BetterAuth's daily refresh, so this is "last seen
-  // around", never "online now".
-  const sessions = operators.length
-    ? await prisma.session.findMany({
+  // One row per operator. Session `updatedAt` moves on BetterAuth's daily
+  // refresh, so this is "last seen around", never "online now".
+  const latest = operators.length
+    ? await prisma.session.groupBy({
+        by: ["userId"],
         where: { userId: { in: operators.map((o) => o.id) } },
-        orderBy: { updatedAt: "desc" },
-        select: { userId: true, updatedAt: true },
+        _max: { updatedAt: true },
       })
     : [];
   const lastActive = new Map<string, string>();
-  for (const row of sessions) {
-    if (!lastActive.has(row.userId)) {
-      lastActive.set(row.userId, row.updatedAt.toISOString());
+  for (const row of latest) {
+    if (row._max.updatedAt) {
+      lastActive.set(row.userId, row._max.updatedAt.toISOString());
     }
   }
 
