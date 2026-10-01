@@ -48,6 +48,7 @@ jest.mock("../../lib/prisma", () => ({
 import { NextRequest } from "next/server";
 import { DELETE as deleteProvider } from "@/app/api/organizations/[orgId]/sso/providers/[providerId]/route";
 import { PATCH as patchSettings } from "@/app/api/organizations/[orgId]/sso/route";
+import { DELETE as releaseDomain } from "@/app/api/organizations/[orgId]/domain-claims/[domain]/route";
 
 const req = (method: string, body?: unknown) =>
   new NextRequest("https://x.test/api", {
@@ -115,5 +116,68 @@ describe("PATCH settings", () => {
   it("rejects the removed allowedEmailDomains field as an empty body", async () => {
     const res = await call({ allowedEmailDomains: ["acme.com"] });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("DELETE domain claim (D21)", () => {
+  const call = () =>
+    releaseDomain(req("DELETE"), {
+      params: Promise.resolve({ orgId: "org_1", domain: "acme.com" }),
+    });
+
+  beforeEach(() => {
+    tx.orgDomainClaim.findUnique.mockResolvedValue({
+      organizationId: "org_1",
+      domain: "acme.com",
+    });
+  });
+
+  it("revokes provider approval for the domain in the same transaction and logs it", async () => {
+    tx.organizationSSOSettings.findUnique.mockResolvedValue({
+      enforceSSO: false,
+    });
+    tx.ssoProvider.findMany.mockResolvedValue([
+      { providerId: "oidc-a", domain: "acme.com" },
+    ]);
+
+    const res = await call();
+
+    expect(res.status).toBe(204);
+    expect(tx.orgDomainClaim.delete).toHaveBeenCalledWith({
+      where: { domain: "acme.com" },
+    });
+    expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
+      where: { organizationId: "org_1", domain: "acme.com" },
+      data: { domainVerified: false },
+    });
+    expect(tx.orgAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "DOMAIN_RELEASED",
+        details: { domain: "acme.com", unapprovedProviderIds: ["oidc-a"] },
+      }),
+    });
+  });
+
+  it("refuses when it would revoke the last approved provider under enforcement", async () => {
+    tx.ssoProvider.findMany.mockResolvedValue([
+      { providerId: "oidc-a", domain: "acme.com" },
+    ]);
+
+    const res = await call();
+
+    expect(res.status).toBe(409);
+    expect(tx.orgDomainClaim.delete).not.toHaveBeenCalled();
+    expect(tx.ssoProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves other domains' providers alone", async () => {
+    tx.ssoProvider.findMany.mockResolvedValue([
+      { providerId: "oidc-b", domain: "acme.org" },
+    ]);
+
+    const res = await call();
+
+    expect(res.status).toBe(204);
+    expect(tx.ssoProvider.updateMany).not.toHaveBeenCalled();
   });
 });
