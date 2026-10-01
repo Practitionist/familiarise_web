@@ -4642,11 +4642,8 @@ enum ParticipantStatus {
 /// and `lib/booking/reschedule-restore.ts` both branch on the second, so they
 /// import the constant instead of spelling the string.
 ///
-/// APPEND-ONLY IS ENFORCED, not conventional: `booking_status_history_immutable`
-/// in prisma/sql/check-constraints.sql raises on UPDATE and DELETE, the same
-/// argument and shape as `ledger_entry_immutable` (ledger-triggers.sql) and
-/// `usage_ledger_entry_immutable` below. A trigger fires on FUTURE writes and
-/// never scans existing rows, so unlike a CHECK it needs no reset window.
+/// Append-only: `booking_status_history_immutable` (check-constraints.sql) refuses
+/// DELETE and UPDATE of audit columns; the SetNull FK columns stay writable.
 model BookingStatusHistory {
   id String @id @default(uuid())
 
