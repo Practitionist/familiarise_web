@@ -38,11 +38,13 @@ The application enforces authorization at the API layer:
    the role gate through `requireOrgAccess`'s `permission` option; the
    BILLING_ADMIN disjunction that once lived in its own helper is now the
    `billing.manage` key on finance-mutating routes.
-4. **SCIM bearer tokens** authenticate at the SCIM endpoints and
-   carry the implicit tenant scope via `ScimToken.organizationId`.
-5. **Cron routes** require `CRON_SECRET` for every `/api/cleanup/*`.
-6. **Outbound webhook deliveries** sign every body with HMAC-SHA256
+4. **Cron routes** require `CRON_SECRET` for every `/api/cleanup/*`.
+5. **Outbound webhook deliveries** sign every body with HMAC-SHA256
    so receivers can verify provenance.
+6. **No PostgREST access**: the end of `prisma/sql/check-constraints.sql`
+   revokes every grant on `public` from Supabase's `anon` and
+   `authenticated` roles (and their default privileges), so the anon
+   key cannot read tables over the Data API even without RLS.
 
 That stack is the security boundary today. The Prisma client connects
 as the service role and trusts the app layer to scope every query —
@@ -57,9 +59,10 @@ threat model:
 - **If the Supabase service-role key leaks** (env-var exfiltration,
   CI secret exposure), an attacker with the key can read every row
   in every table. RLS doesn't help here — service role bypasses RLS.
-- **If the Supabase anon key gets used client-side** (someone wires
-  it into a marketing page by mistake), every row is readable via
-  the `anon` role. **RLS would close this.**
+- **If the Supabase anon key is used to query tables** (it is a
+  `NEXT_PUBLIC_` variable, so treat it as public), the grant revoke
+  above already returns permission errors. RLS would add a second
+  layer if a grant were ever restored by mistake.
 - **If a future feature uses Supabase Storage / Realtime subscriptions
   directly from the browser** (rather than through our API), RLS
   becomes load-bearing — those clients authenticate as `anon` or
@@ -115,8 +118,6 @@ once in SQL).
 | `OrganizationInvoice` | Org member where role ≥ MANAGER OR BILLING_ADMIN | service_role only |
 | `WebhookEndpoint` | Org member where role ≥ MANAGER OR BILLING_ADMIN | service_role only |
 | `OutboundWebhookDelivery` | Same as endpoint | service_role only |
-| `ScimToken` | OWNER only | service_role only |
-| `ScimGroupMapping` | OWNER only | service_role only |
 | `ErasureRequest` | The requesting user OR platform ADMIN | service_role only |
 | `OrgDataExportJob` | Org member where role = OWNER OR BILLING_ADMIN | service_role only |
 | `users` | Self OR linked-membership operator | service_role only |

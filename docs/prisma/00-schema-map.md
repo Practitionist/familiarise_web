@@ -198,6 +198,15 @@ erDiagram
         string organizationId
         string domain
         string userId
+        string oidcConfig
+        boolean domainVerified
+    }
+    TwoFactor {
+        string id
+        string userId
+        boolean verified
+        int failedVerificationCount
+        datetime lockedUntil
     }
     CookiePreference {
         string id
@@ -219,6 +228,7 @@ erDiagram
 
     User ||--o{ Account : "has"
     User ||--o{ Session : "has"
+    User ||--o| TwoFactor : "has"
     User ||--o| CookiePreference : "has"
     User ||--o| NotificationPreference : "has"
     User ||--o{ SsoProvider : "has"
@@ -1270,8 +1280,8 @@ erDiagram
         string id
         string organizationId
         boolean enforceSSO
-        datetime breakGlassUntil
         MemberRole defaultRoleForAutoJoin
+        int version
     }
     OrgDomainClaim {
         string id
