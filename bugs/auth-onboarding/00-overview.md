@@ -12,11 +12,11 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 |---|---|
 | Onboarding multi-device last-write-wins | ✅ FIXED-BY #985 (CAS on `onboardingCompleted`) |
 | Phone unique empty-string Zod hazard | ❌ NON-ISSUE (mitigation exists at both real write boundaries; the only Zod phone field is unused/dead code) |
-| No true concurrent consultant + consultee role signup (Member vs Membership dual source) | 🟡 LEGIT-DEFERRED (large) |
+| No true concurrent consultant + consultee role signup (one `User.role`; `Membership` is the only org-role source since the BetterAuth `Member` table was removed in PR #1878) | 🟡 LEGIT-DEFERRED (large) |
 | No self-serve "become a consultant too" role switcher | 🟡 LEGIT-DEFERRED |
 | Consultant lazy ConsulteeProfile — one-role dashboard routing unclear | 🟡 LEGIT-DEFERRED |
-| STAFF/ADMIN invite-only — ensure no UI leak | 🔵 by-design (verify no leak) |
-| True session revoke blocked (BetterAuth admin plugin not installed) | 🟡 follow-up #725 |
+| STAFF/ADMIN created only by an ADMIN (no self-signup) — ensure no UI leak | 🔵 by-design (verify no leak) |
+| True session revoke blocked (BetterAuth admin plugin not installed) | ✅ RESOLVED (admin plugin installed; every revoke goes through `lib/auth/session-revoke.ts`, #1856 / PR #1878) |
 | Marketing consent not stamped at signup | 🔵 TRACKED #701 |
 
 ## Known gaps / bugs
@@ -25,7 +25,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - No self-serve “become a consultant too” / role switcher after onboarding.
 - Consultant may get lazy ConsulteeProfile for booking others — dashboard routing still one role; UX unclear.
 - Onboarding multi-device last-write-wins (see enterprise onboarding race file).
-- STAFF/ADMIN invite-only — good; ensure no UI leak.
+- STAFF/ADMIN are created only by an ADMIN (no self-signup) — good; ensure no UI leak.
 - Phone unique empty-string hazards mitigated in Zod — stay vigilant.
 
 ## Unhappy paths & user psychology

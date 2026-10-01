@@ -18,7 +18,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 | Host orgs / live payouts / IRP / dunning suspend gated off | 🔵 by-design flags (#713 IRP, #779 dunning) |
 | No RLS; hierarchy columns inert (#771) | 🔵 #771 (CLOSED — accepted API-layer isolation; 🎯 rec A) |
 | Platform onboarding role race | ✅ FIXED-BY #985 (CAS on onboardingCompleted) |
-| SCIM implemented; some docs still say parked | 🟡 LEGIT-DEFERRED (doc drift) |
+| SCIM implemented; some docs still say parked | ✅ RESOLVED-BY-REMOVAL (SCIM removed, PR #1878) |
 | P0: checkout↔ledger non-atomicity (C-01) | ✅ FIXED-BY #994 |
 | P0: PENDING_TRUST mis-scoped to host not sponsor (E-01) | ✅ FIXED-BY #991 |
 | P0: consultant payables unparked for ghost INVOICE (E-02) | ✅ FIXED-BY #991 |
@@ -30,7 +30,6 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Host orgs, live payouts, IRP, dunning suspend gated off.
 - No RLS; hierarchy columns inert (#771).
 - Platform onboarding role race is the sharpest identity risk (see sibling file).
-- SCIM implemented in code; some docs still say parked.
 - **P0 money trust:** checkout↔ledger non-atomicity; PENDING_TRUST mis-scoped to host not sponsor; consultant payables unparked for ghost INVOICE; KYB/domain unwired — see money-* and compliance-* files.
 
 ## Deep-dive index
@@ -83,7 +82,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## High concurrency / multi-device
 
-Org money paths (wallet, seats, invites) are well hardened at the CAS layer. Residual enterprise risk is **trust semantics** (wrong park, PAID-before-wire, KYB) and **governance** (SCIM caps, seat ceilings), plus platform onboarding. See deep-dive files.
+Org money paths (wallet, seats, invites) are well hardened at the CAS layer. Residual enterprise risk is **trust semantics** (wrong park, PAID-before-wire, KYB) and **governance** (seat ceilings), plus platform onboarding. See deep-dive files.
 
 ## Suggested directions
 

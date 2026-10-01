@@ -1,5 +1,7 @@
 # Enterprise Concurrency, Deadlocks & Traffic Spikes
 
+> **SCIM removed (PR #1878).** SCIM provisioning was removed before launch, so the SCIM items below (X-03, the IT sync spike, SCIM bulk isolation) are history. X-04's "true revoke blocked, BetterAuth admin plugin not installed" is also stale: the admin plugin is installed now.
+
 > **Verdict pass 2026-09-03/04.** Every money-related claim in this file was re-checked against `dev@e1766fa2d` and the live database as part of the 2026-09-03 finance-subsystem verification. Of 5 claims, 3 are still true today, 2 have been addressed since this dossier was written, and 0 are stale. See [`docs/payments/audits/2026-09-03-finance-verdicts.md`](../../docs/payments/audits/2026-09-03-finance-verdicts.md) for the per-item disposition.
 
 ## Context
@@ -101,6 +103,6 @@ Millions of users: bottleneck is **Postgres pool + Serializable checkout**, not 
 ## Suggested directions
 
 1. Implement and green-bar chaos 14c.
-2. SSO version CAS; SCIM seat governance parity.
+2. SSO version CAS.
 3. Implement or delete `revokeSession` docs.
 4. Plan CREDIT_POOL reserve-hold if enroll becomes long-running.
