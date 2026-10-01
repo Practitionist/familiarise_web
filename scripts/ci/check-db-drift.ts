@@ -61,13 +61,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Both allowlists feed the same `KnownEntry` shape; which one applies is
-  // decided by the direction of the drift, not by the lookup.
+  // One allowlist per direction: a schema-only entry must never excuse a
+  // db-only drift (P2023 on every read).
   const driftFile = JSON.parse(fs.readFileSync(KNOWN_DRIFT, "utf8"));
-  const known: KnownEntry[] = [
-    ...(driftFile.enumLabelsInDbNotInSchema ?? []),
-    ...(driftFile.enumLabelsInSchemaNotInDb ?? []),
-  ];
+  const knownDbOnly: KnownEntry[] = driftFile.enumLabelsInDbNotInSchema ?? [];
+  const knownSchemaOnly: KnownEntry[] =
+    driftFile.enumLabelsInSchemaNotInDb ?? [];
 
   // `now` is only used to expire allowlist entries; a stale allowlist must not
   // outlive its own deadline.
@@ -99,7 +98,7 @@ async function main(): Promise<void> {
     const schemaOnly = schemaLabels.filter((l) => !liveLabels.includes(l));
 
     if (dbOnly.length > 0) {
-      const entry = known.find((k) => k.enum === name);
+      const entry = knownDbOnly.find((k) => k.enum === name);
       const covered =
         entry && dbOnly.every((l) => entry.labels.includes(l)) ? entry : null;
       if (covered && covered.expires >= today) {
@@ -121,17 +120,9 @@ async function main(): Promise<void> {
     }
 
     if (schemaOnly.length > 0) {
-      // #1896 — a schema AHEAD of the database is the NORMAL state of any
-      // pre-merge schema PR, because the sanctioned workflow pushes the DB
-      // AFTER merge (one `db push` per merged PR, never two schema-bearing PRs
-      // at once). Without an allowlist here, no PR can ever add an enum label:
-      // the rehearsal database this guard runs against is created fresh, so it
-      // always lags the branch's schema. The `dbOnly` direction already had an
-      // escape hatch; this makes the pair symmetric rather than loosening the
-      // check — an entry still needs a reason, a tracking reference and an
-      // EXPIRY, and past that date this fails again. Use a short window: the
-      // drift should disappear the moment `db push` runs.
-      const entry = known.find((k) => k.enum === name);
+      // A pre-merge schema PR is legitimately ahead of the shared DB until
+      // the post-merge `db push`; allow it only with a short-expiry entry.
+      const entry = knownSchemaOnly.find((k) => k.enum === name);
       const covered =
         entry && schemaOnly.every((l) => entry.labels.includes(l)) ? entry : null;
       if (covered && covered.expires >= today) {
