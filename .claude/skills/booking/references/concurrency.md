@@ -50,6 +50,18 @@ one deliberate nesting is approval → mint: the approval routes still hold thei
 approval key when they mint the pay link, so the mint is its own atom
 underneath, never the reverse.
 
+Every writer that moves one booking's lifecycle takes the `appointment-lock:`
+atom before it opens its transaction. That includes the reschedule withdraw
+(#1583) and, as of #1846, the abandon door, the reschedule expiry sweep (which
+expires and restores in one transaction under it), trial DELETE (which moves
+the status and tombstones the session in one transaction on its own client),
+and moderation's bulk cancel, which takes the lock per engagement. A request or trial with no appointment yet has no atom, so its CAS
+alone decides. Offering DELETE takes the `event-checkout:` key checkout takes
+for the same webinar, class or subscription plan, with an explicit 75-second
+TTL and one retry so the lock outlives every attempt; a consultation plan has
+no checkout key, so the Serializable transaction and the in-WHERE guard carry
+that race alone.
+
 ## 2. Slot locks are interval-granular and all-or-nothing
 
 `slotAtomStarts` floors the start to the half-hour grid (`SLOT_ATOM_MS` is

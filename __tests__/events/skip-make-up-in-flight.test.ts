@@ -17,9 +17,13 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   findDedupedRefund: (...a: unknown[]) => findDedupedRefund(...a),
   RefundValidationError: class extends Error {},
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn();
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
 jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
   recomputeEarningsHold: jest.fn(),

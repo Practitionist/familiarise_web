@@ -27,8 +27,8 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 import {
-  recordSystemError,
-  recordSystemEvent,
+  recordSystemEventSafe,
+  recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -374,13 +374,13 @@ export async function mintConsumerInvoice(
       tags: { feature: "consumer-invoice" },
       extra: { paymentId: payment.id, ...mismatch },
     });
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: "Consumer tax invoice not minted: supplier state is ambiguous",
       err: ambiguous,
       context: { paymentId: payment.id, ...mismatch },
-    }).catch(() => {});
+    });
     return { consumerInvoiceId: null };
   }
 
@@ -610,7 +610,7 @@ export async function mintConsumerCreditNote(
     const refusal = new Error(
       `ConsumerInvoice ${invoice.id} is credited in full; ${params.amountPaise}p could not be reversed.`,
     );
-    void recordSystemEvent({
+    void recordSystemEventSafe({
       organizationId: null,
       category: "PAYMENT",
       severity: "ERROR",
@@ -621,7 +621,7 @@ export async function mintConsumerCreditNote(
         disputeId: params.disputeId ?? null,
         errorMessage: refusal.message,
       },
-    }).catch(() => {});
+    });
     reportSentryError(refusal, {
       subsystem: "payments",
       op: "mintConsumerCreditNote",

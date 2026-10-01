@@ -139,7 +139,7 @@ export async function POST(
     for (const staged of stagedEmails) {
       await attemptStagedEmail(staged, EMAIL_BUDGET_MS.AUTH);
     }
-  });
+  }, "org.bulk-import.post-commit");
 
   const invited = results.filter((r) => r.ok).length;
   return NextResponse.json(

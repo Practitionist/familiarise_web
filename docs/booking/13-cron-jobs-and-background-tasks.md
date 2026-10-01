@@ -269,6 +269,28 @@ This job was retired on 2026-09-19 (#1732, #1589 P-P1-01). It cancelled `APPROVE
 
 ---
 
+### i. Expire Reschedule Proposals
+
+The table below lists where this job runs and how it is invoked.
+
+| Field              | Value                                                                                                   |
+| ------------------ | ------------------------------------------------------------------------------------------------------- |
+| **Schedule**       | Netlify ticker every 15 minutes (`reschedule-proposals`); GitHub Actions `45 * * * *` as the hourly backstop |
+| **Source**         | `scripts/appointments/expire-reschedule-proposals.ts`                                                   |
+| **API**            | `/api/cleanup/reschedule-proposals`                                                                     |
+| **GitHub Actions** | `.github/workflows/expire-reschedule-proposals.yml`                                                     |
+| **HTTP Methods**   | GET, POST                                                                                               |
+
+**Purpose**: The job expires reschedule proposals that nobody answered before their `expiresAt`, and since #1846 it puts the booking back exactly as it was (#1527 decision 9). Before #1846 the released slots stayed released, so a confirmed session disappeared because a consultant did not click.
+
+**Restore**: Each lapsed proposal is handled under the appointment lock that every other lifecycle writer takes. Inside one transaction the job moves the proposal to `EXPIRED` through `transitionRescheduleRequest`, with the stale-time predicate repeated in the CAS, and restores the booking through `restoreRescheduledBooking` in `lib/booking/reschedule-restore.ts`, the same helper a withdrawal uses. The restore flips the released `RESCHEDULED` slots back to `SCHEDULED` and returns a parent request that the reschedule flipped to `PENDING` to the status it held before. When at least one slot came back, the job tells both parties through the `EXPIRED` outcome of the `appointment-rescheduled` Novu family and its email, after the transaction commits.
+
+**Unrestored expiry**: If the consultant's original time was booked while the proposal was open, the restore meets the overlap constraint, or the parent request's CAS misses, and the whole transaction rolls back. The job reports the miss to Sentry first, then expires the proposal on its own, and the slots stay released for the consultant to re-place. The result reports `proposalsExpired`, which counts every proposal the run expired, and `proposalsExpiredUnrestored`, which counts the subset that expired without the restore; the HTTP twin summarises both fields. A proposal that was answered between the read and the write, or whose appointment lock is held by a live writer, is skipped and taken by a later tick.
+
+**Safety**: The job runs under a fail-open cron lock, because the work is idempotent: `EXPIRED` leaves the open set, so a re-run picks up exactly what is left. It reads lapsed proposals in batches of 500 and stops after four batches per invocation, and the next tick continues where it stopped.
+
+---
+
 ## The Netlify ticker
 
 `netlify/functions/cron-tick.mts` (ADR 27) is a Netlify scheduled function that runs every five minutes and POSTs a fixed list of `/api/cleanup/*` targets, because ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule roughly once every hundred minutes instead of on its declared cadence. As of 2026-09-19 (#1583 E-P0-04, #1589 P-P0-01 and N-P1-03, #1591 J1-P1-05, #1599 C-P1-06) it carries five booking targets, each due on every third tick — a 15-minute cadence — through the ticker's `TARGET_EVERY_MINUTES` map:

@@ -22,6 +22,11 @@ export function trackOnboardingEvent(
     | "draft_quarantined"
     | "submit_success"
     | "submit_error"
+    // A client-side Zod refusal: the payload failed the form schema, so the
+    // submit never left the browser. Distinct from `submit_error`, which is a
+    // server refusal or a throw. Worth separating because only this one is
+    // fixable by changing the form.
+    | "submit_validation_failed"
     | "verification_deferred"
     | "invite_bypassed"
     | "invite_check_skipped"

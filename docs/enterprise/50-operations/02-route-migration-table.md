@@ -45,7 +45,7 @@ The credit-pool model became the wallet, so every `/credits*` route now resolves
 | Old | Now | Notes |
 |-----|-----|-------|
 | `GET /api/organizations/[orgId]/billing` | same (still live) + `GET /api/organizations/[orgId]/billing-account` | `GET /billing` was **not** removed — it's the aggregated dashboard snapshot (month-to-date / outstanding / pending). Per-account detail (balance, creditLimit, fundingSource) moved to `/billing-account`. `billingMode` replaced by `BillingAccount.fundingSource`. |
-| `PATCH /api/organizations/[orgId]/billing` | `PATCH /api/organizations/[orgId]/billing-account` | Now gated OWNER ∨ BILLING_ADMIN (`requireOrgBillingAdminOrOwner`). |
+| `PATCH /api/organizations/[orgId]/billing` | `PATCH /api/organizations/[orgId]/billing-account` | Now gated OWNER ∨ BILLING_ADMIN (the `billing.manage` matrix key). |
 | `GET /api/organizations/[orgId]/credits` | `GET /api/organizations/[orgId]/billing-account/wallet` | `OrgCreditPool` → `BillingAccount.walletBalance`. |
 | `POST /api/organizations/[orgId]/credits/purchase` | `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `OrgCreditPurchase` → `WalletTopUp` keyed by `providerOrderId @unique`; webhook confirm posts a `TOPUP` txn (`Dr CASH / Cr WALLET`). |
 | `GET /api/organizations/[orgId]/credits/ledger` | `GET /api/organizations/[orgId]/billing-account/wallet` | `OrgCreditLedger` → the org's WALLET-account `LedgerEntry` rows (the journal is the history). |

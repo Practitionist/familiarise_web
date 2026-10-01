@@ -15,9 +15,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 const recordSystemEvent = jest.fn(async (_event: unknown) => undefined);
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemEvent: (event: unknown) => recordSystemEvent(event),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemEvent: (event: unknown) => recordSystemEvent(event),
+    recordSystemEventSafe: (event: unknown) => recordSystemEvent(event),
+  };
+});
 jest.mock("../../lib/novu/service", () => ({
   notifyPayoutFailed: jest.fn(),
   notifyPayoutProcessed: jest.fn(),

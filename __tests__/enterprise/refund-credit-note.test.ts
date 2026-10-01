@@ -9,10 +9,16 @@
  * burned sequence number) and a no-op for non-invoiced payments. Mocked tx.
  */
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-  recordSystemEvent: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  const recordSystemEvent = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemEvent,
+    recordSystemErrorSafe: recordSystemError,
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 
 import {
   mintInvoiceRefundCreditNote,

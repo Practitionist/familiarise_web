@@ -51,7 +51,7 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 type ReversalSource =
   // A single booking payment (the common case).
@@ -427,13 +427,13 @@ export async function postPayoutClawback(
     );
     // #776 — page immediately on dual-write drift; fire-and-forget. #1582
     // B-P1-02 — global client on purpose: the rethrow rolls the tx back.
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId,
       category: "LEDGER",
       summary: `Payout clawback ledger posting failed for payout ${payoutId}`,
       err,
       context: { orgPayoutId: payoutId, refundId },
-    }).catch(() => {});
+    });
     throw err;
   }
 }

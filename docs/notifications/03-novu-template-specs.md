@@ -1461,7 +1461,7 @@ verification-status-changed
 
 These need Dashboard configuration after Tier 1 is done:
 
-- `appointment-rescheduled` — AppointmentRescheduledPayload. Email twin: `APPOINTMENT_RESCHEDULED` (`emails/booking/AppointmentRescheduledEmail.tsx`), sent by `sendAppointmentRescheduledEmail()` right after each of the four bells with the same `outcome` (#1653); the PROPOSED copy names the reschedule request's `expiresAt` as the deadline.
+- `appointment-rescheduled` — AppointmentRescheduledPayload. Email twin: `APPOINTMENT_RESCHEDULED` (`emails/booking/AppointmentRescheduledEmail.tsx`), sent by `sendAppointmentRescheduledEmail()` right after each bell with the same `outcome` (#1653); the PROPOSED copy names the reschedule request's `expiresAt` as the deadline. Since #1846 the family template also carries an `EXPIRED` outcome, which the reschedule expiry sweep sends to both parties when it restores the original time; its in-app body says the proposed time expired so the original time stands, and its email subject is "Your {type} keeps its original time". The template change needs `npm run novu:sync`: Development was synced on 2026-09-28, and Production is owed at release with a `--dry-run` first.
 - `appointment-completed` — AppointmentPayload
 - `appointment-partially-scheduled` — AppointmentPartiallyScheduledPayload (#1206). Consultee only, fired alongside `appointment-booked` when a consultant accepts a partial allocation. The copy must name `placedSessions` of `requiredSessions` and say the remaining `unplacedSessions` are still to be timed.
 - `refund-processed` — RefundPayload

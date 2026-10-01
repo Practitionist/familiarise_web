@@ -188,7 +188,7 @@ export class SchedulingService {
       if (stagedNotices && stagedNotices.length > 0) {
         scheduleAfter(async () => {
           for (const staged of stagedNotices) await attemptTrigger(staged);
-        });
+        }, "scheduling.allocate.post-commit");
       }
       return result;
     } catch (error) {

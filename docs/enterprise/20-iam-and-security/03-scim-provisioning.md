@@ -57,6 +57,12 @@ and the webhook fires, but the user's data is untouched. Purging data is
 a different, user-initiated act (DPDP §12 erasure), and the erasure
 short-circuit below is what makes the two paths refuse to collide.
 
+### SCIM goes through the membership guard (#1854)
+
+Since #1854 (bucket C of #1846), SCIM writes that change an existing membership run through the same shared guard in `lib/enterprise/membership-guards.ts` as the dashboard. Creating a brand-new membership stays automatic, because the identity provider vouches for the person: it applies the role's effects directly through `applyMembershipRoleEffects`, which may create the expert or consultee profile the role needs, as SSO JIT does, and it honours the unverified-org seat cap. The identity provider acts with OWNER authority, so it may assign every role, including OWNER, MAINTAINER and BILLING_ADMIN, but it is otherwise fully guarded. For an existing membership, reprovision, PATCH and DELETE each run at Serializable isolation through `guardedScimWrite`, move the status by compare-and-set, write an audit row, bump the member's session generation, and release the member's seats on suspension. SCIM cannot suspend the organization's last ACTIVE OWNER, and it never revives a REMOVED or ERASED membership: a reprovision or an `active: true` heartbeat on such a row changes nothing, because only accepting a new invitation brings a REMOVED member back. A guard refusal or a lost compare-and-set answers the identity provider with a SCIM conflict instead of a 500, and a reprovision into EXPERT recomputes the expert's independence on both organizations.
+
+A member that SCIM or SSO creates has never agreed to the platform's sign-up terms, so the account no longer receives the sign-up consent stamp automatically. The org dashboard instead shows a first sign-in consent step (`JoinConsentGate`) to any member who has no core-processing consent record at all, and an invitation accepted by such an account shows the sign-up consent inline and records it in the accept transaction.
+
 ## Endpoint inventory
 
 The five SCIM verbs we mount, their paths, and what each one does are summarized below.
@@ -109,7 +115,7 @@ retry-loop on us (verified in `app/scim/v2/Users/[id]/route.ts`).
 ## Authentication
 
 Every SCIM call carries `Authorization: Bearer <raw token>`.
-`/api/organizations/[orgId]/scim/tokens` (OWNER-only — `requireOrgOwner`;
+`/api/organizations/[orgId]/scim/tokens` (OWNER-only — the `identity.manage` matrix key;
 BILLING_ADMIN deliberately excluded, since a leaked token provisions
 arbitrary users) mints tokens. The token is 48 random bytes
 (base64url), and the **raw value is returned exactly once** on POST. We

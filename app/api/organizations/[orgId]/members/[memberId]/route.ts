@@ -495,7 +495,10 @@ export async function PATCH(
     // Vendor attempt after the response; the row was written in the tx.
     if (stagedRoleEmail) {
       const staged = stagedRoleEmail;
-      scheduleAfter(() => attemptOnboardingEmail(staged));
+      scheduleAfter(
+        () => attemptOnboardingEmail(staged),
+        "member.onboarding-email",
+      );
     }
 
     return NextResponse.json({ membership: result });

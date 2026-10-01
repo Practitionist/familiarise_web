@@ -23,10 +23,14 @@ jest.mock("../../lib/prisma", () => ({
 
 // withdrawConsent fires a SESSION_BOOKING cascade event through a dynamic
 // import; the gate under test does not depend on it.
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemEvent: jest.fn(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemEvent = jest.fn();
+  return {
+    __esModule: true,
+    recordSystemEvent,
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 
 import { checkConsent, withdrawConsent } from "@/lib/compliance/dpdp";
 import {

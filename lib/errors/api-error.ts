@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { classifyError } from "@/lib/errors/classification/payment-error-classification";
 import { reportSentryError } from "@/lib/observability/report";
+import { setSentryIdentity } from "@/lib/observability/identity";
 
 import { isRefusal, type Refusal } from "./refusal";
 
@@ -10,6 +11,7 @@ interface IApiErrorOptions {
   tag: string; // e.g. "[ClassPlan.GET]"
   error: unknown;
   userId?: string; // for debugging context
+  role?: string | null;
   fallbackMessage?: string;
 }
 
@@ -47,8 +49,16 @@ export function apiError({
   tag,
   error,
   userId,
+  role,
   fallbackMessage,
 }: IApiErrorOptions): NextResponse {
+  // Many of these routes are reached without going through `requireApiAuth`
+  // (or predating it), so the acting user is not always on the isolation
+  // scope. This helper already accepted a `userId` and then only interpolated
+  // it into a console string — the one place in the codebase where the actor
+  // was in hand and got thrown away. Stamp it before either branch reports.
+  if (userId) setSentryIdentity({ userId, role });
+
   // Developer-friendly logging with context
   const ctx = userId ? ` (user: ${userId})` : "";
   if (isRefusal(error)) return refusalResponse(tag, ctx, error);
@@ -60,7 +70,7 @@ export function apiError({
   } else {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "api" } },
+      { tags: { subsystem: "api", route_tag: tag } },
     );
     console.error(`${tag}${ctx} Unexpected:`, error);
   }

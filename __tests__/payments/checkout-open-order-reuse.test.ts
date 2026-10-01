@@ -128,10 +128,14 @@ jest.mock("../../lib/payments/wallet-freeze", () => ({
   isWalletFrozen: jest.fn(async () => false),
   WalletFrozenError: class extends Error {},
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: jest.fn(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn();
+  return {
+    __esModule: true,
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 jest.mock("../../lib/api/organizations/program-helpers", () => ({
   __esModule: true,
   recordBookingUtilization: jest.fn(),

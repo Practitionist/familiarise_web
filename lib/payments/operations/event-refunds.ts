@@ -3,8 +3,8 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
-  recordSystemError,
   recordSystemEvent,
+  recordSystemErrorSafe,
 } from "@/lib/enterprise/system-events";
 import {
   REFUNDABLE_BALANCE_SELECT,
@@ -341,13 +341,13 @@ export async function refundWholeEventPayments(
           paymentId: overagePaymentId,
           error: errMsg(err),
         });
-        void recordSystemError({
+        void recordSystemErrorSafe({
           organizationId: null,
           category: "PAYMENT",
           summary: `Overage credit-back failed for side-payment ${overagePaymentId}`,
           err,
           context: { overagePaymentId, eventId, kind },
-        }).catch(() => {});
+        });
       }
     }
   }
@@ -619,13 +619,13 @@ export async function refundRemovedAttendeeSeat(args: {
       tags: { feature: "attendee-removal-refund" },
       extra: { ...args },
     });
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId,
       category: "PAYMENT",
       summary: `Seat refund failed for attendee removed from ${args.kind} ${args.eventId}`,
       err,
       context: { ...args },
-    }).catch(() => {});
+    });
     return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
 }
@@ -735,13 +735,13 @@ async function creditSeatRefund(
     return { amountRefundedPaise: 0, refundPct: 0, rail: "CREDITS" };
   }
   if (!whole) {
-    await recordSystemError({
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: `Credit seat left ${args.kind} ${args.eventId} mid-series — per-session credit restoration needs a human`,
       err: new Error("CREDIT_SEAT_PARTIAL_RESTORE"),
       context: { ...args, paymentId },
-    }).catch(() => {});
+    });
     return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
   const r = await refundBookingPayment({

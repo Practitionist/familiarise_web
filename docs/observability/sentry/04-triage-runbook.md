@@ -20,6 +20,18 @@ An issue caused by the pass is resolved with a one-line comment naming the QA re
 
 `FAMILIARISE_WEB-9` and `-A` are cross-region cold-connect timeouts on the single-connection pool, ignored until escalating, tracked on #932/#937 and #1124. `-44` is the edge layer answering non-JSON to a `fetch().json()` on the checkout success page during an instance-boot stall, ignored, same family. `-51` is the session lookup's replica-lag guard firing as designed (warning, expected); since #1752 the success page waits it out instead of routing to failure. `-4P` (`reconcile-payment-status: N pending payments have gateway ids the gateway does not know`) fired every five minutes for weeks on thirteen seed rows that no sweep could claim; #1761 retires such rows once, so a recurrence means a new orphan, not the old ones. `-4Y`/`-4Z`/`-59` are the overlapping-occurrence seed data on `reconcile-occurrence-availability`. `-56` is `SessionLookupFailedError` thrown from the `/profile` layout server component, which throws where an API route would answer 503; it is tracked on #1611 and goes away when `/profile` folds into Account. The four `cron failed:` ids from 2026-09-20 are the sink's first deliveries (previous page).
 
+## A trickled issue's event count is a lower bound, and that is not a bug
+
+Some issue classes are throttled: `INFRA_TRANSIENT_PATTERNS` in `sentry.shared.config.ts` keeps one event per class per ten minutes and drops the rest before they reach the transport, because a repeat carries no information the first one did not. The affected issues are the infrastructure-transient ones named in that list, plus `[system-events] write failed`.
+
+So `Events: 1` on one of those does **not** mean it happened once. It means "at least once per ten-minute window while the window was live", and the true figure during a sustained outage is roughly 6 per hour, so ~144 per day. Read the issue's `last seen` span and the tag, not the event count, to judge whether something is ongoing.
+
+Read the issue's `last seen` span and the tag rather than the event count. The throttle admits one event per class per ten minutes **per warm instance** — roughly 6/hour, so ~144/day — and that is the _admitted_ count, not the number of occurrences: the other 143 may or may not have happened, and the throttle deliberately does not claim otherwise.
+
+The failure this prevents is triaging a live dependency outage as a rarity because its counter reads 1. The 2026-09-22 quota incident was the same trap one level up: the dashboard looked healthy because sessions and transactions kept flowing while the `error` category alone was rate limited.
+
+Where a count is the real signal — a sweep that found N broken records — the event carries it in `extra`, and there is no throttle, because there the set _is_ the fact. See the conventions page for which mechanism a given mass event should use.
+
 ## The tools
 
 The Sentry MCP is read-mostly: `search_issues`, `search_events`, `get_sentry_resource` and `update_issue` (resolve/ignore with a comment) cover a sweep. It cannot create alert rules; the workflow-engine API answers `400 This API no longer exists` to the old projects/rules endpoint, and the working path is the Sentry CLI's `sentry alert issues create practitionist/familiarise_web …` with the `--condition`, `--filter` and `--action` JSON documented in the memory of the 2026-09-19 pool-exhaustion rule (rule id 6031144, which pages on `pool_exhaustion:true` events). The CLI authenticates through its own OAuth login, not the dead `.env` token. Gmail carries no Sentry mail for this project today — the alert rules email the owner directly — so a "check Gmail for Sentry" step confirms absence rather than finding anything.

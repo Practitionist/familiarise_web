@@ -43,10 +43,15 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 // resolved value is re-armed in beforeEach — the job does
 // `recordSystemError(...).catch(...)` and needs a real promise back.
 const recordSystemError = jest.fn();
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: (...a: unknown[]) => recordSystemError(...(a as [never])),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    __esModule: true,
+    recordSystemError: (...a: unknown[]) =>
+      recordSystemError(...(a as [never])),
+    recordSystemErrorSafe: (...a: unknown[]) =>
+      recordSystemError(...(a as [never])),
+  };
+});
 
 jest.mock("../../lib/novu/service", () => ({
   __esModule: true,

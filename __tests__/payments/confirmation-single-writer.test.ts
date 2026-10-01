@@ -81,11 +81,16 @@ jest.mock("../../lib/rate-limit", () => ({
 // fire-and-forget and best-effort in production; here it would reach the real
 // prisma module, which this suite stubs to a handful of models.
 const recordSystemEvent = jest.fn().mockResolvedValue(undefined);
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemEvent: (...args: unknown[]) => recordSystemEvent(...args),
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    __esModule: true,
+    recordSystemEvent: (...args: unknown[]) => recordSystemEvent(...args),
+    recordSystemError,
+    recordSystemEventSafe: (...args: unknown[]) => recordSystemEvent(...args),
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 const findUnique = jest.fn();
 const updateMany = jest.fn();

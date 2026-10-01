@@ -15,9 +15,12 @@ jest.mock("../../lib/booking/transitions", () => ({
   transitionOccurrenceCompletion: (...a: unknown[]) => transition(...a),
 }));
 const recordSystemError = jest.fn();
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => recordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => recordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => recordSystemError(...a),
+  };
+});
 jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
 jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
   recomputeEarningsHold: jest.fn(),

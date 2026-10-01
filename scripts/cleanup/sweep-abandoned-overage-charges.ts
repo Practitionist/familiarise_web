@@ -12,7 +12,7 @@
 import prisma from "@/lib/prisma";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface OverageSweepResult {
@@ -40,6 +40,12 @@ async function sweepAbandonedOverageChargesUnlocked(
   const ageDays = opts.ageDays ?? 7;
   const limit = opts.limit ?? 500;
   const cutoff = new Date(Date.now() - ageDays * 86_400_000);
+
+  // How many audit writes may be in flight before the loop drains them. Small
+  // enough to stay well inside the single-connection pool this job runs under
+  // (PG_POOL_MAX=1 in the serverless deploy env, lib/prisma.ts:63) and large
+  // enough that the sweep is not serialised one write per iteration.
+  const WRITE_BATCH = 10;
 
   // Abandoned = PENDING CHARGE_MEMBER side-charge older than the grace window
   // whose side-Payment never succeeded AND was never even started at the
@@ -84,6 +90,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   // its own FAILs via chargeTimedOutAt.
   let failed = 0;
   let invoicedSkips = 0;
+  const pendingRecords: Promise<void>[] = [];
   for (const a of abandoned) {
     const outcome = await prisma.$transaction(async (tx) => {
       const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
@@ -101,14 +108,40 @@ async function sweepAbandonedOverageChargesUnlocked(
       // base — the org was under-billed for this session. Needs a manual
       // billing adjustment; surface it instead of silently diverging the leg.
       invoicedSkips += 1;
-      void recordSystemError({
-        organizationId: null,
-        category: "OVERAGE",
-        summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
-        err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
-        context: { overageEventId: a.id },
-      }).catch(() => {});
+      // Batched, not collected and drained once at the end. Pushing all of
+      // them and awaiting a single time starts every insert before the first
+      // is awaited: with up to `limit` (default 500) invoiced parents that is
+      // 500 concurrent writes against a pool documented at PG_POOL_MAX=1 in
+      // the serverless deploy env (lib/prisma.ts:63). They queue past the
+      // connection timeout, and because `*Safe` resolves even when a write
+      // fails, the sweep can report success having durably recorded nothing —
+      // leaving manual billing adjustments with no audit trail.
+      //
+      // Draining per batch keeps the writes off the calling loop (so the sweep
+      // is not serialised one write per iteration) while never holding more
+      // than WRITE_BATCH open at once. `*Safe` never rejects, so this cannot
+      // throw; it is awaited so a batch is durable before the next starts, and
+      // so nothing is lost to the process exiting on an empty event loop.
+      pendingRecords.push(
+        recordSystemErrorSafe({
+          organizationId: null,
+          category: "OVERAGE",
+          summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
+          err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+          context: { overageEventId: a.id },
+        }),
+      );
+      if (pendingRecords.length >= WRITE_BATCH) {
+        await Promise.all(pendingRecords);
+        pendingRecords.length = 0;
+      }
     }
+  }
+  // Final drain of the last partial batch. `*Safe` never rejects, so this
+  // cannot throw; it exists purely so those writes are complete before the
+  // process is allowed to exit.
+  if (pendingRecords.length > 0) {
+    await Promise.all(pendingRecords);
   }
 
   console.log(

@@ -4451,24 +4451,28 @@ export async function handleCheckout(
           // P3 referral bells, scheduled after the response (scheduleAfter
           // degrades to a floating promise outside a request scope — jest
           // and scripts reach this path). Bells, never money truth.
-          scheduleAfter(() =>
-            notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-              console.error("[referral-qualification-bell] failed:", bellErr),
-            ),
+          scheduleAfter(
+            () =>
+              notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+                console.error("[referral-qualification-bell] failed:", bellErr),
+              ),
+            "checkout.referral-qualification-bell",
           );
           // P3 credits-applied bell: applyCreditsToPayment ran inside the
           // committed tx above, so this post-commit read is the correct
           // boundary (belling inside service.ts would fire in-tx).
           if (result.creditsApplied > 0) {
-            scheduleAfter(() =>
-              notifyCreditsAppliedBestEffort({
-                userId,
-                creditsUsedPaise: result.creditsApplied,
-                remainingPaise: result.creditsRemainingAfter,
-                appointmentType: validatedData.appointmentType,
-              }).catch((bellErr) =>
-                console.error("[credits-applied-bell] failed:", bellErr),
-              ),
+            scheduleAfter(
+              () =>
+                notifyCreditsAppliedBestEffort({
+                  userId,
+                  creditsUsedPaise: result.creditsApplied,
+                  remainingPaise: result.creditsRemainingAfter,
+                  appointmentType: validatedData.appointmentType,
+                }).catch((bellErr) =>
+                  console.error("[credits-applied-bell] failed:", bellErr),
+                ),
+              "checkout.credits-applied-bell",
             );
           }
         } catch (referralError) {

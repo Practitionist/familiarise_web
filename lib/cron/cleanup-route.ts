@@ -80,8 +80,17 @@ export function parseLimitParam(req: NextRequest): number | undefined {
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
  * observable through response timing.
+ *
+ * Exported because four `app/api/cleanup/*` routes predate the factory and
+ * hand-roll their own HTTP twin. `reconcile-sessions` compared the header with
+ * `!==`, which leaks the matching prefix through timing; the others duplicated
+ * this correctly. One implementation, so the next hand-rolled twin cannot get
+ * it subtly wrong.
  */
-function bearerMatches(authHeader: string | null, cronSecret: string): boolean {
+export function bearerMatches(
+  authHeader: string | null,
+  cronSecret: string,
+): boolean {
   if (!authHeader) return false;
   const sha = (v: string) => createHash("sha256").update(v).digest();
   return timingSafeEqual(sha(authHeader), sha(`Bearer ${cronSecret}`));

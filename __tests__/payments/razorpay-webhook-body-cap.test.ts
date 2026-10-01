@@ -38,9 +38,13 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   processRazorpayWebhookEvent: jest.fn(),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemEvent: jest.fn(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemEvent = jest.fn();
+  return {
+    recordSystemEvent,
+    recordSystemEventSafe: recordSystemEvent,
+  };
+});
 
 import type { NextRequest } from "next/server";
 
