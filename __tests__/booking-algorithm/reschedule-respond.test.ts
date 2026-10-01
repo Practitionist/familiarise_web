@@ -120,6 +120,13 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: (...a: unknown[]) => mockGetSession(...a),
 }));
 
+// CI runs a real Redis; every case here is the same user.
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn(async () => null),
+  eventMutationLimiter: {},
+}));
+
 jest.mock("../../lib/payments/dispute-guard", () => ({
   hasActiveDisputeForAppointment: (...a: unknown[]) =>
     mockHasActiveDispute(...a),

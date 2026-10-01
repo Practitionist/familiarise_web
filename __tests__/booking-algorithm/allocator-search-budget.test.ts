@@ -431,8 +431,8 @@ describe("the search's time budget", () => {
   });
 
   it("keeps the grid on the truncated path too", async () => {
-    // Rows published at 09:15: the truncated search still must not emit a start
-    // the buyer path refuses.
+    // Rows published at 09:15: the truncated search snaps up to the grid and
+    // never emits the off-grid start the buyer path refuses.
     mockTx.class.findUnique.mockResolvedValue(
       classWith(customRows("2025-06-01T09:15:00.000Z", 120)),
     );
@@ -445,7 +445,11 @@ describe("the search's time budget", () => {
       allowPartial: true,
     });
 
-    expect(placedOccurrences()).toHaveLength(0);
+    const placed = placedOccurrences();
+    expect(placed.length).toBeGreaterThan(0);
+    for (const o of placed) {
+      expect(new Date(o.startsAt).getTime() % THIRTY_MIN_MS).toBe(0);
+    }
   });
 });
 
