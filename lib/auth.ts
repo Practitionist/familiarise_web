@@ -30,6 +30,7 @@ import {
   isOperatorRole,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
+import { authRateLimit } from "@/lib/auth/rate-limit";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
 // defaultAc so statements line up. No `session:*`: the plugin's session
@@ -159,41 +160,10 @@ export const auth = betterAuth({
     provider: "postgresql",
   }),
 
-  // BetterAuth's built-in rate limit is disabled here on purpose.
-  //
-  // Why: BetterAuth's limiter is in-memory per Node.js process. We
-  // deploy to Netlify (serverless) where each cold-start lambda gets
-  // its own counter, so an attacker who rotates through enough lambdas
-  // can race past any per-process gate. A globally-coherent limit has
-  // to live in shared state (Upstash Redis).
-  //
-  // Coverage is provided by the Upstash-backed policies in
-  // `lib/rate-limit/policies.ts`, enforced at the edge in `middleware.ts`.
-  //
-  // The previous coverage note above claimed `/api/auth/forget-password` was
-  // limited. It never was: BetterAuth's endpoint is
-  // `/api/auth/request-password-reset` (`dist/api/routes/password.mjs:20`), so
-  // the prefix never matched and the entire forgot-password flow was
-  // unthrottled. The policy table is now keyed on a `RATE_SCOPE` constant that
-  // generates both the matcher and the limiter, so a typo in an endpoint name
-  // can no longer silently disable a gate the way that one did.
-  //
-  // The unauth `/api/auth/sso/domain-check` endpoint has its own
-  // 120/hr/IP gate (prevents domain enumeration of registered orgs),
-  // deliberately generous for shared-office NAT. Wallet top-ups have a
-  // per-org limiter keyed on `org:${orgId}`.
-  //
-  // Localhost (`::1` / `127.0.0.1` / `unknown_ip`) bypasses these
-  // limits via `isBypassableIp` so booking-algorithm-tests + agent
-  // runs aren't slowed down; production traffic never bypasses.
-  //
-  // If you ever re-enable BetterAuth's rate limit, audit the overlap
-  // against `authLimiter` to avoid double-counting and the surprises
-  // that follow (two different 429 responses for the same flow).
-  // See audit Phase B.8 + docs/enterprise/20-iam-and-security/04-rate-limiting.md.
-  rateLimit: {
-    enabled: false,
-  },
+  // Upstash-backed so the count is shared across lambdas; budgets and the
+  // store live in lib/auth/rate-limit.ts. The edge limiter in middleware.ts
+  // covers only non-BetterAuth routes, so nothing is counted twice.
+  rateLimit: authRateLimit,
 
   emailAndPassword: {
     enabled: true,
@@ -304,20 +274,18 @@ export const auth = betterAuth({
       httpOnly: true,
     },
     ipAddress: {
-      // Order matters and is most-trusted-first. `x-nf-client-connection-ip`
-      // is Netlify's canonical client IP and cannot be forged by a client;
-      // `x-forwarded-for` is client-supplied and is only consulted when
-      // Netlify's header is absent (e.g. a direct container run in tests).
-      // This is the same order `lib/rate-limit.ts:getClientIp` uses — the two
-      // must agree, or a session's recorded IP and its rate-limit key differ.
+      // The rate-limit key and the session's recorded IP. Most-trusted
+      // first: `x-nf-client-connection-ip` is set by Netlify and cannot be
+      // forged by a client. The fallbacks only matter off Netlify, and
+      // BetterAuth ignores a multi-hop `x-forwarded-for` (no trustedProxies),
+      // so a client cannot pick its own key by prepending addresses.
       ipAddressHeaders: [
         "x-nf-client-connection-ip",
         "x-vercel-forwarded-for",
         "x-forwarded-for",
       ],
-      // Aggregate IPv6 into /64s. Without this every IPv6 customer behind one
-      // ISP prefix shares a single rate-limit bucket, which is a self-inflicted
-      // denial of service on exactly the population least able to rotate IPs.
+      // Key IPv6 on the /64. One host usually owns a whole /64, so per-address
+      // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,
     },
   },
