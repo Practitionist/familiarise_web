@@ -107,13 +107,9 @@ function classifyAllocationFailure(
     case "ILLEGAL_TRANSITION":
     case "RESCHEDULE_STATE_CHANGED":
       return "request-changed";
-    // #1132 — the SLOT went to somebody else, so the request is still
-    // allocatable at a different time: keep the dialog open, refetch both
-    // grids so the next pick is made against cells that include the loss, and
-    // let the server's own sentence (which names the time) be the description.
+    // #1132 / #1863 — slot lost, co-host busy or lock contention: nothing was
+    // allocated and the request stands, so stay open and refetch both grids.
     case "SLOT_TAKEN":
-    // #1863 — the co-host and the transient lock are the same shape of
-    // answer for this decision: nothing was allocated, the request stands.
     case "COLLABORATOR_UNAVAILABLE":
     case "LOCK_CONTENTION":
     default:

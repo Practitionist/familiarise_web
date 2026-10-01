@@ -37,7 +37,15 @@ import { buildWhere } from "@/lib/api/scope/list-appointments";
 const ORG = "org-1";
 const MEMBER = { organizationId: ORG, status: "ACTIVE" as const };
 
-function ctx(role: "OWNER" | "MANAGER" | "LEARNER", orgStatus?: "ACTIVE" | "SUSPENDED" | "DEACTIVATED" | "PENDING_VERIFICATION" | null) {
+function ctx(
+  role: "OWNER" | "MANAGER" | "LEARNER",
+  orgStatus?:
+    | "ACTIVE"
+    | "SUSPENDED"
+    | "DEACTIVATED"
+    | "PENDING_VERIFICATION"
+    | null,
+) {
   return {
     raw: ORG,
     memberships: [{ ...MEMBER, role }],
@@ -82,8 +90,7 @@ describe("resolveOrgScope on a DEACTIVATED org", () => {
 
   it("refuses a vanished org row too", () => {
     const res = resolveOrgScope(ctx("OWNER", null));
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.code).toBe("ORG_DEACTIVATED");
+    expect(res).toMatchObject({ ok: false, code: "ORG_DEACTIVATED" });
   });
 
   it("refuses the LEARNER before the operations.read downgrade would have", () => {
@@ -134,8 +141,7 @@ describe("resolveOrgScope is otherwise unchanged", () => {
       ...ctx("OWNER", "DEACTIVATED"),
       memberships: [],
     });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.code).toBe("ORG_MEMBERSHIP_REQUIRED");
+    expect(res).toMatchObject({ ok: false, code: "ORG_MEMBERSHIP_REQUIRED" });
   });
 });
 
