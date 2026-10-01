@@ -3,7 +3,7 @@
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { motion } from "framer-motion";
 import { Quote, Star } from "lucide-react";
-import Image from "next/image";
+import { FamiliariseMark } from "@/components/brand/FamiliariseLogo";
 
 const TESTIMONIALS = [
   {
@@ -127,12 +127,7 @@ export function SatisfiedTestimonial() {
 
                 {/* Reviewed on Familiarise */}
                 <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-800">
-                  <Image
-                    src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-                    alt="Familiarise"
-                    width={14}
-                    height={14}
-                  />
+                  <FamiliariseMark className="size-3.5 text-zinc-500" />
                   <span className="text-[10px] text-zinc-500">
                     Reviewed on Familiarise
                   </span>

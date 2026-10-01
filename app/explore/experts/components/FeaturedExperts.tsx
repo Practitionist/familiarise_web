@@ -5,7 +5,15 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck, Globe } from "lucide-react";
+import {
+  User,
+  Star,
+  StarHalf,
+  ArrowRight,
+  Award,
+  BadgeCheck,
+  Globe,
+} from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
@@ -35,15 +43,15 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
   };
 
   return (
-    <section className="py-20 bg-gradient-to-b from-zinc-100 to-white relative overflow-hidden">
+    <section className="py-12 md:py-16 relative overflow-hidden">
       {/* Background Pattern */}
       <div className="absolute inset-0 dot-pattern opacity-30" />
 
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
         {/* Section Header */}
         <motion.div
-          className="text-center mb-16"
-          initial={{ opacity: 0, y: 20 }}
+          className="mb-8"
+          initial={false}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
@@ -54,10 +62,10 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
               Familiarise Pick
             </span>
           </div>
-          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-foreground mb-4">
-            Top Familiarise <span className="silver-text">Experts</span>
+          <h2 className="text-fluid-3xl md:text-fluid-4xl font-semibold tracking-tight text-foreground mb-4">
+            Top Familiarise Experts
           </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+          <p className="text-base text-muted-foreground max-w-2xl">
             Discover the best of the best. Our top consultants are ready to help
             you achieve your goals.
           </p>
@@ -86,7 +94,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                 <motion.div
                   key={expert.id}
                   className="h-full"
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={false}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{
@@ -98,7 +106,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                     href={`/explore/experts/${expert.id}`}
                     className="group block h-full"
                   >
-                    <div className="bg-card rounded-2xl p-6 shadow-sm border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+                    <div className="explore-card bg-card rounded-2xl p-6 border border-border h-full flex flex-col">
                       {/* Avatar */}
                       <div className="relative mb-4">
                         <Avatar className="mx-auto h-20 w-20 ring-4 ring-muted group-hover:ring-border transition-all">
@@ -158,7 +166,9 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                                   <CompanyLogo
                                     key={`${expert.id}-company-${i}`}
                                     companyName={exp.company}
-                                    companyDomain={exp.companyDomain ?? undefined}
+                                    companyDomain={
+                                      exp.companyDomain ?? undefined
+                                    }
                                     size={22}
                                     className="border-border"
                                   />

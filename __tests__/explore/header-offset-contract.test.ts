@@ -15,7 +15,9 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+// The contract is the offset expression, not Prettier's line wrapping.
+const read = (rel: string) =>
+  readFileSync(join(process.cwd(), rel), "utf8").replace(/\s+/g, " ");
 
 /** The one offset every explore surface below the navbar uses. */
 const HEADER_STACK =

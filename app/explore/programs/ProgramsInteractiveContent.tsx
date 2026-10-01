@@ -181,7 +181,7 @@ export default function ProgramsInteractiveContent({
   const uniqueLevels = availableLevels;
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="explore-page min-h-screen">
       {/* Hero Section */}
       <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
         <div className="absolute inset-0">
@@ -274,7 +274,7 @@ export default function ProgramsInteractiveContent({
             {/* Advanced Filters */}
             <motion.div
               className="mb-8"
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.5 }}

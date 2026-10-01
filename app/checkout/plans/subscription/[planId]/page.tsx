@@ -571,6 +571,10 @@ export default function SubscriptionCheckoutPage({
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
+          <p className="text-sm text-muted-foreground">
+            Your plan includes {planData?.data?.totalSessions ?? "—"} sessions.
+            Session dates are arranged with your expert after purchase.
+          </p>
           <div className="grid gap-2">
             {/* Start + first cycle (#1766): the buyer picked a start; the
                 consultant schedules one cycle at a time from it. */}

@@ -1773,7 +1773,9 @@ export function UnifiedCalendar({
   }
 
   return (
-    <div className={`flex flex-col gap-4 min-h-0 ${className}`}>
+    <div
+      className={`calendar-surface flex flex-col gap-4 min-h-0 p-3 sm:p-5 ${className}`}
+    >
       {/* Warning Banner */}
       {configWarning && (
         <div className="shrink-0 rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3">
@@ -1807,8 +1809,8 @@ export function UnifiedCalendar({
       )}
 
       {/* Header */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
-        <div className="flex gap-2">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4 sm:gap-4">
+        <div className="flex gap-1 rounded-xl border border-border bg-muted/50 p-1">
           <Button
             variant={view === "week" ? "default" : "outline"}
             size="sm"
@@ -1829,6 +1831,7 @@ export function UnifiedCalendar({
           <Button
             variant="outline"
             size="sm"
+            aria-label="Previous calendar period"
             onClick={() =>
               setCurrentDate(
                 view === "week"
@@ -1839,7 +1842,7 @@ export function UnifiedCalendar({
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
+          <div className="min-w-0 text-center text-sm font-semibold sm:min-w-[150px] sm:text-lg">
             {view === "week"
               ? formatDateRangeLabel(
                   startOfWeek(currentDate, { weekStartsOn }),
@@ -1870,6 +1873,7 @@ export function UnifiedCalendar({
                 : isSameMonth(currentDate, calendarDayOf(now, gridZone))
             }
             title="Jump to today"
+            aria-label="Jump to today"
           >
             <CalendarCheck className="h-4 w-4 sm:mr-1" />
             <span className="hidden sm:inline">Today</span>

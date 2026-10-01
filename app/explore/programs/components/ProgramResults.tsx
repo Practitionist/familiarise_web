@@ -55,7 +55,7 @@ function ProgramResultsImpl({
           {programs.map((item, index) => (
             <motion.div
               key={item.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{
@@ -63,7 +63,11 @@ function ProgramResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ProgramCard program={item} variant="grid" viewerOrgs={viewerOrgs} />
+              <ProgramCard
+                program={item}
+                variant="grid"
+                viewerOrgs={viewerOrgs}
+              />
             </motion.div>
           ))}
         </div>
@@ -72,7 +76,7 @@ function ProgramResultsImpl({
           {programs.map((item, index) => (
             <motion.div
               key={item.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{
@@ -80,7 +84,11 @@ function ProgramResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ProgramCard program={item} variant="list" viewerOrgs={viewerOrgs} />
+              <ProgramCard
+                program={item}
+                variant="list"
+                viewerOrgs={viewerOrgs}
+              />
             </motion.div>
           ))}
         </div>

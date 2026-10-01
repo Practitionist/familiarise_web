@@ -4,6 +4,7 @@ import { memo } from "react";
 import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
+import { FamiliariseMark } from "@/components/brand/FamiliariseLogo";
 import Link from "next/link";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -147,7 +148,7 @@ function GridCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+      className="group explore-card bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -223,12 +224,7 @@ function GridCard({
         </div>
 
         <div className="flex items-center gap-1 mt-2">
-          <Image
-            src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-            alt="Familiarise"
-            width={12}
-            height={12}
-          />
+          <FamiliariseMark className="size-3 text-muted-foreground" />
           <span className="text-[10px] text-muted-foreground/70">
             on Familiarise
           </span>
@@ -253,7 +249,7 @@ function ListCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
+      className="group explore-card bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative w-48 md:w-64 flex-shrink-0">
@@ -330,12 +326,7 @@ function ListCard({
             </span>
           </div>
           <div className="flex items-center gap-1 mt-2">
-            <Image
-              src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-              alt="Familiarise"
-              width={12}
-              height={12}
-            />
+            <FamiliariseMark className="size-3 text-muted-foreground" />
             <span className="text-[10px] text-muted-foreground/70">
               on Familiarise
             </span>
@@ -359,7 +350,7 @@ function CarouselCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
+      className="group explore-card bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">

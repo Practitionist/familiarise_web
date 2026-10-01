@@ -13,7 +13,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   addDays,
   differenceInCalendarDays,
@@ -23,7 +24,8 @@ import {
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
-import { ConsultantAvailability } from "./components/ConsultantAvailability";
+import { OfferingPreview } from "./components/OfferingPreview";
+import { resolveOffering, type ExpertService } from "./offering-selection";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
@@ -60,6 +62,28 @@ export function ExpertProfileClient({
   const { toast } = useToast();
   const pricingRef = useRef<HTMLDivElement>(null);
   const [autoOpenTrial, setAutoOpenTrial] = useState(false);
+  const [bookingRequest, setBookingRequest] = useState(0);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const requestedPlan = searchParams.get("plan");
+  const action = searchParams.get("action");
+  const conflictReturn = searchParams.get("conflict") === "1";
+  const requestedService =
+    action === "subscribe" || action === "trial"
+      ? "subscriptions"
+      : action === "book"
+        ? "consultations"
+        : undefined;
+  const [offering, setOffering] = useState(() =>
+    resolveOffering(consultantDetails, requestedPlan, requestedService),
+  );
+  const selectedPlan =
+    offering.service === "consultations"
+      ? consultantDetails.consultationPlans.find(
+          (plan) => plan.id === offering.planId,
+        )
+      : consultantDetails.subscriptionPlans.find(
+          (plan) => plan.id === offering.planId,
+        );
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
@@ -73,13 +97,24 @@ export function ExpertProfileClient({
   // after a checkout 409 re-read the stale green cell. Entered with
   // `?conflict=1`, or restored from the back/forward cache, the next fetch
   // bypasses the browser cache once.
-  const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
+  const bypassCacheOnce = useRef(conflictReturn);
+  const bypassMonthCacheOnce = useRef(conflictReturn);
 
-  // Pricing-day slots share the overview's week-window query: the week
-  // containing the selected day uses the same [start, end] computation as
-  // ConsultantAvailability's weekOffset, so an overlapping reader joins the
-  // single in-flight request instead of firing its own 1-day compute. Day
-  // clicks inside a loaded week cost zero requests (staleTime 30s).
+  const changeOffering = useCallback(
+    (planId: string | null, service?: ExpertService) => {
+      setOffering(resolveOffering(consultantDetails, planId, service));
+      setSelectedSlot(null);
+      setAutoOpenTrial(false);
+    },
+    [consultantDetails],
+  );
+
+  useEffect(() => {
+    changeOffering(requestedPlan, requestedService);
+  }, [changeOffering, requestedPlan, requestedService]);
+
+  // Read one week only while the consultation calendar is open. Choosing
+  // another day in that week reuses the same cached availability answer.
   const todayStart = startOfDay(new Date());
   // Calendar-day arithmetic: a DST transition makes seven days 167 or 169
   // elapsed hours, which would park the selected day in the wrong week.
@@ -100,6 +135,7 @@ export function ExpertProfileClient({
     endUtc: selectedDate ? pricingWeekEnd : null,
     timezone: !isTimezoneLoading ? (timezone ?? null) : null,
     bypassRef: bypassCacheOnce,
+    enabled: calendarOpen && offering.service === "consultations",
   });
 
   // #1785 L-4 — one read for the visible month drives the day marks. It is
@@ -109,6 +145,8 @@ export function ExpertProfileClient({
     consultantId: consultantDetails?.id,
     monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
     timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    enabled: calendarOpen && offering.service === "consultations",
+    bypassRef: bypassMonthCacheOnce,
   });
 
   const selectedDateKey =
@@ -128,18 +166,24 @@ export function ExpertProfileClient({
     }
   }, [dayQuery.error, toast]);
 
-  const refreshSlots = useCallback(
-    () =>
-      Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["availability", consultantDetails?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["availability-month", consultantDetails?.id],
-        }),
-      ]).then(() => undefined),
-    [queryClient, consultantDetails?.id],
-  );
+  const refreshSlots = useCallback(() => {
+    bypassCacheOnce.current = true;
+    bypassMonthCacheOnce.current = true;
+    return Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["availability", consultantDetails?.id],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["availability-month", consultantDetails?.id],
+      }),
+    ]).then(() => undefined);
+  }, [queryClient, consultantDetails?.id]);
+
+  useEffect(() => {
+    if (!conflictReturn) return;
+    setSelectedSlot(null);
+    void refreshSlots();
+  }, [conflictReturn, requestedPlan, refreshSlots]);
 
   // Handle ?action=trial or ?action=book from explore page buttons
   useEffect(() => {
@@ -152,6 +196,8 @@ export function ExpertProfileClient({
         behavior: "smooth",
         block: "start",
       });
+      if (action === "book" || action === "subscribe")
+        setBookingRequest((n) => n + 1);
       if (action === "trial") {
         setAutoOpenTrial(true);
       }
@@ -279,8 +325,9 @@ export function ExpertProfileClient({
   // Day cells carry their state without colour (#1785 L-4): a ring and a bold
   // number on a day with a bookable time, plain grey and disabled on a day
   // without, dimmed and disabled in the past, a dot under today. The marks
-  // come from the month read; while it loads the cells pulse, and if it
-  // fails the cells stay plain and clickable under a one-line notice.
+  // come from the month read. The booking dialog replaces the date grid with
+  // neutral placeholders until those marks are known. If the read fails,
+  // unknown days remain plain and clickable to check their times individually.
   const renderCalendar = useCallback(() => {
     const daysInMonth = new Date(
       currentDate.getFullYear(),
@@ -297,12 +344,9 @@ export function ExpertProfileClient({
     const days = [];
     const now = new Date();
     const marks = monthQuery.data ?? null;
-    const marksLoading = monthQuery.isPending && !!timezone;
 
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
-      );
+      days.push(<div key={`empty-${i}`} className="h-10 w-full"></div>);
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
@@ -335,22 +379,18 @@ export function ExpertProfileClient({
           aria-pressed={isSelected}
           aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
           className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
-            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
+            "relative flex h-10 w-full items-center justify-center rounded-xl text-sm transition-colors duration-200",
+            isSelected && "bg-primary font-semibold text-primary-foreground",
             !isSelected &&
               bookable &&
-              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
+              "ring-1 ring-border font-semibold text-foreground hover:bg-accent",
             !isSelected &&
               (state === "unknown" || state === "today+unknown") &&
-              "font-medium text-zinc-300 hover:bg-zinc-700/60",
+              "font-medium text-foreground hover:bg-accent",
             !isSelected &&
               (state === "none" || state === "today+none") &&
               "text-zinc-500",
             state === "past" && "opacity-40 text-zinc-500",
-            marksLoading &&
-              state !== "past" &&
-              !isSelected &&
-              "animate-pulse ring-1 ring-white/10",
           )}
           onClick={() => {
             setSelectedDate(date);
@@ -368,45 +408,31 @@ export function ExpertProfileClient({
       );
     }
 
-    if (monthQuery.isError) {
-      days.push(
-        <p
-          key="marks-error"
-          role="status"
-          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
-        >
-          Couldn&apos;t load availability marks — pick a day to see its times.
-        </p>,
-      );
-    }
-
     return days;
-  }, [
-    currentDate,
-    selectedDate,
-    timezone,
-    monthQuery.data,
-    monthQuery.isPending,
-    monthQuery.isError,
-  ]);
+  }, [currentDate, selectedDate, timezone, monthQuery.data]);
 
   return (
-    <main className="bg-muted">
-      {/* Back Navigation */}
-      <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
-          <Link
-            href="/explore/experts"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Experts
-          </Link>
-        </div>
-      </div>
-
-      {/* Main Content Area - Profile, About, Availability + Pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
+    <main className="explore-page pb-24 xl:pb-0">
+      {/* Profile and selected offering; scheduling belongs in booking. */}
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
+        <nav aria-label="Breadcrumb" className="mb-6">
+          <ol className="flex items-center gap-2 text-sm text-muted-foreground">
+            <li>
+              <Link
+                href="/explore/experts"
+                className="hover:text-foreground hover:underline"
+              >
+                Experts
+              </Link>
+            </li>
+            <li aria-hidden="true">
+              <ChevronRight className="h-3.5 w-3.5" />
+            </li>
+            <li aria-current="page" className="truncate">
+              {userDetails.name || "Expert profile"}
+            </li>
+          </ol>
+        </nav>
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           {/* Main Content */}
           <motion.div
@@ -422,6 +448,12 @@ export function ExpertProfileClient({
                 reviewCount={consultantDetails._count.reviews}
               />
 
+              <OfferingPreview
+                consultantDetails={consultantDetails}
+                service={offering.service}
+                planId={offering.planId}
+              />
+
               <AboutSection
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
@@ -432,26 +464,16 @@ export function ExpertProfileClient({
                 education={userDetails.education || []}
                 certifications={userDetails.certifications || []}
               />
-
-              {/* Gated on timezone resolution: the overview used to fire
-                  immediately with the "UTC" fallback and then refire with the
-                  real zone — a third, wrong-zone allocation compute per visit.
-                  One effect-tick delay is invisible inside the page fade-in. */}
-              {!isTimezoneLoading && timezone ? (
-                <ConsultantAvailability
-                  consultantDetails={consultantDetails}
-                  timezone={timezone}
-                  bypassRef={bypassCacheOnce}
-                />
-              ) : null}
             </div>
           </motion.div>
 
           {/* Sidebar - Pricing */}
           <motion.div
             ref={pricingRef}
+            data-booking-panel
+            id="expert-booking"
             className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
@@ -470,18 +492,44 @@ export function ExpertProfileClient({
               setSelectedSlot={setSelectedSlot}
               timezone={timezone || "UTC"}
               autoOpenTrial={autoOpenTrial}
+              bookingRequest={bookingRequest}
+              selectedPlanId={offering.planId}
+              selectedService={offering.service}
+              onServiceChange={(service) => changeOffering(null, service)}
+              onPlanChange={(id) => changeOffering(id, offering.service)}
+              onCalendarOpenChange={setCalendarOpen}
+              slotsLoading={dayQuery.isFetching || isTimezoneLoading}
+              slotsError={dayQuery.isError}
+              calendarLoading={monthQuery.isPending || isTimezoneLoading}
+              calendarError={monthQuery.isError}
               onRefreshSlots={refreshSlots}
             />
           </motion.div>
         </div>
       </div>
 
+      {selectedPlan && (
+        <div className="mobile-booking-bar">
+          <span className="min-w-0 truncate text-sm font-medium">
+            {selectedPlan?.title || "Explore plans"}
+          </span>
+          <Button
+            className="shrink-0 rounded-xl"
+            onClick={() => setBookingRequest((n) => n + 1)}
+          >
+            {offering.service === "consultations"
+              ? "Book a session"
+              : "Start mentorship"}
+          </Button>
+        </div>
+      )}
+
       {/* Classes & Webinars - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-8">
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 pb-8">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           <motion.div
             className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
@@ -496,11 +544,11 @@ export function ExpertProfileClient({
       </div>
 
       {/* Reviews - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-12">
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 pb-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           <motion.div
             className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
           >

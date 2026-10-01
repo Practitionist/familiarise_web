@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PlanHero } from "../../../components/PlanHero";
 import { PlanDetailBody } from "../../../components/PlanDetailBody";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { Badge } from "@/components/ui/badge";
@@ -92,61 +93,35 @@ export function WebinarDetails({
   };
 
   return (
-    <main className="min-h-screen bg-muted">
-      {/* Hero Banner */}
-      <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
-        <Image
-          src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
-          alt="Webinar cover"
-          fill
-          className="object-cover"
-          priority
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
-
-        {/* Back Navigation */}
-        <div className="absolute top-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
+    <main className="explore-page min-h-screen pb-24 lg:pb-0">
+      <PlanHero
+        title={plan.title}
+        image={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+        badge={
+          <div className="flex items-center gap-3 mb-4">
+            <Badge className="bg-background text-foreground">Webinar</Badge>
+            <Badge className={getStatusBadgeClass(sessionStatus)}>
+              {sessionStatus}
+            </Badge>
           </div>
+        }
+      >
+        <div className="flex items-center gap-4 text-white/80">
+          <span className="text-2xl md:text-3xl font-bold text-white">
+            {formatPrice(plan.price)}
+          </span>
+          <span className="text-white/60">•</span>
+          <span>{plan.durationInHours} hours</span>
         </div>
-
-        {/* Title Overlay */}
-        <div className="absolute bottom-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
-            <div className="flex items-center gap-3 mb-4">
-              <Badge className="bg-background text-foreground">Webinar</Badge>
-              <Badge className={getStatusBadgeClass(sessionStatus)}>
-                {sessionStatus}
-              </Badge>
-            </div>
-            <h1 className="text-fluid-4xl tracking-tight font-bold text-white mb-2">
-              {plan.title}
-            </h1>
-            <div className="flex items-center gap-4 text-white/80">
-              <span className="text-2xl md:text-3xl font-bold text-white">
-                {formatPrice(plan.price)}
-              </span>
-              <span className="text-white/60">•</span>
-              <span>{plan.durationInHours} hours</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      </PlanHero>
 
       {/* Content */}
-      <div className="w-full max-w-[92%] xl:max-w-[88%] 2xl:max-w-[1600px] mx-auto py-8 md:py-12">
+      <div className="explore-container py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
           {/* Main Content */}
           <motion.div
             className="lg:col-span-2 space-y-8"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
@@ -165,7 +140,7 @@ export function WebinarDetails({
               <FeatureItem
                 icon={<Clock className="h-5 w-5" />}
                 label="Duration"
-                value={`${plan.durationInHours} hours`}
+                value={`${plan.durationInHours} hour${plan.durationInHours === 1 ? "" : "s"}`}
               />
               <FeatureItem
                 icon={<Users className="h-5 w-5" />}
@@ -206,13 +181,13 @@ export function WebinarDetails({
           {/* Sidebar */}
           <motion.div
             className="lg:col-span-1"
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <div className="sticky top-24 space-y-6">
+            <div className="lg:sticky lg:top-[calc(var(--header-height,5rem)+var(--maintenance-banner-height,0px)+1.5rem)] space-y-6">
               {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
+              <Card className="rounded-2xl border-border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Host</CardTitle>
                 </CardHeader>
@@ -297,6 +272,7 @@ export function WebinarDetails({
 
               {/* Registration Card */}
               <ClientWebinarRegistration
+                title={plan.title}
                 webinarPlanId={plan.id}
                 webinarId={webinarId}
                 price={plan.price}
