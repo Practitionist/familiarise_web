@@ -14,6 +14,10 @@ export const authClient = createAuthClient({
   // callback can validate it. A raw POST to /api/auth/sign-in/sso would
   // skip PKCE entirely and break Auth0 / Okta OIDC / Azure AD OIDC flows.
   plugins: [customSessionClient<typeof auth>(), ssoClient()],
+  // NOTE (#1856): no `sessionOptions.refetchInterval` here, deliberately.
+  // BetterAuth's built-in poll cannot skip hidden tabs and re-renders
+  // every consumer on each tick. AuthSyncProvider re-checks on tab focus
+  // instead, and server guards read the database on every request.
 });
 
 export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =

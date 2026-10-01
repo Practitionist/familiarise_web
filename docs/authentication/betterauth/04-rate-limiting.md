@@ -39,7 +39,8 @@ try {
 
 | Limiter | Endpoint | Key | Limit | Window |
 |---|---|---|---|---|
-| `authLimiter` | POST `/api/auth/sign-in`, `sign-up`, `forget-password` | IP | 10 | 15 min |
+| `authLimiter` | POST `/api/auth/sign-in`, `sign-up`, `forget-password`, `reset-password`, `verify-email`, `change-password` (#1856: the latter three close the original gap; `sign-out`/link/unlink stay out deliberately) | IP | 10 | 15 min |
+| `sessionMgmtLimiter` | `/api/user/sessions*` except the `/current` liveness probe (every tab calls it on focus) — device list, per-device revoke, revoke-others (#1856; own limiter so session traffic can't exhaust the sign-in budget; generous because one office NAT shares it) | IP | 120 | 15 min |
 | `searchLimiter` | GET `/api/user/consultants` | IP | 60 | 1 min |
 | `eligibilityLimiter` | GET `/api/trials/check-eligibility` | IP | 20 | 1 min |
 | `newsletterLimiter` | POST `/api/newsletter/subscribe` | IP | 3 | 1 hr |
@@ -52,6 +53,7 @@ try {
 
 | Limiter | Endpoint | Key | Limit | Window |
 |---|---|---|---|---|
+| `sessionMgmtUserLimiter` | Same three `/api/user/sessions*` routes as above, applied in-handler past `requireApiAuth` — the precise per-user gate | userId | 60 | 15 min |
 | `checkoutLimiter` | POST `/api/checkout` | userId | 5 | 1 min |
 | `discountLimiter` | POST `/api/payments/discounts/validate` | userId | 10 | 1 min |
 | `referralApplyLimiter` | POST `/api/referrals/apply` | userId | 3 | 24 hr |

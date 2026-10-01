@@ -140,22 +140,16 @@ export async function applyMembershipRoleEffects(
  * -------------------------
  * The UX cost of "you've been signed out, please log in again" is high
  * relative to the marginal security benefit, so removal uses this same
- * generation bump rather than a hard session kill. There is no
- * server-side revoke-by-userId available: the `admin` plugin (which
- * exposes `auth.api.revokeUserSessions({ body: { userId } })`) is not
- * installed, and core BetterAuth `revokeSession`/`revokeSessions` need
- * the target user's own session token/headers — which an admin removing
- * someone else does not hold. This code also runs inside a Prisma
- * `$transaction`, where a BetterAuth API call (writing outside the tx)
- * would be unsound. So membership removal, role downgrade, and
- * soft-suspend all rely on the bump: the next request through
- * `customSession` sees the stale generation and refetches.
+ * generation bump rather than a hard session kill (ban is the path that
+ * kills sessions, via `lib/auth/session-revoke.ts`). So membership
+ * removal, role downgrade, and soft-suspend all rely on the bump: the
+ * next request through `customSession` sees the new generation.
  *
  * Failure mode if not called
  * --------------------------
- * The user keeps acting with their old role until BetterAuth's
- * `updateAge: 24h` session-rotation window passes; up to 24h of acting
- * with stale permissions. That's the bug this closes — audit Phase B.5.
+ * Server reads stay correct — the cookie cache is off and customSession
+ * re-reads memberships on every call — but a client holding an old
+ * payload has no signal that its role changed. Audit Phase B.5.
  */
 export async function bumpUserSessionGeneration(
   tx: PrismaLike,
