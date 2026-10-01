@@ -34,7 +34,7 @@ const SESSION_FORMATS = [
     highlights: [
       "Direct 1-on-1 video call with screen sharing",
       "Transparent per-session rate set by the expert",
-      "Full consultant-fee refund ≥24h before 1:1 sessions (50% for 12–24h)",
+      "Full consultant-fee refund >24h before 1:1 sessions (50% for 12–24h)",
     ],
     href: "/explore/experts",
     cta: "Find an Expert",

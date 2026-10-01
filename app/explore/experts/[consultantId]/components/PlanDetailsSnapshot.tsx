@@ -657,7 +657,7 @@ export function PlanDetailsSnapshot({
               Plan Details Snapshot
             </h3>
             <p className="text-xs text-muted-foreground">
-              Medium-detail overview of your selected plan in the booking panel
+              What&apos;s included, who it&apos;s for, and how the sessions run
             </p>
           </div>
         </div>

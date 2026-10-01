@@ -744,7 +744,29 @@ export default function ConsultationPricingToggle({
   const paused =
     cta.action === "request" && consultantDetails.acceptingRequests === false;
 
+  // The plan can change from outside this component (PlanDetailsSnapshot, the
+  // ?plan= URL effect) without going through choosePlan. A slot picked for the
+  // old plan's duration must never survive into the new plan's checkout.
+  const previousPlanIdRef = useRef(activeConsultationOption);
   useEffect(() => {
+    if (previousPlanIdRef.current === activeConsultationOption) return;
+    previousPlanIdRef.current = activeConsultationOption;
+    // A restored purchase intent sets the plan and its own step/slot flow.
+    if (pendingIntent) return;
+    setSelectedSlot(null);
+    setHeldWindow(null);
+    setStep(0);
+    setSelectionNotice("");
+  }, [activeConsultationOption, pendingIntent, setSelectedSlot]);
+
+  const driftPlanIdRef = useRef(activeConsultationOption);
+  useEffect(() => {
+    // On the commit where the plan changed, the reset above owns the slot;
+    // don't also flag it as an availability change.
+    if (driftPlanIdRef.current !== activeConsultationOption) {
+      driftPlanIdRef.current = activeConsultationOption;
+      return;
+    }
     if (!selectedSlot || slotsLoading || slotsError || pendingIntent) return;
     if (!currentSlot) {
       setSelectedSlot(null);
@@ -756,6 +778,7 @@ export default function ConsultationPricingToggle({
       setSelectedSlot(currentSlot);
     }
   }, [
+    activeConsultationOption,
     currentSlot,
     selectedSlot,
     slotsLoading,

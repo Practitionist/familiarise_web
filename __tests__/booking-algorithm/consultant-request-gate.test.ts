@@ -73,6 +73,7 @@ const mockSubscriptionCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  verificationStatus: "VERIFIED",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };

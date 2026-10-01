@@ -34,7 +34,7 @@ const REFUND_HIGHLIGHTS: readonly LegalHighlight[] = [
     label: "Refund Processing",
     title: "7–14 Business Days",
     description:
-      "2–3 business days review, 5–7 days processor transfer, plus 2–4 days bank credit.",
+      "2–3 business days review, initiation within 24–48 hours of approval, then 5–7 business days for your bank.",
   },
   {
     icon: RefreshCw,

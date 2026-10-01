@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import { canGoBackInApp } from "@/lib/navigation/in-app-history";
 import { cn } from "@/utils/tailwind";
 
 export interface BackNavigationButtonProps {
@@ -34,11 +35,9 @@ export function BackNavigationButton({
       return;
     }
 
-    const hasSameOriginReferrer =
-      !document.referrer ||
-      document.referrer.startsWith(window.location.origin);
-
-    if (window.history.length > 1 && hasSameOriginReferrer) {
+    // document.referrer alone is unreliable (empty on direct entry, never
+    // updated by client-side navigations), so consult the in-app trail too.
+    if (canGoBackInApp()) {
       event.preventDefault();
       router.back();
     }

@@ -387,9 +387,9 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
           <li>Refunds are processed based on timing of cancellation</li>
           <li>Platform may charge cancellation fees in certain cases</li>
           <li>
-            Refunds are processed within 7–14 business days total (2–3 business
-            days review, 5–7 business days processor transfer, and 2–4 business
-            days bank credit)
+            Refunds typically reach your account within 7–14 business days
+            total (2–3 business days review, initiation within 24–48 hours of
+            approval, and 5–7 business days bank processing)
           </li>
         </ul>
       </>

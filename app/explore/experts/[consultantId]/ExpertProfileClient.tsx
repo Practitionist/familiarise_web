@@ -514,8 +514,12 @@ export function ExpertProfileClient({
     ],
   );
 
+  // Checkout and the approval pay-link both refuse non-VERIFIED consultants,
+  // so don't offer a booking flow that would dead-end at payment.
+  const isBookable = consultantDetails.verificationStatus === "VERIFIED";
+
   return (
-    <main className="bg-muted pb-24 xl:pb-0">
+    <main className={cn("bg-muted", isBookable && "pb-24 xl:pb-0")}>
       {/* Back Navigation */}
       <div className="bg-card border-b border-border">
         <div className="w-full px-4 md:px-8 lg:px-12 py-4">
@@ -598,62 +602,80 @@ export function ExpertProfileClient({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           >
-            <ExpertPricing
-              userDetails={userDetails}
-              consultantDetails={consultantDetails}
-              handleConsultationBooking={handleConsultationBooking}
-              handleSubscriptionBooking={handleSubscriptionBooking}
-              selectedDate={selectedDate}
-              setSelectedDate={setSelectedDate}
-              currentDate={currentDate}
-              setCurrentDate={setCurrentDate}
-              renderCalendar={renderCalendar}
-              slotTimings={slotTimings}
-              selectedSlot={selectedSlot}
-              setSelectedSlot={setSelectedSlot}
-              timezone={timezone || "UTC"}
-              autoOpenTrial={autoOpenTrial}
-              bookingRequest={bookingRequest}
-              initialPlanId={searchParams.get("plan")}
-              initialService={resolveInitialService(searchParams.get("action"))}
-              activeServiceTab={activeServiceTab}
-              onServiceTabChange={setActiveServiceTab}
-              selectedConsultationPlanId={selectedConsultationPlanId}
-              onSelectConsultationPlanId={setSelectedConsultationPlanId}
-              selectedSubscriptionPlanId={selectedSubscriptionPlanId}
-              onSelectSubscriptionPlanId={setSelectedSubscriptionPlanId}
-              slotsLoading={dayQuery.isFetching || isTimezoneLoading}
-              slotsError={dayQuery.isError}
-              onRefreshSlots={refreshSlots}
-            />
+            {isBookable ? (
+              <ExpertPricing
+                userDetails={userDetails}
+                consultantDetails={consultantDetails}
+                handleConsultationBooking={handleConsultationBooking}
+                handleSubscriptionBooking={handleSubscriptionBooking}
+                selectedDate={selectedDate}
+                setSelectedDate={setSelectedDate}
+                currentDate={currentDate}
+                setCurrentDate={setCurrentDate}
+                renderCalendar={renderCalendar}
+                slotTimings={slotTimings}
+                selectedSlot={selectedSlot}
+                setSelectedSlot={setSelectedSlot}
+                timezone={timezone || "UTC"}
+                autoOpenTrial={autoOpenTrial}
+                bookingRequest={bookingRequest}
+                initialPlanId={searchParams.get("plan")}
+                initialService={resolveInitialService(
+                  searchParams.get("action"),
+                )}
+                activeServiceTab={activeServiceTab}
+                onServiceTabChange={setActiveServiceTab}
+                selectedConsultationPlanId={selectedConsultationPlanId}
+                onSelectConsultationPlanId={setSelectedConsultationPlanId}
+                selectedSubscriptionPlanId={selectedSubscriptionPlanId}
+                onSelectSubscriptionPlanId={setSelectedSubscriptionPlanId}
+                slotsLoading={dayQuery.isFetching || isTimezoneLoading}
+                slotsError={dayQuery.isError}
+                onRefreshSlots={refreshSlots}
+              />
+            ) : (
+              <div className="rounded-2xl border border-border bg-card p-6 shadow-elevation-1 xl:sticky xl:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)]">
+                <h2 className="text-base font-semibold text-foreground">
+                  Booking opens soon
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  {userDetails.name || "This expert"} is completing profile
+                  verification. You can explore their plans, classes, and
+                  webinars now; 1:1 bookings open once verification is
+                  complete.
+                </p>
+              </div>
+            )}
           </motion.div>
         </div>
       </div>
 
       {/* Sticky Mobile Booking Bar */}
-      <div className="xl:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur-md p-3">
-        <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {userDetails.name || "Expert"}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              1:1 Consultations &amp; Mentorship
-            </p>
+      {isBookable ? (
+        <div className="xl:hidden fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur-md p-3">
+          <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">
+                {userDetails.name || "Expert"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                1:1 Consultations &amp; Mentorship
+              </p>
+            </div>
+            <Button
+              className="rounded-xl px-5 font-semibold"
+              onClick={() => {
+                pricingRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                });
+              }}
+            >
+              Book a Session
+            </Button>
           </div>
-          <Button
-            className="rounded-xl px-5 font-semibold"
-            onClick={() => {
-              pricingRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-              });
-            }}
-          >
-            Book a Session
-          </Button>
         </div>
-      </div>
+      ) : null}
     </main>
   );
 }
