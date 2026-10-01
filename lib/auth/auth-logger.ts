@@ -77,6 +77,7 @@ const EXPECTED_AUTH_FAILURE_MESSAGES: ReadonlySet<string> = new Set([
  * dependency to answer, and Redis is the outage being guarded).
  */
 const SCHEMA_MESSAGE_THROTTLE_MS = 5 * 60 * 1000;
+const SCHEMA_MESSAGE_THROTTLE_MAX_KEYS = 100;
 const lastSchemaMessageAtByKey = new Map<string, number>();
 
 export function reportAuthLogToSentry(
@@ -114,6 +115,11 @@ export function reportAuthLogToSentry(
       SCHEMA_MESSAGE_THROTTLE_MS
     ) {
       return;
+    }
+    // Messages can carry variable text, so cap the map; resetting it only
+    // lets one extra event per message through.
+    if (lastSchemaMessageAtByKey.size >= SCHEMA_MESSAGE_THROTTLE_MAX_KEYS) {
+      lastSchemaMessageAtByKey.clear();
     }
     lastSchemaMessageAtByKey.set(message, now);
     Sentry.captureMessage(`[better-auth] ${message}`, {
