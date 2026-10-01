@@ -410,13 +410,12 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 
 - **JIT default role floor:** `lib/labels/org-labels.ts:JitDefaultRoleSchema` (locked to `LEARNER`); UI lock at `app/dashboard/organization/[orgId]/settings/sso/page.tsx`
 - **SAML cert validation:** `lib/sso/provider-schemas.ts:validateSamlCert` (Node `crypto.X509Certificate`)
-- **customSession narrow catch:** `lib/auth.ts` bareMembers loop (P2002-only)
+- **SSO JIT membership:** `lib/sso/jit-membership.ts:provisionSsoMembership` (sso `provisionUser`; P2002-only catch)
 - **SSO error-toast wrapper:** `lib/sso/signin-with-toast.ts:ssoSigninWithGuard` (2s redirect watchdog + BetterAuth error inspection)
 - **Domain-verification gate:** `app/api/organizations/[orgId]/sso/providers/route.ts` POST — DOMAIN_NOT_OWNED / DOMAIN_NOT_VERIFIED 422s
 - **SsoProvider composite unique:** `prisma/schema.prisma model SsoProvider @@unique([organizationId, domain])`
 - **sessionGeneration marker:** `lib/api/organizations/membership-transitions.ts:bumpUserSessionGeneration` + `prisma/schema.prisma User.sessionGeneration` + `lib/auth.ts customSession`
 - **lookupEnforcedOrg helper:** `lib/sso/enforce-session.ts:lookupEnforcedOrg` (shared across `session.create.before`, `customSession`, `/api/auth/sso/domain-check`)
-- **N+1 fix in customSession:** `applyMembershipRoleEffects(..., preloadedProfiles)` in `lib/api/organizations/membership-transitions.ts`
 - **Rate-limit policy:** `lib/auth.ts` block comment + Upstash `authLimiter` at `middleware.ts:192-197`
 - **SSO error codes reference:** `docs/enterprise/reference/sso-error-codes.md`
 - **JIT + session-refresh doc:** `docs/enterprise/28-jit-and-session-refresh.md`

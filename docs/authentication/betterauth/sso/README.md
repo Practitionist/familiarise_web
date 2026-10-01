@@ -154,15 +154,16 @@ Rate limited at 60/hr per IP to prevent org-existence enumeration.
 - `oidcConfigSchema`: `issuer` (URL), `clientId`, `clientSecret`, `discoveryEndpoint` (URL), `pkce` (defaults to `true`).
 - `createProviderSchema`: `domain`, `issuer`, `providerType` (`oidc` only) and `oidcConfig`. No `providerId`; see `generateProviderId`.
 
-### 3.8 Member-to-Membership Bridge
+### 3.8 JIT Membership
 
-When an SSO user signs in, the `provisionUser` bridge in `lib/auth.ts` upserts a BetterAuth `Member` row (temporary until the org plugin is removed; the plugin's own `organizationProvisioning` is disabled). Our typed `Membership` row is created by `customSession()` on the first session read:
-
-```
-SSO auto-join → BetterAuth creates Member → customSession() finds
-bare Member (no sibling Membership) → creates Membership with
-defaultRoleForAutoJoin → links via betterAuthMemberId
-```
+When an SSO user signs in, the sso() plugin's `provisionUser` hook
+(`lib/sso/plugin-options.ts`) calls `provisionSsoMembership`
+(`lib/sso/jit-membership.ts`) before the session cookie is set. It writes the
+typed `Membership` for `SsoProvider.organizationId` with
+`defaultRoleForAutoJoin`, after the org-status and unverified seat-cap gates,
+and is a no-op if any membership row already exists. It runs on every login
+(`provisionUserOnEveryLogin: true`). The organization plugin and its `Member`
+table are not used.
 
 ### 3.9 PKCE Requirement
 

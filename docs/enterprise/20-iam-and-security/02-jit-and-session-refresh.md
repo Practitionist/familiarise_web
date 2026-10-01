@@ -12,7 +12,8 @@ This document explains how organization memberships materialize when a
 user signs in through an org's IdP for the very first time (Just-In-Time
 auto-join), and how a role change propagates to an already-active session
 without forcing the user to log out. It is written for engineers touching
-`lib/auth.ts:customSession`, `lib/api/organizations/membership-transitions.ts`,
+`lib/sso/jit-membership.ts`, `lib/auth.ts:customSession`,
+`lib/api/organizations/membership-transitions.ts`,
 the `/api/organizations/[orgId]/members` route family, or the
 `OrganizationSSOSettings` model. The companion docs are
 [`sso-and-authentication`](01-sso-and-authentication.md), which covers the
@@ -23,38 +24,20 @@ covers the limiter posture.
 
 ## §1 — JIT (Just-In-Time) auto-join
 
-When a user authenticates against an org's IdP for the very first time,
-BetterAuth's SSO plugin writes a row to the `members` table (the
-BetterAuth Member shim) but does NOT create the typed `Membership` row
-the rest of the codebase reads. The bridge is in
-`lib/auth.ts:customSession`:
+The sso() plugin calls our `provisionUser` hook
+(`lib/sso/plugin-options.ts`) after the OIDC callback has created or found
+the user, linked the account and created the session, but before it sets the
+session cookie. The hook calls `provisionSsoMembership`
+(`lib/sso/jit-membership.ts`), which writes the typed `Membership` directly.
+There is no BetterAuth organization plugin and no `Member` table.
 
-```ts
-const bareMembers = await prisma.member.findMany({
-  where: { userId: user.id, membership: null },
-  ...
-});
-for (const bm of bareMembers) {
-  const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
-  await prisma.$transaction(async (tx) => {
-    const roleEffects = await applyMembershipRoleEffects(tx, {
-      userId: user.id,
-      role: defaultRole,
-      preloadedProfiles, // pre-fetched at the top of customSession; B.7
-    });
-    await tx.membership.create({ /* role, FKs, betterAuthMemberId */ });
-  });
-}
-```
-
-Concretely: a new graduate student signs in to **IIT Madras** via the
-campus IdP for the first time. The IdP asserts their identity, BetterAuth
-writes the bare `members` row, and on the very next session load
-`customSession` notices the row has no typed `Membership` sibling and
-mints one as `LEARNER` (the locked `defaultRoleForAutoJoin`). No admin
-touched anything; the student lands on a working dashboard scoped to
-exactly LEARNER capabilities. (IIT Madras is a seeded org; the IdP wiring
-is the operator-configured shape, not part of the seed.)
+Concretely: a new graduate student signs in to **IIT Madras** via the campus
+IdP for the first time. The IdP asserts their identity, BetterAuth creates
+the User + Account + Session, and `provisionUser` mints a `LEARNER`
+membership (the locked `defaultRoleForAutoJoin`) before the redirect. No
+admin touched anything; the student's first page load already sees the
+membership. (IIT Madras is a seeded org; the IdP wiring is the
+operator-configured shape, not part of the seed.)
 
 ```mermaid
 sequenceDiagram
@@ -62,21 +45,24 @@ sequenceDiagram
   actor S as New IIT student
   participant IdP as Campus IdP
   participant BA as BetterAuth (SSO plugin)
-  participant CS as customSession hook
+  participant JIT as provisionSsoMembership
   participant DB as Postgres
   S->>IdP: first SSO sign-in
-  IdP-->>BA: assertion (email @ iitm.ac.in)
-  BA->>DB: create User + Account + bare `members` row
-  Note over BA,DB: BetterAuth writes the Member shim but NOT<br/>the typed Membership the app reads
-  BA->>CS: build session
-  CS->>DB: findMany members WHERE membership IS null
-  Note over CS,DB: defaultRole = ssoSettings.defaultRoleForAutoJoin ?? "LEARNER"<br/>(schema-locked to LEARNER)
-  CS->>DB: BEGIN tx — applyMembershipRoleEffects + Membership.create
-  Note over CS,DB: catch swallows P2002 ONLY (concurrent-create race) —<br/>every other error re-throws (audit Phase A.3)
-  CS-->>S: session with LEARNER membership ✅
+  IdP-->>BA: code → token exchange, ID token verified
+  BA->>DB: create User + Account + Session
+  BA->>JIT: provisionUser({ user, provider })
+  JIT->>DB: Membership exists for (userId, provider.organizationId)?
+  Note over JIT,DB: yes → no-op (REMOVED / SUSPENDED rows are left alone)
+  JIT->>DB: org status gate (SUSPENDED / DEACTIVATED refused)
+  JIT->>DB: Serializable tx — seat cap (PENDING_VERIFICATION) +<br/>applyMembershipRoleEffects + Membership.create
+  Note over JIT,DB: P2002 = a concurrent login already joined;<br/>any other error fails the callback
+  BA-->>S: session cookie + redirect ✅
 ```
 
-Three invariants make this safe:
+`provisionUserOnEveryLogin` is on. A user who already had a password account
+and links SSO is not a "registration", and a join refused by the seat cap
+should succeed once a seat frees up; the existing-row check keeps the repeat
+to one indexed lookup.
 
 ### Invariant 1 — Role floor is LEARNER
 
@@ -96,25 +82,20 @@ admin does it explicitly via `/dashboard/organization/[orgId]/members`
 after first signin. That path is audit-logged
 (`MEMBER_ROLE_CHANGED`); JIT auto-join would not be.
 
-### Invariant 2 — Catch is narrowed to P2002
+### Invariant 2 — Governance gates run once, at sign-in
 
-The transaction's catch block only swallows `Prisma.PrismaClientKnownRequestError`
-with code `P2002` (unique-constraint race — another concurrent session-
-create won the membership). Every other error re-throws. Audit Phase A.3.
+A SUSPENDED or DEACTIVATED org is refused, and a PENDING_VERIFICATION org
+admits at most `UNVERIFIED_ORG_SEAT_CAP` ACTIVE members, counted in the same
+Serializable transaction as the insert (retried on P2034 via
+`withSerializableRetry`). Each skip writes an `SSO` system event.
 
-Pre-fix, the bare `catch {}` swallowed network drops, Supabase RLS
-denials, FK violations — anything. Users could end up with a
-session cookie but no Membership row, landing on a broken dashboard
-where every org-scoped API call 403'd.
+### Invariant 3 — No half-provisioned sign-in
 
-### Invariant 3 — Profile FKs pre-loaded
-
-`applyMembershipRoleEffects` accepts `preloadedProfiles` so the
-customSession hook fetches the user's `consulteeProfileId` +
-`consultantProfileId` once and passes them through the bareMembers
-loop. For a user in 10 SSO orgs, this is the difference between 10
-redundant `users.findUnique` round-trips per session lookup and zero.
-Audit Phase B.7.
+The catch only swallows `P2002` on `(userId, organizationId)`. Any other
+error propagates out of `provisionUser`, so the plugin fails the callback
+before the cookie is set: the user is never signed in without the membership
+the IdP promised, the transaction leaves no partial profile or membership
+behind, and the next login retries.
 
 ---
 
@@ -244,7 +225,7 @@ boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
 - **Bump helper:** `lib/api/organizations/membership-transitions.ts:bumpUserSessionGeneration`
 - **Schema:** `prisma/schema.prisma model User → sessionGeneration Int @default(0)`
 - **Carry in session:** `lib/auth.ts` additionalFields + customSession `liveSessionGeneration`
-- **JIT auto-join loop:** `lib/auth.ts:customSession` bareMembers loop
+- **JIT auto-join:** `lib/sso/jit-membership.ts:provisionSsoMembership`, wired as the sso() `provisionUser` hook in `lib/sso/plugin-options.ts`
 - **Role floor schema:** `lib/labels/org-labels.ts:JitDefaultRoleSchema`
 - **API gate on settings:** `app/api/organizations/[orgId]/sso/route.ts:PatchBodySchema`
 
@@ -271,7 +252,7 @@ The table below maps the symptoms you are most likely to observe back to their p
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| New SSO user can't access the dashboard, session cookie present | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error. | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it. |
+| SSO callback fails with a server error and no session cookie | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error. | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it; the next sign-in retries. |
+| New SSO user signs in but has no org membership | A gate skipped the join: org SUSPENDED / DEACTIVATED, or PENDING_VERIFICATION at the seat cap. | Look for the `SSO` category `JIT auto-join skipped` system event for the org. |
 | User keeps acting as old role after promotion, across several requests | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
-| `customSession` slow under high SSO sign-in load | The bareMembers loop is running for many orgs without `preloadedProfiles`. | Ensure the pre-fetch at the top of `customSession` is still in place; passes through `preloadedProfiles` to `applyMembershipRoleEffects`. |
 | Settings page shows a role dropdown for `defaultRoleForAutoJoin` | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`. | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block. |

@@ -5,7 +5,7 @@
  *
  * Before this helper, four call sites (the since-retired POST /members, PATCH
  * /members/[memberId], invitations/accept, SSO auto-join in
- * `lib/auth.ts`) each had their own inline branching for profile FK
+ * `lib/sso/jit-membership.ts`) each had their own inline branching for profile FK
  * hydration. PATCH only touched role/status/departmentLabel — so a
  * MANAGER → LEARNER transition left `consulteeProfileId` null and
  * `/my-program` joined nothing. SSO auto-join only hydrated the
@@ -48,21 +48,6 @@ export type RoleEffectInput = {
     | "EXPERT"
     | "LEARNER"
     | "SUPPORT";
-  /**
-   * Optional: pre-fetched profile FKs to skip the lazy-creators' own
-   * `findUnique` round-trip when the caller has already loaded the
-   * user row. Used by the customSession bareMembers loop in
-   * `lib/auth.ts` to avoid an N+1 lookup per bare member. See audit
-   * Phase B.7.
-   *
-   * If a value is `null` the helper still attempts the lazy-create
-   * (e.g. LEARNER role + null consulteeProfileId → INSERT). If a value
-   * is set, the helper returns it as-is without re-fetching.
-   */
-  preloadedProfiles?: {
-    consulteeProfileId: string | null;
-    consultantProfileId: string | null;
-  };
 };
 
 export type RoleEffectResult = {
@@ -83,13 +68,10 @@ export async function applyMembershipRoleEffects(
   tx: PrismaLike,
   input: RoleEffectInput,
 ): Promise<RoleEffectResult> {
-  const { userId, role, preloadedProfiles } = input;
+  const { userId, role } = input;
 
   if (role === "LEARNER") {
-    // Fast path: caller already knows the consulteeProfileId.
-    const consulteeProfileId =
-      preloadedProfiles?.consulteeProfileId ??
-      (await ensureConsulteeProfile(tx, userId));
+    const consulteeProfileId = await ensureConsulteeProfile(tx, userId);
     return {
       consulteeProfileId,
       consultantProfileId: null,
@@ -98,10 +80,7 @@ export async function applyMembershipRoleEffects(
   }
 
   if (role === "EXPERT") {
-    // Fast path: caller already knows the consultantProfileId.
-    const consultantProfileId =
-      preloadedProfiles?.consultantProfileId ??
-      (await ensureConsultantProfile(tx, userId));
+    const consultantProfileId = await ensureConsultantProfile(tx, userId);
     return {
       consulteeProfileId: null,
       consultantProfileId,

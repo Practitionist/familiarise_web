@@ -12,7 +12,6 @@ import {
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
-import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   sendWelcomeEmail,
@@ -25,10 +24,7 @@ import {
   shouldRejectSession,
   lookupEnforcedOrg,
 } from "@/lib/sso/enforce-session";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
-import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
-import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 import { hashStaffPassword } from "@/lib/auth/staff-invitations";
@@ -622,47 +618,10 @@ export const auth = betterAuth({
       allowUserToCreateOrganization: false,
     }),
 
-    // Enterprise: SSO plugin (OIDC).
-    // Per-org providers are linked via `organizationId` on the row. See
-    // lib/auth-helpers.ts and the OrganizationSSOSettings model in
-    // prisma/schema.prisma for the policy layer (allowedEmailDomains,
-    // enforceSSO).
-    sso({
-      // D10b: sign-in and the OIDC callback refuse any provider whose
-      // `domainVerified` is false. The org proves the domain with the app's
-      // own DNS TXT claim (OrgDomainClaim.verifiedAt, required at create),
-      // and only the ADMIN approval door flips the flag. The plugin's own
-      // verify-domain endpoints are in `disabledPaths` above.
-      domainVerification: { enabled: true },
-      // Belt to `/sso/register` being disabled: no user may own a provider.
-      providersLimit: 0,
-      // The plugin's provisioning assigns org-plugin roles by email domain
-      // match and would skip our lifecycle and seat gates.
-      organizationProvisioning: { disabled: true },
-      // TEMPORARY bridge until the org plugin is removed (phase C). With
-      // provisioning disabled nothing creates the bare Member row that the
-      // customSession JIT loop below turns into a gated Membership, so
-      // create it here. Idempotent, hence safe on every login; the gates
-      // (org status, seat cap, LEARNER role) still run in customSession.
-      provisionUserOnEveryLogin: true,
-      provisionUser: async ({ user, provider }) => {
-        if (!provider.organizationId) return;
-        await prisma.member.upsert({
-          where: {
-            organizationId_userId: {
-              organizationId: provider.organizationId,
-              userId: user.id,
-            },
-          },
-          create: {
-            organizationId: provider.organizationId,
-            userId: user.id,
-            role: "member",
-          },
-          update: {},
-        });
-      },
-    }),
+    // Enterprise: SSO plugin (OIDC). Per-org providers are linked via
+    // `SsoProvider.organizationId`; options and the JIT membership hook live
+    // in lib/sso/plugin-options.ts.
+    sso(ssoPluginOptions),
 
     customSession(async ({ user: baseUser, session }) => {
       // Cast to include additionalFields (available at runtime via BetterAuth,
@@ -681,58 +640,18 @@ export const auth = betterAuth({
         sessionGeneration?: number | null;
       };
 
-      // Read the user's current session-generation marker + the
-      // profile FKs we'll need below for any bareMembers JIT auto-join.
-      //
-      // The marker is carried in the session payload primarily for
-      // observability + a future fast-path that can skip the membership
-      // re-fetch when the marker hasn't moved (audit B.5).
-      //
-      // Pre-fetching the profile FKs lets us pass them into
-      // `applyMembershipRoleEffects` via `preloadedProfiles` so each
-      // bareMember in the loop below skips a redundant `findUnique`.
-      // Audit Phase B.7 — for users in 10 SSO orgs this is the
-      // difference between 10 extra `users.findUnique` round-trips on
-      // every session lookup and zero.
-      // One round-trip for the gen marker, the profile FKs, AND the bare-member
-      // backlog. This used to be two separate queries (`user.findUnique` + a
-      // standalone `member.findMany`); folding the bare-member lookup into the
-      // same `findUnique` via the `members` relation drops a cross-region
-      // pooler round-trip from every session resolution without changing
-      // anything else — same rows, same shape, and this path runs under
-      // disableCookieCache so nothing here is cached. (#932)
+      // The session-generation marker is carried in the payload for
+      // observability and a future fast path that can skip the membership
+      // re-fetch when it hasn't moved (audit B.5).
       const currentUserRow = await prisma.user.findUnique({
         where: { id: user.id },
         select: {
           sessionGeneration: true,
-          consulteeProfileId: true,
-          consultantProfileId: true,
           // #693 defense-in-depth: sessions are deleted at ban time and
           // sign-in is plugin-gated, but a session minted in the race window
           // must still resolve as banned.
           banned: true,
           banExpires: true,
-          // SSO membership sync: the sso() provisionUser bridge creates a
-          // BetterAuth Member row; we need a typed Membership sibling. Pull the
-          // unrepaired ones (no Membership yet) so the loop below auto-creates
-          // them and SSO-provisioned users get access on first session load.
-          members: {
-            where: { membership: null },
-            select: {
-              id: true,
-              organizationId: true,
-              role: true,
-              organization: {
-                select: {
-                  id: true,
-                  // #1132 follow-up — the auto-join gates below need the
-                  // lifecycle status; joining a SUSPENDED org must be refused.
-                  status: true,
-                  ssoSettings: { select: { defaultRoleForAutoJoin: true } },
-                },
-              },
-            },
-          },
         },
       });
       const liveSessionGeneration =
@@ -740,127 +659,6 @@ export const auth = betterAuth({
       const effectivelyBanned =
         (currentUserRow?.banned ?? false) &&
         (!currentUserRow?.banExpires || currentUserRow.banExpires > new Date());
-      const preloadedProfiles = currentUserRow
-        ? {
-            consulteeProfileId: currentUserRow.consulteeProfileId,
-            consultantProfileId: currentUserRow.consultantProfileId,
-          }
-        : undefined;
-
-      const bareMembers = currentUserRow?.members ?? [];
-      for (const bm of bareMembers) {
-        if (!bm.organization) continue;
-        // #1132 follow-up — governance gates for JIT auto-join. Without
-        // these, a stale IdP sync could regrow memberships into a
-        // SUSPENDED / DEACTIVATED org, or push a PENDING_VERIFICATION org
-        // past UNVERIFIED_ORG_SEAT_CAP. Skips are logged so ops can see an
-        // IdP that is out of sync with the platform's lifecycle state.
-        const orgStatus = bm.organization.status;
-        if (orgStatus === "SUSPENDED" || orgStatus === "DEACTIVATED") {
-          void recordSystemEvent({
-            organizationId: bm.organizationId,
-            category: "SSO",
-            severity: "WARN",
-            message: `JIT auto-join skipped: organization is ${orgStatus} and the lifecycle gate refused membership creation for user ${user.id}`,
-            context: {
-              userId: user.id,
-              betterAuthMemberId: bm.id,
-              organizationStatus: orgStatus,
-            },
-          });
-          continue;
-        }
-        const defaultRole =
-          bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
-        try {
-          // Wrap the role-effect resolution + Membership create in a
-          // transaction so the lazy-created profile (LEARNER →
-          // ConsulteeProfile, EXPERT → ConsultantProfile) and the
-          // Membership row commit atomically.
-          //
-          // CR #1234 — seat admission is now ATOMIC: for unverified orgs the
-          // active-seat count runs in the SAME Serializable transaction as
-          // the create, so two concurrent JIT sessions can no longer both
-          // observe sub-cap counts and overshoot UNVERIFIED_ORG_SEAT_CAP.
-          // Conflicts retry via the house helper; a persistent abort skips
-          // this join (the next session load repairs it — bareMembers only
-          // lists unrepaired rows).
-          const result = await withSerializableRetry(() =>
-            prisma.$transaction(
-              async (tx): Promise<{ skipped: boolean }> => {
-                if (orgStatus === "PENDING_VERIFICATION") {
-                  const activeMembers = await tx.membership.count({
-                    where: {
-                      organizationId: bm.organizationId,
-                      status: "ACTIVE",
-                    },
-                  });
-                  if (activeMembers >= UNVERIFIED_ORG_SEAT_CAP) {
-                    return { skipped: true };
-                  }
-                }
-                const roleEffects = await applyMembershipRoleEffects(tx, {
-                  userId: user.id,
-                  role: defaultRole,
-                  // Pre-fetched at the top of customSession to avoid an
-                  // N+1 across the bareMembers loop. Audit Phase B.7.
-                  preloadedProfiles,
-                });
-                await tx.membership.create({
-                  data: {
-                    userId: user.id,
-                    organizationId: bm.organizationId,
-                    role: defaultRole,
-                    status: "ACTIVE",
-                    consulteeProfileId: roleEffects.consulteeProfileId,
-                    consultantProfileId: roleEffects.consultantProfileId,
-                    payoutRecipient: roleEffects.payoutRecipient,
-                    betterAuthMemberId: bm.id,
-                  },
-                });
-                return { skipped: false };
-              },
-              { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-            ),
-          );
-          if (result.skipped) {
-            void recordSystemEvent({
-              organizationId: bm.organizationId,
-              category: "SSO",
-              severity: "WARN",
-              message: `JIT auto-join skipped: organization is ${orgStatus} and the seat/cap gate refused membership creation for user ${user.id}`,
-              context: {
-                userId: user.id,
-                betterAuthMemberId: bm.id,
-                organizationStatus: orgStatus,
-              },
-            });
-            continue;
-          }
-        } catch (err) {
-          // Narrow to P2002 (unique-constraint violation) ONLY. The
-          // prior bare `catch {}` swallowed every error during the JIT
-          // auto-join transaction, including:
-          //   - Transient DB connection drops (would leave the user
-          //     with NO Membership row and a working session, landing
-          //     them on a broken dashboard).
-          //   - Permission errors from Supabase RLS (silent denial of
-          //     service).
-          //   - Domain-upsert races other than uniqueness (e.g. FK
-          //     violations from a stale cache).
-          // Re-throw everything else so it surfaces at the BetterAuth
-          // boundary and the user sees an error toast instead of a
-          // silent broken state. See audit Phase A.3.
-          if (
-            err instanceof Prisma.PrismaClientKnownRequestError &&
-            err.code === "P2002"
-          ) {
-            // Concurrent session-create won the membership — safe to ignore.
-            continue;
-          }
-          throw err;
-        }
-      }
 
       // Load active org memberships so OrgSwitcher + checkout can render
       // without an extra roundtrip.
