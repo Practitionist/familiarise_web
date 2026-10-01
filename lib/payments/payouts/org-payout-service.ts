@@ -1811,3 +1811,95 @@ export async function markOrgPayoutReversed(
   // Not COMPLETED — fall through to the PROCESSING→FAILED path (money never left).
   return markOrgPayoutFailedInternal(payoutId, reason, "REVERSED");
 }
+
+export interface OrgBatchResult {
+  success: boolean;
+  orgsScanned: number;
+  payoutsCreated: number;
+  payoutsAlreadyExisted: number;
+  totalAmount: number;
+  skippedNotEligible: number;
+  errors: string[];
+}
+
+/**
+ * Walks every canHost org with READY OrganizationEarnings in the cycle window
+ * and rolls them into one OrganizationPayout per org via createOrgPayoutBatch.
+ */
+export async function createOrgPayoutBatches(opts?: {
+  periodStart?: Date;
+  periodEnd?: Date;
+}): Promise<OrgBatchResult> {
+  const { createHash } = await import("crypto");
+  const { getActiveOrgMaintenanceWindow } = await import("@/lib/maintenance");
+  const periodEnd = opts?.periodEnd ?? new Date();
+  const periodStart =
+    opts?.periodStart ??
+    new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const result: OrgBatchResult = {
+    success: false,
+    orgsScanned: 0,
+    payoutsCreated: 0,
+    payoutsAlreadyExisted: 0,
+    totalAmount: 0,
+    skippedNotEligible: 0,
+    errors: [],
+  };
+
+  const eligible = await prisma.organizationEarnings.groupBy({
+    by: ["organizationId"],
+    where: {
+      status: "READY",
+      orgPayoutId: null,
+      createdAt: { gte: periodStart, lt: periodEnd },
+    },
+    _count: true,
+  });
+  result.orgsScanned = eligible.length;
+
+  for (const row of eligible) {
+    const orgId = row.organizationId;
+    const orgMaint = await getActiveOrgMaintenanceWindow(orgId);
+    if (orgMaint && orgMaint.phase === "OFFLINE") {
+      result.skippedNotEligible++;
+      result.errors.push(
+        `${orgId}: org-specific OFFLINE maintenance active (${orgMaint.reason ?? "no reason"}); skipped`,
+      );
+      continue;
+    }
+
+    const idempotencyKey = createHash("sha256")
+      .update(`${orgId}:${periodStart.toISOString()}`)
+      .digest("hex");
+
+    try {
+      const out = await createOrgPayoutBatch(orgId, periodStart, periodEnd, {
+        idempotencyKey,
+        notes: `Weekly cron batch ${periodStart.toISOString()} → ${periodEnd.toISOString()}`,
+      });
+      if (out.alreadyExisted) {
+        result.payoutsAlreadyExisted++;
+      } else {
+        result.payoutsCreated++;
+        result.totalAmount += out.amountPaise;
+      }
+    } catch (err) {
+      if (err instanceof PayoutLockError) {
+        result.errors.push(`${orgId}: payout lock held; skipped`);
+        continue;
+      }
+      if (err instanceof PayoutValidationError) {
+        result.skippedNotEligible++;
+        result.errors.push(`${orgId}: ${err.message}`);
+        continue;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`${orgId}: ${message}`);
+    }
+  }
+
+  result.success = true;
+  return result;
+}
+

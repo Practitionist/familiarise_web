@@ -32,7 +32,7 @@ import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { OnboardingStepper } from "@/components/onboarding/onboarding-stepper";
 import { OnboardingNotice } from "@/components/onboarding/OnboardingNotice";
 import { useToast } from "@/hooks/use-toast";
-import { signOut, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   describeIssuePath,
@@ -428,17 +428,7 @@ function signOutToSignin() {
       ? inner
       : `/form/onboarding${search ? `?${params.toString()}` : ""}`;
   const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
-  const cleanupHref = `/api/auth/clear-stale-session?callbackUrl=${encodeURIComponent(here)}`;
-  signOut({
-    fetchOptions: {
-      onSuccess: () => {
-        window.location.href = signinHref;
-      },
-      onError: () => {
-        window.location.href = cleanupHref;
-      },
-    },
-  });
+  void signOutEverywhere(signinHref);
 }
 
 const MultiStepForm: React.FC = () => {

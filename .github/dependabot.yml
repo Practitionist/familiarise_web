@@ -101,7 +101,6 @@ updates:
         patterns:
           - "@radix-ui/*"
           - "lucide-react"
-          - "react-icons"
           - "cmdk"
         update-types:
           - "minor"

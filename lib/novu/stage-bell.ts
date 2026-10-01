@@ -7,7 +7,7 @@ import type { NovuWorkflowId } from "./templates/types";
  * ADR 27): a rollback takes the row with it, the relay drains it after the
  * commit, and the dedupe key makes a second staging of the same event a no-op.
  */
-export function stageBell(
+export async function stageBell(
   tx: Pick<Tx, "notificationOutbox">,
   args: {
     workflowId: NovuWorkflowId;
@@ -16,6 +16,7 @@ export function stageBell(
     dedupeKey: string;
   },
 ) {
+  if (args.recipients.length === 0) return null;
   return stageTrigger({
     tx,
     ...args,

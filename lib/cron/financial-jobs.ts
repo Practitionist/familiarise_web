@@ -20,7 +20,6 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "reconcile-payout-status",
   "cascade-refund-earnings",
   "reconcile-pending-refunds",
-  "handle-lost-disputes",
   "reconcile-disputes",
   "cleanup-abandoned-payments",
   "release-earnings",

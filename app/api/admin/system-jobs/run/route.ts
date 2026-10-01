@@ -25,7 +25,6 @@ import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnin
 
 // Disputes
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
-import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
 import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
 
 // Earnings
@@ -126,16 +125,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       reconciledCount: result.reconciledCount,
       urgentCount: result.urgentCount,
       errorCount: result.errors.length,
-    };
-  },
-  "handle-lost-disputes": async () => {
-    const result = await handleLostDisputes();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      updatedCount: result.updatedCount,
-      alreadyPaidCount: result.alreadyPaidCount,
-      errorCount: result.errorCount,
     };
   },
   "cascade-refund-earnings": async () => {

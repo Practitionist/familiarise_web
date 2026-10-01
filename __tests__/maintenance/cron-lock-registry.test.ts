@@ -204,7 +204,7 @@ describe("cron lock registry (#1169)", () => {
   it("finds the whole scheduled fleet", () => {
     // A floor, not an equality: new jobs are expected. This only catches the
     // parser silently matching nothing after a workflow-format change.
-    expect(registry.length).toBeGreaterThanOrEqual(61);
+    expect(registry.length).toBeGreaterThanOrEqual(60);
   });
 
   it("resolves an entrypoint for every scheduled workflow", () => {

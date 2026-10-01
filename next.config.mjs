@@ -375,7 +375,6 @@ const nextConfig = {
     "resend",
     "bcrypt",
     "@stream-io/node-sdk",
-    "libsodium-wrappers",
   ],
 
   images: {

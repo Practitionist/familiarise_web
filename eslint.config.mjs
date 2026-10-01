@@ -19,7 +19,6 @@ export default [
       "out/**",
       "coverage/**",
       "public/static/**",
-      "update-postman-collection.ts",
     ],
   },
 
