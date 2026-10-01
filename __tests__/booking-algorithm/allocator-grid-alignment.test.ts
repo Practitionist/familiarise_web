@@ -8,7 +8,7 @@
  * candidate starts at 10:15 and 10:45 — a booking checkout would refuse, placed
  * by the server, for a buyer who could never have made it.
  *
- * The fix floors the walk's anchor to the grid (`candidateStartsInRow`). The
+ * The fix snaps the walk's anchor UP to the grid (`candidateStartsInRow`). The
  * buyer's 15-minute LEAD TIME is deliberately left alone: `slot-validation.ts`
  * documents that asymmetry on purpose (a server-picked slot may be imminent
  * where a client-picked one may not), and the allocator keeps its own
@@ -211,11 +211,9 @@ describe("a consultant's published grid is the allocator's grid", () => {
     }
   });
 
-  it("emits no off-grid start for an OFF-GRID row, rather than one checkout refuses", async () => {
-    // A legacy row published at 10:15. Flooring the anchor puts the first
-    // candidate at 10:00, which is before the row, so availability refuses it
-    // and the row contributes nothing: the alternative was a 10:15 booking the
-    // buyer's own edge check refuses structurally.
+  it("places an OFF-GRID legacy row at its first on-grid start inside the row", async () => {
+    // A legacy row published 10:15-14:15: never 10:15 (checkout refuses it) and
+    // never 10:00 (outside the published hours).
     mockTx.consultation.findUnique.mockResolvedValue(
       consultationWithRow(customRow("2025-01-06T10:15:00.000Z", 4)),
     );
@@ -226,9 +224,12 @@ describe("a consultant's published grid is the allocator's grid", () => {
       mode: "auto",
     });
 
-    expect(result.success).toBe(false);
-    expect(result.errorCode).toBe("SLOT_SHORTAGE");
-    expect(placedOccurrences()).toHaveLength(0);
+    expect(result.success).toBe(true);
+    const placed = placedOccurrences();
+    expect(placed).toHaveLength(1);
+    expect(new Date(placed[0].startsAt).toISOString()).toBe(
+      "2025-01-06T10:30:00.000Z",
+    );
   });
 
   it("never emits a start the buyer path's own grid check would refuse", async () => {

@@ -3175,18 +3175,9 @@ export class SchedulingService {
    * silently truncated legitimate long rows). Callers that cannot supply a
    * row end still get the 48-step safety net.
    *
-   * The anchor is FLOORED to the booking grid. The step is the grid, so one
-   * floor aligns every candidate the walk emits; without it a row whose own
-   * start is off-grid mints starts at :15 and :45, and every buyer path refuses
-   * those structurally (`slotStartRefusal` → SLOT_NOT_ON_GRID, in checkout and
-   * in request-for-approval). That made an off-grid row's whole grid 100%
-   * unbookable and let the allocator place a booking no buyer could have made.
-   * Flooring rather than snapping UP matters: an off-grid legacy row now
-   * contributes no candidate at all (its first floored start is before the row,
-   * so availability refuses it) instead of quietly placing a session 15 minutes
-   * into hours the consultant never published. The write boundary
-   * (`lib/scheduling/availability-contract`) no longer publishes such a row —
-   * this is the read-side half of the same rule.
+   * The anchor is snapped UP to the booking grid (buyer paths refuse off-grid
+   * starts), so an off-grid legacy row 10:15-12:00 yields 10:30, 11:00, 11:30:
+   * on-grid and inside the published hours.
    */
   private static candidateStartsInRow(
     rowStart: Date,
@@ -3202,10 +3193,8 @@ export class SchedulingService {
     const starts: Date[] = [];
     /** Did the ROW (its end, or the edge of availability) stop the walk? */
     let boundedByRow = false;
-    // Same modulo the buyer path's own grid test uses, so the allocator can only
-    // emit starts that test accepts.
     const anchorMs =
-      Math.floor(rowStart.getTime() / SCHEDULING_INTERVAL_MS) *
+      Math.ceil(rowStart.getTime() / SCHEDULING_INTERVAL_MS) *
       SCHEDULING_INTERVAL_MS;
 
     for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
