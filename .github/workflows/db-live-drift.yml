@@ -1,0 +1,54 @@
+name: DB Live Drift
+
+permissions:
+  contents: read
+
+# The shared live DB (dev AND prod) vs dev's schema + sidecars. Off the PR path:
+# red here means "run `npm run db:push` against the live DB", not "fix a PR".
+on:
+  schedule:
+    - cron: "3 7 * * *"
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  db-live-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - run: npm ci --ignore-scripts
+
+      - run: npx --no-install prisma generate
+
+      - name: Sidecar + enum drift guard
+        run: |
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL secret missing"; exit 1; }
+          node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
+          node_modules/.bin/tsx scripts/ci/check-db-drift.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
+        run: bash scripts/ci/notify-ops-failure.sh "db-live-drift"

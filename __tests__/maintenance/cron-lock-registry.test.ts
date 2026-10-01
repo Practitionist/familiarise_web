@@ -47,12 +47,17 @@ const LOCK_EXEMPT: Record<string, string> = {
   // watchdog depend on the infrastructure it exists to report on, and the
   // check is read-only, so a double-run costs nothing.
   "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
+  // Ticker-only probe: one Sentry event per run and no DB writes; a double run
+  // costs one extra event and the email alert is deduped in Redis.
+  "cron-tick:sentry-ingest-canary": "deliberately unlocked — vendor probe",
   // #1270 — a drift DETECTOR, not a job. It runs the operator script in
   // `--check` mode, which makes no Stream write and no database write; the
   // whole run is one `getAppSettings` read. Two concurrent reads cost one
   // extra API call, so a lock would buy nothing and would give a read-only
   // guard a hard dependency on Redis.
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // Catalog reads only (pg_constraint/pg_enum); a double-run costs nothing.
+  "db-live-drift.yml": "deliberately unlocked — read-only catalog check",
 };
 
 interface Row {
@@ -97,6 +102,40 @@ function findLock(
   return { jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" };
 }
 
+/** The lock in an entry file, or in the first core under `coreDirs` it imports. */
+function lockFor(
+  entry: string | null,
+  entryFile: string | null,
+  entrySrc: string | null,
+  coreDirs: RegExp,
+): { lock: ReturnType<typeof findLock>; lockedIn: string | null } {
+  const own = findLock(entrySrc);
+  if (own || !entrySrc || !entryFile)
+    return { lock: own, lockedIn: own ? entry : null };
+  for (const imp of entrySrc.matchAll(
+    /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
+  )) {
+    const resolved = resolveImport(entryFile, imp[1]);
+    if (!resolved) continue;
+    const rel = path.relative(ROOT, resolved);
+    if (!coreDirs.test(rel) || rel.includes("with-cron-lock")) continue;
+    const found = findLock(read(resolved));
+    if (found) return { lock: found, lockedIn: rel };
+  }
+  return { lock: null, lockedIn: null };
+}
+
+/** The `/api/cleanup/<target>` routes netlify/functions/cron-tick.mts POSTs. */
+function tickerTargets(): string[] {
+  const src = read(path.join(ROOT, "netlify", "functions", "cron-tick.mts"));
+  const block =
+    src?.match(/const TARGETS = \[([\s\S]*?)\] as const/)?.[1] ?? "";
+  return Array.from(
+    block.replace(/\/\/.*$/gm, "").matchAll(/["']([a-z0-9-]+)["']/g),
+    (m) => m[1],
+  );
+}
+
 function buildRegistry(): Row[] {
   const rows: Row[] = [];
 
@@ -109,30 +148,15 @@ function buildRegistry(): Row[] {
     const entryFile = entrypoint ? path.join(ROOT, entrypoint) : null;
     const entrySrc = entryFile ? read(entryFile) : null;
 
-    let lock = findLock(entrySrc);
-    let lockedIn = lock ? entrypoint : null;
-
     // Wrapper → core: jobs/** wrappers hold the GitHub Actions plumbing and
     // delegate to a scripts/** or lib/** core, which is where the lock usually
     // lives so every entry point (Actions, HTTP, local) inherits it.
-    if (!lock && entrySrc && entryFile) {
-      for (const imp of entrySrc.matchAll(
-        /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
-      )) {
-        const resolved = resolveImport(entryFile, imp[1]);
-        if (!resolved) continue;
-        const rel = path.relative(ROOT, resolved);
-        if (!/^(scripts|lib)\//.test(rel) || rel.includes("with-cron-lock")) {
-          continue;
-        }
-        const found = findLock(read(resolved));
-        if (found) {
-          lock = found;
-          lockedIn = rel;
-          break;
-        }
-      }
-    }
+    const { lock, lockedIn } = lockFor(
+      entrypoint,
+      entryFile,
+      entrySrc,
+      /^(scripts|lib)\//,
+    );
 
     const guard = entrySrc?.match(/abortIfMaintenance\(\s*["'`]([^"'`]+)["'`]/);
     rows.push({
@@ -142,6 +166,30 @@ function buildRegistry(): Row[] {
         guard?.[1] ??
         lock?.jobName ??
         path.basename(entrypoint ?? workflow, ".ts"),
+      lockedIn,
+      failMode: lock?.failMode ?? null,
+    });
+  }
+
+  // Ticker-only jobs (no YAML twin): the route is the entrypoint.
+  const viaYaml = new Set(rows.map((r) => r.jobName));
+  for (const target of tickerTargets()) {
+    const entrypoint = path.join("app", "api", "cleanup", target, "route.ts");
+    const entryFile = path.join(ROOT, entrypoint);
+    const entrySrc = read(entryFile);
+    const jobName =
+      entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
+    if (viaYaml.has(jobName)) continue;
+    const { lock, lockedIn } = lockFor(
+      entrypoint,
+      entryFile,
+      entrySrc,
+      /^(scripts|lib|jobs)\//,
+    );
+    rows.push({
+      workflow: `cron-tick:${target}`,
+      entrypoint: entrySrc ? entrypoint : null,
+      jobName,
       lockedIn,
       failMode: lock?.failMode ?? null,
     });
@@ -272,6 +320,7 @@ describe("cron lock registry (#1169)", () => {
     // killing a mid-flight money job is the one thing worse than a double run.
     const missing = registry
       .map((r) => r.workflow)
+      .filter((workflow) => !workflow.startsWith("cron-tick:"))
       .filter((workflow) => {
         const src = read(path.join(WORKFLOW_DIR, workflow));
         if (!src) return true;
