@@ -64,7 +64,8 @@
     "db:push:no-sidecars-DANGEROUS": "prisma db push"
   },
   "dependencies": {
-    "@better-auth/sso": "^1.7.6",
+    "@better-auth/core": "1.7.6",
+    "@better-auth/sso": "1.7.6",
     "@hookform/resolvers": "^5.2.2",
     "@novu/api": "^3.13.0",
     "@novu/nextjs": "^3.13.0",
@@ -100,7 +101,7 @@
     "@upstash/redis": "^1.36.1",
     "bad-words": "^4.0.0",
     "bcrypt": "^6.0.0",
-    "better-auth": "^1.7.6",
+    "better-auth": "1.7.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
