@@ -39,18 +39,18 @@ Two rules decide almost every row below:
 
 ## 2. Environment variables
 
-| Variable                                                     | Needed for                                                                                         |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET` (or `BETTER_AUTH_SECRETS`)              | Cookie signing; encryption of TOTP secrets, backup codes, OAuth tokens                             |
-| `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`                     | Base URL, redirects, SSO callback URLs                                                             |
-| `BETTER_AUTH_TRUSTED_ORIGINS`                                | Extra origins (comma-separated), e.g. previews                                                     |
-| `GOOGLE_CLIENT_ID`/`_SECRET`, `GITHUB_CLIENT_ID`/`_SECRET`   | Social sign-in                                                                                     |
-| `AUTH_CONFIG_ENCRYPTION_KEY` (+ `_PREVIOUS` during rotation) | SSO provider config encryption, 64 hex characters                                                  |
-| `UPSTASH_REDIS_REST_URL`/`_TOKEN`                            | Both rate limiters (fail open without them)                                                        |
-| `RESEND_API_KEY`                                             | Verification, reset and staff setup email                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                                     | Error reporting and the CSP report endpoint (read at build time)                                   |
-| `ENABLE_CSP_ENFORCE`                                         | `true` at build time switches CSP from report-only to enforced                                     |
-| `STRICT_BUILD`                                               | Strict by default. `false` skips type-check and lint inside `next build` on Netlify (stopgap only) |
+| Variable                                                     | Needed for                                                                                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET` (or `BETTER_AUTH_SECRETS`)              | Cookie signing; encryption of TOTP secrets, backup codes, OAuth tokens                                                      |
+| `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`                     | Base URL, redirects, SSO callback URLs                                                                                      |
+| `BETTER_AUTH_TRUSTED_ORIGINS`                                | Extra origins (comma-separated), e.g. previews                                                                              |
+| `GOOGLE_CLIENT_ID`/`_SECRET`, `GITHUB_CLIENT_ID`/`_SECRET`   | Social sign-in                                                                                                              |
+| `AUTH_CONFIG_ENCRYPTION_KEY` (+ `_PREVIOUS` during rotation) | SSO provider config encryption, 64 hex characters                                                                           |
+| `UPSTASH_REDIS_REST_URL`/`_TOKEN`                            | Both rate limiters (fail open without them)                                                                                 |
+| `RESEND_API_KEY`                                             | Verification, reset and staff setup email                                                                                   |
+| `NEXT_PUBLIC_SENTRY_DSN`                                     | Error reporting and the CSP report endpoint (read at build time)                                                            |
+| `ENABLE_CSP_ENFORCE`                                         | `true` at build time switches CSP from report-only to enforced                                                              |
+| `STRICT_BUILD`                                               | Off by default. `true` adds type-check and lint inside `next build` on Netlify (OOMs at 6144 MB today); CI always runs both |
 
 ## 3. Related
 

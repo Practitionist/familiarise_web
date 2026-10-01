@@ -33,10 +33,10 @@ const RESOLVED_APP_URL =
     : process.env.NEXT_PUBLIC_APP_URL;
 
 /**
- * Type-check and lint inside `next build`, Netlify included, unless
- * `STRICT_BUILD=false`. See the `eslint` / `typescript` keys below.
+ * Opt-in type-check and lint inside Netlify's `next build`. See the `eslint` /
+ * `typescript` keys below.
  */
-const STRICT_BUILD = process.env.STRICT_BUILD !== "false";
+const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
  * CSP violations go straight to Sentry's security-report endpoint, derived
@@ -242,11 +242,10 @@ const nextConfig = {
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
       : {}),
   },
-  // Type-check and lint during `next build`, on Netlify too: a direct push to
-  // a release branch deploys without going through a PR's CI run. The cost is
-  // a slower build and more peak RSS against netlify.toml's 6144 MB heap; if
-  // the build starts exiting 137, set STRICT_BUILD=false as a stopgap and
-  // raise the heap/concurrency knobs below.
+  // Skipped on Netlify by default: with them on, the deploy preview was killed
+  // (exit 137) at "Linting and checking validity of types" on the 6144 MB
+  // heap. CI type-checks and lints every PR and every push to dev/staging/prod
+  // instead. STRICT_BUILD=true turns them back on for a Netlify build.
   eslint: {
     ignoreDuringBuilds: process.env.NETLIFY === "true" && !STRICT_BUILD,
   },
