@@ -9,12 +9,13 @@
 
 ## 1. Background
 
-Auth-related testing has two layers:
+Auth-related testing has three layers:
 
 - **Unit tests** (`__tests__/sso/`) — Jest tests covering pure decision logic with injected I/O.
+- **OIDC round trip** (`__tests__/sso/oidc-round-trip.test.ts`) — the production sso() options against a live `oauth2-mock-server` IdP: discovery, PKCE authorize → callback, token exchange, ID-token verification, session cookie and JIT membership. Uses BetterAuth's memory adapter, so Prisma itself is not exercised.
 - **Static invariants** (`scripts/verify-sso-invariants.sh`) — Bash grep checks that catch common regressions without a DB or runtime.
 
-Both run in CI on every PR via `.github/workflows/ci.yaml`.
+All run in CI on every PR via `.github/workflows/ci.yaml` (`npm run test` and the invariants step).
 
 ## 2. Test Layout
 
@@ -24,6 +25,8 @@ Both run in CI on every PR via `.github/workflows/ci.yaml`.
 __tests__/sso/
 ├── derive-urls.test.ts       # ACS/metadata URL derivation
 ├── enforce-session.test.ts   # SSO session-creation veto logic
+├── jit-membership.test.ts    # SSO JIT gates and idempotency
+├── oidc-round-trip.test.ts   # real OIDC flow against oauth2-mock-server
 └── provider-schemas.test.ts  # Zod schema validation for SSO providers
 ```
 

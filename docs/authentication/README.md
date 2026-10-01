@@ -118,9 +118,8 @@ is still looking at the form.
   IdP recipes for Okta/Auth0). Configuration-side; this folder is
   implementation-side. Keep them in lock-step but don't duplicate.
 - `docs/enterprise/playbooks/sso-testing.md` *(planned; not in repo yet)*
-  — four ways to exercise SSO locally
-  (mocksaml.com / saml-idp / Keycloak / real dev tenants). Read after
-  this folder if you need to test.
+  — ways to exercise OIDC SSO locally beyond the jest round trip
+  (Keycloak / real dev tenants). Read after this folder if you need to test.
 
 ## 6. Related docs
 

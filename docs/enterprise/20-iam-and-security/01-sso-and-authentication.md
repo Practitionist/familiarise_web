@@ -851,14 +851,13 @@ Two flows have no error to map. `requestPasswordReset` answers 200 with the same
 
 ## Testing SSO locally
 
-Real IdPs cost iteration time. Four approaches, top-down — each catches bugs the one above can't:
+Real IdPs cost iteration time. Three approaches, top-down — each catches bugs the one above can't:
 
 | # | Tool | Protocol | Setup | Proves |
 |---|---|---|---|---|
-| 1 | `mocksaml.com` | SAML | zero (needs a public tunnel for the ACS POST) | assertion parsing + `customSession` auto-provisions a typed `Membership` |
-| 2 | `saml-idp` (npm) | SAML | `npx saml-idp …` | SP-initiated flow, cert rotation, attribute mapping (no tunnel) |
-| 3 | Keycloak (Docker) | SAML + OIDC | Docker | OIDC **PKCE** round-trip; closest to Okta/Azure |
-| 4 | Auth0 / Okta dev tenant | OIDC / SAML | free signup | real-world signoff before a customer link |
+| 1 | `__tests__/sso/oidc-round-trip.test.ts` (`oauth2-mock-server`) | OIDC | none; runs in `npm run test` | discovery, PKCE authorize → callback, token exchange, ID-token verification, session cookie, JIT `Membership` (memory adapter, not Prisma) |
+| 2 | Keycloak (Docker) | OIDC | Docker | OIDC **PKCE** round-trip against the real app and database; closest to Okta/Azure |
+| 3 | Auth0 / Okta dev tenant | OIDC | free signup | real-world signoff before a customer link |
 
 **Prereqs (all):** dev server at `NEXT_PUBLIC_APP_URL`; a seeded org with `OWNER` (`npm run db:seed:small`); add `allowedEmailDomains` + a provider under `/dashboard/organization/<orgId>/settings/sso` — the Add Provider dialog shows the ACS / Redirect URI + SP Metadata URL to paste into the IdP.
 
@@ -871,7 +870,7 @@ BETTER_AUTH_TRUSTED_ORIGINS="http://localhost:3000,http://localhost:8080" npm ru
 ```
 Create a realm + user, an OIDC client (Client auth ON, Standard flow ON, redirect `http://localhost:3000/api/auth/sso/callback/kc-oidc`, **PKCE = S256**), then register it in the Add Provider dialog (Issuer `http://localhost:8080/realms/<realm>`, Discovery `…/.well-known/openid-configuration`). **PKCE check:** on "Sign in with SSO", the redirect to Keycloak's `/auth` must carry `code_challenge=<43+ char>` + `code_challenge_method=S256`. If missing, `ssoClient()` isn't wired or the signin page is doing a raw `fetch`.
 
-**Common failure modes:** `redirect_uri mismatch` → copy the dialog's URI verbatim (case-sensitive); `InResponseTo mismatch` → lost `better-auth.state` cookie (sameSite); `code_verifier missing` → `ssoClient()` plugin not registered; typed `Membership` not created → `customSession` sync runs on session load, visit `/dashboard` once after the redirect.
+**Common failure modes:** `redirect_uri mismatch` → copy the dialog's URI verbatim (case-sensitive); `InResponseTo mismatch` → lost `better-auth.state` cookie (sameSite); `code_verifier missing` → `ssoClient()` plugin not registered; typed `Membership` not created → look for the `SSO` `JIT auto-join skipped` system event (org status or seat cap).
 
 ## Related docs
 

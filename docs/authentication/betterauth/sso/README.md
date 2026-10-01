@@ -198,4 +198,4 @@ If an org enables `enforceSSO` but hasn't registered any providers yet, enforcem
 - [../03-sessions-and-hooks.md](../03-sessions-and-hooks.md) — Session hooks, membership bridge
 - [../05-testing.md](../05-testing.md) — SSO tests and static invariants
 - [docs/enterprise/20-iam-and-security/01-sso-and-authentication.md](../../../enterprise/20-iam-and-security/01-sso-and-authentication.md) — Admin-facing SSO configuration guide
-- `docs/enterprise/playbooks/sso-testing.md` *(planned; not in repo yet)* — Local SSO testing (mocksaml, Keycloak, etc.)
+- `docs/enterprise/playbooks/sso-testing.md` *(planned; not in repo yet)* — Local SSO testing (Keycloak, dev tenants); the automated OIDC round trip is `__tests__/sso/oidc-round-trip.test.ts`
