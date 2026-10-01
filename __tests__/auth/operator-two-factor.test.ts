@@ -36,7 +36,7 @@ const mockLookup = lookupSession as jest.MockedFunction<typeof lookupSession>;
 
 function sessionFor(role: string, twoFactorEnabled?: boolean) {
   return {
-    kind: "ok",
+    kind: "found",
     session: {
       session: { id: "s1", userId: "u1" },
       user: { id: "u1", role, banned: false, twoFactorEnabled },

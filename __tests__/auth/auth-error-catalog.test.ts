@@ -142,27 +142,18 @@ describe("no raw server text escapes", () => {
 });
 
 describe("sign-in copy does not enumerate accounts", () => {
-  it("a wrong password and an unknown address are both non-revealing", () => {
-    // Better Auth answers both with the same code; the copy must not undo that
-    // by hinting at existence.
-    const wrongPassword = humanizeAuthError("signin", {
+  it("the one sign-in failure code says nothing about whether the account exists", () => {
+    // Better Auth answers a wrong password, an unknown address and an SSO-only
+    // account with this one code; the copy must not undo that. (Its
+    // CREDENTIAL_ACCOUNT_NOT_FOUND only comes from update-user, which needs a
+    // session, so it is not a sign-in answer.)
+    const copy = humanizeAuthError("signin", {
       code: "INVALID_EMAIL_OR_PASSWORD",
       status: 401,
     });
-    const unknownAddress = humanizeAuthError("signin", {
-      code: "CREDENTIAL_ACCOUNT_NOT_FOUND",
-      status: 401,
-    });
-    expect(wrongPassword.title).not.toBe(unknownAddress.title);
-    // The two must both be non-revealing. Asserted explicitly rather than
-    // "identical", because the catalogue is allowed to differentiate *tone*
-    // (one suggests SSO, the other suggests a password) as long as neither
-    // states that an account exists or does not.
-    for (const copy of [wrongPassword, unknownAddress]) {
-      expect(copy.description).not.toMatch(
-        /no account|not found|does not exist/i,
-      );
-    }
+    expect(`${copy.title} ${copy.description}`).not.toMatch(
+      /no account|not found|does not exist|no password|couldn't find/i,
+    );
   });
 });
 
