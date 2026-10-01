@@ -12,14 +12,25 @@ import {
   parseLimitParam,
   statusFor,
 } from "@/lib/cron/cleanup-route";
-import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
+import {
+  notifyFailedRefunds,
+  reconcilePendingRefunds,
+} from "@/scripts/refunds/reconcile-pending-refunds";
 
 export const { GET, POST } = cleanupRoute({
   // Must be the canonical cron job name: `assertNotInMaintenance` keys the
   // DEGRADED branch on FINANCIAL_JOB_NAMES membership, and "reconcile-refunds"
   // is not a member, so this financial job would have run through DEGRADED.
   job: "reconcile-pending-refunds",
-  run: (req) => reconcilePendingRefunds({ limit: parseLimitParam(req) }),
+  // Same two passes as the Actions job: reconcile (which can flip a stale
+  // refund to FAILED), then notify payers of FAILED refunds (#1746).
+  run: async (req) => {
+    const result = await reconcilePendingRefunds({
+      limit: parseLimitParam(req),
+    });
+    const failedNotify = await notifyFailedRefunds();
+    return { ...result, failedNotified: failedNotify.notified };
+  },
   summarize: (r) => ({
     totalProcessed: r.totalProcessed,
     reconciledCount: r.reconciledCount,
@@ -27,6 +38,7 @@ export const { GET, POST } = cleanupRoute({
     skippedCount: r.skippedCount,
     skippedFenced: r.skippedFenced,
     failedUnknownId: r.failedUnknownId,
+    failedNotified: r.failedNotified,
   }),
   // #1458 — a fenced-gateway skip is a healthy run with something an operator
   // should know about: PENDING refunds exist on a rail this deployment does not
