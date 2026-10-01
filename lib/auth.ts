@@ -72,9 +72,28 @@ export const auth = betterAuth({
   // server calls are unaffected.
   disabledPaths: [
     "/list-sessions",
+    // The admin plugin's whole HTTP surface. It stays installed for the
+    // role/ban columns, the sign-in ban check and the server-side
+    // `auth.api.createUser` used by staff onboarding, but its endpoints skip
+    // the back-office permission matrix, the 2FA gate and OpsActionLog. Every
+    // operator action has an audited door under app/api/admin instead.
+    // Impersonation is off: support reads a customer's data through the
+    // back office, it does not become the customer.
+    "/admin/set-role",
+    "/admin/get-user",
+    "/admin/create-user",
+    "/admin/update-user",
+    "/admin/list-users",
     "/admin/list-user-sessions",
+    "/admin/unban-user",
+    "/admin/ban-user",
+    "/admin/impersonate-user",
+    "/admin/stop-impersonating",
     "/admin/revoke-user-session",
     "/admin/revoke-user-sessions",
+    "/admin/remove-user",
+    "/admin/set-user-password",
+    "/admin/has-permission",
     // SSO provider lifecycle. Registration, edits and deletes go through
     // app/api/organizations/[orgId]/sso/providers (org-scoped, audited,
     // server-generated providerId), and approval through the ADMIN door

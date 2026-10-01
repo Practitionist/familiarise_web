@@ -14,16 +14,10 @@
  * limiting, tax context or gateway routing.
  */
 
-// Checkout imports `assertNotImpersonated` as well as `requireApiAuth` (#1927 —
-// it is a money-mutating door that does not go through a back-office surface, so
-// it is not covered by the capability-matrix check). `jest.mock` replaces the
-// module wholesale, so an unlisted export is `undefined` and the route throws
-// a 500 that has nothing to do with what this suite asserts.
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: jest.fn(async () => ({
     session: { user: { id: "user_1" } },
   })),
-  assertNotImpersonated: jest.fn(() => null),
 }));
 
 jest.mock("../../lib/rate-limit", () => ({

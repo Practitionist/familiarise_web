@@ -138,100 +138,6 @@ export function isPrivileged(role: string | undefined | null): boolean {
   return role === "ADMIN" || role === "STAFF";
 }
 
-// ============================================================================
-// #1927 — no money under impersonation. Applied by every privileged helper.
-// ============================================================================
-
-/**
- * Surfaces that MOVE MONEY, or destroy an account irrecoverably.
- *
- * This is the impersonation deny-list, and it is derived from the capability
- * matrix rather than from a route list so it cannot drift as doors are added:
- * a new money door arrives by naming a money surface, and naming a money
- * surface is what puts it here. Read-only siblings (`refunds.read`,
- * `payouts.read`, …) are deliberately absent — the catalog's stated policy is
- * that staff READ every money surface so a billing ticket is resolvable
- * without an escalation, and impersonation is a support tool, so blocking the
- * read would break the support workflow the impersonation exists to serve.
- *
- * `classSeries.money` is in and `classSeries.support` is out for the same
- * reason as the `.read`/`.manage` split: cancelling one session for a host is
- * a support act; sweeping a whole series refunds people.
- */
-const IMPERSONATION_DENIED_SURFACES: ReadonlySet<BackofficeSurface> =
-  new Set<BackofficeSurface>([
-    "payments.manage",
-    "refunds.manage",
-    "disputes.manage",
-    "invoices.manage",
-    "subscriptions.manage",
-    "payouts.manage",
-    "approvalPayments.manage",
-    "classSeries.money",
-    "users.moderate",
-  ]);
-
-/** The admin whose session this one is acting as, or null. */
-export function impersonatedBy(session: Session): string | null {
-  // Narrow rather than trust: the column exists on the Session row and the
-  // admin plugin's inferred session type declares it optional, but a custom
-  // session callback that re-spreads the session (or a test double) can leave
-  // it absent entirely, and "absent" must not read as "impersonated".
-  const value = (session as { impersonatedBy?: string | null }).impersonatedBy;
-  return value ?? null;
-}
-
-export interface OperatorGateOptions {
-  /**
-   * Which capability is being exercised. Only `requireBackofficeSurface`
-   * passes it, and only it consults {@link IMPERSONATION_DENIED_SURFACES}.
-   */
-  surface?: BackofficeSurface;
-}
-
-/**
- * The shared body of every privileged guard: no money under impersonation.
- * The 2FA precondition already ran in {@link requireApiAuth}.
- */
-async function enforceOperatorPreconditions(
-  session: Session,
-  opts: OperatorGateOptions = {},
-): Promise<NextResponse | null> {
-  if (opts.surface && impersonatedBy(session)) {
-    if (IMPERSONATION_DENIED_SURFACES.has(opts.surface)) {
-      return NextResponse.json(
-        {
-          error:
-            "This action changes real money or data, so it cannot be taken while viewing another account.",
-          code: "IMPERSONATION_BLOCKED",
-        },
-        { status: 403 },
-      );
-    }
-  }
-  return null;
-}
-
-/**
- * Standalone impersonation check for money doors that do not go through a
- * back-office surface — the shape `requireApiAuth` + a hand-rolled role check
- * leaves behind, and the one door of that shape that matters today is
- * `app/api/checkout/route.ts`. Returns a response to return, or null to
- * proceed. Exported so that call site is a one-liner rather than a re-derivation
- * of the deny-list.
- */
-export function assertNotImpersonated(session: Session): NextResponse | null {
-  if (!impersonatedBy(session)) return null;
-  return NextResponse.json(
-    {
-      error:
-        "This action changes real money or data, so it cannot be taken while viewing another account.",
-      code: "IMPERSONATION_BLOCKED",
-    },
-    { status: 403 },
-  );
-}
-
 /**
  * Strict ADMIN-only auth — for routes that mutate platform-level state
  * irreversibly (system jobs, maintenance mode, exchange rates, newsletters,
@@ -240,9 +146,7 @@ export function assertNotImpersonated(session: Session): NextResponse | null {
  *
  * @see docs/api/auth-helpers.md for the decision matrix.
  */
-export async function requireAdminAuth(
-  opts: OperatorGateOptions = {},
-): Promise<
+export async function requireAdminAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
@@ -255,8 +159,6 @@ export async function requireAdminAuth(
       ),
     };
   }
-  const refused = await enforceOperatorPreconditions(auth.session, opts);
-  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
@@ -270,9 +172,7 @@ export async function requireAdminAuth(
  * flavor below. If you're refactoring a route that previously allowed
  * both ADMIN and STAFF, use `requirePrivilegedAuth` instead.
  */
-export async function requireStaffAuth(
-  opts: OperatorGateOptions = {},
-): Promise<
+export async function requireStaffAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
@@ -285,8 +185,6 @@ export async function requireStaffAuth(
       ),
     };
   }
-  const refused = await enforceOperatorPreconditions(auth.session, opts);
-  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
@@ -298,9 +196,7 @@ export async function requireStaffAuth(
  *
  * @see docs/api/auth-helpers.md for the decision matrix.
  */
-export async function requirePrivilegedAuth(
-  opts: OperatorGateOptions = {},
-): Promise<
+export async function requirePrivilegedAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
@@ -313,8 +209,6 @@ export async function requirePrivilegedAuth(
       ),
     };
   }
-  const refused = await enforceOperatorPreconditions(auth.session, opts);
-  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
@@ -330,15 +224,9 @@ export async function requirePrivilegedAuth(
  * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
  *
  * @see lib/auth/backoffice-permissions.ts for the matrix and its rationale.
- *
- * This is also where the impersonation deny-list bites (see
- * {@link IMPERSONATION_DENIED_SURFACES}): every ops door in the app funnels
- * through here — `withOpsAction` in lib/backoffice/ops-action-log.ts calls
- * nothing else — so a money door cannot forget the check.
  */
 export async function requireBackofficeSurface(
   surface: BackofficeSurface,
-  opts: OperatorGateOptions = {},
 ): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
@@ -354,11 +242,6 @@ export async function requireBackofficeSurface(
       ),
     };
   }
-  const refused = await enforceOperatorPreconditions(auth.session, {
-    ...opts,
-    surface,
-  });
-  if (refused) return { error: refused };
   return { session: auth.session };
 }
 
