@@ -132,8 +132,8 @@ type PreviewState =
   | { phase: "valid"; orgName: string; orgLogo: string | null; role: string }
   | { phase: "invalid"; message: string };
 
-// The preview API returns `role` as a free-form string (Invitation.role on
-// the BetterAuth table). Narrow it to a MemberRole before label lookup;
+// The preview API returns `role` as a free-form string (Invitation.role).
+// Narrow it to a MemberRole before label lookup;
 // fall back to the raw value when the string doesn't match the enum.
 function roleLabel(role: string): string {
   const parsed = MemberRoleSchema.safeParse(role);

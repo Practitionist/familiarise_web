@@ -88,7 +88,6 @@ model User {
   supportFlowOutcomes       SupportFlowOutcome[]
   accounts                  Account[] // BetterAuth Accounts
   sessions                  Session[] // BetterAuth Sessions
-  members                   Member[] // BetterAuth membership rows
   memberships               Membership[] // Typed enterprise memberships (Arch 4-Modified)
   invitationsSent           Invitation[]               @relation("InvitationsSent")
   // #1927 — the platform-side operator door (STAFF/ADMIN), DISTINCT from the
@@ -908,10 +907,9 @@ model Session {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  activeOrganizationId String?
   // Required by the BetterAuth admin plugin's generated queries; impersonation
   // itself is not enabled (#693).
-  impersonatedBy       String?
+  impersonatedBy String?
 
   @@index([userId])
   @@map("sessions")
@@ -952,9 +950,8 @@ model Verification {
 //   INVOICED_MONTHLY  → BillingAccount.fundingSource=INVOICE + PurchaseOrder + Invoice
 //   PREPAID_UNLIMITED → Program(LICENSED_SEAT) coveredEngagementsPerCycle=null
 //
-// BetterAuth's `Member` table is kept for invitation-token compatibility; the
-// typed `Membership` model is the source of truth. Linkage via
-// Membership.betterAuthMemberId.
+// Membership is the only membership table; BetterAuth's organization plugin
+// (and its `Member` table) is not mounted.
 //
 // India compliance: fields are schema-final, implementations in
 // lib/compliance/** are stubbed (see docs/compliance/india/07-stubs-and-
@@ -967,11 +964,6 @@ model Organization {
   id   String @id @default(cuid())
   name String
   slug String @unique
-
-  // Unused by the app; BetterAuth 1.7's organization plugin schema check
-  // requires them. They go when the organization plugin is removed.
-  logo     String?
-  metadata String?
 
   status    OrgStatus @default(PENDING_VERIFICATION)
   /// Optimistic-lock clock for owner-editable settings. The PATCH CASes on the
@@ -1079,8 +1071,6 @@ model Organization {
   tdsRecords     TDSRecord[]
   tdsAdjustments TdsAdjustment[]
 
-  // BetterAuth (kept for invite-token flow)
-  members     Member[]
   invitations Invitation[]
 
   // Typed enterprise model
@@ -1209,28 +1199,6 @@ model Organization {
   @@map("organizations")
 }
 
-// BetterAuth Member — kept for invitation token compatibility; NOT the source
-// of truth for typed role/status. Our Membership table carries typed fields
-// and is linked via Membership.betterAuthMemberId.
-model Member {
-  id             String @id @default(cuid())
-  organizationId String
-  userId         String
-  role           String @default("member") // free-form; typed role lives on Membership
-
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  membership Membership?
-
-  createdAt DateTime @default(now())
-
-  @@unique([organizationId, userId])
-  @@index([organizationId])
-  @@index([userId])
-  @@map("members")
-}
-
 model Invitation {
   id             String   @id @default(cuid())
   organizationId String
@@ -1269,8 +1237,6 @@ model Invitation {
 
 //////////////////////////////////////////////////// MEMBERSHIP ////////////////////////////////////////////////////
 // Typed, unified membership. Supersedes the old OrganizationMemberProfile.
-// Links to BetterAuth Member via betterAuthMemberId (optional; populated on
-// invite acceptance and SSO auto-join).
 
 model Membership {
   id             String @id @default(uuid())
@@ -1307,10 +1273,6 @@ model Membership {
 
   // Entitlement tracking
   programAssignments ProgramAssignment[]
-
-  // BetterAuth bridge
-  betterAuthMemberId String? @unique
-  betterAuthMember   Member? @relation(fields: [betterAuthMemberId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

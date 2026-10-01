@@ -227,7 +227,6 @@ erDiagram
     User ||--o| OrgWorkspaceProfile         : "operator identity"
     User ||--o{ ConsentArtifact             : "DPDP grants"
 
-    Membership ||--o| Member                : "betterAuthMemberId"
     Membership ||--o{ ProgramAssignment     : "entitled to"
     Membership }o--o| RateCard              : "override (optional)"
 

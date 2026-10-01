@@ -31,7 +31,7 @@ BetterAuth is the authentication library powering sign-in, sign-up, session mana
 Plugins are registered in [`lib/auth.ts`](../../../lib/auth.ts#L319-L530) in this order:
 
 ```
-organization() → sso() → customSession() → nextCookies()
+sso() → customSession() → nextCookies()
 ```
 
 > [!WARNING]
@@ -39,7 +39,6 @@ organization() → sso() → customSession() → nextCookies()
 
 | Plugin            | What it does                                                                                                                                               |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `organization()`  | BetterAuth's org plugin. Creates `Member` rows. `creatorRole: "OWNER"`, `organizationLimit: 5`.                                                            |
 | `sso()`           | `@better-auth/sso` — mounts SAML + OIDC endpoints under `/api/auth/sso/*`. Auto-provisions the `ssoProvider` table.                                        |
 | `customSession()` | Enriches every session read with user fields and org memberships. SSO enforcement lives in `session.create.before`, not here (the read-time flag was removed — see Sessions and Hooks §2.3). This is the **hot path** — every authenticated request runs it. |
 | `nextCookies()`   | Wires BetterAuth's cookie lifecycle into Next.js `headers()` / `cookies()`.                                                                                |
@@ -151,13 +150,11 @@ With the cookie cache off, every authenticated request runs the session lookup p
 
 ## 6. Edge Cases & Foot-Guns
 
-1. **Plugin ordering matters.** `nextCookies()` must be last. `customSession()` must come after `organization()` and `sso()` because it reads data those plugins create.
+1. **Plugin ordering matters.** `nextCookies()` must be last. BetterAuth's organization plugin is deliberately not mounted: org membership is the typed `Membership` table, and SSO JIT writes it from the sso() `provisionUser` hook (`lib/sso/jit-membership.ts`).
 
 2. **`auth-client.ts` must mirror `auth.ts`.** If you add a plugin server-side, add its client plugin too. Missing `ssoClient()` on the client breaks `signIn.sso()` — PKCE isn't generated and OIDC flows silently fail.
 
 3. **Edge Runtime limitation.** `middleware.ts` runs in the Edge Runtime. `@better-auth/sso` imports `node:crypto` / `node:dns`, which are unavailable in Edge. That's why middleware only checks cookie presence — real validation happens in API routes.
-
-4. **`betterAuthMemberId` bridge.** BetterAuth's `Member` table and our `Membership` table are linked via `Membership.betterAuthMemberId`. If you delete one, the other becomes orphaned. Always operate on both.
 
 ## 7. Related Docs
 

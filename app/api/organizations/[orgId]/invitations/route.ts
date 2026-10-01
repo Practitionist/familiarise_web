@@ -2,10 +2,9 @@
  * GET  /api/organizations/[orgId]/invitations
  * POST /api/organizations/[orgId]/invitations
  *
- * Backed by BetterAuth's `Invitation` table — we keep the invitation
- * token lifecycle inside BetterAuth so the accept flow can verify the
- * token natively. The typed `Membership` row is created separately at
- * accept time (see /api/organizations/invitations/accept/route.ts).
+ * Backed by the app's own `Invitation` table (BetterAuth's organization
+ * plugin is not mounted). The typed `Membership` row is created at accept
+ * time (see /api/organizations/invitations/accept/route.ts).
  *
  * EXPERT requires canHost=true and LEARNER canSponsor=true (checked below);
  * SUPPORT is invitable like the other operator roles (#1527). The role list

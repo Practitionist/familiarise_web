@@ -99,7 +99,6 @@ erDiagram
   }
   Session {
     string userId FK
-    string activeOrganizationId
   }
   User {
     string email UK
@@ -601,24 +600,21 @@ forensic record an enterprise security review will pull.
 When an SSO user lands for the first time:
 
 1. BetterAuth creates the platform `User` + `Account` (with
-   `providerId = ssoProvider.providerId`).
-2. BetterAuth's organization plugin sees a matching org (via allowed
-   domain) and creates a bare `Member` row.
-3. `customSession` (`lib/auth.ts`) spots the bare `Member` without a
-   `Membership` sibling and auto-creates one:
-   - `role = defaultRoleForAutoJoin` — **locked to `LEARNER`** (audit
-     Phase A.1; see [#jit-default-role](#jit-default-role) below).
-   - `status = ACTIVE`
-   - `consulteeProfileId` is populated when the role is LEARNER and
-     the user has an existing ConsulteeProfile.
-4. The `Member.id` is recorded as `Membership.betterAuthMemberId` so
-   the bridge between the two tables is live.
+   `providerId = ssoProvider.providerId`) and the session row.
+2. The sso() plugin's `provisionUser` hook (`lib/sso/plugin-options.ts`)
+   calls `provisionSsoMembership` (`lib/sso/jit-membership.ts`) for
+   `SsoProvider.organizationId`, before the session cookie is set:
+   - an existing `Membership` of any status → no-op;
+   - a SUSPENDED / DEACTIVATED org, or a PENDING_VERIFICATION org at
+     `UNVERIFIED_ORG_SEAT_CAP` → skipped, with an `SSO` system event;
+   - otherwise one Serializable transaction creates the profile the role
+     needs and the `Membership` (`role = defaultRoleForAutoJoin`, **locked
+     to `LEARNER`**, see [#jit-default-role](#jit-default-role); `status =
+     ACTIVE`).
 
-The auto-repair is wrapped in a try/catch that swallows Prisma P2002
-(unique-constraint races) ONLY — every other error re-throws and
-surfaces at the BetterAuth boundary. Audit Phase A.3 narrowed the
-prior bare `catch {}` because it swallowed transient DB drops + RLS
-denials, leaving users with a session cookie but no Membership row.
+Only Prisma P2002 on `(userId, organizationId)` (a concurrent login won) is
+swallowed. Every other error fails the callback, so no user is signed in
+without the membership; the next login retries.
 
 For the full sequence (including the `sessionGeneration` marker that
 keeps active sessions fresh after role changes) see

@@ -52,12 +52,10 @@ don't repeat content.
    for a session cookie. Real validation happens in the API route via
    `requireApiAuth()`. See [`02-middleware.md`](./02-middleware.md).
 3. **Role hierarchy (org-side):** `OWNER > MAINTAINER > MANAGER > EXPERT > SUPPORT > LEARNER`. Platform-side: `ADMIN > STAFF > everyone-else`. Use the typed helpers in `lib/auth-helpers.ts`; never inline-compare roles. See [`docs/authorization/`](../../authorization/README.md).
-4. **Two membership tables.** BetterAuth's untyped `Member` (free-form
-   string role, kept for invite-token compatibility) and our typed
-   `Membership` (the source of truth for role/status/profile links).
-   `customSession` reconciles them on every authenticated request; the
-   `betterAuthMemberId` field bridges the two. See
-   [`03-sessions-and-hooks.md`](./03-sessions-and-hooks.md).
+4. **One membership table.** Org membership is the typed `Membership`
+   (role/status/profile links). BetterAuth's organization plugin and its
+   `Member` table are not used; SSO JIT writes `Membership` at sign-in
+   (`lib/sso/jit-membership.ts`).
 5. **SSO enforcement is server-side.** `session.create.before` rejects
    credential/OAuth signins from enforced domains at the source (closes
    #673). There is no read-time enforcement: a `ssoEnforcementFailed`

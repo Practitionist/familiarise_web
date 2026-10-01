@@ -1,10 +1,8 @@
 /**
  * POST /api/organizations/invitations/accept
  *
- * Accepts a pending BetterAuth `Invitation` by id and creates the typed
- * `Membership` row in the same transaction. Also creates the BetterAuth
- * `Member` sibling so BetterAuth's org-scoped session flows keep working
- * — the two tables are linked via `Membership.betterAuthMemberId`.
+ * Accepts a pending `Invitation` by id and creates the typed `Membership`
+ * row in the same transaction.
  *
  * Token race: two concurrent accepts from the same email could both pass
  * the pre-check. `updateMany WHERE status = pending` gives us an atomic
@@ -95,8 +93,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Narrow the stored string to a MemberRole. BetterAuth's Invitation
-  // table stores role as a free-form string, so validate before using.
+  // Narrow the stored string to a MemberRole. Invitation.role is a
+  // free-form string column, so validate before using.
   const roleResult = MemberRoleSchema.safeParse(inv.role);
   if (!roleResult.success) {
     return NextResponse.json(
@@ -380,24 +378,13 @@ export async function POST(req: NextRequest) {
     payoutRecipient: "SELF" | "ORGANIZATION";
   };
 
-  /** A first-time joiner: the BetterAuth Member sibling plus the Membership. */
+  /** A first-time joiner. */
   async function createMembership(tx: Tx, roleData: RoleData) {
-    // BetterAuth's Member row is kept for org-scoped session flows; its role
-    // is a free-form string, so the typed value is written for third-party
-    // readers. Membership.betterAuthMemberId preserves the linkage.
-    const betterAuthMember = await tx.member.create({
-      data: {
-        organizationId: inv.organizationId,
-        userId,
-        role: normalizedRole,
-      },
-    });
     return tx.membership.create({
       data: {
         userId,
         organizationId: inv.organizationId,
         status: "ACTIVE",
-        betterAuthMemberId: betterAuthMember.id,
         ...roleData,
       },
     });

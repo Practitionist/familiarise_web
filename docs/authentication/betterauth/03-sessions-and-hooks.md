@@ -62,33 +62,11 @@ session.create.before hook ──── SSO veto (may throw FORBIDDEN)
 
 ### 2.3 customSession Enrichment
 
-Every `getSession()` call runs `customSession()`. Three things happen:
+Every `getSession()` call runs `customSession()`. It only reads; SSO JIT
+membership is written at sign-in by the sso() `provisionUser` hook
+(`lib/sso/jit-membership.ts`), not here.
 
-**1. SSO Membership Bridge**
-
-BetterAuth's `Member` table (untyped, free-form `role` string) and our `Membership` table (typed `MemberRole` enum) are separate. When an SSO user auto-joins, BetterAuth creates a `Member` row but not our `Membership`. The bridge finds "bare" members (`Member` rows where `membership IS NULL`) and creates the missing `Membership`:
-
-```typescript
-// Simplified flow:
-const bareMembers = await prisma.member.findMany({
-  where: { userId: user.id, membership: null },
-});
-for (const bm of bareMembers) {
-  await prisma.membership.create({
-    data: {
-      role: org.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER",
-      status: "ACTIVE",
-      betterAuthMemberId: bm.id,
-      // ...
-    },
-  });
-}
-```
-
-> [!WARNING]
-> Unique-constraint race conditions on `Membership` creation are caught and silently ignored — two concurrent requests might both try to create the same membership.
-
-**2. Organization Memberships Payload**
+**1. Organization Memberships Payload**
 
 Loads all ACTIVE memberships with org metadata. This powers the `OrgSwitcher` and checkout without an extra roundtrip. Shape:
 
@@ -107,7 +85,7 @@ Loads all ACTIVE memberships with org metadata. This powers the `OrgSwitcher` an
 }
 ```
 
-**3. SSO Enforcement Flag (removed)**
+**2. SSO Enforcement Flag (removed)**
 
 This used to mirror the `session.create.before` logic to set `ssoEnforcementFailed: true` on existing sessions. The flag never had a consumer and was removed (#1242) — do not re-introduce it without its consumer. Enforcement lives solely in `session.create.before`.
 
@@ -138,14 +116,11 @@ Two pieces work together to make the rendered auth state correct and consistent 
 
 Pass `true` to `getSession()` (sets `disableCookieCache`) for role-gated, PII or finance reads and for fields that were just mutated (e.g., `onboardingCompleted` after onboarding submit). The cookie cache is currently off, so both forms read the DB, but the distinction keeps those reads fresh if the cache is ever re-enabled.
 
-### Two Membership Tables
+### One Membership Table
 
-| Table        | Owned by   | Role type         | Purpose                                                     |
-| ------------ | ---------- | ----------------- | ----------------------------------------------------------- |
-| `Member`     | BetterAuth | Free-form string  | Invitation tokens, BetterAuth org plugin internals          |
-| `Membership` | Our code   | `MemberRole` enum | Source of truth for role, status, profile links, department |
-
-**Bridge field:** `Membership.betterAuthMemberId` links to `Member.id`. Always keep both in sync.
+`Membership` (our code, `MemberRole` enum) is the source of truth for role,
+status, profile links and department. BetterAuth's organization plugin and its
+`Member` table are not mounted.
 
 ## 4. Edge Cases & Foot-Guns
 

@@ -228,8 +228,7 @@ single Prisma transaction that:
 3. If `canSponsor=true`, creates the `BillingAccount` with the chosen
    `fundingSource`. `walletBalance = 0` is set when the source is
    `WALLET`, and `null` otherwise.
-4. Creates an `OWNER` `Membership` row AND a matching BetterAuth `Member`
-   row, bridged via `Membership.betterAuthMemberId`.
+4. Creates an `OWNER` `Membership` row.
 5. Upserts an `OrgWorkspaceProfile` for the creator (one row per user who
    operates an org, shared across multiple orgs) and stamps
    `User.orgWorkspaceProfileId`. The response body includes

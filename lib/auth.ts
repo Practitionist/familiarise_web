@@ -3,12 +3,7 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import {
-  admin,
-  customSession,
-  organization,
-  twoFactor,
-} from "better-auth/plugins";
+import { admin, customSession, twoFactor } from "better-auth/plugins";
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
@@ -75,8 +70,8 @@ export const auth = betterAuth({
     // SSO provider lifecycle. Registration, edits and deletes go through
     // app/api/organizations/[orgId]/sso/providers (org-scoped, audited,
     // server-generated providerId), and approval through the ADMIN door
-    // under app/api/admin/organizations. The plugin's own endpoints
-    // authorize on org-plugin Member rank or `provider.userId`, which our
+    // under app/api/admin/organizations. Without the organization plugin the
+    // plugin's own endpoints authorize on `provider.userId`, which our
     // org-scoped rows leave null, and its verify-domain endpoint would flip
     // `domainVerified` without staff approval.
     "/sso/register",
@@ -97,6 +92,15 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       if (ctx.path?.startsWith("/sso/saml2")) {
         throw new APIError("NOT_FOUND");
+      }
+      // sign-in/sso resolves `organizationSlug` through the organization
+      // plugin's model, which is not mounted, so the adapter would throw a
+      // 500 (and an auth-error Sentry event) on a junk parameter. Our client
+      // signs in by providerId or email only.
+      if (ctx.path === "/sign-in/sso" && ctx.body?.organizationSlug) {
+        throw new APIError("BAD_REQUEST", {
+          message: "organizationSlug is not supported",
+        });
       }
     }),
   },
@@ -599,23 +603,6 @@ export const auth = betterAuth({
       roles: { ADMIN: adminAc, STAFF: staffAc, user: userAc },
       bannedUserMessage:
         "Your account has been suspended. If you believe this is a mistake, please contact support.",
-    }),
-
-    // Enterprise: BetterAuth Organization plugin.
-    // Arch 4-Modified: BetterAuth Member.role is a free-form string; the
-    // source of truth is our Membership model (linked via
-    // Membership.betterAuthMemberId). On creator-role assignment we pass the
-    // new enum name "OWNER" which our auth-helpers normalize.
-    // #1132 — org creation must go through POST /api/organizations, which
-    // enforces the ORG_WORKSPACE/ADMIN gate, ENABLE_HOST_ORGS, slug validation
-    // and BillingAccount + OrgWorkspaceProfile creation. The plugin's own
-    // /api/auth/organization/create defaults this flag to `true` when unset,
-    // which let any authenticated user mint an Organization and own it while
-    // skipping every one of those steps.
-    organization({
-      organizationLimit: 5,
-      creatorRole: "OWNER",
-      allowUserToCreateOrganization: false,
     }),
 
     // Enterprise: SSO plugin (OIDC). Per-org providers are linked via

@@ -806,7 +806,6 @@ export async function requireOrgAccess(
       payoutRecipient: "SELF",
       rateCardOverrideId: null,
       exclusiveEngagement: false,
-      betterAuthMemberId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
