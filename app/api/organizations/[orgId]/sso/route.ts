@@ -17,6 +17,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { readOidcConfig } from "@/lib/prisma-sso-secret-extension";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
 import { JitDefaultRoleSchema } from "@/lib/labels/org-labels";
@@ -264,10 +265,20 @@ export async function GET(
       defaultRoleForAutoJoin: "LEARNER",
       version: 1,
     },
-    providers: providers.map(({ oidcConfig, ...rest }) => ({
-      ...rest,
-      providerType: oidcConfig ? "oidc" : null,
-    })),
+    providers: providers.map((provider) => {
+      // `oidcConfig` decrypts on read; one unreadable row must not 500 the
+      // whole list. Its detail route reports the failure.
+      const { config, failure } = readOidcConfig(provider);
+      return {
+        id: provider.id,
+        providerId: provider.providerId,
+        issuer: provider.issuer,
+        domain: provider.domain,
+        domainVerified: provider.domainVerified,
+        providerType: config || failure ? "oidc" : null,
+        ...(failure ? { providerMisconfigured: true } : {}),
+      };
+    }),
     domainClaims: claims,
   });
 }

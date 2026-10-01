@@ -129,16 +129,9 @@ function makeClient() {
 
   // Two result extensions, both applying on read:
   //   - moneyResultExtensions: BigInt money columns -> number (#780).
-  //   - ssoSecretDecryptExtension: `SsoProvider.oidcConfig` / `samlConfig`
-  //     envelope -> the JSON object BetterAuth's SSO plugin expects. The
-  //     plugin has no read hook (`SSOOptions` exposes no decrypt), and
-  //     @better-auth/prisma-adapter has no transform option, so the database
-  //     layer is the only seam that covers *every* reader at once — the
-  //     plugin and the admin settings GET. Decrypting per call site is how a
-  //     tenant's IdP client secret ends up in a log line. Plaintext rows pass
-  //     through untouched, so this is safe to land before the encryption
-  //     migration.
-  //     See lib/prisma-sso-secret-extension.ts for the full rationale.
+  //   - ssoSecretDecryptExtension: `SsoProvider.oidcConfig` envelope -> the
+  //     JSON object BetterAuth's SSO plugin expects. See that module for why
+  //     the Prisma client is the only seam that covers every reader.
   //
   // Merged per-model, not with a top-level spread: `$extends` infers each
   // model's result shape from its own object literal, and a spread widens

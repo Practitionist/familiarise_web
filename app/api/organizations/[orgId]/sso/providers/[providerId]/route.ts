@@ -24,10 +24,8 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import { redactOidcConfig } from "@/lib/sso/redact-oidc-config";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
-import {
-  SecretPayloadError,
-  type SecretPayloadFailure,
-} from "@/lib/sso/secret-crypto";
+import type { SecretPayloadFailure } from "@/lib/sso/secret-crypto";
+import { readOidcConfig } from "@/lib/prisma-sso-secret-extension";
 
 /**
  * The message an OWNER sees when their provider's config cannot be read.
@@ -59,47 +57,13 @@ export async function GET(
   const access = await requireOrgAccess(orgId, { permission: "identity.read" });
   if (access.error) return access.error;
 
-  // This query is where the stored config is decrypted: the
-  // `$extends({ result })` map in `lib/prisma-sso-secret-extension.ts`
-  // normalises `oidcConfig` to a parsed object on the way
-  // out, for both the `sso:v1:` envelope and the legacy plaintext-JSON
-  // format. So there is nothing to decode here, and no per-column
-  // `try`/`catch` — a row we cannot read now fails as ONE query rather
-  // than as one column, and that failure has to be caught here.
+  // Decryption happens lazily when `oidcConfig` is read, so the read goes
+  // through `readOidcConfig` rather than relying on a try around the query.
   //
-  // Reported as 200 with `providerMisconfigured` set, not as an error status.
-  // The settings page has to render *something* for this provider, and the
-  // only thing it can honestly render is its identity with no config; a 4xx
-  // or 5xx makes the client treat the response as a failed fetch and drop the
-  // provider from the list entirely, which leaves the admin with no idea
-  // which org-scoped IdP just went dark. (An earlier version of this comment
-  // claimed 409; the code has always returned 200, and 200 is what the
-  // settings page is written against.)
-  let provider: Awaited<ReturnType<typeof findProvider>>;
-  let configError: string | null = null;
-  try {
-    provider = await findProvider(providerId, orgId);
-  } catch (err) {
-    if (!(err instanceof SecretPayloadError)) throw err;
-    Sentry.captureException(err, {
-      tags: { subsystem: "enterprise", op: "sso-provider-read" },
-      extra: { failure: err.failure },
-    });
-    configError = unreadableConfigError(err.failure);
-    // The shape is fixed and the ids are route params, so a placeholder row
-    // is enough to keep the response identical to the readable case. The
-    // config is `null` below, so a failed read can never leak a partial
-    // config either.
-    provider = {
-      id: "",
-      providerId,
-      issuer: "",
-      domain: "",
-      domainVerified: false,
-      oidcConfig: null,
-    };
-  }
-
+  // An unreadable config is a 200 with `providerMisconfigured`, not an error
+  // status: the settings page must still list the provider so the admin can
+  // see which IdP is broken.
+  const provider = await findProvider(providerId, orgId);
   if (!provider) {
     return NextResponse.json(
       { error: "SSO provider not found" },
@@ -107,7 +71,18 @@ export async function GET(
     );
   }
 
-  const type: "oidc" | null = provider.oidcConfig ? "oidc" : null;
+  const read = readOidcConfig(provider);
+  let configError: string | null = null;
+  if (read.failure) {
+    Sentry.captureException(read.error, {
+      tags: { subsystem: "enterprise", op: "sso-provider-read" },
+      extra: { failure: read.failure },
+    });
+    configError = unreadableConfigError(read.failure);
+  }
+  const oidcConfig = read.config;
+
+  const type: "oidc" | null = oidcConfig ? "oidc" : null;
 
   // A provider row with no config is a half-written record. Fabricating a
   // `callbackUrl` for it would write a misleading value into the admin UI;
@@ -124,7 +99,7 @@ export async function GET(
       domainVerified: provider.domainVerified,
       providerType: type,
       callbackUrl,
-      oidcConfig: redactOidcConfig(provider.oidcConfig),
+      oidcConfig: redactOidcConfig(oidcConfig),
       ...(configError
         ? {
             providerMisconfigured: true,
@@ -137,13 +112,8 @@ export async function GET(
 }
 
 /**
- * The provider row, as the Prisma layer returns it: the config column
- * already decrypted and parsed.
- *
- * `select` is explicit so the returned shape is exactly what this route
- * serves — `userId` in particular has no business crossing into an admin
- * response — and so the placeholder the unreadable path substitutes is
- * checked against the same shape as a real row.
+ * The provider row; `oidcConfig` decrypts when read. `select` is explicit so
+ * `userId` never crosses into an admin response.
  */
 function findProvider(providerId: string, orgId: string) {
   return prisma.ssoProvider.findFirst({
