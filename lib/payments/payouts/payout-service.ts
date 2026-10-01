@@ -1050,26 +1050,8 @@ async function processSinglePayout(payout: {
       return { payoutId: payout.id, success: false, skipped: true };
     }
 
-    // #1020 sibling — a payout whose earnings sit on a REFUNDED payment must
-    // not leave the building either. The dispute guard above has an earnable
-    // HELD to fall back on; a refund has no such status, so this pre-claim
-    // reject is the ONLY line of defence.
-    //
-    // The window it closes is real and short. scripts/refunds/
-    // reconcile-pending-refunds.ts marks a refund SUCCEEDED once it is an hour
-    // old (RECONCILIATION_THRESHOLD_MS) WITHOUT running the earnings cascade,
-    // deliberately — the cascade is owned by applyRefundCascade so the app, the
-    // gateway webhook and the backstop cron apply it exactly once. Until the
-    // 15-minute cascade-refund-earnings backstop claims `cascadedAt`, the
-    // earning is still READY with refundedShareAmount = 0 for a booking the
-    // gateway has already refunded. Paying it in that state returns the money to
-    // the buyer AND pays the consultant. A PENDING refund blocks for the same
-    // reason one step earlier: the gateway call is out, so the outcome is
-    // unknown and could still land.
-    //
-    // FAILED/CANCELLED never block (see REFUND_INACTIVE_FOR_GATING): no money
-    // moved, so the earning is still owed in full. A SUCCEEDED refund whose
-    // cascade has landed already deducted the share, so it is safe to pay.
+    // A refund that is PENDING or not yet cascaded onto the earning would be
+    // paid to the consultant AND returned to the buyer. Block until it lands.
     const refundPendingEarning = await prisma.consultantEarnings.findFirst({
       where: {
         payoutId: payout.id,
@@ -1092,6 +1074,27 @@ async function processSinglePayout(payout: {
         subsystem: "payments",
         expected: true,
         extra: { payoutId: payout.id },
+      });
+      return { payoutId: payout.id, success: false, skipped: true };
+    }
+
+    // `payout.amount` is frozen at batch time; a reversal landing on a BATCHED
+    // earning afterwards lowers what is owed. Never disburse more than that.
+    const owedAgg = await prisma.consultantEarnings.aggregate({
+      where: { payoutId: payout.id },
+      _sum: { consultantSharePaise: true, refundedShareAmount: true },
+    });
+    const owedPaise =
+      sumPaise(owedAgg._sum.consultantSharePaise) -
+      sumPaise(owedAgg._sum.refundedShareAmount);
+    if (owedPaise < payout.amount) {
+      console.warn(
+        `[Payouts] Payout ${payout.id} blocked — earnings owe ${owedPaise}p < batched ${payout.amount}p`,
+      );
+      reportSentryMessage("Payout amount exceeds what its earnings still owe", {
+        subsystem: "payments",
+        level: "error",
+        extra: { payoutId: payout.id, owedPaise, amount: payout.amount },
       });
       return { payoutId: payout.id, success: false, skipped: true };
     }
