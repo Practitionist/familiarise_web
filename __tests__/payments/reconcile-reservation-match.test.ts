@@ -233,6 +233,72 @@ describe("reconcilePendingRefunds placeholder matching", () => {
   });
 });
 
+// Prod 2026-10-01: orders.fetchPayments 404'd for five stale placeholders and
+// failed every run. Past 24h the row is FAILED and paged once; younger waits.
+describe("reconcilePendingRefunds — placeholder whose order the gateway does not know", () => {
+  const orderNotFound = () =>
+    new RefundError("Failed to process refund", "UNKNOWN_ERROR", "RAZORPAY", {
+      statusCode: 404,
+      error: undefined,
+    });
+
+  test("past 24h → FAILED via CAS, paged once, batch continues, run succeeds", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([
+        placeholderRow({ id: "res_a", ageHours: 30 }),
+        placeholderRow({ id: "res_b", ageHours: 30 }),
+      ])
+      .mockResolvedValueOnce([]);
+    mockList
+      .mockRejectedValueOnce(orderNotFound())
+      .mockRejectedValueOnce(orderNotFound());
+
+    const result = await reconcilePendingRefunds();
+
+    expect(mockList).toHaveBeenCalledTimes(2);
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "res_b", status: "PENDING" },
+        data: expect.objectContaining({ status: "FAILED" }),
+      }),
+    );
+    expect(result).toMatchObject({
+      success: true,
+      failedCount: 2,
+      failedUnknownId: 2,
+      errors: [],
+    });
+    expect(mockPage).toHaveBeenCalledTimes(1);
+    expect(mockPage.mock.calls[0][1]).toMatchObject({
+      extra: { failed: ["res_a", "res_b"] },
+    });
+  });
+
+  test("within 24h → left PENDING and skipped; any other list error stays an error", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([
+        placeholderRow({ id: "res_young", ageHours: 2 }),
+        placeholderRow({ id: "res_flaky", ageHours: 30 }),
+      ])
+      .mockResolvedValueOnce([]);
+    mockList.mockRejectedValueOnce(orderNotFound()).mockRejectedValueOnce(
+      new RefundError("Failed to process refund", "UNKNOWN_ERROR", "RAZORPAY", {
+        statusCode: 502,
+      }),
+    );
+
+    const result = await reconcilePendingRefunds();
+
+    expect(refundTable.updateMany).not.toHaveBeenCalled();
+    expect(result.skippedCount).toBe(1);
+    expect(result.errors).toEqual([
+      "Refund res_flaky: Failed to process refund",
+    ]);
+    expect(result.success).toBe(false);
+    expect(mockPage).not.toHaveBeenCalled();
+  });
+});
+
 describe("reconcilePendingRefunds real-id PENDING polling", () => {
   test("polls getRefund and settles a lost-webhook confirmation", async () => {
     refundTable.findMany
