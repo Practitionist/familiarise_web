@@ -137,11 +137,17 @@ describe("org payout submission error classification (#1846 N1)", () => {
     },
     {
       label: "a 409 whose description says 422 and invalid",
-      err: gatewayError(409, "422 invalid fund_account_id is already in flight"),
+      err: gatewayError(
+        409,
+        "422 invalid fund_account_id is already in flight",
+      ),
     },
     {
       label: "a 503 whose description says invalid",
-      err: gatewayError(503, "service temporarily unavailable: invalid upstream state"),
+      err: gatewayError(
+        503,
+        "service temporarily unavailable: invalid upstream state",
+      ),
     },
     {
       label: "a 502 whose description says bad request",
@@ -189,11 +195,12 @@ describe("org payout submission error classification (#1846 N1)", () => {
 
   // A 2xx is not a rejection either — only the named 4xx range is.
   const NON_REJECTIONS: number[] = [200, 201, 302];
-  it.each(NON_REJECTIONS)("does not treat a %i as a definitive rejection", (
-    status,
-  ) => {
-    expect(classifyGatewaySubmissionError(gatewayError(status, "ok"))).toBe(
-      "TRANSIENT_OR_UNKNOWN",
-    );
-  });
+  it.each(NON_REJECTIONS)(
+    "does not treat a %i as a definitive rejection",
+    (status) => {
+      expect(classifyGatewaySubmissionError(gatewayError(status, "ok"))).toBe(
+        "TRANSIENT_OR_UNKNOWN",
+      );
+    },
+  );
 });

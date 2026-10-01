@@ -264,8 +264,10 @@ function txStub() {
         if (where.status?.in && !where.status.in.includes(e.status)) {
           return { count: 0 };
         }
-        if (where.refundedAmountPaise !== undefined &&
-            e.refundedAmountPaise !== where.refundedAmountPaise) {
+        if (
+          where.refundedAmountPaise !== undefined &&
+          e.refundedAmountPaise !== where.refundedAmountPaise
+        ) {
           return { count: 0 };
         }
         Object.assign(e, data);

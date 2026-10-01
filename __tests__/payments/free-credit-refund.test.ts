@@ -459,7 +459,9 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     // Absolute-set semantics on this rail (not {increment}) — the whole point
     // of the CAS: two writers can only compose to min(share, a + b).
     expect(earningUpdate).toBeDefined();
-    expect((earningUpdate![0] as { data: Record<string, unknown> }).data).toMatchObject({
+    expect(
+      (earningUpdate![0] as { data: Record<string, unknown> }).data,
+    ).toMatchObject({
       status: "REFUNDED",
       refundedShareAmount: 80_000,
     });

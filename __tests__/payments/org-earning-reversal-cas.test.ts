@@ -67,14 +67,19 @@ jest.mock("../../lib/api/organizations/program-helpers", () => ({
 }));
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
-  restoreCreditsForPaymentUpTo: jest.fn(async (_p: string, _t: unknown, n: number) => n),
+  restoreCreditsForPaymentUpTo: jest.fn(
+    async (_p: string, _t: unknown, n: number) => n,
+  ),
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: jest.fn(),
   findDedupedRefund: (...a: unknown[]) => mockFindDeduped(...a),
   isDedupeKeyConflict: () => false,
   RefundValidationError: class RefundValidationError extends Error {
-    constructor(message: string, public code: string) {
+    constructor(
+      message: string,
+      public code: string,
+    ) {
       super(message);
       this.name = "RefundValidationError";
     }
@@ -357,7 +362,10 @@ describe("org capped earning reversal — the cap under a partial race", () => {
 
     const out = await applyCappedOrgEarningReversal(db, { ...r }, 3_000);
 
-    expect(out).toMatchObject({ reversedPaise: 2_000, refundedAmountPaise: 3_000 });
+    expect(out).toMatchObject({
+      reversedPaise: 2_000,
+      refundedAmountPaise: 3_000,
+    });
     expect(dataOf(updateMany)).toEqual({
       refundedAmountPaise: 3_000,
       status: EarningStatus.REFUNDED,
@@ -398,7 +406,10 @@ describe("org capped earning reversal — PAID, and the terminal row", () => {
     // The guard only fires when this call actually moves the status, so a
     // partial clawback of paid money stays legal on the same footing as the
     // consultant twin.
-    const r = orgRow({ status: EarningStatus.PAID, refundedAmountPaise: 5_000 });
+    const r = orgRow({
+      status: EarningStatus.PAID,
+      refundedAmountPaise: 5_000,
+    });
     const { db, updateMany } = orgStore([r]);
 
     const out = await applyCappedOrgEarningReversal(db, { ...r }, 2_000);
@@ -467,7 +478,9 @@ describe("org capped earning reversal — zero never reaches the journal", () =>
     expect(r.refundedAmountPaise).toBe(0);
     // The org rail names ITSELF in the warning, so the log points at the twin.
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("Org earnings oe-1: capped reversal CAS refused twice"),
+      expect.stringContaining(
+        "Org earnings oe-1: capped reversal CAS refused twice",
+      ),
     );
     warn.mockRestore();
   });
@@ -547,7 +560,9 @@ describe("the generalisation leaves the consultant rail alone", () => {
     await applyCappedEarningReversal(db, { ...r }, 1_000);
 
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("Earnings ce-1: capped reversal CAS refused twice"),
+      expect.stringContaining(
+        "Earnings ce-1: capped reversal CAS refused twice",
+      ),
     );
     warn.mockRestore();
   });
@@ -628,8 +643,9 @@ function lastPosting(): any[] {
 }
 
 function clawbackPosts() {
-  return mockPostLedgerTxn.mock.calls.filter(([, arg]: [unknown, { idempotencyKey: string }]) =>
-    String(arg?.idempotencyKey).startsWith("clawback:"),
+  return mockPostLedgerTxn.mock.calls.filter(
+    ([, arg]: [unknown, { idempotencyKey: string }]) =>
+      String(arg?.idempotencyKey).startsWith("clawback:"),
   );
 }
 
@@ -676,7 +692,10 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     tx.organizationEarnings.findUnique = d.findUnique;
     tx.payment.findUniqueOrThrow.mockResolvedValue(orgOnlySettlement([r]));
 
-    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" });
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+    });
 
     // The row landed at its share via the CAS (absolute set, not an increment).
     expect(r.refundedAmountPaise).toBe(20_000);
@@ -689,7 +708,9 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     const clawback = tx.organizationPayout.update.mock.calls.find(
       ([arg]: any) => !!arg?.data?.clawbackAmountPaise,
     );
-    expect(clawback?.[0].data.clawbackAmountPaise).toEqual({ increment: 20_000 });
+    expect(clawback?.[0].data.clawbackAmountPaise).toEqual({
+      increment: 20_000,
+    });
     // …and so did the audit row and the clawback journal, exactly once.
     expect(tx.orgAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -724,7 +745,10 @@ describe("free_ credits rail — the org clawback reads the APPLIED amount", () 
     tx.payment.findUniqueOrThrow.mockResolvedValue(orgOnlySettlement([r]));
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
 
-    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" });
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+    });
 
     // Both attempts ran, neither won — a reported no-op, never a claimed write.
     expect(d.updateMany).toHaveBeenCalledTimes(2);

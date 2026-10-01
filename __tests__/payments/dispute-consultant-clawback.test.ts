@@ -31,7 +31,11 @@
  * parity and idempotency at the call site.
  */
 
-import type { DisputeStatus, EarningStatus, PayoutStatus } from "@prisma/client";
+import type {
+  DisputeStatus,
+  EarningStatus,
+  PayoutStatus,
+} from "@prisma/client";
 
 interface SystemErrorPayload {
   organizationId?: string | null;
@@ -47,7 +51,9 @@ const recordSystemError = jest
 const applyReversal = jest
   .fn<Promise<unknown>, [unknown, unknown]>()
   .mockResolvedValue({ kind: "CONSULTANT_CLAWBACK", clawbackPosted: true });
-const recordTdsReversal = jest.fn<Promise<void>, [unknown]>().mockResolvedValue();
+const recordTdsReversal = jest
+  .fn<Promise<void>, [unknown]>()
+  .mockResolvedValue();
 
 jest.mock("../../lib/enterprise/system-events", () => {
   const recordSystemEvent = jest.fn<Promise<void>, []>().mockResolvedValue();
@@ -183,7 +189,13 @@ function makeTxStub() {
         return { ...row, payment: store.payments.get(row.paymentId) ?? null };
       },
       create: async () => ({}),
-      update: async ({ where, data }: { where: { disputeId: string }; data: Partial<DisputeRow> }) => {
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { disputeId: string };
+        data: Partial<DisputeRow>;
+      }) => {
         const row = store.disputes.find((d) => d.disputeId === where.disputeId);
         if (!row) return null;
         Object.assign(row, data);
@@ -227,7 +239,11 @@ function makeTxStub() {
         Object.assign(row, data);
         return { count: 1 };
       },
-      findMany: async ({ where }: { where: { paymentId: string; status?: { in: EarningStatus[] } } }) =>
+      findMany: async ({
+        where,
+      }: {
+        where: { paymentId: string; status?: { in: EarningStatus[] } };
+      }) =>
         store.consultantEarnings
           .filter(
             (e) =>
@@ -235,15 +251,21 @@ function makeTxStub() {
               (!where.status || where.status.in.includes(e.status)),
           )
           .map((e) => ({ ...e })),
-      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Record<string, unknown>;
+      }) => {
         const row = store.consultantEarnings.find((e) => e.id === where.id);
         if (!row) return null;
         for (const [k, v] of Object.entries(data)) {
           const cur = (row as unknown as Record<string, unknown>)[k];
           (row as unknown as Record<string, unknown>)[k] =
             v !== null && typeof v === "object" && "increment" in (v as object)
-              ? (((cur as number | null) ?? 0) +
-                  (v as { increment: number }).increment)
+              ? ((cur as number | null) ?? 0) +
+                (v as { increment: number }).increment
               : v;
         }
         return row;
@@ -263,7 +285,10 @@ function makeTxStub() {
     billingAccount: { findFirst: async () => null },
     // null ⇒ applyB2cChargebackReversal bails (no booking journal to mirror).
     // That path is covered by its own suite; here it just stays quiet.
-    ledgerTransaction: { findUnique: async () => null, create: async () => ({}) },
+    ledgerTransaction: {
+      findUnique: async () => null,
+      create: async () => ({}),
+    },
     orgAuditLog: { create: async () => ({}) },
     gstTcsAdjustment: { create: async () => ({}) },
   };
@@ -311,15 +336,18 @@ function seedEarning(
 /** The single CONSULTANT_CLAWBACK call the handler made, if any. */
 function consultantClawbackCalls() {
   return applyReversal.mock.calls
-    .map(([, input]) => input as {
-      source: {
-        kind: string;
-        consultantPayoutId: string;
-        consultantProfileId: string;
-      };
-      amountPaise: number;
-      refundId: string;
-    })
+    .map(
+      ([, input]) =>
+        input as {
+          source: {
+            kind: string;
+            consultantPayoutId: string;
+            consultantProfileId: string;
+          };
+          amountPaise: number;
+          refundId: string;
+        },
+    )
     .filter((i) => i.source.kind === "CONSULTANT_CLAWBACK");
 }
 
@@ -329,8 +357,8 @@ beforeEach(() => {
   store.disputes.length = 0;
   store.consultantEarnings.length = 0;
   tx = makeTxStub();
-  mockedTransaction.mockImplementation((fn: (t: typeof tx) => Promise<unknown>) =>
-    fn(tx),
+  mockedTransaction.mockImplementation(
+    (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
   );
 });
 
@@ -451,7 +479,9 @@ describe("LOST dispute on a PAID consultant earning — the clawback", () => {
     // would have been dropped as a replay and 2000 paise lost.
     const calls = consultantClawbackCalls();
     expect(calls).toHaveLength(2);
-    const byPayout = new Map(calls.map((c) => [c.source.consultantPayoutId, c.amountPaise]));
+    const byPayout = new Map(
+      calls.map((c) => [c.source.consultantPayoutId, c.amountPaise]),
+    );
     expect(byPayout.get("cpay_1")).toBe(5_000);
     expect(byPayout.get("cpay_2")).toBe(1_000);
     // …and the clawbacks still sum to the earnings reversals, exactly.
@@ -480,7 +510,11 @@ describe("LOST dispute — cases with no cash out stay untouched", () => {
 
   test("a PAID earning with no payoutId is still paged but never clawed back", async () => {
     seedPayment(10_000);
-    seedEarning({ id: "ce_orphan", payoutId: null, consultantSharePaise: 6_000 });
+    seedEarning({
+      id: "ce_orphan",
+      payoutId: null,
+      consultantSharePaise: 6_000,
+    });
     seedOpenDispute(10_000);
 
     await handleDisputeUpdated("disp_1", "lost", null);

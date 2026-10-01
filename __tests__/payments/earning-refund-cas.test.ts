@@ -202,7 +202,11 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     const b = await applyCappedEarningReversal(db, { ...stale }, 5_000);
 
     // The loser re-reads and takes only the residual: 5_000 + min(5_000, 3_000).
-    expect(b).toMatchObject({ reversedPaise: 3_000, fullyRefunded: true, lostRace: true });
+    expect(b).toMatchObject({
+      reversedPaise: 3_000,
+      fullyRefunded: true,
+      lostRace: true,
+    });
     expect(r.refundedShareAmount).toBe(8_000);
     expect(r.refundedShareAmount).toBeLessThanOrEqual(r.consultantSharePaise);
     expect(r.status).toBe(EarningStatus.REFUNDED);
@@ -296,11 +300,7 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     const { db, updateMany, findUnique } = store([]);
     findUnique.mockResolvedValueOnce(null as never);
 
-    const out = await applyCappedEarningReversal(
-      db,
-      row(),
-      1_000,
-    );
+    const out = await applyCappedEarningReversal(db, row(), 1_000);
 
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(out).toMatchObject({ reversedPaise: 0, lostRace: true });
@@ -328,9 +328,9 @@ describe("capped earning reversal — the status guard is unconditional", () => 
     });
     const { db, updateMany } = store([r]);
 
-    await expect(applyCappedEarningReversal(db, { ...r }, 5_000)).rejects.toThrow(
-      IllegalEarningStatusTransitionError,
-    );
+    await expect(
+      applyCappedEarningReversal(db, { ...r }, 5_000),
+    ).rejects.toThrow(IllegalEarningStatusTransitionError);
     // Threw BEFORE the write: no conditional update was even issued.
     expect(updateMany).not.toHaveBeenCalled();
     expect(r.refundedShareAmount).toBe(3_000);
@@ -429,7 +429,10 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
   });
 
   it("skips a row a concurrent writer already took to REFUNDED", async () => {
-    const r = row({ status: EarningStatus.REFUNDED, refundedShareAmount: 8_000 });
+    const r = row({
+      status: EarningStatus.REFUNDED,
+      refundedShareAmount: 8_000,
+    });
     const { updateMany, refundEarningsTx } = harness([r]);
 
     await refundEarnings("pay-1", { forceRefund: true, tx: refundEarningsTx });

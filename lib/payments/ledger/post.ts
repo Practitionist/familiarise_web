@@ -1,4 +1,7 @@
-import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import type { PrismaLike } from "@/lib/prisma";
 /**
  * #771 D1/D5 — double-entry posting helper (Batch 2 foundation).

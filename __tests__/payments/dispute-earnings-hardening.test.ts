@@ -267,10 +267,7 @@ function resetStore(): void {
  * narrow shapes and a direct property access cannot narrow a string/object
  * union.
  */
-function statusMatches(
-  filter: unknown,
-  actual: EarningStatus,
-): boolean {
+function statusMatches(filter: unknown, actual: EarningStatus): boolean {
   if (filter === null || filter === undefined) return true;
   if (typeof filter === "object" && "in" in filter) {
     const list = (filter as { in?: EarningStatus[] }).in;
@@ -328,7 +325,9 @@ interface TxStub {
     }) => Promise<{ count: number }>;
     findMany: (args: { where: EarningsLostWhere }) => Promise<OrgEarningRow[]>;
     /** The CAS re-reads through this after a lost race. */
-    findUnique: (args: { where: { id: string } }) => Promise<OrgEarningRow | null>;
+    findUnique: (args: {
+      where: { id: string };
+    }) => Promise<OrgEarningRow | null>;
     update: (args: {
       where: { id: string };
       data: EarningsUpdate;
@@ -477,7 +476,10 @@ function makeTxStub(): TxStub {
           if (where.paymentId !== undefined && e.paymentId !== where.paymentId)
             continue;
           if (where.id !== undefined && e.id !== where.id) continue;
-          if (where.status !== undefined && !statusMatches(where.status, e.status))
+          if (
+            where.status !== undefined &&
+            !statusMatches(where.status, e.status)
+          )
             continue;
           if (
             where.preDisputeStatus !== undefined &&

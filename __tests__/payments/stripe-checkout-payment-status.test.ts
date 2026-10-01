@@ -91,7 +91,9 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
     },
-    webhookEvent: { updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })) },
+    webhookEvent: {
+      updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
+    },
   },
 }));
 
@@ -140,7 +142,9 @@ jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEventSafe: (...a: unknown[]) =>
     recordSystemEvent(...(a as [never])),
 }));
-const validateWebhookMetadata = jest.fn((..._a: unknown[]): unknown => undefined);
+const validateWebhookMetadata = jest.fn(
+  (..._a: unknown[]): unknown => undefined,
+);
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
@@ -310,15 +314,15 @@ describe("a session with no collected money must not confirm a booking", () => {
   });
 
   it("names the invariant in a warn so the park is visible, not a silent drop", async () => {
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     // Read the calls BEFORE restoring: `mockRestore()` resets the recorded
     // calls along with the implementation, so restoring in a `finally` and
     // asserting after it saw an empty array.
     let line = "";
     try {
-      await postStripe(
-        sessionCompletedEvent({ payment_status: "unpaid" }),
-      );
+      await postStripe(sessionCompletedEvent({ payment_status: "unpaid" }));
       line = warn.mock.calls.map((c) => String(c[0])).join("\n");
     } finally {
       warn.mockRestore();

@@ -142,18 +142,16 @@ const appliedKeys = () => applied.map((t) => t.idempotencyKey);
 beforeEach(() => {
   jest.clearAllMocks();
   applied = [];
-  mockPost.mockImplementation(
-    async (_db: unknown, input: MockTxn) => {
-      if (applied.some((t) => t.idempotencyKey === input.idempotencyKey)) {
-        return { transactionId: input.idempotencyKey, created: false };
-      }
-      applied.push({
-        idempotencyKey: input.idempotencyKey,
-        postings: input.postings,
-      });
-      return { transactionId: input.idempotencyKey, created: true };
-    },
-  );
+  mockPost.mockImplementation(async (_db: unknown, input: MockTxn) => {
+    if (applied.some((t) => t.idempotencyKey === input.idempotencyKey)) {
+      return { transactionId: input.idempotencyKey, created: false };
+    }
+    applied.push({
+      idempotencyKey: input.idempotencyKey,
+      postings: input.postings,
+    });
+    return { transactionId: input.idempotencyKey, created: true };
+  });
   tx.payment.updateMany.mockResolvedValue({ count: 1 });
   tx.payment.findUnique.mockResolvedValue(side);
   tx.overageEvent.findFirst.mockResolvedValue(invoicedParent);
@@ -177,7 +175,11 @@ describe("late capture after the parent was invoiced", () => {
       kind: "OVERAGE_MEMBER",
       paymentId: "side1",
       postings: [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: MARGINAL },
+        {
+          account: { kind: "CASH" },
+          direction: "DEBIT",
+          amountPaise: MARGINAL,
+        },
         {
           account: { kind: "ORG_PAYABLE", organizationId: "org1" },
           direction: "CREDIT",

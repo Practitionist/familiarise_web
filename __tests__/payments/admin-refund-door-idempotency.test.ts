@@ -222,7 +222,9 @@ describe("no per-request key generation survives in either door (source contract
 
     // The defect, verbatim: a per-request UUID in the dedupeKey expression.
     expect(src).not.toContain("?? opsActionId");
-    expect(src).not.toMatch(/idempotencyKey\s*:\s*z\.string\(\)\.uuid\(\)\s*\.optional/);
+    expect(src).not.toMatch(
+      /idempotencyKey\s*:\s*z\.string\(\)\.uuid\(\)\s*\.optional/,
+    );
     expect(src).not.toContain("randomUUID");
     // `opsActionId` is no longer destructured into the door at all.
     expect(src).not.toMatch(/\(\s*\{[^}]*\bopsActionId\b[^}]*\}\s*\)\s*=>/);

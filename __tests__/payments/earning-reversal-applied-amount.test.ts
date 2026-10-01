@@ -54,7 +54,11 @@ const tx: any = {
   appointmentOccurrence: { findMany: jest.fn() },
   refund: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
   payment: { findUniqueOrThrow: jest.fn() },
-  consultantEarnings: { update: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn() },
+  consultantEarnings: {
+    update: jest.fn(),
+    updateMany: jest.fn(),
+    findUnique: jest.fn(),
+  },
   organizationEarnings: {
     update: jest.fn(),
     updateMany: jest.fn(async () => ({ count: 1 })),
@@ -104,7 +108,9 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
 
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
-  restoreCreditsForPaymentUpTo: jest.fn(async (_p: string, _t: unknown, n: number) => n),
+  restoreCreditsForPaymentUpTo: jest.fn(
+    async (_p: string, _t: unknown, n: number) => n,
+  ),
 }));
 
 jest.mock("../../lib/novu", () => ({
@@ -177,7 +183,8 @@ function earningsDelegate(rows: Earn[], refuseAlways = false) {
     if (refuseAlways) return { count: 0 };
     const r = rows.find((e) => e.id === where.id);
     if (!r) return { count: 0 };
-    if (where.status?.in && !where.status.in.includes(r.status)) return { count: 0 };
+    if (where.status?.in && !where.status.in.includes(r.status))
+      return { count: 0 };
     if (
       where.refundedShareAmount !== undefined &&
       where.refundedShareAmount !== r.refundedShareAmount
@@ -189,12 +196,17 @@ function earningsDelegate(rows: Earn[], refuseAlways = false) {
   });
   const findUnique = jest.fn(async ({ where }: any) => {
     const r = rows.find((e) => e.id === where.id);
-    return r ? { status: r.status, refundedShareAmount: r.refundedShareAmount } : null;
+    return r
+      ? { status: r.status, refundedShareAmount: r.refundedShareAmount }
+      : null;
   });
   return { updateMany, findUnique };
 }
 
-function sum(postings: Array<{ direction: string; amountPaise: number }>, d: string) {
+function sum(
+  postings: Array<{ direction: string; amountPaise: number }>,
+  d: string,
+) {
   return postings
     .filter((p) => p.direction === d)
     .reduce((s, p) => s + p.amountPaise, 0);
@@ -245,7 +257,10 @@ describe("reversal posting — the APPLIED amount, never the request", () => {
     tx.consultantEarnings.findUnique = delegate.findUnique;
     tx.payment.findUniqueOrThrow.mockResolvedValue(settlement(rows));
 
-    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" });
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+    });
 
     // The request is the whole ₹800 share, but only ₹500 was still reversible:
     // 30,000 already clawed back. The column advanced by the APPLIED figure...
@@ -288,7 +303,10 @@ describe("reversal posting — the APPLIED amount, never the request", () => {
     tx.payment.findUniqueOrThrow.mockResolvedValue(settlement(rows));
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
 
-    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" });
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+    });
 
     // Both attempts ran, neither won — a reported no-op, never a claimed write.
     expect(delegate.updateMany).toHaveBeenCalledTimes(2);
@@ -309,14 +327,21 @@ describe("reversal posting — the APPLIED amount, never the request", () => {
 
   it("posts nothing when the cap leaves zero paise — and never a 0-paise posting", async () => {
     const rows: Earn[] = [
-      { ...partlyReversedEarning(), refundedShareAmount: 80_000, status: "REFUNDED" },
+      {
+        ...partlyReversedEarning(),
+        refundedShareAmount: 80_000,
+        status: "REFUNDED",
+      },
     ];
     const delegate = earningsDelegate(rows);
     tx.consultantEarnings.updateMany = delegate.updateMany;
     tx.consultantEarnings.findUnique = delegate.findUnique;
     tx.payment.findUniqueOrThrow.mockResolvedValue(settlement(rows));
 
-    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" });
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+    });
 
     // Already at its share: the helper short-circuits on the cap, so it never
     // issues the conditional write at all.
@@ -329,18 +354,25 @@ describe("reversal posting — the APPLIED amount, never the request", () => {
   });
 
   it("still posts the full request when nothing caps it — the normal path is unchanged", async () => {
-    const rows: Earn[] = [{ ...partlyReversedEarning(), refundedShareAmount: 0 }];
+    const rows: Earn[] = [
+      { ...partlyReversedEarning(), refundedShareAmount: 0 },
+    ];
     const delegate = earningsDelegate(rows);
     tx.consultantEarnings.updateMany = delegate.updateMany;
     tx.consultantEarnings.findUnique = delegate.findUnique;
     tx.payment.findUniqueOrThrow.mockResolvedValue(settlement(rows));
 
-    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" });
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+    });
 
     // Applied == request, so the figures the pre-fix code used were correct
     // here. This guards against the fix silently shrinking a normal reversal.
     expect(rows[0].refundedShareAmount).toBe(80_000);
-    expect(postingFor("CONSULTANT_PAYABLE")).toMatchObject({ amountPaise: 80_000 });
+    expect(postingFor("CONSULTANT_PAYABLE")).toMatchObject({
+      amountPaise: 80_000,
+    });
     expect(mockRecordTdsReversal).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({ refundAmountPaise: 80_000 }),

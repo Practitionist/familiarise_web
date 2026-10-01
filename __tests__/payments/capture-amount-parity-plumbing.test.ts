@@ -93,7 +93,9 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
     },
-    webhookEvent: { updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })) },
+    webhookEvent: {
+      updateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
+    },
   },
 }));
 
@@ -145,7 +147,9 @@ jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEventSafe: (...a: unknown[]) =>
     recordSystemEvent(...(a as [never])),
 }));
-const validateWebhookMetadata = jest.fn((..._a: unknown[]): unknown => undefined);
+const validateWebhookMetadata = jest.fn(
+  (..._a: unknown[]): unknown => undefined,
+);
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
@@ -418,9 +422,7 @@ describe("Stripe enters the confirmation router with the amount it actually took
     ).toBeUndefined();
     //   2. and the route still asks for the pi_ id, so a later refund or
     //      dispute can be resolved against the right gateway object.
-    expect(
-      paymentUpdateMany.mock.calls.length,
-    ).toBeGreaterThanOrEqual(0);
+    expect(paymentUpdateMany.mock.calls.length).toBeGreaterThanOrEqual(0);
     expect(refundPayment).not.toHaveBeenCalled();
     expect(appointmentFindUnique).toHaveBeenCalled();
   });

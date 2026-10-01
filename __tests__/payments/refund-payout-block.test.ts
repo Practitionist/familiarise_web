@@ -32,7 +32,11 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
       findFirst: jest.fn(),
       aggregate: jest.fn().mockResolvedValue({
-        _sum: { consultantSharePaise: 500000, grossAmount: null, refundedShareAmount: null },
+        _sum: {
+          consultantSharePaise: 500000,
+          grossAmount: null,
+          refundedShareAmount: null,
+        },
       }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -211,7 +215,11 @@ beforeEach(() => {
   mocks.consultantPayout.updateMany.mockResolvedValue({ count: 1 });
   mocks.consultantEarnings.updateMany.mockResolvedValue({ count: 0 });
   mocks.consultantEarnings.aggregate.mockResolvedValue({
-    _sum: { consultantSharePaise: 500000, grossAmount: null, refundedShareAmount: null },
+    _sum: {
+      consultantSharePaise: 500000,
+      grossAmount: null,
+      refundedShareAmount: null,
+    },
   });
   mocks.consultantPayout.findMany.mockResolvedValue([APPROVED]);
 });

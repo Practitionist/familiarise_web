@@ -124,7 +124,9 @@ async function main(): Promise<void> {
       // the post-merge `db push`; allow it only with a short-expiry entry.
       const entry = knownSchemaOnly.find((k) => k.enum === name);
       const covered =
-        entry && schemaOnly.every((l) => entry.labels.includes(l)) ? entry : null;
+        entry && schemaOnly.every((l) => entry.labels.includes(l))
+          ? entry
+          : null;
       if (covered && covered.expires >= today) {
         tolerated.push(
           `${name}: schema-only ${schemaOnly.join(", ")} — known drift, tracked by ${covered.trackedBy}, expires ${covered.expires}`,

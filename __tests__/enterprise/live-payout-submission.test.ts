@@ -329,13 +329,15 @@ describe("processOrgPayout — live submission gating", () => {
       process.env.ENABLE_LIVE_PAYOUTS = "true";
       setupHappyClaim();
       setupVerifiedAccount();
-      const createPayout = jest.fn().mockRejectedValue(
-        new RazorpayXHttpError(
-          "RazorpayX API error (HTTP 502): invalid_request",
-          "GATEWAY_ERROR",
-          httpStatus,
-        ),
-      );
+      const createPayout = jest
+        .fn()
+        .mockRejectedValue(
+          new RazorpayXHttpError(
+            "RazorpayX API error (HTTP 502): invalid_request",
+            "GATEWAY_ERROR",
+            httpStatus,
+          ),
+        );
       setupGatewayService({ createPayout });
 
       mockedPrisma.organizationPayout.updateMany.mockResolvedValue({
@@ -367,7 +369,9 @@ describe("processOrgPayout — live submission gating", () => {
       // must leave the earnings BATCHED under the SAME payout row, so the
       // cron re-submits under the SAME idempotency key. Releasing them here
       // is what let RazorpayX pay the org twice.
-      expect(mockedPrisma.organizationEarnings.updateMany).not.toHaveBeenCalled();
+      expect(
+        mockedPrisma.organizationEarnings.updateMany,
+      ).not.toHaveBeenCalled();
       const payoutRolls =
         mockedPrisma.organizationPayout.updateMany.mock.calls.filter(
           ([arg]) => arg.data?.status === "FAILED",

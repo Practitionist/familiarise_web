@@ -34,7 +34,9 @@ jest.mock("../../lib/payments/ledger/post", () => {
   const actual = jest.requireActual("../../lib/payments/ledger/post");
   return {
     ...actual,
-    postLedgerTxn: jest.fn().mockResolvedValue({ transactionId: "ltx_1", created: true }),
+    postLedgerTxn: jest
+      .fn()
+      .mockResolvedValue({ transactionId: "ltx_1", created: true }),
   };
 });
 jest.mock("../../lib/payments/operations/refund", () => ({
@@ -83,11 +85,13 @@ function makeTx(overrides: { alreadyPosted?: boolean; payout?: unknown } = {}) {
         .mockResolvedValue(overrides.alreadyPosted ? { id: "ltx-1" } : null),
     },
     consultantPayout: {
-      findUnique: jest.fn().mockResolvedValue(
-        "payout" in overrides
-          ? overrides.payout
-          : { id: "cpay-1", clawbackInitiatedAt: null },
-      ),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue(
+          "payout" in overrides
+            ? overrides.payout
+            : { id: "cpay-1", clawbackInitiatedAt: null },
+        ),
       // W1a — the counter that keeps `ConsultantPayout` in step with its
       // journal, mirroring `reversePayoutClawback` for the org pair. Without
       // it the outstanding recovery is only a ledger balance, with no counter
@@ -106,7 +110,8 @@ type TxStub = ReturnType<typeof makeTx>;
  * which also made `tx.consultantPayout.update` unreadable for the counter
  * assertions below.
  */
-const asTx = (tx: TxStub) => tx as unknown as Parameters<typeof applyReversal>[0];
+const asTx = (tx: TxStub) =>
+  tx as unknown as Parameters<typeof applyReversal>[0];
 
 const SOURCE = {
   kind: "CONSULTANT_CLAWBACK",
@@ -150,7 +155,9 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
       amountPaise: 50_000,
     });
     // Reclassification only: revenue (PLATFORM_FEE) never moves.
-    expect(arg.postings.map((p) => p.account.kind)).not.toContain("PLATFORM_FEE");
+    expect(arg.postings.map((p) => p.account.kind)).not.toContain(
+      "PLATFORM_FEE",
+    );
     expect(credit).toEqual({
       account: { kind: "CONSULTANT_PAYABLE", consultantProfileId: "cp_xyz" },
       direction: "CREDIT",
@@ -160,7 +167,9 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
     // Scoping: the account resolves to a deterministic id unique per
     // consultant, and NOT to the org-scoped id `getOrgReceivables` reads — so
     // the receivable never leaks into an org's receivables page.
-    expect(ledgerAccountId(debit.account)).toBe("CONSULTANT_RECEIVABLE|_|cp_xyz|INR");
+    expect(ledgerAccountId(debit.account)).toBe(
+      "CONSULTANT_RECEIVABLE|_|cp_xyz|INR",
+    );
     expect(
       ledgerAccountId({ kind: "ORG_RECEIVABLE", organizationId: "org-1" }),
     ).not.toBe(ledgerAccountId(debit.account));
@@ -204,7 +213,9 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
     // A second dispute against the same payout must accumulate the amount
     // without moving the "recovery first became owed" timestamp — `undefined`
     // is Prisma's "leave this column alone".
-    const tx = makeTx({ payout: { id: "cpay-1", clawbackInitiatedAt: new Date(0) } });
+    const tx = makeTx({
+      payout: { id: "cpay-1", clawbackInitiatedAt: new Date(0) },
+    });
     await applyReversal(asTx(tx), {
       source: SOURCE,
       amountPaise: 1_000,

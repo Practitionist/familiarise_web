@@ -486,10 +486,7 @@ async function reverseConsultantPayoutClawback(
   // One clawback per (dispute, payout), even when several earnings share it.
   const alreadyPosted = await tx.ledgerTransaction.findUnique({
     where: {
-      idempotencyKey: consultantClawbackKey(
-        input.refundId,
-        consultantPayoutId,
-      ),
+      idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
     },
     select: { id: true },
   });
@@ -547,10 +544,7 @@ export async function postConsultantPayoutClawback(
   // Rethrow so the enclosing tx rolls back: reversal and clawback stay atomic.
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: consultantClawbackKey(
-        input.refundId,
-        consultantPayoutId,
-      ),
+      idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
       // Counters a consultant `payout:<id>` txn (doc §4.4), hence PAYOUT.
       kind: "PAYOUT",
       payoutId: consultantPayoutId,
@@ -581,7 +575,11 @@ export async function postConsultantPayoutClawback(
       category: "LEDGER",
       summary: `Consultant payout clawback ledger posting failed for payout ${consultantPayoutId}`,
       err,
-      context: { consultantPayoutId, consultantProfileId, refundId: input.refundId },
+      context: {
+        consultantPayoutId,
+        consultantProfileId,
+        refundId: input.refundId,
+      },
     });
     throw err;
   }
