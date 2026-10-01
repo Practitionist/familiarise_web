@@ -3,10 +3,9 @@
  *
  * ## Why this module exists
  *
- * The failure-modes matrix (row 19, `docs/authentication/betterauth/09-failure-modes.md`)
- * records that `lib/observability/expected.ts` was defined, honoured in
- * `beforeSend`, and called from nowhere — so every expected auth failure pages
- * on-call while behaving correctly. The marker is only half the job; deciding
+ * `lib/observability/expected.ts` was defined, honoured in `beforeSend`, and
+ * called from nowhere — so every expected auth failure paged on-call while
+ * behaving correctly. The marker is only half the job; deciding
  * *which* failures deserve it is the half that has to be one place, because
  * "a thrown fetch on the sign-in page" is asserted in two page components and a
  * third reader will otherwise re-derive the test and get it wrong in the
@@ -23,7 +22,7 @@
  *
  * `isUnreachableTransportError` does not treat a 5xx as unreachable. A 5xx is an
  * HTTP response *we* produced, which means a handler ran, which means the
- * platform delivered the request — the opposite of the stall in row 6, and very
+ * platform delivered the request — the opposite of the cold-instance stall, and very
  * often a real server fault worth a page. Only a failure that never reached the
  * service qualifies.
  */
@@ -37,7 +36,7 @@ import { markExpected } from "@/lib/observability/expected";
  *
  * 1. **`fetch` rejected** (`TypeError: Failed to fetch`, or the same text as a
  *    message). The browser never got a response. This is the Netlify
- *    cold-instance stall of failure-modes row 6 as the customer experiences it:
+ *    cold-instance stall as the customer experiences it:
  *    ~25-28 s, then a thrown fetch, then `status 0` in `humanizeAuthError`'s
  *    vocabulary, whose copy is `UNREACHABLE` — "nothing was changed".
  *

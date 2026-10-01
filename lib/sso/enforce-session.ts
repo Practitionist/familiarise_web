@@ -24,14 +24,11 @@ export interface EnforcedOrgInfo {
 }
 
 /**
- * Shared implementation of the `lookupEnforcedOrg` callback. Single
- * source of truth for "given an email domain, which org enforces SSO
- * for it?" used by three call sites that previously duplicated this
- * lookup verbatim (drift was a real risk — see issue #673):
+ * Single source of truth for "given an email domain, which org enforces SSO
+ * for it?" (#673). Two call sites:
  *
  *   1. `lib/auth.ts` databaseHooks.session.create.before — pre-cookie veto
- *   2. `lib/auth.ts` customSession — defense-in-depth read-time check
- *   3. `app/api/auth/sso/domain-check/route.ts` — unauth pre-login probe
+ *   2. `app/api/auth/sso/domain-check/route.ts` — unauth pre-login probe
  *
  * Returns `null` (= don't enforce) when any precondition fails:
  *   - No `OrgDomainClaim` row for the domain.
@@ -45,7 +42,7 @@ export interface EnforcedOrgInfo {
  * The verified claim is the only domain truth: every verified domain of an
  * enforcing org is enforced.
  *
- * Audit Phase B.6. See `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`.
+ * See `docs/authentication/sso.md` §3.
  */
 export async function lookupEnforcedOrg(
   prisma: PrismaLike, // #780 extended client

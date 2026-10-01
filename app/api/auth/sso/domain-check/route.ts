@@ -44,11 +44,9 @@ export async function GET(req: NextRequest) {
   if (!domain) return NextResponse.json({ enforceSSO: false });
 
   // Single source of truth for "is this domain enforced + by which org?"
-  // (audit B.6). Returns null when any precondition fails: no verified
-  // claim, inactive org, allowlist mismatch, enforceSSO=false. The
-  // previous inline lookup here, in `lib/auth.ts:session.create.before`,
-  // and in `lib/auth.ts:customSession` each had subtle drift — see
-  // issue #673.
+  // shared with `lib/auth.ts:session.create.before` (#673). Returns null
+  // when any precondition fails: no verified claim, inactive org,
+  // enforceSSO=false.
   const enforced = await lookupEnforcedOrg(prisma, domain);
   if (!enforced) {
     return NextResponse.json({ enforceSSO: false });
@@ -89,8 +87,9 @@ export async function GET(req: NextRequest) {
   // An org-scoped SSO login lands the user IN that org's dashboard, not on
   // their singular-UserRole home. `callbackUrl` is honored by the signin
   // redirect effect for onboarded users and threaded through onboarding for
-  // first-timers (relative-path XSS-guarded there). The auto-joined membership
-  // is committed in the same customSession request, so the org layout resolves.
+  // first-timers (relative-path XSS-guarded there). The JIT membership is
+  // committed during the SSO callback (`provisionUser` in
+  // lib/sso/plugin-options.ts), so the org layout resolves.
   const orgHome = `/dashboard/organization/${enforced.organizationId}/home`;
   return NextResponse.json({
     enforceSSO: true,

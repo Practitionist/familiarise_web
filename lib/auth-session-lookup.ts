@@ -7,8 +7,8 @@ import { markExpected } from "@/lib/observability/expected";
 /**
  * #1716 — the three answers a session lookup can give. `getSession` alone
  * collapses the third into the second: the `customSession` plugin's endpoint
- * wraps the core lookup in `.catch(() => null)` (better-auth 1.6.5,
- * `plugins/custom-session/index.mjs:50`), so an adapter failure — a ~27 s
+ * wraps the core lookup in `.catch(() => null)` (better-auth 1.7.6,
+ * `plugins/custom-session/index.mjs`), so an adapter failure — a ~27 s
  * cold-instance stall on a VALID cookie — came back as "no session" and the
  * caller answered 401 to a signed-in user.
  *
@@ -29,12 +29,10 @@ export type SessionLookup =
  *
  * ## Why the constructor marks the error
  *
- * Failure-modes row 19 names this exact object as one of the three sites that
- * "currently page": the code is `SESSION_LOOKUP_FAILED`, the catalog maps it to
- * `UNREACHABLE`, and the whole point of the tri-state is that a lookup which
- * threw is an *answer we modelled* — the boundary retries and the customer keeps
- * their session. Paging on it is the failure the row exists to describe: correct
- * behaviour, reported as a fault, indistinguishable from a real defect in a log.
+ * The code is `SESSION_LOOKUP_FAILED`, the catalog maps it to `UNREACHABLE`,
+ * and a lookup that threw is an *answer we modelled* — the boundary retries and
+ * the customer keeps their session. Paging on it would report correct
+ * behaviour as a fault, indistinguishable from a real defect in a log.
  *
  * Marking in the constructor rather than at each throw site is deliberate. There
  * is one throw site in `lib/auth-guard.ts` today and no reason to believe a

@@ -518,10 +518,9 @@ async function routeRequest(
   }
 
   // Protected app routes — redirect to signin (preserving callbackUrl) when no
-  // session cookie. SSO enforcement is NOT done here: customSession() in
-  // lib/auth.ts marks `ssoEnforcementFailed` on the session and layouts/server
-  // components redirect on it. We can't call getSession() at the edge (see the
-  // header block).
+  // session cookie. SSO enforcement is NOT done here: it vetoes session
+  // creation in lib/auth.ts (`databaseHooks.session.create.before`). We can't
+  // call getSession() at the edge (see the header block).
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_PREFIXES)) {
     if (!isAuthenticated) {
       const signInUrl = new URL(URLS.SIGNIN, req.url);
