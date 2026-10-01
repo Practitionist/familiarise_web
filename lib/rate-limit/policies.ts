@@ -38,8 +38,7 @@ export const RATE_SCOPE = {
   // #1927 — platform operator onboarding. Two surfaces, not one: minting a
   // privileged account is an authenticated, attributable act; redeeming one is
   // an unauthenticated act on a bearer token, so it is budgeted per token.
-  STAFF_INVITE_CREATE: "platform.staff-invite-create",
-  STAFF_INVITATION_ACCEPT: "platform.staff-invitation-accept",
+  STAFF_CREATE: "platform.staff-create",
 } as const;
 
 export type RateScope = (typeof RATE_SCOPE)[keyof typeof RATE_SCOPE];
@@ -123,14 +122,14 @@ export const RATE_POLICIES = {
   /* Platform operator onboarding (#1927)                                   */
   /* ---------------------------------------------------------------------- */
 
-  [RATE_SCOPE.STAFF_INVITE_CREATE]: {
-    scope: RATE_SCOPE.STAFF_INVITE_CREATE,
+  [RATE_SCOPE.STAFF_CREATE]: {
+    scope: RATE_SCOPE.STAFF_CREATE,
     window: "1 h",
     dimensions: { account: 20 },
     description:
-      "POST /api/admin/staff-invitations. Account-keyed on the ADMIN who is " +
-      "doing the inviting, never on the invited address and never on the IP. " +
-      "Keying on the invitee would be a foot-gun in the wrong direction (one " +
+      "POST /api/admin/team/members. Account-keyed on the ADMIN who is " +
+      "adding staff, never on the new address and never on the IP. " +
+      "Keying on the new address would be a foot-gun in the wrong direction (one " +
       "admin could exhaust a colleague's budget) and keying on the IP would " +
       "punish a whole office NAT for one person's mistake. Twenty an hour is " +
       "well above a real onboarding session — a first-admin hire, then a " +
@@ -139,23 +138,6 @@ export const RATE_POLICIES = {
       "sees the OpsActionLog rows. The throttle is deliberately NOT the " +
       "moneyOpsLimiter: onboarding is not a money act, and sharing a bucket " +
       "would let a refunds burst lock the team out of hiring.",
-  },
-
-  [RATE_SCOPE.STAFF_INVITATION_ACCEPT]: {
-    scope: RATE_SCOPE.STAFF_INVITATION_ACCEPT,
-    window: "1 h",
-    dimensions: { ip: 30, token: 10 },
-    description:
-      "POST /api/auth/staff-invitation/accept. Unauthenticated and token-" +
-      "bearing, so it gets both dimensions: IP 30/hr stops a sweep of guessed " +
-      "tokens from one host, and the per-token bucket is the one that " +
-      "matters — a leaked setup link is a platform-privileged credential, and " +
-      "ten redemption attempts an hour turns it from a takeover into a " +
-      "statistic. Deliberately TIGHTER than the org invite's 60/20: an org " +
-      "member's worst outcome is a membership, an operator's is `refunds." +
-      "manage`. A real invitee opens one link and submits once, and the " +
-      "password-strength check runs before the accept body is written, so a " +
-      "typo costs one of the ten rather than the whole budget.",
   },
 } as const satisfies Record<RateScope, RatePolicy>;
 
@@ -224,19 +206,9 @@ export function limiterFor(
  * the rationale that justifies it. A caller that wants a budget for a
  * non-edge surface asks the table for it.
  */
-export const staffInviteCreateLimiter = limiterFor(
-  RATE_SCOPE.STAFF_INVITE_CREATE,
+export const staffCreateLimiter = limiterFor(
+  RATE_SCOPE.STAFF_CREATE,
   "account",
-);
-
-export const staffInvitationAcceptIpLimiter = limiterFor(
-  RATE_SCOPE.STAFF_INVITATION_ACCEPT,
-  "ip",
-);
-
-export const staffInvitationAcceptTokenLimiter = limiterFor(
-  RATE_SCOPE.STAFF_INVITATION_ACCEPT,
-  "token",
 );
 
 /* -------------------------------------------------------------------------- */

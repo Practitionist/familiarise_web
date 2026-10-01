@@ -6,10 +6,7 @@ import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { applyRateLimit } from "@/lib/rate-limit";
-import {
-  accountKey,
-  staffInviteCreateLimiter,
-} from "@/lib/rate-limit/policies";
+import { accountKey, staffCreateLimiter } from "@/lib/rate-limit/policies";
 import {
   OPERATOR_ROLES,
   createOperator,
@@ -42,10 +39,7 @@ export const POST = withOpsAction(
     run: async ({ body, actor }) => {
       // The per-admin budget the invitation door had, kept for this door.
       if (
-        await applyRateLimit(
-          staffInviteCreateLimiter,
-          await accountKey(actor.userId),
-        )
+        await applyRateLimit(staffCreateLimiter, await accountKey(actor.userId))
       ) {
         throw new OpsRefusal(
           "RATE_LIMITED",
