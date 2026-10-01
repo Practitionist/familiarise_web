@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { TPublicConsultantReview } from "@/types/review";
-import Image from "next/image";
+import { FamiliariseMark } from "@/components/brand/FamiliariseLogo";
 
 import { StarIcon } from "lucide-react";
 import React from "react";
@@ -86,12 +86,7 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
           </div>
         )}
         <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-border">
-          <Image
-            src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-            alt="Familiarise"
-            width={14}
-            height={14}
-          />
+          <FamiliariseMark className="size-3.5 text-muted-foreground" />
           <span className="text-[10px] text-muted-foreground/70">
             Reviewed on Familiarise
           </span>

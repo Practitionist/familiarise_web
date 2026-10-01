@@ -2,6 +2,8 @@
 
 UI and booking-journey improvements against dev, plus the user-approved generated curriculum brochures for classes and subscriptions. No schema, availability-engine, gateway-payment, or authentication-policy changes. The two new PDF routes include deployment tracing for the existing React runtime and bundled fonts. The latest follow-up adds a selected-offering preview and explicit consultation checkout recovery.
 
+The same PR now includes the approved Familiarise logo and customer-first landing page. See the separate [landing and brand review](../landing-refresh/README.md) for assets, architecture, visual decisions, verification, and captures.
+
 ## Confirmed design decisions
 
 | Decision                   | Chosen direction                                                                                                       | Tradeoff                                                                                           |

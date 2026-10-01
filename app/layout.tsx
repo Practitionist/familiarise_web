@@ -25,8 +25,8 @@ export const viewport: Viewport = {
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 const SITE_DESCRIPTION =
-  "Connect with world-class experts for 1-on-1 sessions, classes, webinars, and personalized career guidance. Transform your career with Familiarise.";
-const SITE_TITLE = "Familiarise | Expert Consultations & Career Mentorship";
+  "Find expert guidance for your next step. Explore one-to-one consultations, ongoing mentorship, expert-led classes, and live webinars on Familiarise.";
+const SITE_TITLE = "Familiarise | Expert Guidance & Live Learning";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -40,6 +40,10 @@ export const metadata: Metadata = {
     "webinars",
     "professional development",
   ],
+  icons: {
+    icon: { url: "/brand/familiarise-icon.svg", type: "image/svg+xml" },
+    apple: { url: "/brand/familiarise-apple-icon.png", sizes: "180x180" },
+  },
   openGraph: {
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
@@ -47,11 +51,20 @@ export const metadata: Metadata = {
     url: "/",
     siteName: "Familiarise",
     locale: "en_US",
+    images: [
+      {
+        url: "/brand/landing-og.png",
+        width: 1200,
+        height: 630,
+        alt: "Familiarise — the right expert, a clearer way forward",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
+    images: ["/brand/landing-og.png"],
   },
   robots: {
     index: true,

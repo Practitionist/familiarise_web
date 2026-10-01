@@ -4,6 +4,7 @@ import { memo } from "react";
 import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
+import { FamiliariseMark } from "@/components/brand/FamiliariseLogo";
 import Link from "next/link";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -223,12 +224,7 @@ function GridCard({
         </div>
 
         <div className="flex items-center gap-1 mt-2">
-          <Image
-            src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-            alt="Familiarise"
-            width={12}
-            height={12}
-          />
+          <FamiliariseMark className="size-3 text-muted-foreground" />
           <span className="text-[10px] text-muted-foreground/70">
             on Familiarise
           </span>
@@ -330,12 +326,7 @@ function ListCard({
             </span>
           </div>
           <div className="flex items-center gap-1 mt-2">
-            <Image
-              src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-              alt="Familiarise"
-              width={12}
-              height={12}
-            />
+            <FamiliariseMark className="size-3 text-muted-foreground" />
             <span className="text-[10px] text-muted-foreground/70">
               on Familiarise
             </span>

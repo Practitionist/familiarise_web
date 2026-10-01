@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowUpRight, MessageSquare } from "lucide-react";
@@ -73,7 +72,7 @@ const FacebookIcon = ({ className }: { className?: string }) => (
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
-import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
+import { FamiliariseLogo } from "@/components/brand/FamiliariseLogo";
 
 interface FooterLink {
   label: string;
@@ -245,17 +244,26 @@ const Footer: React.FC = () => {
 
       {/* Waitlist signup — every marketing page, merged with the footer */}
       <div className="relative z-10 border-b border-zinc-800">
-        <div className="container mx-auto px-4 md:px-6 py-20 md:py-28">
+        <div
+          className={`container mx-auto px-4 md:px-6 ${isHomePage ? "py-12 md:py-14" : "py-20 md:py-28"}`}
+        >
           <div className="max-w-2xl mx-auto text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center mx-auto mb-6 shadow-lg">
+            <div
+              className={`${isHomePage ? "hidden" : "flex"} w-16 h-16 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 items-center justify-center mx-auto mb-6 shadow-lg`}
+            >
               <MessageSquare className="w-8 h-8 text-white" />
             </div>
-            <h2 className="text-fluid-5xl font-bold tracking-tight text-white mb-4">
+            <h2
+              className={`${isHomePage ? "text-2xl sm:text-3xl font-semibold" : "text-fluid-5xl font-bold"} tracking-tight text-white mb-4`}
+            >
               Stay in the <span className="silver-text">loop</span>
             </h2>
-            <p className="text-lg text-zinc-500 mb-8">
-              Get expert tips, career advice, and exclusive offers delivered to
-              your inbox weekly.
+            <p
+              className={`${isHomePage ? "text-sm" : "text-lg"} text-zinc-400 mb-6`}
+            >
+              {isHomePage
+                ? "Useful guidance, straight to your inbox."
+                : "Get expert tips, career advice, and exclusive offers delivered to your inbox weekly."}
             </p>
 
             <form
@@ -264,6 +272,8 @@ const Footer: React.FC = () => {
             >
               <Input
                 type="email"
+                aria-label="Email address for the Familiarise newsletter"
+                autoComplete="email"
                 placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -305,20 +315,16 @@ const Footer: React.FC = () => {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-8 lg:gap-10">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
-            <Link href="/" className="inline-block mb-6">
-              <div className="relative h-10 w-36">
-                <Image
-                  src={familiariseLogoWhite}
-                  alt="Familiarise"
-                  fill
-                  className="object-contain object-left"
-                  sizes="144px"
-                />
-              </div>
+            <Link
+              href="/"
+              aria-label="Familiarise home"
+              className="inline-block mb-6"
+            >
+              <FamiliariseLogo className="text-white" />
             </Link>
             <p className="text-zinc-400 text-sm leading-relaxed mb-6 max-w-xs">
-              Connect with world-class experts for personalized mentorship,
-              classes, and career guidance. Transform your career today.
+              Expert guidance for your next step. Explore consultations, ongoing
+              mentorship, classes, and live webinars.
             </p>
 
             {/* Social Links */}
