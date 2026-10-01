@@ -22,6 +22,8 @@
  * - onboardingSubmitLimiter: 10/min per user  — updateOnboardingInformationAction + PATCH /api/form/onboarding/[id] (heavy multi-table tx)
  * - onboardingDraftLimiter:  30/min per user  — saveOnboardingDraftAction (800ms-debounced autosave + pagehide flush)
  * - verificationSubmitLimiter: 10/hr per user — POST /api/verification/submit + /resubmit (review-queue writes + admin notify)
+ * - sessionMgmtLimiter:     120/15min per IP  — /api/user/sessions* except the liveness probe (see middleware)
+ * - sessionMgmtUserLimiter: 60/15min per user — same three routes, keyed past requireApiAuth (the precise gate)
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -293,6 +295,59 @@ export const ssoDomainCheckLimiter = makeLimiter(
   60,
   "1 h",
   "rl:sso-domain-check",
+);
+
+/**
+ * 120 per 15 minutes per IP — /api/user/sessions* except the signal
+ * poll (#1856, exempt there).
+ *
+ * Deliberately NOT authLimiter: session traffic (a device list that
+ * reloads after every revoke) must never exhaust the 10/15m sign-in
+ * budget and lock a legitimate user out of signing in. IP-keyed
+ * because middleware is cookie-presence-only — so one office NAT
+ * shares this bucket, which is why it is generous AND paired with the
+ * per-user limiter below (a single NAT office revoking devices must
+ * not lock itself out; the per-user bucket is the precise gate).
+ */
+export const sessionMgmtLimiter = makeLimiter(120, "15 m", "rl:session-mgmt");
+
+/**
+ * 60 per 15 minutes per user — the same three session routes, keyed by
+ * user id inside the handlers (past `requireApiAuth`, where the caller
+ * is known). This is the precise gate; the IP rule above is coarse
+ * abuse friction only. Applied in the route, not the middleware,
+ * because only the route can resolve who is calling.
+ */
+export const sessionMgmtUserLimiter = makeLimiter(
+  60,
+  "15 m",
+  "rl:session-mgmt-user",
+);
+
+/**
+ * 120 per 15 minutes per STAFF USER — `/api/admin/users/[userId]/sessions*`
+ * (#1856, review follow-up).
+ *
+ * The back-office session surface had no limiter at ANY layer before this:
+ * no `RATE_LIMIT_RULES` entry matches `/api/admin/*` (they stop at the
+ * `/api/auth/` and `/api/organizations/` prefixes), and neither handler
+ * called `applyRateLimit`. That left an unauthenticated-rate-limit-free
+ * read of up to 25 rows of `ipAddress` + device label + last-seen for ANY
+ * user id, to any `users.read` operator.
+ *
+ * Keyed per STAFF USER, not per IP and not per TARGET: the threat is one
+ * operator (or one hijacked operator session) walking the user directory
+ * to harvest device/IP history, so the budget belongs to the operator.
+ * An IP key would let a shared office pool cover for the abuse, and a
+ * per-target key would be trivially reset by varying the user id.
+ *
+ * Budget is generous because the legitimate shape is a support agent
+ * resolving ONE ticket, which is a handful of calls.
+ */
+export const adminSessionAccessLimiter = makeLimiter(
+  120,
+  "15 m",
+  "rl:admin-session-access",
 );
 
 /** 20 per hour per org — POST /api/organizations/[orgId]/billing-account/wallet/top-ups (orgId-keyed; blocks a single org from minting hundreds of Razorpay orders) */
