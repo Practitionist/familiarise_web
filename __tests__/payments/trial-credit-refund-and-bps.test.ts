@@ -326,7 +326,11 @@ describe("refundCancelledTrial — the credits actually come back", () => {
     });
 
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
-    expect(result).toEqual({ refundPct: 0, amountRefundedPaise: 0, rail: null });
+    expect(result).toEqual({
+      refundPct: 0,
+      amountRefundedPaise: 0,
+      rail: null,
+    });
   });
 });
 
@@ -340,7 +344,11 @@ describe("quoteTrialRefund — basis points, not floats (#1396)", () => {
         { hoursBefore: 0, refundPct: 0 },
       ]),
     );
-    givenPayment({ ...creditFundedTrial, amount: BigInt(99_999), paymentIntent: "pi_test" });
+    givenPayment({
+      ...creditFundedTrial,
+      amount: BigInt(99_999),
+      paymentIntent: "pi_test",
+    });
     mockAppointmentFindUnique.mockResolvedValue(startingInHours(72));
 
     const quote = await quoteTrialRefund({

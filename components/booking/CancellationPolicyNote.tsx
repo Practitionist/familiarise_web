@@ -53,7 +53,8 @@ export type PurchaseFunding =
 /** 24 → "24 hours", 72 → "3 days", 0 → "no notice". */
 export function noticePhrase(hoursBefore: number): string {
   if (hoursBefore <= 0) return "no notice";
-  if (hoursBefore < 24) return `${hoursBefore} hour${hoursBefore === 1 ? "" : "s"}`;
+  if (hoursBefore < 24)
+    return `${hoursBefore} hour${hoursBefore === 1 ? "" : "s"}`;
   // Days only from three up: "cancel at least 1 day before" is less immediate
   // than "24 hours before", and 24 is the single most common rung on the
   // platform ladder. A buyer reading this is checking a deadline.
@@ -80,17 +81,11 @@ function pctPhrase(refundPct: number): string {
  * the sentence says so rather than making the buyer work out that "24 hours"
  * includes "never".
  */
-export function ladderSentence(
-  terms: CancellationPolicyTerms,
-): string {
+export function ladderSentence(terms: CancellationPolicyTerms): string {
   const descending = [...terms.tiers].sort(
     (a, b) => b.hoursBefore - a.hoursBefore,
   );
-  const topPct = computeRefundPct(
-    terms,
-    Number.POSITIVE_INFINITY,
-    false,
-  );
+  const topPct = computeRefundPct(terms, Number.POSITIVE_INFINITY, false);
   return descending
     .map((tier, index) => {
       // `validateTierLadder` requires the last rung to sit at 0 hours precisely
@@ -125,7 +120,9 @@ export function nextTierBoundary(
   if (hoursUntilStart === null) return null;
   const nowPct = computeRefundPct(terms, hoursUntilStart, false);
   const better = terms.tiers
-    .filter((tier) => tier.refundPct > nowPct && tier.hoursBefore > hoursUntilStart)
+    .filter(
+      (tier) => tier.refundPct > nowPct && tier.hoursBefore > hoursUntilStart,
+    )
     .sort((a, b) => a.hoursBefore - b.hoursBefore)[0];
   if (!better) return null;
   return {
@@ -195,18 +192,14 @@ export function purchaseCancellationCopy(props: {
   const now = props.now ?? Date.now();
 
   if (props.eventKind === "individual") {
-    const lines = [
-      `After a time is agreed: ${ladderSentence(terms)}.`,
-    ];
+    const lines = [`After a time is agreed: ${ladderSentence(terms)}.`];
     // A 1:1 checkout CAN already carry a chosen slot (`?startsAt=`), and when it
     // does the ladder stops being a table and becomes a number: which rung this
     // booking is on right now, and how much more notice would move it up. That
     // is the figure the audit called "the hours-until at the next tier
     // boundary", and it is the only version of it a buyer can act on.
     const start = props.eventStartsAt ? new Date(props.eventStartsAt) : null;
-    const hoursUntil = start
-      ? (start.getTime() - now) / 3_600_000
-      : null;
+    const hoursUntil = start ? (start.getTime() - now) / 3_600_000 : null;
     if (hoursUntil !== null) {
       const nowPct = computeRefundPct(terms, hoursUntil, false);
       const next = nextTierBoundary(terms, hoursUntil);

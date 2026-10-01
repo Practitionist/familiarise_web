@@ -30,7 +30,10 @@ jest.mock("../../lib/prisma", () => ({
 
 import prisma from "../../lib/prisma";
 import { isOrgFundedPaymentMethod } from "../../lib/data/org-sponsored-seats";
-import { isActForOrgBooking, isOrgFundedByOrg } from "../../lib/booking/org-actor";
+import {
+  isActForOrgBooking,
+  isOrgFundedByOrg,
+} from "../../lib/booking/org-actor";
 import { buildWhere } from "../../lib/api/scope/list-appointments";
 
 const m = prisma as unknown as {
@@ -48,7 +51,15 @@ describe("the org-funded rail tuple", () => {
     }
     // The PERSONAL rail and a card are the same non-answer, and null/undefined
     // (a Payment with no method yet) must not read as "org funded" either.
-    for (const method of ["PERSONAL", "CARD", "CREDITS", "BANK", "", null, undefined]) {
+    for (const method of [
+      "PERSONAL",
+      "CARD",
+      "CREDITS",
+      "BANK",
+      "",
+      null,
+      undefined,
+    ]) {
       expect(isOrgFundedPaymentMethod(method)).toBe(false);
     }
   });

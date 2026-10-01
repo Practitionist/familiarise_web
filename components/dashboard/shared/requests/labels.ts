@@ -114,17 +114,20 @@ const CODE_SENTENCE: Record<string, string> = {
   // while they were choosing, or the notice window. The last one is not a
   // failure at all — it is a policy answer, and the server's own sentence names
   // the hours, so pass it through rather than inventing a vaguer one.
-  RESCHEDULE_ALREADY_OPEN: "A reschedule request is already open for this booking.",
+  RESCHEDULE_ALREADY_OPEN:
+    "A reschedule request is already open for this booking.",
   PROPOSAL_COUNT_MISMATCH: TOAST.changedElsewhere,
   PROPOSAL_WINDOW_CLOSED: TOAST.changedElsewhere,
   // CN-1 / #1169 PR 1 — the booking locks fail CLOSED on a Redis outage. The
   // request is untouched, so this is a wait-and-retry, same as LOCK_CONTENTION.
-  BOOKING_LOCK_UNAVAILABLE: "The booking system is briefly busy — retry in a moment.",
+  BOOKING_LOCK_UNAVAILABLE:
+    "The booking system is briefly busy — retry in a moment.",
   // #1319 — the server spent its Serializable budget. Nothing was written.
   SERIALIZATION_CONFLICT: "The booking system was busy — please try again.",
   // B4 — the capacity pre-check. Terminal, so the sentence points elsewhere
   // rather than at a retry.
-  EVENT_SOLD_OUT: "This session is full — pick another time or join the waitlist.",
+  EVENT_SOLD_OUT:
+    "This session is full — pick another time or join the waitlist.",
   // DELIBERATELY ABSENT, because the server's own sentence is the better copy
   // and the fallback below already reaches it (with any `[CODE]` stripped):
   //   RESCHEDULE_WINDOW, SLOT_TOO_SOON, SLOT_NOT_ON_GRID

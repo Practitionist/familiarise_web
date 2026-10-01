@@ -297,7 +297,10 @@ describe("the merged custom-availability index", () => {
   it("drops a malformed row instead of throwing on it", () => {
     const index = buildAvailabilityIndex([
       { startsAt: "not-a-date", endsAt: at("2026-09-20T11:00:00Z") },
-      { startsAt: at("2026-09-20T11:00:00Z"), endsAt: at("2026-09-20T09:00:00Z") },
+      {
+        startsAt: at("2026-09-20T11:00:00Z"),
+        endsAt: at("2026-09-20T09:00:00Z"),
+      },
       {
         startsAt: at("2026-09-20T09:00:00Z"),
         endsAt: at("2026-09-20T11:00:00Z"),

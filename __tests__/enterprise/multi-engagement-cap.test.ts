@@ -731,7 +731,8 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
             "expected the reversal to be refused, but it resolved",
           );
         },
-        (e: unknown) => e as InstanceType<typeof ProgramAssignmentUnderflowError>,
+        (e: unknown) =>
+          e as InstanceType<typeof ProgramAssignmentUnderflowError>,
       );
 
       expect(err.programAssignmentId).toBe("asg-1");

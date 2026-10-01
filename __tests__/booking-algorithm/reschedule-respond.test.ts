@@ -570,7 +570,10 @@ describe("decline ends the request and restores what it released", () => {
     expect(await decline()).toEqual({ done: true, restoredFully: true });
 
     const [args] = txStub.rescheduleRequest.updateMany.mock.calls[0] as [
-      { where: { id: string; status: { in: string[] } }; data: Record<string, unknown> },
+      {
+        where: { id: string; status: { in: string[] } };
+        data: Record<string, unknown>;
+      },
     ];
     expect(args.data).toMatchObject({
       status: "DECLINED",
@@ -578,7 +581,9 @@ describe("decline ends the request and restores what it released", () => {
     });
     // The restore is the CAS'd helper's write, not a bare update: the from-set
     // is what keeps a row an allocation already replaced from being resurrected.
-    expect(txStub.appointmentOccurrence.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(
+      txStub.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           id: { in: RELEASED_IDS },
@@ -604,7 +609,10 @@ describe("decline ends the request and restores what it released", () => {
     await decline();
 
     const [args] = txStub.consultation.updateMany.mock.calls[0] as [
-      { where: { id: string; status: { in: string[] } }; data: Record<string, unknown> },
+      {
+        where: { id: string; status: { in: string[] } };
+        data: Record<string, unknown>;
+      },
     ];
     expect(args.where.id).toBe("cons-1");
     expect(args.where.status.in).toEqual(["PENDING"]);
@@ -701,9 +709,14 @@ describe("decline ends the request and restores what it released", () => {
     useDeclineRow();
     txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 0 });
 
-    expect(await decline()).toEqual({ done: false, reason: "PROPOSAL_NOT_OPEN" });
+    expect(await decline()).toEqual({
+      done: false,
+      reason: "PROPOSAL_NOT_OPEN",
+    });
     // Nothing un-released out from under the answer that won.
-    expect(txStub.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
+    expect(
+      txStub.appointmentOccurrence.updateManyAndReturn,
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -1089,7 +1102,9 @@ describe("who counts as the counterparty", () => {
     );
 
     mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
-    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(404);
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      404,
+    );
   });
 
   it("an initiator who is neither party nor a payer admin leaves nobody able to answer", async () => {

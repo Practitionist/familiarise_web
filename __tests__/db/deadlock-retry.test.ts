@@ -84,9 +84,7 @@ describe("withSerializableRetry with deadlocks", () => {
   });
 
   it("gives up after maxRetries and rethrows the deadlock", async () => {
-    const fn = jest
-      .fn()
-      .mockRejectedValue(adapterDeadlock());
+    const fn = jest.fn().mockRejectedValue(adapterDeadlock());
     await expect(withSerializableRetry(fn, 2)).rejects.toMatchObject({
       name: "DriverAdapterError",
       cause: { originalCode: "40P01" },

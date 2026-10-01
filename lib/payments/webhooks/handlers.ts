@@ -54,10 +54,7 @@ import {
 } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
-import {
-  getClassCapacity,
-  getWebinarCapacity,
-} from "@/lib/events/capacity";
+import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import {
   AUTO_REFUND_PENDING_PREFIX,
   DOUBLE_BOOKING_BLOCKED_NOTE,

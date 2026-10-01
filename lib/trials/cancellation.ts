@@ -214,7 +214,8 @@ export async function quoteTrialRefund(args: {
   // credit in full and a 0% tier restores nothing — a late cancel bites a credit
   // buyer exactly as it bites a card buyer.
   const isFreeCreditFunded =
-    fundingRailForIntent(payment.paymentIntent) === "CREDITS" && grossPaise === 0;
+    fundingRailForIntent(payment.paymentIntent) === "CREDITS" &&
+    grossPaise === 0;
   const creditRestoresInFull = isFreeCreditFunded && refundPct > 0;
   // #1396 — `refundPct` may carry two decimals (a policy can say 12.5%), so
   // multiplying paise by the float first put a binary rounding error inside a
@@ -343,7 +344,8 @@ export async function refundCancelledTrial(args: {
         rail: restored.rail,
       };
     }
-    if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0, rail: null };
+    if (amountPaise <= 0)
+      return { refundPct, amountRefundedPaise: 0, rail: null };
 
     const result = await refundBookingPayment({
       paymentId: quote.paymentId,

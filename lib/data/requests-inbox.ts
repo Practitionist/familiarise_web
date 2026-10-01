@@ -828,11 +828,7 @@ async function readCounts(
     );
     tasks.push(() =>
       prisma.consultation.count({
-        where: consultationRequestWhere(
-          cp,
-          scope,
-          "APPROVED_PENDING_PAYMENT",
-        ),
+        where: consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
       }),
     );
   }

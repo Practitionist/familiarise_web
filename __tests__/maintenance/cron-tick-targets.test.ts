@@ -151,7 +151,6 @@ describe("cron-tick targetRequest", () => {
     });
   });
 
-
   // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
   // 20 s budget, where fifty under 6 s was aborted on every tick.
   it("gives the orphaned-confirmation reconcile a bite of ten and 20 s", () => {

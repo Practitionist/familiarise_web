@@ -50,10 +50,7 @@ jest.mock("../../lib/prisma", () => {
 
 const lockCalls: string[] = [];
 jest.mock("../../utils/appointmentlock", () => ({
-  withAppointmentLock: async (
-    id: string,
-    fn: (lock?: unknown) => unknown,
-  ) => {
+  withAppointmentLock: async (id: string, fn: (lock?: unknown) => unknown) => {
     lockCalls.push(id);
     return fn({ key: `appointment-lock:${id}` });
   },
@@ -206,7 +203,9 @@ describe("lapseApprovedRequest — one body, two terminal words", () => {
       db.subscription.updateMany.mock.calls[0][0],
     ]) {
       expect(call.where.status).toEqual({ in: ["APPROVED_PENDING_PAYMENT"] });
-      expect(JSON.stringify(call.where)).toContain('"paymentStatus":"SUCCEEDED"');
+      expect(JSON.stringify(call.where)).toContain(
+        '"paymentStatus":"SUCCEEDED"',
+      );
     }
   });
 
@@ -224,14 +223,12 @@ describe("lapseApprovedRequest — one body, two terminal words", () => {
 
     expect(out).toEqual({ moved: 0, appointmentId: null });
     expect(db.payment.updateMany).not.toHaveBeenCalled();
-    expect(
-      db.appointmentOccurrence.updateManyAndReturn,
-    ).not.toHaveBeenCalled();
+    expect(db.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
   });
 });
 
 describe("POST …/withdraw-approval answers the status it wrote", () => {
-  it("200 { status: \"CANCELLED\" } on a won CAS, with the notice still fired", async () => {
+  it('200 { status: "CANCELLED" } on a won CAS, with the notice still fired', async () => {
     db.consultation.findUnique.mockResolvedValue(consultationRow);
     db.consultation.updateMany.mockResolvedValue({ count: 1 });
 

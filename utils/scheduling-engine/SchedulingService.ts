@@ -2354,9 +2354,8 @@ export class SchedulingService {
           include: { occurrences: true },
         });
 
-      const tentativeSlotCount = this.tentativeSlotCountOf(
-        existingAppointments,
-      );
+      const tentativeSlotCount =
+        this.tentativeSlotCountOf(existingAppointments);
       // #1012 — before any delete+recreate, confirm the page's view of the
       // tentative set still matches the database.
       this.assertExpectedTentativeSlotCount(

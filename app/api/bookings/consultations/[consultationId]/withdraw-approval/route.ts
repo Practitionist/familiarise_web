@@ -58,9 +58,7 @@ export async function POST(
       // module, or every sweep that shares it stops loading under jsdom. This is
       // the one boundary that has both types in scope.
       renewLock: async (heldLock) => {
-        await renewAppointmentLock(
-          heldLock as ApprovalLock | null | undefined,
-        );
+        await renewAppointmentLock(heldLock as ApprovalLock | null | undefined);
       },
     });
     return NextResponse.json(body, {

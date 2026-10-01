@@ -156,7 +156,11 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 // these answer with a room that has space, the way a live roster does.
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getWebinarCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
+  getWebinarCapacity: jest.fn(() => ({
+    isFull: false,
+    registered: 1,
+    max: 10,
+  })),
   getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 

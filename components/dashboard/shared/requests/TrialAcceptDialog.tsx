@@ -42,10 +42,16 @@ function scheduleFailureCopy(error: unknown): {
   if (error instanceof ApiResponseError) {
     const known = error.code ? TRIAL_REFUSAL_TITLE[error.code] : undefined;
     if (known) {
-      return { title: known, description: errorSentence(undefined, error.message) };
+      return {
+        title: known,
+        description: errorSentence(undefined, error.message),
+      };
     }
     return {
-      title: error.status === 409 ? "That time is no longer available" : "Couldn't schedule trial",
+      title:
+        error.status === 409
+          ? "That time is no longer available"
+          : "Couldn't schedule trial",
       description:
         error.status === 409
           ? `${errorSentence(undefined, error.message)} Pick another time.`

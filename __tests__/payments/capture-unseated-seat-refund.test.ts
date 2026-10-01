@@ -495,7 +495,8 @@ describe("the auto-refund marker on a released seat", () => {
       paymentId: "pay-1",
     });
     markerRow.mockResolvedValue({
-      description: "Auto-refund pending: capture landed after the seat was released",
+      description:
+        "Auto-refund pending: capture landed after the seat was released",
     });
     markerSettle.mockResolvedValue({ count: 1 });
   });
@@ -511,7 +512,9 @@ describe("the auto-refund marker on a released seat", () => {
   it("is settled once the refund succeeds", async () => {
     await deliver();
     expect(markerSettle).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ id: "pay-1" }) }),
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "pay-1" }),
+      }),
     );
   });
 
@@ -528,7 +531,9 @@ describe("the auto-refund marker on a released seat", () => {
 // ---------------------------------------------------------------------------
 describe("a legacy capture for an event with no room left", () => {
   it("takes no seat, records why, and returns the money", async () => {
-    paymentFindUnique.mockResolvedValue(pendingSeatPayment({ appointmentId: null }));
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({ appointmentId: null }),
+    );
     webinarFindUnique.mockResolvedValue(liveWebinarRow());
     getWebinarCapacity.mockReturnValue({
       max: 1,
@@ -570,7 +575,9 @@ describe("a legacy capture for an event with no room left", () => {
   });
 
   it("a full class refuses the same way, and the gate is the canonical one", async () => {
-    paymentFindUnique.mockResolvedValue(pendingSeatPayment({ appointmentId: null }));
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({ appointmentId: null }),
+    );
     classFindUnique.mockResolvedValue(liveClassRow());
     getClassCapacity.mockReturnValue({
       max: 2,
@@ -601,7 +608,9 @@ describe("a legacy capture for an event with no room left", () => {
   });
 
   it("a buyer who already holds a live seat is not refused by their own room", async () => {
-    paymentFindUnique.mockResolvedValue(pendingSeatPayment({ appointmentId: null }));
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({ appointmentId: null }),
+    );
     webinarFindUnique.mockResolvedValue(
       liveWebinarRow({
         appointment: {

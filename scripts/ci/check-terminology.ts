@@ -172,7 +172,19 @@ const PATH_EXTENSIONS = new Set([
  * Characters that mean the token is a pattern or prose, not a path: `a|b`,
  * `{id}`, `*.ts`, `foo(bar)`. A `..` is rejected separately below.
  */
-const PATH_FORBIDDEN_CHARS = new Set(["*", "{", "}", "|", ",", "<", ">", "=", "$", "(", ")"]);
+const PATH_FORBIDDEN_CHARS = new Set([
+  "*",
+  "{",
+  "}",
+  "|",
+  ",",
+  "<",
+  ">",
+  "=",
+  "$",
+  "(",
+  ")",
+]);
 
 /**
  * Paths that look repo-shaped but belong to a dependency. `lib/api.js` is the
@@ -234,10 +246,14 @@ export function loadLiveConstraintNames(root: string): Set<string> {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".sql")) continue;
     const text = fs.readFileSync(path.join(dir, entry.name), "utf8");
-    for (const m of text.matchAll(/CONSTRAINT(?:\s+IF\s+EXISTS)?\s+"([^"]+)"/g)) {
+    for (const m of text.matchAll(
+      /CONSTRAINT(?:\s+IF\s+EXISTS)?\s+"([^"]+)"/g,
+    )) {
       names.add(m[1]);
     }
-    for (const m of text.matchAll(/CONSTRAINT\s+TRIGGER\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    for (const m of text.matchAll(
+      /CONSTRAINT\s+TRIGGER\s+([A-Za-z_][A-Za-z0-9_]*)/g,
+    )) {
       names.add(m[1]);
     }
   }
@@ -247,13 +263,15 @@ export function loadLiveConstraintNames(root: string): Set<string> {
 /** The backticked token read as a repo-relative file path, or null. */
 function asRepoPath(token: string): string | null {
   const candidate = token.trim().replace(/[.,;:)\]]+$/, "");
-  if (!candidate || candidate.includes(" ") || candidate.includes("..")) return null;
+  if (!candidate || candidate.includes(" ") || candidate.includes(".."))
+    return null;
   for (const ch of PATH_FORBIDDEN_CHARS) {
     if (candidate.includes(ch)) return null;
   }
   if (!candidate.includes("/")) return null;
   if (!PATH_ROOTS.some((root) => candidate.startsWith(root))) return null;
-  if (PATH_PREFIX_EXEMPT.some((prefix) => candidate.startsWith(prefix))) return null;
+  if (PATH_PREFIX_EXEMPT.some((prefix) => candidate.startsWith(prefix)))
+    return null;
   if (THIRD_PARTY_PATHS.has(candidate)) return null;
   const last = candidate.slice(candidate.lastIndexOf("/") + 1);
   const dot = last.lastIndexOf(".");

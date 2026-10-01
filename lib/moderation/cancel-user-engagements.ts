@@ -705,7 +705,8 @@ async function readClassSeriesLedgers(
         // refund that follows is every seat at its FULL balance, not the
         // pro-rata net. A reader reconciling the consultant's earnings needs to
         // know which of the two they are looking at.
-        fallbackRefundBasis: "full balance for every seat (pro-rata netting skipped)",
+        fallbackRefundBasis:
+          "full balance for every seat (pro-rata netting skipped)",
       },
     });
     captureModerationError(error);

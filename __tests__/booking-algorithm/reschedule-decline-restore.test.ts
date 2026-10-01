@@ -60,7 +60,10 @@ interface Store {
     appointmentId: string;
     openForAppointmentId: string | null;
     createdAt: Date;
-    appointment: { consultationId: string | null; subscriptionId: string | null };
+    appointment: {
+      consultationId: string | null;
+      subscriptionId: string | null;
+    };
   };
   slots: SlotRow[];
   consultation: { id: string; status: string } | null;
@@ -396,7 +399,11 @@ function seed(
     }),
   );
   (prisma.appointmentOccurrence.findFirst as jest.Mock).mockImplementation(
-    async ({ where }: { where: { id: { in: string[] }; completionStatus?: string } }) => {
+    async ({
+      where,
+    }: {
+      where: { id: { in: string[] }; completionStatus?: string };
+    }) => {
       const hit = state.slots
         .filter(
           (s) =>
@@ -480,7 +487,10 @@ describe("a proposal replaces the coverage it released, counted in atoms", () =>
     // real one and wave a proposal through.
     expect(
       releasedAtomCount([
-        { startsAt: at("2026-10-08T10:00:00Z"), endsAt: at("2026-10-08T09:00:00Z") },
+        {
+          startsAt: at("2026-10-08T10:00:00Z"),
+          endsAt: at("2026-10-08T09:00:00Z"),
+        },
       ]),
     ).toBe(0);
     // A row one millisecond short is still one atom — a stray millisecond must
@@ -514,7 +524,10 @@ describe("the propose response's outcome code", () => {
         autoConfirmed: true,
         autoConfirmReason: null,
       }),
-    ).toEqual({ code: "AUTO_CONFIRMED", message: "Your new time is confirmed." });
+    ).toEqual({
+      code: "AUTO_CONFIRMED",
+      message: "Your new time is confirmed.",
+    });
   });
 
   it("falls back to the route's own sentence when no times were named", () => {
@@ -676,7 +689,10 @@ describe("a decline restores the booking it declined to move", () => {
   it("answers PROPOSAL_NOT_OPEN when the proposal was already answered", async () => {
     seed({ requestStatus: "ACCEPTED" });
 
-    expect(await decline()).toEqual({ done: false, reason: "PROPOSAL_NOT_OPEN" });
+    expect(await decline()).toEqual({
+      done: false,
+      reason: "PROPOSAL_NOT_OPEN",
+    });
     // Nothing un-released out from under the accept.
     expect(state.slots[0].completionStatus).toBe("RESCHEDULED");
   });

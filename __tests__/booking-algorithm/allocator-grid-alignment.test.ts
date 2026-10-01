@@ -142,7 +142,9 @@ function placedOccurrences(): { startsAt: Date; endsAt: Date }[] {
     (call) =>
       (
         call[0] as {
-          data?: { occurrences?: { create?: { startsAt: Date; endsAt: Date }[] } };
+          data?: {
+            occurrences?: { create?: { startsAt: Date; endsAt: Date }[] };
+          };
         }
       ).data?.occurrences?.create ?? [],
   );
@@ -150,7 +152,9 @@ function placedOccurrences(): { startsAt: Date; endsAt: Date }[] {
     (call) =>
       (
         call[0] as {
-          data?: { occurrences?: { create?: { startsAt: Date; endsAt: Date }[] } };
+          data?: {
+            occurrences?: { create?: { startsAt: Date; endsAt: Date }[] };
+          };
         }
       ).data?.occurrences?.create ?? [],
   );

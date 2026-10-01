@@ -128,7 +128,10 @@ describe("custom windows", () => {
     // exactly as a weekly row does.
     expect(
       validateCustomWindow(
-        { startsAt: at("2026-09-20T10:15:00Z"), endsAt: at("2026-09-20T12:15:00Z") },
+        {
+          startsAt: at("2026-09-20T10:15:00Z"),
+          endsAt: at("2026-09-20T12:15:00Z"),
+        },
         0,
         NOW,
       )?.code,
@@ -138,7 +141,10 @@ describe("custom windows", () => {
   it("refuses a range that ENDS off the grid", () => {
     expect(
       validateCustomWindow(
-        { startsAt: at("2026-09-20T09:00:00Z"), endsAt: at("2026-09-20T11:15:00Z") },
+        {
+          startsAt: at("2026-09-20T09:00:00Z"),
+          endsAt: at("2026-09-20T11:15:00Z"),
+        },
         0,
         NOW,
       )?.code,

@@ -127,16 +127,10 @@ export function normaliseSlotToSchedulingGrid<
 >(slot: T, timezone: string): T {
   if (!slot.startTime || !slot.endTime) return slot;
 
-  const startsAt = convertTimezoneToUtc(
-    slot.startTime,
-    PROBE_DATE,
-    timezone,
-  );
+  const startsAt = convertTimezoneToUtc(slot.startTime, PROBE_DATE, timezone);
   const endsAt = convertTimezoneToUtc(
     slot.endTime,
-    isOvernight(slot.startTime, slot.endTime)
-      ? PROBE_NEXT_DATE
-      : PROBE_DATE,
+    isOvernight(slot.startTime, slot.endTime) ? PROBE_NEXT_DATE : PROBE_DATE,
     timezone,
   );
   if (!startsAt || !endsAt) return slot;

@@ -259,10 +259,7 @@ describe("all four client save paths publish a bookable row", () => {
   });
 
   it("the onboarding sync, weekly", () => {
-    const [built] = buildWeeklySlotsForSave(
-      day([row("09:00", "12:00")]),
-      EUC,
-    );
+    const [built] = buildWeeklySlotsForSave(day([row("09:00", "12:00")]), EUC);
     expect(built.startTimeUtc % 30).toBe(0);
     expect(built.endTimeUtc % 30).toBe(0);
   });

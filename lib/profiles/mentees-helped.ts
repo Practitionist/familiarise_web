@@ -278,9 +278,7 @@ export async function recomputeMenteesHelped(
     oneToOne: consultations.map((r) => r.requestedBy.userId),
     subscription: subscriptions.map((r) => r.requestedBy.userId),
     trial: trials.map((r) => r.consulteeProfile.userId),
-    webinar: webinarSeats.flatMap((a) =>
-      a.participants.map((p) => p.userId),
-    ),
+    webinar: webinarSeats.flatMap((a) => a.participants.map((p) => p.userId)),
     class: classSeats.flatMap((a) => a.participants.map((p) => p.userId)),
   });
 

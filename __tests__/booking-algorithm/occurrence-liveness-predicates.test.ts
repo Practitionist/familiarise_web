@@ -22,7 +22,6 @@
  * stale-tab guard exists to protect and reject every reschedule as stale.
  */
 
-
 import "./setup";
 
 jest.mock("../../lib/prisma", () => ({
@@ -70,7 +69,9 @@ jest.mock("@sentry/nextjs", () => ({
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
 jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
-  ...jest.requireActual("../../utils/scheduling-engine/ScheduleValidationService"),
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
   ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
@@ -222,7 +223,6 @@ beforeEach(() => {
 afterEach(() => {
   jest.useRealTimers();
 });
-
 
 const allocateManual = (expectedTentativeSlotCount: number) =>
   SchedulingService.allocate({

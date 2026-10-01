@@ -154,7 +154,11 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 // NOT read as "room available"; answer with a room that has space instead.
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getWebinarCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
+  getWebinarCapacity: jest.fn(() => ({
+    isFull: false,
+    registered: 1,
+    max: 10,
+  })),
   getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 

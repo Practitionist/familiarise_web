@@ -164,15 +164,27 @@ describe("an overnight end lands one day after its start", () => {
 
   it("23:30 → 00:30 spans the hour it was typed as", () => {
     for (const timezone of ZONES) {
-      const { startsAt, endsAt } = overnight("23:30", "00:30", DATES[1], timezone);
+      const { startsAt, endsAt } = overnight(
+        "23:30",
+        "00:30",
+        DATES[1],
+        timezone,
+      );
       expect(Date.parse(endsAt) - Date.parse(startsAt)).toBe(60 * 60 * 1000);
     }
   });
 
   it("22:00 → 01:00 spans the three hours it was typed as", () => {
     for (const timezone of ZONES) {
-      const { startsAt, endsAt } = overnight("22:00", "01:00", DATES[1], timezone);
-      expect(Date.parse(endsAt) - Date.parse(startsAt)).toBe(3 * 60 * 60 * 1000);
+      const { startsAt, endsAt } = overnight(
+        "22:00",
+        "01:00",
+        DATES[1],
+        timezone,
+      );
+      expect(Date.parse(endsAt) - Date.parse(startsAt)).toBe(
+        3 * 60 * 60 * 1000,
+      );
     }
   });
 
@@ -184,7 +196,12 @@ describe("an overnight end lands one day after its start", () => {
 
   it("a row that does not cross midnight is untouched by the rollover", () => {
     for (const timezone of ZONES) {
-      const { startsAt, endsAt } = overnight("09:00", "17:00", DATES[1], timezone);
+      const { startsAt, endsAt } = overnight(
+        "09:00",
+        "17:00",
+        DATES[1],
+        timezone,
+      );
       expect(Date.parse(endsAt) - Date.parse(startsAt)).toBe(
         8 * 60 * 60 * 1000,
       );
@@ -195,7 +212,7 @@ describe("an overnight end lands one day after its start", () => {
 // ─── 4. The write path the fallback actually feeds ──────────────────────────
 
 describe("a consultant whose zone did not resolve publishes their own hours", () => {
-  it("the weekly row stores the typed minutes when the fallback is \"UTC\"", () => {
+  it('the weekly row stores the typed minutes when the fallback is "UTC"', () => {
     // `timezone || "UTC"` in `use-consultant-settings-form` and in the onboarding
     // wizard is the whole reason this branch was load-bearing, and a weekly row
     // carries nothing but this minute-of-day — so a host shift here is a

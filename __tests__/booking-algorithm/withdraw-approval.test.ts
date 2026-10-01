@@ -53,10 +53,7 @@ jest.mock("../../lib/prisma", () => {
 const lockCalls: string[] = [];
 const lockRenewals: unknown[] = [];
 jest.mock("../../utils/appointmentlock", () => ({
-  withAppointmentLock: async (
-    id: string,
-    fn: (lock?: unknown) => unknown,
-  ) => {
+  withAppointmentLock: async (id: string, fn: (lock?: unknown) => unknown) => {
     lockCalls.push(id);
     return fn({ key: `appointment-lock:${id}` });
   },

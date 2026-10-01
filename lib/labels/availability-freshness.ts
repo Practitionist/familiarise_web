@@ -92,7 +92,11 @@ export function availabilityFreshness(
   // No successful fetch ever: the grid is not "stale", it has never loaded, and
   // the component's own loading/error state owns that case.
   if (!Number.isFinite(fetchedAtMs)) {
-    return { freshness: "unknown", label: null, failed: consecutiveFailures > 0 };
+    return {
+      freshness: "unknown",
+      label: null,
+      failed: consecutiveFailures > 0,
+    };
   }
 
   const age = Math.max(0, nowMs - fetchedAtMs);

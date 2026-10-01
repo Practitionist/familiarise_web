@@ -1518,9 +1518,8 @@ async function expireStaleRequestsUnlocked(
   allErrors.push(...subscriptionResult.errors);
 
   // Expire APPROVED-unallocated paid subscriptions (PR 2c money fix)
-  const approvedUnallocated = await expireApprovedUnallocatedSubscriptions(
-    limits,
-  );
+  const approvedUnallocated =
+    await expireApprovedUnallocatedSubscriptions(limits);
   allErrors.push(...approvedUnallocated.errors);
 
   // #1775 C-3 — paid plans the consultant never allocated within 48 h.

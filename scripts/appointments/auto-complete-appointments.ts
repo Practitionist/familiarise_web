@@ -832,9 +832,7 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
  * one CAS per row (`decideSlotOutcome`). A live overrun and a consultation host
  * no-show still inside the detector's handoff are left SCHEDULED.
  */
-async function completeIndividualSlots(
-  maxOutcomes: number,
-): Promise<{
+async function completeIndividualSlots(maxOutcomes: number): Promise<{
   completed: number;
   unverified: number;
   voided: number;
