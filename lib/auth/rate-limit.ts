@@ -140,7 +140,6 @@ export const AUTH_RATE_LIMIT_RULES: NonNullable<
   "/sign-in/social": { window: 15 * MINUTE, max: 30 },
   "/callback/*": { window: 15 * MINUTE, max: 30 },
   "/sign-in/sso": { window: 15 * MINUTE, max: 20 },
-  "/sso/callback": { window: 15 * MINUTE, max: 30 },
   "/sso/callback/*": { window: 15 * MINUTE, max: 30 },
 
   // Read on every page load and tab focus, and nothing to guess. Throttling

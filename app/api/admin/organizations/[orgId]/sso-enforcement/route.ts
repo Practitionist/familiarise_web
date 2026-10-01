@@ -23,6 +23,18 @@ export const POST = withOpsAction(
   {
     mode: "tx",
     run: async (tx, { params, body }) => {
+      const org = await tx.organization.findUnique({
+        where: { id: params.orgId },
+        select: { id: true },
+      });
+      if (!org) {
+        throw new OpsRefusal(
+          "ORGANIZATION_NOT_FOUND",
+          "No organization with that id.",
+          404,
+        );
+      }
+
       if (body.enforce) {
         const approved = await tx.ssoProvider.count({
           where: { organizationId: params.orgId, domainVerified: true },

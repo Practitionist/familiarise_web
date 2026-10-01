@@ -16,6 +16,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 
 const tx = {
+  organization: { findUnique: jest.fn() },
   ssoProvider: { count: jest.fn() },
   organizationSSOSettings: {
     findUnique: jest.fn(),
@@ -42,7 +43,20 @@ const call = (body: unknown) =>
     { params: Promise.resolve({ orgId: "org_1" }) },
   );
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  tx.organization.findUnique.mockResolvedValue({ id: "org_1" });
+});
+
+it("answers 404 for an organization that does not exist", async () => {
+  tx.organization.findUnique.mockResolvedValue(null);
+
+  const res = await call({ enforce: false, reason: "their IdP is down" });
+
+  expect(res.status).toBe(404);
+  expect((await res.json()).code).toBe("ORGANIZATION_NOT_FOUND");
+  expect(tx.organizationSSOSettings.upsert).not.toHaveBeenCalled();
+});
 
 it("turns enforcement off, bumping the version, and logs it", async () => {
   tx.organizationSSOSettings.findUnique.mockResolvedValue({ enforceSSO: true });

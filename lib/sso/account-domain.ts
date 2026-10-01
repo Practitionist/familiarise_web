@@ -1,7 +1,9 @@
 import { APIError } from "better-auth/api";
 import prisma from "@/lib/prisma";
 
-// Every other Account.providerId is an SsoProvider.providerId.
+// Every other Account.providerId is treated as an SsoProvider.providerId. A new
+// social provider must be added here; until it is, its sign-ins fail closed
+// with SSO_EMAIL_DOMAIN_MISMATCH rather than skipping the domain check.
 const NON_SSO_PROVIDERS = new Set(["credential", "google", "github"]);
 
 export function isSsoProviderId(providerId: string): boolean {
