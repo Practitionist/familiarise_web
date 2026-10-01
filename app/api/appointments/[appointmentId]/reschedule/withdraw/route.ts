@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
@@ -29,6 +30,9 @@ export async function POST(
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
+    // Same budget as the sibling reschedule route: both move slots and money.
+    const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (limited) return limited;
 
     // Found via the appointment rather than by request id: the caller is acting
     // on a booking they can see, and openForAppointmentId already guarantees at
