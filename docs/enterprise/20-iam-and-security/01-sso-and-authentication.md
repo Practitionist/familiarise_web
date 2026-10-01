@@ -135,7 +135,7 @@ in Docker or use an Auth0/Okta developer tenant; the steps are in
 - [authentication/sso.md](../../authentication/sso.md) — canonical SSO
   design, secret key rotation, failure modes.
 - [jit-and-session-refresh](02-jit-and-session-refresh.md) — JIT sequence and
-  `sessionGeneration`.
+  how role changes reach live sessions.
 - [rate-limiting](04-rate-limiting.md) — limits on SSO sign-in, callback and
   the domain-check probe.
 - [organization-lifecycle](../00-foundations/05-organization-lifecycle.md) —

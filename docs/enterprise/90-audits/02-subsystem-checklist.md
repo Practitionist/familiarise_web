@@ -133,7 +133,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, org-route-ma
 - [ ] Role ladder OWNER(100)/MAINTAINER(80)/BILLING_ADMIN(70)/MANAGER(60)/EXPERT(40)/SUPPORT(30)/LEARNER(20) `✅`
 - [ ] BILLING_ADMIN rank-independent finance gate (MAINTAINER denied) `✅` — the `billing.manage` key in `lib/auth/org-permissions.ts`
 - [ ] LEARNER↔EXPERT disjoint transition blocked `🔒` — `lib/enterprise/role-transitions.ts`
-- [ ] `sessionGeneration` bump on role/status change (no forced logout) `✅` — `membership-transitions.ts`
+- [ ] Role/status change reaches live sessions on the next request (no forced logout) `✅` — cookie cache off; `sessionGeneration` removed in #1878 (ADR 10 superseded)
 - [ ] Anti-lockout: can't remove/demote last OWNER `✅` — `governance.ts`
 - [ ] Member-removal pre-check for in-flight money (overage/earnings/refund/dispute) `❌` #779 §C
 - [ ] RBAC over-centralization (name/billingEmail OWNER-only) `🟡` #779 §A

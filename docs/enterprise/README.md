@@ -143,7 +143,7 @@ These four docs cover how people get into orgs (OIDC SSO and JIT) and the protec
 | #   | Doc                                                                          | Focus                                                   |
 | --- | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
 | 01  | [sso-and-authentication](20-iam-and-security/01-sso-and-authentication.md)   | `OrganizationSSOSettings`, `SsoProvider`, domain claims |
-| 02  | [jit-and-session-refresh](20-iam-and-security/02-jit-and-session-refresh.md) | JIT auto-join, `sessionGeneration`, role-change refresh |
+| 02  | [jit-and-session-refresh](20-iam-and-security/02-jit-and-session-refresh.md) | JIT auto-join, role-change refresh                      |
 | 04  | [rate-limiting](20-iam-and-security/04-rate-limiting.md)                     | BetterAuth limiter on Upstash + edge rules              |
 | 05  | [security-headers](20-iam-and-security/05-security-headers.md)               | CSP + header posture                                    |
 

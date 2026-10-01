@@ -113,118 +113,26 @@ Concrete failure mode: an OWNER demoted to LEARNER could keep
 acting as OWNER for 24h. A removed member could keep accessing the org
 dashboard for 24h. Both are real bugs, not just hygiene.
 
-### The fix — `sessionGeneration` marker
+### The fix: sessions are read from the database on every request
 
-Every membership mutation that affects the effective permission set
-calls `bumpUserSessionGeneration(tx, userId)`, and the four mutation
-paths that do so are as follows.
+BetterAuth's cookie cache is off (`session.cookieCache.enabled: false` in
+`lib/auth.ts`), so every server session read re-runs `customSession`, which
+loads the user's memberships from the database. A promotion, demotion or
+removal applies on the user's next request, with no forced logout and no
+marker to bump. The cost is one memberships query per authenticated request.
+Turning the cookie cache back on would reopen the staleness window above.
 
-- A `POST /members` adds or reactivates a member.
-- A `PATCH /members/[memberId]` changes a member's role, status, or departmentLabel.
-- A `DELETE /members/[memberId]` soft-deletes a member to `REMOVED`.
-- A `POST /invitations/accept` accepts an invitation.
+Human-initiated revokes (the user's device list, the staff Team page) still
+hard-revoke sessions through `lib/auth/session-revoke.ts`.
 
-The helper increments `users.sessionGeneration` by 1 inside the same
-transaction as the mutation (`{ increment: 1 }` — an atomic Prisma
-update, not a read-modify-write).
-
-`customSession` reads the live row's `sessionGeneration` on every
-session lookup and re-loads memberships from the DB **unconditionally**
-(the `memberships.findMany` always runs; the marker is not yet used as
-a skip-the-refetch guard — that fast-path is the future use noted in
-`lib/auth.ts`). Since memberships are always fresh, the user's effective
-permissions update on the next round-trip — no forced logout needed.
-The marker is what client code can compare against its cached payload to
-*detect* staleness; the always-on refetch is what actually corrects it.
-
-BetterAuth's cookie cache is **off** (`session.cookieCache.enabled:
-false` in `lib/auth.ts`, #1857), so every server session read re-runs
-`customSession` and "next round-trip" means exactly that. The
-catastrophic 24h figure below is the worst case when the bump is *not*
-called at all and the only refresh is BetterAuth's `updateAge: 24h`
-rotation.
-
-#### Trade-off: a DB hit every request vs a cookie cache
-
-With the cache off, every authenticated request runs `customSession` —
-the live `users` row plus `memberships.findMany`. We pay that so a role
-change, a removal, a ban or a revoked session applies on the next
-request rather than up to `maxAge` later; `customSession` already
-queried Prisma on every read, so the cache only saved one indexed
-lookup. Re-enabling it would bring back that staleness window for the
-dangerous cases too (a downgraded OWNER still acting as OWNER, a
-removed member still inside), which is why sensitive reads use
-`getSession(true)` regardless.
-
-### Why a counter, not a boolean
-
-Concurrent role mutations (e.g. a script bulk-promoting interns)
-would race against a boolean "stale" flag — the first reader clears
-the flag, and later mutations are lost. A monotonic counter carried
-in the session payload (`additionalFields.sessionGeneration`, see
-`lib/auth.ts`) means each session can compare "I've seen up to N"
-against the current row value, unambiguously.
-
-### Why we don't force logout
-
-The UX cost of "you've been signed out, please log in again" is high
-relative to the marginal security benefit. The catastrophic case is
-role downgrade with a stale OWNER session, or a removed member still
-inside — and that is handled by the same `sessionGeneration` bump, not a
-hard kill. BetterAuth's `admin` plugin *is* installed, but its
-`revokeUserSessions` endpoint is caller-scoped (it checks the *calling*
-admin's session) and cannot join the membership transaction, so it is
-not the primitive for system-initiated changes. Removal, downgrade and
-soft-suspend bump the generation and take effect on the next request.
-Human-initiated revokes (the user's device list, the staff door) do
-hard-revoke through `lib/auth/session-revoke.ts`; if removal ever
-should too, the primitive is `revokeAllUserSessions` (ADR 10 addendum,
-ADR 35).
-
-The `sessionGeneration` bump also handles the middle case: the membership
-is still active, but the role / status changed. Next request reflects
-the new permissions; no UX disruption.
-
-### Sequence diagram
-
-Walk it through a real promotion: a **Wipro** admin promotes a member
-from LEARNER to MANAGER. The PATCH bumps `sessionGeneration` inside the
-same transaction as the role write; the promoted user does *not* get
-logged out. Their next request re-runs `customSession`, which re-reads memberships and the new MANAGER
-capabilities simply appear.
-
-```mermaid
-sequenceDiagram
-  autonumber
-  actor A as Wipro admin
-  participant API as PATCH /members/[id]
-  participant DB as Postgres
-  actor M as Promoted member (live session)
-  A->>API: PATCH { role: "MANAGER" }
-  API->>DB: BEGIN tx
-  API->>DB: Membership.update(role = MANAGER)
-  API->>DB: users.update sessionGeneration { increment: 1 }
-  Note over API,DB: atomic increment, not read-modify-write —<br/>concurrent promotions can't lose a bump
-  API->>DB: COMMIT
-  API-->>A: 200 OK
-  Note over M: no forced logout
-  M->>API: next request (cookie cache off)
-  API->>DB: customSession reads user.sessionGeneration → N+1
-  API->>DB: memberships.findMany (always runs)
-  API-->>M: session.user now reflects MANAGER ✅
-```
-
-The bump itself is the *atomic increment* in the COMMIT box — it can never lose a
-concurrent promotion, which is why the marker is a counter and not a
-boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
+The earlier `sessionGeneration` counter (ADR 10) was removed in #1878: nothing
+read it once the cookie cache was off.
 
 ---
 
 ## §3 — Code anchors
 
-- **Bump helper:** `lib/api/organizations/membership-transitions.ts:bumpUserSessionGeneration`
-- **Schema:** `prisma/schema.prisma model User → sessionGeneration Int @default(0)`
-- **Carry in session:** `lib/auth.ts` additionalFields + customSession `liveSessionGeneration`
+- **Fresh memberships per request:** `lib/auth.ts` `customSession` (cookie cache off)
 - **JIT auto-join:** `lib/sso/jit-membership.ts:provisionSsoMembership`, wired as the sso() `provisionUser` hook in `lib/sso/plugin-options.ts`
 - **Role floor schema:** `lib/labels/org-labels.ts:JitDefaultRoleSchema`
 - **API gate on settings:** `app/api/organizations/[orgId]/sso/route.ts:PatchBodySchema`

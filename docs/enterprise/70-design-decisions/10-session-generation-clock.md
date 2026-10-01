@@ -2,11 +2,17 @@
 title: Session-generation clock over session revocation
 band: 70-design-decisions
 audience: sde3
-status: live
+status: superseded
 last-reviewed: 2026-09-30
 ---
 
 # ADR 10 — Role changes bump a session-generation counter instead of revoking sessions
+
+> **Superseded (#1878).** `User.sessionGeneration` is gone. With the cookie
+> cache off, `customSession` reloads memberships on every request, so nothing
+> read the counter. See
+> [02-jit-and-session-refresh](../20-iam-and-security/02-jit-and-session-refresh.md)
+> and [ADR 36](36-auth-schema-freeze.md).
 
 ## Context
 
