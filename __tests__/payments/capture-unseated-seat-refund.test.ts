@@ -19,9 +19,7 @@
  * group-event creators needed:
  *
  *   - CONFIRMED/ATTENDED → a redelivered capture, the no-op it always was;
- *   - CANCELLED/REFUNDED → the money bought a seat that is gone: refund it
- *     through the SEAT front door (the only one that picks the org wallet /
- *     credit rail), keyed like the seat-leave rule's own key;
+ *   - CANCELLED/REFUNDED → the seat is gone: refund THIS capture by intent;
  *   - no row at all → the same answer for the buyer, recorded distinctly;
  *   - a legacy capture for a FULL event → no seat is created, and the capture
  *     is refunded instead of overselling the room.
@@ -120,16 +118,6 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
 }));
 
-const refundRemovedAttendeeSeat = jest.fn().mockResolvedValue({
-  amountRefundedPaise: 10000,
-  refundPct: 100,
-  rail: "GATEWAY",
-});
-jest.mock("../../lib/payments/operations/event-refunds", () => ({
-  __esModule: true,
-  refundRemovedAttendeeSeat: (...a: unknown[]) => refundRemovedAttendeeSeat(...a),
-}));
-
 const getWebinarCapacity = jest.fn();
 const getClassCapacity = jest.fn();
 jest.mock("../../lib/events/capacity", () => ({
@@ -186,7 +174,11 @@ import {
   confirmExistingAppointment,
   handlePaymentSuccess,
 } from "../../lib/payments/webhooks/handlers";
+import prisma from "../../lib/prisma";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
+
+const markerRow = prisma.payment.findUnique as unknown as jest.Mock;
+const markerSettle = prisma.payment.updateMany as unknown as jest.Mock;
 
 const BUYER = "user-1";
 const WEBINAR = "web-1";
@@ -288,11 +280,6 @@ beforeEach(() => {
   recordSystemErrorSafe.mockResolvedValue(undefined);
   refundPayment.mockResolvedValue({ refundId: "rfnd-1" });
   refundBookingPayment.mockResolvedValue({ refundId: "rfnd-2" });
-  refundRemovedAttendeeSeat.mockResolvedValue({
-    amountRefundedPaise: 10000,
-    refundPct: 100,
-    rail: "GATEWAY",
-  });
   getWebinarCapacity.mockReturnValue({
     max: 10,
     registered: 1,
@@ -322,7 +309,7 @@ beforeEach(() => {
 // Part A — the seat CAS count, read instead of discarded.
 // ---------------------------------------------------------------------------
 describe("a capture whose seat is not there any more", () => {
-  it("a RELEASED seat is reported, keyed for the seat front door, and refunded", async () => {
+  it("a RELEASED seat is reported and THIS capture is refunded by intent", async () => {
     participantUpdateMany.mockResolvedValue({ count: 0 });
     participantFindFirst.mockResolvedValue({
       id: "part-1",
@@ -351,15 +338,11 @@ describe("a capture whose seat is not there any more", () => {
         data: { status: "CONFIRMED" },
       }),
     );
-    // ...and the money went back through the seat door, under the seat-leave
-    // rule's own key, so a later leave of the same sale cannot pay twice.
-    expect(refundRemovedAttendeeSeat).toHaveBeenCalledWith(
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: "webinar",
-        eventId: WEBINAR,
-        attendeeUserId: BUYER,
-        mode: "full",
-        dedupeKey: "seat-leave:part-1",
+        paymentId: "pay-1",
+        dedupeKey: "capture-unseated:pay-1",
       }),
     );
     // The generic door is the org-unaware one; a released SEAT must not use it.
@@ -413,7 +396,7 @@ describe("a capture whose seat is not there any more", () => {
     );
 
     expect(replay).toBeNull();
-    expect(refundRemovedAttendeeSeat).toHaveBeenCalledTimes(1);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     // The replay never reaches the seat arm at all: the payment-status claim is
     // upstream of it and the claim is a CAS, so the second delivery sees a
     // SUCCEEDED row and stops.
@@ -436,7 +419,6 @@ describe("a capture whose seat is not there any more", () => {
     );
 
     expect(result).toEqual({ capturedAfterTerminal: false });
-    expect(refundRemovedAttendeeSeat).not.toHaveBeenCalled();
     expect(recordSystemErrorSafe).not.toHaveBeenCalled();
   });
 
@@ -450,17 +432,7 @@ describe("a capture whose seat is not there any more", () => {
       BUYER,
     );
 
-    expect(result).toEqual({
-      capturedAfterTerminal: true,
-      seatRefund: {
-        kind: "webinar",
-        eventId: WEBINAR,
-        participantId: null,
-        // No row, so no seat to name a sale from: Phase 2 falls back to the
-        // payment the capture itself landed on.
-        paymentId: null,
-      },
-    });
+    expect(result).toEqual({ capturedAfterTerminal: true, seatReleased: true });
     expect(recordSystemErrorSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         context: expect.objectContaining({
@@ -510,18 +482,44 @@ describe("a capture whose seat is not there any more", () => {
       BUYER,
     );
 
-    expect(result).toEqual({
-      capturedAfterTerminal: true,
-      seatRefund: {
-        kind: "class",
-        eventId: "class-1",
-        participantId: "part-2",
-        // The seat's own funding row travels with it: the refund is addressed to
-        // the payment this capture landed on, not to whichever of the buyer's
-        // payments on this class is oldest.
-        paymentId: "pay-1",
-      },
+    expect(result).toEqual({ capturedAfterTerminal: true, seatReleased: true });
+  });
+});
+
+describe("the auto-refund marker on a released seat", () => {
+  beforeEach(() => {
+    participantUpdateMany.mockResolvedValue({ count: 0 });
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CANCELLED",
+      paymentId: "pay-1",
     });
+    markerRow.mockResolvedValue({
+      description: "Auto-refund pending: capture landed after the seat was released",
+    });
+    markerSettle.mockResolvedValue({ count: 1 });
+  });
+  afterEach(() => markerRow.mockResolvedValue(null));
+
+  const deliver = () =>
+    handlePaymentSuccess(
+      "order-1",
+      WEBINAR_METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+  it("is settled once the refund succeeds", async () => {
+    await deliver();
+    expect(markerSettle).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "pay-1" }) }),
+    );
+  });
+
+  it("survives a refund that throws, so retry-auto-refunds re-drives it", async () => {
+    refundBookingPayment.mockRejectedValueOnce(new Error("gateway timeout"));
+    await deliver();
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(markerSettle).not.toHaveBeenCalled();
   });
 });
 
