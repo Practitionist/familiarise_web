@@ -144,17 +144,22 @@ describe("reportAuthLogToSentry (#1856)", () => {
     expect(captureMessage).toHaveBeenCalledTimes(2);
   });
 
-  it("caps the throttle map so variable messages cannot grow it forever", () => {
+  it("caps the throttle map without letting a full cycle through again", () => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(1_000_000);
     for (let i = 0; i < 100; i++) {
       reportAuthLogToSentry("error", `column c${i} does not exist`);
     }
     expect(captureMessage).toHaveBeenCalledTimes(100);
 
-    // The 101st distinct message resets the map instead of growing it, so
-    // the first message is no longer throttled.
+    // Full and nothing expired: new keys are skipped, old ones stay throttled.
     reportAuthLogToSentry("error", "column c100 does not exist");
     reportAuthLogToSentry("error", "column c0 does not exist");
-    expect(captureMessage).toHaveBeenCalledTimes(102);
+    expect(captureMessage).toHaveBeenCalledTimes(100);
+
+    // Once the window passes, expired keys make room again.
+    now.mockReturnValue(1_000_000 + 5 * 60 * 1000);
+    reportAuthLogToSentry("error", "column c100 does not exist");
+    expect(captureMessage).toHaveBeenCalledTimes(101);
   });
 
   it("still forwards a real Error whose message reads like an auth outcome", () => {
