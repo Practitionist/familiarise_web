@@ -199,6 +199,10 @@ export async function recordOverageAtCheckout(
         appointmentId: null,
         organizationId,
         parentPaymentId: paymentId,
+        // #1859 M-P0-10 — never persist null: a null key bypasses the unique
+        // guard (PG NULLs are distinct), so two concurrent overage charges both
+        // insert and the member is charged twice.
+        clientIdempotencyKey: `overage:${globalThis.crypto.randomUUID()}`,
       },
     });
     const memberOverageEvent = await tx.overageEvent.create({
