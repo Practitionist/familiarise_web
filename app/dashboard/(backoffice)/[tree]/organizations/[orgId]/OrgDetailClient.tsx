@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { OrgLifecycleActions } from "@/components/dashboard/backoffice/organizations/OrgLifecycleActions";
+import { OrgSsoProviders } from "@/components/dashboard/backoffice/organizations/OrgSsoProviders";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import {
   DashboardContent,
@@ -25,7 +26,7 @@ const day = (d: Date | string | null) =>
  * #1527 — the org detail page: lifecycle (Verify / Reject / Suspend /
  * Reactivate / Deactivate), the KYB and GST facts ops check before verifying,
  * billing with the wallet unfreeze door, and (Q8) the manual invoice composer
- * moved here from the org's own Billing page.
+ * moved here from the org's own Billing page, and SSO provider approval.
  */
 export function OrgDetailClient({ org }: Readonly<{ org: OrgDetail }>) {
   const { basePath } = useBackofficeCapability();
@@ -156,6 +157,8 @@ export function OrgDetailClient({ org }: Readonly<{ org: OrgDetail }>) {
             </div>
           )}
         </Section>
+
+        <OrgSsoProviders orgId={org.id} providers={org.ssoProviders} />
       </DashboardContent>
       {org.billingAccount && (
         <InvoiceComposer

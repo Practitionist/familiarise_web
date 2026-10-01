@@ -3,7 +3,7 @@ import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
 
 /**
  * #1527 — the back-office org detail: identity, KYB/GST satellites, billing
- * account and its wallet-freeze state. Sequential reads (PG_POOL_MAX=1).
+ * account and its wallet-freeze state, and its SSO providers. Sequential reads (PG_POOL_MAX=1).
  */
 export async function readOrgDetail(orgId: string) {
   const org = await prisma.organization.findUnique({
@@ -40,7 +40,31 @@ export async function readOrgDetail(orgId: string) {
   const walletFrozen = org.billingAccount
     ? await isWalletFrozen(prisma, org.billingAccount.id)
     : false;
-  return { ...org, walletFrozen };
+  // D22: what staff need to approve a provider, i.e. whether the org still
+  // holds a verified DNS claim for its domain (the approval route re-checks).
+  const providers = await prisma.ssoProvider.findMany({
+    where: { organizationId: orgId },
+    select: {
+      providerId: true,
+      issuer: true,
+      domain: true,
+      domainVerified: true,
+    },
+    orderBy: { providerId: "asc" },
+  });
+  const verifiedDomains = new Set(
+    (
+      await prisma.orgDomainClaim.findMany({
+        where: { organizationId: orgId, verifiedAt: { not: null } },
+        select: { domain: true },
+      })
+    ).map((c) => c.domain),
+  );
+  const ssoProviders = providers.map((p) => ({
+    ...p,
+    claimVerified: verifiedDomains.has(p.domain),
+  }));
+  return { ...org, walletFrozen, ssoProviders };
 }
 
 export type OrgDetail = NonNullable<Awaited<ReturnType<typeof readOrgDetail>>>;
