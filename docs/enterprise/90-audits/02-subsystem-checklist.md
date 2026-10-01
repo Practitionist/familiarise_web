@@ -8,6 +8,8 @@ last-reviewed: 2026-06-05
 
 # Enterprise subsystem — deep phased verification checklist
 
+> **Superseded in part (PR #1878):** SSO is OIDC-only. SAML, SCIM (Phase 5 below, `lib/scim/`, the `scim/*` routes) and SSO break-glass were removed before launch; skip those items. Current design: [SSO](../../authentication/sso.md) and [ADR 36](../70-design-decisions/36-auth-schema-freeze.md).
+
 A file-tree-grounded map of **every sub-subsystem** of the enterprise layer, grouped into phases you can verify in order. Each item is annotated with the real code path and a status hint from the audit series.
 
 **Status legend:** `✅` wired end-to-end · `🟡` partial / known limitation · `❌` not built / gated off · `🔒` intentionally blocked (verify the block fires) · `(verify)` claim to confirm against code.
