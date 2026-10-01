@@ -104,7 +104,11 @@ jest.mock("../../lib/stream/webhook-dispatch", () => ({
 // stubbing verification would let the suite pass even if the route keyed on a
 // header instead.
 
+import { gzipSync } from "node:zlib";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { POST } from "../../app/api/stream/webhooks/route";
+import { WebhookPayloadTooLargeError } from "../../lib/webhooks/bounded-inflate";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -161,6 +165,28 @@ async function deliver(
   };
   if (opts.id) headers["x-webhook-id"] = opts.id;
   return POST(signed(headers, body) as never);
+}
+
+/**
+ * Deliver RAW BYTES with a deliberately invalid signature.
+ *
+ * `deliver` above takes a string and signs it, which is right for the dedup
+ * tests and useless here: these cases need to control the octets on the wire
+ * (specifically the gzip magic) and must NOT produce a valid signature, because
+ * the question is whether the size ceiling is enforced BEFORE authentication.
+ */
+async function deliverBytes(
+  raw: Buffer,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const req = new Request("https://example.test/api/stream/webhooks", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    // A `Uint8Array` view rather than the Buffer itself: `Buffer<ArrayBufferLike>`
+    // is not assignable to `BodyInit`, and what matters on the wire is the octets.
+    body: new Uint8Array(raw),
+  });
+  return POST(req as never);
 }
 
 beforeEach(() => {
@@ -611,5 +637,98 @@ describe("other route outcomes", () => {
     delete process.env.STREAM_WEBHOOK_SECRET;
     const res = await deliver(callEndedEvent());
     expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * #1829 — the inflate bound must be enforced by OUR code, not by the runtime.
+ *
+ * The first version passed zlib's `maxOutputLength` and relied on it. That
+ * passes a unit test and a local build on Node 26, and then does nothing in the
+ * deployed environment: a probe against the Netlify preview returned `401` —
+ * the body had been fully inflated and the signature check ran against it — at
+ * 14, 15, 17, 18 and 20 MiB, while an uncompressed 400 KiB request correctly
+ * returned 413 from the compressed cap. So the only environment that matters for
+ * an unauthenticated memory-exhaustion vector was doing the unbounded allocation
+ * the fix existed to prevent.
+ *
+ * These tests are written so that an implementation which delegates the bound to
+ * a runtime option cannot satisfy them by accident.
+ */
+describe("the inflate ceiling is ours, not the runtime's (#1829)", () => {
+  const gzipped = (payload: string) =>
+    gzipSync(Buffer.from(payload, "utf8"), { level: 9 });
+  const body = (inflatedBytes: number) =>
+    gzipped(`{"type":"call.ended","pad":"${"x".repeat(inflatedBytes)}"}`);
+
+  it("rejects a payload that inflates past the ceiling", async () => {
+    const { gunzipWithin, MAX_DECOMPRESSED_BYTES } =
+      await import("../../lib/webhooks/bounded-inflate");
+    const raw = body(MAX_DECOMPRESSED_BYTES + 1_000_000);
+    // Sanity: the compressed envelope must be well inside the request cap, or
+    // this would be testing the wrong bound.
+    expect(raw.length).toBeLessThan(256 * 1024);
+
+    await expect(
+      gunzipWithin(raw, MAX_DECOMPRESSED_BYTES),
+    ).rejects.toBeInstanceOf(WebhookPayloadTooLargeError);
+  });
+
+  it("returns a payload that fits", async () => {
+    const { gunzipWithin } = await import("../../lib/webhooks/bounded-inflate");
+    const payload = JSON.stringify({ type: "call.ended", id: "ok" });
+    await expect(
+      gunzipWithin(gzipped(payload), 16 * 1024 * 1024),
+    ).resolves.toEqual(Buffer.from(payload, "utf8"));
+  });
+
+  it("aborts the inflater rather than finishing into a buffer nobody reads", async () => {
+    // The distinguishing assertion. A bound that is merely checked AFTER the
+    // inflate — or delegated to an option the runtime may ignore — still produces
+    // the whole buffer internally. Ours must not: the peak bytes held is bounded
+    // by the ceiling plus one chunk, so a 200 MiB payload must not cost 200 MiB.
+    const { gunzipWithin } = await import("../../lib/webhooks/bounded-inflate");
+    const raw = body(200 * 1024 * 1024);
+    expect(raw.length).toBeLessThan(256 * 1024);
+
+    const before = process.memoryUsage().heapUsed;
+    await expect(gunzipWithin(raw, 1024 * 1024)).rejects.toBeInstanceOf(
+      WebhookPayloadTooLargeError,
+    );
+    // A generous ceiling for allocator noise: the point is that this is nowhere
+    // near the 200 MiB the payload inflates to.
+    const grewMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024);
+    expect(grewMiB).toBeLessThan(64);
+  });
+
+  it("routes an over-inflated delivery to 413, not to a signature check", async () => {
+    const { MAX_DECOMPRESSED_BYTES } =
+      await import("../../lib/webhooks/bounded-inflate");
+    const raw = body(MAX_DECOMPRESSED_BYTES + 1_000_000);
+    const res = await deliverBytes(raw, { "x-signature": "v1=deadbeef" });
+    // 413 says "this could never be verified"; 401 would say "your signature was
+    // wrong", which is a different and wrong diagnosis for an oversized body.
+    expect(res.status).toBe(413);
+  });
+
+  it("does not rely on zlib's maxOutputLength", async () => {
+    // A source-level guard, deliberately. The deployed failure was invisible to
+    // every behavioural test, so the invariant that would have caught it —
+    // "the bound is enforced by counting in this module" — is pinned explicitly.
+    // Strip comments first: the module's docblock necessarily NAMES
+    // `maxOutputLength` in order to explain why it is not used, and a naive
+    // substring check would match that prose rather than the code.
+    const src = readFileSync(
+      join(process.cwd(), "lib/webhooks/bounded-inflate.ts"),
+      "utf8",
+    )
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//"))
+      .join("\n");
+    expect(src).not.toContain("maxOutputLength");
+    // The three things that make the bound real, all in code rather than options.
+    expect(src).toContain("total > limit");
+    expect(src).toContain("gunzip.destroy()");
+    expect(src).toContain("createGunzip()");
   });
 });

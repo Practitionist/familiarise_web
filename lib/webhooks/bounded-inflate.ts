@@ -1,4 +1,4 @@
-import { gunzip as gunzipCb } from "node:zlib";
+import { createGunzip } from "node:zlib";
 
 /**
  * #1829 — the ceiling on an INFLATED webhook payload, mirroring Stream's own
@@ -30,27 +30,59 @@ export class WebhookPayloadTooLargeError extends Error {
 /**
  * Inflate with a hard ceiling on the OUTPUT.
  *
- * `maxOutputLength` is enforced by zlib as it inflates, so the buffer never
- * reaches the ceiling — this is a bound, not a check performed after the
- * allocation that was the problem. `promisify(gunzip)` cannot express it,
- * because the option is not passed through the promisified single-value
- * signature, so the callback form is used directly.
+ * #1829 — the bound is enforced by COUNTING here, not by zlib's
+ * `maxOutputLength`, and that is not a stylistic choice. The first version of
+ * this function passed `maxOutputLength` to `gunzip` and passed both its unit
+ * test and a local build, because the local Node honours the option. Probing the
+ * Netlify deploy preview then showed it does not: a 20 KiB gzip of a 20 MiB
+ * payload returned `401 Invalid signature` — meaning the body was fully inflated
+ * and the signature check ran against it — at every size from 14 MiB upward,
+ * while the uncompressed 400 KiB request correctly returned 413 from the
+ * compressed-body cap.
+ *
+ * So the deployment, which is the only environment that matters for an
+ * unauthenticated memory-exhaustion vector, was doing exactly the unbounded
+ * allocation the fix was written to remove. A test that runs on the developer's
+ * machine cannot see this; only the deployed surface can. The bound now lives in
+ * code we own: the stream is destroyed the moment the running total passes the
+ * limit, so the buffer never exceeds the ceiling by more than one chunk, on
+ * every Node version and every bundler.
+ *
+ * `gunzip.destroy()` matters as much as the throw. Aborting mid-stream releases
+ * the inflater instead of letting it finish into a buffer nobody will read.
  */
 export async function gunzipWithin(
   raw: Uint8Array,
   limit: number,
 ): Promise<Buffer> {
-  try {
-    return await new Promise<Buffer>((resolve, reject) => {
-      gunzipCb(raw, { maxOutputLength: limit }, (err, buf) => {
-        if (err) reject(err);
-        else resolve(buf);
-      });
+  const gunzip = createGunzip();
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  return new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      gunzip.destroy();
+      reject(err);
+    };
+
+    gunzip.on("data", (chunk: Buffer) => {
+      total += chunk.byteLength;
+      if (total > limit) {
+        fail(new WebhookPayloadTooLargeError(limit));
+        return;
+      }
+      chunks.push(chunk);
     });
-  } catch (err) {
-    if ((err as { code?: string })?.code === "ERR_BUFFER_TOO_LARGE") {
-      throw new WebhookPayloadTooLargeError(limit);
-    }
-    throw err;
-  }
+    gunzip.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks));
+    });
+    gunzip.on("error", (err: Error) => fail(err));
+
+    gunzip.end(Buffer.from(raw));
+  });
 }
