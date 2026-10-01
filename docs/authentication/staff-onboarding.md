@@ -61,8 +61,9 @@ sequenceDiagram
    setup link** on the row (`POST /api/admin/team/members/{id}/setup-link`, same
    budget), or the operator uses **Forgot password**.
 4. **Enrol.** On first sign-in every back-office page redirects to
-   `/auth/two-factor/setup` and every operator API answers 428
-   `TWO_FACTOR_REQUIRED`. Enrolment needs the password (`allowPasswordless` is
+   `/auth/two-factor/setup`, every operator API answers 428
+   `TWO_FACTOR_REQUIRED`, and routes that read `getSession()` directly treat
+   the operator as signed out (401). Enrolment needs the password (`allowPasswordless` is
    off), shows a QR code and the secret, verifies one code, then shows the
    backup codes once.
 5. **Consent.** Nobody consents on an operator's behalf: `user.create.after`

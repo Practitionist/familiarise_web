@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import {
   assertSessionReadMemoized,
   isSessionReadMemoized,
@@ -94,8 +95,30 @@ function sessionReader(): SessionReader {
   return memoizedReader;
 }
 
-export async function getSession(disableCookieCache = false) {
-  return sessionReader()(disableCookieCache);
+/**
+ * A STAFF/ADMIN session without an enrolled second factor reads as NO session,
+ * so the many routes that branch on `session.user.role` inline cannot hand
+ * operator powers to a password-only sign-in. Only the enrolment path opts in
+ * with `allowUnenrolledOperator`: `lookupSession`, behind the page guards
+ * (which send the operator to /auth/two-factor/setup) and `requireApiAuth`
+ * (which answers 428 rather than 401). BetterAuth's own /two-factor/*
+ * endpoints read their session themselves and are unaffected.
+ */
+export async function getSession(
+  disableCookieCache = false,
+  { allowUnenrolledOperator = false } = {},
+) {
+  const session = await sessionReader()(disableCookieCache);
+  return allowUnenrolledOperator ? session : withoutUnenrolledOperator(session);
+}
+
+function withoutUnenrolledOperator(
+  session: Awaited<ReturnType<SessionReader>>,
+) {
+  const unenrolled =
+    isOperatorRole(session?.user.role) &&
+    session?.user.twoFactorEnabled !== true;
+  return unenrolled ? null : session;
 }
 
 /**
@@ -114,5 +137,5 @@ export async function getSession(disableCookieCache = false) {
  * in routes). See #1807.
  */
 export async function getCachedSession() {
-  return sessionReader()(false);
+  return withoutUnenrolledOperator(await sessionReader()(false));
 }

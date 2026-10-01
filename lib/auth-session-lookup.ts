@@ -75,7 +75,6 @@ function markLookupCause(cause: unknown): unknown {
   return cause instanceof Error ? markExpected(cause) : cause;
 }
 
-
 // Better Auth's default names: the `__Secure-` prefix rides on https origins.
 const SESSION_TOKEN_COOKIES = [
   "__Secure-better-auth.session_token",
@@ -121,7 +120,12 @@ export async function lookupSession(
 ): Promise<SessionLookup> {
   let session: Awaited<ReturnType<typeof getSession>>;
   try {
-    session = await getSession(disableCookieCache);
+    // Opted in: the page guards and requireApiAuth answer an unenrolled
+    // operator with the setup redirect or a 428, and a null here would read
+    // as a failed lookup (the row is live) and answer 503.
+    session = await getSession(disableCookieCache, {
+      allowUnenrolledOperator: true,
+    });
   } catch (cause) {
     if (isNextControlFlowError(cause)) throw cause;
     return { kind: "failed", cause: markLookupCause(cause) };
@@ -145,9 +149,7 @@ export async function lookupSession(
       return {
         kind: "failed",
         cause: markLookupCause(
-          new Error(
-            "session row is live but the session lookup answered null",
-          ),
+          new Error("session row is live but the session lookup answered null"),
         ),
       };
     }

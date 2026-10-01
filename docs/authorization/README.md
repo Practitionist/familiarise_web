@@ -52,7 +52,8 @@ A `STAFF`/`ADMIN` session without enrolled TOTP gets **428**
 `TWO_FACTOR_REQUIRED` with header `X-Auth-Action: enroll-2fa`. `twoFactorEnabled`
 is rebuilt from the user row on every read (no cookie cache), so it is as fresh
 as a column read. Enrolment runs on BetterAuth's `/two-factor/*` endpoints, which
-never reach this helper.
+never reach this helper. Routes that skip the helpers and call `getSession()`
+get `null` for such a session, so they answer 401 rather than act on the role.
 
 ## 3. `requireOrgAccess(orgId, opts)`
 

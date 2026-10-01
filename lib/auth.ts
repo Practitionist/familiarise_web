@@ -661,9 +661,10 @@ export const auth = betterAuth({
 
     // Two-factor: TOTP (authenticator app) + single-use backup codes, used by
     // operators only. Mandatory for STAFF/ADMIN: `session.create.before`
-    // limits them to credential + TOTP sessions, and the API/page guards in
+    // limits them to credential + TOTP sessions, the API/page guards in
     // lib/auth-helpers.ts and lib/auth-guard.ts confine an unenrolled
-    // operator to /auth/two-factor/setup.
+    // operator to /auth/two-factor/setup, and lib/auth-server.ts's
+    // getSession() reads their session as signed out everywhere else.
     //
     // `allowPasswordless` stays off, so enrolling needs the account password.
     // Every operator account is created with a credential account, so nobody

@@ -29,6 +29,7 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
+import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo, useRef, Suspense } from "react";
@@ -67,9 +68,8 @@ function useAuthenticatedRedirectTarget(
     if (isPending || onboardingCompleted === undefined) return;
 
     let cancelled = false;
-    const resolveAndGo = (completed: boolean) => {
+    const go = (target: string) => {
       if (cancelled) return;
-      const target = completed ? callbackUrl || "/dashboard" : onboardingUrl;
       // Idempotency guard: re-renders / Strict-Mode double-invocation /
       // duplicate store emissions must not queue a second navigation.
       // (A delayed-state callbackUrl used to fire this effect twice with
@@ -79,6 +79,8 @@ function useAuthenticatedRedirectTarget(
       navigatedRef.current = target;
       router.replace(target);
     };
+    const resolveAndGo = (completed: boolean) =>
+      go(completed ? callbackUrl || "/dashboard" : onboardingUrl);
 
     getSession({ query: { disableCookieCache: true } })
       .then(({ data, error: sessionError }) => {
@@ -91,6 +93,15 @@ function useAuthenticatedRedirectTarget(
         }
         // Session revoked between paint and check — no protected redirect.
         if (!data?.user) return;
+        // Server pages read an operator without 2FA as signed out
+        // (lib/auth-server.ts), so any other target would bounce back here.
+        if (
+          isOperatorRole(data.user.role) &&
+          data.user.twoFactorEnabled !== true
+        ) {
+          go("/auth/two-factor/setup");
+          return;
+        }
         resolveAndGo(!!data.user.onboardingCompleted);
       })
       .catch(() => {

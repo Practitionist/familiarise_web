@@ -88,9 +88,10 @@ flowchart LR
 1. **The session token never leaves the server in JSON.** `customSession`
    strips it, `/list-sessions` is disabled over HTTP, and the device list
    reads through `SESSION_PUBLIC_SELECT`.
-2. **Every operator power is behind 2FA.** `requireApiAuth` answers 428
-   `TWO_FACTOR_REQUIRED` and `requireOperator` redirects to enrolment until the
-   operator has an authenticator.
+2. **Every operator power is behind 2FA.** Until the operator has an
+   authenticator, the app's `getSession()` reads their session as signed out,
+   `requireApiAuth` answers 428 `TWO_FACTOR_REQUIRED` and `requireOperator`
+   redirects to enrolment.
 3. **Operator actions go through audited app routes.** The admin plugin's HTTP
    endpoints are all disabled; the plugin stays for its columns, the ban check
    and the server-side `createUser`.

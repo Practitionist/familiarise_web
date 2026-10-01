@@ -123,6 +123,12 @@ rather than a sign-out.
 
 The 428 carries `X-Auth-Action: enroll-2fa` so the client knows the next step.
 
+Routes that call the app's `getSession()` (`lib/auth-server.ts`) and check the
+role inline fail closed: an operator session without 2FA comes back as `null`,
+so they answer 401. Only `lookupSession`, under the guards above, opts in with
+`allowUnenrolledOperator` so enrolment can still happen. The sign-in page sends
+such an operator straight to `/auth/two-factor/setup`.
+
 ## 5. Flows
 
 ### 5.1 Consumer sign-up and email sign-in
