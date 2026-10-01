@@ -57,17 +57,17 @@ flowchart TD
 
 Key settings, all stated explicitly in `lib/auth.ts`:
 
-| Setting           | Value                                                                                                           |
-| ----------------- | --------------------------------------------------------------------------------------------------------------- |
-| Passwords         | bcrypt cost 12, 8 to 128 characters, email verification required before a credential sign-in                    |
-| Reset link        | 30 minutes, single use; a reset deletes every session for the user                                              |
-| Verification link | 1 hour; signs the user in on click (`autoSignInAfterVerification`)                                              |
-| Token storage     | Reset and verification identifiers stored as SHA-256 (`verification.storeIdentifier: "hashed"`)                 |
-| Social            | Google and GitHub. Account linking on, **no `trustedProviders`**; OAuth tokens encrypted at rest                |
-| Cookies           | `__Secure-` prefix, `httpOnly`, `SameSite=Lax` (the OAuth and SSO callbacks are top-level GETs)                 |
-| Client IP         | `x-nf-client-connection-ip` first (set by Netlify, unforgeable); IPv6 keyed on the /64                          |
-| Session           | 30-day expiry, refreshed at most once a day (`updateAge`), `cookieCache` **off**                                |
-| `disabledPaths`   | `/list-sessions`; every `/admin/*` endpoint; `/sso/register`, provider CRUD, domain verification, SAML metadata |
+| Setting           | Value                                                                                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Passwords         | bcrypt cost 12, 8 to 128 characters, email verification required before a credential sign-in                                                                                                                                             |
+| Reset link        | 30 minutes, single use; a reset deletes every session for the user                                                                                                                                                                       |
+| Verification link | 1 hour; signs the user in on click (`autoSignInAfterVerification`)                                                                                                                                                                       |
+| Token storage     | Reset and verification identifiers stored as SHA-256 (`verification.storeIdentifier: "hashed"`)                                                                                                                                          |
+| Social            | Google and GitHub. Account linking on, **no `trustedProviders`**; OAuth tokens encrypted at rest                                                                                                                                         |
+| Cookies           | `__Secure-` prefix, `httpOnly`, `SameSite=Lax` (the OAuth and SSO callbacks are top-level GETs)                                                                                                                                          |
+| Client IP         | `x-nf-client-connection-ip` first (set by Netlify, unforgeable); IPv6 keyed on the /64                                                                                                                                                   |
+| Session           | 30-day expiry, refreshed at most once a day (`updateAge`), `cookieCache` **off**                                                                                                                                                         |
+| `disabledPaths`   | `/list-sessions`; `/get-access-token`, `/account-info`, `/refresh-token`, `/update-session`; the OTP 2FA pair; every `/admin/*` endpoint; `/sso/register`, provider CRUD, domain verification, SAML metadata, the shared `/sso/callback` |
 
 `disabledPaths` blocks HTTP only. Server code can still call `auth.api.*`,
 which is how staff onboarding calls `createUser`.

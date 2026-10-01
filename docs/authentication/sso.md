@@ -21,9 +21,10 @@ Three facts carry the security of the design:
    only be created, and only be approved, for a domain the org has verified
    with a TXT record (`OrgDomainClaim.verifiedAt`).
 3. **BetterAuth's own provider endpoints are off.** `/sso/register`, provider
-   list/get/update/delete and the plugin's domain-verification endpoints are in
-   `disabledPaths`; `/sso/saml2/*` answers 404 from `hooks.before`.
-   `providersLimit: 0` is the backstop.
+   list/get/update/delete, the plugin's domain-verification endpoints and the
+   shared `/sso/callback` are in `disabledPaths` (the per-provider
+   `/sso/callback/:providerId` stays); `/sso/saml2/*` answers 404 from
+   `hooks.before`. `providersLimit: 0` is the backstop.
 
 ## 1. Lifecycle
 

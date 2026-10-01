@@ -38,6 +38,7 @@ import {
 } from "@/lib/auth/operator-session-policy";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
 import { authRateLimit } from "@/lib/auth/rate-limit";
+import { stripSessionToken } from "@/lib/auth/strip-session-token";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
 // defaultAc so statements line up. No `session:*`: the plugin's session
@@ -79,6 +80,15 @@ export const auth = betterAuth({
   // server calls are unaffected.
   disabledPaths: [
     "/list-sessions",
+    // No caller: these hand out the linked provider's OAuth tokens or let the
+    // browser write session fields.
+    "/get-access-token",
+    "/account-info",
+    "/refresh-token",
+    "/update-session",
+    // Email/SMS OTP is not configured; operators use TOTP or backup codes.
+    "/two-factor/send-otp",
+    "/two-factor/verify-otp",
     // The admin plugin's whole HTTP surface. It stays installed for the
     // role/ban columns, the sign-in ban check and the server-side
     // `auth.api.createUser` used by staff onboarding, but its endpoints skip
@@ -116,6 +126,9 @@ export const auth = betterAuth({
     "/sso/request-domain-verification",
     "/sso/verify-domain",
     "/sso/saml2/sp/metadata",
+    // The shared callback only serves providers with `redirectURI` set; ours
+    // all return to /sso/callback/:providerId, which enforcement keys on.
+    "/sso/callback",
   ],
 
   // SSO is OIDC-only, but @better-auth/sso 1.7.6 has no switch to leave the
@@ -161,6 +174,7 @@ export const auth = betterAuth({
         }
       }
     }),
+    after: stripSessionToken,
   },
 
   database: prismaAdapter(prisma, {

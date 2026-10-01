@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -81,15 +82,31 @@ const SESSION_TOKEN_COOKIES = [
   "better-auth.session_token",
 ];
 
-/** The raw session token from the signed cookie, or null when no cookie rides. */
+/**
+ * The session token from a correctly signed cookie, else null. better-call
+ * signs as `<token>.<base64 HMAC-SHA256(token, secret)>`, URL-encoded.
+ */
 async function sessionTokenFromCookie(): Promise<string | null> {
   const jar = await cookies();
+  const secret = process.env.BETTER_AUTH_SECRET;
   for (const name of SESSION_TOKEN_COOKIES) {
-    const value = jar.get(name)?.value;
-    if (!value) continue;
-    // better-call signs as `<token>.<signature>`; the token is what the row is keyed on.
+    const raw = jar.get(name)?.value;
+    if (!raw) continue;
+    if (!secret) return null;
+    let value: string;
+    try {
+      value = decodeURIComponent(raw);
+    } catch {
+      return null;
+    }
     const dot = value.lastIndexOf(".");
-    return dot < 1 ? null : value.substring(0, dot);
+    if (dot < 1) return null;
+    const token = value.substring(0, dot);
+    const given = Buffer.from(value.substring(dot + 1), "base64");
+    const expected = createHmac("sha256", secret).update(token).digest();
+    return given.length === expected.length && timingSafeEqual(given, expected)
+      ? token
+      : null;
   }
   return null;
 }

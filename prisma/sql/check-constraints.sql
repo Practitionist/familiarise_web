@@ -754,6 +754,7 @@ ALTER TABLE "ssoProvider" ADD CONSTRAINT "sso_provider_id_not_reserved"
 -- this every table (sessions, accounts, verifications) is readable over the
 -- Data API. Revoke, and stop future tables created by this role from being
 -- granted. Skipped where the roles do not exist (local and CI Postgres).
+-- Re-apply after every `prisma db push` (npm run db:sidecars).
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')

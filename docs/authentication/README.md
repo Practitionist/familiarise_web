@@ -86,8 +86,9 @@ flowchart LR
 ## Rules that hold everywhere
 
 1. **The session token never leaves the server in JSON.** `customSession`
-   strips it, `/list-sessions` is disabled over HTTP, and the device list
-   reads through `SESSION_PUBLIC_SELECT`.
+   strips it, `hooks.after` (`lib/auth/strip-session-token.ts`) drops it from
+   sign-in, sign-up and two-factor verify bodies, `/list-sessions` is disabled
+   over HTTP, and the device list reads through `SESSION_PUBLIC_SELECT`.
 2. **Every operator power is behind 2FA.** Until the operator has an
    authenticator, the app's `getSession()` reads their session as signed out,
    `requireApiAuth` answers 428 `TWO_FACTOR_REQUIRED` and `requireOperator`
