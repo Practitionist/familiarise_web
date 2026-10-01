@@ -10,8 +10,17 @@
  * 3. Optionally invalidate ISR/cache for the blog pages
  */
 
+import { timingSafeEqual } from "node:crypto";
+
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+
+/** Constant-time compare; timingSafeEqual throws on unequal lengths. */
+function secretMatches(given: string, expected: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const secret = process.env.DIRECTUS_WEBHOOK_SECRET;
@@ -23,7 +32,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // Validate webhook signature
   const signature = req.headers.get("x-directus-signature");
-  if (!signature || signature !== secret) {
+  if (!signature || !secretMatches(signature, secret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -47,7 +56,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       message: "CMS integration not yet active",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "api" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "api" } },
+    );
     console.error("[webhooks/directus] Error:", error);
     return NextResponse.json(
       { error: "Webhook processing failed" },
