@@ -29,6 +29,7 @@ import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 import {
   capOperatorExpiry,
   isOperatorRole,
+  refusesOperatorAccount,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
@@ -594,6 +595,20 @@ export const auth = betterAuth({
     },
     account: {
       create: {
+        before: async (account) => {
+          if (account.providerId === "credential") return;
+          const user = await prisma.user.findUnique({
+            where: { id: account.userId },
+            select: { role: true },
+          });
+          if (refusesOperatorAccount(user?.role, account.providerId)) {
+            throw new APIError("FORBIDDEN", {
+              message:
+                "Staff accounts sign in with email, password and an authenticator code.",
+              code: "STAFF_PASSWORD_SIGN_IN_ONLY",
+            });
+          }
+        },
         after: async (account) => {
           // Send account-linked email for non-credential providers
           if (account.providerId !== "credential") {

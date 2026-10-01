@@ -40,6 +40,18 @@ export function refusesOperatorSession(
 }
 
 /**
+ * True when `providerId` must not be linked to an operator. A social or SSO
+ * account would be a second way in that the session gate has to keep
+ * refusing; `account.create.before` (lib/auth.ts) stops it being made.
+ */
+export function refusesOperatorAccount(
+  role: string | null | undefined,
+  providerId: string,
+): boolean {
+  return isOperatorRole(role) && providerId !== "credential";
+}
+
+/**
  * An operator session lives at most 12 hours from sign-in, however active it
  * is. The consumer settings (30-day expiry, daily sliding refresh) would
  * otherwise keep a stolen operator cookie alive for as long as it is used.

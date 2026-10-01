@@ -28,6 +28,7 @@ import {
   capOperatorExpiry,
   isOperatorRole,
   OPERATOR_SESSION_MAX_AGE_MS,
+  refusesOperatorAccount,
   refusesOperatorSession,
 } from "../../lib/auth/operator-session-policy";
 
@@ -85,6 +86,25 @@ describe("refusesOperatorSession", () => {
     expect(isOperatorRole("ADMIN")).toBe(true);
     expect(isOperatorRole("USER")).toBe(false);
     expect(isOperatorRole(undefined)).toBe(false);
+  });
+});
+
+describe("refusesOperatorAccount", () => {
+  it.each(["google", "github", "sso-acme"])(
+    "refuses linking %s to an operator",
+    (providerId) => {
+      expect(refusesOperatorAccount("STAFF", providerId)).toBe(true);
+      expect(refusesOperatorAccount("ADMIN", providerId)).toBe(true);
+    },
+  );
+
+  it("lets an operator hold a credential account", () => {
+    expect(refusesOperatorAccount("ADMIN", "credential")).toBe(false);
+  });
+
+  it("never refuses a non-operator", () => {
+    expect(refusesOperatorAccount("CONSULTEE", "google")).toBe(false);
+    expect(refusesOperatorAccount(null, "sso-acme")).toBe(false);
   });
 });
 

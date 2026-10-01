@@ -142,7 +142,8 @@ export type AppAuthErrorCode =
   | "REQUEST_REJECTED"
   /* Server-enrolled 2FA that the client has not satisfied yet. */
   | "TWO_FACTOR_REQUIRED"
-  /* lib/auth.ts `session.create.before` — an operator on a social/SSO path. */
+  /* lib/auth.ts `session.create.before` / `account.create.before` — an
+     operator on a social/SSO path. */
   | "STAFF_PASSWORD_SIGN_IN_ONLY"
   /* lib/auth.ts `hooks.before` — trustDevice on a 2FA verify. */
   | "TRUST_DEVICE_DISABLED"
