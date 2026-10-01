@@ -175,6 +175,11 @@ sequenceDiagram
 5. The SSO enforcement veto applies: a user whose verified domain belongs to an
    org with `enforceSSO` and an approved provider gets `SSO_REQUIRED`.
 
+Adding a provider: add it to `socialProviders` in `lib/auth.ts` (with its env
+vars), to `lib/auth-providers.ts` (the buttons and the reserved SSO ids) and to
+`components/auth/auth-icons.tsx`. Only add providers that assert a verified
+email, and never add `trustedProviders`.
+
 ### 5.3 Staff sign-in: password plus TOTP
 
 ```mermaid
