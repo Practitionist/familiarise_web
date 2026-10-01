@@ -10,7 +10,7 @@
  * accept.
  *
  * We only touch rows where:
- *   - `status = "pending"` (don't clobber "accepted" / "revoked")
+ *   - `status = PENDING` (don't clobber ACCEPTED / CANCELED)
  *   - `expiresAt < now()`
  *
  * Per-expiry an `OrgAuditLog` row is emitted (MEMBER / INVITE_EXPIRED)
@@ -63,7 +63,7 @@ async function cleanupStaleInvitationsUnlocked(): Promise<StaleInvitationsCleanu
     // MAINTAINER. Batch size is bounded — stale invites are rare.
     const candidates = await prisma.invitation.findMany({
       where: {
-        status: "pending",
+        status: "PENDING",
         expiresAt: { lt: now },
       },
       select: {
@@ -104,11 +104,11 @@ async function cleanupStaleInvitationsUnlocked(): Promise<StaleInvitationsCleanu
             where: { id: invite.id },
             select: { status: true },
           });
-          if (!fresh || fresh.status !== "pending") return false;
+          if (!fresh || fresh.status !== "PENDING") return false;
 
           await tx.invitation.update({
             where: { id: invite.id },
-            data: { status: "expired" },
+            data: { status: "EXPIRED" },
           });
 
           await tx.orgAuditLog.create({

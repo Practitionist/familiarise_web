@@ -15,7 +15,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { HostInvitableMemberRoleSchema } from "@/lib/labels/org-labels";
-import { Prisma } from "@prisma/client";
+import { InvitationStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
@@ -46,13 +46,7 @@ const InviteBodySchema = z.object({
   expiresInDays: z.coerce.number().int().min(1).max(30).default(14),
 });
 
-const StatusFilterSchema = z.enum([
-  "pending",
-  "accepted",
-  "rejected",
-  "expired",
-  "canceled",
-]);
+const StatusFilterSchema = z.nativeEnum(InvitationStatus);
 
 export async function GET(
   req: NextRequest,

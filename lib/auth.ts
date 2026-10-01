@@ -228,6 +228,10 @@ export const auth = betterAuth({
     },
   },
 
+  // Reset and verification tokens are stored as SHA-256, so a leaked
+  // verifications table yields no usable links.
+  verification: { storeIdentifier: "hashed" },
+
   socialProviders: {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID ?? "",

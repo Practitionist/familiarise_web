@@ -20,7 +20,6 @@ import {
   checkConsent,
 } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
-import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 import { transitionMembership } from "@/lib/enterprise/transitions";
@@ -93,16 +92,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Narrow the stored string to a MemberRole. Invitation.role is a
-  // free-form string column, so validate before using.
-  const roleResult = MemberRoleSchema.safeParse(inv.role);
-  if (!roleResult.success) {
-    return NextResponse.json(
-      { error: `Unknown invitation role: ${inv.role}` },
-      { status: 400 },
-    );
-  }
-  const normalizedRole = roleResult.data;
+  const normalizedRole = inv.role;
 
   const userId = auth.session.user.id;
   // Same closure-friendly aliasing as `inv` above, for the staging inside runAcceptTx.
@@ -194,8 +184,8 @@ export async function POST(req: NextRequest) {
       // Atomic claim — only the first concurrent accept wins. Follow-up
       // retries get count=0 and fall into the 409 branch below.
       const claim = await tx.invitation.updateMany({
-        where: { id: invitationId, status: "pending" },
-        data: { status: "accepted", userId },
+        where: { id: invitationId, status: "PENDING" },
+        data: { status: "ACCEPTED", userId },
       });
       if (claim.count === 0) {
         throw Object.assign(new Error("Invitation is no longer pending"), {

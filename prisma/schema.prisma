@@ -15,17 +15,17 @@ datasource db {
 ////////////////////////////////////////// USER MODEL //////////////////////////////////////////
 
 model User {
-  id                  String    @id @default(cuid())
+  id                  String   @id @default(cuid())
   name                String
-  email               String    @unique
-  emailVerified       Boolean   @default(false)
+  email               String   @unique
+  emailVerified       Boolean  @default(false)
   image               String?
-  phone               String?   @unique
+  phone               String?  @unique
   address             String?
-  onlineStatus        Boolean   @default(false)
+  onlineStatus        Boolean  @default(false)
   timezone            String?
-  onboardingCompleted Boolean?  @default(false)
-  role                UserRole? @default(CONSULTEE)
+  onboardingCompleted Boolean? @default(false)
+  role                UserRole @default(CONSULTEE)
 
   // New fields for enhanced user profile
   dateOfBirth         DateTime?
@@ -142,17 +142,17 @@ model User {
   // Suspension = banned:true + banExpires set (lazy expiry, plugin auto-unbans
   // at sign-in); permanent ban = banned:true + banExpires:null. Who/when/why
   // lives in ModerationAction, not here.
-  banned     Boolean?  @default(false)
+  banned     Boolean   @default(false)
   banReason  String?
   banExpires DateTime? @db.Timestamptz
 
   // BetterAuth two-factor plugin. Mandatory for STAFF/ADMIN: lib/auth.ts
   // limits their sessions to credential + TOTP sign-in, and until this is true
   // the API and page guards only let them reach /auth/two-factor/setup.
-  twoFactorEnabled Boolean? @default(false)
+  twoFactorEnabled Boolean @default(false)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   invitations                   Invitation[]
   twoFactor                     TwoFactor?
@@ -874,16 +874,16 @@ model Account {
   providerId            String
   accessToken           String?   @db.Text
   refreshToken          String?   @db.Text
-  accessTokenExpiresAt  DateTime?
-  refreshTokenExpiresAt DateTime?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz
+  refreshTokenExpiresAt DateTime? @db.Timestamptz
   scope                 String?
   idToken               String?   @db.Text
   password              String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@unique([providerId, accountId])
   @@index([userId])
@@ -894,20 +894,22 @@ model Session {
   id        String   @id @default(cuid())
   token     String   @unique
   userId    String
-  expiresAt DateTime
+  expiresAt DateTime @db.Timestamptz
   ipAddress String?
   userAgent String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   // Required by the BetterAuth admin plugin's generated queries; impersonation
   // itself is not enabled (#693).
   impersonatedBy String?
 
-  @@index([userId])
+  // Device list (newest first per user) and the expired-row sweep.
+  @@index([userId, createdAt])
+  @@index([expiresAt])
   @@map("sessions")
 }
 
@@ -915,12 +917,14 @@ model Verification {
   id         String   @id @default(cuid())
   identifier String
   value      String
-  expiresAt  DateTime
+  expiresAt  DateTime @db.Timestamptz
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([identifier])
+  // scripts/cleanup/cleanup-auth-tokens.ts deletes by expiresAt.
+  @@index([expiresAt])
   @@map("verifications")
 }
 
@@ -1079,6 +1083,7 @@ model Organization {
   // SSO + domain claims
   ssoSettings  OrganizationSSOSettings?
   domainClaims OrgDomainClaim[]
+  ssoProviders SsoProvider[]
 
   // Plan catalog back-relations
   consultationPlans ConsultationPlan[]
@@ -1196,11 +1201,11 @@ model Organization {
 }
 
 model Invitation {
-  id             String   @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   email          String
-  role           String   @default("member")
-  status         String   @default("pending")
+  role           MemberRole
+  status         InvitationStatus @default(PENDING)
   expiresAt      DateTime
   inviterId      String
 
@@ -1216,7 +1221,7 @@ model Invitation {
   // Drives the "list pending invites" tab in /dashboard/.../members
   // and the dedup pre-check at POST /organizations/[orgId]/invitations.
   @@index([organizationId, status])
-  // Supports the dedup pre-check (orgId + email + status="pending")
+  // Supports the dedup pre-check (orgId + email + status=PENDING)
   // before INSERT. The invariant — "at most one pending invite per
   // (org, lower(email))" — is DB-enforced by the partial unique index
   // `invitations_org_email_pending_key` in prisma/sql/check-constraints.sql
@@ -1229,6 +1234,13 @@ model Invitation {
   @@index([inviterId])
   @@index([userId])
   @@map("invitations")
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  CANCELED
+  EXPIRED
 }
 
 //////////////////////////////////////////////////// MEMBERSHIP ////////////////////////////////////////////////////
@@ -6932,20 +6944,26 @@ model MaintenanceWindow {
 }
 
 model SsoProvider {
-  id             String  @id
+  id             String        @id
   issuer         String
   oidcConfig     String?
   samlConfig     String?
+  // Org-scoped rows leave userId null; SetNull so deleting the creating
+  // user can never take an org's SSO down with it.
   userId         String?
-  user           User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
   providerId     String
   organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   domain         String
   // Read by the sso() plugin (domainVerification.enabled): sign-in and the
   // OIDC callback refuse a provider until this is true. Only the ADMIN door
   // app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval
   // sets it, after re-checking the org's verified OrgDomainClaim.
-  domainVerified Boolean @default(false)
+  domainVerified Boolean       @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   // `providerId` is globally unique (BetterAuth uses it as the URL
   // slug for /api/auth/sso/.../{providerId}/...). The composite below
@@ -7204,9 +7222,9 @@ model TwoFactor {
 
   // BetterAuth 1.7 twoFactor columns. `verified` stays false until the first
   // TOTP code proves enrolment; the counter and lock throttle code guessing.
-  verified                Boolean?  @default(true)
-  failedVerificationCount Int?      @default(0)
-  lockedUntil             DateTime?
+  verified                Boolean   @default(true)
+  failedVerificationCount Int       @default(0)
+  lockedUntil             DateTime? @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

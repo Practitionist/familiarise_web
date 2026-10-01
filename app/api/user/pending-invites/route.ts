@@ -29,7 +29,7 @@ export async function GET() {
   const invites = await prisma.invitation.findMany({
     where: {
       email: session.user.email.toLowerCase(),
-      status: "pending",
+      status: "PENDING",
       // expiresAt is required on Invitation, so "unexpired" is a single gt.
       expiresAt: { gt: now },
     },
@@ -50,10 +50,10 @@ export async function GET() {
   await prisma.invitation.updateMany({
     where: {
       email: session.user.email.toLowerCase(),
-      status: "pending",
+      status: "PENDING",
       expiresAt: { lte: now },
     },
-    data: { status: "expired" },
+    data: { status: "EXPIRED" },
   });
 
   return NextResponse.json({

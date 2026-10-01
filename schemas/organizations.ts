@@ -273,30 +273,17 @@ export const UpdateMemberPayloadSchema = z
 
 // ───────────────────────────── Invitations ─────────────────────────────
 
-// Invitation.status comes from BetterAuth's bridge table and is stored
-// as a free-form lowercase string. We accept the canonical four states
-// and gracefully tolerate anything else by relaxing the field — that
-// avoids a parse-time crash if BetterAuth introduces a new state.
-const InvitationStatusSchema = z
-  .union([
-    z.enum([
-      "pending",
-      "accepted",
-      "rejected",
-      "expired",
-      "canceled",
-      "revoked",
-    ]),
-    z.string(),
-  ])
-  .transform((v) => v as string);
+const InvitationStatusSchema = z.enum([
+  "PENDING",
+  "ACCEPTED",
+  "CANCELED",
+  "EXPIRED",
+]);
 
 export const InvitationRowSchema = z.object({
   id: z.string(),
   email: z.string().email(),
-  // `role` is stored on the BetterAuth invite row as a string; we narrow
-  // to MemberRole at the UI level for label lookup, but accept any string
-  // so a future role addition doesn't crash the table.
+  // A MemberRole; kept loose so a future role addition doesn't crash the table.
   role: z.string(),
   status: InvitationStatusSchema,
   expiresAt: z.string(),
