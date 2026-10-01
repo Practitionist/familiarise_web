@@ -144,6 +144,19 @@ describe("reportAuthLogToSentry (#1856)", () => {
     expect(captureMessage).toHaveBeenCalledTimes(2);
   });
 
+  it("caps the throttle map so variable messages cannot grow it forever", () => {
+    for (let i = 0; i < 100; i++) {
+      reportAuthLogToSentry("error", `column c${i} does not exist`);
+    }
+    expect(captureMessage).toHaveBeenCalledTimes(100);
+
+    // The 101st distinct message resets the map instead of growing it, so
+    // the first message is no longer throttled.
+    reportAuthLogToSentry("error", "column c100 does not exist");
+    reportAuthLogToSentry("error", "column c0 does not exist");
+    expect(captureMessage).toHaveBeenCalledTimes(102);
+  });
+
   it("still forwards a real Error whose message reads like an auth outcome", () => {
     // The denylist matches the MESSAGE, never the error's text. A thrown
     // exception is a fault whatever it says.
