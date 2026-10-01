@@ -26,12 +26,6 @@ const withBundleAnalyzer =
  * literal strings — it does NOT expand `$DEPLOY_PRIME_URL` inside a value —
  * and `NEXT_PUBLIC_*` is baked at build, so a runtime fallback would come too
  * late for the client bundle.
- *
- * Declared ABOVE the header block because `Reporting-Endpoints` needs an
- * ABSOLUTE URL, which the Reporting API requires (unlike `report-uri`, which
- * takes the path). A deploy preview therefore reports to its own origin and
- * production reports to production — the same "a preview talks to itself"
- * rule the auth client needs, for the same reason.
  */
 const RESOLVED_APP_URL =
   process.env.CONTEXT && process.env.CONTEXT !== "production"
@@ -50,53 +44,40 @@ const RESOLVED_APP_URL =
 const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
- * CSP violation sink, declared here because BOTH the directive and the
- * `Reporting-Endpoints` header below are derived from it and must not drift.
- *
- * `app/api/csp-report/route.ts` is the handler for the path half. It accepts
- * both legacy `application/csp-report` and the Reporting API's
- * `application/reports+json`, so one handler serves both delivery mechanisms.
+ * CSP violations go straight to Sentry's security-report endpoint, derived
+ * from the DSN (`https://<key>@<host>/<project>` →
+ * `https://<host>/api/<project>/security/?sentry_key=<key>`). Without a DSN
+ * (local dev) the policy simply carries no report directive.
  */
-const CSP_REPORT_PATH = "/api/csp-report";
+function sentryCspReportUrl() {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (!dsn) return undefined;
+  try {
+    const { username: key, host, pathname } = new URL(dsn);
+    const project = pathname.replace(/^\/+/, "");
+    if (!key || !project) return undefined;
+    const params = new URLSearchParams({ sentry_key: key });
+    if (process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT) {
+      params.set(
+        "sentry_environment",
+        process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+      );
+    }
+    return `https://${host}/api/${project}/security/?${params}`;
+  } catch {
+    return undefined;
+  }
+}
+const CSP_REPORT_URL = sentryCspReportUrl();
 const CSP_REPORT_GROUP = "csp-endpoint";
-const CSP_REPORT_ENDPOINT = RESOLVED_APP_URL
-  ? `${RESOLVED_APP_URL.replace(/\/+$/, "")}${CSP_REPORT_PATH}`
-  : undefined;
 
 /**
  * Content Security Policy.
  *
- * Enforced by default; the escape hatch is an explicit
- * `ENABLE_CSP_ENFORCE=false`, and a production build without it prints a
- * banner. See the enforcement note further down — and note that the decision is
- * baked in at config-evaluation time, so changing the variable requires a
- * REDEPLOY, not a restart.
- *
- * Why the report-only window still exists as a decision, even though it is no
- * longer the default
- * ------------------------------
- * A strict CSP can silently break Stream.io's call-widget script injection
- * or a Razorpay popup if any allow-list entry drifts, and this allow-list has
- * ALREADY drifted once: before the three `*.stream-io-*` entries were added
- * (documented below) every dashboard load filed violations for traffic the
- * product cannot function without, and video calling would have failed
- * outright the instant enforcement was switched on.
- *
- * The blocker on flipping the default is that nobody has read the report
- * yet. `/api/csp-report` writes a `console.warn` line with
- * `event: "csp_violation"` to the Netlify function log — there is no queryable
- * store, no Sentry event, no dashboard. Triage means tailing production logs
- * for a day, tallying by `violated-directive`, and judging each as
- * "legitimate third party" or "browser noise". That is an operator task, not a
- * code change, and it is not safe to short-circuit it.
- *
- * So the default stays report-only and the build says so out loud, every
- * production build, in the one channel that is never stripped
- * (`compiler.removeConsole` below excludes `error` and `warn`; `log` is not
- * one of them). Leaving this off FOREVER is not a supported state — the
- * report-only window is closed by triaging the reports and setting the env
- * var, not by silence. The rollout runbook is
- * `docs/enterprise/50-operations/03-runbooks.md` ("CSP enforcement").
+ * Report-only at launch: a drifted allow-list entry would otherwise break
+ * Razorpay checkout or Stream calls for everyone at once. Violations land in
+ * Sentry; once they are triaged, set `ENABLE_CSP_ENFORCE=true` and redeploy
+ * (the value is read at build time).
  *
  * Allow-list rationale
  * --------------------
@@ -186,74 +167,18 @@ const CSP_DIRECTIVES = [
   // /api/auth/*, so 'self' permits every one of them, and the directive
   // forecloses an injected form exfiltrating credentials to a third party.
   "form-action 'self'",
-  // Legacy delivery, kept: report-uri is deprecated in the CSP3 spec and
-  // ignored by browsers that only implement the Reporting API below. Both are
-  // shipped because a browser that implements only one of them still reports.
-  `report-uri ${CSP_REPORT_PATH}`,
-  // Reporting API delivery — the current mechanism. The `Reporting-Endpoints`
-  // response header below binds the group name to the absolute endpoint.
-  // Omitted when the origin is unresolvable: `report-to` pointing at a group
-  // no header defines is a silently-dropped directive, and report-uri above
-  // still delivers.
-  ...(CSP_REPORT_ENDPOINT ? [`report-to ${CSP_REPORT_GROUP}`] : []),
+  // Both delivery mechanisms: report-uri is deprecated but is all some
+  // browsers implement; report-to is bound by the Reporting-Endpoints header.
+  ...(CSP_REPORT_URL
+    ? [`report-uri ${CSP_REPORT_URL}`, `report-to ${CSP_REPORT_GROUP}`]
+    : []),
 ].join("; ");
 
-/**
- * Enforcement is opt-out, not opt-in — the value is READ, and only an explicit
- * `false` disables it. `=== "true"` is the old behaviour: unset meant
- * report-only, and unset is what production has always been.
- *
- * This is deliberately NOT flipped to enforce-by-default. The reasoning is in
- * the CSP docblock above: the allow-list has a documented drift history, the
- * violation report has never been triaged, the sink is a log line nobody
- * queries, and the worst failure mode is Razorpay checkout breaking for every
- * customer at once. Rolling that die without reading the reports would be a
- * worse outcome than the advisory header, which is a finding on an audit, not
- * an outage.
- *
- * The escape hatch is explicit and temporary. Set `ENABLE_CSP_ENFORCE=false`
- * in the Netlify env ONLY as a deliberate step, and put it back in the same
- * change that reads the report.
- *
- * Note the build-time bake, which the runbook's "no restart required" line
- * gets wrong: this reads process.env at config-evaluation time and lands in
- * the `headers()` output, so a production env change does not take effect
- * until the next deploy. Rollback is a redeploy, not a config push.
- */
-const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE !== "false";
+const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
 
 const CSP_HEADER_KEY = CSP_ENFORCE
   ? "Content-Security-Policy"
   : "Content-Security-Policy-Report-Only";
-
-if (!CSP_ENFORCE && process.env.NODE_ENV === "production") {
-  // Fires on every production build including Netlify deploys, because
-  // `log` is the level `compiler.removeConsole` strips in production and
-  // this must not be one of the silent kinds. Development builds stay quiet
-  // — the finding that matters is a production header.
-  console.warn(
-    [
-      "",
-      "  ┌─ CSP IS ADVISORY (Content-Security-Policy-Report-Only)",
-      "  │",
-      "  │  This build ships a REPORT-ONLY policy, not an enforcing one.",
-      "  │  Nothing is blocked. Violations are logged at /api/csp-report as",
-      '  │  `event: "csp_violation"` and are NOT queryable — triage them by',
-      "  │  tailing the production function log.",
-      "  │",
-      "  │  To close the window: tally by `violated-directive`, add any",
-      "  │  legitimate third party to CSP_DIRECTIVES, then set",
-      "  │  ENABLE_CSP_ENFORCE=true (unset is treated as enforcing; only an",
-      '  │  explicit "false" re-opens report-only). Env changes are baked',
-      "  │  at build — redeploy to take effect.",
-      "  │",
-      "  │  Runbook: docs/enterprise/50-operations/03-runbooks.md",
-      `  │  context: ${process.env.CONTEXT ?? "unset (local build)"}`,
-      "  └─────────────────────────────────────────────────────────────",
-      "",
-    ].join("\n"),
-  );
-}
 
 /** @type {Array<{ key: string; value: string }>} */
 const securityHeaders = [
@@ -278,21 +203,12 @@ const securityHeaders = [
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
   },
-  // CSP. Enforcing by default; `ENABLE_CSP_ENFORCE=false` re-opens the
-  // report-only window and warns the build (see CSP_ENFORCE above).
   { key: CSP_HEADER_KEY, value: CSP_DIRECTIVES },
-  // Bind the `report-to csp-endpoint` group name to an ABSOLUTE URL, which
-  // the Reporting API requires and the CSP spec does not allow you to infer
-  // from report-uri. Emitted only when the origin resolved, so a build with
-  // no NEXT_PUBLIC_APP_URL sends a report-to directive with no endpoint
-  // header rather than a header pointing nowhere. Applies to both header
-  // modes — reports keep flowing after enforcement, they are just attached
-  // to a blocked request.
-  ...(CSP_REPORT_ENDPOINT
+  ...(CSP_REPORT_URL
     ? [
         {
           key: "Reporting-Endpoints",
-          value: `${CSP_REPORT_GROUP}="${CSP_REPORT_ENDPOINT}"`,
+          value: `${CSP_REPORT_GROUP}="${CSP_REPORT_URL}"`,
         },
       ]
     : []),

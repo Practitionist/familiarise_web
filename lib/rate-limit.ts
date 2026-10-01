@@ -8,7 +8,6 @@
  * - referralApplyLimiter:   3/24h per user   — POST /api/referrals/apply (farming)
  * - remindLimiter:          1/24h per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind (#1775)
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
- * - cspReportLimiter:       120/min per IP   — POST /api/csp-report (browser-generated)
  * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
  * - requestApprovalLimiter: 10/hr per user   — POST /api/scheduling/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
@@ -103,22 +102,6 @@ export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
 // Review writes: the composer POSTs for every edit, and a new review is already
 // bounded by the pair unique and a held session, so this only stops hammering.
 export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
-
-/**
- * 120 per minute per IP — POST /api/csp-report.
- *
- * Was on spamLimiter's 5/hr, which is sized for a HUMAN deciding to file a
- * support ticket. A CSP report is emitted by the browser, unprompted, once per
- * violated directive per page load — so one person opening a few dashboard
- * pages exhausted the hour's quota in seconds and every report after that was
- * dropped with a 429. The report-only rollout was therefore blind in exactly
- * the situation it exists to observe: a directive drifting on a real user.
- *
- * Sized for a page that violates a handful of directives on every navigation,
- * with headroom, while still capping a hostile poster. Reports are logged, not
- * stored, so the cost of a generous ceiling is log volume rather than writes.
- */
-export const cspReportLimiter = makeLimiter(120, "1 m", "rl:csp-report");
 
 /**
  * #1134 P1-11 — Stream had NO rate limiting on any route or server action.
