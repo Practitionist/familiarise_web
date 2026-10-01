@@ -59,13 +59,13 @@ come first.
 
 ## 3. Edge and handler limiters
 
-| Scope                         | Route                                            | Budget                                     | Where                      |
-| ----------------------------- | ------------------------------------------------ | ------------------------------------------ | -------------------------- |
-| `enterprise.sso-domain-check` | `GET /api/auth/sso/domain-check`                 | 120 / hour per IP                          | Edge                       |
-| `enterprise.invite-accept`    | `POST /api/organizations/invitations/accept`     | 60 / hour per IP, 20 / hour per invitation | Edge (IP), handler (token) |
-| session management            | `/api/user/sessions*` except `/current`          | 120 / 15 min per IP                        | Edge                       |
-| session management, per user  | same                                             | 60 / 15 min per user                       | Handler                    |
-| `platform.staff-create`       | `POST /api/admin/team/members`, `.../setup-link` | 20 / hour per ADMIN                        | Handler                    |
+| Scope                         | Route                                            | Budget               | Where   |
+| ----------------------------- | ------------------------------------------------ | -------------------- | ------- |
+| `enterprise.sso-domain-check` | `GET /api/auth/sso/domain-check`                 | 120 / hour per IP    | Edge    |
+| `enterprise.invite-accept`    | `POST /api/organizations/invitations/accept`     | 60 / hour per IP     | Edge    |
+| session management            | `/api/user/sessions*` except `/current`          | 120 / 15 min per IP  | Edge    |
+| session management, per user  | same                                             | 60 / 15 min per user | Handler |
+| `platform.staff-create`       | `POST /api/admin/team/members`, `.../setup-link` | 20 / hour per ADMIN  | Handler |
 
 The `enterprise.*` and `platform.*` scopes are declared once in
 `lib/rate-limit/policies.ts` (scope, window, budgets, rationale) and reported
@@ -74,6 +74,9 @@ verbatim in the 429 body as `scope`. Account keys there are
 at rest. These limiters also fail open.
 
 `/api/user/sessions/current` is exempt: every open tab calls it on focus.
+
+The invite-accept policy also declares a 20 / hour per-invitation budget, but
+no handler spends it yet (open item).
 
 ## 4. Breached passwords (`lib/auth/password-policy.ts`)
 
