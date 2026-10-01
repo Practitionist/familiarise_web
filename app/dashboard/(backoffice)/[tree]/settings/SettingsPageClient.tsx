@@ -71,7 +71,6 @@ export default function BackofficeProfilePage() {
 
   const [formData, setFormData] = useState({
     name: "",
-    email: "",
     phone: "",
     address: "",
     timezone: "",
@@ -87,7 +86,6 @@ export default function BackofficeProfilePage() {
     if (adminData) {
       setFormData({
         name: adminData.name || "",
-        email: adminData.email || "",
         phone: adminData.phone || "",
         address: adminData.address || "",
         timezone: adminData.timezone || "",
@@ -196,13 +194,13 @@ export default function BackofficeProfilePage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
+              {/* Read-only: the profile route never writes email. */}
               <Input
                 id="email"
-                name="email"
                 type="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                placeholder="your@email.com"
+                value={adminData?.email ?? ""}
+                readOnly
+                disabled
               />
             </div>
             <div className="space-y-2">
