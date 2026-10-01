@@ -27,6 +27,7 @@ import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 import {
+  capOperatorExpiry,
   isOperatorRole,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
@@ -515,7 +516,8 @@ export const auth = betterAuth({
     //
     // The same hook keeps operators on password + TOTP: the twoFactor plugin
     // never challenges a social or SSO callback, so those are refused here
-    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts).
+    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts). It also caps an
+    // operator session at 12 hours; `update.before` holds that on refresh.
     session: {
       create: {
         before: async (session, ctx) => {
@@ -556,6 +558,37 @@ export const auth = betterAuth({
               code: "SSO_REQUIRED",
             });
           }
+
+          if (isOperatorRole(user?.role)) {
+            return {
+              data: {
+                expiresAt: capOperatorExpiry(
+                  session.createdAt ?? new Date(),
+                  session.expiresAt,
+                ),
+              },
+            };
+          }
+        },
+      },
+      update: {
+        // Only get-session's sliding refresh writes `expiresAt`, and it has
+        // just loaded this session and its user into `ctx.context.session`,
+        // so the clamp needs no query. For an operator the refresh therefore
+        // runs on every read (12h is always within the 30d-minus-1d window);
+        // the write is one row by token, and operators are few.
+        before: async (data, ctx) => {
+          const current = ctx?.context.session;
+          if (!data.expiresAt || !current) return;
+          if (!isOperatorRole((current.user as { role?: string }).role)) return;
+          return {
+            data: {
+              expiresAt: capOperatorExpiry(
+                new Date(current.session.createdAt),
+                new Date(data.expiresAt),
+              ),
+            },
+          };
         },
       },
     },

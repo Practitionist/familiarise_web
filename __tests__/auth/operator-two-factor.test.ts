@@ -25,7 +25,9 @@ jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 import { lookupSession } from "../../lib/auth-session-lookup";
 import { requireApiAuth, requireApiSession } from "../../lib/auth-helpers";
 import {
+  capOperatorExpiry,
   isOperatorRole,
+  OPERATOR_SESSION_MAX_AGE_MS,
   refusesOperatorSession,
 } from "../../lib/auth/operator-session-policy";
 
@@ -83,6 +85,31 @@ describe("refusesOperatorSession", () => {
     expect(isOperatorRole("ADMIN")).toBe(true);
     expect(isOperatorRole("USER")).toBe(false);
     expect(isOperatorRole(undefined)).toBe(false);
+  });
+});
+
+describe("capOperatorExpiry", () => {
+  const createdAt = new Date("2026-10-01T00:00:00Z");
+  const cap = new Date("2026-10-01T12:00:00Z");
+
+  it("is 12 hours", () => {
+    expect(OPERATOR_SESSION_MAX_AGE_MS).toBe(12 * 60 * 60 * 1000);
+  });
+
+  it("pulls a 30-day expiry (create or sliding refresh) back to sign-in + 12h", () => {
+    const thirtyDays = new Date("2026-10-31T00:00:00Z");
+    expect(capOperatorExpiry(createdAt, thirtyDays)).toEqual(cap);
+  });
+
+  it("keeps an expiry already inside the cap", () => {
+    const early = new Date("2026-10-01T06:00:00Z");
+    expect(capOperatorExpiry(createdAt, early)).toBe(early);
+  });
+
+  it("ends an old session at its first refresh: the cap is already past", () => {
+    const old = new Date("2026-09-01T00:00:00Z");
+    const refreshed = capOperatorExpiry(old, new Date("2026-10-31T00:00:00Z"));
+    expect(refreshed.getTime()).toBeLessThan(createdAt.getTime());
   });
 });
 
