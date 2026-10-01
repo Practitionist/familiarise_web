@@ -58,6 +58,13 @@
  * What it does instead is leave the call's own cap stale, so the failure is
  * logged at `error` and picked up by the next join (the mint re-sends
  * `max_duration_seconds`) or the next planner save.
+ *
+ * "Failure" is therefore EVERYTHING past the call, and the boundary opens before
+ * the `Meeting` lookup rather than at the first provider call: a transient pool
+ * exhaustion or a reset connection on that read is exactly as reachable on this
+ * route as a Stream outage, and it must not escape either. The catch reads
+ * `meeting?.id`, so a lookup that never returned still gets a logged failure
+ * instead of a `TypeError` out of the handler itself.
  */
 import prisma from "@/lib/prisma";
 import { resolveMaxCallDurationSeconds } from "@/lib/meetings/duration-cap";
@@ -95,53 +102,59 @@ export async function syncCallWindowForOccurrence(occurrence: {
   startsAt: Date;
   endsAt: Date;
 }): Promise<CallWindowSyncResult> {
-  const meeting = await prisma.meeting.findUnique({
-    where: { appointmentOccurrenceId: occurrence.id },
-    select: { id: true, streamCallId: true },
-  });
-  if (!meeting) {
-    // The room is minted lazily, on the first join. A booking that has never been
-    // entered has nothing to correct — the mint reads these same times.
-    return { updated: false, reason: "no_meeting" };
-  }
-
-  if (!isStreamConfigured()) {
-    streamLogger.error(
-      "Stream not configured — the call keeps its stale session window",
-      { meetingId: meeting.id, streamCallId: meeting.streamCallId },
-    );
-    return { updated: false, reason: "no_call" };
-  }
-
-  const call = getStreamVideoClient().video.call(
-    STREAM_CALL_TYPE,
-    toCallId(meeting.streamCallId),
-  );
-
-  // The run is not in doubt here: the planner has just written it. That is worth
-  // saying because `resolveMaxCallDurationSeconds` returns null for a run it
-  // could not RESOLVE, and its docstring is emphatic that a guessed cap is worse
-  // than no cap because the SFU would end a long session early. Here the value is
-  // read from the row the caller just committed, not inferred — so passing it is
-  // the resolved case, and a null would mean a caller wired this up wrong.
-  const maxDurationSeconds = resolveMaxCallDurationSeconds(
-    { endsAt: occurrence.endsAt },
-    occurrence.startsAt,
-  );
-  if (maxDurationSeconds === null) {
-    // Unreachable for a well-formed window; treated as a refusal rather than a
-    // guessed number, per that function's own doctrine.
-    return { updated: false, reason: "unreadable" };
-  }
-
-  const durationMinutes = Math.max(
-    Math.round(
-      (occurrence.endsAt.getTime() - occurrence.startsAt.getTime()) / 60000,
-    ),
-    0,
-  );
+  // Hoisted above the boundary deliberately. The catch below reports on the
+  // meeting, and the boundary now opens BEFORE the lookup — so `null` here means
+  // "we never learned which meeting this was", which is precisely the case the
+  // `?.` on the log fields below exists to survive.
+  let meeting: { id: string; streamCallId: string } | null = null;
 
   try {
+    meeting = await prisma.meeting.findUnique({
+      where: { appointmentOccurrenceId: occurrence.id },
+      select: { id: true, streamCallId: true },
+    });
+    if (!meeting) {
+      // The room is minted lazily, on the first join. A booking that has never been
+      // entered has nothing to correct — the mint reads these same times.
+      return { updated: false, reason: "no_meeting" };
+    }
+
+    if (!isStreamConfigured()) {
+      streamLogger.error(
+        "Stream not configured — the call keeps its stale session window",
+        { meetingId: meeting.id, streamCallId: meeting.streamCallId },
+      );
+      return { updated: false, reason: "no_call" };
+    }
+
+    const call = getStreamVideoClient().video.call(
+      STREAM_CALL_TYPE,
+      toCallId(meeting.streamCallId),
+    );
+
+    // The run is not in doubt here: the planner has just written it. That is worth
+    // saying because `resolveMaxCallDurationSeconds` returns null for a run it
+    // could not RESOLVE, and its docstring is emphatic that a guessed cap is worse
+    // than no cap because the SFU would end a long session early. Here the value is
+    // read from the row the caller just committed, not inferred — so passing it is
+    // the resolved case, and a null would mean a caller wired this up wrong.
+    const maxDurationSeconds = resolveMaxCallDurationSeconds(
+      { endsAt: occurrence.endsAt },
+      occurrence.startsAt,
+    );
+    if (maxDurationSeconds === null) {
+      // Unreachable for a well-formed window; treated as a refusal rather than a
+      // guessed number, per that function's own doctrine.
+      return { updated: false, reason: "unreadable" };
+    }
+
+    const durationMinutes = Math.max(
+      Math.round(
+        (occurrence.endsAt.getTime() - occurrence.startsAt.getTime()) / 60000,
+      ),
+      0,
+    );
+
     const { call: current } = await withStreamCircuitBreaker(() => call.get());
 
     const merged = {
@@ -176,11 +189,14 @@ export async function syncCallWindowForOccurrence(occurrence: {
     // The window is now wrong ON STREAM while being right in the database. Log
     // it loudly — this is the one failure mode where the app is right and the
     // provider is not, and the consequence (an SFU cut short of the booked end)
-    // lands on a paid consultation.
+    // lands on a paid consultation. Reached by the provider failures above AND by
+    // the lookup that opened this boundary, so the identity fields are optional:
+    // when the row never came back, `meeting` is still null and reporting it must
+    // not become a second failure on top of the first.
     streamLogger.error(
       "Could not re-stamp the session window on the Stream call",
       error,
-      { meetingId: meeting.id, streamCallId: meeting.streamCallId },
+      { meetingId: meeting?.id, streamCallId: meeting?.streamCallId },
     );
     return { updated: false, reason: "stream_error" };
   }

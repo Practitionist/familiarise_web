@@ -159,10 +159,33 @@ describe("#1829 — chat reconnect must reopen the socket, not re-await connectU
 });
 
 describe("#1829 — a replaced video client is disconnected, not abandoned", () => {
-  it("disconnects the dead same-user client before overwriting the global", () => {
-    const disconnect = provider.indexOf(
-      "await adoptable.disconnectUser().catch(() => undefined)",
+  /**
+   * Drops `//` comment lines before asserting on a slice. Several of the
+   * branches below are heavily commented, and both `disconnectUser` and
+   * `isVideoClientLive` are named in that prose — an assertion over the raw
+   * text would be reading the comment, not the code.
+   */
+  const code = (source: string): string =>
+    source
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+
+  const teardownAt = (): number =>
+    provider.indexOf("await adoptable.disconnectUser().catch(() => undefined)");
+  /** The `if` that guards the teardown, and the code it guards. */
+  const teardownBranch = (): string => {
+    const disconnect = teardownAt();
+    return code(
+      provider.slice(
+        provider.lastIndexOf("if (adoptable)", disconnect),
+        disconnect,
+      ),
     );
+  };
+
+  it("disconnects the client it is about to overwrite, BEFORE the overwrite", () => {
+    const disconnect = teardownAt();
     const overwrite = provider.indexOf("setGlobalVideoClient(client)");
     expect(disconnect).toBeGreaterThan(-1);
     // Before the overwrite, or the old client loses its last reference and
@@ -170,20 +193,45 @@ describe("#1829 — a replaced video client is disconnected, not abandoned", () 
     expect(disconnect).toBeLessThan(overwrite);
   });
 
-  it("scopes the teardown to the same user", () => {
-    // Tearing down a client belonging to a DIFFERENT user would kill a session
-    // this function was never asked to end.
-    const branch = provider.slice(
-      provider.indexOf("if (sameUser && adoptable)"),
-      provider.indexOf("if (sameUser && adoptable)") + 200,
+  it("tears down whatever is in the global slot, not only a same-user client", () => {
+    // #1829 — the guard USED to read `sameUser && adoptable`. A same-user client
+    // is now repaired in place and returns before reaching the teardown, so that
+    // guard stopped being a scope and became dead code: what is actually left
+    // to release is exactly a client belonging to a DIFFERENT user, whose ref is
+    // about to be overwritten. Keeping the `sameUser` half would have leaked the
+    // previous user's socket on any user switch the mount effect's
+    // `disconnectStreamClients()` had not already observed.
+    const branch = teardownBranch();
+    expect(branch).toContain("if (adoptable)");
+    expect(branch).not.toContain("sameUser");
+  });
+
+  it("does not consult liveness — being not-live is what put it on this path", () => {
+    // `isVideoClientLive` returning false is what routed us here, so a liveness
+    // gate would read "release it because we are throwing it away" and then
+    // "do not release it because it is not live" — leaking the one client still
+    // holding a socket's reconnect machinery.
+    expect(teardownBranch()).not.toContain("isVideoClientLive");
+  });
+
+  it("never releases a same-user client, which is repaired instead", () => {
+    // The other half of the scope question. Disconnecting a same-user client
+    // here would restore the old defect by another name: every mid-session video
+    // flap would throw away a client — and every `Call` in its state store.
+    const repair = provider.indexOf("await coordinator.openConnection()");
+    expect(repair).toBeGreaterThan(-1);
+    const repairBranch = code(
+      provider.slice(
+        provider.lastIndexOf("if (sameUser && adoptable)", repair),
+        provider.indexOf("if (adoptable)", repair),
+      ),
     );
-    expect(branch).toContain("sameUser && adoptable");
+    expect(repairBranch).toContain("sameUser && adoptable");
+    expect(repairBranch).not.toContain("disconnectUser");
   });
 
   it("swallows the rejection — a dead client must not fail a live connect", () => {
-    const disconnect = provider.indexOf(
-      "await adoptable.disconnectUser().catch(() => undefined)",
-    );
+    const disconnect = teardownAt();
     expect(provider.slice(disconnect, disconnect + 90)).toContain(
       ".catch(() => undefined)",
     );

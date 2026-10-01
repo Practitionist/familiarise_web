@@ -6,7 +6,6 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
-import { resolveMaxCallDurationSeconds } from "@/lib/meetings/duration-cap";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import { getMaintenanceState } from "@/lib/maintenance";
@@ -24,7 +23,6 @@ interface MeetingSlot {
   appointmentId?: string | null;
 }
 import { Meeting } from "@prisma/client";
-import type { AppointmentsType } from "@prisma/client";
 import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
 import {
@@ -37,6 +35,10 @@ import {
   rebuiltRoomIdForOccurrence,
   roomIdForOccurrence,
 } from "@/lib/meetings/room-id";
+import {
+  buildAuthoritativeRoomPayload,
+  CALL_MEMBER_ROLE,
+} from "@/lib/meetings/room-payload";
 import { liveParticipant } from "@/lib/booking/participants";
 
 // Input validation schemas
@@ -249,8 +251,11 @@ const slotSchema = z.object({
  * Nothing is lost by dropping the distinction. Host-ness in the UI is derived
  * from `custom.consultantUserId` via useSessionInfo(), never from the Stream
  * role, and `hostUserIds`/`guestUserIds` below still carry the two sides.
+ *
+ * The value itself now lives in `lib/meetings/room-payload.ts`, because the join
+ * route has to name the same role: two constants that mean the same thing is
+ * the failure the grants script would turn into a total video outage.
  */
-const CALL_MEMBER_ROLE = "call_member";
 
 export type SessionCallMember = { user_id: string; role: string };
 
@@ -824,116 +829,12 @@ export async function createDbMeeting(
  * only exposes an attack surface is deleted rather than gated.
  */
 
-/**
- * What a session's Stream call is described with, once, by the server (#1270).
- *
- * Every field used to be assembled in the browser and handed to Stream by the
- * browser, so the person who clicked Join first decided what the room said
- * about itself — including `consultantUserId`, which is the value the meeting
- * UI derives host-ness from. These are now read from the same rows the
- * entitlement gate reads.
+/*
+ * `describeCall` and `buildCallCustom` moved to `lib/meetings/room-payload.ts`,
+ * unchanged in substance, because the recovery path has to build the SAME
+ * payload and a second copy is exactly how the two would drift (#1829). The
+ * reasoning travels with them; `CallDescription` was local to `describeCall`.
  */
-interface CallDescription {
-  title: string;
-  description: string;
-}
-
-function describeCall(
-  appointmentType: AppointmentsType,
-  appointmentId: string | null | undefined,
-  profile: SessionCallProfile | null,
-): CallDescription {
-  const offeringTitle = profile?.offeringTitle ?? null;
-  // The consultee, by name. Group events name no guests at all, so this is
-  // null for a webinar or a class and the offering branches below take over —
-  // which is the same precedence the browser-side version had.
-  const guestName = profile?.guestName ?? null;
-
-  if (guestName) {
-    return {
-      title: `${appointmentType} with ${guestName}`,
-      description: `${appointmentType} Meeting`,
-    };
-  }
-  if (appointmentType === "WEBINAR" && offeringTitle) {
-    return {
-      title: `Webinar: ${offeringTitle}`,
-      description: `Webinar Session for ${offeringTitle}`,
-    };
-  }
-  if (appointmentType === "CLASS" && offeringTitle) {
-    return {
-      title: `Class: ${offeringTitle}`,
-      description: `Class Session for ${offeringTitle}`,
-    };
-  }
-  return {
-    title: `Meeting for Appointment ${appointmentId ?? "unknown"}`,
-    description: `${appointmentType} Meeting`,
-  };
-}
-
-/**
- * The `custom` blob a newly minted call carries.
- *
- * Extracted only to keep `provisionAppointmentMeeting` under the
- * cognitive-complexity limit the pipeline enforces.
- */
-function buildCallCustom(args: {
-  occurrenceId: string;
-  appointmentId: string | null | undefined;
-  appointmentType: AppointmentsType;
-  organizationId: string | null;
-  profile: SessionCallProfile | null;
-}): Record<string, unknown> {
-  const { profile } = args;
-  const { title, description } = describeCall(
-    args.appointmentType,
-    args.appointmentId,
-    profile,
-  );
-
-  // #org-appts — which SIDE of the appointment each viewer is on. Resolved from
-  // resolvePlanOwnerIds and slot membership rather than accepted from the
-  // caller: this is what useSessionInfo() reads to decide who may end the call
-  // for everyone, so a browser must not be able to name itself here.
-  // `consultantUserId` stays the owner for calls and screens minted before
-  // #1580; `hostUserIds` is the owner plus the accepted co-presenter.
-  const consultantUserId = profile?.hostUserIds[0] ?? null;
-  const consulteeUserId = profile?.guestUserIds[0] ?? null;
-  const hostUserIds = profile?.hostControlUserIds ?? [];
-
-  return {
-    title,
-    description,
-    appointmentId: args.appointmentId ?? null,
-    // #1554 — the occurrence keys the room; `slotId` stays for the screens
-    // that read it.
-    slotId: args.occurrenceId,
-    occurrenceId: args.occurrenceId,
-    appointmentType: args.appointmentType,
-    ...(args.organizationId ? { organizationId: args.organizationId } : {}),
-    ...(consultantUserId ? { consultantUserId } : {}),
-    ...(hostUserIds.length > 0 ? { hostUserIds } : {}),
-    ...(consulteeUserId ? { consulteeUserId } : {}),
-    // #1070 — the session's real shape. `CallRequest` has no `ends_at`, so the
-    // end travels as call metadata; see provisionAppointmentMeeting for why the
-    // one field that could enforce it is still not used.
-    ...(profile
-      ? {
-          sessionStartsAt: profile.startsAt.toISOString(),
-          sessionEndsAt: profile.endsAt.toISOString(),
-          sessionDurationMinutes: profile.durationMinutes,
-          ...(profile.offeringTitle
-            ? { offeringTitle: profile.offeringTitle }
-            : {}),
-          // Both sides by name, so each screen can lead with the OTHER one.
-          ...(profile.hostName ? { hostName: profile.hostName } : {}),
-          ...(profile.guestName ? { guestName: profile.guestName } : {}),
-        }
-      : {}),
-  };
-}
 
 /**
  * The outcome of asking for a session's room.
@@ -1161,38 +1062,33 @@ export async function provisionAppointmentMeeting(
   // the whole GetOrCreateCall without one (#1270).
   const authorUserId = callProfile?.hostUserIds[0] ?? authorized.userId;
 
-  // #1280 — a server-side duration cap, as a BILLING and data-integrity
-  // backstop. Free: `limits.max_duration_seconds` is a call-type/per-call
-  // setting, not a metered service, and it reads `null` on the live type today.
+  // #1829 — the payload, resolved ONCE and shared with the recovery path.
   //
-  // #1144 recorded this as the highest-value unbuilt item on the grounds that
-  // the SFU would end calls "at the slot boundary". #1160 corrected that, and
-  // the correction is the whole design: **the timer counts from the moment the
-  // FIRST PARTICIPANT JOINS, not from `starts_at`.** Set to the booked length,
-  // a consultant joining fifteen minutes early to check their camera would have
-  // Stream hard-terminate the session before the booked end, ejecting both
-  // parties mid-sentence. `lib/meeting.ts` declined to send this field for
-  // exactly that reason, and on that point it was right rather than cautious.
+  // This used to be assembled inline here, which is why a recovery could not
+  // reproduce it: `POST /api/meetings/[meetingId]/join` is the only thing that
+  // materialises a room whose first mint failed, and it carried
+  // `created_by_id: userId` and nothing else. So whenever the mint below threw
+  // after the row committed — the normal state this ordering produces — the room
+  // that eventually appeared was authored by whoever walked in first, with no
+  // host metadata, no roster, no schedule and no duration bound. Both entry
+  // points now build the same object, so the two cannot describe one room
+  // differently.
   //
-  // So it is set GENEROUSLY: the booked run, plus the earliest anyone can join,
-  // plus a grace window. It is not slot enforcement and must never be mistaken
-  // for it — #472 owns overrun handling, and the application still decides when
-  // a session is over.
-  //
-  // What it buys, which nothing else in the stack provides:
-  //   1. Stream stamps `ended_at` whether or not our webhook pipeline works.
-  //      #1134 found 1,417 sessions with no `endedAt` and a pipeline that had
-  //      never processed one event; this is the only control that degrades
-  //      gracefully through that, because it does not run on our infrastructure.
-  //   2. It bounds the worst-case bill. A forgotten tab or a client that fails
-  //      to tear down media bills participant minutes indefinitely, and the only
-  //      thing standing between us and an unbounded meter is
-  //      `inactivity_timeout_seconds` — which requires everyone to actually
-  //      disconnect.
-  const maxDurationSeconds = resolveMaxCallDurationSeconds(
-    callProfile,
+  // `windowEndsAt` is the profile's end, which is null exactly when the profile
+  // is: an unresolved run gets NO cap rather than a guessed one (see
+  // `resolveMaxCallDurationSeconds`, whose own doctrine is that a guessed cap
+  // ends a long paid session early).
+  const payload = buildAuthoritativeRoomPayload({
+    occurrenceId: anchorSlot.id,
+    appointmentId: anchorSlot.appointmentId,
+    appointmentType: authorized.appointment.appointmentType,
+    organizationId: authorized.appointment.organizationId ?? null,
     startsAt,
-  );
+    windowEndsAt: callProfile?.endsAt ?? null,
+    identity: callProfile,
+    fallbackAuthorId: authorized.userId,
+  });
+
   if (!callProfile?.hostUserIds.length) {
     streamLogger.warn("Minting a call without a resolvable host", {
       slotId: anchorSlot.id,
@@ -1262,46 +1158,17 @@ export async function provisionAppointmentMeeting(
   try {
     await withStreamCircuitBreaker(async () => {
       // Stream refuses a call operation naming a user it does not hold, and a
-      // token alone never creates one. resolveSessionCallProfile syncs the
-      // members it names; the author may not be among them on the fallback
-      // path above. Already-synced ids are filtered inside.
-      await upsertUsersToStream([authorUserId]);
+      // token alone never creates one. `payload.syncUserIds` is the author plus
+      // every member the payload names, so the initial members exist on the call
+      // the create names them; resolveSessionCallProfile already synced most of
+      // them, and already-synced ids are filtered inside.
+      await upsertUsersToStream(payload.syncUserIds);
 
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
         streamCallId,
       );
-      await call.getOrCreate({
-        data: {
-          created_by_id: authorUserId,
-          starts_at: startsAt,
-          // Omitted entirely when the run could not be resolved — see
-          // `resolveMaxCallDurationSeconds`. A guessed cap is worse than none:
-          // the call type carries no limit of its own, so leaving it out is
-          // exactly the behaviour before this backstop existed.
-          ...(maxDurationSeconds !== null
-            ? {
-                settings_override: {
-                  limits: { max_duration_seconds: maxDurationSeconds },
-                },
-              }
-            : {}),
-          custom: buildCallCustom({
-            occurrenceId: anchorSlot.id,
-            appointmentId: anchorSlot.appointmentId,
-            appointmentType: authorized.appointment.appointmentType,
-            organizationId: authorized.appointment.organizationId ?? null,
-            profile: callProfile,
-          }),
-          // #1134 P0-1 — once ensure-call-type-grants strips `join-call` from
-          // `user` and `guest`, membership is the ONLY thing that admits
-          // anyone. A call minted without members is still joinable via
-          // POST /api/meetings/[id]/join, which grants membership itself.
-          ...(callProfile && callProfile.members.length > 0
-            ? { members: callProfile.members }
-            : {}),
-        },
-      });
+      await call.getOrCreate({ data: payload.data });
     });
   } catch (error) {
     Sentry.captureException(

@@ -63,51 +63,178 @@ const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
 /**
  * #E7 — is the chat client's socket actually up?
  *
- * `wsConnection` is a `StableWSConnection`, and `connected` is its own
- * liveness read: false from the moment the socket drops, and NOT merely
- * "a connect was attempted". It is declared in the SDK's client type but not
- * re-exported through the v9 typings this file already casts around, so the
- * access is narrowed here — one cast, one place, with the reason — rather than
- * sprinkled at each of the two call sites.
+ * This used to read `wsConnection.connected`, and `StableWSConnection` has no
+ * such property. stream-chat@9.52.0
+ * (`node_modules/stream-chat/dist/types/connection.d.ts:21-44`) declares
+ * `connectionID?`, `connectionOpen?`, `consecutiveFailures`, `isConnecting`,
+ * `isDisconnected`, `isHealthy`, `isResolved?` and `ws?` — there is no
+ * `connected` anywhere on the class. So the read was ALWAYS false against a
+ * real SDK client: a genuinely healthy socket was REJECTED, the provider ran
+ * recovery instead of adopting, and the only thing that could ever have made
+ * the check pass was a hand-shaped `.connected` mock. The test suite was
+ * green and production did the opposite.
  *
- * A MISSING `wsConnection` reads as NOT live, deliberately. That is the
+ * What is read now is the SDK's OWN composition, verbatim, taken from the two
+ * places it decides for itself whether a connection already exists
+ * (`dist/cjs/index.browser.js:14718`, inside `openConnection()`, and `:16147`,
+ * inside `setLocalDevice()`):
+ *
+ *     (this.wsConnection?.isHealthy || this.wsFallback?.isHealthy())
+ *       && this._hasConnectionID()
+ *
+ * `wsFallback` is the HTTP long-poll fallback (`client.d.ts:106`, optional) and
+ * its `isHealthy()` already carries the connectionID check internally
+ * (`connection_fallback.d.ts:38`; implemented at `index.browser.js:12478` as
+ * `!!this.connectionID && this.state === "CONNECTED"`), so both branches are
+ * honoured and neither invents a fact the SDK has not computed.
+ *
+ * Every name comes from the published typings — `wsConnection: StableWSConnection | null`
+ * (`client.d.ts:105`), `wsFallback?: WSConnectionFallback` (`client.d.ts:106`),
+ * `_hasConnectionID(): boolean` (`client.d.ts:172`) — so there is no cast left
+ * to drift, no `!` to silence a null, and a future SDK rename becomes a type
+ * error HERE rather than a silent always-false read in production. Synchronous
+ * and allocation-free (three property reads and a `Boolean`), because it is
+ * called from a retry decision.
+ *
+ * Why the health field and not the event: `_setHealth(false)` runs
+ * synchronously on `onclose`/`onerror` and on the browser `offline` event
+ * (`index.browser.js:11673`, `:11723`, `:11734`), but the
+ * `connection.changed(online: false)` it dispatches is deferred by 5 seconds
+ * (`:11757-11761`). The field is therefore strictly FRESHER than the event the
+ * provider subscribes to, and it is the same fact the SDK gates its own
+ * "already connected" short-circuit on.
+ *
+ * A MISSING or unhealthy socket reads as NOT live, deliberately. That is the
  * fail-closed direction: an unknown socket state must send us through a real
- * `connectUser`, and the cost of being wrong there is one redundant connect
+ * reconnect, and the cost of being wrong there is one redundant connect
  * (idempotent) while the cost of guessing "live" is the bug this whole change
  * exists to fix.
+ *
+ * Exported solely so `__tests__/stream/provider-liveness.test.ts` can drive it
+ * against SDK-shaped fixtures. Nothing else imports this name.
  */
-function isChatClientLive(client: StreamChat): boolean {
-  const ws = (
-    client as unknown as {
-      wsConnection?: { connected?: boolean };
-    }
-  ).wsConnection;
-  return ws?.connected === true;
+/**
+ * Exactly the surface {@link isChatClientLive} reads, named in the SDK's own
+ * types rather than re-declared.
+ *
+ * `Pick` off `StreamChat` keeps the real field types — `isHealthy: boolean`,
+ * `connectionID?: string`, `isHealthy(): boolean` on the fallback,
+ * `_hasConnectionID(): boolean` — so an SDK rename is still a compile error here
+ * and, because the type is derived rather than written out, a renamed field
+ * cannot be satisfied by a lookalike fixture in a test. It also states the read
+ * surface in one place instead of leaving it implied by the body.
+ *
+ * `wsFallback` stays OPTIONAL exactly as `client.d.ts:106` declares it.
+ */
+type ChatLiveness = {
+  wsConnection: Pick<
+    NonNullable<StreamChat["wsConnection"]>,
+    "isHealthy" | "connectionID"
+  > | null;
+  wsFallback?: Pick<
+    NonNullable<StreamChat["wsFallback"]>,
+    "isHealthy" | "connectionID"
+  >;
+  _hasConnectionID: StreamChat["_hasConnectionID"];
+};
+
+export function isChatClientLive(client: ChatLiveness): boolean {
+  const wsHealthy = client.wsConnection?.isHealthy === true;
+  const fallbackHealthy = client.wsFallback?.isHealthy() === true;
+  return (wsHealthy || fallbackHealthy) && client._hasConnectionID();
 }
 
 /**
- * #E7 — the video SDK's equivalent of {@link isChatClientLive}.
+ * #E7 — the video SDK's equivalent of {@link isChatClientLive}: is the
+ * COORDINATOR socket actually up?
  *
- * `client.state.connectedUser` is part of the SDK's public read-only state store
- * and is documented as "the current user connected over WS to the coordinator
- * server" — the handshake's own outcome, cleared on disconnect. Reading it is
- * a plain synchronous property access, so it is safe to call from a retry
- * decision.
+ * This used to read `client.state.connectedUser`, which is an IDENTITY fact,
+ * not a transport one. In @stream-io/video-client@1.59.0
+ * `writeableStateStore.setConnectedUser` is called from exactly two places
+ * (`dist/index.cjs.js:20026`, inside `connectUser`, and `:20051`, inside
+ * `disconnectUser`) — a coordinator socket that merely DROPPED clears neither.
+ * So a video client whose WebSocket had been dead since the network went away
+ * passed this check, was adopted, and was published as
+ * `videoConnected: true` over a client that could not receive a packet. The
+ * provider's `connection.changed` subscription was chat-only, so nothing ever
+ * corrected the flag and nothing ever triggered recovery.
  *
- * Deliberately a POLL rather than a subscription. `client.on(...)` is a typed
- * overload over Stream's generated event union, and pinning this app to the
- * exact event names that union happens to expose is a worse dependency than
- * asking the SDK for its state. The read happens on exactly the two occasions
- * where the answer changes something — the initial connect and every retry —
- * and the chat client's `connection.changed` subscription (below) is what makes
- * a mid-session flap reach a retry in the first place.
+ * What is read now is the video client's own coordinator client —
+ * `StreamVideoClient.streamClient: StreamClient`
+ * (`dist/src/StreamVideoClient.d.ts:24`), a real `StreamChat`-shaped
+ * connection manager, NOT the app's separate `stream-chat` singleton. Its
+ * `wsConnection: StableWSConnection | null`
+ * (`dist/src/coordinator/connection/client.d.ts:28`) carries the same real
+ * health fields as the chat one — `isHealthy`, `isConnecting`, `isDisconnected`,
+ * `connectionID?` (`dist/src/coordinator/connection/connection.d.ts`) — and
+ * `_hasConnectionID(): boolean` is declared on the same class
+ * (`client.d.ts:53`, implemented at `index.cjs.js:18708-18709` as
+ * `Boolean(this.wsConnection?.connectionID)`).
+ *
+ * No `wsFallback` term here, unlike {@link isChatClientLive}: the video SDK
+ * vendors its OWN copy of the connection layer and that copy declares no
+ * `wsFallback` at all (`client.d.ts` has no such member, and
+ * `index.cjs.js` contains no long-poll fallback implementation — the
+ * `transport.changed` event type at
+ * `dist/src/coordinator/connection/types.d.ts:74-77` is never dispatched by this
+ * version). Reading one would be inventing a field.
+ *
+ * The composition matches the video SDK's own short-circuit in
+ * `openConnection()` (`index.cjs.js:18795-18797`:
+ * `if (this.wsConnection?.isHealthy && this._hasConnectionID()) … return;`), so
+ * "live" here means exactly what "already connected" means to the SDK — the
+ * provider cannot claim a connection the SDK would refuse to open, nor rebuild
+ * one the SDK considers good.
+ *
+ * COORDINATOR ONLY. This says nothing about SFU/media: the coordinator socket
+ * is the authenticated control plane, and media is a separate connection with
+ * separate failure modes (see video-js#2003, where a healthy coordinator and a
+ * dead SFU are independent). Nothing in this file may promote a coordinator
+ * fact into a media-level one — the value is published only as the
+ * client-level `videoConnected` flag in lib/stream/connection-store.ts, and
+ * call state is left entirely to `lib/stream/media-teardown.ts` and the call
+ * surfaces. Synchronous, like the chat equivalent, because it is called from a
+ * retry decision.
+ *
+ * Exported (like {@link isChatClientLive}) solely so
+ * `__tests__/stream/provider-liveness.test.ts` can drive it against
+ * SDK-shaped fixtures. It is not part of any public surface: the module itself
+ * is only ever reached through `next/dynamic` from `providers/StreamProvider.tsx`,
+ * and nothing else imports these names.
  */
-function isVideoClientLive(client: StreamVideoClient): boolean {
-  // Truthiness rather than `!= null`: `connectedUser` is an object when
-  // connected and `undefined` when not, so the check is exact, and it keeps the
-  // repo's `eqeqeq` rule satisfied without a disable comment for what is not
-  // really a comparison.
-  return Boolean(client.state?.connectedUser);
+/**
+ * Exactly the surface {@link isVideoClientLive} reads, named in the video SDK's
+ * own types rather than re-declared.
+ *
+ * `StreamVideoClient["streamClient"]` is the video SDK's vendored coordinator
+ * `StreamClient`, and its `wsConnection` is that package's own
+ * `StableWSConnection` — neither class is re-exported from
+ * `@stream-io/video-client`'s root, so the types are reached by indexed access
+ * and `Pick`ed. The result is structurally the same guarantee as the chat side:
+ * `isHealthy: boolean` and `connectionID?: string` are the SDK's own types, so
+ * an SDK rename is a compile error rather than a fixture that quietly stops
+ * matching.
+ *
+ * `state` is deliberately ABSENT. The whole defect was reading an identity fact
+ * off it; leaving it out of the surface means a future edit has to widen this
+ * type to reach `connectedUser` again, which is a reviewable act.
+ */
+type VideoLiveness = {
+  streamClient: {
+    wsConnection: Pick<
+      NonNullable<StreamVideoClient["streamClient"]["wsConnection"]>,
+      "isHealthy" | "connectionID"
+    > | null;
+    _hasConnectionID: StreamVideoClient["streamClient"]["_hasConnectionID"];
+  };
+};
+
+export function isVideoClientLive(client: VideoLiveness): boolean {
+  const coordinator = client.streamClient;
+  return (
+    coordinator.wsConnection?.isHealthy === true &&
+    coordinator._hasConnectionID()
+  );
 }
 
 /**
@@ -547,12 +674,14 @@ const StreamProviderImpl = ({
     // since the network dropped. The store therefore reported connected, no
     // channel was ever refetched, and the only way out was a full page reload.
     //
-    // `client.wsConnection` is the SDK's own liveness read; `connected` is
-    // false from the moment the socket drops, so this gate is exactly the fact
-    // that was missing. When it is false we fall THROUGH — and "fall through to
-    // connectUser" is what this comment used to claim, which was wrong in a way
-    // that mattered: `connectUser` is NOT the repair path for a client that
-    // already holds this userID. See the `openConnection` branch below.
+    // `isChatClientLive` is the SDK's own liveness read — `wsConnection.isHealthy`
+    // (or a healthy long-poll fallback) plus a connectionID, the same composition
+    // the SDK gates its own reconnect on. `isHealthy` goes false the instant the
+    // socket drops, so this gate is exactly the fact that was missing. When it is
+    // false we fall THROUGH — and "fall through to connectUser" is what this
+    // comment used to claim, which was wrong in a way that mattered: `connectUser`
+    // is NOT the repair path for a client that already holds this userID. See the
+    // `openConnection` branch below.
     const adoptable = getGlobalChatClient();
     if (
       getCurrentStreamUserId() === userDetails.id &&
@@ -736,15 +865,17 @@ const StreamProviderImpl = ({
 
     // Check if we already have a global client for this user - adopt it
     //
-    // #E7 — `state.connectedUser` is the video SDK's own reactive truth: it is
-    // set only after the coordinator WebSocket has completed a handshake and it
-    // is cleared the moment the socket drops. It is the video counterpart of
-    // `wsConnection.connected` on the chat client, and it was never read — the
-    // gate below was `getCurrentStreamUserId() === userDetails.id && adoptable`,
-    // which is true for a client that connected an hour ago and has been
-    // offline since. So a video reconnect after a mid-session flap adopted the
-    // dead client, `connectUser` never re-ran, and `videoConnected` stayed true
+    // #E7 — the gate used to be identity alone
+    // (`getCurrentStreamUserId() === userDetails.id && adoptable`), which is
+    // true for a client that connected an hour ago and has been offline since,
+    // and `state.connectedUser` is no better: it is cleared only by
+    // `disconnectUser`, never by a dropped socket. So a video reconnect after a
+    // mid-session flap adopted the dead client and `videoConnected` stayed true
     // over a client that could not receive a single packet.
+    //
+    // `isVideoClientLive` is the coordinator socket's own health read, so a
+    // dropped coordinator now fails this gate and falls through to the repair
+    // branch below instead of being adopted.
     const adoptable = getGlobalVideoClient();
     const sameUser = getCurrentStreamUserId() === userDetails.id;
     if (sameUser && adoptable && isVideoClientLive(adoptable)) {
@@ -755,28 +886,98 @@ const StreamProviderImpl = ({
       return adoptable;
     }
 
-    // #1829 — a client we are about to REPLACE must be released, not abandoned.
-    //
-    // `isVideoClientLive` returning false means the coordinator socket is down,
-    // but the client object is still holding that socket's reconnect machinery
-    // and the token provider's timers. `setGlobalVideoClient` further down
-    // overwrites the only reference to it, so nothing can ever disconnect it
-    // again: it sits on a timer, can reconnect behind the new client, and holds
-    // a SECOND WebSocket session for the same user — which the MAU meter would
-    // then have counted twice, had it been a chat mint.
-    //
-    // Every flap-and-recover cycle leaked one more client, so the leak is
-    // proportional to network quality rather than to load. Same-user only: a
-    // client belonging to a DIFFERENT user is not ours to tear down here.
-    //
-    // Best-effort by design. A client that is already dead may reject, and that
-    // must not be the reason a healthy session fails to connect — so the
-    // rejection is swallowed, exactly as in the failure path below.
-    if (sameUser && adoptable) {
-      await adoptable.disconnectUser().catch(() => undefined);
-    }
-
+    // Everything from here on runs inside the try, so a REJECTED reconnect lands
+    // in the same catch a failed cold connect does and gets the same
+    // `setVideoConnected(false)` — `connectChat` gets that for free because its
+    // `openConnection()` branch already sits inside its try, and leaving the
+    // video repair outside would have made "readiness FALSE after a failed
+    // reopen" true only by accident.
     try {
+      // #1829 — a same-user client whose COORDINATOR SOCKET is down is repaired
+      // in place, not replaced. This is the video half of the repair branch
+      // `connectChat` already has, and it was missing: the only options were
+      // "adopt" (wrong once the socket is gone) and "throw the client away and
+      // build another". So every mid-session video flap cost a whole new client —
+      // and a client's `Call` instances live in its own state store, so replacing
+      // it silently dropped every call the surface was rendering.
+      //
+      // The SDK's own repair for this state is `streamClient.openConnection()`
+      // ("if the websocket connection is closed, … call client.openConnection to
+      // reconnect"), and its short-circuit order is the same as chat's
+      // (`@stream-io/video-client@1.59.0`, `dist/index.cjs.js:18790-18797`): an
+      // in-flight handshake is returned as-is, and a healthy connection is a
+      // no-op. Both are handled explicitly here rather than relied on, so
+      // neither can be mistaken for a repair.
+      if (sameUser && adoptable) {
+        const coordinator = adoptable.streamClient;
+
+        // An already-in-flight handshake is ADOPTED, never duplicated — a second
+        // `openConnection()` behind a handshake we do not own is exactly the
+        // `disconnectUser`-racing-`connectUser` flap the grace window exists to
+        // avoid. And readiness is NOT claimed here: the socket is mid-handshake,
+        // so marking `videoConnected` on that basis would report connected over a
+        // socket that may never finish connecting. The video `connection.changed`
+        // subscription sets the flag on the event that means the socket is up.
+        // Leaving it unset here is not a gap: every route into this function
+        // other than a cold connect arrives either from the grace timer — longer
+        // than the SDK's 5s offline debounce (`index.cjs.js:18322-18330`), so
+        // the subscription has already published the outage — or from a caller
+        // that starts from `videoConnected: false` anyway.
+        if (coordinator.wsConnection?.isConnecting) {
+          streamLogger.debug(
+            "Video coordinator already reconnecting; awaiting the event",
+            { userId: userDetails.id },
+          );
+          return adoptable;
+        }
+
+        streamLogger.info("Reopening video coordinator for an existing user", {
+          userId: userDetails.id,
+        });
+        // Awaited, so `videoConnected` is set only once the handshake genuinely
+        // resolved, and a rejection throws into the catch below rather than
+        // resolving stale — the exact defect this branch is the counterpart of.
+        await coordinator.openConnection();
+        setVideoConnected(true);
+        return adoptable;
+      }
+
+      // #1829 — a client we are about to REPLACE must be released, not
+      // abandoned.
+      //
+      // `setGlobalVideoClient` further down overwrites the only reference to the
+      // old client, so nothing can ever disconnect it again: it sits on a timer,
+      // can reconnect behind the new client, and holds a SECOND WebSocket
+      // session for a user the store has already stopped describing — which the
+      // MAU meter would then have counted twice, had it been a chat mint.
+      //
+      // The condition used to be `sameUser && adoptable`, and that guard became
+      // unreachable rather than merely redundant: the repair branch above now
+      // returns for EVERY same-user client, live or not, because a same-user
+      // client is repaired in place and never replaced. What is left here is
+      // exactly "there is a client in the global slot and we are about to drop
+      // it" — which, given that `getCurrentStreamUserId()` no longer names this
+      // user, means a client belonging to a DIFFERENT user. Tearing that one down
+      // is not optional either: the mount effect's `disconnectStreamClients()`
+      // is what owns a user switch, and it only runs when it observes
+      // `getCurrentStreamUserId() !== userDetails.id` at mount time, so a client
+      // that outlives that check would stay connected forever.
+      //
+      // The teardown is deliberately NOT gated on liveness, and that is the trap
+      // worth naming: `isVideoClientLive` returning false is what put us on the
+      // replacement path at all, so a liveness gate here would read "release it
+      // because we are about to throw it away" and then "do not release it
+      // because it is not live" — leaking the one client still holding a
+      // socket's reconnect machinery. Release is unconditional; only WHO gets
+      // released is scoped.
+      //
+      // Best-effort by design. A client that is already dead may reject, and
+      // that must not be the reason a healthy session fails to connect — so the
+      // rejection is swallowed, exactly as in the failure path below.
+      if (adoptable) {
+        await adoptable.disconnectUser().catch(() => undefined);
+      }
+
       streamLogger.debug("Connecting to Stream Video", {
         userId: userDetails.id,
       });
@@ -1154,6 +1355,96 @@ const StreamProviderImpl = ({
       handler.unsubscribe();
     };
   }, [clients?.chat, userDetails?.id, connectServices]);
+
+  // #E7 — the same three steps for VIDEO, which had none.
+  //
+  // The chat subscription above was the file's only liveness subscription, so a
+  // VIDEO-only outage — a dropped coordinator socket with chat perfectly healthy,
+  // which is the normal shape of a video call on a bad uplink — changed nothing
+  // at all: the store kept saying `videoConnected: true`, `connectVideo`'s
+  // adopt gate passed, and the only recovery was a reload. `isVideoClientLive`
+  // now reads a real health field, but a poll alone cannot fix that: the poll
+  // only runs when something else has already decided to reconnect, and this
+  // file had nothing that decided. The coordinator DISPATCHES the event — so
+  // subscribe to it.
+  //
+  // `connection.changed` is not an internal detail being leaned on. It is part
+  // of the video SDK's own published event union —
+  // `ConnectionChangedEvent = { type: 'connection.changed'; online: boolean }`
+  // (`@stream-io/video-client@1.59.0`,
+  // `dist/src/coordinator/connection/types.d.ts:66-69`), reached through
+  // `AllClientEvents` (same file `:125`) and
+  // `StreamVideoClient.on` (`dist/src/StreamVideoClient.d.ts:90`, implemented
+  // at `dist/index.cjs.js:20063` as a straight pass-through to
+  // `streamClient.on`). No cast, no invented event name, and the SDK subscribes
+  // to the same event internally at `index.cjs.js:19864`.
+  //
+  // Note the SDK debounces the OFFLINE dispatch by 5 seconds
+  // (`index.cjs.js:18322-18330`) while dispatching the recovery immediately, so
+  // this is deliberately not a mirror of `wsConnection.isHealthy` at the
+  // millisecond level — RECONNECT_GRACE_MS (8s) is the recovery clock, and it is
+  // longer than that debounce, so by the time any reconnect decision is taken
+  // this handler has already published the truth.
+  //
+  // Nothing here promotes a coordinator fact into a media one. `videoConnected`
+  // is a CLIENT-level flag in the store (see lib/stream/connection-store.ts) and
+  // this subscription only ever moves it; no call, SFU, track or participant
+  // state is read or written. A recovered coordinator says the app can talk to
+  // the API again, and nothing more — media recovery is a separate connection
+  // with separate failure modes, and stays the call surfaces' business.
+  useEffect(() => {
+    const video = clients?.video;
+    if (!video) return;
+
+    let graceTimeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
+    const cancelGrace = () => {
+      if (graceTimeout !== undefined) {
+        clearTimeout(graceTimeout);
+        graceTimeout = undefined;
+      }
+    };
+
+    const unsubscribe = video.on("connection.changed", (event) => {
+      if (event.online) {
+        cancelGrace();
+        streamLogger.debug("Video coordinator recovered", {
+          userId: userDetails?.id,
+        });
+        setVideoConnected(true);
+        return;
+      }
+
+      streamLogger.warn("Video coordinator dropped; waiting to reconnect", {
+        userId: userDetails?.id,
+      });
+      setVideoConnected(false);
+      cancelGrace();
+      graceTimeout = setTimeout(() => {
+        if (cancelled || signedOutRef.current) return;
+        streamLogger.info(
+          "Video still offline after the grace window; reconnecting",
+          { userId: userDetails?.id },
+        );
+        // Same shared path a cold connect takes, so `connectVideo`'s repair
+        // branch, the backoff ladder, the classification and the reporting are
+        // all reused rather than duplicated. Deliberately NO `markSyncIncomplete`
+        // here: channel membership is a CHAT fact and this is a video reconnect.
+        void connectServices().catch(() => {
+          // `connectServices` owns its own failures; the catch is here so a
+          // future edit that makes it reject cannot become an unhandled
+          // rejection from a timer.
+        });
+      }, RECONNECT_GRACE_MS);
+    });
+
+    return () => {
+      cancelled = true;
+      cancelGrace();
+      unsubscribe();
+    };
+  }, [clients?.video, userDetails?.id, connectServices]);
 
   // The shell exposes `retryConnection` without importing the SDK bundle, so it
   // asks for a retry by event rather than by calling into here directly.

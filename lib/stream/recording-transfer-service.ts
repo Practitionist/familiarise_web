@@ -83,6 +83,258 @@ const DOWNLOAD_TIMEOUT_MS = (() => {
 })();
 
 /**
+ * Wall-clock ceiling on the cleanup delete of an object this transfer uploaded
+ * but could not attach (see the `stored.count === 0` branch).
+ *
+ * Same convention as DOWNLOAD_TIMEOUT_MS above: env-tunable, parsed
+ * defensively so a blank `.env.sample` key is "unset" rather than zero, and
+ * sized against the work rather than the platform. The work is one object
+ * removal — a single HTTP request with no body — so a healthy delete is
+ * sub-second and 30s is already an order of magnitude of slack. It is NOT sized
+ * against the 10-minute download because it is not doing download work: this
+ * runs on the tail of a transfer that already spent the download budget, and
+ * inside a 25-row batch at concurrency 3, so an unbounded stall here held the
+ * whole chunk — and the `transfer-expiring-recordings` cron lock — open behind a
+ * request that will never be answered.
+ *
+ * Enforced with a race, NOT an abort: `StorageFileApi.remove(paths)` takes no
+ * options and no signal (checked against the installed `@supabase/storage-js`),
+ * so there is nothing to cancel. That distinction is load-bearing and is why
+ * the result carries `DELETE_UNCONFIRMED` rather than being folded into a
+ * failure: after this returns, the request may still be in flight and may still
+ * succeed. We stop WAITING; we do not stop the delete.
+ */
+const CLEANUP_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.RECORDING_CLEANUP_TIMEOUT_MS?.trim());
+  return Number.isFinite(raw) && raw > 0 ? raw : 30 * 1000;
+})();
+
+/** Marker so a bound breach is distinguishable from a delete that reported failure. */
+const CLEANUP_TIMEOUT = "RECORDING_OBJECT_CLEANUP_TIMEOUT";
+
+/**
+ * #1829 — what became of an object this attempt uploaded that no row ended up
+ * owning.
+ *
+ * Exhaustive on purpose, because each value names a DIFFERENT next action and
+ * collapsing the last three into one boolean would recreate the defect this
+ * type exists to close: a caller that cannot tell "confirmed gone" from "unknown"
+ * cannot decide whether anything is still owed. In particular `DELETE_FAILED`
+ * and `DELETE_UNCONFIRMED` are NOT interchangeable — one says the object is
+ * there, the other says we do not know, and only the second might resolve
+ * itself.
+ */
+export type OrphanObjectCleanup =
+  /** The delete returned success. The bucket is known not to hold this key. */
+  | "DELETED"
+  /**
+   * The delete ran and reported a failure, or threw. The object is presumed
+   * still present and nothing in this system will ever look for it again.
+   */
+  | "DELETE_FAILED"
+  /**
+   * The delete outlived CLEANUP_TIMEOUT_MS, so its outcome is unknown and the
+   * request was NOT cancelled — it may still complete, and may still fail.
+   */
+  | "DELETE_UNCONFIRMED"
+  /**
+   * No delete was attempted, because ownership is genuinely unknown: the write
+   * that attaches the object may have landed or may never have run.
+   *
+   * Deliberate. Deleting on that uncertainty is a coin flip that can destroy a
+   * recording a row legitimately owns — possibly one a replay has already been
+   * sold against, since `AVAILABLE` + `PLATFORM` is precisely the pair the
+   * publish/purchase/listing gates all require. What makes leaving it alone safe
+   * is the deterministic key (see `recordingObjectKey`): the row reverts to
+   * READY, the next attempt writes the SAME key, `upsert` collapses it onto the
+   * object already in the bucket, and the row ends up owning real bytes.
+   */
+  | "UNCLAIMED";
+
+/** An uploaded object no row owns, and what was done about it. */
+export type OrphanObjectReport = {
+  /** The exact bucket key. This is the thing a reaper has to delete. */
+  storagePath: string;
+  cleanup: OrphanObjectCleanup;
+  /** Vendor/storage error text, or the reason no delete was attempted. */
+  detail: string;
+};
+
+export type TransferResult = {
+  success: boolean;
+  error?: string;
+  /**
+   * A concurrent retention tombstone or expiry sweep won the row while this
+   * attempt was in flight, AND the object this attempt uploaded is confirmed
+   * gone. Not a fault, and deliberately not counted as one — see
+   * `processExpiringRecordings`.
+   *
+   * #1829 — it is now conditional where it was not. It used to be set purely
+   * because the row was lost, while the delete's result was logged and ignored,
+   * so a failed delete still reported a benign retirement. That is precisely
+   * backwards: the object is only harmless if the bytes are actually gone, and
+   * when they are not, nothing in the system points at them and nothing will
+   * ever retry. Callers read `orphanObject` to tell the two apart; a falsy
+   * `retired` is the signal to count this as a failure.
+   */
+  retired?: boolean;
+  /**
+   * Set only when this attempt uploaded bytes that no row ended up owning —
+   * including the `DELETED` case, so a caller can reconcile rather than infer.
+   * `cleanup !== "DELETED"` means a human or a reaper still owes a deletion.
+   */
+  orphanObject?: OrphanObjectReport;
+};
+
+/**
+ * Delete an object we know no row owns, and report what actually happened.
+ *
+ * Never throws and never blocks past CLEANUP_TIMEOUT_MS. It also never assumes:
+ * a `{ success: false }` return and a thrown network error are both reported as
+ * `DELETE_FAILED`, because "we asked and it did not happen" and "we asked and
+ * found out" are the same fact about the bucket.
+ */
+async function purgeUnownedRecordingObject(
+  storagePath: string,
+): Promise<OrphanObjectReport> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Never resolves; only rejects, so it can only ever win the race by timing
+  // out. Built outside the try so the timer exists before the delete starts.
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(CLEANUP_TIMEOUT)),
+      CLEANUP_TIMEOUT_MS,
+    );
+    // A pending timer with no waiter must never be the reason an invocation
+    // stays open.
+    timer.unref?.();
+  });
+
+  try {
+    const purged = await Promise.race([
+      deleteRecordingObject(storagePath),
+      expiry,
+    ]);
+    return purged.success
+      ? {
+          storagePath,
+          cleanup: "DELETED",
+          detail: `Removed ${storagePath} from the ${RECORDINGS_BUCKET} bucket.`,
+        }
+      : {
+          storagePath,
+          cleanup: "DELETE_FAILED",
+          detail: `Deleting ${storagePath} from the ${RECORDINGS_BUCKET} bucket failed: ${purged.error ?? "no error text returned"}. The object is presumed still present.`,
+        };
+  } catch (err) {
+    const timedOut =
+      err instanceof Error && err.message.includes(CLEANUP_TIMEOUT);
+    return {
+      storagePath,
+      cleanup: timedOut ? "DELETE_UNCONFIRMED" : "DELETE_FAILED",
+      detail: timedOut
+        ? `Deleting ${storagePath} from the ${RECORDINGS_BUCKET} bucket did not settle within ${CLEANUP_TIMEOUT_MS}ms. The request was not cancelled, so it may still be in flight: the object's presence or absence is unknown.`
+        : `Deleting ${storagePath} from the ${RECORDINGS_BUCKET} bucket threw: ${err instanceof Error ? err.message : String(err)}. The object is presumed still present.`,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Free-form `SystemEvent.category`, so this needs no migration. */
+export const UNOWNED_OBJECT_EVENT_CATEGORY = "RECORDING_OBJECT_UNOWNED";
+
+/**
+ * Leave a durable, attributable trace of an object no row owns.
+ *
+ * #1829 — this is the honest ceiling of what exists today, and it is worth
+ * being blunt about what it is NOT. It is a record, not a retry: nothing reads
+ * `RECORDING_OBJECT_UNOWNED` and re-attempts the delete. The sweep in
+ * `scripts/cleanup/cleanup-old-stream-recordings.ts` retries a failed delete by
+ * re-deriving the pair from the row — `collectTombstonePlan` keeps a row
+ * un-tombstoned when its delete fails, precisely so tomorrow's run tries the
+ * same path again — and that loop is closed to us here, because the row this
+ * object belonged to was retired and names no path at all. The one bucket-level
+ * sweep in the repo, `scripts/cleanup/reconcile-document-storage.ts`, does list
+ * unreferenced objects and delete them after a grace period, but it is pinned to
+ * the `documents` and `support-attachments` buckets with its database side
+ * hardcoded to `prisma.appointmentDocument`, and it never looks at `recordings`.
+ * There is no third mechanism: `StreamRevocationRetry` is scoped to erasure-plan
+ * revocation, and `NotificationOutbox` carries notifications.
+ *
+ * So the object gets (a) a truthful `error` string naming the exact key, which
+ * is what the cron records and what the job wrapper prints, and (b) a
+ * `SystemEvent` row carrying the same key plus the owning org, the disposition,
+ * and the vendor's error text — indexed by `correlationId`, so a single query
+ * enumerates every unowned recording object this platform has produced, and
+ * escalated to Sentry by `recordSystemError`. That is what makes the object
+ * *actionable by a human* rather than merely logged. It is best-effort by
+ * `recordSystemEvent`'s own contract, and deliberately NOT `strict`: a throw
+ * here would escape into the generic catch, lose the truthful result this whole
+ * change exists to produce, and mask the real fault behind a failed write about
+ * the fault.
+ *
+ * DEFERRED WORK — the durable object inventory this cannot be, written out so
+ * it can be built accurately rather than re-derived:
+ *
+ *   1. A table that outlives `Recording`. Every scheme here keys ownership to
+ *      the `Recording` row, which is exactly the thing that disappears in this
+ *      window: the row is retired, or the org cascade reaches it, and the
+ *      object outlives the row. `onDelete: Cascade` from `Meeting` means a
+ *      deleted meeting can take an attached recording — and its bytes — with it.
+ *   2. A row per uploaded object, written BEFORE the upload and updated after
+ *      it, with an ownership token: `PENDING` (claimed, upload in flight),
+ *      `ATTACHED` (the recording row names it), `ORPHANED` (nobody does). The
+ *      write must precede the upload because a process death between upload and
+ *      bookkeeping is the same gap with one fewer moving part; the deterministic
+ *      key makes the pre-write idempotent across retries and the 2-hour stale
+ *      sweep.
+ *   3. A token-fenced attach, so "the recording row now owns this object" is a
+ *      CAS on the inventory row rather than a boolean we hope survived a crash.
+ *   4. A reaper over `ORPHANED` rows older than a grace period — the shape
+ *      `reconcile-document-storage.ts` already has for documents, generalised to
+ *      a table that says which paths are live instead of diffing a bucket
+ *      against one model. Bounded deletes, counted deletes, and a summary
+ *      `SystemEvent` per run.
+ *   5. Retention coupling: an `ORPHANED` object's age must be checked against
+ *      the OWNING ORG's `streamRecordingRetentionDays` the way the tombstone
+ *      sweep does, so a reaper cannot delete bytes an org is still entitled to
+ *      and, on the DPDP side, cannot fail to delete bytes it is not.
+ */
+async function recordUnownedObject(params: {
+  recordingId: string;
+  organizationId: string | null;
+  report: OrphanObjectReport;
+}): Promise<void> {
+  try {
+    await recordSystemError({
+      organizationId: params.organizationId,
+      category: UNOWNED_OBJECT_EVENT_CATEGORY,
+      summary: `Recording object left unowned in ${RECORDINGS_BUCKET} (${params.report.cleanup})`,
+      err: new Error(params.report.detail),
+      context: {
+        recordingId: params.recordingId,
+        storagePath: params.report.storagePath,
+        bucket: RECORDINGS_BUCKET,
+        cleanup: params.report.cleanup,
+      },
+      // Same value as the transfer's other events, so one `correlationId`
+      // enumerates the whole story of a single recording.
+      correlationId: params.recordingId,
+    });
+  } catch (err) {
+    // `recordSystemError` is best-effort and does not throw, but this sits in a
+    // cleanup path whose whole job is to return a truthful result; a swallowed
+    // throw here must not become a second, confusing failure on top of it.
+    streamLogger.warn("Failed to record an unowned recording object", {
+      recordingId: params.recordingId,
+      storagePath: params.report.storagePath,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Build Prisma where-clause to filter recordings by their plan's storage policy.
  * Joins through Recording → Meeting → AppointmentOccurrence → Appointment → Plan.
  *
@@ -495,12 +747,33 @@ export class RecordingTransferService {
    * sweep: it means a concurrent retention tombstone or expiry sweep won the
    * row while this attempt was in flight, so the object just uploaded is
    * deleted rather than attached to a row that must not have it.
+   *
+   * #1829 qualifies that sentence, and the qualification is the whole defect.
+   * "The object just uploaded is deleted" was an ASSUMPTION: the delete's result
+   * was logged into a `warn` context field and then discarded, and the returned
+   * error stated as durable fact that the object had been deleted. When the
+   * delete failed, those bytes were in the bucket with no row naming them —
+   * invisible to every retention sweep (all of which key off a row's
+   * `storagePath`), invisible to `deleteRecording`, and to any retry. So the
+   * benign `retired` verdict was reported for a DPDP-relevant orphan, and the
+   * sweep was told the batch was clean. `retired` is now set only when the
+   * bytes are confirmed gone; anything else returns `success: false` with
+   * `retired` falsy and an `orphanObject` report, which is what routes the item
+   * into the sweep's `failed` tally.
    */
   static async transferRecordingToSupabase(
     recordingId: string,
-  ): Promise<{ success: boolean; error?: string; retired?: boolean }> {
+  ): Promise<TransferResult> {
     let recording: RecordingRow | null = null;
     let storagePath: string | null = null;
+    /**
+     * Did the storage upload return clean? Set the moment it settles without an
+     * error, which is the instant an object exists in the bucket that no row has
+     * yet been confirmed to own. Everything after it is a database interaction,
+     * so a throw in that region means the bytes are up and this attempt has not
+     * finished deciding who owns them.
+     */
+    let uploadCommitted = false;
 
     try {
       // Get the recording
@@ -685,6 +958,11 @@ export class RecordingTransferService {
         return { success: false, error: uploadError.message };
       }
 
+      // The bytes are in the bucket from here on. Everything below is a database
+      // interaction, so `uploadCommitted` is the flag that tells the generic
+      // catch there is an object whose ownership this attempt never settled.
+      uploadCommitted = true;
+
       // Bytes actually handed to storage — the declared length when there was
       // one, otherwise what the counter saw. Null only for a body-less response
       // that declared no length, which is what the old code always produced.
@@ -725,22 +1003,77 @@ export class RecordingTransferService {
       });
 
       if (stored.count === 0) {
-        // Lost the race. The object we just wrote belongs to a row that must not
-        // have it, so delete it rather than orphaning it in the bucket.
-        const purged = await deleteRecordingObject(storagePath);
+        // Lost the race, and it is CERTAIN: the fence matched nothing, so the
+        // row is not ours and names no storagePath. That is what makes the
+        // delete below mandatory — the row no longer points at this object, so
+        // no retention sweep, no `deleteRecording` and no future retry can ever
+        // name it again. It is also what makes the delete's RESULT load-bearing
+        // rather than incidental.
+        //
+        // #1829 — this branch had three defects, all of them the same defect
+        // seen from different angles:
+        //
+        //   1. `purged.success` went into a log context and nowhere else. A
+        //      failed delete still returned `retired: true` alongside an error
+        //      string asserting, as a durable fact, "the copied object was
+        //      deleted". That string is what the cron records and what an
+        //      auditor reads later.
+        //   2. `retired: true` told the sweep this was NOT a fault. It is a
+        //      fault exactly when the bytes survive: nothing points at them, so
+        //      they are permanent as far as this system is concerned, and a
+        //      benign retirement is how that becomes permanent rather than
+        //      merely likely.
+        //   3. The delete was unbounded, so one stalled storage request held
+        //      the chunk — and the transfer-expiring-recordings cron lock —
+        //      open behind a call with no answer coming.
+        //
+        // What is NOT fixed here, and is not faked: there is no durable owner
+        // for this object, so the retry this most wants is one no mechanism in
+        // this repo can perform. See the DEFERRED WORK note on
+        // `recordUnownedObject` for precisely what the inventory has to provide.
+        // Until it exists the honest result is a non-success that names the
+        // object, a disposition the caller can branch on, and a durable
+        // system-event breadcrumb.
+        const orphan = await purgeUnownedRecordingObject(storagePath);
+        const discarded = orphan.cleanup === "DELETED";
+
+        if (!discarded) {
+          // Only when something is still owed. A confirmed delete needs no
+          // breadcrumb: there is no object left to point at.
+          await recordUnownedObject({
+            recordingId,
+            organizationId: recording.organizationId,
+            report: orphan,
+          });
+        }
+
         streamLogger.warn(
-          "Transfer completed but the row was retired mid-flight; object discarded",
+          discarded
+            ? "Transfer completed but the row was retired mid-flight; object discarded"
+            : "Transfer completed but the row was retired mid-flight; the object was NOT discarded and nothing owns it",
           {
             recordingId,
             storagePath,
-            objectDeleted: purged.success,
+            objectDeleted: discarded,
+            cleanup: orphan.cleanup,
+            detail: orphan.detail,
           },
         );
+
         return {
           success: false,
-          retired: true,
-          error:
-            "Recording was retired while the transfer was in flight; the copied object was deleted.",
+          // True ONLY when the bytes are confirmed gone. A falsy value here is
+          // what routes this into the sweep's `failed` tally instead of its
+          // benign `retired` one, which is the difference between a clean sweep
+          // exit and a page — and both callers
+          // (jobs/stream/transfer-expiring-recordings.ts and
+          // app/api/cleanup/transfer-expiring-recordings/route.ts) already
+          // branch on exactly this.
+          retired: discarded,
+          error: discarded
+            ? "Recording was retired while the transfer was in flight; the copied object was deleted."
+            : `Recording was retired while the transfer was in flight and the copied object was NOT deleted — ${orphan.cleanup}. ${orphan.detail} No recording row names ${orphan.storagePath}, so no sweep will ever retry it; the path is in this message and in the ${UNOWNED_OBJECT_EVENT_CATEGORY} system event.`,
+          orphanObject: orphan,
         };
       }
 
@@ -758,12 +1091,58 @@ export class RecordingTransferService {
       streamLogger.error("Failed to transfer recording", error, {
         recordingId,
       });
+
+      // #1829 — a fault AFTER the upload committed is a different failure from
+      // a fault before it, and conflating them is what left the old catch here
+      // reporting a clean "not transferable" with an object in the bucket and no
+      // idea who owned it. The bytes are up; whether the attach landed is
+      // genuinely unknown, because the write may have applied and lost its
+      // response, or may never have run at all.
+      //
+      // So: NO delete. Deleting on that uncertainty is a coin flip that can
+      // destroy a recording a row legitimately owns — and one that a row owns
+      // is one `AVAILABLE` + `PLATFORM`, which is exactly the pair the publish,
+      // purchase and marketplace-listing gates all require. A replay may have
+      // been SOLD against those bytes.
+      //
+      // What makes leaving the object alone safe is the deterministic key (see
+      // `recordingObjectKey`, D2): the row reverts to READY below, the next
+      // attempt writes the SAME key, `upsert` collapses it onto the object
+      // already there, and the row ends up owning real bytes instead of a
+      // pointer to nothing. The 2-hour stale sweep and the 6-hourly cron both
+      // drive that retry, so this resolves itself without a human — which is
+      // precisely why it is reported as `UNCLAIMED` and not as a failed
+      // cleanup.
+      const unowned: OrphanObjectReport | null =
+        uploadCommitted && storagePath
+          ? {
+              storagePath,
+              cleanup: "UNCLAIMED",
+              detail: `The upload to ${RECORDINGS_BUCKET}/${storagePath} completed, then the transfer failed before the row was confirmed attached: ${errorMessage}. No delete was attempted — the attaching write may have landed, and deleting on that uncertainty could destroy a recording the row legitimately owns. The object key is derived from the row, so the next attempt writes this same key and re-attaches it.`,
+            }
+          : null;
+
+      if (unowned) {
+        await recordUnownedObject({
+          recordingId,
+          organizationId: recording?.organizationId ?? null,
+          report: unowned,
+        });
+      }
+
       // Revert to READY + track the attempt so cron/manual retries can re-attempt
       // (only when the recording row was actually loaded — otherwise nothing to bump).
       if (recording) {
         await this.recordTransferFailure(recordingId, errorMessage);
       }
-      return { success: false, error: errorMessage };
+
+      return {
+        success: false,
+        error: unowned
+          ? `${errorMessage} The uploaded object ${unowned.storagePath} is left UNCLAIMED: no row names it and no delete was attempted, because whether the attaching write landed is unknown. The object key is derived from the row, so the next attempt re-attaches this same object.`
+          : errorMessage,
+        ...(unowned ? { orphanObject: unowned } : {}),
+      };
     }
   }
 
@@ -797,9 +1176,20 @@ export class RecordingTransferService {
     failed: number;
     /**
      * Rows a retention tombstone or the expiry sweep retired while this batch
-     * held them. Counted separately from `failed` on purpose: the transfer did
-     * everything asked of it, and reporting it as a failure would make a healthy
-     * sweep exit non-zero every time the two crons overlapped.
+     * held them, AND whose uploaded object was confirmed deleted. Counted
+     * separately from `failed` on purpose: the transfer did everything asked of
+     * it, and reporting it as a failure would make a healthy sweep exit non-zero
+     * every time the two crons overlapped.
+     *
+     * #1829 — the second condition is the load-bearing one and it is not
+     * optional. When the object could NOT be discarded — the delete failed, or
+     * its outcome is unknown — the bytes are in the bucket with no row naming
+     * them, which is a DPDP-relevant orphan no sweep will ever revisit. That is
+     * counted in `failed`, so the job wrapper exits non-zero, the HTTP twin
+     * reports it, and the transfer's `error` string (which names the exact
+     * bucket key) reaches the log. It is NOT counted here as a benign
+     * retirement, because "a concurrent sweep won the row" is not what makes it
+     * harmless — the object being gone is.
      */
     retired: number;
     errors: string[];
