@@ -124,7 +124,7 @@ DROP INDEX IF EXISTS "invitations_org_email_pending_key";
 -- SPLIT
 CREATE UNIQUE INDEX "invitations_org_email_pending_key"
   ON "invitations" ("organizationId", lower("email"))
-  WHERE "status" = 'pending';
+  WHERE "status" = 'PENDING';
 
 -- SPLIT
 -- #676 PM-17 — extend the payment_amounts_nonnegative pattern to every other
@@ -747,3 +747,22 @@ ALTER TABLE "ssoProvider" DROP CONSTRAINT IF EXISTS "sso_provider_id_not_reserve
 -- SPLIT
 ALTER TABLE "ssoProvider" ADD CONSTRAINT "sso_provider_id_not_reserved"
   CHECK (lower(btrim("providerId")) NOT IN ('credential', 'facebook', 'github', 'google', 'sso'));
+-- SPLIT
+-- D18 — the app reaches Postgres only as the owner role, through Prisma.
+-- Supabase grants its PostgREST roles (anon, authenticated) full access to
+-- public by default, and the anon key ships in the browser bundle, so without
+-- this every table (sessions, accounts, verifications) is readable over the
+-- Data API. Revoke, and stop future tables created by this role from being
+-- granted. Skipped where the roles do not exist (local and CI Postgres).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
+  END IF;
+END $$;
