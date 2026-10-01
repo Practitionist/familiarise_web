@@ -20,7 +20,7 @@ last-reviewed: 2026-06-05
 >
 > **How we got here:** for the chronological story of how the subsystem was built — the audit-series journey (#655 → #768 → #772 → #776/#785 → #777/#787 → #779 → docs refresh) — see [Design history](../00-foundations/01-overview.md#design-history).
 >
-> **Last updated:** 2026-06-05. This revision reconciles the guide with the banded-docs rewrite of the same day. Every band was given a five-key frontmatter block (`title`, `band`, `audience`, `status`, `last-reviewed`) and per-level reading paths. The `10-money-and-ledger/` money band was renumbered and grew to **thirteen docs**, absorbing payouts, refunds, disputes, and inbound payment webhooks out of the old `docs/payments` tree and adding a new earnings-lifecycle doc (the `EarningStatus` machine, including `PENDING_TRUST` and the `HOLD_PERIOD_HOURS` windows). A new `70-design-decisions/` band of twelve ADRs now records *why* the system is shaped the way it is. The compliance layer absorbed a regulatory refresh: the Income-tax Act 2025 in force since 1-Apr-2026 (§393 non-salary TDS, §397(2) no-PAN), the 194-O marketplace rate confirmed at 0.1%, and DPDP operational duties dated to 13 May 2027. The previous milestone was the v2 mega-audit (#777/#778/#779: contract lifecycle, cycle engine, overage/dunning/wallet-floor, field-level RBAC, SSO break-glass, refund/credit-note unification). **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
+> **Last updated:** 2026-06-05. This revision reconciles the guide with the banded-docs rewrite of the same day. Every band was given a five-key frontmatter block (`title`, `band`, `audience`, `status`, `last-reviewed`) and per-level reading paths. The `10-money-and-ledger/` money band was renumbered and grew to **thirteen docs**, absorbing payouts, refunds, disputes, and inbound payment webhooks out of the old `docs/payments` tree and adding a new earnings-lifecycle doc (the `EarningStatus` machine, including `PENDING_TRUST` and the `HOLD_PERIOD_HOURS` windows). A new `70-design-decisions/` band of twelve ADRs now records *why* the system is shaped the way it is. The compliance layer absorbed a regulatory refresh: the Income-tax Act 2025 in force since 1-Apr-2026 (§393 non-salary TDS, §397(2) no-PAN), the 194-O marketplace rate confirmed at 0.1%, and DPDP operational duties dated to 13 May 2027. The previous milestone was the v2 mega-audit (#777/#778/#779: contract lifecycle, cycle engine, overage/dunning/wallet-floor, field-level RBAC, refund/credit-note unification). **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
 
 ---
 
@@ -149,7 +149,7 @@ This doc gives you the holistic mental model. When you need implementation detai
 | Dispute / chargeback handling | `docs/enterprise/10-money-and-ledger/11-disputes.md` |
 | Inbound payment webhooks (signature + idempotency) | `docs/enterprise/10-money-and-ledger/12-payment-webhooks.md` |
 | Why a design is the way it is (ADRs) | `docs/enterprise/70-design-decisions/00-README.md` |
-| SSO testing | `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` |
+| SSO setup and enforcement | `docs/authentication/sso.md` (enterprise summary: `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`) |
 
 ---
 
@@ -273,7 +273,7 @@ This is a mini-glossary for the terms you'll see everywhere. A full A-Z glossary
 | **OrganizationEarnings** | The org's share of settled sessions (applies to canHost orgs). |
 | **OrganizationPayout** | A batch settlement of earnings to the org's bank account. |
 | **OrgAuditLog** | Immutable record of every significant mutation on the org (invite sent, member removed, contract signed, etc.). |
-| **SSO Provider** | SAML or OIDC identity provider that lets the org's users sign in via their corporate IdP. |
+| **SSO Provider** | OIDC identity provider that lets the org's users sign in via their corporate IdP. |
 | **Domain Claim** | "This email domain belongs to this org" — enables domain-based auto-join on SSO. |
 | **ConsentArtifact** | DPDP-compliant record of a user's consent for data processing. |
 
@@ -789,8 +789,8 @@ The system explicitly refuses to execute operations that would leave the org in 
 |---|---|
 | Last-OWNER demotion/removal | Orphaning the org |
 | Last-capability disable (canSponsor AND canHost = false) | INERT state |
-| Last SSO provider delete when enforceSSO=true | Locking out all users |
-| Last domain claim release when enforceSSO=true AND no providers | Same |
+| Deleting the last approved SSO provider while enforceSSO=true | Silently switching enforcement off (409; disable enforcement first) |
+| Releasing a domain claim that would un-approve the last approved provider while enforceSSO=true | Same (409) |
 | Active member removal during org deletion | Orphaning members |
 | Delete Program with existing assignments | Soft-delete instead (sets `status=CANCELLED`) |
 
@@ -1080,21 +1080,21 @@ sequenceDiagram
     participant L as /auth/signin
     participant DC as /api/auth/sso/domain-check
     participant BA as BetterAuth SSO plugin
-    participant IdP as Wipro OneLogin (SAML)
+    participant IdP as Wipro IdP (OIDC)
     participant DB
 
     U->>L: Enters email, tabs out
     L->>DC: GET ?email=alice@wipro.com
-    DC->>DB: Lookup OrgDomainClaim for 'wipro.com'
-    DB-->>DC: Claim exists → Wipro org, enforceSSO=true
-    DC->>L: Return { enforceSSO: true, providerId: 'wipro-saml' }
+    DC->>DB: Verified OrgDomainClaim for 'wipro.com'?
+    DB-->>DC: Wipro org, enforceSSO=true, approved provider
+    DC->>L: Return { enforceSSO: true, organizationName, ssoBody }
     L->>U: Show "Sign in with Wipro SSO" button<br/>(hide password field)
     U->>L: Clicks SSO button
-    L->>BA: signIn.sso({ providerId, domain, callbackURL })
-    BA->>IdP: Redirect to SAML AuthN Request
+    L->>BA: signIn.sso(ssoBody)
+    BA->>IdP: OIDC authorization request (PKCE)
     U->>IdP: Authenticates
-    IdP->>BA: SAML Response (ACS callback)
-    BA->>DB: Auto-create User + Membership(LEARNER default)
+    IdP->>BA: Code to /api/auth/sso/callback/[providerId]
+    BA->>DB: Create User, then provisionUser JIT-creates Membership (defaultRoleForAutoJoin, LEARNER by default)
     BA->>L: Set session cookie
     L->>U: Redirect to /dashboard/organization/wipro/home
 ```
@@ -1738,13 +1738,12 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 ### 24.1 Core identity
 
-The five rows here form the tenant-and-membership foundation that every other enterprise model references via foreign key; `OrgWorkspaceProfile` is lazy-created rather than eagerly seeded, which matters when bootstrapping test fixtures.
+The four rows here form the tenant-and-membership foundation that every other enterprise model references via foreign key; `OrgWorkspaceProfile` is lazy-created rather than eagerly seeded, which matters when bootstrapping test fixtures.
 
 | Model | Purpose |
 |---|---|
 | `Organization` | The tenant; canSponsor + canHost + hierarchy |
-| `Membership` | User-to-org relationship with role |
-| `Member` | BetterAuth-compat bridge row |
+| `Membership` | User-to-org relationship with role (the only membership table; no BetterAuth organization plugin) |
 | `Invitation` | Pending / accepted / revoked invites |
 | `OrgWorkspaceProfile` | Lazy-created for any user creating an org |
 
@@ -1802,13 +1801,13 @@ This group of models implements DPDP obligations and HRIS integration; `TdsAdjus
 
 ### 24.6 Identity & SSO
 
-These four models underpin single-sign-on, email-domain routing, and outbound webhook delivery; the `breakGlassUntil` and `previousSecretHash` fields call out the escape-hatch and secret-rotation windows that operators most commonly need to know when something breaks.
+These four models underpin single-sign-on, email-domain routing, and outbound webhook delivery; `SsoProvider.domainVerified` (staff approval) and `previousSecretHash` are the fields operators most commonly need when something breaks.
 
 | Model | Purpose |
 |---|---|
-| `OrganizationSSOSettings` | Per-org SSO config; `enforceSSO` + `breakGlassUntil` (OWNER-set 1-72h escape window, #779 §E) |
-| `SsoProvider` | SAML/OIDC provider |
-| `OrgDomainClaim` | Email domain → org mapping |
+| `OrganizationSSOSettings` | Per-org SSO config: `enforceSSO`, `defaultRoleForAutoJoin`, `version` (optimistic lock) |
+| `SsoProvider` | OIDC provider. `oidcConfig` is an encrypted envelope; `domainVerified` is set only by platform-staff approval |
+| `OrgDomainClaim` | Email domain → org mapping; DNS TXT proof sets `verifiedAt` |
 | `WebhookEndpoint` | Per-org outbound webhook target; secret rotation via `secretRotatedAt` + `previousSecretHash` (24h dual-sign grace). Deliveries: `OutboundWebhookDelivery` |
 
 ### 24.7 Audit + ledger
@@ -1883,8 +1882,7 @@ PayoutArrangement: DIRECT | AOR* | EOR*
     ├── /payouts            (GET, POST)
     ├── /rate-cards         (GET, POST — OWNER∨BILLING_ADMIN)
     ├── /sso                (GET, PATCH)
-    │   ├── /providers      (GET, POST, etc.)
-    │   └── /break-glass    (POST — OWNER, 1-72h enforceSSO bypass window)
+    │   └── /providers      (GET, POST; /[providerId] GET, DELETE)
     ├── /domain-claims      (GET, POST, DELETE)
     ├── /verification/resubmit (POST — MAINTAINER, re-submit after rejection)
     ├── /webhooks           (GET, POST)
@@ -1977,9 +1975,9 @@ flowchart TD
 
 Money surfaces name the finance keys of the permission matrix (`billing.manage`, `purchaseOrders.manage` and `payouts.manage` in `lib/auth/org-permissions.ts`), which admit **OWNER ∨ BILLING_ADMIN** and nobody else — MAINTAINER is deliberately shut out. They front rate-cards, purchase-orders, wallet top-ups, invoices (incl. `…/pay`), and the billing-account PATCH. Separately, `PATCH /api/organizations/[orgId]` enforces a **per-role field allowlist**, so the same route accepts different columns by caller (a MAINTAINER may set branding but not `fundingSource`). See § 9.2.1.
 
-### 26.4 SSO enforcement & break-glass (#779 §E)
+### 26.4 SSO enforcement
 
-When `OrganizationSSOSettings.enforceSSO = true`, password login is vetoed server-side in `lib/sso/enforce-session.ts` — the session layer rejects any non-SSO session for a user whose email is in a claimed domain (not just a UI hint). The escape hatch is **break-glass**: an OWNER opens a `breakGlassUntil` window (1-72h, default 4h) via `POST /sso/break-glass`; while `breakGlassUntil > now`, the auth layer skips the `enforceSSO` gate so admins can recover from a misconfigured IdP without being locked out of their own org. This is the anti-lockout counterpart to "last SSO provider delete" (§ 9.4).
+When `OrganizationSSOSettings.enforceSSO = true`, password and social sign-in are vetoed server-side: BetterAuth's `session.create.before` hook calls `lib/sso/enforce-session.ts` and refuses with `403 SSO_REQUIRED` any session for a user whose email is in one of the org's verified claimed domains unless that user has an account linked to one of the org's approved providers (not just a UI hint). Turning enforcement on (`PATCH /api/organizations/[orgId]/sso`, `identity.manage`) needs a verified domain and at least one staff-approved provider (409 otherwise). The check fails open when the org has no approved provider, so an owner mid-setup is never trapped. There is no bypass window. If the IdP is down, an OWNER who still has a live session turns `enforceSSO` off. Platform staff revoking the provider's approval (`POST /api/admin/organizations/[orgId]/sso-providers/[providerId]/approval` with `approve: false`) also makes enforcement fail open, because that route has no `enforceSSO` guard. Detail: [SSO](../../authentication/sso.md).
 
 ### 26.5 Verification resubmit loop (#779 §A)
 
@@ -2041,7 +2039,7 @@ PROGRAM: PROGRAM_CREATED, PROGRAM_ASSIGNED, ...
 WALLET: WALLET_TOPUP, WALLET_REFUND, ...
 INVOICE: INVOICE_GENERATED, INVOICE_PAID, INVOICE_ROLLED_UP, ...
 PAYOUT: PAYOUT_INITIATED, PAYOUT_PROCESSED, ...
-SETTINGS: SETTINGS_CHANGED, SSO_ENABLED, DOMAIN_CLAIMED, SSO_CERT_EXPIRING, ...
+SETTINGS: SETTINGS_CHANGED, SSO_ENABLED, SSO_DISABLED, DOMAIN_CLAIMED, DOMAIN_VERIFIED, ...
 CONSENT: CONSENT_GRANTED, DATA_BREACH_REPORTED, ...
 SYSTEM: VERIFIED, SUSPENDED, HRIS_SYNC_STARTED, ...
 ```
@@ -2101,7 +2099,6 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 | `dispatch-outbound-webhooks` → `jobs/cleanup/dispatch-outbound-webhooks.ts` | every 1 min | Deliver queued outbound webhooks; re-queues stale `IN_FLIGHT` rows by `updatedAt` and claims atomically so overlapping ticks can't double-deliver (#812) |
 | `archive-webhook-events` → `jobs/cleanup/archive-webhook-events.ts` | Sun 00:00 | Roll off old webhook events |
 | `sweep-stuck-webhook-events` → `jobs/cleanup/sweep-stuck-webhook-events.ts` | every 10 min | Re-drives stuck inbound `WebhookEvent` rows, including Razorpay refunds deferred because they arrived before capture (7-day give-up cap, #813) |
-| `sso-cert-expiry-alert` → `jobs/cleanup/sso-cert-expiry-alert.ts` | 03:00 / 08:30 | Parse SAML X.509 `notAfter`, emit audit |
 | `prune-audit-logs` → `jobs/cleanup/prune-audit-logs.ts` | 03:15 / 08:45 | Retention prune of `OrgAuditLog` |
 | `release-pending-trust-earnings` → `jobs/cleanup/release-pending-trust-earnings.ts` | hourly :30 | Release `PENDING_TRUST` earnings |
 | `cleanup-abandoned-org-top-ups` → `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | 02:00 / 07:30 | Reap stale PENDING `WalletTopUp` rows |
@@ -2535,7 +2532,7 @@ Common errors + resolutions.
 | 409 LAST_OWNER_GUARD | Trying to demote/remove only OWNER | Promote another member first |
 | 404 ORG_NOT_HOSTING | Accessing /payouts on BUYER org | Normal; feature-gated |
 | 409 ORG_NOT_VERIFIED | Mutation on PENDING_VERIFICATION org | Wait for admin verification |
-| 429 RATE_LIMITED | Too many auth attempts | Wait 15 min or admin override |
+| 429 RATE_LIMITED | Too many auth attempts | Wait for `Retry-After` (sign-in window is 15 min); there is no admin override |
 | 500 P2034 (Prisma TX conflict) | Concurrent Serializable TX collision | Retry with backoff |
 | 409 P2002 (unique constraint) | Duplicate invite/domain/etc. | Surface as "already exists" |
 | 400 Invalid body | Zod validation failed | Check error.flatten() for field errors |
@@ -2625,11 +2622,9 @@ See `docs/enterprise/50-operations/04-monitoring.md` for suggested BetterStack /
 
 **MANAGER** — MemberRole. Department-level manager with read-only analytics.
 
-**Member** — BetterAuth-compat bridge row pairing a User with an Organization.
-
 **MemberRole** — Enum: OWNER, MAINTAINER, MANAGER, EXPERT, LEARNER, SUPPORT.
 
-**Membership** — Application-layer user-to-org relationship (richer than Member).
+**Membership** — User-to-org relationship with role and status; the only org-membership table.
 
 **MSME** — Micro Small Medium Enterprises Act §15 (45-day payment rule for registered MSMEs).
 
@@ -2671,7 +2666,7 @@ See `docs/enterprise/50-operations/04-monitoring.md` for suggested BetterStack /
 
 **SOW** — Statement of Work (PROJECT program artifact).
 
-**SSO** — Single Sign-On via SAML or OIDC.
+**SSO** — Single Sign-On via OIDC.
 
 **SUPPORT** — MemberRole. Non-billing admin/observer.
 
@@ -2698,7 +2693,7 @@ Programs:    Program (configLockedAt/archivedAt) · LicensedSeatConfig ·
              BookingUtilization
 Revenue:     RateCard · OrganizationEarnings · OrganizationPayout ·
              OrganizationPayoutAccount
-SSO/webhook: OrganizationSSOSettings (enforceSSO/breakGlassUntil) · SsoProvider ·
+SSO/webhook: OrganizationSSOSettings (enforceSSO) · SsoProvider (OIDC) ·
              OrgDomainClaim · OutboundWebhookEndpoint (secretRotatedAt)
 Compliance:  ConsentArtifact · DataBreach · OrgDataExportJob · TdsAdjustment* ·
              HrisConfig · HrisSyncJob · HrisEmployeeMap
@@ -2767,7 +2762,7 @@ Each row names a canonical document and summarises the slice of the enterprise s
 | `docs/enterprise/00-foundations/05-organization-lifecycle.md` | Org status state machine |
 | `docs/enterprise/30-programs-and-lifecycle/03-expert-lifecycle.md` | EXPERT joining flow |
 | `docs/enterprise/10-money-and-ledger/07-payout-pipeline.md` | Settlement detail |
-| `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` | SSO implementation |
+| `docs/authentication/sso.md` | SSO implementation |
 | `docs/enterprise/10-money-and-ledger/04-wallet-and-topups.md` | Wallet + ledger |
 | `docs/enterprise/10-money-and-ledger/08-invoicing.md` | Invoice lifecycle |
 | `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md` | Org marketplace pages |
@@ -2795,7 +2790,7 @@ Each row names a canonical document and summarises the slice of the enterprise s
 | `docs/enterprise/50-operations/03-runbooks.md` | Operations runbooks |
 | `docs/enterprise/50-operations/04-monitoring.md` | Dashboards + alerts |
 | `docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md` | Idempotency design |
-| `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` | SSO testing |
+| `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` | SSO enterprise summary |
 | `PRICING_STRATEGY.md` (repo root) | Pricing strategy |
 | `HIRING_PLAN.md` (repo root) | Headcount plan |
 | `SALES_MARKETING_PLAYBOOK.md` (repo root) | Sales scripts |
@@ -2915,16 +2910,16 @@ A: `ConsentArtifact` row with SHA-256 hash of policy + timestamp.
 ### SSO & security
 
 **Q32: Is SAML SSO supported?**
-A: Yes. OIDC too.
+A: No. SSO is OIDC-only; SAML and SCIM are not supported.
 
 **Q33: How do I enforce SSO-only login?**
-A: Set `OrganizationSSOSettings.enforceSSO = true`. User must have email in a claimed domain.
+A: An OWNER turns on **Enforce SSO** (`PATCH /api/organizations/[orgId]/sso` with `enforceSSO: true`). It needs a DNS-verified domain claim and at least one staff-approved provider; it then applies to every user whose email is in one of the org's verified domains.
 
 **Q34: What if a user has SSO enforced but no matching provider?**
-A: Login fails with "SSO required but no valid provider for your domain".
+A: Password or social sign-in is refused with `403 SSO_REQUIRED` and the user is told to use their organization's SSO. If the org has no approved provider at all, enforcement fails open.
 
 **Q35: Can multiple SSO providers serve one org?**
-A: Yes. Multiple providers can coexist (e.g., SAML for employees, OIDC for contractors).
+A: Yes, one OIDC provider per claimed domain (`SsoProvider` is unique on `organizationId` + `domain`).
 
 ### Technical
 

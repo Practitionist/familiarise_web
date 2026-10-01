@@ -66,15 +66,15 @@ Items 8–12 cover the HOST (earn-only) shape: wallet top-up atomicity, the over
 
 ## 3. Hybrid org (IIT Madras — HYBRID · WALLET · CREDIT_POOL)
 
-Items 13–20 verify that a HYBRID org correctly runs sponsor and host flows on the same payment, that the `CREDIT_POOL` money-meter accounts value rather than count, and that the v2 lifecycle additions (cycle rollover, auto-renew, SSO break-glass, wallet floor) behave as designed.
+Items 13–20 verify that a HYBRID org correctly runs sponsor and host flows on the same payment, that the `CREDIT_POOL` money-meter accounts value rather than count, and that the v2 lifecycle additions (cycle rollover, auto-renew, wallet floor) and SSO enforcement behave as designed.
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
 | 13 | HYBRID self-deal — sponsor (wallet out) + host (org earns) on ONE payment | ✅ | One `BOOKING` posts `Dr WALLET(org)` plus `Cr ORG_PAYABLE(org)` (host earnings) — both flows, one payment (see [scenarios-and-examples §5.6](01-scenarios-and-examples.md)). |
 | 14 | `CREDIT_POOL` money-meter — credits burn by **price**, not count | ✅ | `consumedPaise` metered against `creditBudgetPerCycle × 100` (1 credit = ₹1); a ₹5,000 session burns more than a ₹500 one (#753). |
 | 15 | `LICENSE` funding + LICENSED_SEAT (`coveredEngagementsPerCycle=null`) absorbs bookings | ✅ | Checkout writes `PaymentLeg(source=LICENSE, amountPaise=0)` + increments `BookingUtilization`; no `BOOKING` journal txn (nothing moved). |
-| 16 | SSO enforcement + allowedEmailDomains via `OrganizationSSOSettings` | ✅ | `customSession` hook + `shouldRejectSession` / `lib/sso/enforce-session.ts`. |
-| 17 | SSO break-glass — OWNER opens a 1–72h (default 4h) IdP-outage window | ✅ | `POST/DELETE /sso/break-glass`; sets `breakGlassUntil`, auth layer skips the `enforceSSO` gate while `> now`; who/why in the audit row (#779 §E). Route-level only — no dashboard button. |
+| 16 | SSO enforcement on verified claimed domains via `OrganizationSSOSettings.enforceSSO` | ✅ | BetterAuth `session.create.before` veto (`shouldRejectSession` in `lib/sso/enforce-session.ts`) refuses non-SSO sessions with 403 `SSO_REQUIRED`; `customSession` re-checks at read time. Fails open while the org has no approved provider. |
+| 17 | OIDC provider approval gate — a provider signs nobody in until platform staff approve it | ✅ | Provider is stored with `domainVerified=false`; ADMIN approves or revokes via `POST /api/admin/organizations/[orgId]/sso-providers/[providerId]/approval` (Approve/Revoke on the back-office org page; approve re-checks the DNS claim; `OpsActionLog`). Enabling `enforceSSO` needs a verified domain + an approved provider (409 otherwise); revoking approval is also the IdP-outage escape hatch. |
 | 18 | Cycle rollover — ended ACTIVE assignment ROLLs (successor minted) vs CLOSEs | ✅ | `advance-program-cycles.ts` (02:15 UTC, scheduled) + pure `decideCycleTransition`; ROLL zeroes counters + sets `rolledToAssignmentId`/`rolledAt`; CLOSE on contract-inactive / autoRenew-off / clamped (#779 §A, [scenarios-and-examples §5.11](01-scenarios-and-examples.md)). |
 | 19 | Contract auto-renew (idempotent claim-gate) | ✅ | `auto-renew-contracts.ts` (02:30 UTC, scheduled) claims via `autoRenewedAt`, mints a RENEWAL successor, flips old → EXPIRED in one tx; `supersededByContractId @unique` is the double-run backstop. |
 | 20 | Wallet floor / auto-top-up | 🟡 | `wallet-low-balance.ts` (23:45 UTC, scheduled) detects the dip and **notifies** finance + stamps the cooldown — **NOTIFY-ONLY**. `autoTopUpEnabled`/`autoTopUpAmountPaise`/`autoTopUpMandateId` are written-but-unread (no recurring mandate; no money moves, #777 §C). |
@@ -94,7 +94,7 @@ Each row covers a capability that spans all four org shapes — RBAC, audit trai
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
-| 23 | `OrgAuditLog` row emitted for every mutating route | ✅ | Handlers emit via `AUDIT_ACTIONS` constants (incl. the v2 actions: `CONTRACT_SUPERSEDED`, `CONTRACT_AUTO_RENEWED`, `PROGRAM_ASSIGNMENT_ROLLED`, `VERIFICATION_RESUBMITTED`, break-glass `SETTINGS_CHANGED`). |
+| 23 | `OrgAuditLog` row emitted for every mutating route | ✅ | Handlers emit via `AUDIT_ACTIONS` constants (incl. the v2 actions: `CONTRACT_SUPERSEDED`, `CONTRACT_AUTO_RENEWED`, `PROGRAM_ASSIGNMENT_ROLLED`, `VERIFICATION_RESUBMITTED`, `SSO_ENABLED` / `SSO_DISABLED`). |
 | 24 | Field-level RBAC on money-bearing org fields | ✅ | The OWNER-or-BILLING_ADMIN gate (today the `billing.manage` matrix key) + org-PATCH allowlists gate billing email / funding / branding-money fields to OWNER/BILLING_ADMIN (#779 §A). |
 | 25 | Config lock 🔒 — program money config + contract terms immutable once in use | ✅ | `lib/enterprise/config-lock.ts`: `Program.configLockedAt` (`PROGRAM_CONFIG_LOCKED`) on first assignment; `LOCKED_CONTRACT_FIELDS` on a non-DRAFT/billing contract (`CONTRACT_TERMS_LOCKED`). Change-by-supersede, never mutate. |
 | 26 | Program archive / soft-delete | ✅ | `Program.archivedAt` hides from active lists + the cycle engine skips it; archive PATCH refuses while any ACTIVE in-window assignment exists (`PROGRAM_HAS_ACTIVE_ASSIGNMENTS`); DELETE stays DRAFT-only (#777 §B). |
@@ -117,7 +117,7 @@ Each row covers a capability that spans all four org shapes — RBAC, audit trai
   surfaces that ship complete**: cycle rollover (18) + auto-renew (19) +
   their crons, contract terminate/ supersede + cascade (6), config lock +
   archive (25, 26), the OverageEvent system with surcharge + breaker +
-  member-timeout (4, 32), field-level RBAC (24), SSO break-glass (17),
+  member-timeout (4, 32), field-level RBAC (24), SSO provider approval (17),
   verification resubmit (27), webhook rotation grace (28), data export (29),
   refund credit notes (30), refund-failed notify (31).
 - **5 🟡** — schema-final, happy-path-correct, but each stops short by
@@ -137,11 +137,11 @@ Each row covers a capability that spans all four org shapes — RBAC, audit trai
      #813); only the richer `TdsAdjustment` consolidation model is unwired.
   5. **IRP uploader gated off** (row 7) — mapper + cron are real but
      behind `ENABLE_IRP_UPLOADER` + `CLEARTAX_*`; correct for sub-₹5cr.
-- **Caveat on two ✅ rows — route-level only, no dashboard UI:** contract
-  **supersede/renew** (row 6) and **SSO break-glass** (row 17) work
-  end-to-end via the route/cron and are counted ✅, but neither has a
-  dashboard button yet (#777 §B / #779 §E) — the UI surfaces the *effect*
-  (superseded/renewed rows, the audit entry), so drive them via the route.
+- **Caveat on one ✅ row — route-level only, no dashboard UI:** contract
+  **supersede/renew** (row 6) works end-to-end via the route/cron and is
+  counted ✅, but has no dashboard button yet (#777 §B) — the UI surfaces
+  the *effect* (superseded/renewed rows, the audit entry), so drive it via
+  the route.
 - **0 🔴** — every scenario produces a correct result or a 🟡 with a known,
   bounded follow-up.
 

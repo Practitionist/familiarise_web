@@ -96,8 +96,8 @@ export async function GET(
  * #1846 bucket C — direct-add is retired. Joining is invite + accept only:
  * "Add people" and bulk import send an Invitation, which the person accepts
  * with the DPDP consent step. This route used to create an ACTIVE membership
- * (or reactivate a REMOVED one) that the person never agreed to. SSO JIT and
- * SCIM provision on their own paths and never called it.
+ * (or reactivate a REMOVED one) that the person never agreed to. SSO JIT
+ * provisions on its own path and never called it.
  */
 export function POST() {
   return NextResponse.json(

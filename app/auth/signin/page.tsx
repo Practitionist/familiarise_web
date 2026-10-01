@@ -9,8 +9,10 @@ import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
+  type AuthErrorAction,
   type AuthErrorField,
 } from "@/lib/labels/auth-errors";
+import { normalizeAuthErrorCode } from "@/lib/labels/auth-error-codes";
 import {
   signIn,
   useSession,
@@ -21,10 +23,21 @@ import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
+import {
+  AuthErrorAffordance,
+  type AuthActionTarget,
+} from "@/components/auth/AuthErrorAffordance";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
+import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
+
+/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
 
 /**
  * Resolve the redirect target for an already-authenticated visitor.
@@ -55,9 +68,8 @@ function useAuthenticatedRedirectTarget(
     if (isPending || onboardingCompleted === undefined) return;
 
     let cancelled = false;
-    const resolveAndGo = (completed: boolean) => {
+    const go = (target: string) => {
       if (cancelled) return;
-      const target = completed ? callbackUrl || "/dashboard" : onboardingUrl;
       // Idempotency guard: re-renders / Strict-Mode double-invocation /
       // duplicate store emissions must not queue a second navigation.
       // (A delayed-state callbackUrl used to fire this effect twice with
@@ -67,6 +79,8 @@ function useAuthenticatedRedirectTarget(
       navigatedRef.current = target;
       router.replace(target);
     };
+    const resolveAndGo = (completed: boolean) =>
+      go(completed ? callbackUrl || "/dashboard" : onboardingUrl);
 
     getSession({ query: { disableCookieCache: true } })
       .then(({ data, error: sessionError }) => {
@@ -79,6 +93,15 @@ function useAuthenticatedRedirectTarget(
         }
         // Session revoked between paint and check — no protected redirect.
         if (!data?.user) return;
+        // Server pages read an operator without 2FA as signed out
+        // (lib/auth-server.ts), so any other target would bounce back here.
+        if (
+          isOperatorRole(data.user.role) &&
+          data.user.twoFactorEnabled !== true
+        ) {
+          go("/auth/two-factor/setup");
+          return;
+        }
         resolveAndGo(!!data.user.onboardingCompleted);
       })
       .catch(() => {
@@ -100,6 +123,7 @@ export default function SignIn() {
 }
 
 function SignInContent() {
+  const router = useRouter();
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const { data: session, isPending } = useSession();
@@ -118,6 +142,10 @@ function SignInContent() {
     Partial<Record<AuthErrorField, string>>
   >({});
   const [resending, setResending] = useState(false);
+  // The catalog's "what to do next" for the last failure, so the page can
+  // render the affordance instead of hardcoding one per failure.
+  const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
+  const retryAfter = useRetryAfterCapture();
 
   // Validate callbackUrl synchronously from the URL. safeSameOriginPath
   // resolves against a probe origin to reject backslash/scheme-relative
@@ -132,6 +160,21 @@ function SignInContent() {
   // (another device, or "sign out other devices"). Exact-match on a fixed
   // string: the param carries no data, so there is nothing to inject.
   const wasRevokedElsewhere = searchParams.get("reason") === "session-revoked";
+
+  // A refused Google or SSO callback lands back here as `?error=<code>`, e.g.
+  // SSO_REQUIRED, whose action button runs the domain check and the SSO
+  // redirect. Unknown codes are ignored, so the param cannot inject copy.
+  const callbackError = normalizeAuthErrorCode(searchParams.get("error"));
+  useEffect(() => {
+    if (!callbackError) return;
+    const copy = humanizeAuthError("signin", { code: callbackError });
+    setErrorAction(copy.action ?? null);
+    toast({
+      title: copy.title,
+      description: copy.description,
+      variant: "destructive",
+    });
+  }, [callbackError, toast]);
 
   // #booking-journey — is this sign-in a detour out of a purchase? Derived
   // from the ALREADY-VALIDATED callbackUrl, never the raw param, so a crafted
@@ -186,37 +229,54 @@ function SignInContent() {
       );
       if (res.ok) {
         const data = await res.json();
-        // Why: the domain-check route returns `providerMisconfigured: true`
-        // when the stored SAML cert fails parse. Surface a friendly toast
-        // and leave `ssoCheck` null so the user falls back to credentials
-        // (which they may also have for legacy reasons). Without this
-        // branch, clicking "Sign in with SSO" would crash BetterAuth and
-        // present a blank 500.
-        if (data.enforceSSO && data.providerMisconfigured) {
-          toast({
-            title: "Single sign-on is misconfigured",
-            description:
-              "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
-            variant: "destructive",
-          });
-          setSsoCheck(null);
-        } else {
-          setSsoCheck(
-            data.enforceSSO
-              ? {
-                  enforceSSO: true,
-                  organizationName: data.organizationName,
-                  ssoBody: data.ssoBody,
-                }
-              : null,
-          );
-        }
+        setSsoCheck(
+          data.enforceSSO
+            ? {
+                enforceSSO: true,
+                organizationName: data.organizationName,
+                ssoBody: data.ssoBody,
+              }
+            : null,
+        );
       }
     } catch {
       // ignore — fall through to normal login
     } finally {
       setSsoChecking(false);
     }
+  };
+
+  /**
+   * The guard's result is a *code*, not a sentence to print.
+   *
+   * `lib/sso/signin-with-toast.ts` resolves failures to
+   * `{ ok, errorMessage, errorCode, action }` where `errorMessage` is
+   * `"<title>. <description>"` assembled from `AUTH_ERROR_COPY` — catalog
+   * text, not a library string, but still a pre-baked string. When an
+   * `errorCode` is present we re-enter the catalog through
+   * `humanizeAuthError` instead, so the copy on screen comes from the same
+   * resolver every other failure on this page uses and the guard's
+   * formatting convention cannot drift away from it. `errorCode` is null
+   * for the guard's own generic sentences (which have no catalog code), and
+   * then `errorMessage` is the only copy there is — still ours, so it is
+   * safe to show.
+   */
+  const reportSsoFailure = (result: {
+    ok: boolean;
+    errorMessage: string | null;
+    errorCode: string | null;
+    action: AuthErrorAction | null;
+  }) => {
+    if (result.ok || !result.errorMessage) return;
+    const copy = result.errorCode
+      ? humanizeAuthError("signin", { code: result.errorCode })
+      : null;
+    toast({
+      title: copy?.title ?? "SSO sign-in failed",
+      description: copy?.description ?? result.errorMessage,
+      variant: "destructive",
+    });
+    setErrorAction(result.action);
   };
 
   const handleSSOSignIn = async () => {
@@ -233,13 +293,7 @@ function SignInContent() {
       domain: ssoCheck.ssoBody.domain,
       callbackURL: ssoCheck.ssoBody.callbackURL,
     });
-    if (!result.ok && result.errorMessage) {
-      toast({
-        title: "SSO sign-in failed",
-        description: result.errorMessage,
-        variant: "destructive",
-      });
-    }
+    reportSsoFailure(result);
   };
 
   // Manual SSO trigger for IT admins testing their setup before enforcement
@@ -260,35 +314,19 @@ function SignInContent() {
       );
       if (!res.ok) throw new Error("check failed");
       const data = await res.json();
-      // Same misconfigured-cert short-circuit as the blur handler — see
-      // its comment above for the failure mode this guards against.
-      if (data.enforceSSO && data.providerMisconfigured) {
-        toast({
-          title: "Single sign-on is misconfigured",
-          description:
-            "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
-          variant: "destructive",
-        });
-        return;
-      }
       if (data.enforceSSO) {
         setSsoCheck({
           enforceSSO: true,
           organizationName: data.organizationName,
           ssoBody: data.ssoBody,
         });
-        const result = await ssoSigninWithGuard({
-          providerId: data.ssoBody.providerId,
-          domain: data.ssoBody.domain,
-          callbackURL: data.ssoBody.callbackURL,
-        });
-        if (!result.ok && result.errorMessage) {
-          toast({
-            title: "SSO sign-in failed",
-            description: result.errorMessage,
-            variant: "destructive",
-          });
-        }
+        reportSsoFailure(
+          await ssoSigninWithGuard({
+            providerId: data.ssoBody.providerId,
+            domain: data.ssoBody.domain,
+            callbackURL: data.ssoBody.callbackURL,
+          }),
+        );
       } else {
         toast({
           title: "No SSO provider found",
@@ -347,17 +385,18 @@ function SignInContent() {
     // Clear any stale "verify your email" banner from a previous attempt.
     setNeedsVerification(false);
     setFieldError({});
+    setErrorAction(null);
+    retryAfter.clear();
     setIsLoading(true);
     const settle = pendingToast({ title: "Signing in..." });
 
-    try {
-      const { data, error } = await signIn.email({
-        email,
-        password,
-      });
-
+    /** Everything that depends on the *result* of `signIn.email`. */
+    const applyResult = (data: object | null | undefined, error: unknown) => {
       if (error) {
-        const copy = humanizeAuthError("signin", error);
+        const copy = humanizeAuthError("signin", error, {
+          retryAfterSeconds: retryAfter.take(),
+        });
+        setErrorAction(copy.action ?? null);
         if (copy.needsVerification) {
           setNeedsVerification(true);
           settle({ title: copy.title, description: copy.description });
@@ -369,41 +408,119 @@ function SignInContent() {
             variant: "destructive",
           });
         }
-      } else if (data) {
-        // The Sentry user is NOT set here. `AuthSyncProvider` mirrors the
-        // resolved session onto the identity, which also covers the SSO and
-        // social sign-in redirects that come back through a full page load
-        // and never touch this handler. Setting it here as well would only
-        // re-stamp the same id without the role, and would keep this one
-        // sign-in path as a second place to forget when identity changes.
-        settle({
-          title: "Sign In Successful",
-          description: callbackUrl
-            ? "Redirecting to your destination..."
-            : "Redirecting to dashboard...",
-        });
-        // Defer the redirect to the useSession-driven effect above so it honours
-        // onboarding status — a non-onboarded user signing in from a booking/trial
-        // callback must go through onboarding first, not straight to callbackUrl.
+        return;
       }
+      if (!data) return;
+      // An enrolled operator: the password was right, but there is no session
+      // yet (and no `user` on this response) until the authenticator code is
+      // verified on the challenge page.
+      if ("twoFactorRedirect" in data && data.twoFactorRedirect) {
+        settle({ title: "Enter your authenticator code" });
+        router.push(
+          callbackUrl
+            ? `/auth/two-factor?callbackUrl=${encodeURIComponent(callbackUrl)}`
+            : "/auth/two-factor",
+        );
+        return;
+      }
+      // The Sentry user is NOT set here. `AuthSyncProvider` mirrors the
+      // resolved session onto the identity, which also covers the SSO and
+      // social sign-in redirects that never touch this handler.
+      settle({
+        title: "Sign In Successful",
+        description: callbackUrl
+          ? "Redirecting to your destination..."
+          : "Redirecting to dashboard...",
+      });
+      // Defer the redirect to the useSession-driven effect above so it honours
+      // onboarding status — a non-onboarded user signing in from a booking/trial
+      // callback must go through onboarding first, not straight to callbackUrl.
+    };
+
+    try {
+      const { data, error } = await signIn.email({
+        email,
+        password,
+        // The `fetchOptions` bag is the client-level fetch configuration: the
+        // proxy (`better-auth/dist/client/proxy.mjs`) lifts it to the top-level
+        // fetch options, which is where `onResponse` (which reads `Retry-After`
+        // off the response — see `components/auth/useRetryAfterCapture.ts` for
+        // why the error object alone cannot carry it) is consumed. The
+        // limiter's body field is the fallback when it is not present.
+        fetchOptions: retryAfter.fetchOptions,
+      });
+      applyResult(data, error);
     } catch (error) {
       // Thrown fetch only (BetterAuth resolves API failures as `{ error }`
       // handled above): the request never completed, so this is a
       // connection problem, not an account problem — safe to say so.
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "auth" } },
-      );
+      //
+      // `markExpectedUnreachable` marks only the shapes where the request never
+      // reached the service (failure-modes row 6's cold-instance stall as the
+      // browser sees it, plus a `status: 0` resolve). Marked → warning +
+      // `expected:true`, which is what row 19 asks for: the event still arrives
+      // and is still the detector for that row, but it stops paging on-call for
+      // something Netlify has already confirmed it does. Anything that is *not*
+      // recognisably a transport failure keeps its error level — a genuine bug in
+      // this handler must still page, and a marker applied too widely is an alert
+      // that never fires.
+      const { error: reported, marked } = markExpectedUnreachable(error);
+      Sentry.captureException(reported, {
+        tags: {
+          subsystem: "auth",
+          ...(marked ? {} : { auth_unreachable: "false" }),
+        },
+      });
       console.error("Sign in error:", error);
+      // Still routed through the catalog rather than hand-written: a thrown
+      // `APIError` is the shape that carries a real `code` and `status`, and
+      // `status: 0` is the "never reached the service" half of
+      // `copyForStatus`. No raw `error.message` is shown.
+      const copy = humanizeAuthError("signin", { status: 0 });
+      setErrorAction(copy.action ?? null);
       settle({
-        title: "Couldn't reach the sign-in service",
-        description: "Check your connection and try again.",
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
+  /**
+   * Which catalog actions this page can service, and how.
+   *
+   * Every entry points at something the page *already* has — the sign-up link
+   * at the foot of the card, the manual SSO trigger, the forgot-password
+   * route. Nothing here invents a new affordance, which is the point: the
+   * catalog says what the customer should do, the page says how.
+   *
+   * Deliberately absent:
+   *   - `sign-in` — the visitor is already on this page.
+   *   - `resend-verification` — `needsVerification` lights the banner above,
+   *     which carries its own resend button.
+   *   - `enroll-2fa` — no 2FA settings page is reachable from an auth page; a
+   *     button that goes nowhere is worse than no button.
+   *   - `retry` — never renderable (see `AuthErrorAffordance`).
+   *
+   * Rebuilt per render rather than memoised: the callbacks close over this
+   * render's `email` / `ssoCheck`, and a memo would pin a stale closure. The
+   * child is not memoised, so a new object identity costs nothing.
+   */
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "forgot-password": { kind: "link", href: "/auth/forgot-password" },
+    "request-new-link": { kind: "link", href: "/auth/forgot-password" },
+    "sign-up": { kind: "link", href: signUpUrl },
+    "switch-to-sso": {
+      kind: "callback",
+      onClick: () => void handleManualSSOClick(),
+      disabled: ssoChecking,
+    },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
+
+  const errorTarget = errorAction ? actionTargets[errorAction] : undefined;
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -531,6 +648,13 @@ function SignInContent() {
                 {isLoading ? "Signing In..." : "Sign In with Email"}
               </Button>
             )}
+            {/* The catalog's next step for the last failure, if this page can
+                service it. One line, no repeated sentence — the toast above
+                already carried the title and description. */}
+            <AuthErrorAffordance
+              action={errorAction ?? undefined}
+              target={errorTarget}
+            />
           </form>
           {!ssoCheck?.enforceSSO && (
             <>

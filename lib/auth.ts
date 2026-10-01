@@ -1,13 +1,16 @@
 import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import { admin, customSession, organization } from "better-auth/plugins";
+import { admin, customSession, twoFactor } from "better-auth/plugins";
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
-import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   sendWelcomeEmail,
@@ -20,12 +23,22 @@ import {
   shouldRejectSession,
   lookupEnforcedOrg,
 } from "@/lib/sso/enforce-session";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
-import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
-import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { ssoPluginOptions } from "@/lib/sso/plugin-options";
+import {
+  assertSsoEmailOnDomain,
+  isSsoProviderId,
+} from "@/lib/sso/account-domain";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
+import {
+  capOperatorExpiry,
+  isOperatorRole,
+  refusesOperatorAccount,
+  refusesOperatorSession,
+} from "@/lib/auth/operator-session-policy";
+import { breachedPasswordCheck } from "@/lib/auth/password-policy";
+import { authRateLimit } from "@/lib/auth/rate-limit";
+import { stripSessionToken } from "@/lib/auth/strip-session-token";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
 // defaultAc so statements line up. No `session:*`: the plugin's session
@@ -67,46 +80,111 @@ export const auth = betterAuth({
   // server calls are unaffected.
   disabledPaths: [
     "/list-sessions",
+    // No caller: these hand out the linked provider's OAuth tokens or let the
+    // browser write session fields.
+    "/get-access-token",
+    "/account-info",
+    "/refresh-token",
+    "/update-session",
+    // Email/SMS OTP is not configured; operators use TOTP or backup codes.
+    "/two-factor/send-otp",
+    "/two-factor/verify-otp",
+    // The admin plugin's whole HTTP surface. It stays installed for the
+    // role/ban columns, the sign-in ban check and the server-side
+    // `auth.api.createUser` used by staff onboarding, but its endpoints skip
+    // the back-office permission matrix, the 2FA gate and OpsActionLog. Every
+    // operator action has an audited door under app/api/admin instead.
+    // Impersonation is off: support reads a customer's data through the
+    // back office, it does not become the customer.
+    "/admin/set-role",
+    "/admin/get-user",
+    "/admin/create-user",
+    "/admin/update-user",
+    "/admin/list-users",
     "/admin/list-user-sessions",
+    "/admin/unban-user",
+    "/admin/ban-user",
+    "/admin/impersonate-user",
+    "/admin/stop-impersonating",
     "/admin/revoke-user-session",
     "/admin/revoke-user-sessions",
+    "/admin/remove-user",
+    "/admin/set-user-password",
+    "/admin/has-permission",
+    // SSO provider lifecycle. Registration, edits and deletes go through
+    // app/api/organizations/[orgId]/sso/providers (org-scoped, audited,
+    // server-generated providerId), and approval through the ADMIN door
+    // under app/api/admin/organizations. Without the organization plugin the
+    // plugin's own endpoints authorize on `provider.userId`, which our
+    // org-scoped rows leave null, and its verify-domain endpoint would flip
+    // `domainVerified` without staff approval.
+    "/sso/register",
+    "/sso/providers",
+    "/sso/get-provider",
+    "/sso/update-provider",
+    "/sso/delete-provider",
+    "/sso/request-domain-verification",
+    "/sso/verify-domain",
+    "/sso/saml2/sp/metadata",
+    // The shared callback only serves providers with `redirectURI` set; ours
+    // all return to /sso/callback/:providerId, which enforcement keys on.
+    "/sso/callback",
   ],
+
+  // SSO is OIDC-only, but @better-auth/sso 1.7.6 has no switch to leave the
+  // SAML endpoints unmounted, and `disabledPaths` matches concrete paths so
+  // it cannot cover the `:providerId` ones. `ctx.path` here is the route
+  // template, so one prefix check 404s the whole SAML surface.
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path?.startsWith("/sso/saml2")) {
+        throw new APIError("NOT_FOUND");
+      }
+      // sign-in/sso resolves `organizationSlug` through the organization
+      // plugin's model, which is not mounted, so the adapter would throw a
+      // 500 (and an auth-error Sentry event) on a junk parameter. Our client
+      // signs in by providerId or email only.
+      if (ctx.path === "/sign-in/sso" && ctx.body?.organizationSlug) {
+        throw new APIError("BAD_REQUEST", {
+          message: "organizationSlug is not supported",
+        });
+      }
+      // Only operators use 2FA, and a trusted device would let a stolen
+      // password skip the authenticator for 30 days. The UI never offers it.
+      if (
+        (ctx.path === "/two-factor/verify-totp" ||
+          ctx.path === "/two-factor/verify-backup-code") &&
+        ctx.body?.trustDevice
+      ) {
+        throw new APIError("BAD_REQUEST", {
+          message: "Trusted devices are not available.",
+          code: "TRUST_DEVICE_DISABLED",
+        });
+      }
+      // 2FA is mandatory for operators. Recovery from a lost authenticator is
+      // a backup code or an admin reset (app/api/admin/team/members/[userId]/
+      // two-factor), never self-service removal.
+      if (ctx.path === "/two-factor/disable") {
+        const current = await getSessionFromCtx(ctx);
+        if (isOperatorRole((current?.user as { role?: string })?.role)) {
+          throw new APIError("FORBIDDEN", {
+            message: "Two-factor authentication is required for staff.",
+            code: "TWO_FACTOR_REQUIRED",
+          });
+        }
+      }
+    }),
+    after: stripSessionToken,
+  },
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
 
-  // BetterAuth's built-in rate limit is disabled here on purpose.
-  //
-  // Why: BetterAuth's limiter is in-memory per Node.js process. We
-  // deploy to Netlify (serverless) where each cold-start lambda gets
-  // its own counter, so an attacker who rotates through enough lambdas
-  // can race past any per-process gate. A globally-coherent limit has
-  // to live in shared state (Upstash Redis).
-  //
-  // Coverage is provided by the Upstash-backed `authLimiter` in
-  // `middleware.ts:192-197` at 10 requests / 15min / IP across:
-  //   - POST /api/auth/sign-up/email
-  //   - POST /api/auth/sign-in/email
-  //   - POST /api/auth/forget-password
-  //   - POST /api/auth/reset-password
-  //
-  // The unauth `/api/auth/sso/domain-check` endpoint has its own
-  // 60/hr/IP gate at `middleware.ts:240-246` (prevents domain
-  // enumeration of registered orgs). Wallet top-ups have a per-org
-  // limiter keyed on `org:${orgId}`.
-  //
-  // Localhost (`::1` / `127.0.0.1` / `unknown_ip`) bypasses these
-  // limits via `isBypassableIp` so booking-algorithm-tests + agent
-  // runs aren't slowed down; production traffic never bypasses.
-  //
-  // If you ever re-enable BetterAuth's rate limit, audit the overlap
-  // against `authLimiter` to avoid double-counting and the surprises
-  // that follow (two different 429 responses for the same flow).
-  // See audit Phase B.8 + docs/enterprise/20-iam-and-security/04-rate-limiting.md.
-  rateLimit: {
-    enabled: false,
-  },
+  // Upstash-backed so the count is shared across lambdas; budgets and the
+  // store live in lib/auth/rate-limit.ts. The edge limiter in middleware.ts
+  // covers only non-BetterAuth routes, so nothing is counted twice.
+  rateLimit: authRateLimit,
 
   emailAndPassword: {
     enabled: true,
@@ -114,27 +192,30 @@ export const auth = betterAuth({
     maxPasswordLength: 128,
     // #673 — a credential signup must prove email ownership before it can hold
     // a session. Without this an attacker can pre-register a victim's address; a
-    // later trusted-provider OAuth login (see accountLinking below) would then
-    // auto-link the real user into the attacker-seeded account (pre-hijacking).
+    // later OAuth login (see accountLinking below) would then auto-link the
+    // real user into the attacker-seeded account (pre-hijacking).
     // OAuth/SSO are unaffected — the IdP already asserts a verified email.
     requireEmailVerification: true,
     password: {
-      hash: async (password) => {
-        return bcrypt.hash(password, 12);
-      },
+      hash: (password) => bcrypt.hash(password, 12),
       verify: async ({ password, hash }) => {
         return bcrypt.compare(password, hash);
       },
     },
-    sendResetPassword: async ({ user, url }) => {
-      // Extract token from URL for the email template
-      const urlObj = new URL(url);
-      const token = urlObj.searchParams.get("token") || "";
+    sendResetPassword: async ({ user, token }) => {
+      // A new operator's first "reset" is their invitation: the account was
+      // created with a random password (lib/auth/operators.ts), so the email
+      // says "set your password" until they have enrolled 2FA.
+      const { role, twoFactorEnabled } = user as {
+        role?: string | null;
+        twoFactorEnabled?: boolean | null;
+      };
       await sendPasswordResetEmail({
         email: user.email,
         name: user.name || "User",
         token,
         userId: user.id,
+        invite: isOperatorRole(role) && twoFactorEnabled !== true,
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
@@ -165,6 +246,10 @@ export const auth = betterAuth({
     },
   },
 
+  // Reset and verification tokens are stored as SHA-256, so a leaked
+  // verifications table yields no usable links.
+  verification: { storeIdentifier: "hashed" },
+
   socialProviders: {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID ?? "",
@@ -174,20 +259,17 @@ export const auth = betterAuth({
       clientId: process.env.GITHUB_CLIENT_ID ?? "",
       clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
     },
-    facebook: {
-      clientId: process.env.FACEBOOK_CLIENT_ID ?? "",
-      clientSecret: process.env.FACEBOOK_CLIENT_SECRET ?? "",
-    },
   },
 
   account: {
     accountLinking: {
       enabled: true,
-      // "credential" is intentionally not listed. trustedProviders only applies
-      // to OAuth providers during the implicit auto-link flow in BetterAuth's
-      // callback handler. Credential accounts are created explicitly during
-      // sign-up, not via OAuth auto-link.
-      trustedProviders: ["google", "github", "facebook"],
+      // No trustedProviders on purpose. A trusted provider links into an
+      // existing account on its email claim alone, so a provider that lets
+      // users set an unverified email could take over any account. Without
+      // it, BetterAuth only auto-links when the provider asserts
+      // email_verified AND the local user's email is verified
+      // (requireLocalEmailVerified, default true).
     },
     // #1861 S1 / #1529 — Account.accessToken/refreshToken are encrypted with
     // the Better Auth secret; nothing in the app reads them directly. Legacy
@@ -195,6 +277,42 @@ export const auth = betterAuth({
     // (node_modules/better-auth/dist/oauth2/utils.mjs isLikelyEncrypted) and
     // vanish at the pre-MVP reset.
     encryptOAuthTokens: true,
+  },
+
+  // Previously unset, so every cookie and IP attribute was BetterAuth's
+  // implicit default. Each key below is now stated so it is reviewable and a
+  // default change upstream cannot move it silently.
+  advanced: {
+    // Netlify serves over https, so this is already what BetterAuth derives —
+    // but "already correct by coincidence" is not the same as asserted, and the
+    // session cookie carries the whole session. Stated, not relied upon.
+    useSecureCookies: true,
+    // `__Secure-` is the default prefix with useSecureCookies on. Stated
+    // because `lib/auth-session-lookup.ts` hardcodes both names when it has to
+    // clear a stale cookie, and a prefix change would silently desync the two.
+    cookiePrefix: "better-auth",
+    defaultCookieAttributes: {
+      // `lax` still sends the cookie on a top-level GET navigation, which is
+      // what the OAuth and SSO callbacks are. `strict` would drop the session
+      // on every one of them.
+      sameSite: "lax",
+      httpOnly: true,
+    },
+    ipAddress: {
+      // The rate-limit key and the session's recorded IP. Most-trusted
+      // first: `x-nf-client-connection-ip` is set by Netlify and cannot be
+      // forged by a client. The fallbacks only matter off Netlify, and
+      // BetterAuth ignores a multi-hop `x-forwarded-for` (no trustedProxies),
+      // so a client cannot pick its own key by prepending addresses.
+      ipAddressHeaders: [
+        "x-nf-client-connection-ip",
+        "x-vercel-forwarded-for",
+        "x-forwarded-for",
+      ],
+      // Key IPv6 on the /64. One host usually owns a whole /64, so per-address
+      // keys would let it rotate through 2^64 buckets.
+      ipv6Subnet: 64,
+    },
   },
 
   session: {
@@ -259,23 +377,20 @@ export const auth = betterAuth({
         required: false,
         input: false,
       },
-      // Session-generation marker carried in the session payload. The
-      // customSession callback compares this to the current row value
-      // on every session lookup; if they diverge, the cached
-      // memberships array is stale and we refetch. See audit Phase B.5
-      // and docs/enterprise/20-iam-and-security/02-jit-and-session-refresh.md.
-      sessionGeneration: {
-        type: "number",
-        required: false,
-        defaultValue: 0,
-        input: false,
-      },
     },
   },
 
   databaseHooks: {
     user: {
       create: {
+        // Checked here as well as in account.create.before: the adapter runs
+        // without transactions, so a refusal at the account step would leave
+        // the user row (and its welcome email) behind, squatting the address.
+        before: async (user, ctx) => {
+          if (ctx?.path?.startsWith("/sso/")) {
+            await assertSsoEmailOnDomain(ctx.params?.providerId, user.email);
+          }
+        },
         after: async (user, ctx) => {
           try {
             // NOTE: ConsulteeProfile used to be auto-created here for every
@@ -314,11 +429,17 @@ export const auth = betterAuth({
             // for them here. Their first sign-in into the org shows the
             // consent step (JoinConsentGate), and accepting an invitation
             // shows it inline (#1854); both write these same rows.
+            //
+            // An operator account created by an admin (lib/auth/operators.ts,
+            // through `auth.api.createUser`) is not that person's signup
+            // either; they give consent themselves on first sign-in.
             const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
+            const operatorCreated = ctx?.path === "/admin/create-user";
             try {
-              const drafts = ssoProvisioned
-                ? []
-                : buildSignupConsentArtifacts(user.id);
+              const drafts =
+                ssoProvisioned || operatorCreated
+                  ? []
+                  : buildSignupConsentArtifacts(user.id);
               for (const draft of drafts) {
                 await prisma.consentArtifact.create({ data: draft });
               }
@@ -355,13 +476,16 @@ export const auth = betterAuth({
             }
 
             // #1298 — awaited: an un-awaited send is dropped when the instance
-            // freezes after the response (same class as #1616).
+            // freezes after the response (same class as #1616). Operators get
+            // the setup email instead of the consumer welcome.
             try {
-              await sendWelcomeEmail({
-                email: user.email,
-                name: user.name || "User",
-                userId: user.id,
-              });
+              if (!operatorCreated) {
+                await sendWelcomeEmail({
+                  email: user.email,
+                  name: user.name || "User",
+                  userId: user.id,
+                });
+              }
             } catch (err) {
               console.error("[AUTH_HOOK] Welcome email error:", err);
               Sentry.captureException(
@@ -404,48 +528,97 @@ export const auth = betterAuth({
     // `/api/auth/sign-in/email` that bypasses our signin UI is rejected here
     // at the source rather than flagged reactively.
     //
-    // Legitimate first-time SSO users are allowed because the SSO plugin
-    // creates the `account` row with `providerId = ssoProvider.providerId`
-    // BEFORE the session is created; returning SSO users already have that
-    // account. The hook fails open when the enforcing org has not yet
-    // registered any `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
+    // For an enforced email domain only the org's own SSO callback may mint
+    // the session. The hook fails open when the enforcing org has no
+    // staff-approved `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
+    //
+    // The same hook keeps operators on password + TOTP: the twoFactor plugin
+    // never challenges a social or SSO callback, so those are refused here
+    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts). It also caps an
+    // operator session at 12 hours; `update.before` holds that on refresh.
     session: {
       create: {
-        before: async (session) => {
+        before: async (session, ctx) => {
           const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { email: true },
+            select: { email: true, role: true },
           });
+
+          if (refusesOperatorSession(user?.role, ctx?.path)) {
+            throw new APIError("FORBIDDEN", {
+              message:
+                "Staff accounts sign in with email, password and an authenticator code.",
+              code: "STAFF_PASSWORD_SIGN_IN_ONLY",
+            });
+          }
 
           const decision = await shouldRejectSession({
             email: user?.email ?? null,
-            userId: session.userId,
-            // Delegate to the shared `lookupEnforcedOrg` (audit B.6).
-            // The previous inline implementation lived here AND at
-            // `customSession` AND at `/api/auth/sso/domain-check`,
-            // with subtle drift between them — see issue #673.
+            path: ctx?.path,
+            providerId: ctx?.params?.providerId,
             lookupEnforcedOrg: (domain) => lookupEnforcedOrg(prisma, domain),
-            hasAccountInProviders: async (userId, providerIds) => {
-              const match = await prisma.account.findFirst({
-                where: { userId, providerId: { in: providerIds } },
-                select: { id: true },
-              });
-              return !!match;
-            },
           });
 
           if (decision.reject) {
             throw new APIError("FORBIDDEN", {
               message:
-                "This email domain requires SSO sign-in. Please use your organization's SSO provider at /auth/signin.",
+                "This email domain requires SSO sign-in through your organization's provider. Password and Google sign-in are off for it.",
               code: "SSO_REQUIRED",
             });
           }
+
+          if (isOperatorRole(user?.role)) {
+            return {
+              data: {
+                expiresAt: capOperatorExpiry(
+                  session.createdAt ?? new Date(),
+                  session.expiresAt,
+                ),
+              },
+            };
+          }
+        },
+      },
+      update: {
+        // Only get-session's sliding refresh writes `expiresAt`, and it has
+        // just loaded this session and its user into `ctx.context.session`,
+        // so the clamp needs no query. For an operator the refresh therefore
+        // runs on every read (12h is always within the 30d-minus-1d window);
+        // the write is one row by token, and operators are few.
+        before: async (data, ctx) => {
+          const current = ctx?.context.session;
+          if (!data.expiresAt || !current) return;
+          if (!isOperatorRole((current.user as { role?: string }).role)) return;
+          return {
+            data: {
+              expiresAt: capOperatorExpiry(
+                new Date(current.session.createdAt),
+                new Date(data.expiresAt),
+              ),
+            },
+          };
         },
       },
     },
     account: {
       create: {
+        before: async (account) => {
+          if (account.providerId === "credential") return;
+          const user = await prisma.user.findUnique({
+            where: { id: account.userId },
+            select: { role: true, email: true },
+          });
+          if (refusesOperatorAccount(user?.role, account.providerId)) {
+            throw new APIError("FORBIDDEN", {
+              message:
+                "Staff accounts sign in with email, password and an authenticator code.",
+              code: "STAFF_PASSWORD_SIGN_IN_ONLY",
+            });
+          }
+          if (isSsoProviderId(account.providerId)) {
+            await assertSsoEmailOnDomain(account.providerId, user?.email);
+          }
+        },
         after: async (account) => {
           // Send account-linked email for non-credential providers
           if (account.providerId !== "credential") {
@@ -486,6 +659,33 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // Rejects breached passwords on sign-up, reset and change.
+    breachedPasswordCheck,
+
+    // Two-factor: TOTP (authenticator app) + single-use backup codes, used by
+    // operators only. Mandatory for STAFF/ADMIN: `session.create.before`
+    // limits them to credential + TOTP sessions, the API/page guards in
+    // lib/auth-helpers.ts and lib/auth-guard.ts confine an unenrolled
+    // operator to /auth/two-factor/setup, and lib/auth-server.ts's
+    // getSession() reads their session as signed out everywhere else.
+    //
+    // `allowPasswordless` stays off, so enrolling needs the account password.
+    // Every operator account is created with a credential account, so nobody
+    // is stranded by it.
+    twoFactor({
+      issuer: "Familiarise",
+      // The pending-2FA cookie is the window in which a correct password has
+      // been given but the second factor has not. 10 minutes is the plugin
+      // default and is right: long enough to fetch an authenticator, short
+      // enough that a shoulder-surfed six-digit code is not worth waiting for.
+      twoFactorCookieMaxAge: 600,
+      backupCodeOptions: {
+        amount: 10,
+        length: 10,
+        storeBackupCodes: "encrypted",
+      },
+    }),
+
     // Moderation (#693, starts #725 Tier-1): provides User.banned/banReason/
     // banExpires, blocks sign-in for banned users, and auto-unbans at sign-in
     // once banExpires passes (lazy suspension expiry — no cron). Ban writes
@@ -502,29 +702,10 @@ export const auth = betterAuth({
         "Your account has been suspended. If you believe this is a mistake, please contact support.",
     }),
 
-    // Enterprise: BetterAuth Organization plugin.
-    // Arch 4-Modified: BetterAuth Member.role is a free-form string; the
-    // source of truth is our Membership model (linked via
-    // Membership.betterAuthMemberId). On creator-role assignment we pass the
-    // new enum name "OWNER" which our auth-helpers normalize.
-    // #1132 — org creation must go through POST /api/organizations, which
-    // enforces the ORG_WORKSPACE/ADMIN gate, ENABLE_HOST_ORGS, slug validation
-    // and BillingAccount + OrgWorkspaceProfile creation. The plugin's own
-    // /api/auth/organization/create defaults this flag to `true` when unset,
-    // which let any authenticated user mint an Organization and own it while
-    // skipping every one of those steps.
-    organization({
-      organizationLimit: 5,
-      creatorRole: "OWNER",
-      allowUserToCreateOrganization: false,
-    }),
-
-    // Enterprise: SSO plugin (SAML / OIDC).
-    // Auto-generates the `ssoProvider` table. Per-org providers are linked
-    // via `organizationId` on the row. See lib/auth-helpers.ts and the
-    // OrganizationSSOSettings model in prisma/schema.prisma for the policy
-    // layer (allowedEmailDomains, enforceSSO).
-    sso(),
+    // Enterprise: SSO plugin (OIDC). Per-org providers are linked via
+    // `SsoProvider.organizationId`; options and the JIT membership hook live
+    // in lib/sso/plugin-options.ts.
+    sso(ssoPluginOptions),
 
     customSession(async ({ user: baseUser, session }) => {
       // Cast to include additionalFields (available at runtime via BetterAuth,
@@ -540,189 +721,18 @@ export const auth = betterAuth({
         staffProfileId?: string | null;
         adminProfileId?: string | null;
         orgWorkspaceProfileId?: string | null;
-        sessionGeneration?: number | null;
+        twoFactorEnabled?: boolean | null;
+        banned?: boolean | null;
+        banExpires?: Date | null;
       };
 
-      // Read the user's current session-generation marker + the
-      // profile FKs we'll need below for any bareMembers JIT auto-join.
-      //
-      // The marker is carried in the session payload primarily for
-      // observability + a future fast-path that can skip the membership
-      // re-fetch when the marker hasn't moved (audit B.5).
-      //
-      // Pre-fetching the profile FKs lets us pass them into
-      // `applyMembershipRoleEffects` via `preloadedProfiles` so each
-      // bareMember in the loop below skips a redundant `findUnique`.
-      // Audit Phase B.7 — for users in 10 SSO orgs this is the
-      // difference between 10 extra `users.findUnique` round-trips on
-      // every session lookup and zero.
-      // One round-trip for the gen marker, the profile FKs, AND the bare-member
-      // backlog. This used to be two separate queries (`user.findUnique` + a
-      // standalone `member.findMany`); folding the bare-member lookup into the
-      // same `findUnique` via the `members` relation drops a cross-region
-      // pooler round-trip from every session resolution without changing
-      // anything else — same rows, same shape, and this path runs under
-      // disableCookieCache so nothing here is cached. (#932)
-      const currentUserRow = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: {
-          sessionGeneration: true,
-          consulteeProfileId: true,
-          consultantProfileId: true,
-          // #693 defense-in-depth: sessions are deleted at ban time and
-          // sign-in is plugin-gated, but a session minted in the race window
-          // must still resolve as banned.
-          banned: true,
-          banExpires: true,
-          // SSO membership sync: BetterAuth auto-provisioning creates a
-          // BetterAuth Member row; we need a typed Membership sibling. Pull the
-          // unrepaired ones (no Membership yet) so the loop below auto-creates
-          // them and SSO-provisioned users get access on first session load.
-          members: {
-            where: { membership: null },
-            select: {
-              id: true,
-              organizationId: true,
-              role: true,
-              organization: {
-                select: {
-                  id: true,
-                  // #1132 follow-up — the auto-join gates below need the
-                  // lifecycle status; joining a SUSPENDED org must be refused.
-                  status: true,
-                  ssoSettings: { select: { defaultRoleForAutoJoin: true } },
-                },
-              },
-            },
-          },
-        },
-      });
-      const liveSessionGeneration =
-        currentUserRow?.sessionGeneration ?? user.sessionGeneration ?? 0;
+      // #693 defense-in-depth: sessions are deleted at ban time and sign-in
+      // is plugin-gated, but a session minted in the race window must still
+      // resolve as banned. `user` is the row BetterAuth just read (the cookie
+      // cache is off), so it is current.
       const effectivelyBanned =
-        (currentUserRow?.banned ?? false) &&
-        (!currentUserRow?.banExpires || currentUserRow.banExpires > new Date());
-      const preloadedProfiles = currentUserRow
-        ? {
-            consulteeProfileId: currentUserRow.consulteeProfileId,
-            consultantProfileId: currentUserRow.consultantProfileId,
-          }
-        : undefined;
-
-      const bareMembers = currentUserRow?.members ?? [];
-      for (const bm of bareMembers) {
-        if (!bm.organization) continue;
-        // #1132 follow-up — governance gates for JIT auto-join. Without
-        // these, a stale IdP sync could regrow memberships into a
-        // SUSPENDED / DEACTIVATED org, or push a PENDING_VERIFICATION org
-        // past UNVERIFIED_ORG_SEAT_CAP. Skips are logged so ops can see an
-        // IdP that is out of sync with the platform's lifecycle state.
-        const orgStatus = bm.organization.status;
-        if (orgStatus === "SUSPENDED" || orgStatus === "DEACTIVATED") {
-          void recordSystemEvent({
-            organizationId: bm.organizationId,
-            category: "SSO",
-            severity: "WARN",
-            message: `JIT auto-join skipped: organization is ${orgStatus} and the lifecycle gate refused membership creation for user ${user.id}`,
-            context: {
-              userId: user.id,
-              betterAuthMemberId: bm.id,
-              organizationStatus: orgStatus,
-            },
-          });
-          continue;
-        }
-        const defaultRole =
-          bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
-        try {
-          // Wrap the role-effect resolution + Membership create in a
-          // transaction so the lazy-created profile (LEARNER →
-          // ConsulteeProfile, EXPERT → ConsultantProfile) and the
-          // Membership row commit atomically.
-          //
-          // CR #1234 — seat admission is now ATOMIC: for unverified orgs the
-          // active-seat count runs in the SAME Serializable transaction as
-          // the create, so two concurrent JIT sessions can no longer both
-          // observe sub-cap counts and overshoot UNVERIFIED_ORG_SEAT_CAP.
-          // Conflicts retry via the house helper; a persistent abort skips
-          // this join (the next session load repairs it — bareMembers only
-          // lists unrepaired rows).
-          const result = await withSerializableRetry(() =>
-            prisma.$transaction(
-              async (tx): Promise<{ skipped: boolean }> => {
-                if (orgStatus === "PENDING_VERIFICATION") {
-                  const activeMembers = await tx.membership.count({
-                    where: {
-                      organizationId: bm.organizationId,
-                      status: "ACTIVE",
-                    },
-                  });
-                  if (activeMembers >= UNVERIFIED_ORG_SEAT_CAP) {
-                    return { skipped: true };
-                  }
-                }
-                const roleEffects = await applyMembershipRoleEffects(tx, {
-                  userId: user.id,
-                  role: defaultRole,
-                  // Pre-fetched at the top of customSession to avoid an
-                  // N+1 across the bareMembers loop. Audit Phase B.7.
-                  preloadedProfiles,
-                });
-                await tx.membership.create({
-                  data: {
-                    userId: user.id,
-                    organizationId: bm.organizationId,
-                    role: defaultRole,
-                    status: "ACTIVE",
-                    consulteeProfileId: roleEffects.consulteeProfileId,
-                    consultantProfileId: roleEffects.consultantProfileId,
-                    payoutRecipient: roleEffects.payoutRecipient,
-                    betterAuthMemberId: bm.id,
-                  },
-                });
-                return { skipped: false };
-              },
-              { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-            ),
-          );
-          if (result.skipped) {
-            void recordSystemEvent({
-              organizationId: bm.organizationId,
-              category: "SSO",
-              severity: "WARN",
-              message: `JIT auto-join skipped: organization is ${orgStatus} and the seat/cap gate refused membership creation for user ${user.id}`,
-              context: {
-                userId: user.id,
-                betterAuthMemberId: bm.id,
-                organizationStatus: orgStatus,
-              },
-            });
-            continue;
-          }
-        } catch (err) {
-          // Narrow to P2002 (unique-constraint violation) ONLY. The
-          // prior bare `catch {}` swallowed every error during the JIT
-          // auto-join transaction, including:
-          //   - Transient DB connection drops (would leave the user
-          //     with NO Membership row and a working session, landing
-          //     them on a broken dashboard).
-          //   - Permission errors from Supabase RLS (silent denial of
-          //     service).
-          //   - Domain-upsert races other than uniqueness (e.g. FK
-          //     violations from a stale cache).
-          // Re-throw everything else so it surfaces at the BetterAuth
-          // boundary and the user sees an error toast instead of a
-          // silent broken state. See audit Phase A.3.
-          if (
-            err instanceof Prisma.PrismaClientKnownRequestError &&
-            err.code === "P2002"
-          ) {
-            // Concurrent session-create won the membership — safe to ignore.
-            continue;
-          }
-          throw err;
-        }
-      }
+        user.banned === true &&
+        (!user.banExpires || new Date(user.banExpires) > new Date());
 
       // Load active org memberships so OrgSwitcher + checkout can render
       // without an extra roundtrip.
@@ -779,8 +789,8 @@ export const auth = betterAuth({
       // SSO enforcement: the primary gate lives in
       // `databaseHooks.session.create.before` (above) — every session-creation
       // path (credential, OAuth, SSO, signup) is vetoed there when the user's
-      // email domain is under an enforced org without a linked provider
-      // account (issue #673).
+      // email domain is under an enforced org and the session did not come
+      // through that org's SSO callback (issue #673).
       //
       // A read-time recheck that flagged bypassed sessions via
       // `ssoEnforcementFailed` used to live here. It was removed: no layout,
@@ -804,10 +814,11 @@ export const auth = betterAuth({
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
           orgWorkspaceProfileId: user.orgWorkspaceProfileId ?? undefined,
-          // Always emit the live value so client code can detect a
-          // stale session by comparing this against its cached payload.
-          sessionGeneration: liveSessionGeneration,
           banned: effectivelyBanned,
+          // Read by the operator 2FA gates (lib/auth-helpers.ts,
+          // lib/auth-guard.ts). Fresh per request: the cookie cache is off,
+          // so `user` is the row BetterAuth just read.
+          twoFactorEnabled: user.twoFactorEnabled === true,
           organizationMemberships,
         },
         // The token is the cookie's value — a bearer credential. The

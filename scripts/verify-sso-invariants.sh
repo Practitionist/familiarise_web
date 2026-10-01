@@ -67,24 +67,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 3: samlConfigSchema must not accept a `callbackUrl` field. BetterAuth
-#          honours it and overrides the derived ACS; any drift from the
-#          derived value silently breaks SAML assertion delivery.
-# ---------------------------------------------------------------------------
-# Match Zod property declarations (`callbackUrl: z.`) and strip out comment
-# lines (starting with `*`, `//`, or `#`) so the docstring referencing the
-# field doesn't trip the check.
-callback_match=$(grep -nE "^[[:space:]]*callbackUrl\s*:" lib/sso/provider-schemas.ts 2>/dev/null || true)
-if [ -n "$callback_match" ]; then
-  fail "callbackUrl re-added as a property in lib/sso/provider-schemas.ts" \
-    "BetterAuth honours callbackUrl and overrides the derived ACS URL. If the user-typed value drifts (trailing slash, http vs https) SAML breaks silently." \
-    "$callback_match"
-else
-  pass "samlConfigSchema does not accept callbackUrl"
-fi
-
-# ---------------------------------------------------------------------------
-# Check 4: POST /sso/providers must not set userId to the creating owner.
+# Check 3: POST /sso/providers must not set userId to the creating owner.
 #          ssoProvider.userId FK has onDelete: Cascade — binding an org-scoped
 #          provider to the owner cascades the delete if the owner ever leaves
 #          the org, silently killing SSO for the whole team.
@@ -100,7 +83,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 5: customSession enforceSSO check must NOT use the blanket
+# Check 4: customSession enforceSSO check must NOT use the blanket
 #          `providerId: { not: "credential" }` test. That matches personal
 #          Google / GitHub OAuth and lets the user bypass enforcement. The
 #          precise check matches against the org's registered
@@ -116,7 +99,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 6: No "coming soon" strings on the SSO settings page. OIDC is fully
+# Check 5: No "coming soon" strings on the SSO settings page. OIDC is fully
 #          supported; a stale subtitle would mislead the IT admin into
 #          thinking OIDC configs will be ignored.
 # ---------------------------------------------------------------------------
@@ -131,7 +114,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 7: Server-side SSO veto must be present — the databaseHooks.session
+# Check 6: Server-side SSO veto must be present — the databaseHooks.session
 #          .create.before hook is what makes enforceSSO non-bypassable by
 #          direct POSTs to BetterAuth's credential endpoints. Without it,
 #          the enforcement collapses back to UI + reactive session flag,
@@ -146,7 +129,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 8: BetterAuth versions must stay aligned between better-auth and
+# Check 7: BetterAuth versions must stay aligned between better-auth and
 #          @better-auth/sso. Drift can cause subtle plugin-API mismatches.
 # ---------------------------------------------------------------------------
 ba=$(node -e "console.log(require('./package.json').dependencies['better-auth'])" 2>/dev/null || echo "")

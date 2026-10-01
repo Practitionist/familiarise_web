@@ -19,7 +19,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 | #771 hierarchy stub / no RLS | 🔵 TRACKED #771 (CLOSED — 🎯 accepted API-layer isolation) |
 | `exclusiveEngagement` unenforced | ✅ FIXED-BY #982 (enforced at checkout per ADR 18) |
 | Bulk members 405 stub | 🟡 LEGIT-DEFERRED |
-| Doc drift: SCIM parked vs live; HOST error codes | 🟡 LEGIT-DEFERRED (doc drift) |
+| Doc drift: SCIM parked vs live; HOST error codes | ✅ SCIM part RESOLVED-BY-REMOVAL (PR #1878); 🟡 HOST codes LEGIT-DEFERRED |
 
 ## Known gaps / bugs
 
@@ -37,12 +37,11 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 | `exclusiveEngagement` | Unenforced |
 | Bulk members | 405 stub |
 
-Doc drift: SCIM parked vs live; HOST gate error codes inconsistent in docs vs routes.
+Doc drift: HOST gate error codes inconsistent in docs vs routes (the SCIM drift ended when SCIM was removed, PR #1878).
 
 ## Unhappy paths & user psychology
 
 - Sales demo turns on host org in staging; prod flag off — “it worked yesterday.”
-- Customer reads outdated SCIM doc and assumes unsupported.
 
 ## Questions (handled?)
 
@@ -72,4 +71,4 @@ Flags are process risk more than race risk — except enabling live payouts unde
 
 ## Suggested directions
 
-Publish internal flag matrix with owner + rollback. Reconcile SCIM documentation.
+Publish internal flag matrix with owner + rollback.

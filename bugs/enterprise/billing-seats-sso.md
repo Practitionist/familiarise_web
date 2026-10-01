@@ -2,7 +2,7 @@
 
 ## Context
 
-Programs: LICENSED_SEAT and CREDIT_POOL. Seats aggregate into billing subscriptions; wallet prepaid with conditional debit; INVOICE accrual + dunning; LICENSE utilization metering. Unverified orgs capped (5 seats, invoice limits). SSO: domain claims, enforceSSO, JIT join, SCIM Users API. Verification loop: PENDING_VERIFICATION → admin verify.
+Programs: LICENSED_SEAT and CREDIT_POOL. Seats aggregate into billing subscriptions; wallet prepaid with conditional debit; INVOICE accrual + dunning; LICENSE utilization metering. Unverified orgs capped (5 seats, invoice limits). SSO: domain claims, enforceSSO, JIT join (OIDC only; SAML and SCIM were removed before launch, PR #1878). Verification loop: PENDING_VERIFICATION → admin verify.
 
 ## Triage verdict (2026-07-12)
 
@@ -13,7 +13,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 | Wallet auto-top-up notify-only, no money moves (#777) | 🔵 TRACKED #777 |
 | `ENABLE_DUNNING_SUSPEND` off — orgs linger unpaid | 🔵 TRACKED #779 (by-design flag) |
 | Host economics / 3-way split behind `ENABLE_HOST_ORGS` | 🔵 by-design gate |
-| SCIM docs drift vs live `/scim/v2/**` | 🟡 LEGIT-DEFERRED (doc drift) |
+| SCIM docs drift vs live `/scim/v2/**` | ✅ RESOLVED-BY-REMOVAL (SCIM removed, PR #1878) |
 | PERSONAL funding reimbursement (#714) incomplete | 🟡 LEGIT-DEFERRED |
 | SSO settings PATCH last-write-wins (see concurrency file) | ✅ FIXED-BY #985 (version CAS) |
 | SCIM bypasses unverified seat governance (see concurrency file) | ✅ FIXED-BY #985 |
@@ -23,7 +23,6 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Wallet auto-top-up: schema + notify-only cron — **no money moves** (#777).
 - `ENABLE_DUNNING_SUSPEND` off — orgs may linger unpaid while still booking.
 - Host economics / 3-way split behind `ENABLE_HOST_ORGS`.
-- SCIM docs drift vs live `/scim/v2/**`.
 - PERSONAL funding reimbursement nuances (#714) incomplete product story.
 
 ## Unhappy paths & user psychology
@@ -61,10 +60,12 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Not B: Hides a working surface and worsens doc/code mismatch.  
 - Not C: Write 405 contradicts implemented SCIM and frustrates HRIS pilots.
 
+> Moot: SCIM was removed before launch (PR #1878).
+
 ## High concurrency / multi-device
 
 Wallet debit and seat adjust are race-safe. SSO JIT + invite accept concurrently for same email need membership uniqueness. Multi-device SSO login bumps session expectations.
 
 ## Suggested directions
 
-Honest UI for auto-top-up (“notify only”). Decide SCIM status and fix docs.
+Honest UI for auto-top-up (“notify only”).

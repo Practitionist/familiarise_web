@@ -1,6 +1,6 @@
 /**
  * #1653 — the people and access emails: support replies and status changes,
- * suspension and ban notices, the SSO certificate expiry and a new review.
+ * suspension and ban notices, and a new review.
  * Each sender takes user ids plus the raw values its call site already holds,
  * resolves recipients through the preference gate (a `null` category is a
  * required notice that the gate never blocks), and renders per recipient in
@@ -19,10 +19,6 @@ import AccountBannedEmail, {
 import AccountSuspendedEmail, {
   ACCOUNT_SUSPENDED_SUBJECT,
 } from "@/emails/account/AccountSuspendedEmail";
-import OrgSsoCertExpiringEmail, {
-  orgSsoCertExpiringSubject,
-  type SsoCertSeverity,
-} from "@/emails/organizations/OrgSsoCertExpiringEmail";
 import NewReviewEmail, {
   newReviewSubject,
 } from "@/emails/reviews/NewReviewEmail";
@@ -261,46 +257,6 @@ export function sendAccountBannedEmail(
         }),
     },
     [args.userId],
-    budgetMs,
-  );
-}
-
-// ── Organisation ────────────────────────────────────────────────────────────
-
-export interface OrgSsoCertExpiringEmailArgs {
-  orgId: string;
-  /** The org's OWNER roster, resolved by the caller. */
-  recipientUserIds: string[];
-  orgName: string;
-  providerName: string;
-  severity: SsoCertSeverity;
-  daysRemaining?: number;
-  notAfter: Date | string;
-  updateUrl: string;
-}
-
-export function sendOrgSsoCertExpiringEmail(
-  args: OrgSsoCertExpiringEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
-  return guarded(
-    {
-      emailType: "ORG_SSO_CERT_EXPIRING",
-      category: null,
-      from: SENDERS.security,
-      entityRef: `org:${args.orgId}`,
-      subject: () => orgSsoCertExpiringSubject(args),
-      render: (r) =>
-        React.createElement(OrgSsoCertExpiringEmail, {
-          orgName: args.orgName,
-          providerName: args.providerName,
-          severity: args.severity,
-          daysRemaining: args.daysRemaining,
-          expiresAtText: whenText(args.notAfter, r.zone),
-          updateUrl: absolute(args.updateUrl),
-        }),
-    },
-    args.recipientUserIds,
     budgetMs,
   );
 }

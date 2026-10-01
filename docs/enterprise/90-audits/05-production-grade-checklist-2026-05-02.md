@@ -12,6 +12,8 @@ last-reviewed: 2026-05-02
 > current enterprise status see [`readiness-audit`](01-readiness-audit.md) (v2 mega-audit
 > addendum, #777/#778/#779) and [`subsystem-checklist`](02-subsystem-checklist.md) (live
 > per-subsystem status). Kept for history; do not treat scores below as current.
+> SSO has since become OIDC-only (SAML removed before launch, PR #1878); see
+> [SSO](../../authentication/sso.md).
 
 Date: 2026-05-02
 

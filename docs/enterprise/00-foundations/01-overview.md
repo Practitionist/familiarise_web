@@ -227,7 +227,6 @@ erDiagram
     User ||--o| OrgWorkspaceProfile         : "operator identity"
     User ||--o{ ConsentArtifact             : "DPDP grants"
 
-    Membership ||--o| Member                : "betterAuthMemberId"
     Membership ||--o{ ProgramAssignment     : "entitled to"
     Membership }o--o| RateCard              : "override (optional)"
 
@@ -535,9 +534,8 @@ flowchart TD
     end
     subgraph IAM["Identity & Access"]
         Membership["Membership\nrole · status"]
-        Member["Member (BetterAuth)"]
         Invitation["Invitation"]
-        SSOSettings["OrganizationSSOSettings\nenforceSSO · breakGlassUntil"]
+        SSOSettings["OrganizationSSOSettings\nenforceSSO · defaultRoleForAutoJoin"]
         DomainClaim["OrgDomainClaim"]
         SsoProvider["SsoProvider"]
     end

@@ -77,7 +77,7 @@ Each flow maps to phases in [`subsystem-checklist`](02-subsystem-checklist.md). 
 6. **Billing → Invoices** — the DRAFT invoice; open the PDF. *(Phase 9)*
 7. **Audit** — every action you just took is logged; export CSV. *(Phase 6)*
 8. **Settings** — edit name/branding. Money-bearing fields (billing email, funding) are gated to OWNER/BILLING_ADMIN via the field-level RBAC disjunction (#779 §A) — sign in as a MANAGER to confirm they're hidden/blocked. *(Phase 0)*
-9. **Integrations** — Webhooks (create an endpoint, **rotate secret** → confirm the old secret still verifies for the 24h grace window, #777), SCIM (token), Data Exports (request one → poll until READY → download via the 7-day signed URL). *(Phases 4, 5, 19)*
+9. **Integrations** — Webhooks (create an endpoint, **rotate secret** → confirm the old secret still verifies for the 24h grace window, #777), Data Exports (request one → poll until READY → download via the 7-day signed URL). *(Phases 4, 19)*
 
 ### Flow B — Learner: covered booking → overage (the money path)
 **Login:** `olivia.anderson@gmail.com` (Wipro LEARNER).
@@ -118,7 +118,7 @@ Each flow maps to phases in [`subsystem-checklist`](02-subsystem-checklist.md). 
 
 ## 🆕 v2 lifecycle & money-safety flows (#777 / #778 / #779)
 
-These exercise the surfaces the v2 mega-audit added. Most are **full dashboard UI**; the two marked *(API/route-level)* have no dedicated button yet — drive them via the route (e.g. with the seeded session cookie) and verify the *effect* in the UI.
+These exercise the surfaces the v2 mega-audit added. Most are **full dashboard UI**; the step marked *(API/route-level)* has no dedicated button yet — drive it via the route (e.g. with the seeded session cookie) and verify the *effect* in the UI.
 
 ### Flow H — Wallet auto-top-up settings (HYBRID, WALLET org)
 **Login:** `charlotte.anderson@gmail.com` (IIT Madras OWNER) → **Billing → Wallet** tab.
@@ -134,10 +134,10 @@ These exercise the surfaces the v2 mega-audit added. Most are **full dashboard U
 1. **Terminate** the contract while a program has live assignments → the guard blocks ("cancel assignments first"). Cancel them, terminate → the cascade flips programs EXPIRED + assignments CLOSED in one tx (no zombies). *(Phase 7, #779 §A)*
 2. *(API/route-level)* **Supersede / amend / renew** — `POST /contracts/[contractId]/supersede` mints the replacement and chains `supersededByContractId` + `supersessionReason` (AMENDMENT / RENEWAL / TERMINATION_REPLACEMENT). Confirm the old row shows superseded and the new row is ACTIVE. Auto-renew is driven by `jobs/contracts/auto-renew-contracts.ts` (`autoRenewedAt` claim-gate), not a button.
 
-### Flow K — SSO break-glass open/close (any org with SSO)
+### Flow K — SSO enforcement (any org with an approved OIDC provider)
 **Login:** the org OWNER → **Settings → SSO**.
-1. Turn **Enforce SSO** on (password login now blocked for claimed domains). *(Phase 4)*
-2. *(API/route-level)* Simulate the IdP being down: `POST /sso/break-glass` opens a time-boxed window (`OrganizationSSOSettings.breakGlassUntil`) where password login is permitted again; the auth layer skips the `enforceSSO` gate while `breakGlassUntil > now`. Who/why is captured in the `OrgAuditLog` row the route emits. Closing = let it lapse or `DELETE` the window. *(#779 §E.)* **Note:** no dashboard control yet — verify via the route + an audit-log entry.
+1. Turn **Enforce SSO** on. It is refused (409) unless the org has a verified domain claim and at least one staff-approved provider. *(Phase 4)*
+2. Sign in with a password as any user whose email is on the claimed domain → refused with `SSO_REQUIRED`. There is no break-glass window; see [SSO](../../authentication/sso.md) for recovery when the IdP is down.
 
 ### Flow L — Consent grant / withdraw (DPDP §6(4))
 **Login:** any org OWNER/MANAGER → **Consent**.
@@ -189,7 +189,7 @@ These are **known, tracked gaps** — verifying them as "not there" is correct. 
 - **Payout disbursement** sits at PROCESSING (gated `ENABLE_LIVE_PAYOUTS`, #776 §B) — money doesn't leave the gateway yet.
 - **Dunning suspension cascade** is **config-gated off by default** (#812) — overdue reminders fire (7-day × 3), and stage 3 auto-suspends the org 7 days past the last reminder only when `ENABLE_DUNNING_SUSPEND` is set; with the flag unset there is no auto-suspend.
 - **Add-EXPERT UI** (#729), **expert appointment view** (#754) — not built.
-- **Contract supersede/renew + SSO break-glass** exist as **routes/crons, not dashboard buttons** yet (#777 §B / #779 §E) — drive them via the route (Flows J/K).
+- **Contract supersede/renew** exists as **routes/crons, not dashboard buttons** yet (#777 §B) — drive it via the route (Flow J).
 - IRN/e-invoice (`ENABLE_IRP_UPLOADER` off), GST TCS, Form 26Q/16A (`ENABLE_TDS_ADMIN_VIEW` off) — schema present, filing deferred (#778). Credit notes on refund **do** mint (#776).
 
 > **Now shipped in v2** (verify them as *present*, per the flows above): state-aware activation + action-center home (#777 §A / #779 §F), pre-checkout overage preview (#777 §C), invoice dunning reminders (#779 §A), cycle-engine rollover + contract cascade (#779 §A), program config-lock (#779 §B), wallet auto-top-up settings (#777 §C), self-serve verification resubmit (#779 §A), webhook secret rotation grace (#777).

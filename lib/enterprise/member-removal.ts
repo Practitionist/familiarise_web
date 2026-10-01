@@ -10,10 +10,7 @@ import {
   type GuardedMembership,
 } from "@/lib/enterprise/membership-guards";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
-import {
-  bumpUserSessionGeneration,
-  recomputeConsultantIsIndependent,
-} from "@/lib/api/organizations/membership-transitions";
+import { recomputeConsultantIsIndependent } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
 import type { OrgExpertRemovedPayload } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
@@ -81,9 +78,6 @@ async function removeInTx(
     where: { id: memberId, organizationId: orgId },
     to: "REMOVED",
   });
-  // Without the bump a removed member keeps acting on org routes until the
-  // cached session rotates (Phase B.5).
-  await bumpUserSessionGeneration(tx, current.userId);
   if (current.role === "EXPERT" && current.consultantProfileId) {
     await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
   }

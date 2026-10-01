@@ -844,7 +844,7 @@ export async function processOnboardingData(
       const pendingInvite = await prisma.invitation.findFirst({
         where: {
           email: validatedBody.email.toLowerCase(),
-          status: "pending",
+          status: "PENDING",
           expiresAt: { gt: new Date() },
         },
         select: { role: true },

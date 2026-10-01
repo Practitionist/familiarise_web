@@ -21,8 +21,8 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 | Rating denormalization vs review rows                                   | ✅ FIXED-BY #987                                                 |
 | Wallet cache vs ledger journal drift                                    | ✅ FIXED-BY #990 (freeze + page on reconcile `ok=false`)         |
 | Stream call exists before MeetingSession row (orphan window)            | 🟡 LEGIT-DEFERRED                                                |
-| BetterAuth `Member` vs `Membership` dual source                         | 🟡 LEGIT-DEFERRED (large)                                        |
-| SCIM/docs vs live implementation drift                                  | 🟡 doc drift (SCIM implemented; docs say parked)                 |
+| BetterAuth `Member` vs `Membership` dual source                         | ✅ resolved by removal (`Member` table dropped, PR #1878)        |
+| SCIM/docs vs live implementation drift                                  | ✅ resolved by removal (SCIM removed, PR #1878)                  |
 | Display currency vs INR settlement dual truth                           | 🔵 TRACKED #783                                                  |
 | Novu vs Resend delivery split brain                                     | 🟡 LEGIT-DEFERRED                                                |
 
@@ -44,11 +44,11 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Subscription status vs per-session slot state after partial reschedule (#448).
 - Rating denormalization vs review rows.
 - Novu vs Resend delivery split brain.
-- SCIM/docs vs live implementation drift (doc drift only — SCIM is implemented). Payment critical-bugs task file vs fixed code and consent “stub” comments vs live checks are both resolved per the verdict table above.
+- SCIM/docs drift: resolved by removing SCIM (PR #1878). Payment critical-bugs task file vs fixed code and consent “stub” comments vs live checks are both resolved per the verdict table above.
 
 ### Dual sources of truth
 
-- BetterAuth `Member` vs `Membership`.
+- ~~BetterAuth `Member` vs `Membership`~~ — resolved: the BetterAuth organization plugin and `Member` table were removed (PR #1878).
 - `User.role` vs org `MemberRole` (intentional but easy to misuse in UI).
 - Display currency vs INR settlement.
 - App validate-access vs Stream permissions.
@@ -101,6 +101,8 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
    - Not B: keeping the bridge forever preserves every UI misuse of the wrong role model
    - Not C: generating Membership from Member only still couples product auth to BetterAuth’s shape
 
+   > Done: the `Member` table and the BetterAuth organization plugin were removed in PR #1878; `Membership` is the only org-role source.
+
 ## High concurrency / multi-device
 
 Under spike, inconsistency windows lengthen (sweeper lag, pool wait, Stream breaker open). Multi-device users observe _different slices_ of the window and conclude the system is random.
@@ -109,5 +111,5 @@ Under spike, inconsistency windows lengthen (sweeper lag, pool wait, Stream brea
 
 1. Outbox or explicit “pending side effects” for payment Phase-2.
 2. PR template: lock order + idempotency key + fail-open/closed choice.
-3. Monthly “doc drift” pass on flags, SCIM, payment bug register, compliance stubs.
+3. Monthly “doc drift” pass on flags, payment bug register, compliance stubs.
 4. Prefer one user-visible status model for “money vs booking vs meeting” alignment.

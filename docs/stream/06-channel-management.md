@@ -180,8 +180,8 @@ for the full account and for the matching 100-member ceiling on channel
 creation.
 
 **It is session-gated.** The module is `"use server"`, so the action is
-remotely invocable and gates itself before any work: it reads the session with
-the cookie cache disabled (`getSession(true)`), rejects suspended accounts, and
+remotely invocable and gates itself before any work: it reads the session
+fresh from the database (`getSession(true)`), rejects suspended accounts, and
 allows only self or privileged (`isPrivileged`) callers — mirroring
 `assertCanMintToken` in `actions/stream/chat/stream.action.ts`. The gate fires
 before the `force` path clears the sync dedup guard, so an unauthenticated call

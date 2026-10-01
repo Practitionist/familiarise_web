@@ -24,14 +24,33 @@ import {
  * Use this at the start of protected API route handlers.
  *
  * Always reads force-fresh, and there is deliberately no opt-out. Session
- * revocation is invisible to a cached read, and `session.user.role` comes from
- * the cookie payload — ~86 call sites branch on that role directly (e.g. the
- * ADMIN gate on DELETE /api/bookings/subscriptions/[id]), so a stale read
- * honours a demotion up to 5 minutes late. The cookie cache would save roughly
- * one query in four anyway, because customSession re-runs its enrichment on
- * every call regardless.
+ * revocation is invisible to a cached read, and ~86 call sites branch on
+ * `session.user.role` directly (e.g. the ADMIN gate on DELETE
+ * /api/bookings/subscriptions/[id]), so a stale read would honour a demotion
+ * late.
+ *
+ * A STAFF/ADMIN session without enrolled 2FA is refused here with 428
+ * `TWO_FACTOR_REQUIRED`, so the inline role checks behind this helper cannot
+ * hand operator powers to a password-only session. Enrolment itself runs on
+ * BetterAuth's /two-factor/* endpoints, which never reach this helper.
  */
 export async function requireApiAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiSession();
+  if (auth.error) return auth;
+  const refused = twoFactorPrecondition(auth.session);
+  if (refused) return { error: refused };
+  return auth;
+}
+
+/**
+ * {@link requireApiAuth} without the operator 2FA precondition: the session
+ * exists and is not banned, nothing more. Only for routes an operator must
+ * reach before enrolling, and which hand out nothing privileged — today the
+ * session liveness probe (app/api/user/sessions/current).
+ */
+export async function requireApiSession(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const lookup = await lookupSession(true);
@@ -68,6 +87,30 @@ export async function requireApiAuth(): Promise<
   return { session };
 }
 
+/**
+ * 428 for an operator whose account has no enrolled second factor, else null.
+ *
+ * `twoFactorEnabled` comes from the session payload, which customSession
+ * rebuilds from the user row on every read (the cookie cache is off), so it is
+ * as fresh as a column read. 428 rather than 403: the operator may do this
+ * once enrolled, and the `enroll-2fa` action points the client at the
+ * enrolment page.
+ */
+function twoFactorPrecondition(session: Session): NextResponse | null {
+  if (!isPrivileged(session.user.role)) return null;
+  if (session.user.twoFactorEnabled === true) return null;
+  return NextResponse.json(
+    {
+      error: "Set up two-factor authentication before using the back office.",
+      code: "TWO_FACTOR_REQUIRED",
+    },
+    {
+      status: 428,
+      headers: { "X-Auth-Action": "enroll-2fa" },
+    },
+  );
+}
+
 /** Seconds a client waits before retrying a failed session lookup (#1716). */
 export const SESSION_LOOKUP_RETRY_AFTER_SECONDS = 2;
 
@@ -86,7 +129,7 @@ export function sessionLookupFailedResponse(): NextResponse {
 }
 
 /**
- * Checks if a user has privileged access (ADMIN or STAFF role).
+ * Checks if the user has privileged access (ADMIN or STAFF role).
  *
  * Prefer the typed helpers below in API handlers — this is here for
  * places that just need a boolean branch (e.g., conditional DB queries).
@@ -558,11 +601,6 @@ export async function requireOrgAccess(
       payoutRecipient: "SELF",
       rateCardOverrideId: null,
       exclusiveEngagement: false,
-      betterAuthMemberId: null,
-      // PR #655 SCIM addition — the stub satisfies the Membership type
-      // by tracking every schema column. Admin sessions never have a
-      // SCIM-provisioned identity by definition; nullable column.
-      externalScimId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

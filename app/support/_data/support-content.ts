@@ -201,7 +201,7 @@ export const supportCategories: SupportCategory[] = [
     slug: "organizations",
     title: "For organizations",
     description:
-      "Sponsorship models, wallet and invoice billing, members and roles, SSO/SCIM.",
+      "Sponsorship models, wallet and invoice billing, members and roles, SSO.",
     icon: "organizations",
     subcategories: [
       {
@@ -213,7 +213,7 @@ export const supportCategories: SupportCategory[] = [
         description: "Wallet, invoices, invites, and roles.",
       },
       {
-        title: "SSO, SCIM & retention",
+        title: "SSO & retention",
         description: "Identity setup, support, and data retention.",
       },
     ],
@@ -336,7 +336,7 @@ export const supportArticles: SupportArticle[] = [
     updated: "September 2026",
     contactCategory: "technical",
     related: [
-      "organizations/sso-scim-setup",
+      "organizations/sso-setup",
       "getting-started/sign-in-and-password",
     ],
     sections: [
@@ -1239,7 +1239,7 @@ export const supportArticles: SupportArticle[] = [
       "Invite tokens, owner vs billing admin, and the verification lifecycle.",
     updated: "September 2026",
     contactCategory: "enterprise",
-    related: ["organizations/sso-scim-setup", "getting-started/sso-sign-in"],
+    related: ["organizations/sso-setup", "getting-started/sso-sign-in"],
     sections: [
       {
         heading: "Invites and roles",
@@ -1256,11 +1256,10 @@ export const supportArticles: SupportArticle[] = [
     ],
   },
   {
-    slug: "sso-scim-setup",
+    slug: "sso-setup",
     category: "organizations",
-    title: "How do we set up SAML/OIDC SSO and SCIM?",
-    excerpt:
-      "Domain claims, provider setup, certificate rotation, and expiry alerts.",
+    title: "How do we set up OIDC SSO?",
+    excerpt: "Domain claims and OIDC provider setup.",
     updated: "September 2026",
     contactCategory: "enterprise",
     related: ["organizations/members-roles", "getting-started/sso-sign-in"],
@@ -1268,13 +1267,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Setup path",
         paragraphs: [
-          "Verify your email domain first — verified domains cannot be claimed by another organisation. Then configure your SAML or OIDC provider with the values from the admin console, enable JIT provisioning or SCIM sync for automatic account creation, and test with a pilot group before enforcing SSO.",
-        ],
-      },
-      {
-        heading: "Certificates and alerts",
-        paragraphs: [
-          "SAML certificates expire. Admins receive expiry alerts ahead of time — rotate the certificate (re-paste the X.509 PEM) before it lapses, or sign-ins will fail. SCIM tokens and group mappings control who syncs; rotate tokens immediately if exposed.",
+          "Verify your email domain first — verified domains cannot be claimed by another organisation. Then configure your OIDC provider with the values from the admin console, enable JIT provisioning for automatic account creation, and test with a pilot group before enforcing SSO.",
         ],
       },
     ],

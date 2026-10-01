@@ -116,10 +116,18 @@ export function reportAuthLogToSentry(
     ) {
       return;
     }
-    // Messages can carry variable text, so cap the map; resetting it only
-    // lets one extra event per message through.
+    // Messages can carry variable text, so the map is capped. When full, drop
+    // expired keys; if it is still full, skip Sentry (console has it) rather
+    // than reset, which would let every cycle of 101 messages through again.
     if (lastSchemaMessageAtByKey.size >= SCHEMA_MESSAGE_THROTTLE_MAX_KEYS) {
-      lastSchemaMessageAtByKey.clear();
+      for (const [key, at] of lastSchemaMessageAtByKey) {
+        if (now - at >= SCHEMA_MESSAGE_THROTTLE_MS) {
+          lastSchemaMessageAtByKey.delete(key);
+        }
+      }
+      if (lastSchemaMessageAtByKey.size >= SCHEMA_MESSAGE_THROTTLE_MAX_KEYS) {
+        return;
+      }
     }
     lastSchemaMessageAtByKey.set(message, now);
     Sentry.captureMessage(`[better-auth] ${message}`, {

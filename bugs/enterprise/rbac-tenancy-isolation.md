@@ -2,7 +2,7 @@
 
 ## Context
 
-Org RBAC: `MemberRole` ladder + surface permissions (`members.manage`, `billing.manage`, …). Enforcement: `requireOrgAccess` requires ACTIVE membership (ADMIN stub exception), optional capability/funding gates. BetterAuth `Member` kept for invite tokens; `Membership` is source of truth. LEARNER ↔ EXPERT transitions blocked — remove and re-invite.
+Org RBAC: `MemberRole` ladder + surface permissions (`members.manage`, `billing.manage`, …). Enforcement: `requireOrgAccess` requires ACTIVE membership (ADMIN stub exception), optional capability/funding gates. `Membership` is the only source of truth (the BetterAuth `Member` table was removed in PR #1878). LEARNER ↔ EXPERT transitions blocked — remove and re-invite.
 
 ## Triage verdict (2026-07-12)
 

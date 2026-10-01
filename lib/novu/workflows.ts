@@ -151,7 +151,6 @@ export const NOVU_WORKFLOWS = {
   // now owes. In-app to the member only (their personal payment obligation).
   ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",
   ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
-  ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
   // A7: notify the consultant that their EXPERT membership at an org was
   // soft-deleted. Triggered from the member DELETE handler.
   ORG_EXPERT_REMOVED: "org-expert-removed",
@@ -1011,22 +1010,6 @@ export type OrgSsoProviderDeletedPayload = {
   deletedByName: string;
   dashboardUrl: string;
 };
-
-export type OrgSsoCertExpiringPayload = {
-  orgName: string;
-  providerId: string;
-  daysRemaining: number;
-  severity: "WARN" | "CRITICAL" | "EXPIRED";
-  /** Friendly, in the recipient's timezone. */
-  notAfter: string;
-  notAfterIso?: string;
-  dashboardUrl: string;
-};
-
-export type OrgSsoCertExpiringInput = Omit<
-  OrgSsoCertExpiringPayload,
-  "notAfterIso"
->;
 
 // A1+A8: discriminated payload for the failed/reversed payout webhook
 // fan-out. `kind` distinguishes a gateway rejection (FAILED) from a bank

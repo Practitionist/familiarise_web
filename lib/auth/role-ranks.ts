@@ -11,9 +11,8 @@ import type { MemberRole } from "@prisma/client";
  * the matrix; a jest pin refuses a rank check under app/api/organizations.
  *
  * What still reads the numbers: picking the "most operator-like" org to land
- * on (`lib/labels/org-labels.ts`) and choosing one role when a SCIM user sits
- * in several mapped groups (`lib/scim/resource-user.ts`). Both are ordering
- * questions, not permission ones.
+ * on (`lib/labels/org-labels.ts`). That is an ordering question, not a
+ * permission one.
  *
  * The steps of ~20 leave room for a future role between two rungs without
  * renumbering the rest.

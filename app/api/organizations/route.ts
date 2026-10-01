@@ -290,24 +290,12 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // OWNER Membership + a matching BetterAuth Member for invitation
-      // + org-scope session support. The Member row's id becomes the
-      // betterAuthMemberId pointer on Membership so the bridge is live
-      // from the moment the org exists.
-      const betterAuthMember = await tx.member.create({
-        data: {
-          organizationId: org.id,
-          userId: auth.session.user.id,
-          role: "OWNER",
-        },
-      });
       const membership = await tx.membership.create({
         data: {
           userId: auth.session.user.id,
           organizationId: org.id,
           status: "ACTIVE",
           role: "OWNER",
-          betterAuthMemberId: betterAuthMember.id,
         },
       });
 
