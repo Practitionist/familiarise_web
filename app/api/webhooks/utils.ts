@@ -1755,30 +1755,9 @@ export async function handleDisputeUpdated(
               });
             }
 
-            // #1020-2 — a PAID consultant share means the cash already left in
-            // a COMPLETED payout. The STATE is now truthful (REFUNDED + TDS
-            // reversed) and the recovery is now AUTOMATIC: the clawback is
-            // booked as a receivable on the consultant's ledger
-            // (`Dr CONSULTANT_RECEIVABLE / Cr PLATFORM_FEE`) rather than
-            // vanishing. Ops are still paged once per dispute, because the page
-            // is the only thing that names the earnings and the disputed total
-            // an operator has to go and collect — see the staged page below.
-            // GROSS vs NET, deliberately two different numbers, computed ONCE.
-            //
-            // `reversalNow` is the GROSS share the consultant no longer earned,
-            // and it is the right figure for `refundedShareAmount` — that column
-            // measures earnings, not cash. But the CASH that left was the
-            // payout's NET: TDS was withheld at source and never transferred.
-            // Clawing back the gross would demand money the platform never sent,
-            // and specifically the withheld tax, which belongs to the government
-            // and is already handled separately by `recordTdsReversal` above.
-            //
-            // `ConsultantPayout.amount` is the gross and `tdsDeducted` the
-            // withholding, so `amount - tdsDeducted` is the figure that left.
-            // Derived rather than read from the nullable `netAmount`, which is
-            // staged pre-gateway and so is not guaranteed present on every row.
-            // `tdsDeducted` is 0 for a payout with no withholding, making the
-            // scale exactly 1 — so a TDS-free payout claws back the gross.
+            // A PAID share already left in a COMPLETED payout: book the NET
+            // (amount - tdsDeducted) as a receivable; the withheld tax is
+            // reversed separately by recordTdsReversal.
             const payoutGross = Number(earning.payout?.amount ?? 0);
             const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
             const netFraction =

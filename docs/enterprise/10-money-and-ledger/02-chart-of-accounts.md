@@ -45,7 +45,7 @@ classDiagram
 | `ORG_RECEIVABLE` | asset | DEBIT | org | an INVOICE-funded org owes us; accrued at booking, cleared on invoice payment |
 | `WALLET` | liability | CREDIT | org | prepaid balance we owe the org (an IOU) |
 | `CONSULTANT_PAYABLE` | liability | CREDIT | consultant | earnings owed to a consultant, not yet paid out |
-| `CONSULTANT_RECEIVABLE` | asset | DEBIT | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning. There is no inbound bank-pull on the consultant rail, so the amount is **recovered by hand** — the ledger entry makes the debt visible and reconcilable rather than losing it. Net of TDS: the transfer was net, and the withheld tax is `TDS_PAYABLE`'s, reversed separately |
+| `CONSULTANT_RECEIVABLE` | asset | DEBIT | consultant | clawback owed BY a consultant after a lost dispute on an already-paid earning, posted `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`: it reclassifies the debit the chargeback reversal left on the payable and never touches revenue. No settlement path yet (recovered by hand). Net of TDS |
 | `ORG_PAYABLE` | liability | CREDIT | org | host-org share owed, not yet paid out |
 | `TDS_PAYABLE` | liability | CREDIT | platform | TDS withheld at payout, owed to the government |
 | `GST_PAYABLE` | liability | CREDIT | platform | GST collected on a booking, owed to the government |

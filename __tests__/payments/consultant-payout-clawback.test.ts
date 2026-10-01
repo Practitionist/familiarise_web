@@ -9,7 +9,7 @@
  * Pins the four properties the gap report calls out:
  *
  *   1. it posts exactly ONE balanced journal, and the journal is a receivable
- *      (`Dr CONSULTANT_RECEIVABLE / Cr PLATFORM_FEE`) rather than the org
+ *      (`Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`) rather than the org
  *      rail's `Dr CASH / Cr ORG_PAYABLE` — the consultant rail has no
  *      reverse-transfer, so a CASH debit would assert money the platform does
  *      not hold;
@@ -149,8 +149,10 @@ describe("applyReversal — CONSULTANT_CLAWBACK: the posting itself", () => {
       direction: "DEBIT",
       amountPaise: 50_000,
     });
+    // Reclassification only: revenue (PLATFORM_FEE) never moves.
+    expect(arg.postings.map((p) => p.account.kind)).not.toContain("PLATFORM_FEE");
     expect(credit).toEqual({
-      account: { kind: "PLATFORM_FEE" },
+      account: { kind: "CONSULTANT_PAYABLE", consultantProfileId: "cp_xyz" },
       direction: "CREDIT",
       amountPaise: 50_000,
     });
