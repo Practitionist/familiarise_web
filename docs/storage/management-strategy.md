@@ -374,95 +374,9 @@ sequenceDiagram
 
 ## Cleanup Strategy
 
-### 1. Daily Automated Cleanup
+### 1. Empty Folders
 
-**Schedule**: Every day at 9:00 AM IST (3:30 AM UTC)
-**Trigger**: GitHub Actions workflow
-
-```yaml
-# .github/workflows/cleanup-empty-folders.yml
-schedule:
-  - cron: "30 3 * * *" # 9 AM IST daily
-```
-
-**Process:**
-
-1. **Folder Scanning**: Traverses entire appointment hierarchy
-2. **Empty Detection**: Identifies folders with no actual files
-3. **Cleanup**: Removes placeholder files and empty markers
-4. **Reporting**: Logs summary of cleanup actions
-
-#### Automated Cleanup Process Flow
-
-```mermaid
-graph TD
-    A[GitHub Actions Trigger<br/>Daily 9:00 AM IST] --> B[Start Cleanup Script]
-
-    B --> C[Initialize Supabase Client]
-    C --> D{Documents Bucket Exists?}
-    D -->|No| E[No Cleanup Needed]
-    D -->|Yes| F[Scan appointments/ folder]
-
-    F --> G[For Each Appointment Folder]
-    G --> H[Scan Consultee Subfolders]
-    H --> I{Folder Empty?}
-
-    I -->|No| J[Check File Age]
-    J --> K{Files > 30 days old?}
-    K -->|Yes| L[Mark as Stale<br/>Log for Review]
-    K -->|No| M[Folder Has Valid Files]
-
-    I -->|Yes| N{Empty > 7 days?}
-    N -->|No| O[Skip - Recently Empty]
-    N -->|Yes| P[Remove Placeholder Files]
-    P --> Q[Delete .keep, .gitkeep, placeholder]
-    Q --> R[Mark Folder as Cleaned]
-
-    R --> S{More Consultee Folders?}
-    M --> S
-    L --> S
-    O --> S
-
-    S -->|Yes| H
-    S -->|No| T{Appointment Folder Empty?}
-
-    T -->|Yes| U[Clean Appointment Folder]
-    T -->|No| V[Keep Appointment Folder]
-
-    U --> W{More Appointment Folders?}
-    V --> W
-
-    W -->|Yes| G
-    W -->|No| X[Generate Cleanup Report]
-
-    X --> Y[Log Statistics:<br/>- Folders Checked<br/>- Empty Folders Found<br/>- Folders Cleaned<br/>- Stale Files Detected<br/>- Errors Encountered]
-
-    Y --> Z{Errors > 0?}
-    Z -->|Yes| AA[Report Errors<br/>Exit with Error Code]
-    Z -->|No| BB[Cleanup Complete<br/>Exit Successfully]
-
-    E --> CC[Log: No Action Needed]
-
-    %% Error Handling
-    D --> DD{Connection Error?}
-    DD -->|Yes| EE[Log Network Error<br/>Retry Logic]
-    EE --> FF{Retry Success?}
-    FF -->|No| GG[Exit with Error]
-    FF -->|Yes| F
-
-    %% Safety Checks
-    P --> HH{Safety Check}
-    HH --> II{Has DB Record?}
-    II -->|Yes| JJ[Skip - File Still Referenced]
-    II -->|No| Q
-
-    style A fill:#e3f2fd
-    style BB fill:#c8e6c9
-    style AA fill:#ffcdd2
-    style GG fill:#ffcdd2
-    style L fill:#fff3e0
-    style JJ fill:#e8f5e8
-```
+Supabase Storage folders are virtual prefixes, so an empty folder costs nothing and is not swept. The former daily `cleanup-empty-folders` job was removed as cosmetic.
 
 ### 2. Stale Data Management
 
@@ -629,16 +543,6 @@ sequenceDiagram
 - **Storage Size**: Track total storage usage
 - **Cleanup Efficiency**: Monitor empty folder cleanup success rate
 
-### 2. Health Checks
-
-```bash
-# Manual cleanup execution
-npm run scripts:cleanup-empty-folders
-
-# Development cleanup with detailed output
-npm run scripts:cleanup-empty-folders:dev
-```
-
 ### 3. Error Monitoring
 
 - **Failed Uploads**: Track and investigate upload failures
@@ -727,13 +631,6 @@ npm run scripts:cleanup-empty-folders:dev
 ```bash
 Solution: The system will automatically create the bucket on first upload
 Status: Fixed with ensureBucketExists() function
-```
-
-**2. Empty Folder Accumulation**
-
-```bash
-Solution: Daily cleanup script removes empty folders automatically
-Manual: Run `npm run scripts:cleanup-empty-folders`
 ```
 
 **3. Permission Denied**

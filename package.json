@@ -38,8 +38,6 @@
     "knip": "npx --yes knip@5.88.1 --no-exit-code",
     "postinstall": "prisma generate",
     "scripts:analyze": "npm run build:analyze && npx tsx scripts/utils/analyze-bundle.ts",
-    "scripts:cleanup-empty-folders": "npx tsx scripts/utils/cleanup-empty-folders.ts",
-    "scripts:cleanup-empty-folders:dev": "tsx scripts/utils/cleanup-empty-folders.ts",
     "scripts:test-bucket": "npx tsx tests/typescript/test-bucket-creation.ts",
     "scripts:create-bucket": "npx tsx scripts/utils/create-documents-bucket.ts",
     "scripts:find-unused-imports": "npx tsx scripts/utils/find-unused-imports.ts",

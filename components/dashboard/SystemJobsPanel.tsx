@@ -196,13 +196,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Weekly",
     category: "Cleanup",
   },
-  {
-    id: "deactivate-expired-discounts",
-    name: "Deactivate Expired Discounts",
-    description: "Deactivate discount codes past expiresAt or at max uses",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
   // Reconciliation
   {
     id: "reconcile-payment-status",
