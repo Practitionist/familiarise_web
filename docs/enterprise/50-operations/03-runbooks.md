@@ -3,7 +3,7 @@ title: Operational runbooks
 band: 50-operations
 audience: sde4
 status: partial
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-01
 ---
 
 # Operational runbooks
@@ -183,14 +183,13 @@ These jobs assemble and submit the weekly payout batch, reconcile in-flight tran
 
 ### Compliance & SSO
 
-Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadline alerting, MSME payment notices, SSO certificate expiry, consent retention, audit-log pruning, and the DPDP §11 data-export worker — note which ones carry a ⚠️ indicating no active workflow file.
+Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadline alerting, MSME payment notices, consent retention, audit-log pruning, and the DPDP §11 data-export worker — note which ones carry a ⚠️ indicating no active workflow file.
 
 | Workflow                     | Script                                                                             | Cron (UTC)               | What it does                                                                                                                                                                                                                                                                                           |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `irp-uploader`               | `jobs/compliance/irp-uploader.ts`                                                  | `30 2 * * *` (08:00 IST) | E-invoice IRN generation via ClearTax GSP. **Gated by `ENABLE_IRP_UPLOADER`**; stubbed sub-₹5cr returns `{status:"FAILED",reason:"STUB"}` recorded as a normal retry.                                                                                                                                  |
 | `databreach-deadline-alerts` | `jobs/compliance/databreach-deadline-alerts.ts`                                    | `15 * * * *` (hourly)    | DPDP 72h breach-report deadline alerts (`event:"dpdp.databreach.deadline"`). Hourly because the cutoff is sharp.                                                                                                                                                                                       |
 | `msme-payment-alerts`        | `jobs/compliance/msme-payment-alerts.ts`                                           | `30 4 * * *`             | MSME §43B(h) at-risk-payout email to finance. Degrades to log-only if `MSME_ALERT_EMAIL`/`RESEND_API_KEY` unset.                                                                                                                                                                                       |
-| `sso-cert-expiry-alert`      | `jobs/cleanup/sso-cert-expiry-alert.ts`                                            | `0 3 * * *` (08:30 IST)  | SP/IdP cert expiry: 30d WARN / 7d CRITICAL → `SSO_CERT_EXPIRING` audit row.                                                                                                                                                                                                                            |
 | `consent-retention-sweeper`  | `jobs/compliance/consent-retention-sweeper.ts` ⚠️                                  | **NOT SCHEDULED**        | DPDP `ConsentArtifact` retention sweep (`DPDP_SWEEPER_DELETE`-gated). ⚠️ **The job exists but has no workflow file** as of 2026-06-05 — its docstring claims "weekly Sunday 03:00 IST" but nothing fires it. Run manually until a workflow is added, or treat retention deletion as not-yet-automated. |
 | `prune-audit-logs`           | `jobs/cleanup/prune-audit-logs.ts`                                                 | `15 3 * * *`             | Deletes audit rows past retention (7y financial / 2y other); one `AUDIT_PRUNED` summary row per org.                                                                                                                                                                                                   |
 | `process-data-exports`       | `jobs/cleanup/process-data-exports.ts` → `scripts/cleanup/process-data-exports.ts` | `*/10 * * * *` (≈10 min) | DPDP §11 right-to-access worker: drains pending `OrgDataExportJob` rows, builds the bundle, writes `DATA_EXPORT_GENERATED`/`_FAILED`. On failure writes the clean prose audit row + a raw `SystemEvent` (`category=DATA_EXPORT`, `correlationId=job.id`). Outputs `picked/succeeded/failed`.           |
@@ -747,94 +746,98 @@ the error was captured in the structured-log output. Any other exit
 code indicates the script crashed before completing — check the
 last log line for a stack trace.
 
-## 🗓️ Re-opening the CSP report-only window (rollback)
+## Content Security Policy (CSP)
 
-**The CSP is now ENFORCING by default.** `ENABLE_CSP_ENFORCE` is
-opt-**out**: `const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE !== "false"`
-(`next.config.mjs`). Unset means enforce, and only an explicit `false`
-ships `Content-Security-Policy-Report-Only`. The previous opt-in
-behaviour — where unset meant report-only, which is what production
-always had — is gone, because a flag that is off unless switched on is
-off in every deployment that forgets, and forgetting is the normal
-case. That is how the observation window was never closed.
+Launch ships `Content-Security-Policy-Report-Only`. `next.config.mjs` reads
+`ENABLE_CSP_ENFORCE` **at build time**; only `true` switches the header to
+`Content-Security-Policy`. Violations go straight to Sentry's security endpoint
+(derived from `NEXT_PUBLIC_SENTRY_DSN`) via `report-uri` and
+`report-to csp-endpoint`; there is no app-side report route. A build without a
+DSN sends no reports.
 
-Violations still stream to `/api/csp-report` in both modes and surface
-as `event: "csp_violation"` lines in the structured log; after
-enforcement they are attached to a *blocked* request rather than an
-allowed one. `Reporting-Endpoints: csp-endpoint="<app-url>/api/csp-report"`
-carries the absolute endpoint the Reporting API needs, alongside the
-legacy `report-uri`.
+> ⚠️ **Every change here is a redeploy, not a config push.** The value is baked
+> into the `headers()` output when the config is evaluated.
 
-> ⚠️ **A rollback is a REDEPLOY, not a config push.** The flag is read
-> at config-evaluation time and lands in the `headers()` output, so a
-> production env change does not take effect until the next deploy.
-> An earlier revision of this runbook said "no restart required" —
-> that was **wrong**, and it understated the rollback window by a full
-> deploy.
+**Switching enforcement on:**
 
-**Cutover protocol** — do not flip before completing this:
+1. **Observe.** In Sentry, filter to CSP reports for production. Group by
+   violated directive and blocked URI. A blocked URI that is a real dependency
+   (new SDK, new Stream region, a payment origin) is a candidate; browser
+   extensions and crawlers are noise.
+2. **Fix.** Add legitimate origins to the matching directive in
+   `CSP_DIRECTIVES` (`next.config.mjs`), deploy, and keep observing until only
+   noise remains. A cluster on one suspicious `blocked-uri` (for example a
+   `data:` payload) is an attack the window surfaced: leave it out.
+3. **Enforce.** Set `ENABLE_CSP_ENFORCE=true` in the production build
+   environment and redeploy. `curl -sI` the site and confirm the header key is
+   `content-security-policy`.
+4. **Smoke.** Load `/`, `/auth/signin`, an org billing page and a Razorpay
+   checkout end to end. Checkout is the highest-risk path: a missing
+   `frame-src` or `script-src` entry breaks payments for everyone.
 
-1. **Day 0 → Day 7 (observe).** Tail production logs filtered to
-   `event: "csp_violation"`. Expected steady-state shape:
+**Rollback.** Remove `ENABLE_CSP_ENFORCE` (or set it to anything but `true`)
+and redeploy. Re-enable in the same change that fixes the allow-list.
+
+**Never add** `*`, `data:` in `script-src`, or wildcard schemes. The allow-list
+and per-directive rationale:
+[`05-security-headers.md`](../20-iam-and-security/05-security-headers.md).
+
+## SSO secret key rotation
+
+`AUTH_CONFIG_ENCRYPTION_KEY` encrypts each OIDC provider's client secret at
+rest. To rotate it:
+
+1. Set `AUTH_CONFIG_ENCRYPTION_KEY` to the new key and
+   `AUTH_CONFIG_ENCRYPTION_KEY_PREVIOUS` to the old one. Redeploy. Reads accept
+   either key; writes use the new one.
+2. Re-encrypt every stored secret with the new key:
+
+   ```bash
+   npx tsx -r dotenv/config scripts/rotate-sso-secret-key.ts
    ```
-   { "event": "csp_violation", "ip": "...", "ua": "...",
-     "report": { "csp-report": { "violated-directive": "...",
-                                  "blocked-uri": "...",
-                                  "document-uri": "..." } } }
-   ```
-   Tally by `violated-directive`. Anything **outside** the directive
-   list in `next.config.mjs` `CSP_DIRECTIVES` is a real candidate;
-   anything inside is browser noise (extensions injecting scripts,
-   crawlers ignoring CSP, etc.).
-2. **Day 7 (review).** Aggregate the violation counts. Two checks:
-   - Are any LEGITIMATE third-party resources getting blocked? If
-     yes → add the domain to the matching `script-src` /
-     `connect-src` / etc. directive in `next.config.mjs` and start
-     the 7-day clock again. Common offenders: a new monitoring SDK,
-     a new analytics endpoint, a new Stream.io region.
-   - Are any reports clustering on a single `blocked-uri` that looks
-     malicious (e.g. `data:` URI with base64 payload)? If yes →
-     leave it blocked AND flip enforce; the report-only window
-     surfaced an attack.
-3. **Day 7 — close the window (already done).** Enforcement is the
-   default and the header key is `Content-Security-Policy`. Same
-   allow-list, same report destination.
-4. **Day 7 + 24h (smoke).** Curl-fetch `/`, `/auth/signin`,
-   `/dashboard/organization/[orgId]/billing` for an active customer
-   org and verify the dashboard still loads end-to-end. Razorpay
-   checkout popup is the highest-risk path — a missing entry in
-   `frame-src` or `script-src` here will break payments. Cloudflare
-   Turnstile is the second (sign-up / sign-in / password-reset), and
-   it is the one whose absence is silent: the widget renders nothing
-   when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset.
-5. **Rollback path.** If enforce breaks anything: set
-   `ENABLE_CSP_ENFORCE=false` in the production Netlify context,
-   then **redeploy**. The build prints a loud `CSP IS ADVISORY` banner
-   in `console.warn` on every production build while the flag is off —
-   `compiler.removeConsole` does not strip `warn`, so read the deploy
-   log. Put the flag back and redeploy forward in the same change that
-   fixes the allow-list; the flag is meant to be a deliberate,
-   temporary step and not a resting state.
 
-**What NEVER goes in the directive list:** `*`, `'unsafe-eval'` in
-`connect-src`, `data:` in `script-src`. Each of these defeats the
-purpose. The current allow-list is documented in
-`docs/enterprise/20-iam-and-security/05-security-headers.md` with the rationale per
-directive.
+3. Continue only when it prints `Re-encrypted N of N` and exits 0. Otherwise
+   fix the failing provider and run it again (it is safe to re-run).
+4. Remove `AUTH_CONFIG_ENCRYPTION_KEY_PREVIOUS` and redeploy.
 
-**Reporter URL note.** `/api/csp-report` is unauthenticated by
-design — the browser is the originator, not the user. It is
-rate-limited by `cspReportLimiter` (120/min on IP), **not**
-`spamLimiter`: a browser emits one report per violated directive per
-navigation, so a single person opening a few dashboard pages exhausted
-the old 5/hour budget and every subsequent report was 429'd — which
-made the rollout blind in exactly the situation it existed to observe.
-Size any future report sink's limiter by who generates the traffic,
-not by how much you want to receive.
+`BETTER_AUTH_SECRET` is a different secret: it signs session cookies and
+encrypts TOTP secrets and backup codes. Replacing it outright signs everyone out
+and breaks every operator's 2FA. Rotate it with BetterAuth's versioned
+`BETTER_AUTH_SECRETS` (`2:new,1:old`) so old values still decrypt. Detail:
+[`sso.md`](../../authentication/sso.md).
 
-**Full reference.**
-[`docs/enterprise/20-iam-and-security/05-security-headers.md`](../20-iam-and-security/05-security-headers.md)
-carries the complete directive list with per-directive rationale,
-including the three added without a compatibility cost
-(`object-src 'none'`, `base-uri 'self'`, `form-action 'self'`) and the
-`challenges.cloudflare.com` entries in `script-src` and `frame-src`.
+## Staff off-boarding
+
+There is no permanent removal or role demotion in the app yet. To cut an
+operator off:
+
+1. An ADMIN opens **Team**, picks the operator and chooses **Suspend**, with a
+   reason (at least 5 characters) and a duration of 1–365 days.
+2. Suspend bans the account and deletes every session in one step, so access
+   ends on the operator's next request. It refuses to suspend yourself or the
+   last ADMIN, and writes an `OpsActionLog` row.
+3. The ban lapses at the first sign-in after its expiry. Put a calendar
+   reminder on the end date and suspend again, or change the role in the
+   database, until a permanent off-boarding action ships.
+
+**Reactivate** on the same page lifts a suspension early. Detail:
+[`staff-onboarding.md`](../../authentication/staff-onboarding.md).
+
+## Lost authenticator (admin 2FA reset)
+
+1. The operator can still sign in with a **backup code** (each works once)
+   and generate fresh codes in their 2FA settings. Operators cannot turn 2FA
+   off, so moving to a new authenticator needs the reset below.
+2. If no backup code is left, confirm their identity **out of band** (video
+   call, manager confirmation). Whoever holds the password when 2FA is reset
+   enrols the new authenticator.
+3. An ADMIN opens **Team** and chooses **Reset 2FA** with a reason. This deletes
+   the stored TOTP secret and backup codes, clears `twoFactorEnabled` and ends
+   every session for that operator. It is audited as `team.member.reset-2fa`.
+4. The operator signs in with their password and is sent straight to
+   `/auth/two-factor/setup`; nothing else is reachable until they enrol.
+
+If the **only** ADMIN loses their authenticator, nobody can open Team. Recovery
+needs direct database access (delete their `TwoFactor` row and set
+`twoFactorEnabled = false`, then delete their sessions). `scripts/bootstrap-admin.ts`
+cannot help: it refuses once any ADMIN exists. Keep at least two ADMINs.
