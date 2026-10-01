@@ -239,7 +239,7 @@ jobs:
       - name: Push schema + sidecars
         # `db push` alone drops the ledger trigger and every CHECK; sidecars restore them.
         run: |
-          npx prisma db push
+          node_modules/.bin/prisma db push
           npm run db:sidecars
 
       - name: Database sidecar + drift guard
