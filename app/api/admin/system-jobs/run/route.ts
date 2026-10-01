@@ -52,7 +52,6 @@ import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status
 // Cleanup
 import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
-import { deactivateExpiredDiscounts } from "@/scripts/cleanup/deactivate-expired-discounts";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
 // Alerts
@@ -330,17 +329,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       orphanedFilesDeleted: result.orphanedFilesDeleted,
       missingFilesFound: result.missingFilesFound,
       cleanedCount: result.orphanedFilesDeleted,
-      errorCount: result.errors.length,
-    };
-  },
-  "deactivate-expired-discounts": async () => {
-    const result = await deactivateExpiredDiscounts();
-    return {
-      success: result.success,
-      expiredByDateCount: result.expiredByDateCount,
-      maxUsesReachedCount: result.maxUsesReachedCount,
-      totalDeactivated: result.totalDeactivated,
-      cleanedCount: result.totalDeactivated,
       errorCount: result.errors.length,
     };
   },

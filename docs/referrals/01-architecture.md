@@ -248,7 +248,7 @@ processQualifyingAction(userId, action)
 
 The qualification window exists to prevent gaming. Without it, someone could sign up via a referral link, never use the platform, and then make a purchase months later — giving the referrer a reward for a connection that was essentially cold. The 30-day window ensures the referral has some causal relationship to the signup.
 
-If the window expires and the user later makes a purchase, the referral status changes to `EXPIRED` rather than `REWARDED`. The referrer gets nothing. The cron job (`scripts/referrals/expire-referrals.ts`) handles bulk expiration daily, but the `processQualifyingAction` function also handles it inline to avoid a race between the cron job and a late payment.
+If the window expires and the user later makes a purchase, the referral status changes to `EXPIRED` rather than `REWARDED`. The referrer gets nothing. There is no expiry cron: `processQualifyingAction` decides reward-versus-expire inline, so a referral that never pays simply stays `SIGNED_UP`.
 
 As of #692 (REF-3), the window check is no longer evaluated in application code separately from the status guard. Previously `processQualifyingAction` compared `Date.now()` against `signedUpAt` in JavaScript and then issued a separate update to flip the status, which left a gap between the read and the write. The window condition is now folded directly into the reward `updateMany` WHERE clause as `signedUpAt >= cutoff` alongside the `status = "SIGNED_UP"` guard, so claiming the reward and deciding it is still in-window are a single atomic operation. If that guarded update affects zero rows — because a concurrent call already claimed it, or because the referral is genuinely past the window — the function only then issues the `EXPIRED` transition, and only for a referral that is still an un-rewarded `SIGNED_UP` whose `signedUpAt` is before the cutoff. Reward-versus-expire is therefore a single guarded decision that two concurrent webhooks cannot both win.
 
@@ -310,23 +310,11 @@ The function `applyCreditsToPayment()` in `lib/referrals/service.ts` implements 
 
 ## 6. Expiration and Cleanup
 
-Two daily cron jobs handle the referral system's cleanup needs.
+One daily cron job handles the referral system's cleanup.
 
 ### Referral expiration
 
-**Script**: `scripts/referrals/expire-referrals.ts`
-
-This job finds all referrals that are still in `SIGNED_UP` status (meaning the referred user never made a payment) where the signup happened more than 30 days ago, and sets their status to `EXPIRED`.
-
-```sql
--- Conceptually:
-UPDATE "Referral"
-SET status = 'EXPIRED', "updatedAt" = NOW()
-WHERE status = 'SIGNED_UP'
-  AND "signedUpAt" < NOW() - INTERVAL '30 days'
-```
-
-This is a cleanup operation — it doesn't affect rewards (those were already handled or skipped by `processQualifyingAction`). It just ensures the referral dashboard shows accurate statuses.
+No job flips stale referrals to `EXPIRED`. The 30-day window is enforced inside the guarded reward write in `processQualifyingAction`, so a `SIGNED_UP` referral past the window can never be rewarded.
 
 ### Credit expiration
 
