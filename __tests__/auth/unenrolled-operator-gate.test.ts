@@ -44,7 +44,11 @@ jest.mock("../../lib/profiles/ensure-org-workspace-profile", () => ({}));
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/user/[id]/route";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { requireOperatorAwaitingTwoFactor } from "@/lib/auth-guard";
+import {
+  requireAuth,
+  requireOnboarded,
+  requireOperatorAwaitingTwoFactor,
+} from "@/lib/auth-guard";
 
 function operator(twoFactorEnabled: boolean) {
   return {
@@ -79,6 +83,15 @@ describe("an operator who has not enrolled 2FA", () => {
     expect(result.error?.status).toBe(428);
     const body = await result.error?.json();
     expect(body?.code).toBe("TWO_FACTOR_REQUIRED");
+  });
+
+  it("is sent to 2FA setup by the shared page guards", async () => {
+    await expect(requireAuth()).rejects.toThrow(
+      "REDIRECT /auth/two-factor/setup",
+    );
+    await expect(requireOnboarded()).rejects.toThrow(
+      "REDIRECT /auth/two-factor/setup",
+    );
   });
 
   it("is let into the setup page", async () => {

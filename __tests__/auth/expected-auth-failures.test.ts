@@ -23,9 +23,9 @@ describe("isUnreachableTransportError", () => {
   // failure-modes matrix says is expected, and a Netlify stall pages on-call
   // every time it happens — which is the state row 19 was written to end.
   it("accepts the browser's rejected-fetch TypeError", () => {
-    expect(
-      isUnreachableTransportError(new TypeError("Failed to fetch")),
-    ).toBe(true);
+    expect(isUnreachableTransportError(new TypeError("Failed to fetch"))).toBe(
+      true,
+    );
   });
 
   // BREAKS IF DELETED: Firefox/Safari — which the auth pages are read on by
@@ -34,9 +34,7 @@ describe("isUnreachableTransportError", () => {
   it("accepts the Firefox wording, which is not 'Failed to fetch'", () => {
     expect(
       isUnreachableTransportError(
-        new TypeError(
-          "NetworkError when attempting to fetch resource.",
-        ),
+        new TypeError("NetworkError when attempting to fetch resource."),
       ),
     ).toBe(true);
   });
@@ -63,9 +61,12 @@ describe("isUnreachableTransportError", () => {
         new TypeError("captcha.refresh is not a function"),
       ),
     ).toBe(false);
-    expect(isUnreachableTransportError(new TypeError("Failed to parse URL"))).toBe(
-      false,
-    );
+    expect(
+      isUnreachableTransportError(new TypeError("x.fetch is not a function")),
+    ).toBe(false);
+    expect(
+      isUnreachableTransportError(new TypeError("Failed to parse URL")),
+    ).toBe(false);
   });
 
   // BREAKS IF DELETED: the predicate starts swallowing faults, which is worse

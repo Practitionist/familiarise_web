@@ -58,11 +58,7 @@ import { markExpected } from "@/lib/observability/expected";
 export function isUnreachableTransportError(error: unknown): boolean {
   if (error === null || typeof error !== "object") return false;
 
-  const candidate = error as {
-    status?: unknown;
-    message?: unknown;
-    name?: unknown;
-  };
+  const candidate = error as { status?: unknown; message?: unknown };
 
   // A status of exactly 0 is `net::ERR_*` / opaque-failure, never a real
   // response: HTTP has no status 0, so nothing we produced can carry it.
@@ -70,17 +66,12 @@ export function isUnreachableTransportError(error: unknown): boolean {
 
   if (typeof candidate.message !== "string") return false;
   const message = candidate.message.toLowerCase();
-  if (!message.includes("fetch")) return false;
-  if (
+  // Chrome/Edge, then Firefox. Anything else mentioning fetch
+  // (`x.fetch is not a function`) is our bug and keeps its error level.
+  return (
     message.includes("failed to fetch") ||
     message.includes("networkerror when attempting to fetch resource")
-  ) {
-    return true;
-  }
-  // `TypeError` is the platform's constructor for a rejected fetch in every
-  // engine. A non-fetch `TypeError` cannot carry these messages, so requiring
-  // the name costs nothing and keeps `x.fetch is not a function` out.
-  return candidate.name === "TypeError";
+  );
 }
 
 /**
