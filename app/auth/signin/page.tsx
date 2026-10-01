@@ -128,6 +128,11 @@ function SignInContent() {
     [searchParams],
   );
 
+  // #1856 — landed here because a session was revoked elsewhere
+  // (another device, or "sign out other devices"). Exact-match on a fixed
+  // string: the param carries no data, so there is nothing to inject.
+  const wasRevokedElsewhere = searchParams.get("reason") === "session-revoked";
+
   // #booking-journey — is this sign-in a detour out of a purchase? Derived
   // from the ALREADY-VALIDATED callbackUrl, never the raw param, so a crafted
   // "/\\evil.example/checkout/..." cannot light up a trust banner. Drives
@@ -382,14 +387,17 @@ function SignInContent() {
         // callback must go through onboarding first, not straight to callbackUrl.
       }
     } catch (error) {
+      // Thrown fetch only (BetterAuth resolves API failures as `{ error }`
+      // handled above): the request never completed, so this is a
+      // connection problem, not an account problem — safe to say so.
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         { tags: { subsystem: "auth" } },
       );
       console.error("Sign in error:", error);
       settle({
-        title: "Sign In Error",
-        description: "An unexpected error occurred. Please try again.",
+        title: "Couldn't reach the sign-in service",
+        description: "Check your connection and try again.",
         variant: "destructive",
       });
     } finally {
@@ -439,6 +447,14 @@ function SignInContent() {
                 You&apos;re almost there — sign in to continue your booking.
                 Your selection is saved and will resume right where you left
                 off.
+              </p>
+            </div>
+          )}
+          {wasRevokedElsewhere && (
+            <div className="mb-4 rounded-md border border-sky-600/60 bg-sky-900/30 p-3">
+              <p className="text-sm text-sky-300">
+                You were signed out — on this device or another one. Sign in
+                again to continue.
               </p>
             </div>
           )}

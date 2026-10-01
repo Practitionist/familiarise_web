@@ -36,6 +36,7 @@ import {
   notifyAccountBanned,
   notifyVerificationStatusChanged,
 } from "@/lib/novu";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import {
   EMAIL_BUDGET_MS,
   sendAccountBannedEmail,
@@ -175,10 +176,13 @@ async function banOrSuspendUser(
     banExpires: banExpires ? banExpires.toISOString() : null,
   };
 
-  const revoked = await tx.session.deleteMany({
-    where: { userId: report.targetUserId },
-  });
-  result.sessionsRevoked = revoked.count;
+  // #1856 — the shared choke point, joined to this transaction so a
+  // rolled-back ban leaves no orphaned revoke (and vice versa). Direct
+  // Prisma is correct here: BetterAuth's admin `revokeUserSessions`
+  // endpoint is caller-scoped (needs the calling admin's session) and
+  // cannot join this tx.
+  const revoked = await revokeAllUserSessions(tx, report.targetUserId);
+  result.sessionsRevoked = revoked.revoked;
 
   if (actionType === "USER_BANNED") {
     const earningsHeld = await holdBannedConsultantEarnings(
