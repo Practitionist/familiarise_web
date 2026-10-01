@@ -1,8 +1,11 @@
 import { createAuthClient } from "better-auth/react";
-import { customSessionClient, twoFactorClient } from "better-auth/client/plugins";
+import {
+  customSessionClient,
+  twoFactorClient,
+} from "better-auth/client/plugins";
 import { ssoClient } from "@better-auth/sso/client";
 import type { auth } from "@/lib/auth";
-import { forgetAuthState } from "@/lib/auth-broadcast";
+import { forgetAuthState } from "@/lib/auth-remembered";
 import { clearSentryIdentity } from "@/lib/observability/identity";
 
 export const authClient = createAuthClient({

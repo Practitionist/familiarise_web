@@ -18,7 +18,7 @@ import {
   readAuthedFlag,
   readAuthedIdentity,
   writeAuthedFlag,
-} from "@/lib/auth-broadcast";
+} from "@/lib/auth-remembered";
 import {
   resolveAuthView,
   useRememberedAuth,
@@ -27,7 +27,7 @@ import {
 
 const IDENTITY = { name: "Zara Brown", image: "https://cdn.test/zara.png" };
 
-describe("auth-broadcast remembered state", () => {
+describe("auth-remembered state", () => {
   beforeEach(() => localStorage.clear());
 
   it("round-trips the flag and the display identity", () => {

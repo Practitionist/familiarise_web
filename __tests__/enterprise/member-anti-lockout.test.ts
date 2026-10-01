@@ -26,14 +26,8 @@ jest.mock("../../lib/prisma", () => ({
       count: jest.fn(),
       update: jest.fn(),
     },
-    // Why: a role downgrade fires `bumpUserSessionGeneration` inside the
-    // transaction (lib/api/organizations/membership-transitions.ts) which calls
-    // `tx.user.update(...)`. The route would crash with `tx.user undefined`
-    // without this delegate exposed on the prisma mock + the tx shim below.
     user: {
-      update: jest
-        .fn()
-        .mockResolvedValue({ id: "u-victim", sessionGeneration: 2 }),
+      update: jest.fn().mockResolvedValue({ id: "u-victim" }),
     },
     orgAuditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -112,11 +106,6 @@ function wireTxShim() {
     const tx = {
       membership: mockedPrisma.membership,
       orgAuditLog: mockedPrisma.orgAuditLog,
-      // Why: role downgrades bump the user's sessionGeneration counter
-      // inside the same transaction (see bumpUserSessionGeneration in
-      // lib/api/organizations/membership-transitions.ts). The shim has to
-      // forward `tx.user.update` to the module-level mock so the helper
-      // can complete the transaction without crashing.
       user: {
         ...mockedPrisma.user,
         // #1700 — the membership-changed email is staged inside this
@@ -215,14 +204,6 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
         consultantProfileId: null,
         payoutRecipient: "SELF",
       },
-    });
-    // Why: every role mutation must bump the demoted user's
-    // sessionGeneration so their next request triggers a customSession
-    // refetch (lib/auth.ts), eliminating up to 24h of stale-permission
-    // exposure. Audit phase B.5 — see bumpUserSessionGeneration docstring.
-    expect(mockedPrisma.user.update).toHaveBeenCalledWith({
-      where: { id: "u-victim" },
-      data: { sessionGeneration: { increment: 1 } },
     });
   });
 

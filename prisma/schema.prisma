@@ -113,19 +113,6 @@ model User {
   // per user; deleted when onboarding completes. See OnboardingDraft below.
   onboardingDraft OnboardingDraft?
 
-  // Session-generation marker: increments on every membership role
-  // change so the next request through `customSession` (see
-  // `lib/auth.ts`) detects "I'm out of date" and refetches memberships
-  // without forcing a logout. Carried into the session payload via
-  // BetterAuth's `additionalFields`; the customSession callback
-  // compares the carried value to this row value on each lookup.
-  //
-  // Why a counter and not a boolean "stale" flag: under concurrent
-  // role mutations, a boolean races between writer and reader. A
-  // monotonic integer makes each session's "I've seen up to N" check
-  // unambiguous. See audit Phase B.5 + docs/enterprise/20-iam-and-security/02-jit-and-session-refresh.md.
-  sessionGeneration Int @default(0)
-
   // DPDP §12 right-to-erasure tombstone marker (audit Phase 2). When set,
   // the user's PII fields are scrubbed to pseudonymous values and every
   // active Membership is flipped to MemberStatus.ERASED. Financial rows

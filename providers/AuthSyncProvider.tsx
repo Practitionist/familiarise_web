@@ -4,11 +4,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
   forgetAuthState,
-  postAuthSync,
   readAuthedFlag,
-  subscribeAuthSync,
   writeAuthedFlag,
-} from "@/lib/auth-broadcast";
+} from "@/lib/auth-remembered";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   clearSentryIdentity,
@@ -16,51 +14,20 @@ import {
 } from "@/lib/observability/identity";
 
 /**
- * Keeps the auth session in sync across browser tabs and devices.
- *
- * Mounted once at the root. It does four things:
- *   1. Listens for login/logout pings from peer tabs and refetches this tab's
- *      session so every `useSession()` consumer re-renders without a reload.
- *      Every tab in a browser profile shares one cookie and therefore one
- *      session, so this ping is all same-browser sync needs.
- *   2. Detects this tab's own logged-out⇄logged-in transition (covers email
- *      sign-in AND the OAuth/SSO redirect, which has no client fetch hook) and
- *      pings peers so they refetch too — including a same-profile sign-in
- *      as a DIFFERENT account (boolean true→true is no transition, so the
- *      user-id change is detected explicitly).
- *   3. Detects revocation from ANOTHER device: when the tab becomes visible,
- *      and whenever the session unexpectedly resolves to null, it asks the
- *      server once (`probeSession`). Only a confirmed revocation signs out,
- *      with `?reason=session-revoked` so the sign-in page can say why; a
- *      failed lookup refetches instead (#1716).
- *   4. Mirrors the resolved session onto the Sentry user, so client-side
- *      events are attributable.
- *
- * Renders nothing. See `lib/auth-broadcast.ts` for why this is needed.
+ * Keeps this tab's auth state honest. Mounted once at the root; renders
+ * nothing. It:
+ *   1. Detects revocation (another tab or device signed out, expiry, a ban):
+ *      when the tab becomes visible, and whenever the session unexpectedly
+ *      resolves to null, it asks the server once (`probeSession`). Only a
+ *      confirmed revocation signs out, with `?reason=session-revoked` so the
+ *      sign-in page can say why; a failed lookup refetches instead (#1716).
+ *      BetterAuth's client also refetches the session on window focus.
+ *   2. Mirrors the resolved session onto the Sentry user and the remembered
+ *      navbar shape (`lib/auth-remembered.ts`).
  */
 
 /** Minimum gap between two focus-triggered revocation checks. */
 const CHECK_THROTTLE_MS = 30_000;
-
-/**
- * Same-profile second sign-in as a DIFFERENT account: the shared cookie
- * jar now belongs to them, but peer tabs still paint the old account
- * (boolean true→true is no transition). Ping login so peers refetch.
- */
-function handleAccountSwitch(
-  authed: boolean,
-  nextUserId: string | null,
-  prevUserId: string | undefined,
-): void {
-  if (
-    authed &&
-    nextUserId !== null &&
-    prevUserId !== undefined &&
-    prevUserId !== nextUserId
-  ) {
-    postAuthSync({ type: "login" });
-  }
-}
 
 type ProbeState = "active" | "revoked" | "unknown";
 
@@ -85,9 +52,7 @@ async function probeSession(): Promise<ProbeState> {
 
 export default function AuthSyncProvider() {
   const { data: session, isPending, refetch } = useSession();
-  // In-memory fallback for the previous authed state, used when the cross-tab
-  // localStorage flag is unavailable (private mode / blocked storage) so
-  // BroadcastChannel sync still works there. Resets per page load.
+  // This tab's previous authed state; resets per page load.
   const previousAuthedRef = useRef<boolean | undefined>(undefined);
   const previousUserIdRef = useRef<string | undefined>(undefined);
   const lastCheckRef = useRef<number>(0);
@@ -136,9 +101,6 @@ export default function AuthSyncProvider() {
     [refetch],
   );
 
-  // Peer-tab login/logout pings: refetch so this tab repaints to the truth.
-  useEffect(() => subscribeAuthSync(() => refetch?.()), [refetch]);
-
   // Stamp the acting user onto Sentry. The single source of truth for the
   // CLIENT identity, and it lives here rather than in the sign-in page for two
   // reasons: SSO and social sign-in are full-page redirects through an IdP, so
@@ -174,44 +136,28 @@ export default function AuthSyncProvider() {
   }, [isPending, session]);
 
   // Unexpected authed→null transitions (revoked elsewhere, expired, or
-  // transient) all land here; the classifier tells them apart. The
-  // `logout` ping is kept as-is so revoked peers converge by refetch.
+  // transient) all land here; the classifier tells them apart.
   useEffect(() => {
     // The loading phase is not a transition — wait for the session to resolve.
     if (isPending) return;
 
     const authed = !!session?.user;
     const nextUserId = session?.user?.id ?? null;
-    // Snapshot first: the ping decision below must compare against the
-    // LAST run's value, not the one recorded this run.
+    // Snapshot first: compare against the LAST run's value.
     const prevAuthed = previousAuthedRef.current;
     // Prefer THIS tab's last observed state: the wrapped `signOut` clears the
-    // localStorage flag BEFORE the network call (shared-device fail-safe), so
-    // by the time the session resolves null the flag already reads `false` and
-    // flag-first comparison would swallow the logout ping. The snapshot is
-    // immune to that pre-clear; it is undefined only on first resolution,
-    // where we fall back to the flag so an OAuth/SSO full-page redirect (new
-    // load, no client fetch hook) still pings peers.
+    // localStorage flag before the network call, so the flag would already
+    // read `false`. On first resolution fall back to the flag so a cold tab
+    // whose session died while it was closed is still classified (with
+    // storage blocked the flag is null and there is nothing to compare).
     const previous = prevAuthed ?? readAuthedFlag();
-    // typeof check: with storage blocked, readAuthedFlag() returns null —
-    // `null !== undefined` would treat "no known before-state" as a transition
-    // and fire a spurious login/logout ping on first resolution.
-    if (typeof previous === "boolean" && previous !== authed) {
-      postAuthSync({ type: authed ? "login" : "logout" });
-      if (previous && !authed) {
-        // Seed the ref BEFORE classifying: it reads the ref
-        // synchronously, and on first resolution the ref is still
-        // undefined (which reads as "never authed" and aborts the
-        // check) — a cold tab whose session died while away would then
-        // never classify. Later runs already carry the prior value.
-        if (prevAuthed === undefined) previousAuthedRef.current = true;
-        void classifyUnexpectedSignOut(true);
-      }
+    if (previous === true && !authed) {
+      // Seed the ref BEFORE classifying: it reads the ref synchronously, and
+      // on first resolution it is still undefined ("never authed").
+      if (prevAuthed === undefined) previousAuthedRef.current = true;
+      void classifyUnexpectedSignOut(true);
     }
     previousAuthedRef.current = authed;
-    // Same-profile second sign-in as a DIFFERENT account is no boolean
-    // transition — detect the user-id change explicitly (see helper).
-    handleAccountSwitch(authed, nextUserId, previousUserIdRef.current);
     previousUserIdRef.current = nextUserId ?? undefined;
     // Also the reconciliation point for the navbar's optimistic first paint:
     // a resolved session rewrites the remembered shape in BOTH directions, and

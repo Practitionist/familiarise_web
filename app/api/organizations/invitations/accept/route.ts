@@ -25,7 +25,6 @@ import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 import { transitionMembership } from "@/lib/enterprise/transitions";
 import {
   applyMembershipRoleEffects,
-  bumpUserSessionGeneration,
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
@@ -317,13 +316,6 @@ export async function POST(req: NextRequest) {
           },
         },
       });
-
-      // Bump the user's session-generation marker so the next request
-      // through customSession picks up the new org membership without
-      // waiting for BetterAuth's 24h session-rotation window. The
-      // accepter sees the org in their sidebar / org-switcher on the
-      // next page load instead of after a manual logout. Audit B.5.
-      await bumpUserSessionGeneration(tx, userId);
 
       // Staged HERE so the roster bell and the joiner's welcome commit with
       // the membership or roll back with it (review round 2 on #1700); the

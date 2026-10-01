@@ -35,7 +35,7 @@ import {
   readAuthedFlag,
   readAuthedIdentity,
   writeAuthedFlag,
-} from "@/lib/auth-broadcast";
+} from "@/lib/auth-remembered";
 
 const mockSignOut = authClient.signOut as unknown as jest.Mock;
 

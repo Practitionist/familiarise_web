@@ -33,7 +33,7 @@ account and no impersonation.
 flowchart LR
   subgraph Browser["Browser: one cookie jar, N tabs"]
     UI["Auth pages<br/>/auth/signin, signup, reset-password,<br/>verify-email, two-factor, two-factor/setup"]
-    SYNC["AuthSyncProvider<br/>tab ping + focus probe"]
+    SYNC["AuthSyncProvider<br/>focus probe"]
   end
 
   subgraph Edge["Netlify Edge: middleware.ts"]

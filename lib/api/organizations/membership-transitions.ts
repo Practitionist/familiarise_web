@@ -102,45 +102,6 @@ export async function applyMembershipRoleEffects(
 }
 
 /**
- * Bump the user's session-generation marker so the next request through
- * `lib/auth.ts:customSession` detects "I'm out of date" and refetches
- * memberships. Use this on every membership mutation that changes the
- * effective permission set (role change, removal, soft-suspend).
- *
- * Why a counter and not a boolean flag
- * ------------------------------------
- * Concurrent role mutations (e.g. a script bulk-promoting interns)
- * race against the customSession reader. A boolean "stale" flag would
- * be cleared by the first reader and miss later mutations. A monotonic
- * integer carried in the session payload means every reader sees an
- * unambiguous "I've seen up to N" check against the current row value.
- *
- * Why we don't force logout
- * -------------------------
- * The UX cost of "you've been signed out, please log in again" is high
- * relative to the marginal security benefit, so removal uses this same
- * generation bump rather than a hard session kill (ban is the path that
- * kills sessions, via `lib/auth/session-revoke.ts`). So membership
- * removal, role downgrade, and soft-suspend all rely on the bump: the
- * next request through `customSession` sees the new generation.
- *
- * Failure mode if not called
- * --------------------------
- * Server reads stay correct — the cookie cache is off and customSession
- * re-reads memberships on every call — but a client holding an old
- * payload has no signal that its role changed. Audit Phase B.5.
- */
-export async function bumpUserSessionGeneration(
-  tx: PrismaLike,
-  userId: string,
-): Promise<void> {
-  await tx.user.update({
-    where: { id: userId },
-    data: { sessionGeneration: { increment: 1 } },
-  });
-}
-
-/**
  * Lazy-create a `ConsultantProfile` for the user. Idempotent: if
  * `user.consultantProfileId` is already set, returns it without
  * writing.

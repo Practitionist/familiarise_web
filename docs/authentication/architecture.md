@@ -84,8 +84,8 @@ which is how staff onboarding calls `createUser`.
   refresh (`lib/auth/operator-session-policy.ts`).
 - No cap on sessions per user. Expired rows are deleted nightly by
   `.github/workflows/cleanup-auth-tokens.yml` (`jobs/cleanup/cleanup-auth-tokens.ts`).
-- `customSession` returns the user with role, profile ids,
-  `sessionGeneration`, a live `banned` flag (honouring `banExpires`),
+- `customSession` returns the user with role, profile ids, a `banned` flag
+  (honouring `banExpires`, from the row BetterAuth just read),
   `twoFactorEnabled` and `organizationMemberships` from the typed `Membership`
   table. It returns the session **without** its token.
 
@@ -280,11 +280,11 @@ stateDiagram-v2
   Gone --> [*]
 ```
 
-| Term          | Meaning                                        | Behaviour                                                                                         |
-| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Multi-tab     | One browser, one cookie, **one** `Session` row | `AuthSyncProvider` pings other tabs over BroadcastChannel on sign-in and sign-out so they refetch |
-| Multi-device  | N browsers, N `Session` rows for one user      | Settings lists them and can end one or all others                                                 |
-| Multi-account | Several users signed in to one browser         | Not supported (BetterAuth `multiSession` is not installed)                                        |
+| Term          | Meaning                                        | Behaviour                                                                                                                                                                                                     |
+| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-tab     | One browser, one cookie, **one** `Session` row | Each tab refetches on focus (BetterAuth's client) and `AuthSyncProvider` probes `/api/user/sessions/current` when it becomes visible, so a sign-out in one tab shows in another the next time it is looked at |
+| Multi-device  | N browsers, N `Session` rows for one user      | Settings lists them and can end one or all others                                                                                                                                                             |
+| Multi-account | Several users signed in to one browser         | Not supported (BetterAuth `multiSession` is not installed)                                                                                                                                                    |
 
 Device management is three app routes, all behind `requireApiAuth`, a 60 per
 15 minutes per-user limiter and a 120 per 15 minutes per-IP edge limiter:
@@ -351,7 +351,6 @@ erDiagram
     boolean banned
     datetime banExpires
     boolean twoFactorEnabled
-    int sessionGeneration
   }
   Session {
     string id PK
@@ -418,7 +417,7 @@ changes are additive only, and CI checks Prisma against what BetterAuth writes.
 | Session lookup tri-state     | `lib/auth-session-lookup.ts`                                   |
 | API and page guards          | `lib/auth-helpers.ts`, `lib/auth-guard.ts`                     |
 | Device list and revoke       | `lib/auth/session-select.ts`, `lib/auth/session-revoke.ts`     |
-| Cross-tab sync and probe     | `providers/AuthSyncProvider.tsx`, `lib/auth-broadcast.ts`      |
+| Revocation probe             | `providers/AuthSyncProvider.tsx`, `lib/auth-remembered.ts`     |
 | SSO                          | `lib/sso/*`, `lib/prisma-sso-secret-extension.ts`              |
 | Error codes and copy         | `lib/labels/auth-error-codes.ts`, `lib/labels/auth-errors*.ts` |
 | Schema guard                 | `scripts/ci/check-auth-schema.ts`                              |

@@ -377,17 +377,6 @@ export const auth = betterAuth({
         required: false,
         input: false,
       },
-      // Session-generation marker carried in the session payload. The
-      // customSession callback compares this to the current row value
-      // on every session lookup; if they diverge, the cached
-      // memberships array is stale and we refetch. See audit Phase B.5
-      // and docs/enterprise/20-iam-and-security/02-jit-and-session-refresh.md.
-      sessionGeneration: {
-        type: "number",
-        required: false,
-        defaultValue: 0,
-        input: false,
-      },
     },
   },
 
@@ -732,29 +721,18 @@ export const auth = betterAuth({
         staffProfileId?: string | null;
         adminProfileId?: string | null;
         orgWorkspaceProfileId?: string | null;
-        sessionGeneration?: number | null;
         twoFactorEnabled?: boolean | null;
+        banned?: boolean | null;
+        banExpires?: Date | null;
       };
 
-      // The session-generation marker is carried in the payload for
-      // observability and a future fast path that can skip the membership
-      // re-fetch when it hasn't moved (audit B.5).
-      const currentUserRow = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: {
-          sessionGeneration: true,
-          // #693 defense-in-depth: sessions are deleted at ban time and
-          // sign-in is plugin-gated, but a session minted in the race window
-          // must still resolve as banned.
-          banned: true,
-          banExpires: true,
-        },
-      });
-      const liveSessionGeneration =
-        currentUserRow?.sessionGeneration ?? user.sessionGeneration ?? 0;
+      // #693 defense-in-depth: sessions are deleted at ban time and sign-in
+      // is plugin-gated, but a session minted in the race window must still
+      // resolve as banned. `user` is the row BetterAuth just read (the cookie
+      // cache is off), so it is current.
       const effectivelyBanned =
-        (currentUserRow?.banned ?? false) &&
-        (!currentUserRow?.banExpires || currentUserRow.banExpires > new Date());
+        user.banned === true &&
+        (!user.banExpires || new Date(user.banExpires) > new Date());
 
       // Load active org memberships so OrgSwitcher + checkout can render
       // without an extra roundtrip.
@@ -836,9 +814,6 @@ export const auth = betterAuth({
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
           orgWorkspaceProfileId: user.orgWorkspaceProfileId ?? undefined,
-          // Always emit the live value so client code can detect a
-          // stale session by comparing this against its cached payload.
-          sessionGeneration: liveSessionGeneration,
           banned: effectivelyBanned,
           // Read by the operator 2FA gates (lib/auth-helpers.ts,
           // lib/auth-guard.ts). Fresh per request: the cookie cache is off,
