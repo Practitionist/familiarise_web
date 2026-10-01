@@ -266,9 +266,7 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
     expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
       where: {
         id: "ce-1",
-        status: {
-          in: expect.arrayContaining(["PENDING", "READY", "PAID", "HELD"]),
-        },
+        status: "PENDING",
         refundedShareAmount: 0,
       },
       data: { refundedShareAmount: 80_000, status: "REFUNDED" },
@@ -534,7 +532,7 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     expect(orgEarningUpdates[0]?.where).toMatchObject({
       id: "oe-1",
       refundedAmountPaise: 0,
-      status: { in: expect.arrayContaining(["READY", "PAID"]) },
+      status: "PAID",
     });
     // Clawback recorded on the COMPLETED payout — exactly once stamped.
     const clawback = tx.organizationPayout.update.mock.calls.find(
@@ -637,7 +635,7 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
   expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
     where: {
       id: "ce-1",
-      status: { in: expect.arrayContaining(["PENDING", "READY", "PAID", "HELD"]) },
+      status: "PENDING",
       refundedShareAmount: 0,
     },
     data: { refundedShareAmount: 40_000 },

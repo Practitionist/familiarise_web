@@ -149,7 +149,7 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     expect(r.status).toBe(EarningStatus.READY);
   });
 
-  it("repeats the legal source statuses and the pre-read value in the WHERE", async () => {
+  it("pins the exact pre-read status and the pre-read value in the WHERE", async () => {
     const r = row();
     const { db, updateMany } = store([r]);
 
@@ -158,11 +158,8 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     const where = whereOf(updateMany);
     expect(where.id).toBe("ce-1");
     expect(where.refundedShareAmount).toBe(0);
-    // REFUNDED is terminal, so it is never a legal source.
-    expect(where.status.in).toEqual(
-      expect.arrayContaining(["READY", "PAID", "PENDING", "HELD", "BATCHED"]),
-    );
-    expect(where.status.in).not.toContain(EarningStatus.REFUNDED);
+    // Any status change since the read forces a re-read.
+    expect(where.status).toBe(EarningStatus.READY);
     // A full reversal is the only thing that moves the status.
     expect(dataOf(updateMany)).toEqual({
       refundedShareAmount: 8_000,
@@ -228,8 +225,8 @@ describe("capped earning reversal — CAS-in-WHERE (#CASC)", () => {
     // at its full share the CAP zeroes the request and the status predicate is
     // never reached — which is a different (also correct) outcome, and asserting
     // it while claiming to test terminality proved nothing. Leaving headroom
-    // forces the refusal to come from `status: { in: REFUNDABLE_EARNING_SOURCE }`,
-    // which is the guard this test is about.
+    // forces the refusal to come from the status guard, which is what this
+    // test is about.
     const r = row({
       status: EarningStatus.REFUNDED,
       refundedShareAmount: 2_000,
@@ -394,7 +391,7 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
       refundedShareAmount: 8_000,
       status: EarningStatus.REFUNDED,
     });
-    expect(whereOf(updateMany).status.in).toContain(EarningStatus.PAID);
+    expect(whereOf(updateMany).status).toBe(EarningStatus.PAID);
     expect(r.status).toBe(EarningStatus.REFUNDED);
     expect(mockRecordTdsReversal).toHaveBeenCalledTimes(1);
     expect(mockRecordTdsReversal).toHaveBeenCalledWith(
@@ -412,6 +409,23 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
     expect(updateMany).not.toHaveBeenCalled();
     expect(mockRecordTdsReversal).not.toHaveBeenCalled();
     expect(r.status).toBe(EarningStatus.PAID);
+  });
+
+  it("without forceRefund, a row that turned PAID after the read is never reversed", async () => {
+    const r = row({ status: EarningStatus.PAID, payoutId: "po-1" });
+    const { updateMany, refundEarningsTx } = harness([r]);
+    // The pre-read still saw BATCHED; the payout completed before the write.
+    (refundEarningsTx as any).consultantEarnings.findMany.mockImplementation(
+      async () => [{ ...r, status: EarningStatus.BATCHED }],
+    );
+
+    await refundEarnings("pay-1", { tx: refundEarningsTx });
+
+    // First CAS (pinned to BATCHED) refused; the re-read sees PAID and stops.
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(r.status).toBe(EarningStatus.PAID);
+    expect(r.refundedShareAmount).toBe(0);
+    expect(mockRecordTdsReversal).not.toHaveBeenCalled();
   });
 
   it("skips a row a concurrent writer already took to REFUNDED", async () => {

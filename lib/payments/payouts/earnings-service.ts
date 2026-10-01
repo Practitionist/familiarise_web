@@ -147,6 +147,7 @@ import {
 import {
   applyCappedEarningReversal,
   applyCappedOrgEarningReversal,
+  REFUNDABLE_UNPAID_EARNING_SOURCE,
 } from "@/lib/payments/payouts/earning-reversal-cas";
 
 /**
@@ -1641,11 +1642,7 @@ export async function refundEarnings(
       continue;
     }
 
-    // Handle already-paid earnings (payout completed).
-    // (Whether this reversal exhausts the earning is now decided INSIDE
-    // `applyCappedEarningReversal`, which re-derives it against the freshest
-    // read on every attempt — a pre-read here could be stale by the time the
-    // write lands, which is exactly what the CAS exists to prevent.)
+    // PAID rows reverse only under forceRefund (with the TDS reversal).
     if (earnings.status === EarningStatus.PAID) {
       if (!options?.forceRefund) {
         console.error(
@@ -1653,14 +1650,6 @@ export async function refundEarnings(
         );
         continue;
       }
-      // #CASC — the status + cap are re-asserted in the WHERE. A concurrent
-      // writer that already reversed this row wins; we then re-read and take
-      // only what the cap still allows (never an unguarded second increment).
-      //
-      // The PAID → REFUNDED assertion is no longer duplicated here:
-      // `applyCappedEarningReversal` asserts it unconditionally on every
-      // attempt, before it writes, so a shared primitive that a future caller
-      // reaches without its own check cannot bypass the rule.
       const paidReversal = await applyCappedEarningReversal(
         db,
         earnings,
@@ -1701,12 +1690,12 @@ export async function refundEarnings(
       continue;
     }
 
-    // Update earnings for non-paid earnings (PENDING/HELD/READY):
-    // always track refundedShareAmount, set REFUNDED when fully exhausted
+    // Non-PAID rows: a row that turns PAID mid-flight is refused, not reversed.
     const reversal = await applyCappedEarningReversal(
       db,
       earnings,
       shareToReverse,
+      REFUNDABLE_UNPAID_EARNING_SOURCE,
     );
     if (reversal.lostRace) {
       console.warn(

@@ -260,7 +260,7 @@ describe("org capped earning reversal — CAS-in-WHERE (org twin)", () => {
     expect(r.status).toBe(EarningStatus.REFUNDED);
   });
 
-  it("repeats the org legal-source statuses and the pre-read value in the WHERE", async () => {
+  it("pins the pre-read status and the pre-read value in the WHERE", async () => {
     const r = orgRow();
     const { db, updateMany } = orgStore([r]);
 
@@ -271,9 +271,8 @@ describe("org capped earning reversal — CAS-in-WHERE (org twin)", () => {
     // The ORG column is pinned — `refundedShareAmount` would silently match
     // nothing and every org reversal would report a lost race.
     expect(where.refundedAmountPaise).toBe(0);
-    expect(where.status.in).toEqual(REFUNDABLE_ORG_EARNING_SOURCE);
-    // REFUNDED is terminal, so it is never a legal source.
-    expect(where.status.in).not.toContain(EarningStatus.REFUNDED);
+    // The exact pre-read status is pinned, so any status change re-reads.
+    expect(where.status).toBe(EarningStatus.READY);
     expect(dataOf(updateMany)).toEqual({
       refundedAmountPaise: 8_000,
       status: EarningStatus.REFUNDED,
@@ -382,7 +381,7 @@ describe("org capped earning reversal — PAID, and the terminal row", () => {
 
     const out = await applyCappedOrgEarningReversal(db, { ...r }, 8_000);
 
-    expect(whereOf(updateMany).status.in).toContain(EarningStatus.PAID);
+    expect(whereOf(updateMany).status).toBe(EarningStatus.PAID);
     expect(out).toMatchObject({
       reversedPaise: 8_000,
       refundedAmountPaise: 8_000,
@@ -517,7 +516,7 @@ describe("the generalisation leaves the consultant rail alone", () => {
     expect(whereOf(updateMany).refundedShareAmount).toBe(0);
     expect(whereOf(updateMany).refundedAmountPaise).toBeUndefined();
     expect(dataOf(updateMany)).toEqual({ refundedShareAmount: 5_000 });
-    expect(whereOf(updateMany).status.in).toEqual(REFUNDABLE_EARNING_SOURCE);
+    expect(whereOf(updateMany).status).toBe(r.status);
   });
 
   it("the consultant guard still refuses the terminal row before any write", async () => {
@@ -572,22 +571,12 @@ describe("one copy of the CAS logic survives the generalisation", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
 
-  it("the helper issues exactly one conditional write, shared by both rails", () => {
+  it("both rails share one CAS core and never increment", () => {
     const code = codeOf("lib/payments/payouts/earning-reversal-cas.ts");
-    // One `updateMany` — the CAS itself. If a rail ever grew its own write, this
-    // would go to 2 and the whole point of the file would be lost.
-    expect(code.match(/\.updateMany\(/g) ?? []).toHaveLength(1);
-    // One status predicate, one optimistic pin, no `increment` anywhere.
-    expect(code.match(/status: \{ in: /g) ?? []).toHaveLength(1);
-    expect(
-      code.match(/\[rail\.reversedColumn\]: alreadyRefunded/g) ?? [],
-    ).toHaveLength(1);
+    // One typed conditional write per table, both driven by the one core.
+    expect(code.match(/\.updateMany\(/g) ?? []).toHaveLength(2);
     expect(code).not.toMatch(/increment:/);
-    // Each table is named ONCE, in its rail descriptor — so the core itself
-    // cannot know which table it is writing, let alone grow a per-table branch.
-    expect(code.match(/consultantEarnings/g) ?? []).toHaveLength(1);
-    expect(code.match(/organizationEarnings/g) ?? []).toHaveLength(1);
-    // Two thin wrappers over the one core, not two cores.
+    expect(code).not.toMatch(/as unknown as/);
     expect(code).toMatch(/async function applyCappedReversal\(/);
     expect(code.match(/await applyCappedReversal\(/g) ?? []).toHaveLength(2);
   });

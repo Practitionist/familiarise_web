@@ -1,36 +1,13 @@
 /**
- * The ONE CAS writer for an earning's refund — consultant OR organisation.
- *
- * Five call sites move an earning to REFUNDED: `refundEarnings` (capture-time
- * and dispute-driven), `applyRefundCascade` (the refund front door) and
- * `reverseFreeCreditSettlement` (the free-credit rail) on the consultant side,
- * and `applyRefundCascade` / `reverseFreeCreditSettlement` on the
- * `OrganizationEarnings` twin. They were originally near-identical copies, which
- * is precisely the shape that drifts: the org twins were still plain
- * `update({ where: { id } })` with no status predicate and no pinned amount, so
- * two concurrent org reversals could both read READY, both pass
- * `assertEarningStatusTransitionLegal` (an assertion over a value read into JS)
- * and both write. This module makes "one implementation" structural rather than
- * a convention: `OrganizationEarnings` is the same shape under a different name,
- * so it gets a rail descriptor, not a second CAS.
- *
- * It lives outside `earnings-service.ts` deliberately, so the two refund front
- * doors can share it without either importing the other or pulling the whole
- * 2,000-line earnings module into their graph.
+ * The ONE CAS writer for an earning's refund, consultant or organisation, so
+ * every REFUNDED writer shares the same status + amount predicate.
  */
 import { EarningStatus } from "@prisma/client";
 
 import type { PrismaLike } from "@/lib/prisma";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 
-/**
- * The statuses a CONSULTANT earning may legally be moved OUT OF on the way to
- * REFUNDED. Every one of these is accepted because
- * `assertEarningStatusTransitionLegal` only forbids PAID → (anything but
- * REFUNDED); REFUNDED is deliberately ABSENT because it is terminal, so a row
- * some other writer already reversed is never a legal source. This array is the
- * WHERE clause, not a hint.
- */
+/** Legal sources for a consultant earning -> REFUNDED. REFUNDED is terminal. */
 export const REFUNDABLE_EARNING_SOURCE: EarningStatus[] = [
   EarningStatus.PENDING,
   EarningStatus.PENDING_TRUST,
@@ -40,22 +17,11 @@ export const REFUNDABLE_EARNING_SOURCE: EarningStatus[] = [
   EarningStatus.PAID,
 ];
 
-/**
- * The same set for `OrganizationEarnings` — spelled out, NOT aliased to the
- * consultant array, so a future divergence between the two tables' legal
- * sources is a one-line diff here rather than an invisible coupling. Verified
- * against `prisma/schema.prisma`: both models carry the SAME `EarningStatus`
- * enum and both are written by the same payout/trust crons, so today they agree
- * on all six non-terminal states. The org twin's amount column is
- * `refundedAmountPaise` (not `refundedShareAmount`) and its cap column is
- * `orgSharePaise` (not `consultantSharePaise`) — that is the whole of the
- * difference.
- *
- * `PENDING_TRUST` is included for the same reason the consultant list includes
- * it: a parked, not-yet-verified host org is still owed a clawback the moment
- * its booking is refunded, and the trust-park cron only moves those rows
- * PENDING, it never makes them un-refundable.
- */
+/** The same set minus PAID, for callers that must not reverse paid-out money. */
+export const REFUNDABLE_UNPAID_EARNING_SOURCE: EarningStatus[] =
+  REFUNDABLE_EARNING_SOURCE.filter((s) => s !== EarningStatus.PAID);
+
+/** The org twin's set: spelled out so the two tables can diverge in one line. */
 export const REFUNDABLE_ORG_EARNING_SOURCE: EarningStatus[] = [
   EarningStatus.PENDING,
   EarningStatus.PENDING_TRUST,
@@ -92,37 +58,19 @@ export type OrgEarningReversalOutcome = {
   lostRace: boolean;
 };
 
-/**
- * The two delegate methods the CAS needs. Deliberately loose: the money column
- * NAMES are supplied by the rail, so a single `where`/`data` construction serves
- * both tables instead of each rail re-deriving the predicates — which is
- * precisely where a copy drifts.
- */
-type ReversalDelegate = {
-  updateMany(args: {
-    where: Record<string, unknown>;
-    data: Record<string, unknown>;
-  }): Promise<{ count: number }>;
-  findUnique(args: {
-    where: { id: string };
-    select: Record<string, boolean>;
-  }): Promise<Record<string, unknown> | null>;
-};
-
-/** Everything that genuinely differs between the two rails, stated once. */
+/** Everything that differs between the two tables, typed per table. */
 type ReversalRail = {
-  /** Human label for warnings ("Earnings" / "Org earnings"). */
   label: string;
-  table: ReversalDelegate;
-  /** The CUMULATIVE-reversal column: pinned in the WHERE, written absolutely. */
-  reversedColumn: "refundedShareAmount" | "refundedAmountPaise";
-  /** The WHERE's status predicate. Explicit per rail, never a hidden default. */
+  /** Legal sources; the CAS also pins the exact pre-read status. */
   refundableSource: EarningStatus[];
-  assertTransition: (
+  cas(
     id: string,
     from: EarningStatus,
-    to: EarningStatus,
-  ) => void;
+    pin: number,
+    next: number,
+    terminal: boolean,
+  ): Promise<number>;
+  read(id: string): Promise<{ status: EarningStatus; reversed: number } | null>;
 };
 
 /** A caller row, normalised. `total` is the cap; `reversed` is the pin. */
@@ -141,46 +89,57 @@ type CappedReversalOutcome = {
   lostRace: boolean;
 };
 
-const consultantRail = (db: PrismaLike): ReversalRail => ({
+const consultantRail = (
+  db: PrismaLike,
+  refundableSource: EarningStatus[],
+): ReversalRail => ({
   label: "Earnings",
-  table: db.consultantEarnings as unknown as ReversalDelegate,
-  reversedColumn: "refundedShareAmount",
-  refundableSource: REFUNDABLE_EARNING_SOURCE,
-  assertTransition: assertEarningStatusTransitionLegal,
+  refundableSource,
+  cas: async (id, from, pin, next, terminal) =>
+    (
+      await db.consultantEarnings.updateMany({
+        where: { id, status: from, refundedShareAmount: pin },
+        data: {
+          refundedShareAmount: next,
+          ...(terminal && { status: EarningStatus.REFUNDED }),
+        },
+      })
+    ).count,
+  read: async (id) => {
+    const r = await db.consultantEarnings.findUnique({
+      where: { id },
+      select: { status: true, refundedShareAmount: true },
+    });
+    return r && { status: r.status, reversed: Number(r.refundedShareAmount) };
+  },
 });
 
 const organizationRail = (db: PrismaLike): ReversalRail => ({
   label: "Org earnings",
-  table: db.organizationEarnings as unknown as ReversalDelegate,
-  reversedColumn: "refundedAmountPaise",
   refundableSource: REFUNDABLE_ORG_EARNING_SOURCE,
-  assertTransition: assertEarningStatusTransitionLegal,
+  cas: async (id, from, pin, next, terminal) =>
+    (
+      await db.organizationEarnings.updateMany({
+        where: { id, status: from, refundedAmountPaise: pin },
+        data: {
+          refundedAmountPaise: next,
+          ...(terminal && { status: EarningStatus.REFUNDED }),
+        },
+      })
+    ).count,
+  read: async (id) => {
+    const r = await db.organizationEarnings.findUnique({
+      where: { id },
+      select: { status: true, refundedAmountPaise: true },
+    });
+    return r && { status: r.status, reversed: Number(r.refundedAmountPaise) };
+  },
 });
 
 /**
- * CAS-in-WHERE writer for an earning's refund, on either table (the `#CASC`
- * doctrine `refundEarnings`/`payout-service` already follow: repeat the money
- * predicate in the WHERE, never read-then-write).
- *
- * `assertEarningStatusTransitionLegal` asserts on a value read into JS, so it
- * cannot stop two concurrent refund paths (an app refund racing a lost-dispute
- * webhook, or two cascades) from both reading READY, both passing it, and both
- * writing. The conditional write repeats the guard in the database:
- *
- *   status: { in: rail.refundableSource } — the legal sources, and it
- *     refuses an already-REFUNDED (terminal) row outright.
- *   <rail.reversedColumn>: <pre-read>    — the optimistic half, and what
- *     keeps the cap sound: the value written is an ABSOLUTE
- *     `min(total, preRead + request)`, never an `increment`. Two writers can
- *     therefore only ever compose into `min(total, a + b)`; an `increment`
- *     capped from a stale read (the old shape on both tables) could sum past
- *     the share and drive the payout readyAmount negative.
- *
- * `count === 0` is a lost race, never "assume it worked": we re-read once and
- * take whatever the cap still allows, so the reversal converges instead of
- * silently dropping this writer's request (a dropped partial clawback is a real
- * under-clawback). A second refusal, a row already at/over its share, or a row
- * another writer has moved to REFUNDED is left to the winner.
+ * CAS writer: WHERE pins the exact pre-read status (which must be a legal
+ * source) and the cumulative reversal; the write is the absolute
+ * `min(total, pre + request)`. A refusal re-reads once and takes the residual.
  */
 async function applyCappedReversal(
   rail: ReversalRail,
@@ -209,33 +168,33 @@ async function applyCappedReversal(
 
     const nextReversed = alreadyRefunded + take;
     const fullyRefunded = nextReversed >= current.total;
-    // UNCONDITIONAL, on the first attempt as much as on the retry. This is a
-    // shared primitive now, so the guard cannot live in the callers: one that
-    // forgets its own assertion would otherwise slip an unguarded
-    // PAID → REFUNDED (or REFUNDED → anything) straight through. On attempt 0
-    // this re-checks the caller's own pre-read value, so it is idempotent with
-    // a caller that did assert; on a retry it covers the re-read, which the
-    // caller never saw. Either way it runs BEFORE the write, and it only fires
-    // when this call actually moves the status.
+    // Asserted here, not in callers, so no caller can bypass it.
     if (fullyRefunded) {
-      rail.assertTransition(
+      assertEarningStatusTransitionLegal(
         current.id,
         current.status,
         EarningStatus.REFUNDED,
       );
     }
 
-    const { count } = await rail.table.updateMany({
-      where: {
-        id: current.id,
-        status: { in: rail.refundableSource },
-        [rail.reversedColumn]: alreadyRefunded,
-      },
-      data: {
-        [rail.reversedColumn]: nextReversed,
-        ...(fullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
+    // A row that moved out of the caller's legal sources (e.g. BATCHED -> PAID
+    // for a non-force caller) is refused, never reversed.
+    if (!rail.refundableSource.includes(current.status)) {
+      return {
+        reversedPaise: 0,
+        reversedTotalPaise: alreadyRefunded,
+        fullyRefunded: current.status === EarningStatus.REFUNDED,
+        lostRace: attempt > 0,
+      };
+    }
+
+    const count = await rail.cas(
+      current.id,
+      current.status,
+      alreadyRefunded,
+      nextReversed,
+      fullyRefunded,
+    );
 
     if (count > 0) {
       return {
@@ -247,10 +206,7 @@ async function applyCappedReversal(
       };
     }
 
-    const fresh = await rail.table.findUnique({
-      where: { id: current.id },
-      select: { status: true, [rail.reversedColumn]: true },
-    });
+    const fresh = await rail.read(current.id);
     if (!fresh) {
       // The row is gone; nothing to reverse and nothing to report against.
       return {
@@ -260,12 +216,7 @@ async function applyCappedReversal(
         lostRace: true,
       };
     }
-    current = {
-      id: current.id,
-      total: current.total,
-      reversed: (fresh[rail.reversedColumn] as number | null) ?? 0,
-      status: fresh.status as EarningStatus,
-    };
+    current = { ...current, status: fresh.status, reversed: fresh.reversed };
   }
 
   // Two refusals in a row: report, never claim a write that did not happen.
@@ -282,7 +233,10 @@ async function applyCappedReversal(
   };
 }
 
-/** The consultant rail. Signature unchanged — `earnings-service.ts` is a caller. */
+/**
+ * The consultant rail. Pass `REFUNDABLE_UNPAID_EARNING_SOURCE` from any path
+ * that must not reverse a PAID row (no TDS reversal / clawback there).
+ */
 export async function applyCappedEarningReversal(
   db: PrismaLike,
   row: {
@@ -292,9 +246,10 @@ export async function applyCappedEarningReversal(
     status: EarningStatus;
   },
   requestPaise: number,
+  refundableSource: EarningStatus[] = REFUNDABLE_EARNING_SOURCE,
 ): Promise<EarningReversalOutcome> {
   const out = await applyCappedReversal(
-    consultantRail(db),
+    consultantRail(db, refundableSource),
     {
       id: row.id,
       status: row.status,
@@ -311,13 +266,7 @@ export async function applyCappedEarningReversal(
   };
 }
 
-/**
- * The `OrganizationEarnings` twin. Same CAS, same cap arithmetic, same
- * unconditional status guard — the org sites' only differences are the column
- * names and the payout clawback / audit rows their callers own, which still
- * read `reversedPaise` (never their own request) for the same reason the
- * consultant TDS filing does.
- */
+/** The `OrganizationEarnings` twin: same CAS, different column names. */
 export async function applyCappedOrgEarningReversal(
   db: PrismaLike,
   row: {
