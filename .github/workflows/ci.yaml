@@ -24,6 +24,10 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  # A direct push to a release branch deploys without a PR, so the same checks
+  # run on push too.
+  push:
+    branches: [dev, staging, prod]
   pull_request:
     # `feat/**` is here because a stacked train is the normal shape for large
     # work in this repo and, without it, a sub-PR whose base is a feature branch

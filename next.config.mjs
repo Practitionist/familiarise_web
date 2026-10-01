@@ -33,15 +33,10 @@ const RESOLVED_APP_URL =
     : process.env.NEXT_PUBLIC_APP_URL;
 
 /**
- * Opt-in for type-checking and linting inside `next build` on Netlify.
- *
- * Off by default so no existing deploy changes behaviour. See the long
- * rationale at the `eslint` / `typescript` keys below — the summary is that
- * `NETLIFY` is set on every Netlify build including production, so gating on
- * it meant production shipped untyped and unlinted code, and this flag makes
- * turning the checks back on a decision rather than a side effect.
+ * Type-check and lint inside `next build`, Netlify included, unless
+ * `STRICT_BUILD=false`. See the `eslint` / `typescript` keys below.
  */
-const STRICT_BUILD = process.env.STRICT_BUILD === "true";
+const STRICT_BUILD = process.env.STRICT_BUILD !== "false";
 
 /**
  * CSP violations go straight to Sentry's security-report endpoint, derived
@@ -247,53 +242,11 @@ const nextConfig = {
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
       : {}),
   },
-  // Type-check and lint during `next build`: OFF on Netlify, ON everywhere
-  // else, and ON on Netlify when STRICT_BUILD=true.
-  //
-  // What changed and why (#932 was the reason these were ever skipped)
-  // ----------------------------------------------------------------
-  // The old gate was `!!process.env.NETLIFY`, and Netlify sets `NETLIFY=true`
-  // on EVERY build — production included. So the flag was not a Netlify
-  // workaround at all; it was "production ships untyped, unlinted code",
-  // expressed as an environment side effect that nobody reads. The comment it
-  // carried ("CI gates them anyway") was true and load-bearing at the time,
-  // but it described a gate that does not cover every way code reaches prod.
-  //
-  // The reason for skipping is real and unchanged: `next build` runs ESLint
-  // and tsc in the same process as the webpack compile, and netlify.toml
-  // pins `NODE_OPTIONS = "--max-old-space-size=6144"` in an 8 GB container
-  // (see the #1795 / #1792 notes further down on how much of that headroom
-  // the static phase already wants). Adding a second full type-check pass on
-  // top of an already-tight ceiling is how exit 137 happens. So the default
-  // is preserved rather than reversed.
-  //
-  // What is NOT preserved is the accidental part. `STRICT_BUILD=true` is now
-  // the only thing that turns the checks back on, so "strict" is a decision
-  // someone makes, not a side effect of where the build runs. Set it on the
-  // release branches in the Netlify env. Cost when it is on: a slower build
-  // and a higher peak-RSS risk against that 6144 MB ceiling — if the strict
-  // build starts exiting 137, raise the concurrency/heap knobs above before
-  // concluding the checks are unaffordable.
-  //
-  // What CI does and does not cover (.github/workflows/ci.yaml)
-  // ----------------------------------------------------------
-  //   on:
-  //     pull_request:
-  //       branches: [dev, staging, prod, "feat/**"]
-  //   workflow_dispatch:
-  //
-  // There is no `push:` trigger at all. So `npx tsc --noEmit` (step "TypeScript
-  // Check") and `npx eslint .` (step "ESLint Check") run on every pull request
-  // INTO a release branch, and on manual dispatch — but a DIRECT PUSH to
-  // `prod` runs no checks and deploys whatever is on it. That is the gap
-  // `STRICT_BUILD=true` on the release branches closes, and the reason it
-  // should not wait: the direct-push path is exactly the one CI misses.
-  //
-  // Note also that the CI "ESLint Check" and "Prettier Check" steps carry
-  // `continue-on-error: true` — they report into the job summary rather than
-  // failing the job. So lint is currently advisory even on the pull-request
-  // path, and tsc is the check that actually blocks. Worth knowing before
-  // treating CI as the whole safety net.
+  // Type-check and lint during `next build`, on Netlify too: a direct push to
+  // a release branch deploys without going through a PR's CI run. The cost is
+  // a slower build and more peak RSS against netlify.toml's 6144 MB heap; if
+  // the build starts exiting 137, set STRICT_BUILD=false as a stopgap and
+  // raise the heap/concurrency knobs below.
   eslint: {
     ignoreDuringBuilds: process.env.NETLIFY === "true" && !STRICT_BUILD,
   },
