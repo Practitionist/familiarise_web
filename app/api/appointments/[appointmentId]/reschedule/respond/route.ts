@@ -11,6 +11,10 @@ import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedResponse,
+} from "@/lib/enterprise/suspended-member-sessions";
+import {
   AppointmentBusyError,
   BookingLockUnavailableError,
   withAppointmentLock,
@@ -126,9 +130,11 @@ export async function POST(
       !!open &&
       !initiatedByConsultant &&
       !initiatedByConsultee &&
+      !!open.appointment &&
       (await isOrgAdminOfAppointment(
         open.initiatedById,
-        open.appointment?.organizationId,
+        open.appointment,
+        "reschedule",
       ));
     const counterpartyUserId = initiatedByConsultant
       ? consulteeUserId
@@ -142,6 +148,17 @@ export async function POST(
         { error: "No open reschedule request for this booking." },
         { status: 404 },
       );
+    }
+    // #1527 decision 6 — after the anti-oracle gate: a suspended learner
+    // can't answer a proposal on an org-funded booking.
+    if (
+      session.user.id === consulteeUserId &&
+      (await isSuspendedInFundingOrg(
+        session.user.id,
+        open.appointment?.organizationId,
+      ))
+    ) {
+      return membershipSuspendedResponse();
     }
 
     if (parsed.data.action === "decline") {

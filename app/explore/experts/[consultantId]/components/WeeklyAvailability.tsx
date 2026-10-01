@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { roundTime, timeToMinutes } from "../utils/time";
+import { roundTime, timeToMinutes12h } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
@@ -35,8 +35,8 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
     for (const day of DAY_NAMES) {
       const sorted = (slotsByDay[day] || []).slice().sort((a, b) => {
         return (
-          timeToMinutes(roundTime(a.localStartTime)) -
-          timeToMinutes(roundTime(b.localStartTime))
+          timeToMinutes12h(roundTime(a.localStartTime)) -
+          timeToMinutes12h(roundTime(b.localStartTime))
         );
       });
       result[day] = mergeConsecutiveSlotsForDisplay(sorted);

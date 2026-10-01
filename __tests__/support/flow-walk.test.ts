@@ -50,6 +50,14 @@ describe("walkFlow", () => {
     expect(r.escalate).toBe(false);
   });
 
+  it("marks only the chip that hands off to staff (#1527)", () => {
+    const r = walkFlow(flow, null, {}, ctx);
+    expect(r.messages[0].metadata?.options).toEqual([
+      { id: "a", label: "Option A", escalates: true },
+      { id: "b", label: "Option B" },
+    ]);
+  });
+
   it("advances to an escalating terminal and carries its machine-readable reason", () => {
     const r = walkFlow(flow, "start", { chosenOptionId: "a" }, ctx);
     expect(r.escalate).toBe(true);

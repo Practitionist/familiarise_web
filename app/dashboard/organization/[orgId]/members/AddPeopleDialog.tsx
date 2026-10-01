@@ -1,0 +1,180 @@
+"use client";
+
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { UserPlus } from "lucide-react";
+import type { MemberRole } from "@prisma/client";
+import type { z } from "zod";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
+import { FieldError } from "@/components/ui/field-error";
+import { useToast } from "@/hooks/use-toast";
+import {
+  errorMessageFromBody,
+  validateOutboundPayload,
+} from "@/lib/fetch-helpers";
+import { humanizeOrgError } from "@/lib/labels/org-errors";
+import { MEMBER_ROLE_LABEL, getInvitableRoles } from "@/lib/labels/org-labels";
+import { CreateInvitationPayloadSchema } from "@/schemas/organizations";
+
+import { useOrgRole } from "../useOrgRole";
+
+type InvitableRole = z.infer<typeof CreateInvitationPayloadSchema>["role"];
+
+/**
+ * #1846 bucket C — every human-initiated add is an invitation the person
+ * accepts, including the DPDP consent step. This dialog used to add an
+ * existing account straight away as ACTIVE, skipping both; now it always
+ * sends the invitation, whether or not the person already has an account.
+ */
+async function invitePerson(
+  orgId: string,
+  payload: { email: string; role: InvitableRole },
+): Promise<void> {
+  const res = await fetch(`/api/organizations/${orgId}/invitations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(
+      validateOutboundPayload(CreateInvitationPayloadSchema, payload),
+    ),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(
+      humanizeOrgError(
+        errorMessageFromBody(body, "Couldn't send the invitation."),
+      ),
+    );
+  }
+}
+
+export function AddPeopleDialog({
+  orgId,
+  canSponsor,
+  canHost,
+  disabledReason,
+}: Readonly<{
+  orgId: string;
+  canSponsor: boolean;
+  canHost: boolean;
+  /** Set when the org can't take new people yet; disables the trigger. */
+  disabledReason?: string;
+}>) {
+  // #1527 P1-7 — the server refuses OWNER from a non-owner; don't offer it.
+  const { role: viewerRole } = useOrgRole(orgId);
+  const roleOptions = getInvitableRoles(viewerRole, canSponsor, canHost);
+  // Default to the org's common consumer role so the Select is never blank.
+  let defaultRole: MemberRole = "MANAGER";
+  if (canSponsor) defaultRole = "LEARNER";
+  else if (canHost) defaultRole = "EXPERT";
+
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<MemberRole>(defaultRole);
+  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      invitePerson(orgId, { email: email.trim(), role: role as InvitableRole }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["org-invitations", orgId],
+      });
+      toast({
+        title: "Invitation sent",
+        description: `${email.trim()} joins when they accept the emailed invitation.`,
+      });
+      setOpen(false);
+      setEmail("");
+      setRole(defaultRole);
+      setError(null);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <>
+      <Button
+        size="sm"
+        onClick={() => setOpen(true)}
+        disabled={disabledReason !== undefined}
+        title={disabledReason}
+      >
+        <UserPlus className="mr-1 h-4 w-4" /> Add people
+      </Button>
+      <ResponsiveModal open={open} onOpenChange={setOpen}>
+        <ResponsiveModalContent>
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Add people</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
+              We email them an invitation. They join once they accept it and
+              confirm how their data is used.
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="add-people-email">Email</Label>
+              <Input
+                id="add-people-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="alice@acme.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="add-people-role">Role</Label>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as MemberRole)}
+              >
+                <SelectTrigger id="add-people-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {roleOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {MEMBER_ROLE_LABEL[value]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <FieldError message={error} />
+          </div>
+          <ResponsiveModalFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !email.includes("@")}
+            >
+              {mutation.isPending ? "Sending…" : "Send invitation"}
+            </Button>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
+    </>
+  );
+}

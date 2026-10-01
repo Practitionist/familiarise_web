@@ -50,7 +50,11 @@ import {
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
-import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
+import {
+  isSuspendedInFundingOrg,
+  membershipSuspendedError,
+} from "@/lib/enterprise/suspended-member-sessions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 
@@ -173,9 +177,19 @@ export async function POST(
     // is not transaction state, so reading it early costs nothing.
     const orgScope = await prisma.appointment.findUnique({
       where: { id: appointmentId },
-      select: { organizationId: true },
+      select: {
+        organizationId: true,
+        consultationId: true,
+        subscriptionId: true,
+      },
     });
-    const actorIsFundingOrgAdmin = await isOrgAdminOfAppointment(
+    // #1851 decision 1 — 1:1 and subscription bookings only.
+    const fundingOrgActor = orgScope
+      ? await resolveOrgActor(session.user.id, orgScope, "reschedule")
+      : null;
+    // #1527 decision 6 — read here for the same pool reason; applied to the
+    // learner side once the transaction knows who is asking.
+    const actorSuspendedInFundingOrg = await isSuspendedInFundingOrg(
       session.user.id,
       orgScope?.organizationId,
     );
@@ -281,13 +295,21 @@ export async function POST(
           // act on the payer side, so their proposals carry the CONSULTEE role:
           // same auto-confirm consent semantics as the buyer they act for.
           const isOrgAdminActor =
-            !isParticipant && !isPrivilegedUser && actorIsFundingOrgAdmin;
+            !isParticipant && !isPrivilegedUser && fundingOrgActor !== null;
           if (isOrgAdminActor) {
             initiatorRole = "CONSULTEE";
           }
 
           if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
             throw new RescheduleAuthorizationError();
+          }
+          if (
+            initiatorRole === "CONSULTEE" &&
+            !isOrgAdminActor &&
+            !isPrivilegedUser &&
+            actorSuspendedInFundingOrg
+          ) {
+            throw membershipSuspendedError();
           }
 
           // Derive type from DB instead of trusting query param
@@ -374,6 +396,16 @@ export async function POST(
                 MINIMUM_HOURS_BEFORE_RESCHEDULE,
               );
             }
+          }
+
+          // #1851 decision 2 — the org's own trail, beside the booking's.
+          if (isOrgAdminActor && fundingOrgActor) {
+            await recordActForOrg(tx, {
+              actor: fundingOrgActor,
+              action: "reschedule",
+              appointmentId,
+              reason,
+            });
           }
 
           // Audit attribution for every BookingStatusHistory row this

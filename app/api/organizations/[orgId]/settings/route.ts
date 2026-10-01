@@ -17,7 +17,12 @@ export async function GET(
 ) {
   const { orgId } = await params;
   try {
-    const access = await requireOrgAccess(orgId, { minimumRole: "LEARNER" });
+    // #1527 P0-3 — the full org row, credit limit and tax identity. Read by
+    // the General (settings.manage) and Billing contacts (billing.manage)
+    // tabs only, so the same two grants gate it; it used to floor at LEARNER.
+    const access = await requireOrgAccess(orgId, {
+      permission: ["settings.manage", "billing.manage"],
+    });
     if (access.error) return access.error;
 
     // `profile` mirrors the Organization row — callers need the

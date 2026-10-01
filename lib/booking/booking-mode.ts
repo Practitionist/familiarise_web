@@ -28,7 +28,13 @@ export function consultationCtaFor(
     };
   }
   if (slotIsAllocated) {
-    return { action: "request", label: "Request for Approval", hint: null };
+    // #1785 L-3 — the slot list marks a contended time with a "Request" tag;
+    // the sentence under the button says what the tag means.
+    return {
+      action: "request",
+      label: "Request for Approval",
+      hint: "Someone else is asking for this time too — the expert confirms before you pay.",
+    };
   }
   return { action: "checkout", label: "Continue to Checkout", hint: null };
 }

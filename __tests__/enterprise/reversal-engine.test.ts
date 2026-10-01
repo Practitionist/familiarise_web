@@ -26,9 +26,13 @@ const mockPostLedgerTxn = jest.fn();
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
   reportSentryMessage: jest.fn(),

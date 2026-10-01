@@ -69,6 +69,8 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => mockRefundPayment(...a),
+  // #1846 — the trial quote names the rail for the cancel dialog.
+  fundingRailForIntent: () => "GATEWAY",
 }));
 
 jest.mock("@sentry/nextjs", () => ({
@@ -173,6 +175,28 @@ describe("refundCancelledTrial", () => {
     );
     expect(result?.amountRefundedPaise).toBe(100_000);
     expect(result?.failed).toBeUndefined();
+  });
+
+  it("refunds 100 % when the learner cancels a paid trial with no session yet (#1775 C-11)", async () => {
+    mockPaymentFindFirst.mockResolvedValue(paidTrial);
+    mockAppointmentFindUnique.mockResolvedValue({
+      cancellationPolicy: null,
+      occurrences: [],
+    });
+    mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
+
+    const result = await refundCancelledTrial({
+      trialId: TRIAL_ID,
+      appointmentId: APPOINTMENT_ID,
+      paymentId: PAYMENT_ID,
+      initiatedByUserId: USER_ID,
+      isConsultantInitiated: false,
+    });
+
+    expect(result?.refundPct).toBe(100);
+    expect(mockRefundPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: 100_000 }),
+    );
   });
 
   it("mints no refund for a free trial", async () => {

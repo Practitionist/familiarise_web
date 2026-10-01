@@ -78,7 +78,7 @@ async function buildPlatformContext(
 
 export async function GET() {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
   let userId: string | null = null;
   let flowId: string | null = null;
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }

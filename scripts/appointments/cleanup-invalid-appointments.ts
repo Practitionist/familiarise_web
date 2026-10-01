@@ -29,6 +29,7 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { SLOT_TRANSITION_TX_OPTIONS } from "@/lib/booking/slot-release";
 
 /**
  * #1319 — per request, in one transaction: CAS the request to CANCELLED
@@ -45,6 +46,12 @@ async function cancelRequestsAndReleaseSlots(
     // The counters are the caller's report of what is now true in the database,
     // so they are only moved once the transaction has committed — incrementing
     // them inside the callback would keep counting a rolled-back cancellation.
+    // FAMILIARISE_WEB-58 — one request's CAS + slot sweep + history row
+    // exceeds Prisma's default 5 s interactive-transaction timeout on a slow
+    // pool (77-row invalid-period cohort), rolling back and failing the whole
+    // run. Same 30 s bounded-transaction posture as the slot sweeps
+    // (SLOT_TRANSITION_TX_OPTIONS): each id still commits independently, so a
+    // slow row delays but never poisons the cohort.
     const committed = await prisma.$transaction(async (tx) => {
       try {
         if (kind === "consultation") {
@@ -77,7 +84,7 @@ async function cancelRequestsAndReleaseSlots(
         allowZero: true,
       });
       return { cancelled: true as const, slotsCancelled };
-    });
+    }, SLOT_TRANSITION_TX_OPTIONS);
 
     if (!committed.cancelled) {
       outcome.skipped++;
@@ -102,11 +109,14 @@ export interface CleanupResult {
   success: boolean;
 }
 
-// Statuses that should not be cleaned up (already terminal)
+// Statuses that should not be cleaned up (already terminal). COMPLETED is
+// terminal too: without it all four detectors read COMPLETED bookings as
+// cleanable and rely on the CAS skip to avoid COMPLETED→CANCELLED corruption.
 const TERMINAL_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CANCELLED,
   AppointmentStatus.REJECTED,
   AppointmentStatus.EXPIRED,
+  AppointmentStatus.COMPLETED,
 ];
 
 /**

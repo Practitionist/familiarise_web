@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import UseCasePageLayout from "../UseCasePageLayout";
 import type { UseCasePageData } from "../UseCasePageLayout";
+import { CONSULTATION_HOST_NO_SHOW_ANSWER } from "@/lib/support/session-outcome-copy";
 
 export const metadata: Metadata = {
   title: "Career Guidance for College Students in India | Familiarise",
@@ -168,7 +169,10 @@ const data: UseCasePageData = {
     title: "You have three options. Here they are, without the spin.",
     intro:
       "Free advice and paid programs both work for some people. This is where each of them puts the risk, and where we put it.",
-    alternatives: ["Free advice online", "Cohort and pay-after-placement programs"],
+    alternatives: [
+      "Free advice online",
+      "Cohort and pay-after-placement programs",
+    ],
     ourLabel: "Familiarise",
     rows: [
       {
@@ -222,7 +226,10 @@ const data: UseCasePageData = {
     intro:
       "Every listing shows the expert's price, session length and reviews before you commit to anything.",
     links: [
-      { label: "Interview prep", href: "/explore/experts?search=Interview+Prep" },
+      {
+        label: "Interview prep",
+        href: "/explore/experts?search=Interview+Prep",
+      },
       { label: "DSA", href: "/explore/experts?search=DSA" },
       { label: "System design", href: "/explore/experts?search=System+Design" },
       { label: "Data science", href: "/explore/experts?search=Data+Science" },
@@ -256,8 +263,15 @@ const data: UseCasePageData = {
       },
       {
         question: "What if the expert doesn't turn up?",
-        answer:
-          "Report it from the booking itself. Our team reviews the session's attendance record and can arrange a full refund or a reschedule. We deliberately do not automate that decision, because a genuine connectivity failure and a no-show look identical to a script.",
+        // #1569 B3: an expert no-show on a consultation is handled
+        // automatically (D4) — no manual review to wait on, no reschedule
+        // promise. #1833 review: "absent for the session" read as requiring
+        // a total no-show, and the full-refund promise wasn't scoped to
+        // consultations (CodeRabbit); copy now lives in
+        // lib/support/session-outcome-copy.ts, shared with the mentorship
+        // FAQ, to avoid a Sonar CPD match against the identically shaped
+        // FAQ item on the other use-cases pages.
+        answer: CONSULTATION_HOST_NO_SHOW_ANSWER,
       },
       {
         question: "Can I send my resume before the call?",

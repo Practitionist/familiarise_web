@@ -27,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
   getSession: jest.fn(async () => null),
+  getCachedSession: jest.fn(async () => null),
 }));
 
 import { NextRequest } from "next/server";
@@ -145,7 +146,9 @@ describe("availability grid conditional GET", () => {
   });
 
   it("reads the session fresh for the privileged detail shape and cookie-cached for busy/free (#1697 item 4)", async () => {
-    const { getSession } = jest.requireMock("../../lib/auth-server");
+    const { getSession, getCachedSession } = jest.requireMock(
+      "../../lib/auth-server",
+    );
     await GET(
       new NextRequest(`${URL_BASE}?${QUERY}&includeAppointmentDetails=true`),
       { params },
@@ -154,10 +157,15 @@ describe("availability grid conditional GET", () => {
     await GET(new NextRequest(`${URL_BASE}?${QUERY}&consulteeUserId=u-1`), {
       params,
     });
-    expect(getSession).toHaveBeenLastCalledWith();
+    // The busy/free shape takes the explicit cached-read API, never the
+    // force-fresh one — the contract, now greppable as getCachedSession.
+    // The cross-user gate still re-reads the role fresh (#1807), so the
+    // last getSession call carries `true`.
+    expect(getCachedSession).toHaveBeenCalled();
+    expect(getSession).toHaveBeenLastCalledWith(true);
   });
 
-  it("refuses a window wider than 31 days with WINDOW_TOO_WIDE (supersedes #1577)", async () => {
+  it("refuses a window wider than 32 days with WINDOW_TOO_WIDE (supersedes #1577; 32 since #1785)", async () => {
     const res = await GET(
       new NextRequest(
         `${URL_BASE}?startDateInUtc=2026-09-01T00:00:00.000Z&endDateInUtc=2026-10-31T00:00:00.000Z&timezone=UTC`,
@@ -167,7 +175,7 @@ describe("availability grid conditional GET", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       code: "WINDOW_TOO_WIDE",
-      maxWindowDays: 31,
+      maxWindowDays: 32,
     });
     expect(mockedMarker).not.toHaveBeenCalled();
   });

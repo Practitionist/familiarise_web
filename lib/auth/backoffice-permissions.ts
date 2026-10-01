@@ -10,8 +10,8 @@ import type { UserRole } from "@prisma/client";
  *
  * Why this exists at all: admin and staff were two ~85%-identical dashboards
  * whose access difference was expressed only by which route tree you landed
- * in. Merging them into `/dashboard/admin` means the difference has to live
- * somewhere real — here.
+ * in. Merging them into one `(backoffice)/[tree]` route tree (#1527) means the
+ * difference has to live somewhere real — here.
  *
  * Policy, stated once:
  *   - STAFF own support end-to-end: tickets, feedback, moderation,
@@ -67,12 +67,21 @@ export type BackofficeSurface =
   | "payouts.manage"
   | "approvalPayments.manage"
   | "tds.read"
+  // #1771 K-6 — the class-series doors: support moves vs money moves.
+  | "classSeries.support"
+  | "classSeries.money"
+  // #1771 K-9 — the console's audit log; staff read only their own rows.
+  | "opsLog.read"
   // Platform — org lifecycle, comms, and system control.
   | "organizations.manage"
   | "announcements.manage"
   | "analytics.read"
   | "systemJobs.manage"
-  | "maintenance.manage";
+  | "maintenance.manage"
+  // #1527 Q5 — erasure requests, data breaches and failed emails.
+  | "compliance.manage"
+  // #1527 — the newsletter mass send, split from triaging the list.
+  | "newsletter.send";
 
 const roles = (...list: UserRole[]): ReadonlySet<UserRole> =>
   new Set<UserRole>(list);
@@ -98,8 +107,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   // irreversible and account-destroying, so admin-only.
   "appointments.manage": OPERATORS,
   "waitlist.manage": OPERATORS,
-  // #1230 wave-4c — enterprise sales pipeline triage.
-  "leads.manage": OPERATORS,
+  // #1230 wave-4c — enterprise sales pipeline triage. Admin-only (#1527
+  // §17b): staff are support (#1771), and the merged tree would otherwise
+  // hand them a working Leads page.
+  "leads.manage": ADMIN_ONLY,
   "users.read": OPERATORS,
   "users.verify": OPERATORS,
   "users.moderate": ADMIN_ONLY,
@@ -114,9 +125,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "recordings.read": OPERATORS,
   "recordings.play": ADMIN_ONLY,
 
-  // Money — read for context, mutate only as admin. Payouts, approval
-  // payments and TDS have no staff-facing read either: they are settlement
-  // and statutory surfaces with no support use case.
+  // Money — read for context, mutate only as admin. Staff read payouts to
+  // answer "where is my payout" tickets (owner, 2026-09-26); every payout
+  // and earnings mutation stays `payouts.manage`. Approval payments and TDS
+  // have no staff-facing read: they have no support use case.
   "payments.read": OPERATORS,
   "payments.manage": ADMIN_ONLY,
   "refunds.read": OPERATORS,
@@ -127,10 +139,15 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "invoices.manage": ADMIN_ONLY,
   "subscriptions.read": OPERATORS,
   "subscriptions.manage": ADMIN_ONLY,
-  "payouts.read": ADMIN_ONLY,
+  "payouts.read": OPERATORS,
   "payouts.manage": ADMIN_ONLY,
   "approvalPayments.manage": ADMIN_ONLY,
   "tds.read": ADMIN_ONLY,
+  // #1780 — staff cancel a session for a host, grant a make-up and flag
+  // reliability; anything that refunds (skip, series cancel, sweeps) is admin's.
+  "classSeries.support": OPERATORS,
+  "classSeries.money": ADMIN_ONLY,
+  "opsLog.read": OPERATORS,
 
   // Platform — org lifecycle and system control are admin's remit.
   // Announcements are platform-wide outbound comms, so admin-only too.
@@ -140,6 +157,11 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "analytics.read": OPERATORS,
   "systemJobs.manage": ADMIN_ONLY,
   "maintenance.manage": ADMIN_ONLY,
+  // #1527 Q5 — personal-data obligations (DPDP erasure, breach notices) and
+  // the failed-email retry queue are admin's; staff read none of it.
+  "compliance.manage": ADMIN_ONLY,
+  // #1527 — staff triage the newsletter list, but a mass send is admin's.
+  "newsletter.send": ADMIN_ONLY,
 };
 
 export function hasBackofficePermission(

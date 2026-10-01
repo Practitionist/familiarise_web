@@ -102,6 +102,14 @@ async function handleLostDisputesUnlocked(): Promise<LostDisputeHandlerResult> {
     // FIX #567: Use the canonical refundEarnings() path instead of reimplementing.
     // This ensures TDS reversal for PAID earnings, correct revenue field
     // (totalRevenue for PAID, pendingRevenue for non-PAID), and refundedShareAmount tracking.
+    // PRODUCTIONIZATION NOTE: this path flips earnings/TDS only — it does not
+    // append PaymentLeg *_REVERSAL rows, wallet credits, utilization reversals,
+    // ledger postings, credit notes, or payout clawbacks the way
+    // applyRefundCascade() does for refund-driven earnings. A LOST dispute
+    // handled here therefore surfaces as REVERSED_EARNING_WITHOUT_REFUND_TXN /
+    // EARNINGS_LEDGER_DRIFT in reconcile-ledgers until a dispute-loss cascade
+    // front door exists (follow-up: route LOST disputes through a Refund row +
+    // applyRefundCascade like handleDisputeUpdated does).
     const paymentId = dispute.payment?.id;
     if (!paymentId) {
       console.warn(

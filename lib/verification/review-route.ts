@@ -1,6 +1,5 @@
 /**
- * The PATCH body both review routes share (`/api/staff/moderation/profiles/[id]`
- * and `/api/admin/verification/[id]`): validate, decide through
+ * The PATCH body of `/api/admin/verification/[id]`: validate, decide through
  * `reviewVerification` (which stages the consultant's bell and email in its
  * transaction), purge the public surfaces, and attempt the notices in `after()`.
  */
@@ -92,7 +91,7 @@ export async function handleReviewPatch(
   scheduleAfter(async () => {
     if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
     if (email) await attemptOnboardingEmail(email);
-  });
+  }, "verification.review.post-commit");
 
   const verification = await prisma.consultantProfileVerification.findUnique({
     where: { id: verificationId },

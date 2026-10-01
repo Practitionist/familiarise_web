@@ -32,22 +32,22 @@ function outputToGitHubActions(result: AuditPruneResult): void {
   fs.appendFileSync(outputFile, lines + "\n");
 }
 
-if (require.main === module) {
-  runJob("prune-audit-logs", async () => {
-    await abortIfMaintenance("prune-audit-logs");
-    Sentry.logger.info("job:prune-audit-logs started");
-    console.log("🧹 Pruning audit logs past retention...");
-    try {
-      const result = await pruneAuditLogs();
-      console.log(JSON.stringify(result, null, 2));
-      outputToGitHubActions(result);
-      if (!result.success) {
-        process.exitCode = 1;
-        return;
-      }
-      Sentry.logger.info("job:prune-audit-logs finished", { scanned: result.scanned, deleted7y: result.deleted7y, deleted2y: result.deleted2y });
-    } finally {
-      await disconnectDatabase();
+// Unconditional entry: `require.main === module` never fires under tsx (ESM),
+// which previously left this job loading the module and exiting silently.
+runJob("prune-audit-logs", async () => {
+  await abortIfMaintenance("prune-audit-logs");
+  Sentry.logger.info("job:prune-audit-logs started");
+  console.log("🧹 Pruning audit logs past retention...");
+  try {
+    const result = await pruneAuditLogs();
+    console.log(JSON.stringify(result, null, 2));
+    outputToGitHubActions(result);
+    if (!result.success) {
+      process.exitCode = 1;
+      return;
     }
-  });
-}
+    Sentry.logger.info("job:prune-audit-logs finished", { scanned: result.scanned, deleted7y: result.deleted7y, deleted2y: result.deleted2y });
+  } finally {
+    await disconnectDatabase();
+  }
+});

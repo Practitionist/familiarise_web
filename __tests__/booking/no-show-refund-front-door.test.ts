@@ -43,10 +43,15 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 // resolved value is re-armed in beforeEach — the job does
 // `recordSystemError(...).catch(...)` and needs a real promise back.
 const recordSystemError = jest.fn();
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: (...a: unknown[]) => recordSystemError(...(a as [never])),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    __esModule: true,
+    recordSystemError: (...a: unknown[]) =>
+      recordSystemError(...(a as [never])),
+    recordSystemErrorSafe: (...a: unknown[]) =>
+      recordSystemError(...(a as [never])),
+  };
+});
 
 jest.mock("../../lib/novu/service", () => ({
   __esModule: true,
@@ -80,6 +85,7 @@ jest.mock("../../lib/prisma", () => {
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
     },
+    maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
     $disconnect: jest.fn(),
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
@@ -143,7 +149,19 @@ function noShowCandidate(payment: {
       ],
       occurrences: [
         {
+          startsAt: new Date("2026-09-01T10:00:00Z"),
+          endsAt: new Date("2026-09-01T11:00:00Z"),
+          // #1569 — the shared classifier reads per-device presence intervals.
+          presences: [
+            {
+              userId: CONSULTEE_USER,
+              joinedAt: new Date("2026-09-01T10:00:00Z"),
+              leftAt: new Date("2026-09-01T11:00:00Z"),
+            },
+          ],
           meeting: {
+            endedAt: new Date("2026-09-01T11:00:00Z"),
+            endedReason: "call_ended",
             // #1280 — the detector now asks Stream to corroborate before any
             // money moves, so the session needs a call id for it to ask about.
             // Without one it refuses, which is the correct behaviour and not
@@ -219,6 +237,30 @@ describe("consultant no-show refunds", () => {
     );
   });
 
+  // #1834 — a session the sweep decided or parked for ops is never cancelled here.
+  it("keeps decided or parked sessions out of the cohort and the claim's CAS", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    await detectConsultantNoShows();
+
+    const parked = {
+      deletedAt: null,
+      OR: [{ outcome: { not: null } }, { completionStatus: "UNVERIFIED" }],
+    };
+    const [query] = (prisma.consultation.findMany as jest.Mock).mock.calls[0];
+    expect(query.where.appointment.occurrences.none).toEqual(parked);
+    const [claim] = (prisma.consultation.updateMany as jest.Mock).mock.calls[0];
+    expect(claim.where.appointment).toEqual({ occurrences: { none: parked } });
+    const [release] = (
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+    ).mock.calls[0];
+    expect(release.where).toMatchObject({
+      outcome: null,
+      completionStatus: { in: ["SCHEDULED"] },
+    });
+  });
+
   it("does not filter the candidate query on a positive amount", async () => {
     await detectConsultantNoShows();
 
@@ -254,10 +296,11 @@ describe("consultant no-show refunds", () => {
 
   it("leaves a session the consultant actually attended alone", async () => {
     const attended = noShowCandidate({ id: "pay-1", amount: 150000 });
-    attended.appointment.occurrences[0].meeting.attendances = [
-      { userId: CONSULTEE_USER },
-      { userId: CONSULTANT_USER },
-    ];
+    attended.appointment.occurrences[0].presences.push({
+      userId: CONSULTANT_USER,
+      joinedAt: new Date("2026-09-01T10:00:00Z"),
+      leftAt: new Date("2026-09-01T11:00:00Z"),
+    });
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([attended]);
 
     const result = await detectConsultantNoShows();

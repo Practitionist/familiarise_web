@@ -35,9 +35,10 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
 import {
@@ -71,7 +72,7 @@ export async function refundRejectedRequest(args: {
   // the actor is checked here as well as at the route — one missed guard on a
   // future caller must not be enough to hand out the platform's money.
   if (args.actor === "CONSULTEE") {
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary:
@@ -80,7 +81,7 @@ export async function refundRejectedRequest(args: {
         `consultant-initiated tier`,
       err: new Error("REJECTION_REFUND_WRONG_ACTOR"),
       context: { ...args },
-    }).catch(() => {});
+    });
     return null;
   }
 
@@ -114,8 +115,14 @@ export async function refundRejectedRequest(args: {
     // Clamp to what is actually still refundable. A percentage of the gross
     // overshoots on a payment with an earlier partial refund, and the refund
     // operation rejects the whole request rather than paying the remainder.
+    // #1780 R-3 — integer basis points in BigInt, as cancellation-policy does:
+    // a two-decimal percentage times paise put float error inside money.
     const amountPaise = Math.min(
-      Math.floor((ctx.paidPayment.amountPaise * refundPct) / 100),
+      Number(
+        (BigInt(ctx.paidPayment.amountPaise) *
+          BigInt(Math.round(refundPct * 100))) /
+          BigInt(10_000),
+      ),
       ctx.paidPayment.refundablePaise,
     );
     if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };
@@ -172,7 +179,8 @@ async function notifyRejectedRequestPayer(
       amount: amountPaise,
       currency: payment.currency,
       reason: "Your booking request was declined by the consultant.",
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      // #1527 — the recipient is always the payer.
+      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     });
     // #1653 — the email twin; the sender never throws.
     await sendRefundProcessedEmail(

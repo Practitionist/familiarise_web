@@ -1,3 +1,4 @@
+import type { ConsultantNeedsYou } from "@/lib/data/consultant-needs-you";
 import { TAppointment } from "@/types/appointment";
 
 /**
@@ -65,8 +66,16 @@ export interface TPerformanceSnapshot {
 export interface TFinancialSummary {
   /** Net earnings in paise (divide by 100 for INR) */
   netEarnings: number;
-  /** Next payout amount in paise (divide by 100 for INR) */
+  /** Next payout amount in paise (divide by 100 for INR) — READY-only, the
+   *  payout-eligibility value (excludes BATCHED, which is already committed
+   *  to a payout run). */
   nextPayout: number;
+  /**
+   * #1527 review — the Earnings page's "Available" tile (READY + BATCHED,
+   * net of refunds); `nextPayout` alone under-reports it for anyone with a
+   * payout batch in flight.
+   */
+  availableEarnings: number;
   payoutStatus: string;
   activeClients: number;
   activePrograms: number;
@@ -109,4 +118,8 @@ export interface TConsultantDashboardResponse {
   financialSummary: TFinancialSummary;
   /** #1675 PR-Y2 — earnings exist and the payout account is what stops them. */
   payoutSetup?: { needed: boolean; href: string; livePayoutsEnabled: boolean };
+  /** #1527 — Home's Needs you strip; absent when its read failed. */
+  needsYou?: ConsultantNeedsYou;
+  /** #1527 — Home's This month card and milestone line. */
+  sessionsDelivered?: { thisMonth: number; lifetime: number };
 }

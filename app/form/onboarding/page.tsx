@@ -24,10 +24,16 @@ import {
   OnboardingFormDataSchema,
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
-import { AlertTriangle, Check, History, LogOut, RotateCcw } from "lucide-react";
-import { cn } from "@/utils/tailwind";
+import { History, LogOut, RotateCcw } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import * as Sentry from "@sentry/nextjs";
+import { stepEnter, stepExit, stepTransition, stepVisible } from "@/lib/motion";
+import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
+import { OnboardingStepper } from "@/components/onboarding/onboarding-stepper";
+import { OnboardingNotice } from "@/components/onboarding/OnboardingNotice";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   describeIssuePath,
   stepKeyForField,
@@ -38,7 +44,7 @@ import {
   getPendingReferral,
   clearPendingReferral,
 } from "@/lib/pending-referral";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -130,7 +136,9 @@ interface OnboardingStepContext {
   onNext: (data: Partial<OnboardingFormData>) => Promise<void>;
   onBack: () => void;
   onSubmit: (data: Partial<OnboardingFormData>) => Promise<void>;
-  onGoToStep: (targetStep: number) => void;
+  /** Returns whether the jump was taken, so a caller only clears its own
+   *  affordance when the wizard actually moved. */
+  onGoToStep: (targetStep: number) => boolean;
   onExitOrgWizard: () => void;
   /** Settle in-flight draft saves before anything deletes the row. */
   onQuiesceDraftSaves: () => Promise<void>;
@@ -397,6 +405,42 @@ function describeDraftField(field: string | null): string {
     : "longest answers";
 }
 
+/**
+ * Dead-session recovery: sign out, then return to sign-in preserving the
+ * wizard destination. Success navigates straight there; a failed sign-out may
+ * leave a valid cookie behind, so the error path goes through the stale-session
+ * cleanup endpoint first (fail closed) — otherwise sign-in would bounce
+ * straight back to the wizard on the live cookie.
+ *
+ * Ordinary recovery (`?callbackUrl=/checkout/…`) passes the validated ORIGINAL
+ * callback through — wrapping the whole onboarding URL would nest it, and after
+ * completion the guard would see a fully-onboarded user on the wizard (without
+ * add mode) and drop them on the dashboard, never reaching checkout. Add mode
+ * (`?add=CONSULTANT`) keeps the full wizard URL, which requireNotOnboarded
+ * admits for eligible users.
+ */
+function signOutToSignin() {
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  const params = new URLSearchParams(search);
+  const inner = safeSameOriginPath(params.get("callbackUrl"));
+  const here =
+    inner && params.get("add") !== "CONSULTANT"
+      ? inner
+      : `/form/onboarding${search ? `?${params.toString()}` : ""}`;
+  const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
+  const cleanupHref = `/api/auth/clear-stale-session?callbackUrl=${encodeURIComponent(here)}`;
+  signOut({
+    fetchOptions: {
+      onSuccess: () => {
+        window.location.href = signinHref;
+      },
+      onError: () => {
+        window.location.href = cleanupHref;
+      },
+    },
+  });
+}
+
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   // Add mode (PR-6): `?add=CONSULTANT` on an onboarded learner / org operator
@@ -407,6 +451,11 @@ const MultiStepForm: React.FC = () => {
   const addIdentityRef = useRef(addIdentity);
   addIdentityRef.current = addIdentity;
   const [step, setStep] = useState(0);
+  // Which way the user last travelled, so the step transition can slide in the
+  // matching direction. `1` = forward (new step rises from below), `-1` = back.
+  // Without this, Back looks identical to Next, which reads as the wizard
+  // moving the wrong way.
+  const [direction, setDirection] = useState<1 | -1>(1);
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const [draftRestored, setDraftRestored] = useState(false);
   // The step a saved draft points at when the user had already started
@@ -443,6 +492,11 @@ const MultiStepForm: React.FC = () => {
   // earlier in-flight upsert, and the row must never be deleted while a save
   // is still unsettled — otherwise the upsert recreates it after the clear.
   const draftSaveQueueRef = useRef<DraftSaveQueue | null>(null);
+  // True while a step transition is in flight. Guards `handleNext` against a
+  // second click on the still-mounted outgoing form; released by
+  // AnimatePresence's onExitComplete, or explicitly on an error path that does
+  // not change the step.
+  const transitioningRef = useRef(false);
   if (!draftSaveQueueRef.current) {
     draftSaveQueueRef.current = createDraftSaveQueue();
   }
@@ -551,7 +605,12 @@ const MultiStepForm: React.FC = () => {
         // Someone already typing on step 0 keeps their place; the banner
         // offers the stored step instead of yanking the form away.
         if (interactedRef.current) setResumeStep(target);
-        else setStep(target);
+        // The draft can only move the wizard forward from step 0, which is
+        // where this effect runs, so the direction is always forward.
+        if (target > 0) {
+          setDirection(1);
+          setStep(target);
+        }
       }
       if (currentStep > 0 || hasPayload) setDraftRestored(true);
       trackOnboardingEvent("draft_restored", { currentStep, role });
@@ -678,6 +737,8 @@ const MultiStepForm: React.FC = () => {
     setDraftQuarantined(false);
     setDraftOverBudget(false);
     setFormData({});
+    // Always a backward jump to step 0, so the card must animate backwards.
+    setDirection(-1);
     setStep(0);
     await clearOnboardingDraftAction().catch(() => {});
     // Autosave must stay armed: hydration runs once per mount, so resetting
@@ -688,70 +749,114 @@ const MultiStepForm: React.FC = () => {
   };
 
   const handleNext = async (stepData: Partial<OnboardingFormData>) => {
-    // Merge new data first so the async role-flip below reads the
-    // freshest values (React setState batching would otherwise give us
-    // stale formData).
-    const merged: Partial<OnboardingFormData> = { ...formData, ...stepData };
-    if (stepData.scheduleType) {
-      merged.scheduleType = stepData.scheduleType;
-      if (stepData.weeklySlots) {
-        merged.weeklySlots = [...stepData.weeklySlots];
+    // A step transition holds the outgoing form on screen (AnimatePresence
+    // mode="wait") with its Continue button still live. A second click in
+    // that window would run this again against the ALREADY-incremented `step`
+    // and skip the next step's validation — so a consultant could jump past
+    // Professional Profile without it ever validating.
+    if (transitioningRef.current) return;
+    transitioningRef.current = true;
+    // The guard is released by AnimatePresence's onExitComplete, which only
+    // runs if the step ACTUALLY changes. Every other exit from this function —
+    // expired session, the org role handoff failing, the action rejecting
+    // outright — leaves the user on the step they are looking at, so nothing
+    // would ever release it and every later click would be ignored. Tracking
+    // the advance in one place covers all of them, including ones not yet
+    // written, rather than remembering to clear the ref on each branch.
+    let advanced = false;
+    try {
+      // Merge new data first so the async role-flip below reads the
+      // freshest values (React setState batching would otherwise give us
+      // stale formData).
+      const merged: Partial<OnboardingFormData> = {
+        ...formData,
+        ...stepData,
+      };
+      if (stepData.scheduleType) {
+        merged.scheduleType = stepData.scheduleType;
+        if (stepData.weeklySlots) {
+          merged.weeklySlots = [...stepData.weeklySlots];
+        }
+        if (stepData.customSlots) {
+          merged.customSlots = [...stepData.customSlots];
+        }
       }
-      if (stepData.customSlots) {
-        merged.customSlots = [...stepData.customSlots];
-      }
-    }
-    setFormData(merged);
-    trackOnboardingEvent("step_advance", {
-      fromStep: step,
-      role: merged.role ?? null,
-    });
-
-    // ORG_WORKSPACE handoff: when the user completes Personal Info we commit
-    // their role on the User row so the wizard step's
-    // `POST /api/organizations` authorizes — the API gate requires
-    // `UserRole === "ORG_WORKSPACE"` and the signup default is CONSULTEE.
-    // Backing out of the wizard reverts it (see `handleExitOrgWizard`).
-    if (step === 0 && merged.role === "ORG_WORKSPACE") {
-      const userId = session?.user?.id;
-      if (!userId) {
-        toast({
-          title: "Session Expired",
-          description: "Please sign in again to continue.",
-          variant: "destructive",
-        });
-        signOut();
-        return;
-      }
-      // Controlled inputs surface blanks as "" — coerce to undefined so the
-      // action's Zod validator (which rejects "" to avoid colliding on the
-      // `User.phone @unique` index) sees the field as truly omitted.
-      const trimmedPhone = merged.phone?.trim();
-      const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
-        name: merged.name?.trim() || undefined,
-        phone: trimmedPhone || undefined,
-        timezone: merged.timezone?.trim() || undefined,
+      setFormData(merged);
+      setDirection(1);
+      trackOnboardingEvent("step_advance", {
+        fromStep: step,
+        role: merged.role ?? null,
       });
-      if (!result.success) {
-        toast({
-          title: "Unable to continue",
-          description: result.error ?? "Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
 
-    setStep((prevStep) => prevStep + 1);
+      // ORG_WORKSPACE handoff: when the user completes Personal Info we commit
+      // their role on the User row so the wizard step's
+      // `POST /api/organizations` authorizes — the API gate requires
+      // `UserRole === "ORG_WORKSPACE"` and the signup default is CONSULTEE.
+      // Backing out of the wizard reverts it (see `handleExitOrgWizard`).
+      if (step === 0 && merged.role === "ORG_WORKSPACE") {
+        const userId = session?.user?.id;
+        if (!userId) {
+          toast({
+            title: "Session Expired",
+            description: "Please sign in again to continue.",
+            variant: "destructive",
+          });
+          signOutToSignin();
+          return;
+        }
+        // Controlled inputs surface blanks as "" — coerce to undefined so the
+        // action's Zod validator (which rejects "" to avoid colliding on the
+        // `User.phone @unique` index) sees the field as truly omitted.
+        const trimmedPhone = merged.phone?.trim();
+        const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
+          name: merged.name?.trim() || undefined,
+          phone: trimmedPhone || undefined,
+          timezone: merged.timezone?.trim() || undefined,
+        });
+        if (!result.success) {
+          toast({
+            title: "Unable to continue",
+            description: result.error ?? "Please try again.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      setStep((prevStep) => prevStep + 1);
+      advanced = true;
+    } finally {
+      if (!advanced) transitioningRef.current = false;
+    }
   };
 
+  // Back and the stepper share `handleNext`'s guard: the outgoing step's own
+  // Back button is live during the exit too, and an unguarded decrement would
+  // walk the user back past the step they just left.
   const handleBack = () => {
+    if (transitioningRef.current) return;
+    // A no-op move changes no key, so onExitComplete would never fire and the
+    // guard would stay set — freezing the wizard. Bail before arming it.
+    if (step <= 0) return;
+    transitioningRef.current = true;
     trackOnboardingEvent("step_back", { fromStep: step });
+    setDirection(-1);
     setStep((prevStep) => prevStep - 1);
   };
 
-  const handleGoToStep = (targetStep: number) => {
+  // Returns whether the jump was taken. The resume banner clears its stored
+  // step only on a true: if a transition is already in flight the guard
+  // rejects the jump, and clearing unconditionally would destroy the shortcut
+  // without moving the user anywhere.
+  const handleGoToStep = (targetStep: number): boolean => {
+    if (transitioningRef.current) return false;
+    if (targetStep === step) return false;
+    transitioningRef.current = true;
+    // A stepper jump can be in either direction; derive it rather than
+    // defaulting to forward, or "Review → step 2" slides the wrong way.
+    setDirection(targetStep >= step ? 1 : -1);
     setStep(targetStep);
+    return true;
   };
 
   // Backing out of the create-org wizard must also undo the role we committed
@@ -762,6 +867,14 @@ const MultiStepForm: React.FC = () => {
   // unless the handoff is still provisional. Re-picking ORG_WORKSPACE
   // re-commits the role through `handleNext`.
   const handleExitOrgWizard = () => {
+    // Release the transition guard explicitly. The org step is `fullBleed`, so
+    // rendering it returns early and unmounts OnboardingShell — along with the
+    // AnimatePresence that would otherwise call onExitComplete. Without this
+    // the guard is still armed when the shell remounts at step 0, and every
+    // subsequent Next, Back and stepper click is silently ignored: the user
+    // cannot finish onboarding and has to reload.
+    transitioningRef.current = false;
+    setDirection(-1);
     setStep(0);
     const userId = session?.user?.id;
     if (!userId) return;
@@ -779,7 +892,7 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        signOut();
+        signOutToSignin();
         return;
       }
 
@@ -805,8 +918,28 @@ const MultiStepForm: React.FC = () => {
             .join(" · "),
           variant: "destructive",
         });
-        if (targetStep >= 0 && targetStep !== step) setStep(targetStep);
-        console.warn("Form validation errors:", errors);
+        if (targetStep >= 0 && targetStep !== step) {
+          setDirection(targetStep > step ? 1 : -1);
+          setStep(targetStep);
+        }
+        // No client-side logging here: the Sentry breadcrumb below is the
+        // durable record, and a stray log is how PII-shaped field paths end up
+        // pasted into a bug report.
+        trackOnboardingEvent("submit_validation_failed", {
+          groups: groups.length,
+          // Step keys, not field paths: `summarizeIssues` already groups issues
+          // by owning step, and a step key is a label rather than anything a
+          // user typed — so this stays inside the file's "never log field
+          // values" rule while still answering WHICH step refused. The removed
+          // The deleted client log carried the full issue list; the toast surfaces
+          // only the first four, so without this the owning step was
+          // unrecoverable from telemetry.
+          steps: groups
+            .map((g) => g.stepKey)
+            .filter((k) => k !== null)
+            .join(","),
+          role: finalData.role ?? null,
+        });
         return;
       }
 
@@ -843,7 +976,7 @@ const MultiStepForm: React.FC = () => {
             description: "Your session has expired. Please sign in again.",
             variant: "destructive",
           });
-          signOut();
+          signOutToSignin();
           return;
         }
 
@@ -866,7 +999,12 @@ const MultiStepForm: React.FC = () => {
           description: errorMessage,
           variant: "destructive",
         });
-        if (refusedStep >= 0 && refusedStep !== step) setStep(refusedStep);
+        if (refusedStep >= 0 && refusedStep !== step) {
+          // Both are backward jumps: a refusal names the step that owns the
+          // field, which by construction is earlier than the review step.
+          setDirection(refusedStep > step ? 1 : -1);
+          setStep(refusedStep);
+        }
         return;
       }
 
@@ -942,12 +1080,16 @@ const MultiStepForm: React.FC = () => {
       }
 
       if (safeCallback) {
-        router.push(safeCallback);
+        // Terminal navigation: replace, never push. Leaving /form/onboarding
+        // in history makes Back from the destination return to a wizard that
+        // immediately bounces forward again (requireNotOnboarded sees a fully
+        // onboarded user) — the same Back ping-pong the auth pages avoid.
+        router.replace(safeCallback);
         return;
       }
 
       if (pendingToken) {
-        router.push(`/organizations/invite/${pendingToken}`);
+        router.replace(`/organizations/invite/${pendingToken}`);
         return;
       }
 
@@ -958,20 +1100,39 @@ const MultiStepForm: React.FC = () => {
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
-        router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
+        router.replace(
+          `/dashboard/consultant/${String(result.user.consultantProfileId)}`,
+        );
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
       ) {
-        router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
+        router.replace(
+          `/dashboard/consultee/${String(result.user.consulteeProfileId)}`,
+        );
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
-        router.push(`/dashboard/staff/${result.user.staffProfileId}`);
+        // #1527 Q12 — one staff tree, opening on Tickets.
+        router.replace("/dashboard/staff/support");
       } else {
-        router.push("/dashboard");
+        router.replace("/dashboard");
       }
     } catch (error: unknown) {
+      // Sentry only, and NOT the raw exception: this path can carry
+      // submitted field values, and captureException ships
+      // the message, stack and any attached context to the telemetry SDK,
+      // which is a path for onboarding data to leave the browser. Capture a
+      // synthetic error carrying only the error NAME, so the event still
+      // groups by failure type while the payload carries no user data. The
+      // breadcrumb below is the fuller record.
       trackOnboardingEvent("submit_error", { error: "unhandled_exception" });
-      console.error("Error during onboarding:", error);
+      Sentry.captureException(
+        new Error(
+          `onboarding_submit_failed: ${
+            error instanceof Error ? error.name : "unknown"
+          }`,
+        ),
+        { tags: { surface: "onboarding", stage: "submit" } },
+      );
       toast({
         title: "Something Went Wrong",
         description:
@@ -1010,14 +1171,14 @@ const MultiStepForm: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-muted to-background dark:from-gray-900 dark:to-gray-950">
-      {/* Header */}
-      <header className="border-b bg-card/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+    <OnboardingShell
+      wide={activeStep?.wide}
+      header={
+        <div className="container mx-auto flex items-center justify-between gap-4 px-4 py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
               <svg
-                className="w-5 h-5 text-primary-foreground"
+                className="h-5 w-5 text-primary-foreground"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1030,35 +1191,40 @@ const MultiStepForm: React.FC = () => {
                 />
               </svg>
             </div>
-            <span className="text-xl font-semibold truncate">Familiarise</span>
+            <span className="truncate text-xl font-semibold">Familiarise</span>
           </div>
-          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-            <span className="text-sm text-muted-foreground">
-              Step {step + 1} of {totalSteps}
+          <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+            <span className="text-sm text-muted-foreground sm:hidden">
+              {step + 1}/{totalSteps}
             </span>
             <button
-              onClick={() =>
-                signOut({
-                  fetchOptions: {
-                    onSuccess: () => {
-                      window.location.href = "/";
-                    },
-                  },
-                })
-              }
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => void signOutEverywhere("/")}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
               title="Sign out"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">Sign out</span>
             </button>
           </div>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main
-        className={`container mx-auto px-4 py-8 ${activeStep?.wide ? "max-w-[80%]" : "max-w-3xl"}`}
+      }
+      stepper={
+        <OnboardingStepper
+          steps={steps.map((s) => ({ key: s.key, label: s.label }))}
+          current={step}
+          onGoToStep={handleGoToStep}
+        />
+      }
+      footer={
+        <>
+          Need help?{" "}
+          <Link href="/support" className="text-primary hover:underline">
+            Contact support
+          </Link>
+        </>
+      }
+    >
+      <div
         onPointerDownCapture={markInteracted}
         onKeyDownCapture={markInteracted}
       >
@@ -1073,13 +1239,18 @@ const MultiStepForm: React.FC = () => {
                   : "Welcome back — we saved your progress."}
               </span>
             </div>
-            <div className="flex items-center gap-4 shrink-0">
+            <div className="flex shrink-0 items-center gap-4">
               {resumeStep !== null && resumeStep !== step && (
                 <button
                   type="button"
                   onClick={() => {
-                    setStep(resumeStep);
-                    setResumeStep(null);
+                    // Through the guard, not a bare setStep. The step-0 form
+                    // stays mounted and live for the whole exit animation, so
+                    // a bare jump could be followed by an Enter keypress or a
+                    // click on the still-present Continue — and handleNext
+                    // would then advance from the index the user just asked
+                    // for, landing them short and skipping a step's validation.
+                    if (handleGoToStep(resumeStep)) setResumeStep(null);
                   }}
                   className="text-sm font-medium text-primary hover:underline"
                 >
@@ -1088,7 +1259,7 @@ const MultiStepForm: React.FC = () => {
               )}
               <button
                 onClick={() => void startOver()}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
                 title="Discard saved progress and start from the beginning"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -1099,16 +1270,15 @@ const MultiStepForm: React.FC = () => {
         )}
 
         {/* Draft could not be restored — the stored answers are gone, and
-            saying nothing would read as the wizard losing them silently. */}
+            saying nothing would read as the wizard losing them silently.
+            Tone classes come from the `warning` token rather than raw amber,
+            so the banner follows the theme instead of being hard-coded. */}
         {draftQuarantined && (
-          <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
-            <span className="text-foreground">
-              This form has changed since you last saved, so we couldn&apos;t
-              restore your earlier answers. You may need to enter some of them
-              again — everything from here on is being saved as normal.
-            </span>
-          </div>
+          <OnboardingNotice tone="warning">
+            This form has changed since you last saved, so we couldn&apos;t
+            restore your earlier answers. You may need to enter some of them
+            again — everything from here on is being saved as normal.
+          </OnboardingNotice>
         )}
 
         {/* Autosave has stopped because the draft outgrew its storage budget.
@@ -1116,102 +1286,75 @@ const MultiStepForm: React.FC = () => {
             limits, so the run can still be finished — only RESUMING it later
             is at risk. */}
         {draftOverBudget && (
-          <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
-            <span className="text-foreground">
-              Your answers are too long for us to save your progress, so this
-              run won&apos;t be here if you come back later. Shortening your{" "}
-              <strong className="font-medium">
-                {describeDraftField(draftOverBudgetField)}
-              </strong>{" "}
-              will start it saving again. You can still finish and submit
-              without changing anything.
-            </span>
-          </div>
+          <OnboardingNotice tone="warning">
+            Your answers are too long for us to save your progress, so this run
+            won&apos;t be here if you come back later. Shortening your{" "}
+            <strong className="font-medium">
+              {describeDraftField(draftOverBudgetField)}
+            </strong>{" "}
+            will start it saving again. You can still finish and submit without
+            changing anything.
+          </OnboardingNotice>
         )}
 
-        {/* Progress Stepper — completed steps are buttons, so a keyboard
-            user can go back without hunting for the Back button at the
-            bottom of a long step; upcoming steps stay inert because moving
-            forward requires the current step to validate. */}
-        <nav aria-label="Onboarding steps" className="mb-8">
-          <ol className="flex items-start justify-between">
-            {steps.map(({ label }, index) => (
-              <React.Fragment key={label}>
-                <li className="flex flex-col items-center">
-                  <button
-                    type="button"
-                    onClick={() => handleGoToStep(index)}
-                    disabled={index >= step}
-                    aria-current={index === step ? "step" : undefined}
-                    aria-label={`Step ${index + 1} of ${totalSteps}: ${label}${
-                      index < step ? " (completed, go back)" : ""
-                    }`}
-                    className={cn(
-                      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40",
-                      index < step &&
-                        "bg-primary border-primary text-primary-foreground cursor-pointer hover:ring-4 hover:ring-primary/20",
-                      index === step &&
-                        "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20 cursor-default",
-                      index > step &&
-                        "border-muted-foreground/30 text-muted-foreground cursor-default",
-                    )}
-                  >
-                    {index < step ? <Check className="w-4 h-4" /> : index + 1}
-                  </button>
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "text-xs mt-1.5 text-center max-w-[80px] truncate",
-                      index <= step
-                        ? "text-primary font-medium"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {label}
-                  </span>
-                </li>
-                {/* Connector line */}
-                {index < steps.length - 1 && (
-                  <li
-                    aria-hidden="true"
-                    className={cn(
-                      "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
-                      index < step ? "bg-primary" : "bg-muted-foreground/20",
-                    )}
-                  />
-                )}
-              </React.Fragment>
-            ))}
-          </ol>
-        </nav>
-
         {/* Form Card */}
-        <Card className="shadow-lg">
-          <CardHeader className="text-center pb-2">
+        <Card className="shadow-elevation-2">
+          <CardHeader className="pb-2 text-center">
             <CardTitle className="text-fluid-2xl tracking-tight">
               {step === 0 ? "Welcome! Let's get started" : activeStep?.label}
             </CardTitle>
-            <p className="text-muted-foreground text-sm mt-1">
+            <p className="mt-1 text-sm text-muted-foreground">
               {step === 0
                 ? "Tell us a bit about yourself. You can always update this later."
                 : "Complete the information below to continue."}
             </p>
           </CardHeader>
           <CardContent className="pt-6">
-            {activeStep?.render(stepContext)}
+            {/* `mode="wait"` so the outgoing step finishes before the next
+                mounts — without it the two overlap mid-fade and the card
+                appears to double.
+
+                `custom={direction}` is load-bearing. The EXITING element has
+                already rendered with the previous direction, so reading
+                `direction` from the closure would animate Back with the
+                direction from the last forward move. Passing it through
+                `custom` hands the exiting step the NEW direction, and the
+                variant functions below receive it as their argument.
+
+                `onExitComplete` releases the advance guard. The guard — not a
+                CSS pointer-events trick — is what stops the outgoing form being
+                driven, because it is still on screen and still live for the
+                whole exit. A nested `pointer-events-auto` to re-enable the
+                current step would re-enable the exiting one too, since in
+                `mode="wait"` only the outgoing step is mounted at that point.
+            */}
+            <AnimatePresence
+              mode="wait"
+              custom={direction}
+              onExitComplete={() => {
+                transitioningRef.current = false;
+              }}
+            >
+              <motion.div
+                key={activeStep?.key ?? step}
+                custom={direction}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={{
+                  hidden: (d: 1 | -1) => stepEnter(d),
+                  visible: stepVisible,
+                  exit: (d: 1 | -1) => stepExit(d),
+                }}
+                transition={stepTransition}
+              >
+                {activeStep?.render(stepContext)}
+              </motion.div>
+            </AnimatePresence>
           </CardContent>
         </Card>
-
-        {/* Help Text */}
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          Need help?{" "}
-          <Link href="/support" className="text-primary hover:underline">
-            Contact support
-          </Link>
-        </p>
-      </main>
-    </div>
+      </div>
+    </OnboardingShell>
   );
 };
 

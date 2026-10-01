@@ -29,8 +29,8 @@ This system provides **two versions** of abandoned payment cleanup:
 # Run via npm script
 npm run scripts:cleanup-abandoned-payments
 
-# Run directly with ts-node
-npx ts-node scripts/cleanup-abandoned-payments.ts
+# Run directly with tsx
+npx tsx scripts/payments/cleanup-abandoned-payments.ts
 ```
 
 ### **Features:**
@@ -89,7 +89,7 @@ jobs:
           node-version: "18"
           cache: "npm"
       - run: npm ci
-      - run: npx ts-node jobs/cleanup-abandoned-payments.ts
+      - run: npx tsx scripts/payments/cleanup-abandoned-payments.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # ... other secrets
@@ -206,7 +206,7 @@ npm run scripts:cleanup-abandoned-payments
 **Solution**:
 
 ```bash
-npm install @types/node ts-node typescript --save-dev
+npm install @types/node tsx typescript --save-dev
 ```
 
 **Issue**: Database connection fails

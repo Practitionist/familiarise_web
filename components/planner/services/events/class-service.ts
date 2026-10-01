@@ -5,6 +5,7 @@
 import { toast } from "@/hooks/use-toast";
 import { ClassEvent } from "@/types/planner-events";
 import {
+  eventStatusPayload,
   positioningPayload,
   priceToPaise,
 } from "@/components/planner/services/shared/plan-payload";
@@ -228,6 +229,10 @@ export class ClassService {
       })),
       consultantProfileId: consultantId,
       startDate: startDate,
+      lateJoinUntilSession: plan?.lateJoinUntilSession ?? null,
+      lateJoinersGetPastRecordings: plan?.lateJoinersGetPastRecordings ?? false,
+      // #1527 — Save draft must never publish: the route defaults to SCHEDULED.
+      ...eventStatusPayload(classData.status),
     };
 
     if (isUpdate) {

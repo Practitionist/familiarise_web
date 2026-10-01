@@ -7,6 +7,7 @@ import {
   endOfMonth,
   addDays,
   getDaysInMonth,
+  type Day,
 } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "@/lib/scheduling/allocationService";
@@ -69,6 +70,13 @@ export interface UseCalendarDataOptions {
    * Defaults to the browser zone.
    */
   gridZone?: string;
+  /**
+   * #1775 — the day the week grid starts on (a subscription's cycle start);
+   * the fetch window and the visible dates follow it so the columns drawn
+   * are the columns fetched. Defaults to Sunday, which the quota bucketing
+   * (weekKey/countWeeks) stays pinned to regardless.
+   */
+  weekStartsOn?: Day;
   /**
    * Request the per-interval tooltip metadata (title/participant of an
    * overlapping appointment). Defaults FALSE — the route 403s the request for
@@ -292,6 +300,7 @@ export function useCalendarData(
     sessionDurationInHours,
     consulteeUserId,
     includeAppointmentDetails = false,
+    weekStartsOn = 0,
   } = options;
   const gridZone = options.gridZone ?? gridTimeZone();
   const { toast } = useToast();
@@ -434,10 +443,10 @@ export function useCalendarData(
         // read in the grid zone, so the window matches the columns drawn.
         const { start: startDate, end: endDate } = dayRangeBounds(
           view === "week"
-            ? startOfWeek(currentDate, { weekStartsOn: 0 })
+            ? startOfWeek(currentDate, { weekStartsOn })
             : startOfMonth(currentDate),
           view === "week"
-            ? endOfWeek(currentDate, { weekStartsOn: 0 })
+            ? endOfWeek(currentDate, { weekStartsOn })
             : endOfMonth(currentDate),
           gridZone,
         );
@@ -561,6 +570,7 @@ export function useCalendarData(
       consulteeUserId,
       includeAppointmentDetails,
       gridZone,
+      weekStartsOn,
     ],
   );
 
@@ -707,10 +717,10 @@ export function useCalendarData(
   const visibleDates = useMemo((): Date[] => {
     const dates: Date[] = [];
     if (view === "week") {
-      // Sunday start, pinned: weekKey/countWeeks bucket quota weeks on
-      // Sundays, so an implicit locale default drifting to Monday would
-      // silently misalign the fetch window with the weekly caps.
-      const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
+      // Explicit start, never the locale default: weekKey/countWeeks bucket
+      // quota weeks on Sundays regardless, and the grid's own start (#1775)
+      // must match the fetch window above or cells go blank.
+      const weekStart = startOfWeek(currentDate, { weekStartsOn });
       for (let i = 0; i < 7; i++) {
         dates.push(addDays(weekStart, i));
       }
@@ -722,7 +732,7 @@ export function useCalendarData(
       }
     }
     return dates;
-  }, [currentDate, view]);
+  }, [currentDate, view, weekStartsOn]);
 
   /**
    * #997 Phase 2 — the server (availability-with-allocation, requested with

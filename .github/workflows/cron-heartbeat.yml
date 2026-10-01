@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -60,7 +62,16 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-        run: npx --yes tsx@4.23.1 scripts/ci/check-cron-heartbeat.ts
+          # #1822 Q-8 — optional Upstash usage alarm; unset in most
+          # environments, in which case the check skips silently.
+          UPSTASH_MANAGEMENT_API_KEY: ${{ secrets.UPSTASH_MANAGEMENT_API_KEY }}
+          UPSTASH_EMAIL: ${{ secrets.UPSTASH_EMAIL }}
+          UPSTASH_DATABASE_ID: ${{ secrets.UPSTASH_DATABASE_ID }}
+          # Monthly COMMAND count (e.g. 2000000), not dollars; unset = no alarm.
+          UPSTASH_MONTHLY_COMMAND_CAP: ${{ vars.UPSTASH_MONTHLY_COMMAND_CAP }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+        run: node_modules/.bin/tsx scripts/ci/check-cron-heartbeat.ts
 
       - name: Notify on failure
         if: failure()
@@ -69,4 +80,7 @@ jobs:
           # Fallback sink — Slack has never been provisioned, so this is
           # what actually pages today. See 07-required-secrets.md.
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Non-secret identifier the guard compares SENTRY_DSN against.
+          # vars.* is NOT auto-injected into a step env; it must be mapped here.
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
         run: bash scripts/ci/notify-ops-failure.sh "cron-heartbeat"

@@ -70,32 +70,49 @@ const hiddenPlan = {
   webinars: [],
 };
 
+/** The slice of a detail page module these tests drive. */
+interface PageModule {
+  default: (props: { params: Promise<unknown> }) => Promise<unknown>;
+  generateMetadata?: (props: {
+    params: Promise<unknown>;
+  }) => Promise<{ title?: unknown }>;
+}
+const asPage = (mod: Promise<unknown>) => mod as Promise<PageModule>;
+
 const PAGES = [
   {
     name: "consultation",
     load: () =>
-      require("../../app/explore/programs/plans/consultations/[consultationPlanId]/page"),
+      asPage(
+        import("../../app/explore/programs/plans/consultations/[consultationPlanId]/page"),
+      ),
     fetcher: mockGetConsultationPlanDetail,
     params: { consultationPlanId: "plan-1" },
   },
   {
     name: "subscription",
     load: () =>
-      require("../../app/explore/programs/plans/subscriptions/[subscriptionPlanId]/page"),
+      asPage(
+        import("../../app/explore/programs/plans/subscriptions/[subscriptionPlanId]/page"),
+      ),
     fetcher: mockGetSubscriptionPlanDetail,
     params: { subscriptionPlanId: "plan-1" },
   },
   {
     name: "webinar",
     load: () =>
-      require("../../app/explore/programs/plans/webinars/[webinarPlanId]/page"),
+      asPage(
+        import("../../app/explore/programs/plans/webinars/[webinarPlanId]/page"),
+      ),
     fetcher: mockGetWebinarPlanDetail,
     params: { webinarPlanId: "plan-1" },
   },
   {
     name: "class",
     load: () =>
-      require("../../app/explore/programs/plans/classes/[classPlanId]/page"),
+      asPage(
+        import("../../app/explore/programs/plans/classes/[classPlanId]/page"),
+      ),
     fetcher: mockGetClassPlanDetail,
     params: { classPlanId: "plan-1" },
   },
@@ -112,7 +129,7 @@ describe("plan detail pages apply canViewPlanDetail", () => {
       fetcher.mockResolvedValue(hiddenPlan);
       mockCanViewPlanDetail.mockResolvedValue(false);
 
-      const Page = load().default;
+      const Page = (await load()).default;
 
       await expect(Page({ params: Promise.resolve(params) })).rejects.toThrow(
         "NEXT_NOT_FOUND",
@@ -131,11 +148,34 @@ describe("plan detail pages apply canViewPlanDetail", () => {
       fetcher.mockResolvedValue(hiddenPlan);
       mockCanViewPlanDetail.mockResolvedValue(true);
 
-      const Page = load().default;
+      const Page = (await load()).default;
 
       await expect(
         Page({ params: Promise.resolve(params) }),
       ).resolves.toBeDefined();
+    },
+  );
+});
+
+// #1527 Q4 (QA D3) — a hidden plan's title must not reach the <title> tag.
+describe("plan detail metadata applies the same gate", () => {
+  it.each(
+    PAGES.filter((p) => p.name === "consultation" || p.name === "subscription"),
+  )(
+    "$name metadata stays generic for a plan the gate rejects",
+    async ({ load, fetcher, params }) => {
+      fetcher.mockResolvedValue({ ...hiddenPlan, title: "Secret draft" });
+      mockCanViewPlanDetail.mockResolvedValue(false);
+
+      const { generateMetadata } = await load();
+      if (!generateMetadata) throw new Error("page has no generateMetadata");
+      const meta = await generateMetadata({ params: Promise.resolve(params) });
+
+      expect(String(meta.title)).not.toContain("Secret draft");
+      expect(mockCanViewPlanDetail).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Secret draft" }),
+        mockSession,
+      );
     },
   );
 });

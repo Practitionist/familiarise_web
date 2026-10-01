@@ -18,7 +18,8 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
-import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
+import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { CountdownBadge } from "./CountdownBadge";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
@@ -59,6 +60,7 @@ export function AppointmentSheet({
   const action = adapter.primaryAction(vm);
   const overflow = adapter.overflowItems(vm);
   const detailHref = adapter.detailHref(vm);
+  const payHref = bookingPayHref(vm);
   const anchorSession = vm.nextAt
     ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
@@ -194,7 +196,7 @@ export function AppointmentSheet({
             )}
 
             {/* Payment note */}
-            {vm.needsActionReason === "PAY_NOW" && vm.pendingPaymentUrl && (
+            {vm.needsActionReason === "PAY_NOW" && payHref && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 p-3">
                 <p className="text-xs text-amber-800 dark:text-amber-300 mb-2">
                   Complete payment to confirm this booking.
@@ -203,23 +205,13 @@ export function AppointmentSheet({
                   size="sm"
                   className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
                   onClick={() => {
-                    // #1167/#1429 — a trial goes to our own branded checkout
-                    // page, not the raw gateway link. The branch lives in the
-                    // shared helper so every Pay Now surface answers alike.
-                    const trialHref = trialCheckoutHref(vm);
-                    if (trialHref) {
-                      // Internal checkout page — SPA navigation keeps the
-                      // sheet state and client bundle warm (was full reload).
-                      router.push(trialHref);
+                    // #1167/#1429/#1775 P-1 — one shared answer: the trial's
+                    // branded page or our pay page (SPA push), else a hosted link.
+                    if (isExternalPayHref(payHref)) {
+                      window.open(payHref, "_blank", "noopener,noreferrer");
                       return;
                     }
-                    if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
-                      window.open(
-                        vm.pendingPaymentUrl!,
-                        "_blank",
-                        "noopener,noreferrer",
-                      );
-                    }
+                    router.push(payHref);
                   }}
                 >
                   <CreditCard className="h-4 w-4 mr-2" />

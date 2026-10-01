@@ -26,10 +26,23 @@ function loadTicker(): {
   targetRequest: TargetRequest;
   dueTargets: (now: Date) => string[];
   statusFor: (failed: { name: string; status: number }[]) => number;
+  reportableToSentry: (name: string) => boolean;
   bucketFor: (
     status: number,
     maintenance?: boolean,
   ) => "ok" | "held" | "failed";
+  buildFailedTargetsEvent: (failed: { name: string; status: number }[]) => {
+    message: string;
+    level: string;
+    fingerprint: string[];
+    tags: Record<string, string>;
+    contexts: {
+      tick: {
+        failedCount: number;
+        targets: { name: string; status: number; outcome: string }[];
+      };
+    };
+  };
 } {
   const file = path.join(
     __dirname,
@@ -90,8 +103,14 @@ describe("cron-tick targetRequest", () => {
   });
 });
 
-// #1686 — six sweeps run on the 15-minute slots only; the customer-visible
-// five stay on every tick (ADR 27 consequences, 2026-09-17).
+// #1686 — six sweeps run on the 15-minute slots only.
+// #1792 — Upstash 500k cap: every-tick was cut to only the two
+// latency-sensitive money confirms; the rest ride 10/15-minute slots (each
+// has an Actions twin at equal or better cadence, except the ticker-only Novu
+// relay at 10).
+// #1822 Q-3 — the cap was hit again with `reconcile-payment-status` and
+// `reconcile-orphaned-confirmations` still every-tick; both now ride the same
+// 15-minute slot as their siblings (each already has a 30-min Actions twin).
 describe("cron-tick dueTargets cadence", () => {
   const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
@@ -106,7 +125,13 @@ describe("cron-tick dueTargets cadence", () => {
       "cascade-refund-earnings",
       "reconcile-refunds",
       "abandoned-payments",
+      "sweep-stuck-webhook-events",
+      "sweep-orphaned-topup-captures",
+      "dispatch-outbound-webhooks",
       "retry-failed-emails",
+      // #1822 Q-3 — moved off every-tick.
+      "reconcile-payment-status",
+      "reconcile-orphaned-confirmations",
       // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
       "expire-unpaid-trials",
       "reschedule-proposals",
@@ -119,18 +144,48 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("keeps the customer-visible sweeps on every tick", () => {
-    const off = dueTargets(at(5));
-    for (const name of [
-      "reconcile-payment-status",
-      "reconcile-orphaned-confirmations",
-      "sweep-orphaned-topup-captures",
-      "dispatch-outbound-webhooks",
-      "drain-notification-outbox",
-      "sweep-stuck-webhook-events",
-    ]) {
-      expect(off).toContain(name);
+  it("fires the ticker-only Novu relay every 10 minutes", () => {
+    // No Actions twin exists, so 15 would strand bells; 10 halves its burn.
+    expect(dueTargets(at(5))).not.toContain("drain-notification-outbox");
+    expect(dueTargets(at(10))).toContain("drain-notification-outbox");
+  });
+
+  it("fires the Sentry ingest canary every 30 minutes, not every tick", () => {
+    /**
+     * #1868 — the canary posts a real STORED event on every run, so its
+     * cadence is a direct line item on the Sentry error allowance. On the
+     * 5-minute tick that is 288/day, 8,640/month — 173% of the Developer
+     * plan's 5,000 included errors, i.e. the health check would exhaust the
+     * budget it exists to protect. 30 minutes is 48/day, 1,440/month.
+     *
+     * Losing 25 minutes of detection latency is close to free here: the
+     * canary's alert email fires on the FAILING run, so the healthy runs this
+     * removes were the ones that could not do anything about anything.
+     */
+    const name = "sentry-ingest-canary";
+
+    for (const minute of [5, 10, 15, 20, 25]) {
+      expect(dueTargets(at(minute))).not.toContain(name);
     }
+    expect(dueTargets(at(30))).toContain(name);
+    expect(dueTargets(at(60))).toContain(name);
+  });
+  it("never reports the Sentry ingest canary's failure TO Sentry", () => {
+    /**
+     * #1868 — the canary detects that Sentry is discarding events. Reporting
+     * that failure to Sentry is the monitor reporting through the failing
+     * system: an event per tick that can never arrive, and one more per tick
+     * from the allowance it is protecting once ingest recovers.
+     *
+     * Two things are asserted because both matter and they pull opposite ways:
+     * the canary must stay OUT of the Sentry report, and it must stay IN the
+     * failed list so a 503 is still visible in the tick's status and body.
+     */
+    const { reportableToSentry } = loadTicker();
+
+    expect(reportableToSentry("sentry-ingest-canary")).toBe(false);
+    expect(reportableToSentry("process-payouts")).toBe(true);
+    expect(reportableToSentry("reconcile-ledgers")).toBe(true);
   });
 });
 
@@ -154,6 +209,25 @@ describe("cron-tick statusFor", () => {
 // #1598 P1-W03 — a twin refusing inside a maintenance hold answers 503 with
 // a `phase` in the body; that is a healthy hold and joins the 409 bucket. A
 // bare 503 (dead route, platform, dependency) stays a failure.
+describe("cron-tick reportableToSentry", () => {
+  const { reportableToSentry, bucketFor } = loadTicker();
+
+  it("excludes the canary from the Sentry report but keeps it in the failed list", () => {
+    /**
+     * #1868 — the canary detects that Sentry is discarding events, so
+     * reporting that failure to Sentry is the monitor reporting through the
+     * failing system. The two halves matter and pull opposite ways: out of the
+     * Sentry report, still in the tick's own status and body.
+     */
+    expect(reportableToSentry("sentry-ingest-canary")).toBe(false);
+    expect(reportableToSentry("process-payouts")).toBe(true);
+    expect(reportableToSentry("reconcile-ledgers")).toBe(true);
+
+    // Suppression is of the Sentry report only, never of the tick's visibility.
+    expect(bucketFor(503)).toBe("failed");
+  });
+});
+
 describe("cron-tick bucketFor", () => {
   const { bucketFor } = loadTicker();
 
@@ -164,5 +238,48 @@ describe("cron-tick bucketFor", () => {
     expect(bucketFor(200)).toBe("ok");
     expect(bucketFor(500)).toBe("failed");
     expect(bucketFor(0)).toBe("failed");
+  });
+});
+
+describe("cron-tick failed-target reporting", () => {
+  const { buildFailedTargetsEvent } = loadTicker();
+
+  // Sentry groups by message text. Naming the failed targets in the message
+  // would mint a separate issue for every distinct combination of failures, so
+  // a sweep that degrades over time fragments into a dozen near-identical
+  // issues and the one that matters gets lost among them.
+  it("uses one fixed message and fingerprint regardless of which targets failed", () => {
+    const a = buildFailedTargetsEvent([
+      { name: "sweep-stuck-webhook-events", status: 0 },
+    ]);
+    const b = buildFailedTargetsEvent([
+      { name: "reconcile-refunds", status: 500 },
+      { name: "release-earnings", status: 503 },
+    ]);
+
+    expect(a.message).toBe(b.message);
+    expect(a.fingerprint).toEqual(b.fingerprint);
+    expect(a.fingerprint).toEqual(["cron-tick-failed-targets"]);
+  });
+
+  it("carries the detail as context, not in the message", () => {
+    const ev = buildFailedTargetsEvent([
+      { name: "reconcile-refunds", status: 500 },
+      { name: "sweep-stuck-webhook-events", status: 0 },
+    ]);
+
+    expect(ev.message).not.toContain("reconcile-refunds");
+    expect(ev.contexts.tick.failedCount).toBe(2);
+    expect(ev.contexts.tick.targets).toEqual([
+      { name: "reconcile-refunds", status: 500, outcome: "http" },
+      // 0 is this module's "never got an answer" value, not an HTTP status.
+      { name: "sweep-stuck-webhook-events", status: 0, outcome: "network" },
+    ]);
+  });
+
+  it("reports at error level, so it is not grouped with the expected refusals", () => {
+    expect(buildFailedTargetsEvent([{ name: "x", status: 500 }]).level).toBe(
+      "error",
+    );
   });
 });

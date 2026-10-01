@@ -138,11 +138,13 @@ jest.mock("../../lib/stream-logger", () => ({
   __esModule: true,
   streamLogger: { info: jest.fn(), error: jest.fn() },
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  // Returns a promise — callers .catch() it.
-  recordSystemError: () => Promise.resolve(),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    __esModule: true,
+    recordSystemError: () => Promise.resolve(),
+    recordSystemErrorSafe: () => Promise.resolve(),
+  };
+});
 jest.mock("../../schemas/webhooks/metadata", () => ({
   __esModule: true,
   normalizeLegacySlotKeys: (m: unknown) => m,
@@ -312,9 +314,14 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
 
     // The confirm machinery flipped the payer's seat (#1554: the shared class
     // occurrences are the consultant's allocation and are never flipped here).
+    // #1846 SM-B9 — the capture's HELD scope is the first AND arm.
     expect(participantUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ userId: "user-1", status: "HELD" }),
+        where: {
+          AND: expect.arrayContaining([
+            expect.objectContaining({ userId: "user-1", status: "HELD" }),
+          ]),
+        },
         data: { status: "CONFIRMED" },
       }),
     );

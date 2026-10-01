@@ -10,7 +10,8 @@
  */
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,25 +37,67 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { canRaiseAboutOrg } from "@/lib/support/about-org";
 import { SupportPriority } from "@prisma/client";
 import {
   ISSUE_TYPE_LABELS,
   PLATFORM_ISSUE_TYPE_CATEGORIES,
 } from "@/utils/supportTicketUrl";
 
+export interface CreateTicketDefaults {
+  issueType?: string;
+  title?: string;
+  description?: string;
+  /** Preselects "About" (#1527), e.g. org Billing's invoice request. */
+  organizationId?: string;
+}
+
+interface OrgMembership {
+  organizationId: string;
+  orgName: string;
+  role: string;
+  status: string;
+}
+
+/** "About" value for a personal request. */
+const ABOUT_ME = "me";
+
 export function CreateTicketDialog({
   trigger,
+  defaults,
+  requestHref,
 }: {
   /** Custom trigger node; defaults to a "New request" button. */
   trigger?: React.ReactNode;
+  /** Pre-fill, e.g. org Billing's "Request an invoice" (#1527 Q8). */
+  defaults?: CreateTicketDefaults;
+  /** #1527 — the new request's page; the dialog navigates there on create. */
+  requestHref?: (ticketId: string) => string;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [issueType, setIssueType] = useState<string>("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [issueType, setIssueType] = useState<string>(defaults?.issueType ?? "");
+  const [title, setTitle] = useState(defaults?.title ?? "");
+  const [description, setDescription] = useState(defaults?.description ?? "");
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
+  const [about, setAbout] = useState(defaults?.organizationId ?? ABOUT_ME);
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  // #1527 — orgs this viewer may raise a request about; the route re-checks.
+  // Same key as the Support hub's session picker (ACTIVE memberships).
+  const memberships = useQuery({
+    queryKey: ["user-org-memberships"],
+    queryFn: async (): Promise<OrgMembership[]> => {
+      const res = await fetch("/api/user/org-memberships");
+      if (!res.ok) return [];
+      const { data } = await res.json();
+      return data;
+    },
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const aboutOrgs = (memberships.data ?? []).filter(canRaiseAboutOrg);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -66,22 +109,26 @@ export function CreateTicketDialog({
           title: title.trim(),
           description: description.trim(),
           priority,
+          ...(about !== ABOUT_ME && { organizationId: about }),
         }),
       });
       if (!res.ok) await throwSupportError(res, "request create");
-      return res.json();
+      return (await res.json()) as { id: string };
     },
-    onSuccess: () => {
+    onSuccess: (ticket) => {
       toast({
         title: "Request created",
         description: "Our team will reply here and by email.",
       });
       void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
+      void qc.invalidateQueries({ queryKey: ["org-support-tickets"] });
       setOpen(false);
-      setIssueType("");
-      setTitle("");
-      setDescription("");
+      setIssueType(defaults?.issueType ?? "");
+      setTitle(defaults?.title ?? "");
+      setDescription(defaults?.description ?? "");
       setPriority("MEDIUM");
+      setAbout(defaults?.organizationId ?? ABOUT_ME);
+      if (requestHref && ticket?.id) router.push(requestHref(ticket.id));
     },
     onError: (e: unknown) =>
       toast({
@@ -91,7 +138,8 @@ export function CreateTicketDialog({
       }),
   });
 
-  const valid = !!issueType && title.trim().length > 0 && description.trim().length > 0;
+  const valid =
+    !!issueType && title.trim().length > 0 && description.trim().length > 0;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -114,6 +162,29 @@ export function CreateTicketDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {aboutOrgs.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="new-ticket-about">About</Label>
+              <Select value={about} onValueChange={setAbout}>
+                <SelectTrigger id="new-ticket-about">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ABOUT_ME}>Me</SelectItem>
+                  {aboutOrgs.map((m) => (
+                    <SelectItem key={m.organizationId} value={m.organizationId}>
+                      {m.orgName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                A request about an organization is also listed on its Support
+                page, subject only.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="new-ticket-issueType">
               What&apos;s this about? <span className="text-red-500">*</span>

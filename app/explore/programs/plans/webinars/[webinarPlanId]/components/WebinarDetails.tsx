@@ -311,6 +311,7 @@ export function WebinarDetails({
                   plan.webinars?.[0]?.maxParticipants ?? null
                 }
                 consultantUserId={plan.consultantProfile?.user?.id}
+                refundWindowHours={plan.refundWindowHours}
               />
             </div>
           </motion.div>

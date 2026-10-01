@@ -10,7 +10,7 @@ import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import prisma from "@/lib/prisma";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { safeReturnTo } from "@/lib/navigation/safe-return-to";
+import { safeReturnTo } from "@/lib/navigation/safe-path";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";

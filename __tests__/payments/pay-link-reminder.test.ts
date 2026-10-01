@@ -21,7 +21,8 @@ jest.mock("../../lib/prisma", () => {
       update: jest.fn(),
       count: jest.fn(),
     },
-    appointment: { updateMany: jest.fn() },
+    // #1775 — the lapse core re-reads the live wrapper inside the tx.
+    appointment: { updateMany: jest.fn(), findFirst: jest.fn() },
     consultation: { findUnique: jest.fn(), updateMany: jest.fn() },
     // #1732 — the lapsed-link cohort now reads subscriptions too.
     subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
@@ -42,7 +43,8 @@ jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn(),
 }));
 jest.mock("../../lib/payments/core/razorpay", () => ({
-  cancelRazorpayOrder: jest.fn(),
+  // #1861 L2 — the sweep expires only an order proven to hold no payment.
+  cancelRazorpayOrder: jest.fn().mockResolvedValue("no_live_payment"),
 }));
 jest.mock("../../lib/payments/core/stripe", () => ({
   __esModule: true,

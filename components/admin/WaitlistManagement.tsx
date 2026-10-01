@@ -9,7 +9,12 @@
  */
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { WaitlistSource, WaitlistStatus } from "@prisma/client";
 import { format } from "date-fns";
 import { Download, Mail, Search, Send, Users } from "lucide-react";
@@ -31,6 +36,8 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { waitlistStatusBadge } from "@/lib/labels/session-labels";
@@ -160,10 +167,15 @@ export function WaitlistManagement() {
 
   const [subject, setSubject] = useState("");
   const [htmlBody, setHtmlBody] = useState("");
+  // #1527 — staff triage the list; only admin sends (the route 403s otherwise).
+  const canSend = useBackofficeCapability().can("newsletter.send");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin-waitlist", filters],
     queryFn: () => fetchSubscribers(filters),
+    // #1527 QA B13 — paging or filtering must not drop `stats`, which carries
+    // the audience count the send button and its dialog depend on.
+    placeholderData: keepPreviousData,
   });
 
   const broadcast = useMutation({
@@ -188,13 +200,7 @@ export function WaitlistManagement() {
       setHtmlBody("");
       queryClient.invalidateQueries({ queryKey: ["admin-waitlist"] });
     },
-    onError: (sendError: Error) => {
-      toast({
-        title: "Could not send",
-        description: sendError.message,
-        variant: "destructive",
-      });
-    },
+    // A failure is shown inside the confirm dialog, which stays open.
   });
 
   const stats = data?.stats;
@@ -239,7 +245,7 @@ export function WaitlistManagement() {
   return (
     <>
       <DashboardHeader
-        title="Waitlist"
+        title="Newsletter"
         subtitle="Everyone signed up for the Familiarise newsletter"
         actions={
           <Button variant="outline" size="sm" asChild>
@@ -267,6 +273,78 @@ export function WaitlistManagement() {
                 </Card>
               ))}
         </div>
+
+        {/* #1527 QA B13 — the send form sits above the 50-row list: as the
+            last control on the page it ended flush with the viewport bottom,
+            under the fixed cookie bar, which swallowed the click. */}
+        {canSend && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Mail className="h-4 w-4" /> Send a newsletter
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Goes to every confirmed subscriber
+                {stats ? ` (${stats.SUBSCRIBED} right now)` : ""}. An
+                unsubscribe footer is appended automatically.
+              </p>
+              {!stats && error && (
+                <p className="text-sm text-destructive">
+                  The subscriber count did not load, so sending stays off until
+                  it does.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="newsletter-subject">Subject</Label>
+                <Input
+                  id="newsletter-subject"
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                  placeholder="What is new at Familiarise"
+                  maxLength={200}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="newsletter-body">Body (HTML)</Label>
+                <Textarea
+                  id="newsletter-body"
+                  value={htmlBody}
+                  onChange={(event) => setHtmlBody(event.target.value)}
+                  placeholder="<p>Hello…</p>"
+                  rows={10}
+                  className="font-mono text-sm"
+                />
+              </div>
+
+              {/* #1527 Q10 — a mass send is confirmed with its audience size. */}
+              <ConfirmDialog
+                trigger={
+                  <Button
+                    disabled={
+                      broadcast.isPending ||
+                      !subject.trim() ||
+                      !htmlBody.trim() ||
+                      (stats?.SUBSCRIBED ?? 0) === 0
+                    }
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    {broadcast.isPending ? "Sending…" : "Send to subscribers"}
+                  </Button>
+                }
+                title={`Send to ${stats?.SUBSCRIBED ?? 0} subscribers?`}
+                description={`"${subject.trim()}" goes out now to every confirmed subscriber. An email cannot be recalled.`}
+                confirmLabel="Send newsletter"
+                onConfirm={async () => {
+                  await broadcast.mutateAsync();
+                }}
+              />
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
@@ -372,57 +450,6 @@ export function WaitlistManagement() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Mail className="h-4 w-4" /> Send a newsletter
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Goes to every confirmed subscriber
-              {stats ? ` (${stats.SUBSCRIBED} right now)` : ""}. An unsubscribe
-              footer is appended automatically.
-            </p>
-
-            <div className="space-y-2">
-              <Label htmlFor="newsletter-subject">Subject</Label>
-              <Input
-                id="newsletter-subject"
-                value={subject}
-                onChange={(event) => setSubject(event.target.value)}
-                placeholder="What is new at Familiarise"
-                maxLength={200}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="newsletter-body">Body (HTML)</Label>
-              <Textarea
-                id="newsletter-body"
-                value={htmlBody}
-                onChange={(event) => setHtmlBody(event.target.value)}
-                placeholder="<p>Hello…</p>"
-                rows={10}
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <Button
-              onClick={() => broadcast.mutate()}
-              disabled={
-                broadcast.isPending ||
-                !subject.trim() ||
-                !htmlBody.trim() ||
-                (stats?.SUBSCRIBED ?? 0) === 0
-              }
-            >
-              <Send className="mr-2 h-4 w-4" />
-              {broadcast.isPending ? "Sending…" : "Send to subscribers"}
-            </Button>
           </CardContent>
         </Card>
       </div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { loadScript } from "@/app/checkout/plans/utils";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 
 /**
  * Minimal replay-purchase checkout (#366). Mints the order via
@@ -48,8 +49,8 @@ export function RecordingBuyButton({
         return;
       }
 
-      const rzp = new window.Razorpay({
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+      const options = buildCheckoutOptions({
+        keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         // Gateway-authoritative: the order was just minted (or resumed) for
         // body.data.amount. The page's listPricePaise can lag behind a
         // listing-price update inside the 120s ISR window, and Razorpay
@@ -58,14 +59,14 @@ export function RecordingBuyButton({
         currency: body.data.currency,
         name: "Familiarise Recordings",
         description: body.data.description ?? "Recording purchase",
-        order_id: body.data.orderId,
+        orderId: body.data.orderId,
+        // #1771 row 1 — present only when saved cards are on; Razorpay shows the consent.
+        customerId: body.data.customerId,
         prefill: {},
         theme: { color: "#6366f1" },
-        modal: {
-          ondismiss: () => {
-            setStatus("idle");
-            setMessage("Checkout closed — nothing was charged.");
-          },
+        onDismiss: () => {
+          setStatus("idle");
+          setMessage("Checkout closed — nothing was charged.");
         },
         handler: () => {
           // Entitlement is written by the capture webhook, which may land a
@@ -76,6 +77,7 @@ export function RecordingBuyButton({
           );
         },
       });
+      const rzp = new window.Razorpay(options);
       rzp.open();
     } catch {
       setMessage("Something went wrong. Please try again.");

@@ -38,14 +38,15 @@ export const APPOINTMENT_LIST_SELECT = {
     id: true,
     organizationId: true,
     occurrences: {
+      // #1704 P1 — tombstoned rows never reach a list; RESCHEDULED rows do,
+      // because they still carry the ORIGINAL startsAt and the approve gate
+      // must tell them from a fresh request's tentative ones.
+      where: { deletedAt: null },
       select: {
         id: true,
         startsAt: true,
         endsAt: true,
         isTentative: true,
-        // A RESCHEDULED slot still carries its ORIGINAL startsAt, so the
-        // requests table must be able to tell those rows apart from a fresh
-        // request's tentative ones before offering "Use Requested Times".
         completionStatus: true,
       },
       orderBy: { startsAt: "asc" },

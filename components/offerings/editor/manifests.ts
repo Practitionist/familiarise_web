@@ -11,6 +11,7 @@ import {
   BookOpen,
   CalendarRange,
   FileText,
+  Gift,
   IndianRupee,
   Layers,
   MessageSquareQuote,
@@ -122,6 +123,19 @@ const contentSection = (noun: string): SectionSpec => ({
     },
   ],
 });
+
+/**
+ * The plan's files, identical for all four types. On an org-owned plan each
+ * file the org changed says so (#1851 decision 8).
+ */
+const materialsSection: SectionSpec = {
+  id: "materials",
+  title: "Materials",
+  description: "Files attached to this offering.",
+  icon: FileText,
+  fields: [],
+  slot: "materials",
+};
 
 /** Buyer questions. Identical for all four types; rendered by the FAQ editor. */
 const faqSection: SectionSpec = {
@@ -287,6 +301,51 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
   ],
 });
 
+/**
+ * #1527 §7.2 — the subscription trial the API has always accepted
+ * (schemas/plans.ts) but no form could set. The price is edited in whole
+ * rupees like `price`; the service converts it to paise.
+ */
+const trialSection: SectionSpec = {
+  id: "trial",
+  title: "Trial",
+  description: "One short paid or free session before someone subscribes.",
+  icon: Gift,
+  fields: [
+    {
+      name: "trialEnabled",
+      kind: "switch",
+      label: "Offer a trial session",
+      description: "Trial requests arrive in Requests, under Trials.",
+      span: 6,
+    },
+    {
+      name: "trialDurationMinutes",
+      kind: "number",
+      label: "Trial length (minutes)",
+      min: 15,
+      max: 120,
+      step: 15,
+      description: "From 15 to 120 minutes.",
+      span: 3,
+    },
+    {
+      name: "trialPriceInPaise",
+      kind: "number",
+      label: "Trial price (₹)",
+      min: 0,
+      step: 1,
+      description: "Whole rupees. Use ₹0 for a free trial.",
+      span: 3,
+    },
+  ],
+};
+
+/** Field names only the personal (sole-owner) plan routes persist. */
+export const TRIAL_FIELD_NAMES: readonly string[] = trialSection.fields.map(
+  (f) => f.name,
+);
+
 export const CONSULTATION_MANIFEST: OfferingManifest = {
   type: "consultation",
   noun: "consultation",
@@ -300,6 +359,7 @@ export const CONSULTATION_MANIFEST: OfferingManifest = {
     },
     contentSection("consultation"),
     extrasSection(false),
+    materialsSection,
     faqSection,
   ],
 };
@@ -321,6 +381,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
         supportLevelField,
       ],
     },
+    trialSection,
     contentSection("subscription"),
     extrasSection(false),
     {
@@ -332,6 +393,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       slot: "roadmap",
       slotFields: ["subscriptionContents"],
     },
+    materialsSection,
     faqSection,
   ],
 };
@@ -368,6 +430,7 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
       ],
     },
     collaboratorsSection,
+    materialsSection,
     faqSection,
   ],
 };
@@ -411,6 +474,25 @@ export const CLASS_MANIFEST: OfferingManifest = {
           required: true,
           span: 3,
         },
+        {
+          // #1819 — empty keeps enrolment closing when session 1 starts.
+          name: "lateJoinUntilSession",
+          kind: "number",
+          label: "Let learners join until session N",
+          min: 1,
+          step: 1,
+          description:
+            "Leave empty to close enrolment when session 1 starts. A late joiner pays only for the sessions left.",
+          span: 3,
+        },
+        {
+          name: "lateJoinersGetPastRecordings",
+          kind: "switch",
+          label: "Late joiners can watch earlier recordings",
+          description:
+            "When off, a late joiner sees recordings only from the sessions after they joined.",
+          span: 3,
+        },
       ],
     },
     {
@@ -423,6 +505,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
       slotFields: ["classContents"],
     },
     collaboratorsSection,
+    materialsSection,
     faqSection,
   ],
 };

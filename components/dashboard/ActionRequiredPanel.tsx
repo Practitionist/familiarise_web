@@ -13,10 +13,12 @@
  * product to find the one thing that was actually waiting on them.
  *
  * Renders nothing when there is nothing to do, so a clear queue costs no
- * vertical space — the page falls straight through to its content.
+ * vertical space — unless the page passes `emptyState` (the consultee Home
+ * says "All caught up" instead, #1527).
  */
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { AlertCircle, AlertTriangle, ArrowRight, Info } from "lucide-react";
 
 import type { ActionItem } from "@/lib/enterprise/org-activation";
@@ -43,16 +45,20 @@ export function ActionRequiredPanel({
   items,
   heading = "Needs you now",
   className,
+  emptyState,
 }: {
   items: ActionItem[];
   heading?: string;
   className?: string;
+  /** Shown under the heading when the queue is clear; omitted = render nothing. */
+  emptyState?: ReactNode;
 }) {
-  if (items.length === 0) return null;
+  if (items.length === 0 && !emptyState) return null;
 
   return (
     <div className={className ?? "mb-6 space-y-2"}>
       <h2 className="text-sm font-semibold text-foreground">{heading}</h2>
+      {items.length === 0 && emptyState}
       {items.map((item) => {
         const tone = ACTION_TONE[item.severity];
         const Icon = tone.icon;

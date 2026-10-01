@@ -25,10 +25,14 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
     refundBookingPayment(...(a as [never])),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  __esModule: true,
-  recordSystemError: jest.fn(async () => undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn(async () => undefined);
+  return {
+    __esModule: true,
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 
 jest.mock("../../lib/novu/service", () => ({
   __esModule: true,
@@ -50,12 +54,6 @@ jest.mock("../../lib/stream/call-presence", () => ({
     unique: 1,
     maxConcurrent: 1,
   })),
-}));
-
-// The slot-level pass is not what these pins are about.
-jest.mock("../../lib/booking/slot-release", () => ({
-  __esModule: true,
-  transitionSlotsInChunks: jest.fn(async () => 0),
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -85,8 +83,10 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn(),
       updateMany: jest.fn(),
       updateManyAndReturn: jest.fn(),
+      count: jest.fn(async () => 0),
     },
     supportTicket: { findFirst: jest.fn() },
+    maintenanceWindow: { findMany: jest.fn(async () => []) },
     bookingStatusHistory: { create: jest.fn() },
     $disconnect: jest.fn(),
   };
@@ -101,6 +101,7 @@ import {
   NO_SHOW_GRACE_MINUTES,
   NO_SHOW_HANDOFF_MINUTES,
   classifyConsultantAttendance,
+  isPastNoShowHandoff,
 } from "../../lib/booking/attendance";
 
 const CONSULTANT = "user-consultant";
@@ -115,8 +116,15 @@ function minutesAgo(minutes: number): Date {
   return new Date(Date.now() - minutes * 60 * 1000);
 }
 
-/** A past, paid consultation; `attendees` is who has a MeetingAttendance row. */
-function consultation(endedMinutesAgo: number, attendees: string[]) {
+/**
+ * A past, paid consultation; `attendees` is who has a MeetingAttendance row and
+ * `completionStatus` is what the #1569 slot pass decided for its session.
+ */
+function consultation(
+  endedMinutesAgo: number,
+  attendees: string[],
+  completionStatus = "SCHEDULED",
+) {
   return {
     id: "cons-1",
     status: "APPROVED",
@@ -138,9 +146,20 @@ function consultation(endedMinutesAgo: number, attendees: string[]) {
       ],
       occurrences: [
         {
+          startsAt: minutesAgo(endedMinutesAgo + 60),
           endsAt: minutesAgo(endedMinutesAgo),
+          completionStatus,
+          isTentative: false,
+          deletedAt: null,
+          presences: attendees.map((userId) => ({
+            userId,
+            joinedAt: minutesAgo(endedMinutesAgo + 60),
+            leftAt: minutesAgo(endedMinutesAgo),
+          })),
           meeting: {
             streamCallId: "call-1",
+            endedAt: minutesAgo(endedMinutesAgo),
+            endedReason: "call_ended",
             attendances: attendees.map((userId) => ({ userId })),
           },
         },
@@ -224,7 +243,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
 
   it("auto-complete still completes a consultation the consultant attended", async () => {
     db.consultation.findMany.mockResolvedValue([
-      consultation(90, [CONSULTEE, CONSULTANT]),
+      consultation(90, [CONSULTEE, CONSULTANT], "COMPLETED"),
     ]);
 
     const result = await autoCompleteAppointments();
@@ -242,7 +261,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     // cancelled the booking (which removes it from this cohort) or decided not
     // to, and a booking neither job will claim must not exist.
     db.consultation.findMany.mockResolvedValue([
-      consultation(NO_SHOW_HANDOFF_MINUTES + 10, [CONSULTEE]),
+      consultation(NO_SHOW_HANDOFF_MINUTES + 10, [CONSULTEE], "UNVERIFIED"),
     ]);
 
     const result = await autoCompleteAppointments();
@@ -287,6 +306,13 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
 
     expect(result.subscriptionsCompleted).toBe(0);
     expect(db.subscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("pauses the handoff clock while maintenance holds the detector (#1746 B)", () => {
+    const ended = minutesAgo(NO_SHOW_HANDOFF_MINUTES + 30);
+    const degraded = [{ startsAt: minutesAgo(200), endsAt: minutesAgo(100) }];
+    expect(isPastNoShowHandoff(ended)).toBe(true);
+    expect(isPastNoShowHandoff(ended, new Date(), degraded)).toBe(false);
   });
 
   it("hands over only after the hourly detector has seen the booking past its grace window", () => {

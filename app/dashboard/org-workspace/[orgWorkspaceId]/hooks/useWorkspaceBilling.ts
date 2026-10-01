@@ -1,8 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import type { FundingSource } from "@prisma/client";
+import type { WorkspaceBillingRollup } from "@/lib/data/org-workspace";
 import { workspaceBillingQueryKey } from "../workspace-billing-keys";
+
+// One contract with the server read (lib/data/org-workspace.ts).
+export type { WorkspaceBillingPerOrgRow } from "@/lib/data/org-workspace";
 
 /**
  * Cross-org billing roll-up — the single source of truth shared by the
@@ -15,34 +18,9 @@ import { workspaceBillingQueryKey } from "../workspace-billing-keys";
  * here collapses that to a single cached entry.
  */
 
-export interface WorkspaceBillingSummary {
-  orgsOwned: number;
-  totalActiveMembers: number;
-  totalOutstandingPaise: number;
-  totalWalletPaise: number;
-}
-
-export interface WorkspaceBillingPerOrgRow {
-  organizationId: string;
-  organizationName: string;
-  organizationSlug: string;
-  organizationStatus: string;
-  fundingSource: FundingSource | null;
-  currency: string;
-  walletBalancePaise: number;
-  outstandingCount: number;
-  outstandingPaise: number;
-  activeMembers: number;
-}
-
-export interface WorkspaceBillingResponse {
-  summary: WorkspaceBillingSummary;
-  perOrg: WorkspaceBillingPerOrgRow[];
-}
-
 async function fetchWorkspaceBilling(
   orgWorkspaceId: string,
-): Promise<WorkspaceBillingResponse> {
+): Promise<WorkspaceBillingRollup> {
   const res = await fetch(`/api/org-workspace/${orgWorkspaceId}/billing`);
   if (!res.ok) throw new Error("Failed to load billing roll-up");
   return res.json();

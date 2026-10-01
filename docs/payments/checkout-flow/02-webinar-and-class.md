@@ -902,6 +902,14 @@ sequenceDiagram
 - Notify all enrolled students
 - Allow students to withdraw if new time doesn't work
 
+### Late join and the pro-rated price (#1819)
+
+A class batch accepts enrolments until the session the host chose in `ClassPlan.lateJoinUntilSession` has started, and a null value means the batch closes when session 1 starts. `handleClassCheckout` refuses a closed batch with the typed 409 `ENROLMENT_CLOSED`, which is registered in `BUSINESS_ERROR_CODES` so it reaches the buyer intact.
+
+A learner who joins after session 1 pays only for the sessions left. `calculateAmountAndValidate` computes `remaining` (the plan's `totalSessions` minus the sessions that have started) and sets the base price to `floor(price × remaining / totalSessions)` in BigInt paise, so the rounding favours the buyer. An on-time join keeps the full price. The discount code and referral credit then apply to that pro-rated base, and `deriveCheckoutAmount` adds GST to it, so the tax invoice matches what was charged and `Payment.originalAmount` (which `createEarningsFromPayment` splits for the consultant) is the pro-rated base as well.
+
+The booking transaction derives the enrolment again. If a session started between the quote and the transaction, `remaining` no longer matches the quote and checkout refuses with the typed 409 `CLASS_PRICE_CHANGED`; the gateway order is released by the normal abort path, and the retry mints a new order at the new price. A buyer who returns to an unpaid order after a session has started also gets a new order, because the open-order reuse check requires the same amount. The seat then stores `AppointmentParticipant.sessionsPurchased`, which is the plan's total for an on-time join. Every class refund unit (the seat leave, the exit right, the series cancel, the make-up skip and the missed-session settle) divides the seat's amount by that stored number, and a seat without it falls back to the older derivation. The consumer tax invoice names the sessions bought, for example "Sessions 3–8 of 8".
+
 ### Key Takeaways
 
 ✅ **Multi-session enrollment** - one payment = all sessions
@@ -972,12 +980,12 @@ Class (10 weeks, 20 students):
 
 #### 3. Capacity Management
 
-| Event Type       | Capacity Type     | Capacity Check                       | Enforced At     | When Full |
-| ---------------- | ----------------- | ------------------------------------ | --------------- | --------- |
-| **Consultation** | Slot-based        | No overlap with confirmed bookings   | Slot level      | Slot unavailable |
-| **Subscription** | Slot-based        | No overlap for any session           | First slot only | Slot unavailable |
-| **Webinar**      | Participant-based | Participants < effective capacity    | Event level     | Sold out  |
-| **Class**        | Participant-based | Unique users < effective capacity    | Event level     | Sold out  |
+| Event Type       | Capacity Type     | Capacity Check                     | Enforced At     | When Full        |
+| ---------------- | ----------------- | ---------------------------------- | --------------- | ---------------- |
+| **Consultation** | Slot-based        | No overlap with confirmed bookings | Slot level      | Slot unavailable |
+| **Subscription** | Slot-based        | No overlap for any session         | First slot only | Slot unavailable |
+| **Webinar**      | Participant-based | Participants < effective capacity  | Event level     | Sold out         |
+| **Class**        | Participant-based | Unique users < effective capacity  | Event level     | Sold out         |
 
 #### 4. Race Condition Protection
 

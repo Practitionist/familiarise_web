@@ -7,6 +7,7 @@
 import prisma from "@/lib/prisma";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { countSuspendedMemberUpcomingSessions } from "@/lib/enterprise/suspended-member-sessions";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -24,6 +25,7 @@ export async function resolveActivationSignals(orgId: string): Promise<{
   stuckPayoutCount: number;
   creditPoolMaxUtilizationPct: number | null;
   memberBilledOverageProgramNames: string[];
+  suspendedMemberUpcomingCount: number;
 }> {
   const now = new Date();
   const soon = new Date(now.getTime() + THIRTY_DAYS_MS);
@@ -37,6 +39,7 @@ export async function resolveActivationSignals(orgId: string): Promise<{
     stuckPayoutCount,
     meteredAssignments,
     memberBilledPrograms,
+    suspendedMemberUpcomingCount,
   ] = await Promise.all([
     prisma.contract.count({ where: { organizationId: orgId } }),
     prisma.contract.count({
@@ -106,6 +109,8 @@ export async function resolveActivationSignals(orgId: string): Promise<{
       take: 20,
       select: { name: true },
     }),
+    // #1527 decision 6 — booked sessions of suspended members.
+    countSuspendedMemberUpcomingSessions(orgId, now),
   ]);
 
   let maxPct: number | null = null;
@@ -118,18 +123,19 @@ export async function resolveActivationSignals(orgId: string): Promise<{
       const cap = a.program.licensedSeatConfig?.coveredEngagementsPerCycle;
       if (cap && cap > 0) pct = (a.engagementsUsed / cap) * 100;
     }
-    if (pct != null) maxPct = maxPct == null ? pct : Math.max(maxPct, pct);
+    if (pct !== null) maxPct = maxPct === null ? pct : Math.max(maxPct, pct);
   }
 
   return {
     hasContract: contractCount > 0,
     hasActiveContract: activeContractCount > 0,
     contractExpiringSoonCount: expiringCount,
-    kybVerified: kyb?.kybVerifiedAt != null,
+    kybVerified: (kyb?.kybVerifiedAt ?? null) !== null,
     pendingOverageCount: overageAgg._count._all,
     pendingOveragePaise: sumPaise(overageAgg._sum.marginalPaise),
     stuckPayoutCount,
     creditPoolMaxUtilizationPct: maxPct,
     memberBilledOverageProgramNames: memberBilledPrograms.map((p) => p.name),
+    suspendedMemberUpcomingCount,
   };
 }

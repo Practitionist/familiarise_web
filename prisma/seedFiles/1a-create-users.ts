@@ -562,7 +562,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         phone: sanitizePhone(faker.phone.number()),
         address: sanitizeString(faker.location.streetAddress()),
         onlineStatus: faker.datatype.boolean(),
-        timezone: sanitizeString(faker.location.timeZone()),
+        // #1775 — the QA logins are read in one zone, so a preview's clocks
+        // and the tester's agree; the random population keeps faker's spread.
+        timezone:
+          roleOrdinal <= QA_ACCOUNTS_PER_ROLE
+            ? "Asia/Kolkata"
+            : sanitizeString(faker.location.timeZone()),
         // The first QA_ACCOUNTS_PER_ROLE users of each role are the QA logins;
         // a coin flip here hid whole dashboards behind onboarding on every reset.
         onboardingCompleted:
@@ -686,8 +691,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
                 "Data Science",
               ]),
               endYear:
-                new Date().getFullYear() +
-                faker.number.int({ min: 1, max: 3 }),
+                new Date().getFullYear() + faker.number.int({ min: 1, max: 3 }),
             },
           });
         } else {

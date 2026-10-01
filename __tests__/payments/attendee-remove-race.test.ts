@@ -86,6 +86,13 @@ const ATTENDEE_ID = "user-attendee";
 function runInteractiveTransaction(fn: unknown) {
   return (fn as (tx: unknown) => Promise<number>)({
     appointmentParticipant: {
+      // #1780 — the seat is read on the tx first (its id keys the refund).
+      findFirst: async () => ({
+        id: "part-1",
+        appointmentId: "apt-1",
+        createdAt: new Date(0),
+        refundWindowHours: null,
+      }),
       updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
     },
   });
@@ -207,11 +214,13 @@ describe.each(CASES)(
       // #1554 — one CAS statement: only a live seat flips, so the seat and
       // its history commit together or not at all.
       expect(mockParticipantUpdateMany).toHaveBeenCalledTimes(1);
+      // #1846 SM-B9 — the map's live from-set is ANDed with the scope.
       expect(mockParticipantUpdateMany).toHaveBeenCalledWith({
         where: {
-          appointment: participantScope,
-          userId: ATTENDEE_ID,
-          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          AND: [
+            { appointment: participantScope, userId: ATTENDEE_ID },
+            { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
+          ],
         },
         data: { status: "CANCELLED" },
       });

@@ -1,5 +1,9 @@
 name: Claude Code
 
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
 # CodeRabbit is the reviewer of record on this repository; this workflow is the
 # separate @claude mention trigger, gated by the `CLAUDE_ACTION_ENABLED`
 # repository variable so an accidental "@claude" in a comment does not run

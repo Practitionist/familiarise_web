@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { payLinkHref } from "@/lib/payments/pay-link-href";
 
 import {
   needsTrialPayLinkRemint,
@@ -58,6 +59,7 @@ export default async function TrialCheckoutPage({
       select: {
         id: true,
         status: true,
+        paymentId: true,
         paymentDueAt: true,
         pendingPaymentUrl: true,
         subscriptionPlanId: true,
@@ -91,7 +93,7 @@ export default async function TrialCheckoutPage({
               where: { deletedAt: null },
               orderBy: { createdAt: "asc" },
               take: 1,
-              select: { amount: true, currency: true },
+              select: { id: true, amount: true, currency: true },
             },
           },
         },
@@ -113,16 +115,17 @@ export default async function TrialCheckoutPage({
     trial.pendingPaymentUrl = await remintTrialPayLink(trial);
     // The quote must be the row the new link charges against: a re-mint can
     // re-freeze the amount, and the pre-remint read may be stale or empty.
-    // For Razorpay the stored link IS the order id (Payment.paymentIntent).
     if (trial.pendingPaymentUrl && trial.appointment) {
       chargedPayment =
         (await prisma.payment.findFirst({
           where: {
             appointmentId: trial.appointment.id,
-            paymentIntent: trial.pendingPaymentUrl,
+            userId: session.user.id,
+            paymentStatus: "PENDING",
             deletedAt: null,
           },
-          select: { amount: true, currency: true },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, amount: true, currency: true },
         })) ?? chargedPayment;
     }
   }
@@ -135,9 +138,18 @@ export default async function TrialCheckoutPage({
   );
   const amountCurrency =
     chargedPayment?.currency ?? trial.subscriptionPlan.priceCurrency;
+  // #1775 P-1 — the button lands on our pay page for a Razorpay order id.
+  const payHref = payLinkHref({
+    paymentId: chargedPayment?.id,
+    checkoutUrl: trial.pendingPaymentUrl,
+  });
+  // #1775 C-7 — a paid trial is charged at request: PENDING and uncaptured.
+  const chargedAtRequest =
+    trial.status === "PENDING" && trial.paymentId === null;
   const isPayable =
-    trial.status === "AWAITING_PAYMENT" &&
+    (trial.status === "AWAITING_PAYMENT" || chargedAtRequest) &&
     Boolean(trial.pendingPaymentUrl) &&
+    payHref !== null &&
     (!trial.paymentDueAt || trial.paymentDueAt > new Date());
 
   return (
@@ -192,8 +204,16 @@ export default async function TrialCheckoutPage({
 
           {isPayable ? (
             <>
-              <TrialPayButton paymentUrl={trial.pendingPaymentUrl!} />
-              {trial.paymentDueAt && (
+              <TrialPayButton href={payHref!} />
+              {chargedAtRequest && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Refunded in full if{" "}
+                  {trial.subscriptionPlan.consultantProfile?.user?.name ??
+                    "your expert"}{" "}
+                  can&apos;t take it.
+                </p>
+              )}
+              {!chargedAtRequest && trial.paymentDueAt && (
                 <p className="text-center text-xs text-muted-foreground">
                   Your slot is held until{" "}
                   <ViewerLocalTime value={trial.paymentDueAt.toISOString()} />.
@@ -206,8 +226,9 @@ export default async function TrialCheckoutPage({
               <div className="flex gap-3 rounded-xl border border-border bg-muted/50 p-4">
                 <AlertCircle className="h-5 w-5 shrink-0 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  {trial.status === "SCHEDULED"
-                    ? "This trial is already paid for and confirmed."
+                  {trial.status === "SCHEDULED" ||
+                  (trial.status === "PENDING" && trial.paymentId)
+                    ? "This trial is already paid for."
                     : "This trial is no longer awaiting payment — it may have been cancelled, or the payment window may have closed. You can request a new trial with this expert."}
                 </p>
               </div>

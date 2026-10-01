@@ -1,8 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
-import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import {
+  CronLockHeldError,
+  CronLockUnavailableError,
+} from "@/lib/cron/with-cron-lock";
 import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
@@ -30,6 +34,9 @@ export function statusFor(
 
 /** Ceiling on an explicit `?limit=`; above this it is clamped, not rejected. */
 const LIMIT_CAP = 500;
+
+/** #1822 — owner decision: one lock-unavailable report per instance per 15 min. */
+const LOCK_UNAVAILABLE_REPORT_WINDOW_MS = 15 * 60 * 1000;
 
 /**
  * Thrown by {@link parseLimitParam} for a `?limit=` that is present but not a
@@ -73,8 +80,17 @@ export function parseLimitParam(req: NextRequest): number | undefined {
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
  * observable through response timing.
+ *
+ * Exported because four `app/api/cleanup/*` routes predate the factory and
+ * hand-roll their own HTTP twin. `reconcile-sessions` compared the header with
+ * `!==`, which leaks the matching prefix through timing; the others duplicated
+ * this correctly. One implementation, so the next hand-rolled twin cannot get
+ * it subtly wrong.
  */
-function bearerMatches(authHeader: string | null, cronSecret: string): boolean {
+export function bearerMatches(
+  authHeader: string | null,
+  cronSecret: string,
+): boolean {
   if (!authHeader) return false;
   const sha = (v: string) => createHash("sha256").update(v).digest();
   return timingSafeEqual(sha(authHeader), sha(`Bearer ${cronSecret}`));
@@ -149,6 +165,23 @@ export function cleanupRoute<T extends object>(opts: {
       // skips with a 409 instead of double-running.
       if (error instanceof CronLockHeldError) {
         return NextResponse.json({ error: error.message }, { status: 409 });
+      }
+      // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
+      // 15-min window per instance; the first job to hit it is tagged.
+      if (error instanceof CronLockUnavailableError) {
+        captureThrottled(
+          "cron:lock-unavailable",
+          error,
+          {
+            subsystem: "cron",
+            op: "lock-unavailable",
+            expected: true,
+            level: "warning",
+            tags: { job },
+          },
+          LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
+        );
+        return NextResponse.json({ error: error.message }, { status: 503 });
       }
       if (error instanceof InvalidLimitError) {
         return NextResponse.json({ error: "INVALID_LIMIT" }, { status: 400 });

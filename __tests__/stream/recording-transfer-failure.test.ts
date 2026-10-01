@@ -27,9 +27,13 @@ jest.mock("../../lib/stream-logger", () => ({
     error: jest.fn(),
   },
 }));
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  const recordSystemError = jest.fn().mockResolvedValue(undefined);
+  return {
+    recordSystemError,
+    recordSystemErrorSafe: recordSystemError,
+  };
+});
 // #1270 — the service reads the clients from the leaf module now, not from
 // `lib/supabase`. That one carries an `import "server-only"` marker, which
 // throws outside Next's `react-server` resolution and so cannot be reached from
@@ -49,9 +53,8 @@ import { RecordingTransferService } from "../../lib/stream/recording-transfer-se
 const mockFindUnique = (
   prisma as unknown as { recording: { findUnique: jest.Mock } }
 ).recording.findUnique;
-const mockUpdate = (
-  prisma as unknown as { recording: { update: jest.Mock } }
-).recording.update;
+const mockUpdate = (prisma as unknown as { recording: { update: jest.Mock } })
+  .recording.update;
 const mockRecordSystemError = recordSystemError as jest.Mock;
 
 beforeEach(() => {
@@ -72,18 +75,21 @@ describe("transfer failure tracking (STR-2/3)", () => {
       recordingUrl: "https://stream.example/rec_1.mp4",
     });
     // The failure-tracking update returns the post-increment counters.
-    mockUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
-      if (data.transferAttempts) {
-        return Promise.resolve({
-          organizationId: null,
-          transferAttempts: 1,
-          transferFailureAlertedAt: null,
-        });
-      }
-      return Promise.resolve({});
-    });
+    mockUpdate.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => {
+        if (data.transferAttempts) {
+          return Promise.resolve({
+            organizationId: null,
+            transferAttempts: 1,
+            transferFailureAlertedAt: null,
+          });
+        }
+        return Promise.resolve({});
+      },
+    );
 
-    const res = await RecordingTransferService.transferRecordingToSupabase("rec_1");
+    const res =
+      await RecordingTransferService.transferRecordingToSupabase("rec_1");
 
     expect(res.success).toBe(false);
     const failureUpdate = mockUpdate.mock.calls.find(
@@ -104,16 +110,18 @@ describe("transfer failure tracking (STR-2/3)", () => {
       id: "rec_1",
       recordingUrl: "https://stream.example/rec_1.mp4",
     });
-    mockUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
-      if (data.transferAttempts) {
-        return Promise.resolve({
-          organizationId: "org_1",
-          transferAttempts: 3, // crosses the >=3 threshold
-          transferFailureAlertedAt: null,
-        });
-      }
-      return Promise.resolve({});
-    });
+    mockUpdate.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => {
+        if (data.transferAttempts) {
+          return Promise.resolve({
+            organizationId: "org_1",
+            transferAttempts: 3, // crosses the >=3 threshold
+            transferFailureAlertedAt: null,
+          });
+        }
+        return Promise.resolve({});
+      },
+    );
 
     await RecordingTransferService.transferRecordingToSupabase("rec_1");
 
@@ -137,16 +145,18 @@ describe("transfer failure tracking (STR-2/3)", () => {
       id: "rec_1",
       recordingUrl: "https://stream.example/rec_1.mp4",
     });
-    mockUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
-      if (data.transferAttempts) {
-        return Promise.resolve({
-          organizationId: "org_1",
-          transferAttempts: 5,
-          transferFailureAlertedAt: new Date("2026-06-15T00:00:00.000Z"),
-        });
-      }
-      return Promise.resolve({});
-    });
+    mockUpdate.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => {
+        if (data.transferAttempts) {
+          return Promise.resolve({
+            organizationId: "org_1",
+            transferAttempts: 5,
+            transferFailureAlertedAt: new Date("2026-06-15T00:00:00.000Z"),
+          });
+        }
+        return Promise.resolve({});
+      },
+    );
 
     await RecordingTransferService.transferRecordingToSupabase("rec_1");
 

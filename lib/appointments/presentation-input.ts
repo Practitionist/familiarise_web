@@ -5,8 +5,13 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import { sessionsTotalOf } from "@/lib/booking/entitlement";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
+import { seriesLedgerFrom } from "@/lib/booking/class-series";
 import {
   requestHoldDeadline,
   type BookingPresentationInput,
@@ -33,7 +38,43 @@ function toPaymentInput(
     currency: p.currency,
     createdAt: p.createdAt,
     expiresAt: "expiresAt" in p ? p.expiresAt : null,
+    capturedAt: "capturedAt" in p ? p.capturedAt : null,
   };
+}
+
+/**
+ * #1766 / #1775 C-5 — a subscription's frozen entitlement, or null when the
+ * detail read lacks the plan shape. The header count and the next-cycle
+ * ALLOCATE arm both read it.
+ */
+export function detailEntitlement(
+  a: Detail,
+  now = new Date(),
+): SubscriptionEntitlement | null {
+  const sub = a.subscription;
+  const plan = sub?.subscriptionPlan;
+  if (
+    a.appointmentType !== "SUBSCRIPTION" ||
+    !sub ||
+    !plan ||
+    typeof plan.sessionsPerWeek !== "number" ||
+    typeof plan.durationInMonths !== "number" ||
+    typeof plan.totalSessions !== "number"
+  ) {
+    return null;
+  }
+  return subscriptionEntitlement({
+    sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
+    sessionsPerWeek: plan.sessionsPerWeek,
+    durationInMonths: plan.durationInMonths,
+    occurrences: a.occurrences.map((o) => ({
+      ...o,
+      endsAt: o.endsAt ?? o.startsAt,
+    })),
+    schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt ?? now,
+    schedulingTimezone: sub.schedulingTimezone ?? "Asia/Kolkata",
+    now,
+  });
 }
 
 type Money = bigint | number | string;
@@ -165,7 +206,44 @@ export function toPresentationInput(
     history: a.statusHistory,
     plan: planOf(a),
     names: args.names,
+    entitlement: entitlementSummary(detailEntitlement(a)),
+    series: classSeriesSummary(a),
   };
+}
+
+/** #1780 E-5 — a class's misses and exit right, from the detail's sessions. */
+function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
+  const N = a.class?.classPlan?.totalSessions;
+  if (!a.class || !N) return null;
+  const ledger = seriesLedgerFrom({
+    N,
+    occurrences: a.occurrences
+      .filter((o) => !o.deletedAt && !o.isTentative)
+      .map((o) => ({
+        ordinal: o.ordinal,
+        startsAt: new Date(o.startsAt),
+        endsAt: new Date(o.endsAt),
+        completionStatus: o.completionStatus,
+        movedAt: o.movedAt ? new Date(o.movedAt) : null,
+        hostCancelledAt: o.hostCancelledAt ? new Date(o.hostCancelledAt) : null,
+        // #1569 — a voided session is a miss too.
+        voidedAt: o.voidedAt ? new Date(o.voidedAt) : null,
+        outcome: o.outcome,
+      })),
+    now: new Date(),
+  });
+  return {
+    misses: ledger.misses,
+    N,
+    exitRight: ledger.exitRight,
+    undelivered: ledger.remaining + ledger.neverScheduled,
+  };
+}
+
+function entitlementSummary(
+  e: SubscriptionEntitlement | null,
+): BookingPresentationInput["entitlement"] {
+  return e ? { remaining: e.remaining, nextBatch: e.cycle.nextBatch } : null;
 }
 
 /** Who pays and who delivers, by name; the derivation swaps in "you" per viewer. */

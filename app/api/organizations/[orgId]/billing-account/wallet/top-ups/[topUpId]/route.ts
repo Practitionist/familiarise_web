@@ -25,7 +25,10 @@ export async function GET(
   },
 ) {
   const { orgId, topUpId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   // `topUpId` is stored as WalletTopUp.providerOrderId (see the file

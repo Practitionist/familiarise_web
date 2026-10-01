@@ -6,7 +6,7 @@
  *
  * Usage:
  * - First run: ANALYZE=true npm run build
- * - Then run: ts-node scripts/analyze-bundle.ts
+ * - Then run: npx tsx scripts/utils/analyze-bundle.ts
  */
 
 import * as fs from "fs";

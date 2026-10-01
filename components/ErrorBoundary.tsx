@@ -1,7 +1,18 @@
 "use client";
 
 import React from "react";
+import { unstable_rethrow } from "next/navigation";
 import { Button } from "@/components/ui/button";
+
+/** True for Next.js notFound()/redirect()/forbidden() signals. */
+function isNextNavigationSignal(error: unknown): boolean {
+  try {
+    unstable_rethrow(error);
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -40,6 +51,9 @@ class ErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // notFound()/redirect() are Next.js control flow, not crashes: render()
+    // rethrows them to Next's own boundaries, so don't log or report them.
+    if (isNextNavigationSignal(error)) return;
     this.setState({
       error,
       errorInfo,
@@ -64,6 +78,9 @@ class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      // Hand notFound()/redirect() back to Next so a 404 renders as a 404
+      // instead of "Dashboard Error" (#1527 QA).
+      if (isNextNavigationSignal(this.state.error)) throw this.state.error;
       // Use custom fallback if provided
       if (this.props.fallback) {
         const FallbackComponent = this.props.fallback;

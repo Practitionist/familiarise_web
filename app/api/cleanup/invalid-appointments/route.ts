@@ -71,11 +71,13 @@ export async function POST(req: NextRequest) {
       tags: { subsystem: "cron", job: "cleanup-invalid-appointments" },
     });
     console.error("Invalid appointments cleanup API route failed:", error);
+    // The error message is deliberately NOT echoed to the caller. The
+    // `cleanupRoute` factory omits it for the same reason: these handlers throw
+    // from Prisma and the booking state machine, and the message is the kind
+    // of internal detail (row ids, column names, constraint text) that the
+    // factory's contract exists to keep behind the 500.
     return NextResponse.json(
-      {
-        error: "Cleanup job failed",
-        details: error instanceof Error ? error.message : String(error),
-      },
+      { error: "Failed to run cleanup-invalid-appointments" },
       { status: 500 },
     );
   }

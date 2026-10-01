@@ -185,9 +185,12 @@ describe("reconcilePendingRefunds placeholder matching", () => {
     const result = await reconcilePendingRefunds();
 
     expect(result.failedCount).toBe(1);
-    expect(refundTable.update).toHaveBeenCalledWith(
+    // CAS on PENDING: a `refund.created` webhook binding the row to SUCCEEDED
+    // between the read and this write must win (count 0 → skip), never be
+    // clobbered back to FAILED.
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "res_1" },
+        where: { id: "res_1", status: "PENDING" },
         data: expect.objectContaining({ status: "FAILED" }),
       }),
     );

@@ -7,6 +7,7 @@
 import {
   getUpcomingEvents,
   processAllEvents,
+  selectNextUp,
 } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/event-processor";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
@@ -86,5 +87,20 @@ describe("consultee Home keeps slot-less requests", () => {
         events({ consultations: [consultation("REJECTED", null)] }),
       ),
     ).toHaveLength(0);
+  });
+});
+
+describe("consultee Home Next up (#1527 QA)", () => {
+  it("drops cancelled bookings and keeps live ones", () => {
+    const at = new Date(Date.now() + 86_400_000);
+    const row = (status: string) =>
+      ({ status, startsAt: at }) as unknown as Parameters<
+        typeof selectNextUp
+      >[0][number];
+    const kept = selectNextUp(
+      [row("CANCELLED"), row("SCHEDULED"), row("EXPIRED")],
+      3,
+    );
+    expect(kept.map((e) => e.status)).toEqual(["SCHEDULED"]);
   });
 });

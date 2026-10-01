@@ -16,7 +16,12 @@ import { PAYOUT_CONSTANTS, type AppointmentType } from "./constants";
 
 const HOUR_MS = 60 * 60 * 1000;
 
-const DEAD_OCCURRENCE_STATUSES = ["CANCELLED", "RESCHEDULED"] as const;
+// #1569 — a voided session never anchors a hold: it was not delivered.
+const DEAD_OCCURRENCE_STATUSES = [
+  "CANCELLED",
+  "RESCHEDULED",
+  "VOIDED",
+] as const;
 
 /** Hours the type's earnings are held after the anchor. */
 export function holdHoursFor(appointmentType: AppointmentType): number {

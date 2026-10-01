@@ -6,28 +6,38 @@
  * `memberId` is a `Membership.id` (not a User id). Operations produce an
  * audit log row in the same transaction as the mutation.
  *
- * Last-OWNER safety: the API refuses to demote or remove the only active
- * OWNER so an org can never end up ownerless. The check runs inside the
- * transaction so a concurrent second request can't race past it.
+ * Every role and status move goes through the shared membership guard
+ * (`lib/enterprise/membership-guards.ts`, #1846 bucket C), and removal, by
+ * DELETE or by PATCH `status: REMOVED`, goes through the one removal path in
+ * `lib/enterprise/member-removal.ts` (ORG-07).
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
-import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
-import { transitionMembership } from "@/lib/enterprise/transitions";
-import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
+import {
+  IllegalTransitionError,
+  transitionMembership,
+} from "@/lib/enterprise/transitions";
+import {
+  MembershipGuardError,
+  assertNotTombstone,
+  assertRoleChangeAllowed,
+  assertStatusChangeAllowed,
+} from "@/lib/enterprise/membership-guards";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { removeMember } from "@/lib/enterprise/member-removal";
 import {
   applyMembershipRoleEffects,
+  auditPayoutRecipientChange,
   bumpUserSessionGeneration,
-  recomputeConsultantIsIndependent,
+  recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
-import { notifyOrgExpertRemoved } from "@/lib/novu/service";
 import {
   attemptOnboardingEmail,
   stageOrgMembershipChangedEmail,
@@ -36,7 +46,7 @@ import {
 import { scheduleAfter } from "@/lib/api/after-safe";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
-// omitted BILLING_ADMIN — invitable via POST /members but un-PATCH-able
+// omitted BILLING_ADMIN — invitable but un-PATCH-able
 // here, so OWNERs couldn't promote a MAINTAINER to BILLING_ADMIN via
 // the dashboard ("Invalid body" 400). Caught during the 2026-06 role
 // audit. We could import lib/labels/org-labels.ts:MemberRoleSchema to
@@ -90,10 +100,11 @@ export async function GET(
   },
 ) {
   const { orgId, memberId } = await params;
-  // MANAGER+ can read other members' details. LEARNER+SUPPORT can only
-  // fetch THEIR OWN membership — otherwise any member of the org could
-  // enumerate peers' emails/names/profile ids. Member-list (index) view
-  // remains separately gated; this is the detail endpoint.
+  // `members.read` (the same grant as the member list) can read other
+  // members' details; everyone else only THEIR OWN membership, so no member
+  // can enumerate peers' emails/profile ids. Was a MANAGER rank floor, which
+  // let BILLING_ADMIN open members the list refuses and kept SUPPORT out of
+  // members it can list (#1527 P0-4).
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
@@ -112,15 +123,151 @@ export async function GET(
   }
 
   const isSelf = membership.id === access.member.id;
-  const isManagerPlus = isAtLeastRole(access.member.role, "MANAGER");
-  if (!isSelf && !isManagerPlus) {
+  if (!isSelf && !hasOrgPermission(access.member.role, "members.read")) {
     return NextResponse.json(
       { error: "Insufficient role to view other members" },
       { status: 403 },
     );
   }
 
-  return NextResponse.json({ membership });
+  // #1851 — payout routing and the rate-card override are finance data; the
+  // member list already hides them without `payouts.read`, and the detail
+  // now matches it (MANAGER and SUPPORT read members, not their pay).
+  const canSeePay =
+    isSelf || hasOrgPermission(access.member.role, "payouts.read");
+  return NextResponse.json({
+    membership: canSeePay
+      ? membership
+      : {
+          ...membership,
+          payoutRecipient: undefined,
+          rateCardOverrideId: undefined,
+        },
+  });
+}
+
+type MemberPatch = z.infer<typeof PatchBodySchema>;
+type MemberRow = Awaited<
+  ReturnType<typeof prisma.membership.findUniqueOrThrow>
+>;
+
+/** The non-status columns a PATCH writes. */
+function memberUpdateData(
+  patch: MemberPatch,
+  currentRole: MemberRow["role"],
+  roleEffects: Awaited<ReturnType<typeof applyMembershipRoleEffects>> | null,
+) {
+  // #729 — an explicit payout-recipient choice counts only when the resulting
+  // role is EXPERT, and wins over the role-change default below it.
+  const explicitPayout =
+    patch.payoutRecipient !== undefined &&
+    (patch.role ?? currentRole) === "EXPERT"
+      ? patch.payoutRecipient
+      : undefined;
+  return {
+    ...(patch.role !== undefined && { role: patch.role }),
+    ...(patch.departmentLabel !== undefined && {
+      departmentLabel: patch.departmentLabel,
+    }),
+    ...(roleEffects && {
+      consulteeProfileId: roleEffects.consulteeProfileId,
+      consultantProfileId: roleEffects.consultantProfileId,
+      payoutRecipient: roleEffects.payoutRecipient,
+    }),
+    ...(explicitPayout !== undefined && { payoutRecipient: explicitPayout }),
+  };
+}
+
+/** The audit rows a PATCH writes, in the same transaction as the change. */
+async function auditMemberChange(
+  tx: Tx,
+  args: {
+    orgId: string;
+    actorMembershipId: string;
+    current: MemberRow;
+    updated: MemberRow;
+    patch: MemberPatch;
+    roleChanged: boolean;
+    statusChanged: boolean;
+  },
+): Promise<void> {
+  const { current, updated, patch } = args;
+  const base = {
+    organizationId: args.orgId,
+    actorMembershipId: args.actorMembershipId,
+    targetMembershipId: current.id,
+  };
+  // #1851 decision 5 — a payout-recipient change is a money event: its own
+  // PAYOUT-category row, visible to the finance readers.
+  if (updated.payoutRecipient !== current.payoutRecipient) {
+    await auditPayoutRecipientChange(tx, {
+      ...base,
+      from: current.payoutRecipient,
+      to: updated.payoutRecipient,
+      viaRoleChange: args.roleChanged,
+    });
+  }
+  const details = {
+    from: { role: current.role, status: current.status },
+    to: {
+      role: patch.role ?? current.role,
+      status: patch.status ?? current.status,
+    },
+  };
+  if (args.roleChanged) {
+    await tx.orgAuditLog.create({
+      data: {
+        ...base,
+        category: "MEMBER",
+        action: AUDIT_ACTIONS.MEMBER.ROLE_CHANGE,
+        description: `Role: ${current.role} → ${patch.role}`,
+        details,
+      },
+    });
+  }
+  if (args.statusChanged) {
+    await tx.orgAuditLog.create({
+      data: {
+        ...base,
+        category: "MEMBER",
+        action: AUDIT_ACTIONS.MEMBER.STATUS_CHANGE,
+        description: `Status: ${current.status} → ${patch.status}`,
+        details,
+      },
+    });
+  }
+}
+
+/** Maps a guard refusal or an `httpStatus`-tagged error onto the response. */
+function errorResponse(err: unknown): NextResponse | null {
+  if (err instanceof MembershipGuardError) {
+    return NextResponse.json(
+      {
+        error: err.message,
+        code: err.code,
+        ...(err.counts && { counts: err.counts }),
+      },
+      { status: err.httpStatus },
+    );
+  }
+  if (err instanceof IllegalTransitionError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code },
+      { status: err.httpStatus },
+    );
+  }
+  if (err instanceof Error && "httpStatus" in err) {
+    const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
+    return NextResponse.json({ error: err.message }, { status });
+  }
+  return null;
+}
+
+function reportAndRethrow(err: unknown): never {
+  Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+    tags: { subsystem: "organizations" },
+  });
+  throw err;
 }
 
 export async function PATCH(
@@ -132,7 +279,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -145,289 +292,219 @@ export async function PATCH(
   }
   const patch = parsed.data;
 
+  // Gated per field. Role, status and department are people management
+  // (OWNER, MAINTAINER). #1851 decision 5 — an EXPERT's payout recipient
+  // decides where money goes, so only the finance roles (OWNER,
+  // BILLING_ADMIN) change it; MAINTAINER can see it but not change it.
+  const touchesPeople =
+    patch.role !== undefined ||
+    patch.status !== undefined ||
+    patch.departmentLabel !== undefined;
+  if (
+    touchesPeople &&
+    !hasOrgPermission(access.member.role, "members.manage")
+  ) {
+    return NextResponse.json(
+      { error: "Insufficient role to manage members" },
+      { status: 403 },
+    );
+  }
+  if (
+    patch.payoutRecipient !== undefined &&
+    !hasOrgPermission(access.member.role, "members.payoutRecipient.change")
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Only an Owner or Billing admin can change where an expert is paid.",
+        code: "PAYOUT_RECIPIENT_REQUIRES_FINANCE",
+      },
+      { status: 403 },
+    );
+  }
+  const actor = {
+    kind: "member" as const,
+    membershipId: access.member.id,
+    role: access.member.role,
+  };
+
+  // ORG-07 — PATCH → REMOVED is the same operation as DELETE, so it runs the
+  // same removal (guard, cascade, audit, webhook, notices). It is its own
+  // action: mixing it with a role or label edit would half-apply one of them.
+  if (patch.status === "REMOVED") {
+    if (
+      patch.role !== undefined ||
+      patch.departmentLabel !== undefined ||
+      patch.payoutRecipient !== undefined
+    ) {
+      return NextResponse.json(
+        { error: "Remove a member on its own, without other changes." },
+        { status: 400 },
+      );
+    }
+    try {
+      await removeMember({
+        orgId,
+        memberId,
+        actor,
+        actorUserId: access.session.user.id,
+        force: new URL(req.url).searchParams.get("force") === "true",
+      });
+      const membership = await prisma.membership.findFirst({
+        where: { id: memberId, organizationId: orgId },
+      });
+      return NextResponse.json({ membership });
+    } catch (err) {
+      return errorResponse(err) ?? reportAndRethrow(err);
+    }
+  }
+
   // The membership-changed email, staged inside the transaction below.
   let stagedRoleEmail: StagedOnboardingEmail | null = null;
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const current = await tx.membership.findFirst({
-        where: { id: memberId, organizationId: orgId },
-      });
-      if (!current) {
-        throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
-      }
-
-      // Disjoint LEARNER/EXPERT boundary. These two roles imply
-      // different platform profiles (ConsulteeProfile vs ConsultantProfile)
-      // and different billing postures (consumer vs provider), so the
-      // product rule is to force a remove + re-invite instead of
-      // mutating in place. Returning the machine-readable code lets the
-      // dashboard surface the humanized copy via humanizeOrgError.
-      if (
-        patch.role !== undefined &&
-        patch.role !== current.role &&
-        isBlockedRoleTransition(current.role, patch.role)
-      ) {
-        throw Object.assign(new Error("ROLE_TRANSITION_BLOCKED"), {
-          httpStatus: 409,
-        });
-      }
-
-      // OWNER role gate: only OWNERs can assign or revoke the OWNER role.
-      // A MAINTAINER renaming someone to OWNER would effectively grant
-      // themselves extra privileges by proxy.
-      const touchesOwnerRole =
-        patch.role === "OWNER" || current.role === "OWNER";
-      if (touchesOwnerRole && !isAtLeastRole(access.member.role, "OWNER")) {
-        throw Object.assign(
-          new Error("Only an OWNER can assign or revoke the OWNER role"),
-          { httpStatus: 403 },
-        );
-      }
-
-      // Self-role-change guard. Caught during the 2026-06 MAINTAINER role
-      // audit — a MAINTAINER could PATCH their own membership to LEARNER
-      // (or any non-OWNER role), losing admin access and bypassing the
-      // #729 strict identity gate (PATCH lazy-creates the profile, POST
-      // refuses). The footgun: a MAINTAINER self-demotes accidentally and
-      // needs an OWNER to restore them. Role changes belong to a
-      // peer-or-superior review path; the actor cannot grade their own
-      // membership. OWNERs are likewise blocked from changing their own
-      // role — OWNER handoff goes through a dedicated promote-then-demote
-      // path that the last-OWNER guard at L172-187 already protects.
-      const isSelfRoleChange =
-        memberId === access.member.id &&
-        patch.role !== undefined &&
-        patch.role !== current.role;
-      if (isSelfRoleChange) {
-        throw Object.assign(
-          new Error(
-            "You cannot change your own role. Ask another operator to do it for you.",
-          ),
-          { httpStatus: 403 },
-        );
-      }
-
-      // Last-OWNER guard. Runs inside the TX so two concurrent demotes
-      // can't both believe there's a second owner.
-      const isDemotingOwner =
-        current.role === "OWNER" &&
-        patch.role !== undefined &&
-        patch.role !== "OWNER";
-      const isRemovingOwner =
-        current.role === "OWNER" && patch.status === "REMOVED";
-      if (isDemotingOwner || isRemovingOwner) {
-        const activeOwnerCount = await tx.membership.count({
-          where: {
-            organizationId: orgId,
-            role: "OWNER",
-            status: "ACTIVE",
-            id: { not: memberId },
-          },
-        });
-        if (activeOwnerCount === 0) {
-          throw Object.assign(
-            new Error(
-              "Cannot demote or remove the only active OWNER. Promote another member to OWNER first.",
-            ),
-            { httpStatus: 409 },
-          );
-        }
-      }
-
-      // Role-driven profile reconciliation. When the role changes we
-      // hydrate / clear the consultee / consultant FKs through the
-      // shared helper so PATCH stays in sync with POST and invite-accept.
-      // payoutRecipient is reset to the role default (SELF) on role
-      // change; pre-existing overrides are not preserved across a role
-      // move.
-      const roleEffects =
-        patch.role !== undefined && patch.role !== current.role
-          ? await applyMembershipRoleEffects(tx, {
-              userId: current.userId,
-              role: patch.role,
-            })
-          : null;
-
-      // #729 — explicit payout-recipient choice, honoured only when the
-      // resulting role is EXPERT. Applied AFTER the role-effect default so an
-      // operator's choice wins over the reset on a role change.
-      const effectiveRole = patch.role ?? current.role;
-      const explicitPayoutRecipient =
-        patch.payoutRecipient !== undefined && effectiveRole === "EXPERT"
-          ? patch.payoutRecipient
-          : undefined;
-
-      // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
-      // matches zero rows and 409s instead of being resurrected); the
-      // remaining fields ride a plain update in the same tx.
-      if (patch.status !== undefined && patch.status !== current.status) {
-        await transitionMembership(tx, {
-          where: { id: memberId, organizationId: orgId },
-          to: patch.status,
-        });
-
-        // PATCH → REMOVED is the same operation as DELETE — run the same
-        // assignment cascade so the member's slot frees up (see the DELETE
-        // handler's rationale).
-        if (patch.status === "REMOVED") {
-          const now = new Date();
-          await tx.programAssignment.updateMany({
-            where: {
-              membershipId: memberId,
-              periodEnd: { gte: now },
-              status: { in: ["ACTIVE", "PAUSED"] },
-            },
-            data: { periodEnd: now, status: "CANCELLED" },
+    // N4 — Serializable, so two OWNERs demoting or suspending each other
+    // cannot both count the other as the remaining OWNER (write skew); SSI
+    // aborts one side and the retry sees the committed change.
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const current = await tx.membership.findFirst({
+            where: { id: memberId, organizationId: orgId },
           });
-          // E2E-audit P1 fix — release the billed seats the cancelled
-          // assignments held (parity with the assignment-route cancels).
-          await releaseSeatsForTerminatedAssignments(tx, [memberId], now);
-        }
-      }
+          if (!current) {
+            throw Object.assign(new Error("Member not found"), {
+              httpStatus: 404,
+            });
+          }
 
-      const otherData = {
-        ...(patch.role !== undefined && { role: patch.role }),
-        ...(patch.departmentLabel !== undefined && {
-          departmentLabel: patch.departmentLabel,
-        }),
-        ...(roleEffects && {
-          consulteeProfileId: roleEffects.consulteeProfileId,
-          consultantProfileId: roleEffects.consultantProfileId,
-          payoutRecipient: roleEffects.payoutRecipient,
-        }),
-        ...(explicitPayoutRecipient !== undefined && {
-          payoutRecipient: explicitPayoutRecipient,
-        }),
-      };
-      const updated =
-        Object.keys(otherData).length > 0
-          ? await tx.membership.update({
-              where: { id: memberId },
-              data: otherData,
-            })
-          : await tx.membership.findUniqueOrThrow({ where: { id: memberId } });
+          // #1854 — the label rides the session payload, so a tombstone keeps it.
+          if (patch.departmentLabel !== undefined) assertNotTombstone(current);
 
-      // Bump the user's session-generation marker so the customSession
-      // hook picks up the role / status change on their next request
-      // instead of waiting up to 24h for BetterAuth's session rotation
-      // (Phase B.5). Triggers for any field change that affects the
-      // effective permission set: role, status, or departmentLabel.
-      // departmentLabel is included because it shows up in the session
-      // payload (`organizationMemberships[].departmentLabel`).
-      if (
-        patch.role !== undefined ||
-        patch.status !== undefined ||
-        patch.departmentLabel !== undefined
-      ) {
-        await bumpUserSessionGeneration(tx, current.userId);
-      }
+          const roleChanged =
+            patch.role !== undefined && patch.role !== current.role;
+          // #1846 bucket C — the shared guard: self, OWNER-only roles, the
+          // LEARNER↔EXPERT block, the no-history rule for LEARNER/EXPERT, an
+          // existing expert profile for a move into EXPERT, and the last OWNER.
+          if (roleChanged && patch.role !== undefined) {
+            await assertRoleChangeAllowed(tx, {
+              membership: current,
+              to: patch.role,
+              actor,
+              org: access.org,
+            });
+          }
 
-      // A4: recompute ConsultantProfile.isIndependent if this PATCH touches
-      // an EXPERT membership. PATCH cannot promote *into* EXPERT (Zod schema
-      // blocks LEARNER↔EXPERT and the patch.role union excludes EXPERT in
-      // practice), but PATCH can move a current EXPERT into an operator
-      // role or flip an EXPERT membership's status away from / back to
-      // ACTIVE — both shift the consultant's HOST-membership count.
-      if (
-        current.role === "EXPERT" &&
-        current.consultantProfileId &&
-        (patch.role !== undefined || patch.status !== undefined)
-      ) {
-        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
-      }
+          // Role-driven profile reconciliation through the shared helper, so
+          // PATCH stays in sync with invite-accept. The guard above already
+          // required an existing ConsultantProfile for EXPERT, so nothing is
+          // created here. payoutRecipient resets to the role default.
+          const roleEffects =
+            roleChanged && patch.role !== undefined
+              ? await applyMembershipRoleEffects(tx, {
+                  userId: current.userId,
+                  role: patch.role,
+                })
+              : null;
 
-      const auditActions: string[] = [];
-      if (patch.role !== undefined && patch.role !== current.role) {
-        auditActions.push(AUDIT_ACTIONS.MEMBER.ROLE_CHANGE);
-      }
-      if (patch.status !== undefined && patch.status !== current.status) {
-        auditActions.push(AUDIT_ACTIONS.MEMBER.STATUS_CHANGE);
-      }
-      for (const action of auditActions) {
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
+          // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
+          // matches zero rows and 409s instead of being resurrected); the
+          // remaining fields ride a plain update in the same tx. The guard
+          // refuses a self change and suspending the last OWNER (N4).
+          const statusChanged =
+            patch.status !== undefined && patch.status !== current.status;
+          if (statusChanged && patch.status !== undefined) {
+            await assertStatusChangeAllowed(tx, {
+              membership: current,
+              to: patch.status,
+              actor,
+            });
+            await transitionMembership(tx, {
+              where: { id: memberId, organizationId: orgId },
+              to: patch.status,
+            });
+          }
+
+          const otherData = memberUpdateData(patch, current.role, roleEffects);
+          const updated =
+            Object.keys(otherData).length > 0
+              ? await tx.membership.update({
+                  where: { id: memberId },
+                  data: otherData,
+                })
+              : await tx.membership.findUniqueOrThrow({
+                  where: { id: memberId },
+                });
+
+          // Role, status and departmentLabel all ride the session payload, so a
+          // change bumps the generation marker instead of waiting up to 24h for
+          // BetterAuth's session rotation (Phase B.5).
+          if (
+            patch.role !== undefined ||
+            patch.status !== undefined ||
+            patch.departmentLabel !== undefined
+          ) {
+            await bumpUserSessionGeneration(tx, current.userId);
+          }
+
+          // A4: an EXPERT entering or leaving EXPERT or ACTIVE shifts the
+          // consultant's HOST-membership count, which drives
+          // ConsultantProfile.isIndependent.
+          if (roleChanged || statusChanged) {
+            await recomputeIndependenceAcross(tx, [current, updated]);
+          }
+
+          await auditMemberChange(tx, {
+            orgId,
             actorMembershipId: access.member.id,
-            targetMembershipId: memberId,
-            category: "MEMBER",
-            action,
-            description:
-              action === AUDIT_ACTIONS.MEMBER.ROLE_CHANGE
-                ? `Role: ${current.role} → ${patch.role}`
-                : `Status: ${current.status} → ${patch.status}`,
-            details: {
-              from: {
-                role: current.role,
-                status: current.status,
-              },
-              to: {
-                role: patch.role ?? current.role,
-                status: patch.status ?? current.status,
-              },
-            },
-          },
-        });
-      }
+            current,
+            updated,
+            patch,
+            roleChanged,
+            statusChanged,
+          });
 
-      // P3 email twin: role changes notify the affected member; a PATCH
-      // status move to REMOVED notifies non-EXPERT members (EXPERT removals
-      // stay Novu-only via the DELETE path — no duplicate here either).
-      const movedToRemoved =
-        patch.status !== undefined &&
-        patch.status === "REMOVED" &&
-        current.status !== "REMOVED";
-      const roleChanged =
-        patch.role !== undefined && patch.role !== current.role;
-      let kind: "ROLE_CHANGED" | "REMOVED" | null = null;
-      if (movedToRemoved) {
-        if (current.role !== "EXPERT") kind = "REMOVED";
-      } else if (roleChanged) {
-        kind = "ROLE_CHANGED";
-      }
-      // Staged inside this transaction so the notice row commits with the
-      // membership change or rolls back with it (review round 2 on #1700).
-      if (kind !== null) {
-        stagedRoleEmail = await stageOrgMembershipChangedEmail(
-          {
-            userId: current.userId,
-            membershipId: memberId,
-            kind,
-            orgName: access.org.name,
-            roleBefore: current.role,
-            roleAfter: kind === "ROLE_CHANGED" ? patch.role : undefined,
-            actorName:
-              access.session.user.name ??
-              access.session.user.email ??
-              "An operator",
-            dashboardUrl: "/dashboard",
-          },
-          tx,
-        );
-      }
+          // P3 email twin: a role change notifies the affected member. Staged
+          // inside this transaction so the notice row commits with the change
+          // or rolls back with it (review round 2 on #1700).
+          if (roleChanged) {
+            stagedRoleEmail = await stageOrgMembershipChangedEmail(
+              {
+                userId: current.userId,
+                membershipId: memberId,
+                kind: "ROLE_CHANGED",
+                orgName: access.org.name,
+                roleBefore: current.role,
+                roleAfter: patch.role,
+                actorName:
+                  access.session.user.name ??
+                  access.session.user.email ??
+                  "An operator",
+                dashboardUrl: "/dashboard",
+              },
+              tx,
+            );
+          }
 
-      return updated;
-    });
+          return updated;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     // Vendor attempt after the response; the row was written in the tx.
     if (stagedRoleEmail) {
       const staged = stagedRoleEmail;
-      scheduleAfter(() => attemptOnboardingEmail(staged));
+      scheduleAfter(
+        () => attemptOnboardingEmail(staged),
+        "member.onboarding-email",
+      );
     }
 
     return NextResponse.json({ membership: result });
   } catch (err) {
-    // Structured error handling keeps the switch between 404/403/409
-    // explicit — never leak a 500 for user-facing validation issues.
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "organizations" } },
-    );
-    throw err;
+    // Never leak a 500 for a user-facing refusal.
+    return errorResponse(err) ?? reportAndRethrow(err);
   }
 }
 
@@ -440,356 +517,26 @@ export async function DELETE(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    permission: "members.manage",
+  });
   if (access.error) return access.error;
 
-  // #779 §C — in-flight-money override. Only an OWNER may force past the
-  // pre-check; MAINTAINERs must clear the money first.
-  const force = req.nextUrl.searchParams.get("force") === "true";
-  const isOwner = access.member.role === "OWNER";
-
-  // A7: capture context for the post-commit Novu fire. Resolved BEFORE
-  // the transaction so the notification payload is ready to dispatch the
-  // moment the soft-delete commits. Set inside the tx; fired after commit.
-  let notifyContext: {
-    consultantUserId: string;
-    payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
-  } | null = null;
-
-  // The removal email for a non-EXPERT member, staged inside the transaction below.
-  let stagedRemovedEmail: StagedOnboardingEmail | null = null;
-
   try {
-    await prisma.$transaction(async (tx) => {
-      const current = await tx.membership.findFirst({
-        where: { id: memberId, organizationId: orgId },
-        include: { user: { select: { id: true } } },
-      });
-      if (!current) {
-        throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
-      }
-
-      // Self-DELETE guard. The trash icon on your own row would
-      // otherwise let a MAINTAINER (or any operator) self-fire in
-      // one click — they'd lose org access immediately and need
-      // another OWNER to restore. "Leave organization" is a real
-      // use case but belongs to a dedicated confirmation flow with
-      // explicit copy ("you will lose access immediately"), not the
-      // same trash button used to evict others. Until that flow
-      // exists, refuse self-DELETE here. Caught during the 2026-06
-      // MAINTAINER role audit alongside the self-role-change guard
-      // in PATCH.
-      if (memberId === access.member.id) {
-        throw Object.assign(
-          new Error(
-            "You cannot remove yourself. Ask another operator, or use the Leave organization flow when it ships.",
-          ),
-          { httpStatus: 403 },
-        );
-      }
-
-      if (current.role === "OWNER") {
-        // OWNER-only gate — mirrors PATCH at L154-161. Without this, a
-        // MAINTAINER (rank 80) who passed `requireOrgAccess(..., "MAINTAINER")`
-        // could DELETE an OWNER row as long as it wasn't the last OWNER,
-        // because the last-OWNER guard below only protects org continuity,
-        // not privilege escalation. Caught during the 2026-06 MAINTAINER
-        // role audit.
-        if (!isAtLeastRole(access.member.role, "OWNER")) {
-          throw Object.assign(new Error("Only an OWNER can remove an OWNER"), {
-            httpStatus: 403,
-          });
-        }
-        // Last-OWNER guard — unchanged semantically. Now applied to
-        // soft-delete (status → REMOVED) so a sole OWNER can't orphan
-        // the org by removing themselves.
-        const activeOwnerCount = await tx.membership.count({
-          where: {
-            organizationId: orgId,
-            role: "OWNER",
-            status: "ACTIVE",
-            id: { not: memberId },
-          },
-        });
-        if (activeOwnerCount === 0) {
-          throw Object.assign(
-            new Error(
-              "Cannot remove the only active OWNER. Promote another member first.",
-            ),
-            { httpStatus: 409 },
-          );
-        }
-      }
-
-      if (current.status === "REMOVED") {
-        // Idempotent: a repeat DELETE is a no-op that still returns 204.
-        return;
-      }
-
-      // #779 §C — in-flight-money pre-check. Removing a member while real
-      // money tied to THEM is still moving would strand it: a pending/accrued
-      // overage charge, unpaid consultant earnings, an in-progress refund, or
-      // an open dispute all need a settled owner. Scoped via the member's
-      // payments (payment.userId = member.userId); earnings via their
-      // ConsultantProfile. An OWNER may override with ?force=true once they've
-      // accepted the consequences.
-      const [overageInflight, unpaidEarnings, pendingRefunds, openDisputes] =
-        await Promise.all([
-          tx.overageEvent.count({
-            where: {
-              chargeStatus: { in: ["PENDING", "ACCRUED"] },
-              payment: { userId: current.userId },
-            },
-          }),
-          current.consultantProfileId
-            ? tx.consultantEarnings.count({
-                where: {
-                  consultantProfileId: current.consultantProfileId,
-                  status: { not: "PAID" },
-                },
-              })
-            : Promise.resolve(0),
-          tx.refund.count({
-            where: {
-              status: "PENDING",
-              payment: { userId: current.userId },
-            },
-          }),
-          tx.dispute.count({
-            where: {
-              // Open = anything not yet terminal (WON/LOST/CHARGE_REFUNDED/
-              // WARNING_CLOSED). Money may still move until then.
-              status: {
-                in: [
-                  "WARNING_NEEDS_RESPONSE",
-                  "WARNING_UNDER_REVIEW",
-                  "NEEDS_RESPONSE",
-                  "UNDER_REVIEW",
-                ],
-              },
-              payment: { userId: current.userId },
-            },
-          }),
-        ]);
-      const inflightTotal =
-        overageInflight + unpaidEarnings + pendingRefunds + openDisputes;
-      if (inflightTotal > 0 && !(force && isOwner)) {
-        throw Object.assign(new Error("MEMBER_HAS_INFLIGHT_MONEY"), {
-          httpStatus: 409,
-          code: "MEMBER_HAS_INFLIGHT_MONEY",
-          counts: {
-            overageInflight,
-            unpaidEarnings,
-            pendingRefunds,
-            openDisputes,
-          },
-        });
-      }
-      const forced = inflightTotal > 0;
-
-      // Soft-delete (status=REMOVED) instead of hard-delete: audit rows
-      // reference Membership via `actorMembershipId`/`targetMembershipId`,
-      // payouts, earnings, and wallet entries do too. A hard delete
-      // would cascade across half the compliance tables. REMOVED is a
-      // tombstone — it hides the row from all listing endpoints, blocks
-      // login attempts, but keeps the history queryable. The CAS makes a
-      // concurrent double-DELETE 409 instead of re-running the cascade.
-      await transitionMembership(tx, {
-        where: { id: memberId, organizationId: orgId },
-        to: "REMOVED",
-      });
-
-      // Bump the user's session-generation marker so their next
-      // request hits the customSession refetch path and observes the
-      // missing org membership (Phase B.5). Without this, a removed
-      // member can keep acting on org-scoped routes for up to 24h
-      // because the cached memberships array still lists the org.
-      await bumpUserSessionGeneration(tx, current.userId);
-
-      // A4: if this was an EXPERT membership, recompute the consultant's
-      // isIndependent flag now that one HOST tie is gone. If it was the
-      // last active EXPERT membership at any HOST org the flag flips back
-      // to true and the consultant re-appears as "independent" on
-      // /explore/experts.
-      if (current.role === "EXPERT" && current.consultantProfileId) {
-        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
-      }
-
-      // A7 note: past `OrganizationEarnings` are NOT touched on member
-      // removal. Sessions the consultant already delivered are settled
-      // commitments — the org earned its share at booking time, and the
-      // consultant's `ConsultantEarnings` row will pay out independently.
-      // Cancelling already-accrued earnings here would create
-      // reconciliation drift (LED-3 / LED-4 invariants would break).
-      // Forward-looking: once the consultant is REMOVED, no NEW
-      // `OrganizationEarnings` rows are created (resolveOrgSplit returns
-      // null when no active EXPERT membership at a canHost org exists).
-
-      // Cascade: terminate any active ProgramAssignments. Without this,
-      // a removed member's assignments still match the
-      // `periodStart <= now AND periodEnd >= now` filter, so their slot
-      // continues to count against the program cap and a replacement
-      // member can't be added. We close the period at `now` rather than
-      // deleting so engagementsUsed history + UsageLedgerEntry rows
-      // remain queryable for reconciliation.
-      // #779 §A — close the period AND stamp status=CANCELLED (member
-      // removed mid-cycle) so the assignment lifecycle is explicit, not
-      // inferred from periodEnd alone.
-      // Status guard: only live allocations cascade — a ROLLED/CLOSED row
-      // must never be re-stamped CANCELLED by a (forced) re-removal.
-      const now = new Date();
-      const terminated = await tx.programAssignment.updateMany({
-        where: {
-          membershipId: memberId,
-          periodEnd: { gte: now },
-          status: { in: ["ACTIVE", "PAUSED"] },
-        },
-        data: { periodEnd: now, status: "CANCELLED" },
-      });
-      // E2E-audit P1 fix — release billed seats (see PATCH → REMOVED arm).
-      await releaseSeatsForTerminatedAssignments(tx, [memberId], now);
-
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          targetMembershipId: memberId,
-          category: "MEMBER",
-          action: AUDIT_ACTIONS.MEMBER.MEMBER_REMOVED,
-          description: `Removed member ${memberId} (soft delete)`,
-          details: {
-            role: current.role,
-            previousStatus: current.status,
-            assignmentsTerminated: terminated.count,
-            // #779 §C — record an OWNER force-override past the in-flight money
-            // pre-check so the audit trail shows the money was knowingly left.
-            ...(forced && { forced: true }),
-          },
-        },
-      });
-
-      // Outbound webhook: notify integrations that the membership is
-      // gone (HRIS deprovisioning, SaaS-license reclaim). Dispatched
-      // inside the transaction so a rollback (e.g. anti-lockout veto)
-      // also rolls back the webhook delivery row.
-      await dispatchWebhookEvent({
-        prisma: tx,
-        organizationId: orgId,
-        eventType: "member.removed",
-        payload: {
-          membershipId: memberId,
-          userId: current.userId,
-          role: current.role,
-          previousStatus: current.status,
-        },
-      });
-
-      // A7: stage the Novu fire (executed AFTER the tx commits so a
-      // rollback never pages a notification for a delete that didn't
-      // happen). Only EXPERT removals trigger the personal notification —
-      // operator role removals don't need this.
-      if (current.role === "EXPERT" && current.user) {
-        const org = await tx.organization.findUnique({
-          where: { id: orgId },
-          select: { name: true, slug: true },
-        });
-        const actor = await tx.user.findUnique({
-          where: { id: access.session.user.id },
-          select: { name: true, email: true },
-        });
-        if (org) {
-          notifyContext = {
-            consultantUserId: current.user.id,
-            payload: {
-              orgName: org.name,
-              orgSlug: org.slug,
-              removedByName: actor?.name ?? actor?.email ?? "An operator",
-              reason: null,
-              dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard/consultant`,
-            },
-          };
-        }
-      } else {
-        // P3 email twin for non-EXPERT removals. EXPERT keeps Novu-only.
-        const org = await tx.organization.findUnique({
-          where: { id: orgId },
-          select: { name: true },
-        });
-        const actor = await tx.user.findUnique({
-          where: { id: access.session.user.id },
-          select: { name: true, email: true },
-        });
-        if (org) {
-          // Staged inside this transaction (review round 2 on #1700).
-          stagedRemovedEmail = await stageOrgMembershipChangedEmail(
-            {
-              userId: current.userId,
-              membershipId: memberId,
-              kind: "REMOVED",
-              orgName: org.name,
-              roleBefore: current.role,
-              actorName: actor?.name ?? actor?.email ?? "An operator",
-              dashboardUrl: "/dashboard",
-            },
-            tx,
-          );
-        }
-      }
+    // ORG-07 — the same removal PATCH → REMOVED runs. The guard refuses self
+    // removal (a "Leave organization" flow would own that), an OWNER target
+    // for a non-OWNER, the last OWNER, and a member who still has upcoming
+    // sessions, live seats or money in progress here. #779 §C — only an OWNER
+    // may force past the obligations with ?force=true.
+    await removeMember({
+      orgId,
+      memberId,
+      actor: { membershipId: access.member.id, role: access.member.role },
+      actorUserId: access.session.user.id,
+      force: new URL(req.url).searchParams.get("force") === "true",
     });
-
-    // A7: fire-and-forget Novu trigger after commit. A failure here MUST
-    // NOT roll back the soft-delete (the membership is already gone in
-    // the DB); log the error and continue.
-    if (notifyContext !== null) {
-      const ctx = notifyContext as {
-        consultantUserId: string;
-        payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
-      };
-      try {
-        await notifyOrgExpertRemoved(ctx.consultantUserId, ctx.payload);
-      } catch (notifyErr) {
-        Sentry.captureException(
-          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
-          { tags: { subsystem: "organizations" } },
-        );
-        console.error(
-          "[member-delete] Novu notify failed (non-fatal):",
-          notifyErr,
-        );
-      }
-    }
-
-    // Vendor attempt after the response; the row was written in the tx.
-    if (stagedRemovedEmail) {
-      const staged = stagedRemovedEmail;
-      scheduleAfter(() => attemptOnboardingEmail(staged));
-    }
-
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      // #779 §C — forward the structured code + breakdown counts so the UI
-      // renders the in-flight-money wind-down message.
-      const code =
-        "code" in err && typeof err.code === "string" ? err.code : undefined;
-      const counts =
-        "counts" in err && err.counts && typeof err.counts === "object"
-          ? err.counts
-          : undefined;
-      return NextResponse.json(
-        {
-          error: err.message,
-          ...(code && { code }),
-          ...(counts && { counts }),
-        },
-        { status },
-      );
-    }
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "organizations" } },
-    );
-    throw err;
+    return errorResponse(err) ?? reportAndRethrow(err);
   }
 }

@@ -26,6 +26,8 @@ import { Prisma } from "@prisma/client";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -102,15 +104,32 @@ export async function POST(req: NextRequest) {
     if (!result.success) {
       return NextResponse.json(result, { status: 400 });
     }
+
+    // #1861 P4b — gateway order id only; handleCheckout's return shape has
+    // no top-level appointmentId or internal Payment.id to tag (both are
+    // resolved deeper in the pipeline, not surfaced to this route), so this
+    // reads defensively with `in` rather than assuming a field on every
+    // branch. Read-only: never affects the response.
+    const gatewayOrderId =
+      ("orderId" in result && typeof result.orderId === "string" && result.orderId) ||
+      ("paymentIntent" in result &&
+        result.paymentIntent &&
+        typeof result.paymentIntent === "object" &&
+        "id" in result.paymentIntent &&
+        typeof result.paymentIntent.id === "string" &&
+        result.paymentIntent.id) ||
+      undefined;
+    if (gatewayOrderId) {
+      Sentry.getCurrentScope().setTag("gatewayOrderId", gatewayOrderId);
+    }
+
     return NextResponse.json(result);
   } catch (error) {
     // #828 — two concurrent identical requests can both miss the replay
     // lookup; the loser's Payment.create dies on the unique key. Replay the
     // winner's response instead of surfacing a 500.
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      String(error.meta?.target ?? "").includes("clientIdempotencyKey") &&
+      isUniqueViolationOn(error, "clientIdempotencyKey") &&
       replayUserId &&
       replayKey
     ) {
@@ -304,6 +323,8 @@ export async function POST(req: NextRequest) {
       {
         error: classified.errorMessage,
         errorType: classified.errorType,
+        // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
+        ...(error instanceof BookingRuleError ? { code: error.code } : {}),
         ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         timestamp: new Date().toISOString(),
       },

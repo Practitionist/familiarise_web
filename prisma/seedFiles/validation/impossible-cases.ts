@@ -5,7 +5,7 @@
  * They should be run separately from the main seed and expect failures.
  *
  * Usage:
- *   npx ts-node prisma/seedFiles/validation/impossible-cases.ts
+ *   npx tsx prisma/seedFiles/validation/impossible-cases.ts
  *
  * Each test case attempts an operation that should fail due to:
  * - Database constraints (unique, foreign key, check constraints)

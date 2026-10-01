@@ -310,6 +310,14 @@ export async function createRazorpayOrder({
 
 **Note:** Razorpay order IDs start with `order_` prefix.
 
+#### Saved cards and bank EMI (#1771 row 1, #1780 row 1)
+
+Every Razorpay Checkout sheet in the app builds its options through `buildCheckoutOptions` in `lib/payments/client/checkout-options.ts`. The plan checkout (`RazorpayCheckout.tsx`), the recording purchase, the organisation wallet top-up, the organisation invoice and the overage charge all use it, and the two opt-in options below never reach the three organisation sheets.
+
+Saved cards sit behind `ENABLE_SAVED_CARDS`, because Razorpay enables card tokenisation on an account only on request. When the flag is on, a personal checkout (the four plan pages and the recording purchase) resolves the buyer's Razorpay Customer through `savedCardCustomerId`, which calls `ensureRazorpayCustomer` in `lib/payments/core/razorpay.ts`. That function reads `User.razorpayCustomerId`, creates the Customer once with `fail_existing: 0` when the column is empty (so Razorpay returns the existing Customer for the same email and contact), and stores it with a compare-and-set on the null column. The order is minted with `customer_id`, the checkout response echoes the Customer id, and the sheet opens with `customer_id` and `remember_customer: true`. Razorpay then shows its own RBI tokenisation consent box, so the platform keeps no consent table and renders no checkbox, and there is no payment-methods page. A Customer API failure is reported to Sentry and costs the buyer only the save-card offer, never the checkout.
+
+Bank EMI sits behind `ENABLE_CHECKOUT_EMI`. EMI is enabled account-wide by Razorpay and the merchant receives the full amount, so `Payment.amount` is identical either way. The checkout layout passes the server-only flag to the client through `CheckoutFlagsProvider`. While the flag is off, the four plan checkouts open with `config.display.hide: [{ method: "emi" }]`; while it is on, the EMI block shows and the order summary adds "or pay in instalments with your bank" under a gateway-paid total of at least `EMI_MIN_PAISE` (₹3,000).
+
 ### 2.5 Mock Payment Integration
 
 **File:** `/lib/payments/operations/mock.ts`

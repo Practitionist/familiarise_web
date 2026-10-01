@@ -38,11 +38,33 @@ interface CancelRefundPreview {
    */
   wholeEvent?: boolean;
   attendeeCount?: number | null;
+  /**
+   * #1846 — the trial preview says `paid: false` when there is nothing to
+   * refund, and carries the paid amount for the breakdown line when there is.
+   */
+  paid?: boolean;
+  grossPaise?: number;
 }
+
+/** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
+type SeatLeavePreview =
+  | { seated: false }
+  | {
+      seated: true;
+      refused: boolean;
+      message: string | null;
+      estimatedRefundPaise: number;
+      remainingSessions: number | null;
+      currency: string;
+    };
 
 interface CancelConfirmationDialogProps {
   isOpen: boolean;
-  onConfirm: () => void;
+  /**
+   * Receives the quote the viewer saw, so a caller whose cancel refunds only a
+   * confirmed amount (trial DELETE, #1846) can send it back with the click.
+   */
+  onConfirm: (quote?: { estimatedRefundPaise: number }) => void;
   onCancel: () => void;
   title: string;
   consultant: string;
@@ -63,6 +85,11 @@ interface CancelConfirmationDialogProps {
    * name the Appointment row, and the dialog keeps the policy sentence.
    */
   appointmentId?: string | null;
+  /**
+   * #1846 — a quote endpoint other than the appointment cancel preview; the
+   * trial cancel passes `/api/trials/[trialId]/cancel/preview`.
+   */
+  previewUrl?: string | null;
 }
 
 export function CancelConfirmationDialog({
@@ -76,22 +103,27 @@ export function CancelConfirmationDialog({
   isPendingPayment = false,
   mode = "cancel",
   appointmentId,
+  previewUrl,
 }: Readonly<CancelConfirmationDialogProps>) {
   const isLeave = mode === "leave";
 
   // Only the cancel path: an unpaid request has nothing to quote, and leaving a
   // group event refunds through the roster route rather than this one.
-  const previewEnabled =
-    isOpen && !!appointmentId && !isLeave && !isPendingPayment;
+  const quoteUrl =
+    previewUrl ??
+    (appointmentId
+      ? `/api/appointments/${appointmentId}/cancel/preview`
+      : null);
+  const previewEnabled = isOpen && !!quoteUrl && !isLeave && !isPendingPayment;
   const {
     data: preview,
     isLoading: isPreviewLoading,
     isError: isPreviewError,
   } = useQuery<CancelRefundPreview>({
-    queryKey: ["cancel-refund-preview", appointmentId],
+    queryKey: ["cancel-refund-preview", quoteUrl],
     queryFn: async () => {
       const response = await fetch(
-        `/api/appointments/${appointmentId}/cancel/preview`,
+        quoteUrl as string,
         // R18 — the quote had no deadline, and the confirm button is disabled
         // while it loads. A hung request therefore did not just withhold the
         // number, it locked the user out of cancelling their own booking
@@ -108,6 +140,57 @@ export function CancelConfirmationDialog({
     gcTime: 0,
     retry: false,
   });
+
+  // #1780 D-6 — leaving a seat quotes the seat under the same rule the
+  // DELETE runs: refused inside the window, else what comes back.
+  const seatPreviewEnabled = isOpen && !!appointmentId && isLeave;
+  const { data: seatPreview, isLoading: isSeatPreviewLoading } =
+    useQuery<SeatLeavePreview>({
+      queryKey: ["seat-leave-preview", appointmentId],
+      queryFn: async () => {
+        const response = await fetch(
+          `/api/appointments/${appointmentId}/cancel/preview?scope=seat`,
+          { signal: AbortSignal.timeout(8_000) },
+        );
+        if (!response.ok) throw new Error("Could not estimate the refund");
+        return response.json();
+      },
+      enabled: seatPreviewEnabled,
+      staleTime: 0,
+      gcTime: 0,
+      retry: false,
+    });
+  const seatRefused = !!seatPreview?.seated && seatPreview.refused;
+
+  const renderLeaveLine = () => {
+    if (seatPreview?.seated && seatPreview.refused) {
+      return (
+        <p className="text-red-600 text-sm font-medium">
+          {seatPreview.message}
+        </p>
+      );
+    }
+    if (seatPreview?.seated) {
+      const amount = formatCurrencyAmount(
+        seatPreview.estimatedRefundPaise,
+        seatPreview.currency,
+      );
+      const sessions = seatPreview.remainingSessions;
+      return (
+        <p className="text-muted-foreground text-sm">
+          Leaving now refunds{" "}
+          <strong className="text-foreground">{amount}</strong>
+          {sessions ? ` for the ${sessions} remaining sessions.` : "."}
+        </p>
+      );
+    }
+    return (
+      <p className="text-muted-foreground text-sm">
+        You will be removed from this event. If you paid for a seat, a refund is
+        issued under the event&apos;s cancellation policy.
+      </p>
+    );
+  };
 
   // Flattened from a nested ternary — Sonar flags nested ternaries in JSX;
   // the three outcomes are easier to skim as sequential assignments.
@@ -180,11 +263,31 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (preview.paid === false) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          Nothing was paid for this, so there is nothing to refund.
+        </p>
+      );
+    }
     // One sentence per rail, shared with the payments surfaces (#1675 X6).
+    // #1846 — a quote that knows the paid amount shows the breakdown too.
     return (
-      <p className="text-muted-foreground text-sm">
-        {refundRailLine(preview.fundingRail, preview)}
-      </p>
+      <>
+        {preview.grossPaise !== undefined && (
+          <p className="text-muted-foreground text-sm">
+            You paid{" "}
+            <strong className="text-foreground">
+              {formatCurrencyAmount(preview.grossPaise, preview.currency)}
+            </strong>
+            . At this notice the cancellation policy returns {preview.refundPct}
+            % of it.
+          </p>
+        )}
+        <p className="text-muted-foreground text-sm">
+          {refundRailLine(preview.fundingRail, preview)}
+        </p>
+      </>
     );
   };
 
@@ -204,10 +307,7 @@ export function CancelConfirmationDialog({
                 <strong>{consultant}</strong>?
               </p>
               {isLeave ? (
-                <p className="text-muted-foreground text-sm">
-                  You will be removed from this event. If you paid for a seat, a
-                  refund is issued under the event&apos;s cancellation policy.
-                </p>
+                renderLeaveLine()
               ) : isPendingPayment ? (
                 <p className="text-muted-foreground">
                   You haven&apos;t been charged — this releases the approved
@@ -234,8 +334,19 @@ export function CancelConfirmationDialog({
             {isLeave ? "Stay enrolled" : "Keep Appointment"}
           </AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
-            disabled={isLoading || isPreviewLoading}
+            onClick={() =>
+              onConfirm(
+                preview && preview.paid !== false
+                  ? { estimatedRefundPaise: preview.estimatedRefundPaise }
+                  : undefined,
+              )
+            }
+            disabled={
+              isLoading ||
+              isPreviewLoading ||
+              isSeatPreviewLoading ||
+              seatRefused
+            }
             className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
           >
             {isLoading ? (

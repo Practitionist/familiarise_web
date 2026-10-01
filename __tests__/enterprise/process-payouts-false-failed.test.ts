@@ -14,19 +14,24 @@
  * payout already claimed by a concurrent run must be skipped without ever
  * touching the gateway.
  */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const db: Record<string, unknown> = {
     consultantPayout: {
       findMany: jest.fn(),
       updateMany: jest.fn(),
       update: jest.fn(),
     },
     // #1020 — the disbursement dispute guard probes for live disputes.
-    consultantEarnings: { updateMany: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
+    consultantEarnings: {
+      updateMany: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
-  },
-}));
+  };
+  // #1846 — the FAILED write and the earnings release share one transaction.
+  db.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(db));
+  return { __esModule: true, default: db };
+});
 // #1132 — the consultant rail is now gated on ENABLE_LIVE_PAYOUTS (ADR 11), the
 // same freeze the org rail already had. These tests are about the false-FAILED
 // guard and the CAS claim, both of which only run once the freeze is lifted, so
@@ -111,7 +116,7 @@ const unlinkedEarnings = () =>
       arg?.data?.payoutId === null,
   );
 const markedFailed = () =>
-  cp.update.mock.calls.some(
+  cp.updateMany.mock.calls.some(
     ([arg]: [{ data?: { status?: unknown } }]) =>
       arg?.data?.status === "FAILED",
   );
@@ -138,10 +143,13 @@ beforeEach(() => {
 describe("processApprovedPayouts — #785 false-FAILED guard (service path)", () => {
   it("gateway accepted + post-submit DB write fails → does NOT FAIL or unlink earnings (no double-pay)", async () => {
     cp.findMany.mockResolvedValue([APPROVED]);
-    // the persist-after-gateway throws; the catch's re-persist succeeds.
-    cp.update
+    // claim, TDS stage, then the persist-after-gateway throws; the catch's
+    // re-persist succeeds.
+    cp.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
       .mockRejectedValueOnce(new Error("DB write failed"))
-      .mockResolvedValue({});
+      .mockResolvedValue({ count: 1 });
 
     const results = await processApprovedPayouts();
 
@@ -151,13 +159,14 @@ describe("processApprovedPayouts — #785 false-FAILED guard (service path)", ()
     // the double-pay vector — earnings must STAY linked.
     expect(unlinkedEarnings()).toBe(false);
     expect(markedFailed()).toBe(false);
-    // quarantined PROCESSING with the gateway id so handle-stuck-payouts reconciles.
-    const quarantined = cp.update.mock.calls.some(
+    // quarantined with the gateway id so handle-stuck-payouts reconciles; the
+    // status is left PROCESSING because nothing writes it.
+    const quarantined = cp.updateMany.mock.calls.filter(
       ([arg]: [{ data?: { providerPayoutId?: unknown; status?: unknown } }]) =>
         arg?.data?.providerPayoutId === "pout_x" &&
-        arg?.data?.status === "PROCESSING",
+        arg?.data?.status === undefined,
     );
-    expect(quarantined).toBe(true);
+    expect(quarantined).toHaveLength(2);
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       payoutId: "po_1",
@@ -171,6 +180,7 @@ describe("processApprovedPayouts — #785 false-FAILED guard (service path)", ()
     cp.update.mockResolvedValue({});
     (global as unknown as { fetch: jest.Mock }).fetch.mockResolvedValue({
       ok: false,
+      status: 400,
       statusText: "Bad Request",
       json: async () => ({ error: { description: "bad fund account" } }),
     });
@@ -179,6 +189,26 @@ describe("processApprovedPayouts — #785 false-FAILED guard (service path)", ()
 
     expect(markedFailed()).toBe(true);
     expect(unlinkedEarnings()).toBe(true);
+  });
+
+  it("#1846 N1 — a submit that times out stays PROCESSING with its earnings BATCHED, so no later batch re-pays it", async () => {
+    cp.findMany.mockResolvedValue([APPROVED]);
+    (global as unknown as { fetch: jest.Mock }).fetch.mockRejectedValue(
+      new DOMException(
+        "The operation was aborted due to timeout",
+        "TimeoutError",
+      ),
+    );
+
+    const results = await processApprovedPayouts();
+
+    expect(results[0]).toMatchObject({ payoutId: "po_1", success: false });
+    expect(results[0].error).toMatch(/^gateway-outcome-unknown/);
+    expect(markedFailed()).toBe(false);
+    // Earnings are never touched: they stay BATCHED on this payout, and a
+    // batch only collects READY earnings.
+    expect(ce.updateMany).not.toHaveBeenCalled();
+    expect(cp.update).not.toHaveBeenCalled();
   });
 
   it("#776 — CAS claim lost (count 0) → skipped:true and the gateway is NEVER called", async () => {

@@ -17,14 +17,10 @@
 
 const push = jest.fn();
 const leaveCallAndReleaseMedia = jest.fn(() => Promise.resolve());
-let sessionUser: Record<string, unknown> | null = null;
 const call = { id: "slot-A" };
 
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 jest.mock("@stream-io/video-react-sdk", () => ({ useCall: () => call }));
-jest.mock("../../lib/auth-client", () => ({
-  useSession: () => ({ data: sessionUser ? { user: sessionUser } : null }),
-}));
 jest.mock("../../lib/stream/media-teardown", () => ({
   leaveCallAndReleaseMedia: (...args: unknown[]) =>
     leaveCallAndReleaseMedia(...(args as [])),
@@ -34,7 +30,6 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { ExitMeetingButton } from "../../app/meetings/[id]/components/ExitMeetingButton";
-import { resolveAppointmentsHref } from "../../lib/labels/personal-dashboard";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -45,7 +40,6 @@ beforeEach(() => {
   push.mockReset();
   leaveCallAndReleaseMedia.mockReset();
   leaveCallAndReleaseMedia.mockResolvedValue(undefined);
-  sessionUser = { consultantProfileId: "cp-1" };
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -124,39 +118,10 @@ describe("leaving the lobby releases the camera and microphone", () => {
 });
 
 describe("where it goes back to", () => {
-  it("sends a consultant to their own appointments", async () => {
-    sessionUser = { consultantProfileId: "cp-1" };
+  it("routes through the go resolver, which picks the viewer's own side", async () => {
+    // #1527 — one URL for every viewer; /dashboard/go/auto resolves the
+    // consultant or consultee tree server-side.
     await click(render());
-    expect(push).toHaveBeenCalledWith(
-      "/dashboard/consultant/cp-1/appointments",
-    );
-  });
-
-  it("sends a consultee to theirs", async () => {
-    sessionUser = { consulteeProfileId: "ce-9" };
-    await click(render());
-    expect(push).toHaveBeenCalledWith("/dashboard/consultee/ce-9/appointments");
-  });
-
-  it("prefers the delivering side for someone who is both", async () => {
-    sessionUser = { consultantProfileId: "cp-1", consulteeProfileId: "ce-9" };
-    await click(render());
-    expect(push).toHaveBeenCalledWith(
-      "/dashboard/consultant/cp-1/appointments",
-    );
-  });
-
-  it("never sends an org member to an appointments route that does not exist", () => {
-    // org-workspace wins in resolvePersonalDashboardHref but has no
-    // appointments surface, so it must NOT win here.
-    expect(resolveAppointmentsHref({ orgWorkspaceProfileId: "ow-1" })).toBe(
-      "/dashboard/org-workspace/ow-1/home",
-    );
-  });
-
-  it("always resolves somewhere, even with no profile at all", async () => {
-    sessionUser = {};
-    await click(render());
-    expect(push).toHaveBeenCalledWith("/dashboard");
+    expect(push).toHaveBeenCalledWith("/dashboard/go/auto/appointments");
   });
 });

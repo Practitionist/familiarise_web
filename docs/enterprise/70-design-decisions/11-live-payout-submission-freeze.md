@@ -115,3 +115,7 @@ be retired and the parked-state handling simplified. Before any high-value
 post-`processed` reversal gap (research bundle G) should be closed first,
 since the freeze does nothing to protect against a transfer that completes
 and is later clawed back by the beneficiary bank.
+
+## Amendment (2026-09-28): where parked payouts wait
+
+The parked states described above have drifted from the code, and this amendment records where a payout actually waits while the flag is off. On the consultant rail, `processApprovedPayouts` returns before it claims anything, so an approved payout stays APPROVED rather than PROCESSING. On the org rail, #1860 made approval a precondition of payment, so `processOrgPayout` leaves an approved batch at APPROVED, and a batch that nobody has approved stays PENDING whatever the flag says. Flipping the flag therefore makes the next `process-payouts` run submit every APPROVED payout on both rails, which is why the go-live runbook's canary step keeps only one small approved payout eligible for the first run.

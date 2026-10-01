@@ -1,12 +1,11 @@
 /**
  * Resolve the refund facts for a WHOLE booking, not one appointment (#1006).
  *
- * Cancellation is a whole-booking act, but a booking is not always one
- * Appointment row. A subscription is a slot-less placeholder created at
- * checkout — which is the row that carries the Payment — plus one further
- * Appointment per allocated session, none of which carry money. A class is one
- * Appointment per session with every attendee's Payment piled onto the first.
- * Only a consultation and a webinar are genuinely 1:1 with their Appointment.
+ * Cancellation is a whole-booking act. Since #1554 every booking is ONE
+ * Appointment wrapper with N occurrence rows: a subscription's wrapper carries
+ * its Payment and gains an occurrence per allocated session, and a class's
+ * wrapper carries every attendee's Payment and one participant row per seat
+ * (a seat's own ledger is lib/booking/class-series.ts, #1780).
  *
  * The cancel route used to read the payment, the frozen policy snapshot and
  * the start time straight off the appointment it was handed, so:
@@ -27,7 +26,7 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   isCompletedOccurrence,
   sessionsTotalOf,
@@ -194,7 +193,7 @@ export async function resolveBookingRefundContext(
   // is scoped to a payer (or the booking has exactly one: the 1:1 types).
   const singlePayer = !!payerUserId || (!ref.classId && !ref.webinarId);
   if (singlePayer && payments.length > 1) {
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary:
@@ -202,7 +201,7 @@ export async function resolveBookingRefundContext(
         `oldest is being refunded, so the buyer may be owed more`,
       err: new Error("MULTIPLE_REFUNDABLE_PAYMENTS"),
       context: { ref, payerUserId, paymentIds: payments.map((p) => p.id) },
-    }).catch(() => {});
+    });
   }
   const paidPayment = payment
     ? {

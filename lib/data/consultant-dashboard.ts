@@ -18,6 +18,7 @@
  * RSC dehydration and the client helpers wrap every value in `new Date()`.
  */
 
+import { HOST_ATTRIBUTED_OUTCOMES } from "@/lib/booking/session-outcome";
 import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { readByIds } from "@/lib/data/read-by-ids";
@@ -41,6 +42,10 @@ import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { toPlain } from "@/lib/data/serialize";
+import {
+  readConsultantNeedsYou,
+  readSessionsDelivered,
+} from "@/lib/data/consultant-needs-you";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 // =============================================================================
@@ -142,7 +147,7 @@ async function readNextCycles(
       });
       return {
         subscriptionId: row.id,
-        consulteeName: row.requestedBy?.user?.name ?? "Consultee",
+        consulteeName: row.requestedBy?.user?.name ?? "Learner",
         planTitle: row.subscriptionPlan.title,
         nextBatch: entitlement.cycle.nextBatch,
         held: entitlement.held,
@@ -598,6 +603,7 @@ export async function getConsultantDashboard(
     trialCounts,
     netEarningsAgg,
     readyEarningsAgg,
+    availableEarningsAgg,
   ] = await Promise.all([
     // Fetch approved appointments for consultations, subscriptions, webinars, and
     // classes. `appointmentInclude` carries nine nested `user` selections, so an
@@ -756,7 +762,8 @@ export async function getConsultantDashboard(
     }),
     // 3. Session completion rate (last 30 days)
     prisma.appointmentOccurrence.groupBy({
-      by: ["completionStatus"],
+      // #1569 D6 — the outcome splits host-caused voids from platform ones.
+      by: ["completionStatus", "outcome"],
       _count: true,
       where: {
         appointment: {
@@ -799,6 +806,17 @@ export async function getConsultantDashboard(
         consultantProfileId,
         status: "READY",
         payoutId: null,
+      },
+    }),
+    // 7. #1527 review — "Available" (READY + BATCHED), matching the Earnings
+    // page's bucket (lib/dashboard/earnings-state.ts bucketOf); BATCHED rows
+    // are already committed to a run but cash hasn't left, so they read as
+    // "yours" here even though they're excluded from #6's payout-eligibility.
+    prisma.consultantEarnings.aggregate({
+      _sum: { consultantSharePaise: true, refundedShareAmount: true },
+      where: {
+        consultantProfileId,
+        status: { in: ["READY", "BATCHED"] },
       },
     }),
   ]);
@@ -915,6 +933,18 @@ export async function getConsultantDashboard(
   );
   // #1766 — the next-cycle strip; sequential like the read above.
   const nextCycles = await readNextCycles(consultantProfileId, now);
+  // #1527 — the Needs you strip and the This month card. A failure degrades
+  // to no strip, never to a broken Home.
+  const needsYou = await readConsultantNeedsYou(consultantProfileId, now).catch(
+    (error) => {
+      reportSentryError(error, { subsystem: "dashboard", expected: true });
+      return undefined;
+    },
+  );
+  const sessionsDelivered = await readSessionsDelivered(
+    consultantProfileId,
+    startOfMonth,
+  ).catch(() => undefined);
 
   // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
   // reads above; a failure degrades to no row, never to a broken Home.
@@ -977,13 +1007,20 @@ export async function getConsultantDashboard(
         : 0;
 
   // Session completion rate from slot counts
-  const slotCountMap = new Map(
-    slotCounts.map((s) => [s.completionStatus, s._count]),
+  const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
+    slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
+  const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
+  const cancelledSlots = countOf((s) => s.completionStatus === "CANCELLED");
+  const unverifiedSlots = countOf((s) => s.completionStatus === "UNVERIFIED");
+  // D6 — a platform outage is not the consultant's miss.
+  const hostVoidedSlots = countOf(
+    (s) =>
+      s.completionStatus === "VOIDED" &&
+      !!s.outcome &&
+      HOST_ATTRIBUTED_OUTCOMES.includes(s.outcome),
   );
-  const completedSlots = slotCountMap.get("COMPLETED") ?? 0;
-  const cancelledSlots = slotCountMap.get("CANCELLED") ?? 0;
-  const unverifiedSlots = slotCountMap.get("UNVERIFIED") ?? 0;
-  const completionDenom = completedSlots + cancelledSlots + unverifiedSlots;
+  const completionDenom =
+    completedSlots + cancelledSlots + unverifiedSlots + hostVoidedSlots;
   const completionRate =
     completionDenom > 0
       ? Math.round((completedSlots / completionDenom) * 100)
@@ -1004,6 +1041,9 @@ export async function getConsultantDashboard(
   const readyEarningsVal =
     sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
     sumPaise(readyEarningsAgg._sum.refundedShareAmount);
+  const availableEarningsVal =
+    sumPaise(availableEarningsAgg._sum.consultantSharePaise) -
+    sumPaise(availableEarningsAgg._sum.refundedShareAmount);
   const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
   const payoutEligible = readyEarningsVal >= payoutMinimum;
 
@@ -1024,6 +1064,7 @@ export async function getConsultantDashboard(
   const financialSummary = {
     netEarnings: netEarningsVal,
     nextPayout: readyEarningsVal,
+    availableEarnings: availableEarningsVal,
     payoutStatus: payoutEligible
       ? "Ready"
       : readyEarningsVal > 0
@@ -1049,6 +1090,8 @@ export async function getConsultantDashboard(
     nextCycles,
     responseRate,
     payoutSetup,
+    needsYou,
+    sessionsDelivered,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

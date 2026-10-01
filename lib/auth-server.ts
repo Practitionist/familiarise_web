@@ -72,3 +72,20 @@ function sessionReader(): SessionReader {
 export async function getSession(disableCookieCache = false) {
   return sessionReader()(disableCookieCache);
 }
+
+/**
+ * Explicit cookie-cached session read for hot, cosmetic surfaces ONLY
+ * (e.g. the #1697 busy/free availability grid, polled ~1/min/calendar).
+ * Identical to `getSession()` with no arguments — the name exists so the
+ * cached read is a deliberate, greppable choice rather than an omitted
+ * argument, and so the `no-restricted-syntax` freshness rule in
+ * eslint.config.mjs can ban the bare call without banning this one.
+ *
+ * Do NOT use for PII, finance, documents, recordings, or role-gated reads:
+ * the cache honours demotions, bans, revocations and DPDP-erasures up to
+ * ~5 minutes late. Those take `getSession(true)` (or `requireApiAuth()` /
+ * `requireBackofficeSurface()` in routes). See #1807.
+ */
+export async function getCachedSession() {
+  return sessionReader()(false);
+}

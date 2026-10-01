@@ -28,10 +28,12 @@ describe("freeze-appointments doctrine (#1162)", () => {
   });
 
   it("soft-cancels slots with the cancel route's status guard", () => {
-    expect(freezeSource).toContain(
-      "completionStatus: { in: SLOT_RESCHEDULABLE_FROM }",
-    );
-    expect(freezeSource).toContain('completionStatus: "CANCELLED"');
+    // #1846 SM-B13 — through the helper, so each slot writes history too.
+    expect(freezeSource).toContain("transitionOccurrenceCompletion(tx, {");
+    expect(freezeSource).toContain("fromIn: SLOT_RESCHEDULABLE_FROM");
+    expect(freezeSource).toContain('to: "CANCELLED"');
+    // #1846 — the tombstone frees the consultant's time (#1694 exemption).
+    expect(freezeSource).toContain("data: { deletedAt: new Date() }");
   });
 
   it("uses CAS transitions for every event type", () => {
@@ -52,9 +54,9 @@ describe("freeze-appointments doctrine (#1162)", () => {
 
   it("guards the trial status flip and tombstones via the domain helper", () => {
     expect(freezeSource).toContain("softCancelTrialAppointment(");
-    expect(freezeSource).toMatch(
-      /trial\.updateMany\(\{\s*where:\s*\{\s*id: trial\.id,\s*status: \{ in:/,
-    );
+    // #1846 SM-B13 — the CAS helper carries TRIAL_ALLOWED_FROM and history.
+    expect(freezeSource).toContain("transitionTrial(tx, {");
+    expect(freezeSource).not.toContain("tx.trial.updateMany(");
   });
 
   it("refunds through the front door with a graceful re-run skip", () => {
@@ -69,8 +71,11 @@ describe("freeze-appointments doctrine (#1162)", () => {
   });
 
   it("closes open reschedule proposals", () => {
-    expect(freezeSource).toContain("RESCHEDULE_OPEN_STATUSES");
-    expect(freezeSource).toContain("openForAppointmentId: null");
+    // #1846 — the shared helper CASes each proposal and releases its lock.
+    expect(freezeSource).toContain(
+      "declineOpenReschedules(tx, ctx.appointment.id",
+    );
+    expect(freezeSource).not.toContain("tx.rescheduleRequest.updateMany(");
   });
 });
 

@@ -25,7 +25,7 @@ interface AvailabilityGridProps {
 /**
  * One day/date's worth of availability slot rows — the hand-built
  * time-grid extracted from the settings monolith. Purely presentational:
- * validation and state transitions stay with the caller (SettingsTab),
+ * validation and state transitions stay with the caller (useConsultantSettingsForm),
  * which passes validated slots back down. Used identically by the weekly
  * and custom schedule columns.
  */

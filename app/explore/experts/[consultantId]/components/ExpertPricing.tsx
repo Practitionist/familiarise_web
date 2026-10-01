@@ -229,13 +229,17 @@ export function ExpertPricing({
           <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">
             Choose your preferred option
           </p>
-          {/* #1703 D1 — metadata only: how this expert takes bookings. */}
-          <span className="mt-3 inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
-            {bookingModeBadge(
-              consultantDetails.bookingMode,
-              consultantDetails.acceptingRequests,
+          {/* #1703 D1 — metadata only: how this expert takes bookings.
+              #1775 C-6 — consultations only; a plan is always paid at purchase. */}
+          {hasConsultations &&
+            (!hasSubscriptions || activeServiceTab === "consultations") && (
+              <span className="mt-3 inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
+                {bookingModeBadge(
+                  consultantDetails.bookingMode,
+                  consultantDetails.acceptingRequests,
+                )}
+              </span>
             )}
-          </span>
         </div>
 
         {hasConsultations && hasSubscriptions ? (

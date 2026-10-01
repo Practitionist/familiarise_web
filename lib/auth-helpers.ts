@@ -1,13 +1,17 @@
 import { lookupSession } from "@/lib/auth-session-lookup";
 import { NextResponse } from "next/server";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  setSentryIdentityFromSession,
+  setSentryOrgContext,
+} from "@/lib/observability/identity";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import type {
   FundingSource,
   Organization,
   Membership,
-  MemberRole,
   UserRole,
 } from "@prisma/client";
 import {
@@ -49,6 +53,11 @@ export async function requireApiAuth(): Promise<
     };
   }
   const { session } = lookup;
+  // Stamp the acting identity BEFORE the ban check, so a suspended user
+  // hitting a 403 is still attributable when support asks "who is being
+  // bounced". The SDK forks the isolation scope per request, so this is
+  // per-request by construction and cannot leak onto a concurrent request.
+  setSentryIdentityFromSession(session);
   // #693 defense-in-depth — ban-time session deletion + the sign-in gate
   // cover the normal paths; this catches a session minted in the race window.
   if (session.user.banned === true) {
@@ -167,7 +176,7 @@ export async function requirePrivilegedAuth(): Promise<
  * sidebar all agree on who may reach a surface.
  *
  * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
- * merged `/dashboard/admin` renders: those two only express "is this an
+ * merged back-office tree renders: those two only express "is this an
  * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
  * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
  *
@@ -218,20 +227,6 @@ export function checkOwnership(
 }
 
 /**
- * Checks if the session user is a participant in a consultation.
- * Returns true if they are either the consultant or consultee.
- */
-export function isConsultationParticipant(
-  session: Session,
-  consultantProfileId: string | null | undefined,
-  consulteeProfileId: string | null | undefined,
-): boolean {
-  const isConsultant = session.user.consultantProfileId === consultantProfileId;
-  const isConsultee = session.user.consulteeProfileId === consulteeProfileId;
-  return isConsultant || isConsultee;
-}
-
-/**
  * Creates a standardized 403 Forbidden response.
  */
 export function forbiddenResponse(message = "Forbidden"): NextResponse {
@@ -243,13 +238,6 @@ export function forbiddenResponse(message = "Forbidden"): NextResponse {
  */
 export function unauthorizedResponse(message = "Unauthorized"): NextResponse {
   return NextResponse.json({ error: message }, { status: 401 });
-}
-
-/**
- * Creates a standardized 422 Unprocessable Entity response.
- */
-export function unprocessableResponse(message: string): NextResponse {
-  return NextResponse.json({ error: message }, { status: 422 });
 }
 
 /**
@@ -352,8 +340,10 @@ export async function authorizeEventAccess(
 // ORGANIZATION ACCESS HELPERS — Arch 4-Modified (Issue #681)
 // ============================================================================
 
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
-import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
+import {
+  hasAnyOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -374,15 +364,15 @@ export type OrgAccessGrant = {
  *   /billing-account/wallet. 404 on mismatch.
  */
 export type OrgCapabilityGate = {
-  minimumRole?: MemberRole;
   /**
-   * Surface grant from the org permission matrix
-   * (lib/auth/org-permissions.ts) — the preferred gate for surface access.
-   * Unlike `minimumRole` it expresses the operations/finance track split
+   * Key from the org permission matrix (lib/auth/org-permissions.ts) — the
+   * only role gate. It expresses the operations/finance track split
    * (SUPPORT reads operations; BILLING_ADMIN is operator-blind) that the
-   * rank ladder cannot. Both may be set; both must pass.
+   * rank ladder cannot, which is why the `minimumRole` rank floor is gone
+   * (#1851). A list means any-of (a surface two grants open, e.g. Settings
+   * GET — #1527). Omitted means any ACTIVE member.
    */
-  permission?: OrgSurface;
+  permission?: OrgSurface | readonly OrgSurface[];
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
@@ -395,14 +385,21 @@ export type OrgCapabilityGate = {
    * distinguish this from plain 403.
    */
   requireActive?: true;
+  /**
+   * #1527 decision 6 — also admit a SUSPENDED membership, for the member's
+   * already-booked sessions ONLY: the org shell's details read, Appointments ›
+   * Mine, and their own appointment detail. A suspended member never passes a
+   * permission gate, so this refuses when combined with `permission`;
+   * callers branch on `member.status`.
+   */
+  allowSuspended?: true;
 };
 
 /**
  * Require that the session user is an active Membership of the specified
- * organization.
+ * organization, holding `opts.permission` when set, and enforce the
+ * capability + funding-source gates.
  *
- * Accepts either a bare `MemberRole` (legacy single-arg callers) or an
- * options object that also enforces capability + funding-source gates.
  * Platform admins (`UserRole.ADMIN`) bypass membership + role checks and
  * get a synthesized OWNER-rank stub; capability checks still apply so
  * an admin hitting a WALLET-only endpoint on an INVOICE org still gets
@@ -410,18 +407,16 @@ export type OrgCapabilityGate = {
  */
 export async function requireOrgAccess(
   organizationId: string,
-  opts?: MemberRole | OrgCapabilityGate,
+  opts: OrgCapabilityGate = {},
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  const options: OrgCapabilityGate =
-    typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
   const {
-    minimumRole,
     permission,
     canSponsor,
     canHost,
     fundingSource,
     requireActive,
-  } = options;
+    allowSuspended,
+  } = opts;
 
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
@@ -430,14 +425,44 @@ export async function requireOrgAccess(
   // don't need a second round-trip. Non-capability callers pay the same
   // (cheap) cost — this read is LEFT JOIN one row keyed on a unique
   // index.
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    include: {
-      billingAccount: {
-        select: { id: true, fundingSource: true },
+  // FAMILIARISE_WEB-5W — pre-migration rollout: the generated client knows
+  // `Organization.kind` before `db push` creates the column, and a bare
+  // `findUnique` selects every scalar, so the gate 500s with P2022 on every
+  // org route. Answer that exact case with 503 + Retry-After (same posture
+  // as a failed session lookup above): the deploy is mid-rollout, the
+  // client must retry, and nothing must read it as "no access". Scoped to
+  // P2022 only; every other defect still throws to the route's handler.
+  let org;
+  try {
+    org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      include: {
+        billingAccount: {
+          select: { id: true, fundingSource: true },
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2022"
+    ) {
+      // Expected-true warning (not a page): drift windows are normal during
+      // rollout, but the column must actually land via db push afterwards.
+      reportSentryError(error, {
+        subsystem: "auth",
+        op: "requireOrgAccess.schema-drift",
+        expected: true,
+      });
+      return {
+        error: NextResponse.json(
+          { error: "Service temporarily unavailable — retry shortly" },
+          { status: 503, headers: { "Retry-After": "2" } },
+        ),
+      };
+    }
+    throw error;
+  }
   if (!org) {
     return {
       error: NextResponse.json(
@@ -446,6 +471,14 @@ export async function requireOrgAccess(
       ),
     };
   }
+
+  // The tenant is now resolved for this request, so stamp it. Deliberately
+  // before every capability check below, not after the grant: a 403 here is
+  // exactly the "user X was bounced off org Y" question support asks, and an
+  // unauthorized probe still records an accurate tenant. The caller's role
+  // *within* the org is not known yet, so it is added at the grant sites
+  // further down rather than guessed.
+  setSentryOrgContext({ orgId: org.id });
 
   if (org.status === "DEACTIVATED") {
     return {
@@ -508,6 +541,11 @@ export async function requireOrgAccess(
   // above still apply so the admin gets the same structural 404 as a
   // regular user — the endpoint genuinely doesn't exist on that org.
   if (auth.session.user.role === "ADMIN") {
+    // A platform admin crossing a tenant boundary. Recorded as `ADMIN`, not as
+    // the stub's synthesised `OWNER` role, and with no membership id — the
+    // `__admin_stub_…` value is not a real `Membership.id` and would be a
+    // broken join key for anyone reading the Sentry user panel.
+    setSentryOrgContext({ orgId: org.id, orgRole: "ADMIN" });
     const stub: Membership = {
       id: `__admin_stub_${userId}`,
       userId,
@@ -544,7 +582,12 @@ export async function requireOrgAccess(
     };
   }
 
-  if (member.status !== "ACTIVE") {
+  const suspendedAdmitted =
+    allowSuspended === true && member.status === "SUSPENDED";
+  if (
+    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
+    (suspendedAdmitted && permission)
+  ) {
     return {
       error: NextResponse.json(
         { error: `Membership is ${member.status.toLowerCase()}` },
@@ -553,40 +596,27 @@ export async function requireOrgAccess(
     };
   }
 
-  if (minimumRole && !isAtLeastRole(member.role, minimumRole)) {
+  if (permission && !hasAnyOrgPermission(member.role, permission)) {
+    const named =
+      typeof permission === "string" ? permission : permission.join(" or ");
     return {
       error: NextResponse.json(
-        { error: `Forbidden — ${minimumRole} or higher required` },
+        { error: `Forbidden — your role does not grant ${named}` },
         { status: 403 },
       ),
     };
   }
 
-  if (permission && !hasOrgPermission(member.role, permission)) {
-    return {
-      error: NextResponse.json(
-        { error: `Forbidden — your role does not grant ${permission}` },
-        { status: 403 },
-      ),
-    };
-  }
+  // The grant succeeded, so the membership (and its role) is now known for
+  // certain. This is the one place in the request where org_role is a real
+  // `MemberRole` rather than an assumption.
+  setSentryOrgContext({
+    orgId: org.id,
+    orgRole: member.role,
+    membershipId: member.id,
+  });
 
   return { session: auth.session, member, org };
-}
-
-/**
- * Convenience wrapper around {@link requireOrgAccess} for owner-only operations.
- * Accepts the same capability gate as `requireOrgAccess` (sans `minimumRole`,
- * which is always OWNER here).
- */
-export async function requireOrgOwner(
-  organizationId: string,
-  opts?: Omit<OrgCapabilityGate, "minimumRole">,
-): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  return requireOrgAccess(organizationId, {
-    ...opts,
-    minimumRole: "OWNER",
-  });
 }
 
 /**

@@ -40,6 +40,16 @@ export async function settleInvoiceAccruals(): Promise<{
     console.log(
       '[settle-invoice-accruals] ENABLE_CONSOLIDATED_INVOICE === "false" — skipping (explicit opt-out)',
     );
+    // The rollup is the ONLY path from accrual legs to an invoice: silently
+    // skipping re-opens unbounded unbilled accrual. Report the opt-out so the
+    // skip is a visible decision, not a quiet black hole.
+    await recordSystemError({
+      category: "INVOICE",
+      summary:
+        "Consolidated invoice rollup explicitly skipped (ENABLE_CONSOLIDATED_INVOICE=false) — unbilled INVOICE_ACCRUAL legs keep accumulating until the flag is re-enabled",
+      err: new Error("ENABLE_CONSOLIDATED_INVOICE=false explicit opt-out"),
+      context: { flag: "ENABLE_CONSOLIDATED_INVOICE=false" },
+    });
     return { orgsProcessed: 0, invoicesCreated: 0 };
   }
 

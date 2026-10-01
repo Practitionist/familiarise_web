@@ -67,7 +67,10 @@ export const PatchOrganizationPayloadSchema = z.object({
     .toLowerCase()
     .min(2)
     .max(80)
-    .regex(/^[a-z0-9-]+$/, "Slug may only contain lowercase letters, digits, and hyphens")
+    .regex(
+      /^[a-z0-9-]+$/,
+      "Slug may only contain lowercase letters, digits, and hyphens",
+    )
     .optional(),
   description: z.string().max(5000).nullable().optional(),
   industry: z.string().max(120).nullable().optional(),
@@ -108,12 +111,15 @@ export const CreateRateCardPayloadSchema = z
 
 // ───────────────────────────── Members ─────────────────────────────
 
-const MemberStatusSchema = z.enum([
-  "PENDING",
+/** #1527 — the statuses a roster lists; ERASED tombstones never leave the server. */
+export const MEMBER_LIST_STATUSES = [
   "ACTIVE",
+  "PENDING",
   "SUSPENDED",
   "REMOVED",
-]);
+] as const;
+
+const MemberStatusSchema = z.enum(MEMBER_LIST_STATUSES);
 
 export const MemberRowSchema = z.object({
   id: z.string(),
@@ -122,10 +128,22 @@ export const MemberRowSchema = z.object({
   memberId: z.string().optional(),
   role: MemberRoleSchema,
   status: MemberStatusSchema,
-  // #729 — payout routing for EXPERT members (SELF / ORGANIZATION). Defaulted
-  // for non-host rows; the edit dialog only surfaces the control for EXPERTs.
-  payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).default("SELF"),
+  // #729 — payout routing for EXPERT members (SELF / ORGANIZATION). Absent
+  // unless the viewer holds `payouts.read` (#1527): never default it, or an
+  // edit would write SELF over ORGANIZATION.
+  payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).optional(),
   createdAt: z.string(),
+  // #1527 — the EXPERT row's secondary line.
+  consultantProfile: z
+    .object({
+      headline: z.string().nullable(),
+      publishedRatingOneToOne: z.number().nullable(),
+      publishedRatingGroup: z.number().nullable(),
+      ratedClientsOneToOne: z.number().int().nonnegative(),
+      isVerified: z.boolean(),
+    })
+    .nullable()
+    .optional(),
   user: z.object({
     id: z.string(),
     name: z.string().nullable(),
@@ -139,7 +157,86 @@ export type MemberRow = z.infer<typeof MemberRowSchema>;
  *  the client's first query MUST use this same value (and matching queryKey) or
  *  hydration silently misses and the roster re-fetches on mount. Lives here (a
  *  client-safe module, no prisma) so both sides can import it. */
-export const ORG_MEMBERS_PER_PAGE = 20;
+export const ORG_MEMBERS_PER_PAGE = 25;
+
+export const MEMBER_LIST_SORTS = ["name", "role", "joined"] as const;
+
+/** "EXPERT,LEARNER" → ["EXPERT", "LEARNER"]; an empty list is no filter. */
+function csvList<T extends z.ZodTypeAny>(item: T, max: number) {
+  return z.preprocess((value) => {
+    if (typeof value !== "string") return value;
+    const parts = value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return parts.length ? parts : undefined;
+  }, z.array(item).min(1).max(max).optional());
+}
+
+const optionalText = z
+  .string()
+  .trim()
+  .max(100)
+  .optional()
+  .transform((v) => v || undefined);
+
+/** GET /api/organizations/[orgId]/members query (#1527). */
+export const MembersListQuerySchema = z.object({
+  q: optionalText,
+  role: csvList(MemberRoleSchema, MemberRoleSchema.options.length),
+  // Absent = every listed status; ERASED is not accepted.
+  status: csvList(MemberStatusSchema, MEMBER_LIST_STATUSES.length),
+  departmentLabel: optionalText,
+  sort: z.enum(MEMBER_LIST_SORTS).default("name"),
+  dir: z.enum(["asc", "desc"]).default("asc"),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  perPage: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(ORG_MEMBERS_PER_PAGE),
+});
+export type MembersListQuery = z.infer<typeof MembersListQuerySchema>;
+
+/**
+ * The Members tab's URL (`useListParams`: `sort=-joined`, status defaulting to
+ * Active) → the API query. A bad value falls back to its default rather than
+ * failing the whole list. Shared by the SSR prefetch and the client so both
+ * build the same query key (#902).
+ */
+export function membersListQueryFromUrl(
+  get: (key: string) => string | null | undefined,
+): MembersListQuery {
+  const rawSort = get("sort") ?? "";
+  const raw: Record<string, string | undefined> = {
+    q: get("q") ?? undefined,
+    role: get("role") ?? undefined,
+    status: get("status") ?? "ACTIVE",
+    sort: rawSort.replace(/^-/, "") || undefined,
+    dir: rawSort.startsWith("-") ? "desc" : undefined,
+    page: get("page") ?? undefined,
+  };
+  const parsed = MembersListQuerySchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  const bad = new Set(parsed.error.issues.map((i) => String(i.path[0])));
+  if (bad.has("sort")) bad.add("dir");
+  return MembersListQuerySchema.parse({
+    ...Object.fromEntries(Object.entries(raw).filter(([k]) => !bad.has(k))),
+    ...(bad.has("status") && { status: "ACTIVE" }),
+  });
+}
+
+export function membersListKey(orgId: string, query: MembersListQuery) {
+  return ["org-members", orgId, query] as const;
+}
+
+export interface MembersListResult {
+  members: MemberRow[];
+  total: number;
+  /** Per role under the status filter, for the role chips. */
+  counts: Partial<Record<MemberRow["role"], number>>;
+}
 
 export const MembersListResponseSchema = z.object({
   data: z.array(MemberRowSchema).default([]),
@@ -150,20 +247,7 @@ export const MembersListResponseSchema = z.object({
       perPage: z.number().int().positive(),
     })
     .optional(),
-});
-
-// POST /api/organizations/[orgId]/members
-// Direct-add a member by email (dashboard path) OR userId (SSO /
-// admin tooling). The server accepts either identifier, resolves
-// email → userId internally, and returns 404 USER_NOT_FOUND when the
-// account doesn't exist. The dashboard always sends email; userId is
-// reserved for programmatic callers (SSO provisioning, admin scripts).
-// EXPERT is in the wider HostInvitableMemberRoleSchema. It is only
-// accepted by the server when the target org has canHost=true; the UI
-// hides it for sponsor-only orgs (see MembersPageClient).
-export const AddMemberPayloadSchema = z.object({
-  email: z.string().email(),
-  role: HostInvitableMemberRoleSchema,
+  counts: z.record(MemberRoleSchema, z.number().int().nonnegative()).optional(),
 });
 
 // PATCH body shared with the edit-member dialog. At least one of role or
@@ -195,7 +279,14 @@ export const UpdateMemberPayloadSchema = z
 // avoids a parse-time crash if BetterAuth introduces a new state.
 const InvitationStatusSchema = z
   .union([
-    z.enum(["pending", "accepted", "rejected", "expired", "canceled", "revoked"]),
+    z.enum([
+      "pending",
+      "accepted",
+      "rejected",
+      "expired",
+      "canceled",
+      "revoked",
+    ]),
     z.string(),
   ])
   .transform((v) => v as string);

@@ -1,5 +1,8 @@
 name: Retry Failed Emails
 
+permissions:
+  contents: read
+
 # #474 — transactional-email dead-letter retry. lib/email.ts persists a rendered
 # FailedEmail row when a Resend send fails; this worker re-sends due rows, walks
 # the 1m/5m/30m/2h/8h backoff, and dead-letters once exhausted (operator-replayable
@@ -41,6 +44,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -49,13 +54,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run failed-email retry job
-        run: npx --yes tsx@4.23.1 jobs/email/retry-failed-emails.ts
+        run: node_modules/.bin/tsx jobs/email/retry-failed-emails.ts
 
       - name: Notify on failure
         if: failure()
@@ -64,4 +69,7 @@ jobs:
           # Fallback sink — Slack has never been provisioned, so this is
           # what actually pages today. See 07-required-secrets.md.
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Non-secret identifier the guard compares SENTRY_DSN against.
+          # vars.* is NOT auto-injected into a step env; it must be mapped here.
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
         run: bash scripts/ci/notify-ops-failure.sh "retry-failed-emails"

@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { safeReturnTo } from "@/lib/navigation/safe-return-to";
+import { safeReturnTo } from "@/lib/navigation/safe-path";
 
 const root = process.cwd();
 const FALLBACK = "/dashboard/consultee/c1/appointments";

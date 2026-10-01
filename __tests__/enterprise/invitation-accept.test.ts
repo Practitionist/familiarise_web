@@ -52,7 +52,7 @@ describe("invitation-accept guards", () => {
 // Rule: identity creation requires the user's OWN action. Invitation
 // accept is the user's consenting click, so LEARNER lazy-creates the
 // lightweight ConsulteeProfile there (lib/auth.ts sanctions exactly this)
-// while EXPERT stays strict. Admin direct-add is strict for BOTH roles.
+// while EXPERT stays strict. There is no admin direct-add any more (#1846).
 describe("who-is-acting identity gates (#819)", () => {
   // __dirname-relative so the pins survive jest being invoked from any cwd.
   const read = (p: string) =>
@@ -64,10 +64,16 @@ describe("who-is-acting identity gates (#819)", () => {
     expect(src).not.toContain("NOT_A_CONSULTEE");
   });
 
-  it("admin direct-add (POST /members) keeps strict gates for BOTH roles", () => {
+  it("admin direct-add (POST /members) is retired: joining is invite + accept (#1846)", () => {
     const src = read("app/api/organizations/[orgId]/members/route.ts");
-    expect(src).toContain("NOT_A_CONSULTANT");
-    expect(src).toContain("NOT_A_CONSULTEE");
+    expect(src).toContain("USE_INVITATIONS");
+    expect(src).not.toContain("membership.create");
+  });
+
+  it("accept is the one door back from REMOVED, through the CAS, never from ERASED (#1846)", () => {
+    const src = read("app/api/organizations/invitations/accept/route.ts");
+    expect(src).toContain("transitionMembership(tx");
+    expect(src).toContain('existing?.status === "ERASED"');
   });
 
   it("the lazy-create sanction for invite-accept-as-LEARNER still stands in lib/auth.ts", () => {

@@ -40,7 +40,7 @@ interface ProfileSectionProps {
 /**
  * Profile tab of the consultant settings form — domain expertise,
  * professional background, enhanced profile (headline / socials / skills).
- * Presentational only: form state lives in SettingsTab so the combined
+ * Presentational only: form state lives in useConsultantSettingsForm so the combined
  * settings PUT payload is unchanged by the decomposition.
  */
 export function ProfileSection({
@@ -174,7 +174,7 @@ export function ProfileSection({
               name="description"
               value={formData.description}
               onChange={onInputChange}
-              placeholder="Share your professional journey, achievements, and what clients can expect when working with you..."
+              placeholder="Share your professional journey, achievements, and what learners can expect when working with you..."
               className="min-h-[16rem] resize-none"
             />
           </div>

@@ -11,12 +11,13 @@ import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
 import { supportError } from "@/lib/api/support-http";
+import { canRaiseAboutOrg } from "@/lib/support/about-org";
 
 const TICKETS_ROUTE = "user.support-tickets";
 
 export async function GET() {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
@@ -47,6 +48,8 @@ export async function GET() {
             uploadedAt: "desc",
           },
         },
+        // #1527 — the org chip on a request raised "About" an org.
+        organization: { select: { id: true, name: true } },
       },
       orderBy: {
         createdAt: "desc",
@@ -66,7 +69,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
@@ -221,16 +224,34 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // #1021 — stamp the submitter's active org so enterprise tickets can be
-    // routed and SLA-tracked per organisation instead of vanishing into the
-    // B2C queue. First ACTIVE membership wins (users belong to one org in
-    // practice; multi-org members pick their primary dashboard context).
-    // Read from verified memberships, never client-asserted.
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true },
-      orderBy: { createdAt: "asc" },
-    });
+    // #1527 — "About" names the org, never inferred: #1021 stamped the first
+    // ACTIVE membership, which would list a learner's personal request on that
+    // org's Support page. The caller must be ACTIVE there and read its
+    // support requests (operations.read OR billing.read).
+    let organizationId: string | null = null;
+    if (validatedData.organizationId) {
+      const membership = await prisma.membership.findUnique({
+        where: {
+          userId_organizationId: {
+            userId: session.user.id,
+            organizationId: validatedData.organizationId,
+          },
+        },
+        select: { role: true, status: true },
+      });
+      if (!membership || !canRaiseAboutOrg(membership)) {
+        return supportError({
+          status: 403,
+          code: "FORBIDDEN",
+          context: {
+            route: TICKETS_ROUTE,
+            action: "create",
+            attemptedOrgId: validatedData.organizationId,
+          },
+        });
+      }
+      organizationId = validatedData.organizationId;
+    }
 
     // The shared factory owns the write: it stamps lastMessageAt at creation
     // and notifies staff without letting a notification failure turn a
@@ -244,7 +265,7 @@ export async function POST(req: NextRequest) {
       priority: validatedData.priority || "MEDIUM",
       category: validatedData.category,
       issueType: validatedData.issueType,
-      organizationId: membership?.organizationId,
+      organizationId,
       consultationId: resolvedConsultationId,
       subscriptionId: resolvedSubscriptionId,
       paymentId: validatedData.paymentId,

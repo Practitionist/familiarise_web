@@ -15,7 +15,7 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(

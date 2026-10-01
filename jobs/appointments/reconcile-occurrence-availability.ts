@@ -44,7 +44,7 @@ function outputToGitHubActions(result: SlotReconciliationResult): void {
 
   if (result.doubleBookingsDetected > 0) {
     console.log(
-      `::error::${result.doubleBookingsDetected} DOUBLE BOOKINGS detected - manual intervention required!`,
+      `::notice::${result.doubleBookingsDetected} DOUBLE BOOKINGS detected - tracked as data; see FAMILIARISE_WEB-4Y/4Z`,
     );
   }
 
@@ -108,11 +108,11 @@ async function main(): Promise<void> {
       topUpSessionsPlaced: result.topUps.sessionsPlaced,
     });
 
-    // Exit with error if double bookings found (to trigger alerts)
-    if (result.doubleBookingsDetected > 0) {
-      process.exitCode = 1;
-    }
-
+    // FAMILIARISE_WEB-59 — findings are signal, not failure: the detector
+    // did its job by finding them. Only a real error (result.success false)
+    // fails the run and pages. Overlaps themselves are tracked as data
+    // (FAMILIARISE_WEB-4Y/4Z); failing hourly on known seed rows trained
+    // everyone to ignore this job, masking real regressions.
     if (!result.success) {
       process.exitCode = 1;
     }

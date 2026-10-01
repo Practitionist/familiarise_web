@@ -19,79 +19,14 @@
  *   await assertNotInMaintenance("cleanup-abandoned-payments"); // throws 503
  */
 
-import * as Sentry from "@sentry/nextjs";
-import { Redis } from "@upstash/redis";
+import redis from "@/lib/redis";
 import { flushJobSentry } from "@/lib/observability/job-sentry";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { FINANCIAL_JOB_NAMES } from "@/lib/cron/financial-jobs";
 
-// Financial jobs that must NOT run even in DEGRADED mode.
-// These jobs call external APIs to create/cancel financial objects,
-// or mutate financial state (earnings, payouts, refunds) that could
-// become inconsistent during a partial deployment.
-// Exported for the lock-registry drift test (#1169): every member that is
-// cron-scheduled must hold a fail-closed lock.
-// #1582/#1598 — `sweep-stuck-webhook-events`, `reconcile-orphaned-confirmations`
-// and `sweep-orphaned-topup-captures` DO move money, but only by re-driving a
-// webhook DEGRADED already exempts, so they are deliberately not listed here.
-export const FINANCIAL_JOB_NAMES = new Set([
-  "process-payouts",
-  "create-payout-batch",
-  "handle-stuck-payouts",
-  "reconcile-payout-status",
-  "cascade-refund-earnings",
-  "reconcile-pending-refunds",
-  "handle-lost-disputes",
-  "reconcile-disputes",
-  "cleanup-abandoned-payments",
-  "release-earnings",
-  "reconcile-payment-status",
-  "sync-payment-earnings",
-  "generate-subscription-invoices",
-  "settle-invoice-accruals",
-  // #1506 — cancels and refunds consultant no-shows through
-  // refundBookingPayment; every job that calls the refund front door belongs
-  // here so DEGRADED maintenance holds it with the other refunding jobs.
-  "detect-consultant-no-shows",
-  // #1506 — expirePaymentPendingRequests/expireApprovedUnallocatedSubscriptions
-  // in this job call refundPaymentsForExpired, another refund front-door
-  // caller that must be held with the rest of the money jobs.
-  "expire-stale-requests",
-  // Added by the wave-5 sweep: each of these either moves money directly or
-  // mutates the org contract/program state the checkout sponsorship resolver
-  // reads, so a partial deployment can bill against a half-written entitlement.
-  "release-pending-trust-earnings",
-  "auto-renew-contracts",
-  "dunning",
-  "timeout-member-overages",
-  "advance-program-cycles",
-  "expire-contracts",
-  // Registers IRNs with the government portal and writes the resulting IRP
-  // state onto the invoice. It moves no money, but a half-deployed payload
-  // becomes a statutory record that can only be cancelled for 24 hours.
-  "irp-uploader",
-  // #1370 — its healer mints tax invoices, which burns numbers from a gapless
-  // statutory series. A half-deployed run leaves gaps that cannot be filled.
-  "gst-outward-register-export",
-]);
-
-/**
- * #1599 F-P1-03 — the admin console (`/api/admin/system-jobs/run`) keys a few
- * jobs by an id spelled differently from the cron job name. Map those here so
- * the DEGRADED gate has one list, `FINANCIAL_JOB_NAMES`, and no second copy.
- */
-const CRON_JOB_NAME_BY_ADMIN_ID: Record<string, string> = {
-  "reconcile-refunds": "reconcile-pending-refunds",
-  // Rides inside the abandoned-payments run since #1321.
-  "cleanup-approval-payments": "cleanup-abandoned-payments",
-  "tentative-occurrences": "cleanup-tentative-occurrences",
-  "auth-tokens": "cleanup-auth-tokens",
-};
-
-/** True when a cron job name, or an admin console job id, is a money job. */
-export function isFinancialJob(jobIdOrName: string): boolean {
-  return FINANCIAL_JOB_NAMES.has(
-    CRON_JOB_NAME_BY_ADMIN_ID[jobIdOrName] ?? jobIdOrName,
-  );
-}
+// #1527 — the financial job list lives in a pure module so the System jobs
+// console (a client component) can read it without importing Redis.
+export { FINANCIAL_JOB_NAMES, isFinancialJob } from "@/lib/cron/financial-jobs";
 
 /** The maintenance phases that can stop a job. */
 export type BlockingMaintenancePhase = "OFFLINE" | "DEGRADED";
@@ -118,40 +53,70 @@ export class MaintenanceActiveError extends Error {
   }
 }
 
+// #1822 Q-5 — a tick's many target invocations each used to mint a fresh
+// `new Redis({url, token})` and pay its own GET. Cache the phase for the life
+// of the process (capped at 60s) so they share one Redis command; a stale
+// positive can only delay a maintenance transition being honoured by up to
+// that window, which the fail-open design already tolerates.
+const PHASE_CACHE_MS = 60_000;
+// Owner decision (#1822): a fail-open null is cached 5s only, so a blip can't
+// let DEGRADED-gated money jobs through for a full minute.
+const PHASE_FAILURE_CACHE_MS = 5_000;
+let phaseCacheTtlMs = PHASE_CACHE_MS;
+let phaseCachedAt = 0;
+let phaseCachedValue: string | null = null;
+let phaseCacheHasValue = false;
+
 /**
  * Read `maintenance:phase` from Redis. Returns null when the phase cannot be
  * established — no Redis configured, or the probe failed — which every caller
  * treats as "proceed", matching the fail-open design of the rest of the system.
  */
 async function readMaintenancePhase(jobName: string): Promise<string | null> {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-  if (!url || !token) {
-    console.warn(
-      `[${jobName}] UPSTASH_REDIS env vars not set — skipping maintenance check, proceeding`,
-    );
-    return null;
+  const now = Date.now();
+  if (phaseCacheHasValue && now - phaseCachedAt < phaseCacheTtlMs) {
+    return phaseCachedValue;
   }
 
   try {
-    // Intentionally creates a fresh client per invocation — cron jobs run
-    // infrequently and this avoids holding a persistent connection.
-    const redis = new Redis({ url, token });
-    return await redis.get<string>("maintenance:phase");
+    // Shared node client (#1822 Q-5) — cron jobs used to mint a fresh client
+    // per invocation; that's the same GET, paid again for no reason.
+    const phase = await redis.get<string>("maintenance:phase");
+    phaseCachedValue = phase;
+    phaseCacheHasValue = true;
+    phaseCachedAt = now;
+    phaseCacheTtlMs = PHASE_CACHE_MS;
+    return phase;
   } catch (error) {
-    // Fail-open: if Redis is unreachable, proceed with the job
+    // Fail-open: if Redis is unreachable, proceed with the job; the null is
+    // cached for the short failure window only.
     console.warn(
       `[${jobName}] Could not check maintenance state (Redis error: ${
         error instanceof Error ? error.message : String(error)
       }) — proceeding`,
     );
-    Sentry.captureException(
+    phaseCachedValue = null;
+    phaseCacheHasValue = true;
+    phaseCachedAt = now;
+    phaseCacheTtlMs = PHASE_FAILURE_CACHE_MS;
+    // #1822 Q-1 — this used to be an unconditional captureException, which is
+    // what turned one Upstash outage into ~2,650 Sentry events in ~25h (every
+    // fail-open AND fail-closed job hits this path on every invocation).
+    captureThrottled(
+      "maintenance-cron:readMaintenancePhase",
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "maintenance" } },
+      { subsystem: "maintenance", expected: false },
     );
     return null;
   }
+}
+
+/** Test-only: clears the phase cache between cases (#1822). */
+export function resetMaintenancePhaseCacheForTesting(): void {
+  phaseCachedAt = 0;
+  phaseCachedValue = null;
+  phaseCacheHasValue = false;
+  phaseCacheTtlMs = PHASE_CACHE_MS;
 }
 
 /**

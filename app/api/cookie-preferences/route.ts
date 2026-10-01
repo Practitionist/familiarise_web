@@ -25,7 +25,7 @@ async function resolveIdentity(): Promise<{
   userId: string | null;
   sessionId: string | null;
 }> {
-  const session = await getSession();
+  const session = await getSession(true);
   if (session?.user?.id) return { userId: session.user.id, sessionId: null };
 
   const jar = await cookies();

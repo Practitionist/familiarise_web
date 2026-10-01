@@ -96,7 +96,45 @@
     }
   }
 
-  .dark {
+  /*
+   * The dark token set, reachable two ways.
+   *
+   * 1. `.dark` on <html> — the normal route, and what a future real theme
+   *    would use. Dormant today: nothing in the app sets the class, so the
+   *    whole block and its ~370 `dark:` utilities are authored but inactive.
+   *
+   * 2. `body:has(.onboarding-shell)` — onboarding is a DARK-ONLY route, not a
+   *    user-toggleable theme, so it must not need the theme machinery at all.
+   *    It used to try: an inline `<script>` in the route layout adding `.dark`
+   *    to documentElement, plus a mount effect to restore it after the
+   *    `fullBleed` org step unmounted the shell. That was wrong three ways.
+   *      - It only works before first paint, but a nested layout renders the
+   *        script in BODY position, not <head>. Every account of the pattern
+   *        putting it there reports the flash it is supposed to prevent.
+   *      - Mutating <html> before hydration is a React mismatch, so the
+   *        documented remedy is `suppressHydrationWarning` on <html> — which
+   *        __tests__/dashboards/shell-overflow-contract.test.ts:156
+   *        deliberately forbids.
+   *      - And it fought the actual reason the scope had to be root-level at
+   *        all: Radix portals (Select, Dialog, Popover, DropdownMenu,
+   *        Tooltip) mount to document.body, so a class on the shell subtree
+   *        left every dropdown and modal resolving light tokens over a dark
+   *        card.
+   *
+   *    Keying off `body:has(...)` fixes all three. It is pure CSS, so there is
+   *    no pre-paint window and no hydration to mismatch; it re-applies itself
+   *    on every render, so the fullBleed unmount cannot lose it; and because
+   *    the tokens land on `body`, a portal mounted there inherits them
+   *    directly. `:has()` is Baseline widely-available — the same call
+   *    flush-bottom chrome rule further down this file already makes, with the
+   *    same graceful degradation: a browser without it simply renders
+   *    onboarding light, which is the old behaviour, not a broken one.
+   *
+   * One block, two selectors: the dark values are declared once, so a real
+   * theme later only has to start setting `.dark`.
+   */
+  .dark,
+  body:has(.onboarding-shell) {
     --background: 0 0% 4%;
     --foreground: 0 0% 98%;
     --card: 0 0% 7%;
@@ -111,7 +149,15 @@
     --muted-foreground: 0 0% 65%;
     --accent: 0 0% 15%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    /* Was 0 62.8% 30.6% (#7f1d1d), which is a SURFACE colour, not a text
+       colour: 1.87:1 on --card (#121212) and 2.1:1 on --background. Every
+       `text-destructive` in a dark scope was therefore effectively invisible —
+       and the heaviest user of that class is `FieldError`, i.e. exactly the
+       validation copy a person must be able to read.
+       This value is 5.20:1 on --card and 5.49:1 on --background (AA is 4.5:1
+       for body text), and still reads unmistakably as red. The original
+       light-mode value is unchanged. */
+    --destructive: 0 75% 62%;
     --destructive-foreground: 0 0% 98%;
     --warning: 38 92% 50%;
     --warning-foreground: 48 96% 10%;
@@ -259,6 +305,30 @@ input[aria-hidden="true"] {
 
 main > div:has(> .content-flush-bottom) {
   padding-bottom: 0;
+}
+
+/*
+ * Cookie bar reserve (#1527 3c). The consent bar is fixed over the bottom of
+ * the viewport until the visitor chooses, and it hid the end of every page
+ * (the newsletter Send button). It publishes its live height as
+ * --cookie-bar-height on <html> (unset once dismissed), and each scrollport
+ * reserves that much at its end:
+ *   - dashboards: the shell's <main>, the only scrollport. Padding the
+ *     document there would re-open the dead over-scroll this file forbids;
+ *     sticky save bars lift by the same amount so they stay above the bar.
+ *   - every other page: the document itself, via body.
+ * UNLAYERED so it outranks the layered spacing utilities.
+ */
+.h-screen-maintenance main.overflow-y-auto {
+  padding-bottom: var(--cookie-bar-height, 0px);
+}
+
+.h-screen-maintenance main .sticky.bottom-0 {
+  bottom: var(--cookie-bar-height, 0px);
+}
+
+body:not(:has(.h-screen-maintenance)) {
+  padding-bottom: var(--cookie-bar-height, 0px);
 }
 
 @layer utilities {
@@ -1489,7 +1559,13 @@ main > div:has(> .content-flush-bottom) {
   }
 
   /* Entrance animations must settle VISIBLE — `animation: none` on a rule whose
-     keyframes start at opacity 0 would leave the content permanently hidden. */
+     keyframes start at opacity 0 would leave the content permanently hidden.
+     Trap to watch for when adding a STAGGER: `animation: none` handles the
+     duration, but a staggered group also needs the delay gone. A stagger uses
+     `animation-delay` with `animation-fill-mode: both`, and `both` holds the
+     invisible first frame for the whole delay — so shortening the duration
+     alone leaves the later groups stuck at opacity 0. Framer Motion is
+     immune (MotionConfig drops the whole animation); this only bites CSS. */
   .reveal-up,
   .scale-in {
     animation: none !important;

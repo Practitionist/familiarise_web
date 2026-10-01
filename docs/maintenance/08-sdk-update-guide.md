@@ -181,7 +181,7 @@ For every major dependency, this document covers: current version, what it's use
 
 | Field                         | Value                                                                                                      |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Current Version**           | ^2.93.1 (`@supabase/supabase-js` + `@supabase/storage-js`)                                                 |
+| **Current Version**           | ^2.93.1 (`@supabase/supabase-js`; storage types derived from its client surface — direct `@supabase/storage-js` removed, #1804) |
 | **Used For**                  | File storage: documents, profile images, support attachments                                               |
 | **Key Files**                 | `lib/supabase.ts`, document upload/download routes, storage reconciliation job                             |
 | **Minor Update**              | Safe -- storage API is stable                                                                              |
@@ -227,7 +227,7 @@ For every major dependency, this document covers: current version, what it's use
 
 | Field                         | Value                                                                                     |
 | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| **Current Version**           | ^3.13.0 (`@novu/api`, `@novu/nextjs`, `@novu/react`)                                      |
+| **Current Version**           | ^3.13.0 (`@novu/api`, `@novu/nextjs`; `@novu/react` transitive-only via `@novu/nextjs` — direct dep removed, #1804) |
 | **Used For**                  | Notification workflows: email, in-app, push notifications                                 |
 | **Key Files**                 | `lib/novu.ts`, Novu provider setup, notification components                               |
 | **Minor Update**              | Needs Testing -- notification delivery changes                                            |

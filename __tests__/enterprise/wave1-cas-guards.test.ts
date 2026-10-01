@@ -3,7 +3,7 @@
  */
 
 /**
- * #1230 wave-1 regression coverage for the three route-level CAS fixes:
+ * #1230 wave-1 regression coverage for the route-level CAS fixes:
  *
  *  1. Assignment period PATCH claims only live rows — a ROLLED/CLOSED/
  *     CANCELLED assignment must answer 409 ASSIGNMENT_NOT_LIVE instead of
@@ -11,10 +11,9 @@
  *  2. Contract supersede claims the old contract via updateMany BEFORE
  *     re-pointing programs — a lost claim must abort with
  *     CONTRACT_ALREADY_SUPERSEDED and leave programs untouched.
- *  3. Member direct-add reactivation goes through transitionMembership's
- *     CAS so a row that became ERASED between the pre-read and the write
- *     is refused (409 ILLEGAL_TRANSITION) instead of resurrecting a DPDP
- *     tombstone.
+ *  3. (Member direct-add reactivation retired in #1846: a REMOVED member
+ *     comes back only by accepting an invitation, which reactivates through
+ *     transitionMembership's CAS; see invitation-accept.test.ts.)
  *
  * Harness mirrors po-balance-enforcement.test.ts: module-level Prisma
  * mocks forwarded into $transaction's tx shim, requireOrgAccess stubbed,
@@ -83,7 +82,6 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { PATCH as patchAssignment } from "@/app/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]/route";
 import { POST as supersedeContract } from "@/app/api/organizations/[orgId]/contracts/[contractId]/supersede/route";
-import { POST as addMember } from "@/app/api/organizations/[orgId]/members/route";
 
 const m = prisma as unknown as Record<string, Record<string, jest.Mock>> & {
   $transaction: jest.Mock;
@@ -301,68 +299,5 @@ describe("POST contracts/[contractId]/supersede — claim-before-repoint", () =>
         }),
       }),
     );
-  });
-});
-
-// ---- 3. Member direct-add reactivation -------------------------------
-
-describe("POST members — REMOVED→ACTIVE via guarded FSM", () => {
-  function makeReq(body: unknown) {
-    return new NextRequest("http://localhost/api/organizations/org-1/members", {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  const routeParams = { params: Promise.resolve({ orgId: "org-1" }) };
-
-  function setupRemovedMember(role = "LEARNER") {
-    m.membership.findUnique.mockResolvedValue({
-      id: "mem-7",
-      userId: "u-7",
-      role,
-      status: "REMOVED",
-    });
-    m.user.findUnique.mockResolvedValue({ id: "u-7" });
-    // #729/#819 — LEARNER direct-add requires an existing ConsulteeProfile.
-    m.consulteeProfile.findUnique.mockResolvedValue({ id: "cp-1" });
-  }
-
-  it("reactivates through the CAS (updateMany) and re-reads the row", async () => {
-    wireTxShim();
-    setupRemovedMember();
-    m.membership.updateMany.mockResolvedValue({ count: 1 });
-    m.membership.findUniqueOrThrow.mockResolvedValue({
-      id: "mem-7",
-      userId: "u-7",
-      role: "LEARNER",
-      status: "ACTIVE",
-    });
-
-    const res = await addMember(makeReq({ userId: "u-7", role: "LEARNER" }), routeParams);
-    expect(res.status).toBeLessThan(300);
-    expect(m.membership.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          id: "mem-7",
-          status: { in: expect.arrayContaining(["PENDING", "SUSPENDED", "REMOVED"]) },
-        }),
-        data: expect.objectContaining({ status: "ACTIVE" }),
-      }),
-    );
-  });
-
-  it("409 ILLEGAL_TRANSITION when the row turned ERASED mid-flight (claim count 0)", async () => {
-    wireTxShim();
-    setupRemovedMember();
-    // The pre-read said REMOVED, but an erasure run landed between the read
-    // and the write — the CAS predicate excludes ERASED rows, so count is 0
-    // and the tombstone survives.
-    m.membership.updateMany.mockResolvedValue({ count: 0 });
-
-    const res = await addMember(makeReq({ userId: "u-7", role: "LEARNER" }), routeParams);
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.error).toMatch(/ERASED|ILLEGAL_TRANSITION|cannot transition/i);
   });
 });

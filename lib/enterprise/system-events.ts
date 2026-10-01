@@ -17,6 +17,10 @@ import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+import {
+  reportSentryError,
+  SYSTEM_EVENT_WRITE_FAILURE_MARKER,
+} from "@/lib/observability/report";
 
 // Map the DB severity enum onto the telemetry sink's level.
 function severityToTelemetryLevel(
@@ -74,7 +78,14 @@ export interface RecordSystemEventParams {
  * persisted trail at all. Those callers need the failure, not the console line.
  */
 export async function recordSystemEvent(
-  params: RecordSystemEventParams,
+  params: RecordSystemEventParams & {
+    /**
+     * Internal. Set by the `*Safe` wrappers so a swallowed insert failure is
+     * re-thrown to *them* — and to nobody else, which is what keeps every
+     * existing caller's never-reject contract intact.
+     */
+    __reportInsertFailureToCaller?: boolean;
+  },
 ): Promise<void> {
   const severity = params.severity ?? "INFO";
   const db = params.db ?? prisma;
@@ -96,7 +107,7 @@ export async function recordSystemEvent(
     // The system_events insert itself failed — log and move on. An
     // outage of this table must not cascade into the calling worker.
     console.error("[recordSystemEvent] insert failed:", err);
-    if (params.strict) throw err;
+    if (params.strict || params.__reportInsertFailureToCaller) throw err;
   }
 
   // Fire-and-forget telemetry sink (#776 §K). The DB row above is the source
@@ -132,6 +143,8 @@ export async function recordSystemError(params: {
   correlationId?: string | null;
   /** #1582 B-P1-02 — see RecordSystemEventParams.db. */
   db?: Tx | typeof prisma;
+  /** Internal — see RecordSystemEvent's flag of the same name. */
+  __reportInsertFailureToCaller?: boolean;
 }): Promise<void> {
   const errorMessage =
     params.err instanceof Error ? params.err.message : String(params.err);
@@ -149,6 +162,7 @@ export async function recordSystemError(params: {
     },
     correlationId: params.correlationId,
     db: params.db,
+    __reportInsertFailureToCaller: params.__reportInsertFailureToCaller,
   });
 
   // Escalate to Sentry so engineers see it without querying the DB.
@@ -178,7 +192,103 @@ export async function recordSystemError(params: {
 export function recordSystemErrorSafe(
   params: Parameters<typeof recordSystemError>[0],
 ): Promise<void> {
-  return recordSystemError(params).catch((err) => {
+  return recordSystemError({
+    ...params,
+    __reportInsertFailureToCaller: true,
+  }).catch((err) => {
     console.error("[system-events] recordSystemError threw:", err);
+    reportSystemEventWriteFailure("recordSystemError", err);
   });
 }
+
+/**
+ * Report that recording a `SystemEvent` itself failed.
+ *
+ * This is the blind spot the two `*Safe` wrappers were hiding: a failed audit
+ * write used to be visible only in Netlify logs, and the sites that matter
+ * most — the CRITICAL_DISPUTE_UNLINKED page, the consultant clawback, the
+ * missing-ledger-transaction page, the overage-base restore — are exactly the
+ * ones nobody reads logs for.
+ *
+ * `expected: true` because the *report* is the failure, not a new fault: the
+ * thing that actually broke is whatever made the write fail, and that is
+ * reported by its own path. It becomes a Sentry **info**-level event with
+ * `expected:true`, so it is findable without paging anyone for a database
+ * blip.
+ *
+ * The quota argument is NOT made here, because it does not hold: Sentry counts
+ * every event against the error allowance regardless of level, so `expected`
+ * buys severity, not budget. What bounds the budget is the throttle — this
+ * marker is matched by `INFRA_TRANSIENT_PATTERNS`, so repeats inside a
+ * 10-minute window are dropped before transport and cost nothing. During a
+ * systemic database outage every call site fails at once, which is precisely
+ * the flood shape that spent the 2026-09-21 allowance.
+ *
+ * Must never throw. It runs inside the `.catch()` of a never-throw contract,
+ * and an observability helper that raised there would convert a handled
+ * failure into an unhandled rejection — the exact crash the wrappers exist to
+ * prevent.
+ */
+function reportSystemEventWriteFailure(
+  operation: "recordSystemEvent" | "recordSystemError",
+  err: unknown,
+): void {
+  try {
+    // The thrown value may be a Prisma error whose `message` and `meta` carry
+    // constraint text, column values, or a connection string. Report the
+    // operation and a coarse class only; the original object is deliberately
+    // NOT forwarded as `cause` or `extra`, because anything handed to
+    // captureException is subject to transport and retention, and we have not
+    // audited which fields in it are safe. The message stays in the local log
+    // above, which is not shipped anywhere.
+    const errorClass =
+      err instanceof Error
+        ? err.name || "Error"
+        : typeof err === "object" && err !== null
+          ? ((err as { constructor?: { name?: string } }).constructor?.name ??
+            "object")
+          : typeof err;
+    reportSentryError(
+      new Error(
+        `${SYSTEM_EVENT_WRITE_FAILURE_MARKER}: ${operation} failed (${errorClass})`,
+      ),
+      {
+        subsystem: "observability",
+        op: "system-event-write-failed",
+        expected: true,
+        extra: { operation, errorClass },
+      },
+    );
+  } catch {
+    // Nothing left to report to. Losing the report is strictly better than
+    // letting the reporting itself become the unhandled rejection.
+  }
+}
+
+/**
+ * The `recordSystemEvent` counterpart of {@link recordSystemErrorSafe}, added
+ * for the same reason.
+ *
+ * `recordSystemErrorSafe` only covers error records, so every void call site
+ * that recorded a plain event had to hand-roll its own guard. Almost all of
+ * them wrote `void recordSystemEvent({...}).catch(() => {})` — which throws
+ * the diagnostic away entirely, and does so at exactly the sites that matter
+ * most: the CRITICAL_DISPUTE_UNLINKED page, the consultant-paid-earnings
+ * clawback, the missing-booking-ledger-transaction page, and the
+ * overage-base restore. The mechanism that exists to record a money-path fault
+ * was itself the thing quietly failing. `console.error` in the replacement
+ * handler is intentional and non-silent.
+ */
+export function recordSystemEventSafe(
+  params: Parameters<typeof recordSystemEvent>[0],
+): Promise<void> {
+  return recordSystemEvent({
+    ...params,
+    __reportInsertFailureToCaller: true,
+  }).catch((err) => {
+    console.error("[system-events] recordSystemEvent threw:", err);
+    reportSystemEventWriteFailure("recordSystemEvent", err);
+  });
+}
+
+export { SYSTEM_EVENT_WRITE_FAILURE_MARKER };

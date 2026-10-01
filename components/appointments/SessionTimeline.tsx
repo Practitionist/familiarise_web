@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { Video, Loader2, ChevronDown, CreditCard } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import {
@@ -12,6 +12,7 @@ import {
   meetingClosedAt,
 } from "@/lib/appointments/occurrences";
 import type { OccurrenceVM } from "@/lib/appointments/view-model";
+import { TRIAL_STATUS_BADGE } from "@/lib/labels/session-labels";
 import { CountdownBadge } from "./CountdownBadge";
 import { HeldSlotBadge } from "./HeldSlotBadge";
 
@@ -171,6 +172,7 @@ export function SessionTimeline({
   onCompletePayment,
   heldRowLabel,
 }: SessionTimelineProps) {
+  const format = useZonedFormat();
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
     setExpanded(defaultExpanded);
@@ -285,7 +287,7 @@ export function SessionTimeline({
               </button>
             ) : (
               <span className="text-[10px] font-medium uppercase text-muted-foreground/70">
-                Awaiting payment
+                {TRIAL_STATUS_BADGE.AWAITING_PAYMENT.label}
               </span>
             )}
           </div>

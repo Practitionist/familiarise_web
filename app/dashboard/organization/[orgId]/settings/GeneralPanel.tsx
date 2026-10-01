@@ -36,6 +36,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { humanizeEnum } from "@/lib/ui/tone";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -108,11 +109,9 @@ async function fetchSettings(orgId: string): Promise<SettingsResponse> {
 interface PatchPayload {
   name?: string;
   slug?: string;
-  billingEmail?: string | null;
   description?: string | null;
   industry?: string | null;
   website?: string | null;
-  paymentTermsDays?: number;
   isPublic?: boolean;
   canSponsor?: boolean;
   canHost?: boolean;
@@ -146,7 +145,7 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
 }
 
 export function GeneralPanel({ orgId }: { orgId: string }) {
-  const { isAtLeast } = useOrgRole(orgId);
+  const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "settings.manage",
   });
@@ -160,11 +159,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [billingEmail, setBillingEmail] = useState("");
   const [description, setDescription] = useState("");
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
-  const [paymentTermsDays, setPaymentTermsDays] = useState("60");
   const [isPublic, setIsPublic] = useState(false);
   // #777 §B — Tax & compliance (OrganizationTaxInfo). UNREGISTERED is the
   // #1230 wave-4 — MSME (Udyam) declaration. Drives the MSMED 15/45-day
@@ -195,11 +192,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     if (!data) return;
     setName(data.organization?.name ?? "");
     setSlug(data.organization?.slug ?? "");
-    setBillingEmail(data.profile.billingEmail ?? "");
     setDescription(data.profile.description ?? "");
     setIndustry(data.profile.industry ?? "");
     setWebsite(data.profile.website ?? "");
-    setPaymentTermsDays(String(data.profile.paymentTermsDays));
     setIsPublic(data.profile.isPublic ?? false);
     setGstin(data.profile.taxInfo?.gstin ?? "");
     setGstStateCode(data.profile.taxInfo?.gstStateCode ?? "");
@@ -212,9 +207,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
 
   const mutation = useMutation({
     // #779 §A — the API enforces field-level RBAC: descriptive fields are
-    // MAINTAINER+, slug/isPublic OWNER-only, billingEmail/paymentTermsDays
-    // BILLING_ADMIN-or-OWNER. Send only what this role may touch so a
-    // maintainer's rename doesn't 403 on fields they never edited.
+    // MAINTAINER+, slug/isPublic OWNER-only. Send only what this role may
+    // touch so a maintainer's rename doesn't 403 on fields they never edited.
+    // Billing email and terms live on the Billing contacts tab only (#1527).
     mutationFn: (overrides?: PatchPayload) =>
       patchSettings(orgId, {
         name: name.trim(),
@@ -223,10 +218,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         website: website.trim() || null,
         // Optimistic lock — the server CASes on this and 409s a stale tab.
         ...(data && { expectedVersion: data.profile.version }),
-        ...(isAtLeast("OWNER") && {
+        ...(can("settings.ownerFields") && {
           slug: slug.trim() || undefined,
-          billingEmail: billingEmail.trim() || null,
-          paymentTermsDays: parseInt(paymentTermsDays, 10),
           isPublic,
         }),
         ...overrides,
@@ -407,7 +400,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       )}
       {/* No "SSO settings" button any more — SSO is a sibling tab, so a
           button that navigates to it would duplicate the tab bar. */}
-      <PanelHeader description="Organization profile, billing email, and limits" />
+      <PanelHeader description="Organization profile, shape and tax details" />
       <div className="space-y-6">
         {/* Capability + funding summary. Owners can flip canSponsor /
             canHost in-place; non-owners see the read-only badge.
@@ -434,10 +427,13 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   Funding: {FUNDING_SOURCE_LABEL[fundingSource]}
                 </Badge>
               )}
-              <Badge variant="outline">Status: {data.profile.status}</Badge>
+              {/* #1762-4 — a label, not the raw OrgStatus. */}
+              <Badge variant="outline">
+                Status: {humanizeEnum(data.profile.status)}
+              </Badge>
             </div>
 
-            {isAtLeast("OWNER") && (
+            {can("settings.ownerFields") && (
               <div className="space-y-3 border-t border-zinc-200 pt-4">
                 <p className="text-xs font-medium uppercase text-zinc-500">
                   Capability
@@ -470,9 +466,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     className="mt-0.5"
                   />
                   <div>
-                    <p className="text-sm font-medium">Host consultants</p>
+                    <p className="text-sm font-medium">Host experts</p>
                     <p className="text-xs text-zinc-500">
-                      The organization hosts consultants who deliver sessions.
+                      The organization hosts experts who deliver sessions.
                       Enables the payout account, rate cards, and the Experts +
                       Payouts sidebar entries.
                     </p>
@@ -493,8 +489,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
           <CardContent>
             {/* The MAINTAINER/OWNER split below mirrors the PATCH route's
                 field-level gate (#779 §A), not a blanket owner check: name,
-                description, industry and website are MAINTAINER+, while
-                billing email, slug and payment terms stay OWNER-only. */}
+                description, industry and website are MAINTAINER+, while the
+                slug stays OWNER-only. */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -509,22 +505,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     id="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    disabled={!isAtLeast("MAINTAINER")}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="billing-email">Billing email</Label>
-                  <Input
-                    id="billing-email"
-                    type="email"
-                    value={billingEmail}
-                    onChange={(e) => setBillingEmail(e.target.value)}
-                    // #779 §A — finance remit. BILLING_ADMIN edits this on the
-                    // Billing tab, which is gated on `billing.manage`; on THIS
-                    // panel only OWNER may change it. (That tab now exists —
-                    // the comment used to point at a billing page that was
-                    // never built, so the field was OWNER-only in practice.)
-                    disabled={!isAtLeast("OWNER")}
+                    disabled={!can("settings.manage")}
                   />
                 </div>
               </div>
@@ -545,7 +526,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                           .replace(/[^a-z0-9-]/g, "-"),
                       )
                     }
-                    disabled={!isAtLeast("OWNER")}
+                    disabled={!can("settings.ownerFields")}
                     className="border-0 bg-transparent px-1 py-0 h-auto shadow-none focus-visible:ring-0"
                     placeholder="acme-school"
                   />
@@ -563,7 +544,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Short description of the organization"
-                  disabled={!isAtLeast("MAINTAINER")}
+                  disabled={!can("settings.manage")}
                 />
               </div>
 
@@ -575,7 +556,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     value={industry}
                     onChange={(e) => setIndustry(e.target.value)}
                     placeholder="e.g. Education, Software"
-                    disabled={!isAtLeast("MAINTAINER")}
+                    disabled={!can("settings.manage")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -586,29 +567,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     value={website}
                     onChange={(e) => setWebsite(e.target.value)}
                     placeholder="https://example.com"
-                    disabled={!isAtLeast("MAINTAINER")}
+                    disabled={!can("settings.manage")}
                   />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="terms">Payment terms (days)</Label>
-                  <Input
-                    id="terms"
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={paymentTermsDays}
-                    onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    // #779 §A — finance remit (BILLING_ADMIN edits this on the
-                    // Billing tab; OWNER here).
-                    disabled={!isAtLeast("OWNER")}
-                  />
-                  <p className="text-xs text-zinc-500">
-                    India default is NET-60. Only applies when funding source is
-                    INVOICE.
-                  </p>
                 </div>
               </div>
 
@@ -617,7 +577,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                 <p className="text-sm text-emerald-600">Settings saved.</p>
               )}
 
-              {isAtLeast("MAINTAINER") && (
+              {can("settings.manage") && (
                 <div>
                   <Button type="submit" disabled={mutation.isPending}>
                     {mutation.isPending ? "Saving…" : "Save changes"}
@@ -634,7 +594,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             section is hidden for non-owners (read or edit) to avoid a
             silent 403. PAN capture is intentionally out of scope here
             (encrypted-at-rest; managed via the dedicated tax surface). */}
-        {isAtLeast("OWNER") && (
+        {can("settings.ownerFields") && (
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -807,13 +767,13 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   onCheckedChange={setIsPublic}
                   disabled={
                     data.profile.status !== "ACTIVE" ||
-                    !isAtLeast("OWNER") ||
+                    !can("settings.ownerFields") ||
                     mutation.isPending
                   }
                 />
               </div>
             </CardContent>
-            {isAtLeast("OWNER") && (
+            {can("settings.ownerFields") && (
               <CardFooter>
                 <Button
                   onClick={() => mutation.mutate(undefined)}
@@ -829,7 +789,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         {/* #1499 — the org's refund ladder. OWNER-only, matching the free-text
             defaultCancellationPolicy field in the org PATCH: MemberRole has no
             ADMIN, so OWNER is the narrowest role that can already write policy. */}
-        {isAtLeast("OWNER") && <CancellationPolicyCard orgId={orgId} />}
+        {can("settings.cancellationPolicy.publish") && (
+          <CancellationPolicyCard orgId={orgId} />
+        )}
 
         <AlertDialog
           open={pendingDisable !== null}
@@ -845,7 +807,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
               <AlertDialogDescription>
                 {pendingDisable === "canSponsor"
                   ? "Members will no longer be able to bill the organization for new sessions. The Billing surface and any active programs will be hidden. The wallet must already be at ₹0 — the server will reject the change otherwise."
-                  : "External consultants will stop earning through this organization. The Experts and Payouts surfaces will be hidden. Existing earnings remain payable."}
+                  : "External experts will stop earning through this organization. The Experts and Payouts surfaces will be hidden. Existing earnings remain payable."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

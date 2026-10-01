@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     membership: { findFirst: jest.fn() },
+    appointmentParticipant: { findUnique: jest.fn() },
   },
 }));
 
@@ -74,7 +75,11 @@ const mockedReadDetail = readAppointmentDetail as jest.Mock;
 const mockedCanAccess = canAccessAppointment as jest.Mock;
 
 const DETAIL = {
-  appointment: { id: "demo0813-appt-ba", organizationId: "org-1" },
+  appointment: {
+    id: "demo0813-appt-ba",
+    organizationId: "org-1",
+    payment: [{ userId: "payer-1" }],
+  },
 } as unknown as TAppointmentDetail;
 
 beforeEach(() => {
@@ -146,6 +151,20 @@ describe("authorizeAppointment — legitimate access", () => {
   });
 });
 
+describe("authorizeAppointment — the payer's own support thread (#1527 QA)", () => {
+  it("support routes admit the payer off the roster; detail/feedback do not", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "payer-1" } });
+    expect(await authorizeAppointment("a1", true)).toMatchObject({
+      userId: "payer-1",
+      isOrgParty: false,
+    });
+    expect(await authorizeAppointment("a1")).toEqual({
+      code: "FORBIDDEN",
+      status: 403,
+    });
+  });
+});
+
 describe("authorizeAppointment — the org-party grant is opt-in", () => {
   const operatorSession = { user: { id: "op1" } };
   const activeMembership = { role: "MANAGER" };
@@ -200,6 +219,40 @@ describe("authorizeAppointment — the org-party grant is opt-in", () => {
     expect(await authorizeAppointment("a1", true)).toEqual({
       code: "FORBIDDEN",
       status: 403,
+    });
+  });
+});
+
+// #1852 — feedback and support take the SEAT's org on a group session. The
+// feedback POST stamps `auth.organizationId` on the rating, and the org
+// quality aggregate keys on that column, so a null here is what keeps a
+// public attendee's rating out of the host org's score.
+describe("authorizeAppointment — seat-org attribution (#1852)", () => {
+  const webinar = {
+    appointment: {
+      ...DETAIL.appointment,
+      appointmentType: "WEBINAR",
+      organizationId: "host-org",
+    },
+  } as unknown as TAppointmentDetail;
+  const seatFind = prisma.appointmentParticipant.findUnique as jest.Mock;
+
+  it("a B2C rating of an org-hosted public webinar leaves the host org's aggregate unchanged", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "b2c-1" } });
+    mockedReadDetail.mockResolvedValue(webinar);
+    mockedCanAccess.mockReturnValue(true);
+    seatFind.mockResolvedValue({ role: "CONSULTEE", organizationId: null });
+    expect(await authorizeAppointment("a1")).toMatchObject({
+      organizationId: null,
+    });
+
+    // A sponsor's seat on the same session is attributed to the sponsor.
+    seatFind.mockResolvedValue({
+      role: "CONSULTEE",
+      organizationId: "sponsor-org",
+    });
+    expect(await authorizeAppointment("a1")).toMatchObject({
+      organizationId: "sponsor-org",
     });
   });
 });

@@ -7,6 +7,7 @@
  * - discountLimiter:        10/min per user  — POST /api/payments/discounts/validate (brute-force)
  * - waitlistLimiter:        3/hr per IP      — POST /api/waitlist (newsletter signup spam)
  * - referralApplyLimiter:   3/24h per user   — POST /api/referrals/apply (farming)
+ * - remindLimiter:          1/24h per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind (#1775)
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
  * - cspReportLimiter:       120/min per IP   — POST /api/csp-report (browser-generated)
  * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
@@ -26,7 +27,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
-import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
@@ -89,6 +90,9 @@ export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
 
 /** 3 per 24 hours — POST /api/referrals/apply */
 export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
+
+/** 1 per 24 hours per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind (#1775) */
+export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 
 /** 5 per hour — support-tickets, feedbacks, reviews, report (scope key by route) */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
@@ -369,10 +373,6 @@ export function retryAfterSeconds(
   return Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000));
 }
 
-// Module scope, so the window is per function instance and resets with it.
-const REDIS_FAILURE_REPORT_INTERVAL_MS = 60_000;
-let lastRedisFailureReportAt = 0;
-
 export async function applyRateLimit(
   limiter: Ratelimit,
   identifier: string,
@@ -416,16 +416,14 @@ export async function applyRateLimit(
     // no information the first did not, and the volume both burns quota and
     // buries unrelated alerts. Per-instance rather than global on purpose: there
     // is no shared state to coordinate through when the shared state IS what is
-    // down. (#1125)
-    const now = Date.now();
-    if (now - lastRedisFailureReportAt > REDIS_FAILURE_REPORT_INTERVAL_MS) {
-      lastRedisFailureReportAt = now;
-      reportSentryError(error, {
-        subsystem: "rate-limit",
-        op: "applyRateLimit",
-        expected: false,
-      });
-    }
+    // down. (#1125; extracted to a shared helper under #1822 so
+    // lib/maintenance-cron.ts and lib/cron/cleanup-route.ts get the same
+    // throttle instead of re-implementing it.)
+    captureThrottled("rate-limit:applyRateLimit", error, {
+      subsystem: "rate-limit",
+      op: "applyRateLimit",
+      expected: false,
+    });
     return null;
   }
 }

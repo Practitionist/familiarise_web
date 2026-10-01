@@ -32,6 +32,8 @@ export interface ListAppointmentsParams {
   /** Pagination — 1-indexed page, default 20 items per page. */
   page?: number;
   perPage?: number;
+  /** Narrows the scoped set further (e.g. suspended members' sessions). */
+  extraWhere?: Prisma.AppointmentWhereInput;
 }
 
 export interface ListAppointmentsResult {
@@ -167,7 +169,10 @@ export async function listAppointmentsScoped(
 ): Promise<ListAppointmentsResult> {
   const page = Math.max(1, params.page ?? 1);
   const perPage = Math.min(100, Math.max(1, params.perPage ?? 20));
-  const where = buildWhere(params);
+  const scoped = buildWhere(params);
+  const where = params.extraWhere
+    ? { AND: [scoped, params.extraWhere] }
+    : scoped;
 
   const [total, items] = await prisma.$transaction([
     prisma.appointment.count({ where }),

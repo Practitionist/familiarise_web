@@ -68,6 +68,9 @@ const CSP_DIRECTIVES = [
   "style-src 'self' 'unsafe-inline'",
   "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
   "font-src 'self' data:",
+  // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
+  // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
+  "frame-ancestors 'none'",
   "report-uri /api/csp-report",
 ].join("; ");
 
@@ -129,6 +132,8 @@ const RESOLVED_APP_URL =
     : process.env.NEXT_PUBLIC_APP_URL;
 
 const nextConfig = {
+  // Drop the `X-Powered-By: Next.js` fingerprinting header.
+  poweredByHeader: false,
   // Origin-dependent values are recomputed per deploy context — see
   // RESOLVED_APP_URL above. Listing them here overrides whatever the Netlify
   // dashboard injected, for the build only.
@@ -168,6 +173,29 @@ const nextConfig = {
   typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
+    // #1795 — Netlify deploy-preview OOM'd (exit 137, Killed at static page
+    // 166/334) with the heap already capped at 6144 MB inside the 8 GB
+    // container, so prerender-worker RSS — not heap — is the constraint (same
+    // lesson as #1792's widenClientFileUpload). Default concurrency is 8
+    // workers × DB-touching prerenders; halving it on Netlify halves peak
+    // RSS at the cost of a slower static phase. CI/dev keep the default.
+    // Netlify-only survival tuning (exit 137, 8 GB container). NONE of this
+    // affects the shipped site's speed — it only changes how many pages the
+    // build cooks at once. Minimum parallelism: 1 worker × 2 pages in flight
+    // (from 4×8=32). Builds get much slower; that is explicitly accepted.
+    // If Netlify's build time limit ever binds, raise maxConcurrency first.
+    ...(process.env.NETLIFY === "true"
+      ? {
+          staticGenerationMaxConcurrency: 2,
+          // Prerender source maps are held in memory through the static
+          // phase; Netlify trades them for survival (Next memory guide),
+          // CI/dev keep them for prerender stack-trace quality.
+          enablePrerenderSourceMaps: false,
+          // Bounds the jest-worker pools for BOTH compile and static
+          // generation (build/index.js getNumberOfWorkers). Default is 4.
+          cpus: 1,
+        }
+      : {}),
     webpackMemoryOptimizations: true,
     // Only packages Next does NOT already optimize by default. Its built-in
     // list covers lucide-react, recharts and date-fns among others, so listing
@@ -177,23 +205,20 @@ const nextConfig = {
       "framer-motion",
       "@stream-io/video-react-sdk",
       "stream-chat-react",
-      "@radix-ui/react-icons",
       // Imported by components/notifications/NotificationInbox.tsx and not in
       // the default list.
-      "@novu/react",
       "@novu/nextjs",
     ],
     // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
     staleTimes: { dynamic: 30, static: 180 },
   },
 
-  // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
-  // NOTE: date-fns is now 4.1.0 and ships an exports map, so this is likely a
-  // leftover from the v2/v3 era — and transpiling a package may defeat Next's
-  // built-in optimizePackageImports handling for it (45 files import date-fns).
-  // Left in place deliberately: the claim above is unverified either way, and
-  // confirming it needs `npm run build:analyze`, not reasoning.
-  transpilePackages: ["date-fns"],
+  // `transpilePackages: ["date-fns"]` was removed 2026-09-24: date-fns is 4.1.0
+  // with a proper exports map, and Next 15 already carries it in the default
+  // optimizePackageImports list — transpiling only re-processed what the
+  // bundler handles natively. Proven with a full local `next build` after
+  // removal: compile + 284/284 static pages green. Restore if a future major
+  // changes that. (date-fns-tz was never listed here and is unaffected.)
 
   // #1244 — the OpenNext server-handler function blew past Netlify's hard
   // 250MB per-function cap. The file tracer was pulling the entire BUILD
@@ -215,6 +240,14 @@ const nextConfig = {
       "node_modules/terser-webpack-plugin/**",
       "node_modules/schema-utils/**",
       "node_modules/jest-worker/**",
+      // #1527 — server maps kept the handler at the 250MB Lambda cap. Sentry
+      // turns them on and never deletes them; nothing reads them at runtime
+      // (no --enable-source-maps). They stay in .next/server for the upload.
+      ".next/server/**/*.map",
+      // #1527 — /_next/image goes to the Netlify Image CDN, so sharp (only
+      // Next's optimizer imports it) never runs in the function.
+      "node_modules/sharp/**",
+      "node_modules/@img/**",
     ],
   },
 
@@ -248,15 +281,14 @@ const nextConfig = {
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg.
   //
-  // `@react-pdf/renderer` is also in Next's own built-in external list, so
-  // listing it here changes nothing — it is external either way, and that is
-  // what forces lib/pdf to resolve its JSX runtime past the bundler (#1468).
+  // NOTE: `@react-pdf/renderer` is intentionally NOT listed here — it is
+  // already in Next's own built-in external list, so listing it was a no-op
+  // (lib/pdf keeps resolving its JSX runtime past the bundler, #1468).
   serverExternalPackages: [
     "pg",
     "@prisma/adapter-pg",
     "pg-pool",
     "pg-connection-string",
-    "@react-pdf/renderer",
     "razorpay",
     "stripe",
     "resend",
@@ -327,9 +359,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
-  org: "practitionist",
+  // Deployment-specific, read from the environment with the values this repo
+  // has always used as the default. A self-hosted Sentry or a second org in a
+  // different workspace changes these; compiling them in would mean a code
+  // change per environment. The same two names are read at runtime by
+  // `lib/observability/sentry-issues.ts`, so pointing the app at a different
+  // workspace is one env change rather than two that can disagree.
+  org: process.env.SENTRY_ORG || "practitionist",
 
-  project: "familiarise_web",
+  project: process.env.SENTRY_PROJECT || "familiarise_web",
 
   // Only print logs for uploading source maps in CI
   silent: !process.env.CI,
@@ -351,7 +389,12 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 
   // Upload a larger set of source maps for prettier stack traces (increases build time)
-  widenClientFileUpload: true,
+  // #1792 — off on Netlify: the 2026-09-21 build OOM'd (exit 137, Killed at
+  // static page 211/282) with heap already at the 8 GB container ceiling, so
+  // container RSS — not heap — is the constraint. The widened client upload
+  // holds the full client source-map set in memory during the finalize phase;
+  // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  widenClientFileUpload: process.env.NETLIFY !== "true",
 
   // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
   // This can increase your server load as well as your hosting bill.

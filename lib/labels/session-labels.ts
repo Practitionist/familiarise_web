@@ -40,10 +40,12 @@ import type {
   ReferralStatus,
   RefundStatus,
   OccurrenceCompletionStatus,
+  OccurrenceOutcome,
   TrialStatus,
   WaitlistStatus,
   WebinarStatus,
 } from "@prisma/client";
+import { humanizeEnum } from "@/lib/ui/tone";
 
 export interface StatusBadgeStyle {
   label: string;
@@ -54,10 +56,7 @@ export interface StatusBadgeStyle {
 
 /** Title-case an unknown/legacy status string: "SOME_STATE" → "Some State". */
 export function formatStatusLabel(status: string): string {
-  return status
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return humanizeEnum(status);
 }
 
 const FALLBACK_CLASS = "bg-zinc-100 text-zinc-600 border-zinc-200";
@@ -236,6 +235,23 @@ export const SLOT_STATUS_BADGE: Record<
     label: "Rescheduled",
     className: "bg-blue-100 text-blue-900 border-blue-200",
   },
+  // #1569 — a held call that lost too much time; the learner is owed a make-up.
+  VOIDED: {
+    label: "Missed",
+    className: "bg-rose-100 text-rose-900 border-rose-200",
+  },
+};
+
+/** #1569 — what the outcome sweep saw, in plain words for the ops console. */
+export const SESSION_OUTCOME_LABEL: Record<OccurrenceOutcome, string> = {
+  HELD: "Held",
+  CUT_SHORT: "Cut short by the host side",
+  PLATFORM_OUTAGE: "Lost to a platform outage",
+  HOST_ABSENT: "Host never joined",
+  LEARNER_ABSENT: "Learner never joined",
+  NOBODY_JOINED: "Nobody joined",
+  INCONCLUSIVE: "Needs a human decision",
+  OFFLINE: "No call on record",
 };
 
 export const slotStatusBadge = (

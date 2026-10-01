@@ -6,7 +6,7 @@
  * 2. Resizing large images to more reasonable dimensions
  * 3. Compressing images without significant quality loss
  *
- * Usage: ts-node scripts/optimize-images.ts
+ * Usage: npx tsx scripts/utils/optimize-images.ts
  */
 
 import * as fs from "fs";

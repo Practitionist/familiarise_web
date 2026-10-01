@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { claimProgramAssignment } from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -35,9 +36,9 @@ export async function GET(
   },
 ) {
   const { orgId, programId } = await params;
-  // Read widened to any ACTIVE member. LEARNERs need to see who else
-  // is assigned for seat-pool visibility ("how many seats left?").
-  // Write endpoints (POST/DELETE) stay MANAGER+canSponsor.
+  // Any ACTIVE member may call this, but the roster (every assignee's name,
+  // email and spend) is `programs.read`; everyone else gets only their own
+  // rows, without consumedPaise (#1527 P0-2).
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
@@ -57,8 +58,11 @@ export async function GET(
     return NextResponse.json({ error: "Program not found" }, { status: 404 });
   }
 
+  const canReadAll = hasOrgPermission(access.member.role, "programs.read");
   const url = new URL(req.url);
-  const membershipId = url.searchParams.get("membershipId") ?? undefined;
+  const membershipId = canReadAll
+    ? (url.searchParams.get("membershipId") ?? undefined)
+    : access.member.id;
 
   const assignments = await prisma.programAssignment.findMany({
     where: {
@@ -77,7 +81,11 @@ export async function GET(
     orderBy: { periodStart: "desc" },
   });
 
-  return NextResponse.json({ data: assignments });
+  return NextResponse.json({
+    data: canReadAll
+      ? assignments
+      : assignments.map(({ consumedPaise: _spend, ...own }) => own),
+  });
 }
 
 export async function POST(
@@ -89,8 +97,10 @@ export async function POST(
   },
 ) {
   const { orgId, programId } = await params;
+  // #1527 decision 8 — seat assign/unassign is programs.assign (OWNER,
+  // MAINTAINER, MANAGER); was a MAINTAINER rank floor.
   const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+    permission: "programs.assign",
     canSponsor: true,
   });
   if (access.error) return access.error;

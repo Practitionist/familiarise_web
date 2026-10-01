@@ -63,10 +63,12 @@ describe("OCCURRENCE_COMPLETION_ALLOWED_FROM", () => {
   it("pins every edge", () => {
     expect(OCCURRENCE_COMPLETION_ALLOWED_FROM).toEqual({
       SCHEDULED: ["RESCHEDULED"],
-      COMPLETED: ["SCHEDULED", "UNVERIFIED"],
+      COMPLETED: ["SCHEDULED", "UNVERIFIED", "VOIDED"],
       UNVERIFIED: ["SCHEDULED", "COMPLETED"],
       CANCELLED: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"],
       RESCHEDULED: ["SCHEDULED", "RESCHEDULED"],
+      // #1569 — a void is never cancelled away: it stays a miss until settled.
+      VOIDED: ["SCHEDULED", "UNVERIFIED", "COMPLETED"],
     });
   });
 

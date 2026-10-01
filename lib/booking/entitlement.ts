@@ -11,10 +11,10 @@
  *
  * Prisma-free on purpose — client components import it.
  */
+import { addMonths } from "date-fns";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
 import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
-import { addMonthsSafely } from "@/utils/dateUtils";
 
 export type CycleUnit = "week" | "month";
 
@@ -119,7 +119,7 @@ function cycleEnd(start: Date, unit: CycleUnit, tz: string): Date {
   const nextCycleDay =
     unit === "week"
       ? new Date(day.getFullYear(), day.getMonth(), day.getDate() + 7)
-      : addMonthsSafely(day, 1);
+      : addMonths(day, 1);
   return new Date(fromZonedTime(nextCycleDay, tz).getTime() - 1);
 }
 

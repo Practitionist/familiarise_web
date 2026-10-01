@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   // full Stream channel list. A session is now required everywhere, and staff
   // or admin on top of that, so the secret is defence in depth rather than the
   // whole defence.
-  const session = await getSession();
+  const session = await getSession(true);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

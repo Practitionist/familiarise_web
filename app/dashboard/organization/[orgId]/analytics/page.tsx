@@ -1,8 +1,12 @@
-import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
 import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AnalyticsPageClient } from "./AnalyticsPageClient";
-import { getOrgAnalytics } from "@/lib/data/org-analytics";
+import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 
 export default async function OrgAnalyticsPage({
   params,
@@ -27,7 +31,11 @@ export default async function OrgAnalyticsPage({
   await Promise.allSettled([
     queryClient.prefetchQuery({
       queryKey: ["org-analytics", orgId],
-      queryFn: () => getOrgAnalytics(orgId),
+      // Same redaction as the API route (#1527).
+      queryFn: async () => {
+        const analytics = await getOrgAnalytics(orgId);
+        return analytics && orgAnalyticsForRole(analytics, access.member.role);
+      },
     }),
   ]);
 

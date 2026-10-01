@@ -1,17 +1,14 @@
-import { redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { libraryScopeFor } from "@/lib/library/library-query";
 
-import { DocumentsClient } from "./DocumentsClient";
+import { OrgLibraryPage } from "../OrgLibraryPage";
 
 /**
- * /dashboard/organization/[orgId]/documents — documents uploaded against this
- * org's appointments, with the outcome of each review.
- *
- * Briefly a tab on a combined "Resources" page alongside Recordings. Split
- * back out: a group labelled Resources containing a single item also called
- * Resources is redundant nesting, and the two lists answer different
- * questions — this one is a review queue, Recordings is an archive.
+ * /dashboard/organization/[orgId]/documents — Library › Documents (#1527). Every
+ * member, SUSPENDED included, reads their own sessions' files; the Everyone
+ * tab is the same gate the route applies.
  */
 export default async function OrgDocumentsPage({
   params,
@@ -19,13 +16,14 @@ export default async function OrgDocumentsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  if (access.error) notFound();
 
-  const access = await requireOrgAccess(orgId, {
-    permission: "operations.read",
-  });
-  if (access.error) {
-    redirect(`/dashboard/organization/${orgId}/home`);
-  }
-
-  return <DocumentsClient orgId={orgId} />;
+  return (
+    <OrgLibraryPage
+      orgId={orgId}
+      artifact="documents"
+      canSeeEveryone={libraryScopeFor("everyone", access.member) !== null}
+    />
+  );
 }

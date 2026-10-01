@@ -4,7 +4,7 @@ import { use, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Filter, Search } from "lucide-react";
 import type { OrgAuditCategory } from "@prisma/client";
-import { useRequireOrgAccess } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -12,6 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { humanizeEnum } from "@/lib/ui/tone";
+import { visibleAuditCategories } from "@/lib/enterprise/audit-visibility";
 import {
   Select,
   SelectContent,
@@ -19,12 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -33,7 +30,8 @@ import {
 /**
  * /dashboard/organization/[orgId]/audit — org audit-log browser.
  *
- * MAINTAINER+ role-gated (matches the API endpoint). Renders a
+ * `audit.read`-gated (matches the API endpoint), rows scoped per category
+ * grant server-side (#1527: money rows for money readers only). Renders a
  * paginated table of `OrgAuditLog` rows with filters for category +
  * freetext search + date range. The "Download CSV" button hits the
  * export endpoint which streams the full filtered result + emits
@@ -59,29 +57,9 @@ const CATEGORIES: OrgAuditCategory[] = [
   "CONSENT",
   "CATALOG",
   "SYSTEM",
-  // PR #655 added WEBHOOK as the 11th category for outbound-webhook
-  // lifecycle rows (WEBHOOK_ENDPOINT_CREATED / SECRET_ROTATED /
-  // DELIVERY_SUCCEEDED / etc.). The `satisfies Record<OrgAuditCategory>`
-  // contract on CATEGORY_TONE means we MUST list it here.
+  // PR #655 — outbound-webhook lifecycle rows.
   "WEBHOOK",
 ];
-
-// Categories are a neutral taxonomy, not statuses, so they read as monochrome
-// muted chips (#9 — off-brand accents → mono) with the genuinely semantic
-// money/compliance categories keeping a restrained colour cue + dark variants.
-const CATEGORY_TONE: Record<OrgAuditCategory, string> = {
-  MEMBER: "bg-muted text-muted-foreground",
-  CONTRACT: "bg-muted text-muted-foreground",
-  PROGRAM: "bg-muted text-muted-foreground",
-  WALLET: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  INVOICE: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  PAYOUT: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  SETTINGS: "bg-muted text-muted-foreground",
-  CONSENT: "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
-  CATALOG: "bg-muted text-muted-foreground",
-  SYSTEM: "bg-muted text-foreground",
-  WEBHOOK: "bg-muted text-muted-foreground",
-};
 
 type AuditRow = {
   id: string;
@@ -91,7 +69,15 @@ type AuditRow = {
   details: unknown;
   createdAt: string;
   actor: { role: string; user: { name: string; email: string } } | null;
+  actorKind?: "member" | "platform_admin" | "former_member" | "system";
   target: { role: string; user: { name: string; email: string } } | null;
+};
+
+const ACTOR_KIND_LABEL: Record<NonNullable<AuditRow["actorKind"]>, string> = {
+  member: "Member",
+  platform_admin: "Platform admin",
+  former_member: "Former member",
+  system: "System",
 };
 
 type AuditResponse = {
@@ -101,12 +87,17 @@ type AuditResponse = {
 
 export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  // audit.read (OWNER/MAINTAINER/SUPPORT) — same matrix entry the sidebar
-  // and the audit GET API check, so SUPPORT's ticket-investigation read
-  // works and an EXPERT/LEARNER/BILLING_ADMIN direct URL bounces to /home.
+  // audit.read — same matrix entry the sidebar and the audit GET API check;
+  // an EXPERT/LEARNER direct URL bounces to /home.
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
     permission: "audit.read",
   });
+  // The CSV is part of the people export (dataExports.people, #1527), so
+  // SUPPORT, MANAGER and BILLING_ADMIN read but can't export.
+  const { can, role } = useOrgRole(orgId);
+  const canExport = can("dataExports.people");
+  // Only offer categories whose rows this role can read (#1527 audit split).
+  const categories = visibleAuditCategories(role, CATEGORIES);
 
   const [category, setCategory] = useState<OrgAuditCategory | "ALL">("ALL");
   const [search, setSearch] = useState("");
@@ -128,9 +119,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { data, isLoading, isFetching } = useQuery<AuditResponse>({
     queryKey: ["org-audit-log", orgId, queryString],
     queryFn: async () => {
-      const r = await fetch(
-        `/api/organizations/${orgId}/audit?${queryString}`,
-      );
+      const r = await fetch(`/api/organizations/${orgId}/audit?${queryString}`);
       if (!r.ok) throw new Error("Failed to fetch audit log");
       return (await r.json()) as AuditResponse;
     },
@@ -154,8 +143,8 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
         <Card>
           <CardContent className="p-6">
             <p className="text-sm text-foreground">
-              Audit-log access requires MAINTAINER role or higher (or
-              SUPPORT for read-only investigation).
+              The audit log is available to owners, maintainers, managers,
+              billing admins and support staff.
             </p>
           </CardContent>
         </Card>
@@ -196,17 +185,16 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
     {
       key: "category",
       header: "Category",
+      // A neutral taxonomy, not a status: plain chips (#1762-4).
       cell: (row) => (
-        <Badge className={CATEGORY_TONE[row.category]} variant="secondary">
-          {row.category}
-        </Badge>
+        <Badge variant="secondary">{humanizeEnum(row.category)}</Badge>
       ),
     },
     {
       key: "action",
       header: "Action",
-      className: "font-mono text-xs",
-      cell: (row) => row.action,
+      className: "text-xs",
+      cell: (row) => humanizeEnum(row.action),
     },
     {
       key: "actor",
@@ -219,7 +207,9 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
             <div className="text-muted-foreground">{row.actor.user.email}</div>
           </>
         ) : (
-          <span className="text-muted-foreground/70">System</span>
+          <span className="text-muted-foreground">
+            {ACTOR_KIND_LABEL[row.actorKind ?? "system"]}
+          </span>
         ),
     },
     {
@@ -234,7 +224,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
     <>
       <DashboardHeader
         title="Audit log"
-        subtitle="Every mutation in your organization, with actor and timestamp"
+        description="Every change in your organization, with who made it and when."
       />
       <DashboardContent>
         <Card className="mb-4">
@@ -249,6 +239,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                 <div className="relative">
                   <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground/70" />
                   <Input
+                    aria-label="Search description"
                     placeholder="Search description…"
                     value={search}
                     onChange={(e) => {
@@ -271,9 +262,9 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">All categories</SelectItem>
-                  {CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <SelectItem key={c} value={c}>
-                      {c}
+                      {humanizeEnum(c)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -301,14 +292,16 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
               <Button variant="outline" onClick={resetFilters}>
                 Reset
               </Button>
-              <Button
-                variant="outline"
-                onClick={onDownloadCsv}
-                disabled={isFetching}
-              >
-                <Download className="h-4 w-4 mr-1" />
-                CSV
-              </Button>
+              {canExport && (
+                <Button
+                  variant="outline"
+                  onClick={onDownloadCsv}
+                  disabled={isFetching}
+                >
+                  <Download className="h-4 w-4 mr-1" />
+                  CSV
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

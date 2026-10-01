@@ -1,36 +1,31 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useRequireOrgAccess } from "../useOrgRole";
-import {
-  Users,
-  Briefcase,
-  Wallet,
-  AlertCircle,
-  FileText,
-  TrendingUp,
-  UserCheck,
-} from "lucide-react";
 import type { FundingSource, MemberRole } from "@prisma/client";
 
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
-  DashboardGrid,
 } from "@/components/dashboard/PageScaffold";
-import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
+import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
+import { Section } from "@/components/dashboard/Section";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
-// ---------------------------------------------------------------------------
-// Types — match GET /api/organizations/[orgId]/analytics
-// ---------------------------------------------------------------------------
-
+// Types — match GET /api/organizations/[orgId]/analytics. Money sections are
+// null for viewers without `billing.read` (#1527, redacted server-side).
 interface OrgAnalytics {
   capabilities: {
     canSponsor: boolean;
     canHost: boolean;
     fundingSource: FundingSource | null;
-    walletBalance: number | null;
     currency: string | null;
   };
   members: {
@@ -62,21 +57,117 @@ interface OrgAnalytics {
   }> | null;
 }
 
+type RoleRow = { role: MemberRole; count: number };
+type WalletRow = NonNullable<OrgAnalytics["wallet"]>["recent"][number];
+
 async function fetchAnalytics(orgId: string): Promise<OrgAnalytics> {
   const res = await fetch(`/api/organizations/${orgId}/analytics`);
   if (!res.ok) throw new Error("Failed to load analytics");
   return res.json();
 }
 
-function countByRole(
-  byRole: OrgAnalytics["members"]["byRole"],
-  role: MemberRole,
-): number {
-  return byRole.find((r) => r.role === role)?.count ?? 0;
+const roleColumns: ResponsiveColumn<RoleRow>[] = [
+  {
+    key: "role",
+    header: "Role",
+    primary: true,
+    cell: (r) => MEMBER_ROLE_LABEL[r.role],
+  },
+  {
+    key: "count",
+    header: "Active members",
+    className: "tabular-nums",
+    cell: (r) => r.count,
+  },
+];
+
+function walletColumns(currency: string): ResponsiveColumn<WalletRow>[] {
+  return [
+    {
+      key: "reason",
+      header: "Movement",
+      primary: true,
+      cell: (r) => humanizeEnum(r.reason),
+    },
+    {
+      key: "count",
+      header: "Entries",
+      className: "tabular-nums",
+      cell: (r) => r.count,
+    },
+    {
+      key: "delta",
+      header: "Net",
+      className: "tabular-nums",
+      cell: (r) => formatCurrencyAmount(r.deltaPaise, currency),
+    },
+  ];
 }
 
+function MoneyStats({ data }: Readonly<{ data: OrgAnalytics }>) {
+  const currency = data.capabilities.currency ?? "INR";
+  const paidEarnings =
+    data.earnings?.find((e) => e.status === "PAID")?.orgSharePaise ?? 0;
+  const refundedEarnings = (data.earnings ?? []).reduce(
+    (sum, e) => sum + e.refundedPaise,
+    0,
+  );
+  const hasEarnings = (data.earnings?.length ?? 0) > 0;
+  if (!data.wallet && !data.invoices && !hasEarnings) return null;
+  return (
+    <StatRow columns={3}>
+      {data.wallet && (
+        <Stat
+          label="Wallet balance"
+          value={formatCurrencyAmount(data.wallet.balancePaise, currency)}
+        />
+      )}
+      {data.invoices && (
+        <>
+          <Stat
+            label="Outstanding invoices"
+            value={data.invoices.outstandingCount}
+            hint={formatCurrencyAmount(
+              data.invoices.outstandingPaise,
+              currency,
+            )}
+            tone={data.invoices.pastDueCount > 0 ? "critical" : "neutral"}
+          />
+          <Stat
+            label="Paid in the last 30 days"
+            value={data.invoices.paidLast30dCount}
+            hint={formatCurrencyAmount(
+              data.invoices.paidLast30dPaise,
+              currency,
+            )}
+          />
+        </>
+      )}
+      {hasEarnings && (
+        <Stat
+          label="Earnings paid out"
+          value={formatCurrencyAmount(paidEarnings, currency)}
+          hint={
+            refundedEarnings > 0
+              ? `${formatCurrencyAmount(refundedEarnings, currency)} refunded`
+              : undefined
+          }
+        />
+      )}
+    </StatRow>
+  );
+}
+
+/**
+ * Org Analytics: membership and program figures for operators, with money
+ * only for `billing.read` (#1527 — SUPPORT used to see it). Home carries the
+ * action centre now, so this page no longer mirrors it; charts are #663.
+ */
 export function AnalyticsPageClient({ orgId }: { orgId: string }) {
-  const { allowed } = useRequireOrgAccess(orgId, { permission: "operations.read" });
+  const { can } = useOrgRole(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
@@ -85,23 +176,22 @@ export function AnalyticsPageClient({ orgId }: { orgId: string }) {
 
   if (!allowed) return null;
 
-  // On failure `isLoading` is false, so the `!data` skeleton below would
-  // hang forever — surface an explicit error + retry instead.
+  const header = (
+    <DashboardHeader
+      title="Analytics"
+      description="Membership, programs and, for finance roles, money at a glance."
+    />
+  );
+
   if (isError && !data) {
     return (
       <>
-        <DashboardHeader title="Analytics" subtitle="Activity at a glance" />
+        {header}
         <DashboardContent>
-          <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-            <p className="font-medium">Failed to load analytics.</p>
-            <button
-              type="button"
-              onClick={() => refetch()}
-              className="mt-2 inline-flex items-center rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
+          <ErrorState
+            title="Couldn't load analytics"
+            onRetry={() => void refetch()}
+          />
         </DashboardContent>
       </>
     );
@@ -110,117 +200,59 @@ export function AnalyticsPageClient({ orgId }: { orgId: string }) {
   if (isLoading || !data) {
     return (
       <>
-        <DashboardHeader title="Analytics" subtitle="Activity at a glance" />
+        {header}
         <DashboardContent>
-          <DashboardGrid columns={3}>
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <StatCardSkeleton key={i} />
-            ))}
-          </DashboardGrid>
+          <StatRow columns={3}>
+            <StatSkeleton />
+            <StatSkeleton />
+            <StatSkeleton />
+          </StatRow>
         </DashboardContent>
       </>
     );
   }
 
+  const seesMoney = can("billing.read");
   const currency = data.capabilities.currency ?? "INR";
-  const learners = countByRole(data.members.byRole, "LEARNER");
-  const experts = countByRole(data.members.byRole, "EXPERT");
-
-  // Earnings "paid" cell: sum the orgShare of PAID rows, net of refunds.
-  const paidEarnings =
-    data.earnings?.find((e) => e.status === "PAID")?.orgSharePaise ?? 0;
-  const refundedEarnings = (data.earnings ?? []).reduce(
-    (sum, e) => sum + e.refundedPaise,
-    0,
-  );
 
   return (
     <>
-      <DashboardHeader title="Analytics" subtitle="Activity at a glance" />
+      {header}
       <DashboardContent>
-        <DashboardGrid columns={3}>
-          <StatCard
-            title="Members"
+        <StatRow columns={3}>
+          <Stat
+            label="Members"
             value={data.members.total}
-            subtitle={`${data.members.active} active`}
-            icon={Users}
-            variant="info"
+            hint={`${data.members.active} active`}
           />
-          {data.capabilities.canSponsor && (
-            <StatCard
-              title="Learners"
-              value={learners}
-              subtitle={
-                data.programs.activeAssignments > 0
-                  ? `${data.programs.activeAssignments} active assignments`
-                  : "No active assignments"
-              }
-              icon={UserCheck}
-            />
-          )}
-          {data.capabilities.canHost && (
-            <StatCard title="Experts" value={experts} icon={UserCheck} />
-          )}
-          <StatCard
-            title="Active programs"
+          <Stat
+            label="Active programs"
             value={data.programs.active}
-            subtitle={`${data.programs.total} total`}
-            icon={Briefcase}
+            hint={`${data.programs.total} total`}
           />
-          {data.wallet && (
-            <StatCard
-              title="Wallet balance"
-              value={formatCurrencyAmount(data.wallet.balancePaise, currency)}
-              icon={Wallet}
-              variant="success"
+          <Stat
+            label="Active assignments"
+            value={data.programs.activeAssignments}
+          />
+        </StatRow>
+        {seesMoney && <MoneyStats data={data} />}
+        <Section title="Members by role">
+          <ResponsiveTable<RoleRow>
+            columns={roleColumns}
+            rows={data.members.byRole}
+            getRowId={(r) => r.role}
+            empty="No active members yet."
+          />
+        </Section>
+        {seesMoney && data.wallet && data.wallet.recent.length > 0 && (
+          <Section title="Wallet activity, last 30 days">
+            <ResponsiveTable<WalletRow>
+              columns={walletColumns(currency)}
+              rows={data.wallet.recent}
+              getRowId={(r) => r.reason}
             />
-          )}
-          {data.invoices && (
-            <>
-              <StatCard
-                title="Outstanding invoices"
-                value={data.invoices.outstandingCount}
-                subtitle={formatCurrencyAmount(
-                  data.invoices.outstandingPaise,
-                  currency,
-                )}
-                icon={FileText}
-                variant={data.invoices.pastDueCount > 0 ? "warning" : "info"}
-              />
-              <StatCard
-                title="Paid (last 30 days)"
-                value={data.invoices.paidLast30dCount}
-                subtitle={formatCurrencyAmount(
-                  data.invoices.paidLast30dPaise,
-                  currency,
-                )}
-                icon={TrendingUp}
-                variant="success"
-              />
-              {data.invoices.pastDueCount > 0 && (
-                <StatCard
-                  title="Past-due invoices"
-                  value={data.invoices.pastDueCount}
-                  icon={AlertCircle}
-                  variant="warning"
-                />
-              )}
-            </>
-          )}
-          {data.earnings && data.earnings.length > 0 && (
-            <StatCard
-              title="Earnings — paid"
-              value={formatCurrencyAmount(paidEarnings, currency)}
-              subtitle={
-                refundedEarnings > 0
-                  ? `${formatCurrencyAmount(refundedEarnings, currency)} refunded`
-                  : undefined
-              }
-              icon={Wallet}
-              variant="success"
-            />
-          )}
-        </DashboardGrid>
+          </Section>
+        )}
       </DashboardContent>
     </>
   );

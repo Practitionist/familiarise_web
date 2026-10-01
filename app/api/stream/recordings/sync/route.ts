@@ -16,7 +16,7 @@ import { getSession } from "@/lib/auth-server";
 export async function POST(_req: NextRequest) {
   try {
     // Check authentication
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

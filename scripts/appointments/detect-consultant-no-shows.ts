@@ -13,9 +13,9 @@
  * Schedule: hourly.
  *
  * Its candidates no longer race `auto-complete-appointments` (#1504). Both jobs
- * read the same attendance predicate from `lib/booking/attendance.ts`, and that
- * job now defers a booking in the no-show shape instead of completing it out
- * from under this one an hour before this one may look at it.
+ * read the same presence verdict from `lib/booking/session-outcome.ts` (#1569),
+ * and that job leaves a HOST_ABSENT consultation SCHEDULED until the handoff
+ * instead of completing it out from under this one.
  *
  * Scope: CONSULTATION only — a single-session, single-consultant exclusive
  * booking where a full refund of the one payment is the correct remedy.
@@ -36,6 +36,8 @@ import {
   PaymentStatus,
   OccurrenceCompletionStatus,
   SupportIssueType,
+  type OccurrenceOutcome,
+  type Prisma,
 } from "@prisma/client";
 import {
   notifyAppointmentCancelled,
@@ -61,10 +63,15 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
   NO_SHOW_GRACE_MINUTES,
   attendedAnySession,
-  classifyConsultantAttendance,
   meetingsOf,
 } from "@/lib/booking/attendance";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  classifySessionOutcome,
+  type OutageWindow,
+} from "@/lib/booking/session-outcome";
+import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 
 export interface NoShowResult {
   success: boolean;
@@ -104,6 +111,16 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
 // paid, whose slots have all ended past the grace window and where a
 // Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
+// #1834 — a session the outcome sweep decided or parked for ops (D2) is no
+// longer this job's to cancel and refund; cohort and CAS both exclude it.
+const DECIDED_OR_PARKED = {
+  deletedAt: null,
+  OR: [
+    { outcome: { not: null } },
+    { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 function findNoShowCandidates(graceCutoff: Date) {
   return prisma.consultation.findMany({
     where: {
@@ -126,6 +143,7 @@ function findNoShowCandidates(graceCutoff: Date) {
             endsAt: { lt: graceCutoff },
             meeting: { isNot: null },
           },
+          none: DECIDED_OR_PARKED,
         },
       },
     },
@@ -156,6 +174,10 @@ function findNoShowCandidates(graceCutoff: Date) {
               meeting: {
                 include: { attendances: { select: { userId: true } } },
               },
+              // #1569 — the intervals the shared classifier reads.
+              presences: {
+                select: { userId: true, joinedAt: true, leftAt: true },
+              },
             },
           },
         },
@@ -175,13 +197,14 @@ type PaidPayment = NonNullable<
 >["payment"][number];
 
 // Returns the party ids when `consultation` is a confirmed CONSULTANT no-show,
-// or null to skip. The definition itself lives in lib/booking/attendance.ts
-// (#1504) because auto-complete has to read the same one: the consultee has a
-// recorded join (positive evidence they showed up) AND the consultant has no
-// MeetingAttendance row at all. Neither-showed and consultee-no-show cases are
-// intentionally excluded — no consultant-fault refund there.
+// or null to skip. #1569 — the verdict is `classifySessionOutcome`, the same
+// one the end + 1 h sweep writes, so the two jobs cannot disagree (#1504): some
+// session is HOST_ABSENT and the consultant was present in none of them.
+// Neither-showed and consultee-no-show cases are excluded — no consultant-fault
+// refund there.
 function evaluateConsultantNoShow(
   consultation: NoShowCandidate,
+  outages: OutageWindow[],
 ): NoShowParty | null {
   const consultantUserId =
     consultation.consultationPlan?.consultantProfile?.userId;
@@ -194,15 +217,32 @@ function evaluateConsultantNoShow(
     return null;
   }
 
-  // Presence across every session tied to this booking's slots.
-  const verdict = classifyConsultantAttendance(
-    consultation.appointment?.occurrences ?? [],
-    { consultantUserId, consulteeUserId },
-  );
-  if (verdict !== "consultant-absent") return null;
+  const outcomes = (consultation.appointment?.occurrences ?? [])
+    .filter((o) => !isDeadOccurrence(o))
+    .map(
+      (o) =>
+        classifySessionOutcome({
+          startsAt: o.startsAt,
+          endsAt: o.endsAt,
+          hostUserIds: [consultantUserId],
+          intervals: o.presences,
+          meeting: o.meeting,
+          // Stream corroboration is its own refusal below.
+          report: null,
+          maintenanceWindows: outages,
+        }).outcome,
+    );
+  const hostNeverPresent = outcomes.every((o) => HOST_NEVER_PRESENT.has(o));
+  if (!outcomes.includes("HOST_ABSENT") || !hostNeverPresent) return null;
 
   return { consultantUserId, consulteeUserId, appointmentId };
 }
+
+const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
+  "HOST_ABSENT",
+  "NOBODY_JOINED",
+  "OFFLINE",
+]);
 
 /**
  * Does Stream's own record of the call contradict a no-show finding?
@@ -420,7 +460,7 @@ export async function detectBothAbsent(
 // auto-complete cron) cannot re-process it. A concurrent cancel landing here wins
 // and this returns false → skip. On a successful claim we also reflect the
 // no-show on the slots (no NO_SHOW slot status exists — schema frozen, #471 —
-// CANCELLED is the closest; only move slots left SCHEDULED/UNVERIFIED).
+// CANCELLED is the closest; only undecided SCHEDULED slots move, #1834).
 async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
@@ -431,7 +471,10 @@ async function claimConsultantNoShow(
       // BookingStatusHistory row like every other status change; the bare
       // updateMany left no timeline entry for the no-show path.
       await transitionConsultationRequest(tx, {
-        where: { id: consultationId },
+        where: {
+          id: consultationId,
+          appointment: { occurrences: { none: DECIDED_OR_PARKED } },
+        },
         to: AppointmentStatus.CANCELLED,
         fromIn: CANCELLABLE_FROM,
         actorUserId: null,
@@ -447,12 +490,9 @@ async function claimConsultantNoShow(
       // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
       // the from-set is the one the raw updateMany carried.
       await transitionOccurrenceCompletion(tx, {
-        where: { appointmentId, deletedAt: null },
+        where: { appointmentId, deletedAt: null, outcome: null },
         to: OccurrenceCompletionStatus.CANCELLED,
-        fromIn: [
-          OccurrenceCompletionStatus.SCHEDULED,
-          OccurrenceCompletionStatus.UNVERIFIED,
-        ],
+        fromIn: [OccurrenceCompletionStatus.SCHEDULED],
         data: { deletedAt: new Date() },
         // Zero live occurrences means a concurrent writer took the booking's
         // sessions first; the parent cancel above rolls back with this throw
@@ -525,14 +565,19 @@ async function refundNoShowConsultation(
     errors.push(msg);
     // Ops parity with every other refund-failure path: durable signal, not
     // just this job's stdout.
-    void recordSystemError({
+    // Awaited, not `void`. This is a single write on a failure path rather than
+    // a per-iteration call, so serialising it costs nothing, and awaiting is
+    // what makes the record durable: the job exits when its event loop drains,
+    // and a floating write is lost whenever the loop drains first — which is
+    // precisely the failure `*Safe` was introduced to stop hiding.
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: `No-show refund failed for consultation ${consultation.id}`,
       err:
         refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
       context: { paymentId: paidPayment.id },
-    }).catch(() => {});
+    });
     return { refundedPaise: 0, succeeded: false, paidPayment };
   }
 }
@@ -628,12 +673,17 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
   );
 
   const candidates = await findNoShowCandidates(graceCutoff);
+  // #1569 — the classifier's maintenance hold turns a host-absent verdict inconclusive.
+  const outages = await readOutageWindows(
+    prisma,
+    new Date(graceCutoff.getTime() - 7 * 86_400_000),
+  );
 
   console.log(`Found ${candidates.length} paid, ended candidates to check`);
 
   for (const consultation of candidates) {
     try {
-      const party = evaluateConsultantNoShow(consultation);
+      const party = evaluateConsultantNoShow(consultation, outages);
       if (!party) continue;
 
       // Corroborate against Stream before moving money. Our attendance rows are

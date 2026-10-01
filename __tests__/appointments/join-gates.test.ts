@@ -278,7 +278,6 @@ describe("#1270 — the surfaces are wired to those predicates", () => {
 describe("#1270 — there is one join window per role, imported everywhere", () => {
   const surfaces = [
     "app/dashboard/consultee/[consulteeId]/(features)/home/HomeTab.tsx",
-    "app/dashboard/consultant/[consultantId]/(features)/trials/TrialsTab.tsx",
     "components/planner/components/EventManagementDashboard.tsx",
     "components/appointments/SessionTimeline.tsx",
     "components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx",

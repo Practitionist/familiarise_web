@@ -41,6 +41,8 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   isInternalFundedIntent: (i: string) => i.startsWith("org_"),
+  // #1780 decision 11 — credit seats are in the seat-refund cohort now.
+  isFreeCreditIntent: (i?: string) => Boolean(i?.startsWith("free_")),
   refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
 }));
 
@@ -64,9 +66,12 @@ jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => mockReportSentryError(...a),

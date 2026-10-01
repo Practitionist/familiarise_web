@@ -5,6 +5,9 @@
  *
  * DELETE is narrow: only POs with no contracts and no invoices can be
  * hard-deleted. Otherwise mark CANCELLED via PATCH.
+ *
+ * #1851 decision 7 — BILLING_ADMIN keeps PO edits and deletes, and every
+ * money or term field change and every delete writes an audit row.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -12,10 +15,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-// Why: PATCH and DELETE on a PO are finance-team mutations; allow
-// BILLING_ADMIN alongside OWNER while still excluding MAINTAINER. See
-// `lib/auth/billing-admin-gate.ts`.
-import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionPurchaseOrder } from "@/lib/enterprise/transitions";
 
@@ -33,6 +32,27 @@ const PatchBodySchema = z
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
+
+/** JSON-safe snapshot of the named fields (BigInt and Date as strings). */
+function auditValues(
+  source: Partial<Record<string, unknown>>,
+  keys: readonly string[],
+): Record<string, string | null> {
+  return Object.fromEntries(
+    keys.map((key) => {
+      const value = source[key];
+      if (value instanceof Date) return [key, value.toISOString()];
+      if (
+        typeof value === "bigint" ||
+        typeof value === "number" ||
+        typeof value === "string"
+      ) {
+        return [key, String(value)];
+      }
+      return [key, null];
+    }),
+  );
+}
 
 export async function GET(
   _req: NextRequest,
@@ -72,7 +92,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "purchaseOrders.manage",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -152,6 +175,28 @@ export async function PATCH(
         }
       }
 
+      // #1851 decision 7 — one row naming each money/term field's old and
+      // new value, whichever branch wrote it.
+      const changed = Object.keys(moneyOrTermData) as Array<
+        keyof typeof moneyOrTermData
+      >;
+      if (changed.length > 0) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_UPDATED,
+            description: `PurchaseOrder ${current.poNumber} updated: ${changed.join(", ")}`,
+            details: {
+              poId,
+              from: auditValues(current, changed),
+              to: auditValues(moneyOrTermData, changed),
+            },
+          },
+        });
+      }
+
       // updateMany returns no row — re-read in-tx for the response body.
       return tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
     });
@@ -181,7 +226,10 @@ export async function DELETE(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "purchaseOrders.manage",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   try {
@@ -206,6 +254,23 @@ export async function DELETE(
         );
       }
       await tx.purchaseOrder.delete({ where: { id: poId } });
+      // #1851 decision 7 — the row outlives the PO, so it carries the money.
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "INVOICE",
+          action: AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_DELETED,
+          description: `PurchaseOrder ${current.poNumber} deleted`,
+          details: {
+            poId,
+            poNumber: current.poNumber,
+            status: current.status,
+            totalAmountPaise: String(current.totalAmountPaise),
+            remainingAmountPaise: String(current.remainingAmountPaise),
+          },
+        },
+      });
     });
     return new NextResponse(null, { status: 204 });
   } catch (err) {

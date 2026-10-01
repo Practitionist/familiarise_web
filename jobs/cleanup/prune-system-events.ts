@@ -52,15 +52,15 @@ export async function pruneSystemEvents(): Promise<{
   );
 }
 
-// The workflow executes this file directly; without an entry the scheduled run
-// only loaded the module and exited, so nothing was ever pruned.
-if (require.main === module) {
-  runJob("prune-system-events", async () => {
-    await abortIfMaintenance("prune-system-events");
-    try {
-      await pruneSystemEvents();
-    } finally {
-      await prisma.$disconnect();
-    }
-  });
-}
+// The workflow executes this file directly via tsx (ESM); the old
+// `require.main === module` guard never fires under tsx, so the scheduled run
+// only loaded the module and exited without pruning. Run unconditionally like
+// every other job entrypoint.
+runJob("prune-system-events", async () => {
+  await abortIfMaintenance("prune-system-events");
+  try {
+    await pruneSystemEvents();
+  } finally {
+    await prisma.$disconnect();
+  }
+});

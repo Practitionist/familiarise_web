@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { getStripeClient } from "@/lib/payments/core/stripe";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
+import { reportUnknownPayoutStatus } from "@/lib/payments/payouts/payout-service";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -26,6 +27,7 @@ import {
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import {
   confirmTopUp,
   walletCredit,
@@ -41,7 +43,7 @@ import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice"
 import { applyReversal } from "@/lib/payments/operations/reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import {
@@ -1180,12 +1182,14 @@ export async function handleRefundCreated(
           {
             // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
             // inherits the org-ness of the payment it reverses. dashboardUrl stays a
-            // router bounce deliberately: this goes to the PAYER, and an org billing
+            // personal route deliberately: this goes to the PAYER, and an org billing
             // page is not readable by a LEARNER whose booking was org-sponsored.
             ...notificationScope(payment.organizationId),
             amount,
             currency,
-            dashboardUrl: `${getAppUrl()}/dashboard`,
+            // #1527 — was a bare `/dashboard` router bounce; the recipient is
+            // always the payer.
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
           },
           { tx, entityRef: `payment:${payment.id}` },
         );
@@ -1276,13 +1280,16 @@ export async function handleDisputeCreated(
       // PM-4 — without the gateway lookup we can't link the dispute, so
       // earnings won't be held. The 6h reconcile-disputes cron is the only
       // backstop; page so it isn't silently dropped for 6h.
-      void recordSystemError({
+      // Awaited, not `void`: a floating write is lost whenever the invocation
+      // ends first, which is the failure `*Safe` exists to stop hiding. This one
+      // is outside the transaction, so the global client is fine here.
+      await recordSystemErrorSafe({
         category: "WEBHOOK",
         summary: `CRITICAL_DISPUTE_UNLINKED: Razorpay payment lookup failed for dispute ${disputeId}`,
         err: error,
         context: { disputeId, chargeId, gateway },
         correlationId: disputeId,
-      }).catch(() => {});
+      });
       unlinkAlertRecorded = true;
     }
   }
@@ -1296,6 +1303,17 @@ export async function handleDisputeCreated(
   // rw-antidependency aborts one and the retry sees the winner's effect.
   // #1654 — the bell is staged inside the tx and sent only after COMMIT.
   let stagedNotification: StagedTrigger | null = null;
+
+  // #1868 — same shape as `stagedNotification` and for the same reason. The
+  // CRITICAL_DISPUTE_UNLINKED page used to be written THROUGH the tx, so a
+  // later rollback silently discarded it: exactly the case where a critical
+  // page matters most, the one where it would have vanished. Staged inside the
+  // tx, written after COMMIT. The write deliberately does NOT pass `db: tx` —
+  // the transaction has closed by then, and reaching for the global client
+  // from inside an open tx is the PG_POOL_MAX=1 deadlock. Telemetry only; no
+  // money outcome depends on it.
+  type UnlinkAlert = Parameters<typeof recordSystemErrorSafe>[0];
+  let stagedUnlinkAlert: UnlinkAlert | null = null;
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -1327,16 +1345,16 @@ export async function handleDisputeCreated(
           // earnings stay payable until the 6h reconcile-disputes cron — page on it,
           // unless the lookup-failure catch above already paged for this incident.
           if (!unlinkAlertRecorded) {
-            // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps
-            // a telemetry failure from aborting the webhook.
-            await recordSystemError({
+            // Staged, not written — see `stagedUnlinkAlert`. Writing through the
+            // tx meant a CRITICAL page was rolled back with everything else, on
+            // precisely the failure it was raised to catch.
+            stagedUnlinkAlert = {
               category: "WEBHOOK",
               summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
               err: new Error("dispute payment not found"),
               context: { disputeId, chargeId, gateway },
               correlationId: disputeId,
-              db: tx,
-            }).catch(() => {});
+            };
           }
           return;
         }
@@ -1426,7 +1444,8 @@ export async function handleDisputeCreated(
             currency,
             reason,
             status: createdStatus ?? "NEEDS_RESPONSE",
-            dashboardUrl: `${getAppUrl()}/dashboard`,
+            // #1527 — the recipient is always the payer.
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
           },
           { tx, entityRef: `dispute:${disputeId}` },
         );
@@ -1441,6 +1460,12 @@ export async function handleDisputeCreated(
     ),
   );
   await attemptStaged(stagedNotification);
+  if (stagedUnlinkAlert) {
+    // Post-commit and awaited: the tx is closed, so the global client is safe
+    // here, and awaiting means the page cannot be lost to the invocation
+    // ending. `*Safe` still guarantees a recorder failure cannot throw.
+    await recordSystemErrorSafe(stagedUnlinkAlert);
+  }
   return result;
 }
 
@@ -1834,7 +1859,8 @@ export async function handleDisputeUpdated(
                 currency: dispute.currency,
                 reason: dispute.reason || undefined,
                 status: mappedStatus,
-                dashboardUrl: `${getAppUrl()}/dashboard`,
+                // #1527 — the recipient is always the payer.
+                dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
               },
               { tx, entityRef: `dispute:${disputeId}` },
             );
@@ -1865,15 +1891,13 @@ export async function handleDisputeUpdated(
     earnings: number;
   } | null;
   if (stagedClawbackPage) {
-    void Promise.resolve(
-      recordSystemError({
-        organizationId: null,
-        category: "PAYOUT",
-        summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) totalling ${stagedClawbackPage.amountPaise} paise on dispute ${stagedClawbackPage.disputeId}`,
-        err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
-        context: { ...stagedClawbackPage },
-      }),
-    ).catch(() => {});
+    void recordSystemErrorSafe({
+      organizationId: null,
+      category: "PAYOUT",
+      summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) totalling ${stagedClawbackPage.amountPaise} paise on dispute ${stagedClawbackPage.disputeId}`,
+      err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
+      context: { ...stagedClawbackPage },
+    });
   }
 
   return result;
@@ -2062,13 +2086,13 @@ export async function applyB2cChargebackReversal(
     // Earnings were reversed but there's no booking journal to mirror — don't
     // post an unbalanced guess. Page; the reconcile cron's
     // EARNINGS_WITHOUT_BOOKING_TXN owns the upstream gap.
-    void recordSystemError({
+    void recordSystemErrorSafe({
       organizationId: null,
       category: "LEDGER",
       summary: `B2C chargeback ${disputeId}: no booking ledger txn for payment ${paymentId} to reverse`,
       err: new Error("missing booking ledger txn"),
       context: { paymentId, disputeId },
-    }).catch(() => {});
+    });
     return;
   }
 
@@ -2153,6 +2177,7 @@ export async function handleRazorpayPayoutWebhook(
     status: string;
     failure_reason?: string;
     utr?: string;
+    reference_id?: string;
   },
 ): Promise<void> {
   // First: is this an OrganizationPayout? Look up by gatewayPayoutId.
@@ -2234,7 +2259,7 @@ export async function handleRazorpayPayoutWebhook(
     cancelled: "CANCELLED",
   };
 
-  const status = statusMap[payoutData.status] || "PENDING";
+  const status = statusMap[payoutData.status];
 
   // #813/#812 — a `payout.reversed` for an ALREADY-COMPLETED consultant payout
   // must post the inverse journal + re-open earnings, mirroring the org branch.
@@ -2256,6 +2281,17 @@ export async function handleRazorpayPayoutWebhook(
     }
   }
 
+  // R-5 — an unknown status keeps the payout as it is instead of downgrading it to PENDING.
+  if (!status) {
+    await reportUnknownPayoutStatus({
+      provider: PaymentGateway.RAZORPAY,
+      providerPayoutId: payoutData.id,
+      status: payoutData.status,
+      eventType,
+    });
+    return;
+  }
+
   await handlePayoutWebhook(
     PaymentGateway.RAZORPAY,
     payoutData.id,
@@ -2264,6 +2300,7 @@ export async function handleRazorpayPayoutWebhook(
     // UTR — forward the bank reference so a completing consultant payout
     // persists it, mirroring the org branch above.
     payoutData.utr,
+    payoutData.reference_id,
   );
 
   console.log(
@@ -2295,7 +2332,17 @@ export async function handleStripePayoutWebhook(
     canceled: "CANCELLED",
   };
 
-  const status = statusMap[payoutData.status] || "PENDING";
+  const status = statusMap[payoutData.status];
+  // R-5 — the Stripe twin of the same rule.
+  if (!status) {
+    await reportUnknownPayoutStatus({
+      provider: PaymentGateway.STRIPE,
+      providerPayoutId: payoutData.id,
+      status: payoutData.status,
+      eventType,
+    });
+    return;
+  }
   const failureReason = payoutData.failure_message || payoutData.failure_code;
 
   await handlePayoutWebhook(

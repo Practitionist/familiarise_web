@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -14,7 +15,7 @@ import {
   linkParticipantsToPayment,
   liveParticipant,
   recordParticipants,
-  setParticipantStatus,
+  transitionParticipant,
 } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
@@ -35,6 +36,7 @@ import {
 import {
   AppointmentsType,
   type Currency,
+  type OfferingPlanStatus,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -63,6 +65,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import {
   isUserEnrolled,
   isUserRegisteredForWebinar,
@@ -117,17 +120,27 @@ import {
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
+import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
 import { sumPaise } from "@/lib/payments/utils/money";
-import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import {
+  MARKETPLACE_VISIBILITY,
+  planSaleRefusal,
+} from "@/lib/api/plans/visibility";
 import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
+import {
+  classEnrolmentFrom,
+  type OpenClassEnrolment,
+} from "@/lib/booking/class-enrolment";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -200,6 +213,9 @@ const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
   AppointmentStatus.SCHEDULED,
 ];
+
+/** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
+const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
 /** Why a superseded open order's booking was cancelled (#1463). */
 const SUPERSEDED_HOLD_NOTE =
@@ -311,6 +327,8 @@ interface ReusableOrder {
   amount: number;
   currency: string;
   isMockPayment: boolean;
+  /** #1861 L1 — the hold's end, echoed so Checkout can time out before it. */
+  expiresAt?: Date | null;
   /** The booked window's slot rows (consultation/class shape); empty for
    *  subscription placeholders whose period lives on the slot rows too. */
   appointment?: {
@@ -367,35 +385,35 @@ export async function readInvoiceExposurePaise(
   db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
   organizationId: string,
 ): Promise<number> {
-  const [accrualAgg, outstandingAgg] = await Promise.all([
-    db.paymentLeg.aggregate({
-      where: {
-        source: {
-          in: [
-            "INVOICE_ACCRUAL",
-            "OVERAGE_INVOICE_ACCRUAL",
-            // Refunds append negative *_REVERSAL siblings (#786); without them
-            // a refunded seat kept counting against the limit.
-            "INVOICE_ACCRUAL_REVERSAL",
-            "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
-          ],
-        },
-        payment: {
-          organizationId,
-          paymentStatus: "SUCCEEDED",
-          billableToOrgInvoiceId: null,
-        },
+  // Sequential (never Promise.all on `tx`): under PG_POOL_MAX=1 a single
+  // interactive-tx connection cannot serve concurrent queries (#1435).
+  const accrualAgg = await db.paymentLeg.aggregate({
+    where: {
+      source: {
+        in: [
+          "INVOICE_ACCRUAL",
+          "OVERAGE_INVOICE_ACCRUAL",
+          // Refunds append negative *_REVERSAL siblings (#786); without them
+          // a refunded seat kept counting against the limit.
+          "INVOICE_ACCRUAL_REVERSAL",
+          "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+        ],
       },
-      _sum: { amountPaise: true },
-    }),
-    db.organizationInvoice.aggregate({
-      where: {
+      payment: {
         organizationId,
-        status: { in: ["ISSUED", "OVERDUE"] },
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: null,
       },
-      _sum: { totalPaise: true },
-    }),
-  ]);
+    },
+    _sum: { amountPaise: true },
+  });
+  const outstandingAgg = await db.organizationInvoice.aggregate({
+    where: {
+      organizationId,
+      status: { in: ["ISSUED", "OVERDUE"] },
+    },
+    _sum: { totalPaise: true },
+  });
   return (
     sumPaise(accrualAgg._sum.amountPaise) +
     sumPaise(outstandingAgg._sum.totalPaise)
@@ -474,6 +492,7 @@ export async function findReusablePendingOrderPayment(
       amount: true,
       currency: true,
       isMockPayment: true,
+      expiresAt: true,
       appointment: {
         select: {
           occurrences: {
@@ -605,6 +624,8 @@ async function releaseSupersededHolds(params: {
     for (const appointment of appointments) {
       if (appointment.webinarId || appointment.classId) continue;
 
+      // #1778 — the superseded hold frees its times: tell anyone waiting.
+      await stageNoticesForAppointmentHolds(tx, appointment.id);
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
       await transitionOccurrenceCompletion(tx, {
@@ -734,6 +755,8 @@ export class PaymentIntentManager {
     };
     paymentGateway: PaymentGateway;
     isMockPayment?: boolean;
+    customerId?: string;
+    holdExpiresAt?: Date;
   }) {
     try {
       // Imported at call time so the checkout bundle does not evaluate the
@@ -842,6 +865,7 @@ export async function calculateAmountAndValidate(
     let amount = 0;
     let plan;
     let priceCurrency: Currency = "INR";
+    let classSessionsQuoted: number | null = null;
 
     // Lazy-create ConsulteeProfile if this is the user's first
     // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
@@ -874,10 +898,20 @@ export async function calculateAmountAndValidate(
       p: {
         archivedAt: Date | null;
         visibility: string;
+        status?: OfferingPlanStatus | null;
         consultantProfile: { verificationStatus: string } | null;
       },
       label: string,
     ) => {
+      // #1527 Q4 — new sales only. Pay-links minted for approved requests
+      // (approval-payment.ts) deliberately skip this, so unpublishing a plan
+      // never strands a booking the consultant already accepted.
+      if (planSaleRefusal(p)) {
+        throw new BookingRuleError(
+          "PLAN_NOT_PUBLISHED",
+          `${label} isn't available to book right now.`,
+        );
+      }
       if (
         p.consultantProfile &&
         p.consultantProfile.verificationStatus !== "VERIFIED"
@@ -1074,7 +1108,18 @@ export async function calculateAmountAndValidate(
           });
         }
 
-        amount = plan.price;
+        // #1819 — a late joiner pays for the sessions left; the tx re-derives this.
+        const enrolment = assertClassEnrolmentOpen(
+          classEnrolmentFrom({
+            pricePaise: plan.price,
+            N: plan.totalSessions,
+            lateJoinUntilSession: plan.lateJoinUntilSession,
+            sessions: classInstance.appointment?.occurrences ?? [],
+            now: new Date(),
+          }),
+        );
+        amount = enrolment.basePaise;
+        classSessionsQuoted = enrolment.remaining;
         priceCurrency = plan.priceCurrency;
         break;
       }
@@ -1197,6 +1242,7 @@ export async function calculateAmountAndValidate(
       creditsApplied,
       buyerCountry,
       isInternational,
+      classSessionsQuoted,
     };
   });
 }
@@ -2149,7 +2195,7 @@ async function revalidateInsideLock(
       ) {
         throw Object.assign(
           new Error(
-            "Consent required before your organization can book sessions for you.",
+            "Consent required before your organization can book sessions for you. Give session-booking consent in Settings › Account › Data consent.",
           ),
           {
             httpStatus: 403,
@@ -2761,6 +2807,8 @@ export async function handleWebinarCheckout(
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
+  /** #1852 — the org whose money paid for this seat; null for a personal purchase. */
+  payerOrganizationId: string | null = null,
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
@@ -2872,15 +2920,44 @@ export async function handleWebinarCheckout(
   // Webinar participants attend the entire session on the consultant's
   // occurrences; the seat is one participant row (#1554), never a new row.
   if (appointment && appointment.occurrences.length > 0) {
+    // #1852 — the seat carries its OWN payer org, not the host's: one
+    // webinar can seat B2C attendees and members of several orgs, and each
+    // org sees, pays for and reports on only its own seats.
     await recordParticipants(
       tx,
       appointment.id,
       [{ userId, role: "CONSULTEE" }],
-      { status: _skipPayment ? "CONFIRMED" : "HELD" },
+      {
+        status: _skipPayment ? "CONFIRMED" : "HELD",
+        organizationId: payerOrganizationId,
+      },
     );
+    // #1780 row 2 — the seat keeps the refund window it was sold under.
+    await tx.appointmentParticipant.updateMany({
+      where: { appointmentId: appointment.id, userId },
+      data: { refundWindowHours: plan.refundWindowHours },
+    });
   }
 
   return { appointment, plan, amount: plan.price };
+}
+
+/** #1819 — a batch past its host's cutoff refuses with ENROLMENT_CLOSED (409). */
+function assertClassEnrolmentOpen(
+  enrolment: ReturnType<typeof classEnrolmentFrom>,
+): OpenClassEnrolment {
+  if (enrolment.state === "unscheduled") {
+    throw new Error(
+      "This class has not been scheduled yet. Enrollment opens once all sessions are scheduled.",
+    );
+  }
+  if (enrolment.state === "closed") {
+    throw new BookingRuleError(
+      "ENROLMENT_CLOSED",
+      "Enrolment for this batch has closed. Please choose a batch that has not started yet.",
+    );
+  }
+  return enrolment;
 }
 
 export async function handleClassCheckout(
@@ -2888,6 +2965,10 @@ export async function handleClassCheckout(
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
+  /** #1819 — the sessions the quote priced; null skips the stale-quote check. */
+  quotedSessions: number | null = null,
+  /** #1852 — the org whose money paid for this seat; null for a personal purchase. */
+  payerOrganizationId: string | null = null,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
@@ -2971,16 +3052,49 @@ export async function handleClassCheckout(
     throw new Error("No class sessions found");
   }
 
+  // #1819 — re-derived at commit over the quote's rows (cancelled ones too): a
+  // session that started since the quote re-prices the order.
+  const enrolment = assertClassEnrolmentOpen(
+    classEnrolmentFrom({
+      pricePaise: plan.price,
+      N: plan.totalSessions,
+      lateJoinUntilSession: plan.lateJoinUntilSession,
+      sessions: await tx.appointmentOccurrence.findMany({
+        where: { appointmentId: wrapper.id, deletedAt: null },
+        select: { ordinal: true, startsAt: true, completionStatus: true },
+      }),
+      now: new Date(),
+    }),
+  );
+  if (quotedSessions !== null && enrolment.remaining !== quotedSessions) {
+    throw new BookingRuleError(
+      "CLASS_PRICE_CHANGED",
+      "A session of this batch started while you were checking out, so its price has changed. Please review the new price and try again. You have not been charged.",
+    );
+  }
+
   // Class participants attend every session on the consultant's occurrences;
   // the seat is one participant row on the wrapper (#1554), never new rows.
+  // #1852 — the seat carries its own payer org (see handleWebinarCheckout).
   await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
     status: _skipPayment ? "CONFIRMED" : "HELD",
+    organizationId: payerOrganizationId,
+  });
+  // #1780 row 2 — the seat keeps the refund window it was sold under; #1819 —
+  // and the sessions it paid for, which fix its refund unit.
+  await tx.appointmentParticipant.updateMany({
+    where: { appointmentId: wrapper.id, userId },
+    data: {
+      refundWindowHours: plan.refundWindowHours,
+      sessionsPurchased: enrolment.remaining,
+    },
   });
 
   return {
     appointment: wrapper,
     plan,
-    amount: plan.price,
+    amount: enrolment.basePaise,
+    sessionsPurchased: enrolment.remaining,
     slotsLinked: sessions.length,
     // For enterprise cap counting (issue #710): one engagement per
     // class session. The learner is enrolling in every existing session
@@ -3226,7 +3340,7 @@ export async function handleCheckout(
     ) {
       throw Object.assign(
         new Error(
-          "Consent required before your organization can book sessions for you. Grant session-booking consent in your organization's privacy settings.",
+          "Consent required before your organization can book sessions for you. Give session-booking consent in Settings › Account › Data consent.",
         ),
         {
           httpStatus: 403,
@@ -3349,6 +3463,7 @@ export async function handleCheckout(
       creditsApplied,
       buyerCountry: detectedBuyerCountry,
       isInternational,
+      classSessionsQuoted,
     } = await calculateAmountAndValidate(
       validatedData,
       userId,
@@ -3387,6 +3502,17 @@ export async function handleCheckout(
 
     // Get plan data for consultant ID (needed for lock acquisition)
     const planData = await getPlanDataForLock(validatedData);
+
+    // #1771 row 1 — before the slot lock, so a slow Customer API holds nothing; a
+    // failure or timeout yields undefined (no saved-card offer), never a failed checkout.
+    const savedCardCustomer =
+      amount > 0 && (!fundingSource || fundingSource === "PERSONAL")
+        ? await savedCardCustomerId(
+            userId,
+            validatedData.paymentGateway,
+            isMockPayment,
+          )
+        : undefined;
 
     // STEP 2: ACQUIRE DISTRIBUTED LOCK (prevents race conditions)
     // #898 follow-up — also serialize on the consultee so the SAME person can't
@@ -3559,6 +3685,7 @@ export async function handleCheckout(
         // org-sponsored payments never land in PENDING, see the comment
         // above findReusablePendingOrderPayment), so the page must open it.
         skipPayment: reusableOrder.isMockPayment,
+        holdExpiresAt: reusableOrder.expiresAt?.toISOString() ?? null,
         message: "Resuming your in-progress checkout.",
       };
     }
@@ -3594,6 +3721,10 @@ export async function handleCheckout(
     };
     await renewOrAbort(perAttemptTtl);
 
+    // #1861 L1 — one deadline for the gateway's capture window and the
+    // PENDING row, so a Serializable retry cannot push the row past the order.
+    const holdExpiresAt = new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS);
+
     // Enterprise org funding skips the gateway entirely.
     if (isOrgSponsoredPayment) {
       const prefix = isOrgWalletPayment
@@ -3626,6 +3757,8 @@ export async function handleCheckout(
           }),
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
+          customerId: savedCardCustomer,
+          holdExpiresAt,
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
@@ -3773,6 +3906,10 @@ export async function handleCheckout(
                   validatedData,
                   userId,
                   skipPayment,
+                  seatPayerOrganizationId(
+                    organizationId,
+                    isOrgSponsoredPayment,
+                  ),
                 );
                 createdAppointment = webinarResult.appointment;
                 engagementsForCap = 1;
@@ -3785,6 +3922,11 @@ export async function handleCheckout(
                   validatedData,
                   userId,
                   skipPayment,
+                  classSessionsQuoted,
+                  seatPayerOrganizationId(
+                    organizationId,
+                    isOrgSponsoredPayment,
+                  ),
                 );
                 // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
@@ -3831,9 +3973,7 @@ export async function handleCheckout(
                 userId: userId,
                 appointmentId: createdAppointment?.id || null,
                 discountCodeId,
-                expiresAt: skipPayment
-                  ? null
-                  : new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+                expiresAt: skipPayment ? null : holdExpiresAt,
                 buyerCountry: detectedBuyerCountry,
                 isInternational,
                 displayCurrencyAtCheckout,
@@ -3897,7 +4037,7 @@ export async function handleCheckout(
                 );
               }
               if (skipPayment) {
-                await setParticipantStatus(tx, participantWhere, "CONFIRMED");
+                await transitionParticipant(tx, participantWhere, "CONFIRMED");
               }
             }
 
@@ -4237,6 +4377,7 @@ export async function handleCheckout(
 
             return {
               appointmentId: createdAppointment?.id,
+              holdExpiresAt: payment.expiresAt,
               creditsApplied: actualCreditsApplied,
               creditsRemainingAfter,
               capNearBell,
@@ -4306,24 +4447,28 @@ export async function handleCheckout(
           // P3 referral bells, scheduled after the response (scheduleAfter
           // degrades to a floating promise outside a request scope — jest
           // and scripts reach this path). Bells, never money truth.
-          scheduleAfter(() =>
-            notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-              console.error("[referral-qualification-bell] failed:", bellErr),
-            ),
+          scheduleAfter(
+            () =>
+              notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+                console.error("[referral-qualification-bell] failed:", bellErr),
+              ),
+            "checkout.referral-qualification-bell",
           );
           // P3 credits-applied bell: applyCreditsToPayment ran inside the
           // committed tx above, so this post-commit read is the correct
           // boundary (belling inside service.ts would fire in-tx).
           if (result.creditsApplied > 0) {
-            scheduleAfter(() =>
-              notifyCreditsAppliedBestEffort({
-                userId,
-                creditsUsedPaise: result.creditsApplied,
-                remainingPaise: result.creditsRemainingAfter,
-                appointmentType: validatedData.appointmentType,
-              }).catch((bellErr) =>
-                console.error("[credits-applied-bell] failed:", bellErr),
-              ),
+            scheduleAfter(
+              () =>
+                notifyCreditsAppliedBestEffort({
+                  userId,
+                  creditsUsedPaise: result.creditsApplied,
+                  remainingPaise: result.creditsRemainingAfter,
+                  appointmentType: validatedData.appointmentType,
+                }).catch((bellErr) =>
+                  console.error("[credits-applied-bell] failed:", bellErr),
+                ),
+              "checkout.credits-applied-bell",
             );
           }
         } catch (referralError) {
@@ -4426,6 +4571,8 @@ export async function handleCheckout(
         // Matches checkout-replay.ts's SUCCEEDED-branch field name.
         skipPayment:
           isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
+        // #1861 L1 — Checkout's `timeout` is sized to this.
+        holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
@@ -4461,10 +4608,10 @@ export async function handleCheckout(
       const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
       // #1583 C-P1-04 — the loser of two same-key checkouts; the route
       // replays the winner, so this is a modelled race and must not be rewrapped.
-      const isIdempotencyKeyCollision =
-        dbError instanceof Prisma.PrismaClientKnownRequestError &&
-        dbError.code === "P2002" &&
-        String(dbError.meta?.target ?? "").includes("clientIdempotencyKey");
+      const isIdempotencyKeyCollision = isUniqueViolationOn(
+        dbError,
+        "clientIdempotencyKey",
+      );
       const isModelledOutcome =
         isIdempotencyKeyCollision ||
         dbError instanceof WalletFrozenError ||
@@ -4620,10 +4767,7 @@ export async function handleCheckout(
       (error as { code?: unknown } | null)?.code,
     );
     // #1583 C-P1-04 — the same-key collision the inner catch let through.
-    const isKeyCollision =
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      String(error.meta?.target ?? "").includes("clientIdempotencyKey");
+    const isKeyCollision = isUniqueViolationOn(error, "clientIdempotencyKey");
     reportSentryError(error, {
       subsystem: "payments",
       expected:

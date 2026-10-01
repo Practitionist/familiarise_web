@@ -25,7 +25,7 @@ type RouteParams = {
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     // Check authentication
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -52,9 +52,12 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));
 
-jest.mock("../../lib/enterprise/system-events", () => ({
-  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
-}));
+jest.mock("../../lib/enterprise/system-events", () => {
+  return {
+    recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+  };
+});
 
 import { PLATFORM_DEFAULT_TERMS } from "@/lib/payments/operations/cancellation-policy";
 import { refundRejectedRequest } from "../../lib/booking/rejection-refund";
@@ -327,4 +330,16 @@ describe("refundRejectedRequest", () => {
     expect(result?.amountRefundedPaise).toBe(100_000);
     expect(result?.failed).toBeUndefined();
   });
+});
+
+// #1780 R-3 — the rejection refund's amount is integer basis points in
+// BigInt, the same arithmetic as cancellation-policy, never float paise.
+it("computes the rejection amount in BigInt basis points", () => {
+  const src = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/lib/booking/rejection-refund.ts`, "utf8");
+  expect(src).toContain("BigInt(Math.round(refundPct * 100))");
+  expect(src).not.toContain(
+    "Math.floor((ctx.paidPayment.amountPaise * refundPct) / 100)",
+  );
 });

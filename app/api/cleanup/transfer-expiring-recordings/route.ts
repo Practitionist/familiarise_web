@@ -8,12 +8,14 @@
  * Schedule: Every 6 hours (via GitHub Actions)
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import * as Sentry from "@sentry/nextjs";
 import {
   assertNotInMaintenance,
@@ -43,7 +45,8 @@ async function notifyConsultantsOfExpiringRecordings(
     byConsultant.set(rec.consultantUserId, list);
   }
 
-  const dashboardUrl = `${getAppUrl()}/dashboard`;
+  // #1527 — every recipient here is a consultant.
+  const dashboardUrl = `${getAppUrl()}${goHref("expert", "recordings")}`;
   await Promise.allSettled(
     Array.from(byConsultant.entries()).map(([consultantUserId, recs]) => {
       const soonest = recs.reduce(
@@ -67,7 +70,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const cronSecret =
       process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    const sha = (v: string) => createHash("sha256").update(v).digest();
+    if (
+      !cronSecret ||
+      !authHeader ||
+      !timingSafeEqual(sha(authHeader), sha(`Bearer ${cronSecret}`))
+    ) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     // The cron core is shared with the jobs/** entrypoint, which exits on
@@ -77,7 +85,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     streamLogger.info("Starting transfer-expiring-recordings cron");
     Sentry.logger.info("cron:transfer-expiring-recordings started");
 
-    // #476 — both phases under one lock, same key as the GH Actions entry.
+    // #476 — all three phases under one lock, same key as the GH Actions
+    // entry. The notify MUST stay inside the lock: the old shape released the
+    // lock before notifying, so two sequential ticks (Actions + ticker) both
+    // passed the lock and both pinged the same consultants.
     const { transferResult, expiringStreamOnly } = await withCronLock(
       "transfer-expiring-recordings",
       { failMode: "open" },
@@ -95,17 +106,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         // Phase 2: Find STREAM_ONLY recordings expiring soon (for notifications)
         const expiringStreamOnly =
           await RecordingTransferService.getExpiringStreamOnlyRecordings(3);
+
+        // Phase 3 (STR-3) — warn consultants inside the lock.
+        if (expiringStreamOnly.length > 0) {
+          streamLogger.info("STREAM_ONLY recordings expiring soon", {
+            count: expiringStreamOnly.length,
+          });
+          await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
+        }
         return { transferResult, expiringStreamOnly };
       },
     );
-
-    // STR-3 — warn consultants whose STREAM_ONLY recordings are about to expire.
-    if (expiringStreamOnly.length > 0) {
-      streamLogger.info("STREAM_ONLY recordings expiring soon", {
-        count: expiringStreamOnly.length,
-      });
-      await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
-    }
 
     Sentry.logger.info("cron:transfer-expiring-recordings finished", {
       transferred: transferResult.succeeded,

@@ -56,7 +56,8 @@ const consulteeProfileSelect = {
 } as const;
 
 // A mutable array: Prisma's `in` rejects the readonly tuple `as const` makes.
-const LIVE_REFUND_STATUSES: RefundStatus[] = ["PENDING", "SUCCEEDED"];
+// #1780 — FAILED rides along for the refund timeline; the money sums read status explicitly.
+const LIVE_REFUND_STATUSES: RefundStatus[] = ["PENDING", "SUCCEEDED", "FAILED"];
 
 /**
  * What a payer may read of their own row: the amount line, the rail it rode,
@@ -77,13 +78,27 @@ const paymentDisplaySelect = {
   createdAt: true,
   userId: true,
   // #1365 — the buyer's tax invoice is the receipt; a link, not the row.
-  consumerInvoice: { select: { id: true } },
+  // #1527 — its credit notes ride along so a refund can link its note.
+  consumerInvoice: {
+    select: {
+      id: true,
+      creditNotes: {
+        select: { id: true, creditNoteNumber: true },
+        orderBy: { issuedAt: "asc" },
+      },
+    },
+  },
   // `PaymentStatus` never reaches REFUNDED; the shown status is derived from
   // the refunds that went through (lib/appointments/seat-payments.ts). A
   // PENDING one rides along so the money line can say "on its way" (#1675).
   refunds: {
     where: { deletedAt: null, status: { in: LIVE_REFUND_STATUSES } },
-    select: { amountPaise: true, status: true },
+    select: {
+      amountPaise: true,
+      status: true,
+      refundId: true,
+      createdAt: true,
+    },
   },
   disputes: { select: { status: true } },
 } as const;
@@ -152,6 +167,8 @@ export async function readAppointmentDetail(appointmentId: string) {
           // #1428 — the tentative-hold deadline shown on the detail page;
           // without it a held slot has no way to say when it releases.
           expiresAt: true,
+          // #1775 C-5 — the 48 h allocate-or-refund clock.
+          capturedAt: true,
           // Which rail funded the row (lib/appointments/payment-display.ts):
           // an org-funded booking shows its sponsor and no amount.
           organizationId: true,
@@ -233,6 +250,18 @@ export function appointmentRaterRole(
   if (consultantUserIds.includes(userId)) return "PROVIDER";
   if (consulteeUserIds.includes(userId)) return "CONSULTEE";
   return null;
+}
+
+/** #1527 — which side(s) of this appointment a user is on (`/dashboard/go/auto`). */
+export function appointmentViewerSides(
+  userId: string,
+  detail: TAppointmentDetail,
+): { asConsultant: boolean; asConsultee: boolean } {
+  const { consulteeUserIds, consultantUserIds } = participantUserIds(detail);
+  return {
+    asConsultant: consultantUserIds.includes(userId),
+    asConsultee: consulteeUserIds.includes(userId),
+  };
 }
 
 export function canAccessAppointment(

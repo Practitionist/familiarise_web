@@ -76,6 +76,9 @@ const payoutEntitySchema = z.object({
   // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
   // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
   utr: z.string().nullable().optional(),
+  // #1846 N1 — our payout row id, sent as `reference_id` at creation. It
+  // matches a consultant payout whose submit reply was lost.
+  reference_id: z.string().nullable().optional(),
 });
 
 /**
@@ -108,6 +111,12 @@ export async function routeCapturedPayment(params: {
   gatewayPaymentId?: string;
 }): Promise<void> {
   const { orderId, notes, amountPaise, gatewayPaymentId } = params;
+
+  // #1861 P4b — IDs only. `orderId` is what Payment.paymentIntent stores;
+  // an internal Payment.id or appointmentId is not yet resolved at this
+  // point in the pipeline (the handlers below look it up), so gatewayOrderId
+  // is what's known here.
+  Sentry.getCurrentScope().setTag("gatewayOrderId", orderId);
 
   if (notes.type === "credit_purchase" || notes.type === "invoice_payment") {
     // The org path only trusts an amount that came off a PAYMENT entity. On
@@ -446,6 +455,7 @@ export async function processRazorpayWebhookEvent(
           status: payoutEvent.status,
           failure_reason: payoutEvent.failure_reason ?? undefined,
           utr: payoutEvent.utr ?? undefined,
+          reference_id: payoutEvent.reference_id ?? undefined,
         });
         break;
       }

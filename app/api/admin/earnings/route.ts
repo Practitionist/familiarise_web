@@ -30,8 +30,14 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
 
-    // Build where clause
-    const where = status ? { status } : {};
+    // #1771 K-3 — the Earnings tab filters by consultant and payment too.
+    const consultantProfileId = searchParams.get("consultantProfileId");
+    const paymentId = searchParams.get("paymentId");
+    const where = {
+      ...(status ? { status } : {}),
+      ...(consultantProfileId ? { consultantProfileId } : {}),
+      ...(paymentId ? { paymentId } : {}),
+    };
 
     // Get earnings
     const [earnings, total] = await Promise.all([
@@ -68,15 +74,18 @@ export async function GET(req: NextRequest) {
       prisma.consultantEarnings.count({ where }),
     ]);
 
-    return NextResponse.json({
-      earnings,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        earnings,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching earnings:", error);

@@ -31,6 +31,16 @@ export const PAYOUT_CONSTANTS = {
   MAX_RETRY_ATTEMPTS: 3,
 } as const;
 
+/**
+ * #1771 row 6 — an instant payout at or below this (default ₹25,000) is
+ * approved and sent at once; above it, it joins the admin approval queue.
+ * `INSTANT_PAYOUT_AUTO_APPROVE_PAISE` overrides it with a positive integer.
+ */
+export const INSTANT_PAYOUT_AUTO_APPROVE_PAISE = (() => {
+  const fromEnv = Number(process.env.INSTANT_PAYOUT_AUTO_APPROVE_PAISE);
+  return Number.isSafeInteger(fromEnv) && fromEnv > 0 ? fromEnv : 2_500_000;
+})();
+
 // ============================================================================
 // GST/Tax Constants
 // ============================================================================

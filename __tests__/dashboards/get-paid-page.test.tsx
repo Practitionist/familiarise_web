@@ -302,7 +302,7 @@ describe("Y2-3 Home needs-you row", () => {
     expect(off[0]).toMatchObject({
       key: "payout-setup",
       title: "Add your bank account — payouts begin at launch",
-      ctaHref: `/dashboard/consultant/${CP}/settings/payouts`,
+      ctaHref: `/dashboard/consultant/${CP}/settings/get-paid`,
     });
     expect(
       deriveConsultantActionItems({ ...base, livePayoutsEnabled: true })[0]
@@ -317,14 +317,19 @@ describe("Y2-2 the server page imports no client-module function", () => {
       process.cwd(),
       "app/dashboard/consultant/[consultantId]/(features)/settings/payouts",
     );
-    const page = readFileSync(path.join(dir, "page.tsx"), "utf8");
+    // #1785 L-2 — the page moved to the hub's get-paid section; the
+    // components stayed under payouts/.
+    const page = readFileSync(
+      path.join(dir, "..", "get-paid", "page.tsx"),
+      "utf8",
+    );
     // FAMILIARISE_WEB-5Q: calling a `"use client"` export from the RSC 500s
     // on every load. Only the component may cross that line.
     const fromClient = page.match(
-      /import\s*\{([^}]*)\}\s*from\s*"\.\/GetPaidClient"/,
+      /import\s*\{([^}]*)\}\s*from\s*"\.\.\/payouts\/GetPaidClient"/,
     );
     expect(fromClient?.[1].trim()).toBe("GetPaidClient");
-    expect(page).toContain('from "./payout-setup-keys"');
+    expect(page).toContain('from "../payouts/payout-setup-keys"');
     const keys = readFileSync(path.join(dir, "payout-setup-keys.ts"), "utf8");
     expect(keys).not.toMatch(/^"use client"/m);
     expect(keys).not.toMatch(/^import /m);

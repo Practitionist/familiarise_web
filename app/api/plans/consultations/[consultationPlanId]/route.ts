@@ -12,7 +12,14 @@ import {
 } from "@/lib/api/plans/archive";
 
 import { getSession } from "@/lib/auth-server";
+import {
+  deleteUntouchedOffering,
+  offeringDeleteRefusal,
+  OfferingInUseError,
+  UNTOUCHED_CONSULTATION_PLAN,
+} from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
+import { isHiddenDraft } from "@/lib/api/plans/draft-access";
 import * as Sentry from "@sentry/nextjs";
 export async function GET(
   request: NextRequest,
@@ -20,15 +27,24 @@ export async function GET(
 ) {
   try {
     const { consultationPlanId } = await params;
+    // #1527 Q4 — no booking rows: this GET is open to any caller, and neither
+    // the editor nor checkout reads them.
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
       where: { id: consultationPlanId },
       include: {
         consultantProfile: { select: planConsultantSelect },
-        consultations: true,
         topics: true,
         faqs: { orderBy: { order: "asc" } },
       },
     });
+
+    // #1527 Q4 — a draft is readable by its author only.
+    if (await isHiddenDraft(consultationPlan)) {
+      return NextResponse.json(
+        { error: "Consultation plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(consultationPlan) },
@@ -62,7 +78,7 @@ export async function PUT(
 ) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -138,6 +154,8 @@ export async function PUT(
         faqs: faqReplaceNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
         recordingStoragePolicy: validatedData.recordingStoragePolicy,
+        // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
+        status: validatedData.status,
         ...topicsUpdate,
       },
       include: {
@@ -198,7 +216,7 @@ export async function PATCH(
   { params }: { params: Promise<{ consultationPlanId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -289,7 +307,7 @@ export async function DELETE(
 ) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -321,48 +339,57 @@ export async function DELETE(
       );
     }
 
-    // Check if there are any associated consultations
-    const associatedConsultations = await prisma.consultation.findMany({
-      where: { consultationPlanId },
-    });
-
-    if (associatedConsultations.length > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete consultation plan with associated consultations",
-        },
-        { status: 400 },
-      );
-    }
-
-    const consultationPlan = await prisma.consultationPlan.delete({
-      where: { id: consultationPlanId },
-      include: {
-        consultantProfile: {
+    // #1846 CT-02 — the no-history guard rides the DELETE's WHERE inside one
+    // Serializable transaction (lib/booking/offering-delete.ts); the old
+    // findMany-then-delete let a request land in between and cascade away.
+    const ownedPlan = {
+      id: consultationPlanId,
+      consultantProfile: { userId: session.user.id },
+    };
+    const consultationPlan = await deleteUntouchedOffering(
+      "CONSULTATION",
+      consultationPlanId,
+      async (tx) => {
+        const plan = await tx.consultationPlan.findFirst({
+          where: ownedPlan,
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+            consultantProfile: {
+              include: {
+                user: {
+                  select: { id: true, name: true, email: true, image: true },
+                },
+                domain: true,
+                subDomains: true,
+                tags: true,
               },
             },
-            domain: true,
-            subDomains: true,
-            tags: true,
+            topics: true,
           },
-        },
-        topics: true,
+        });
+        if (!plan) return null;
+        const { count } = await tx.consultationPlan.deleteMany({
+          where: { ...ownedPlan, ...UNTOUCHED_CONSULTATION_PLAN },
+        });
+        if (count === 0) throw new OfferingInUseError("CONSULTATION");
+        return plan;
       },
-    });
+    );
+    if (!consultationPlan) {
+      return NextResponse.json(
+        { error: "Consultation plan not found" },
+        { status: 404 },
+      );
+    }
 
     return NextResponse.json(
       { data: transformTopicsToStrings(consultationPlan) },
       { status: 200 },
     );
   } catch (error) {
+    const refusal = offeringDeleteRefusal(error);
+    if (refusal) {
+      return NextResponse.json(refusal.body, { status: refusal.status });
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

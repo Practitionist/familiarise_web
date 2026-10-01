@@ -1,5 +1,7 @@
 "use client";
 
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { gatewayLabel } from "@/lib/labels/money-labels";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 // `formatCurrencyAmount`, not the old major-unit formatter (deleted in #1396):
@@ -78,8 +80,6 @@ const formatDate = (dateString: string) => {
 };
 
 export interface RefundsPageProps {
-  /** Base URL for navigation links (e.g. "/dashboard/admin", "/dashboard/staff/123") */
-  basePath: string;
   /** API endpoint to fetch refunds from */
   apiEndpoint?: string;
   /** Page title */
@@ -91,12 +91,12 @@ export interface RefundsPageProps {
 }
 
 export function RefundsPage({
-  basePath,
   apiEndpoint = "/api/admin/refunds",
   title = "Refunds",
   description = "View and track refund requests",
   queryKeyPrefix = "refunds",
 }: RefundsPageProps) {
+  const { basePath } = useBackofficeCapability();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -206,7 +206,7 @@ export function RefundsPage({
       key: "gateway",
       header: "Gateway",
       className: "text-sm text-muted-foreground",
-      cell: (refund) => refund.paymentGateway,
+      cell: (refund) => gatewayLabel(refund.paymentGateway),
     },
     {
       key: "status",

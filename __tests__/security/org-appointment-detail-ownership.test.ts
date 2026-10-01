@@ -10,10 +10,10 @@
  * SSR ownership hole closed in #1029, where a server page trusted a route param
  * because a client layout appeared to have checked it.
  *
- * Participation rather than `operations.read`: the page renders documents and
- * offers reschedule and cancel, which are participant actions. An operator's
- * view of org sessions stays the metadata-only list (ADR 20), so an OWNER who
- * is not on the session gets a 404 here, not a read.
+ * #1527 widened WHO gets a view, never what a non-participant sees: the
+ * attendee gets the full detail, the delivering expert the consultant detail,
+ * and operators only ADR 20 metadata (payer admins may also cancel or ask to
+ * reschedule, Q11). Anyone else still gets a 404.
  */
 
 import { readFileSync } from "fs";
@@ -26,7 +26,11 @@ const src = readFileSync(join(process.cwd(), PAGE), "utf8");
 
 describe("org appointment detail binds both ids", () => {
   it("requires org membership first", () => {
-    expect(src).toContain("await requireOrgAccess(orgId)");
+    // #1527 decision 6 — SUSPENDED is admitted for the member's own session
+    // only; the operator branch 404s it.
+    expect(src).toContain(
+      "await requireOrgAccess(orgId, { allowSuspended: true })",
+    );
   });
 
   it("checks the appointment belongs to THIS org, not merely to some org", () => {
@@ -48,11 +52,34 @@ describe("org appointment detail binds both ids", () => {
     // appointment exists to someone who should not know that.
     const checks = [
       "if (access.error)",
-      "if (!detail || !profile) notFound()",
+      "if (!detail) notFound()",
       "if (appointment.organizationId !== orgId) notFound()",
-      "if (!owns) notFound()",
     ];
     for (const c of checks) expect(src).toContain(c);
+    // #1527 — no act-for-org grant and no operations.read → 404.
+    expect(src).toMatch(
+      /!mayCancel &&\s*!mayReschedule &&\s*!hasOrgPermission\(role, "operations\.read"\)\s*\)\s*\{\s*notFound\(\);/,
+    );
+  });
+
+  it("gives the delivering expert the consultant detail, not a 404", () => {
+    expect(src).toContain(
+      "appointmentViewerSides(userId, detail).asConsultant",
+    );
+    expect(src).toContain("<DelivererDetailClient");
+  });
+
+  it("offers org-actor actions only to payer-side actors, only on 1:1 bookings", () => {
+    // #1527 decision 8 — reschedule and cancel are separate grants.
+    expect(src).toContain('const mayCancel = canActForOrg(role, "cancel")');
+    expect(src).toContain(
+      'const mayReschedule = canActForOrg(role, "reschedule")',
+    );
+    expect(src).toContain(
+      "appointment.consultation ?? appointment.subscription",
+    );
+    expect(src).toMatch(/canCancel=\{\s*mayCancel && status !== null/);
+    expect(src).toMatch(/canReschedule=\{\s*mayReschedule && status !== null/);
   });
 
   it("orders the org check before the participation check", () => {

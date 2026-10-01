@@ -204,6 +204,7 @@ export type AllocationErrorCode =
   | "PERIOD_ENDED" // scheduling period is in the past — 400
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
   | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
+  | "SUBSCRIPTION_UNPAID" // #1775 C-1 — a plan with no settled payment is never approved — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
@@ -211,6 +212,12 @@ export type AllocationErrorCode =
  */
 export interface AllocationResult {
   success: boolean;
+  /**
+   * #1775 B-9 — where a consultation / subscription approval landed:
+   * `approved` (a settled wrapper) or `awaiting_payment` (the pay order is
+   * minted after the commit). Absent for group events and on failure.
+   */
+  outcome?: "approved" | "awaiting_payment";
   /**
    * #1697 item 5 — outbox rows staged inside the write transaction.
    * `SchedulingService.allocate` strips this and attempts them post-commit;

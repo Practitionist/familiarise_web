@@ -26,7 +26,11 @@ import type { Tx } from "@/lib/prisma";
  * UPDATE — keeping the call site uniform between program types).
  */
 
-import type { Prisma } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  ASSIGNMENT_ALLOWED_FROM,
+  IllegalTransitionError,
+} from "@/lib/enterprise/transitions";
 
 export class SeatCountUnderflowError extends Error {
   constructor(public billingSubscriptionId: string) {
@@ -186,4 +190,86 @@ export async function releaseSeatsForTerminatedAssignments(
     }
   }
   return seen.size;
+}
+
+/**
+ * #1846 SM-C14 / #1851 decision 3 — a contract that ends (manual TERMINATED or
+ * EXPIRED, or the nightly expiry job) closes every live seat under it: ACTIVE
+ * and PAUSED assignments move to CLOSED with the allowed-from set in the
+ * WHERE (the assignment CAS, set-based), a seat
+ * still in period ends now, the billed seat count is released, and each seat
+ * gets its own audit row so the member's timeline shows why it ended. The
+ * programs themselves move to EXPIRED. Returns the number of seats closed.
+ */
+export async function closeContractSeats(
+  tx: Tx,
+  args: {
+    contractId: string;
+    organizationId: string;
+    /** Null for the expiry job, which acts as the platform. */
+    actorMembershipId: string | null;
+    contractStatus: "TERMINATED" | "EXPIRED";
+    now: Date;
+  },
+): Promise<number> {
+  const { contractId, organizationId, actorMembershipId, now } = args;
+  await tx.program.updateMany({
+    where: { contractId, status: { in: ["ACTIVE", "PAUSED"] } },
+    data: { status: "EXPIRED" },
+  });
+  const live = await tx.programAssignment.findMany({
+    where: { program: { contractId }, status: { in: ["ACTIVE", "PAUSED"] } },
+    select: { id: true, programId: true, membershipId: true, periodEnd: true },
+  });
+  if (live.length === 0) return 0;
+
+  // Set-based so a contract with hundreds of seats stays a handful of
+  // statements inside the caller's transaction. The allowed-from set rides
+  // the WHERE (ASSIGNMENT_ALLOWED_FROM.CLOSED); a seat still in period ends
+  // now, one past its period keeps its real end.
+  const ids = live.map((seat) => seat.id);
+  const from = { in: ASSIGNMENT_ALLOWED_FROM.CLOSED };
+  const inPeriod = await tx.programAssignment.updateMany({
+    where: { id: { in: ids }, status: from, periodEnd: { gt: now } },
+    data: { status: "CLOSED", periodEnd: now },
+  });
+  const pastPeriod = await tx.programAssignment.updateMany({
+    where: { id: { in: ids }, status: from, periodEnd: { lte: now } },
+    data: { status: "CLOSED" },
+  });
+  // A seat that moved underneath the read (a concurrent cancel or roll) is a
+  // lost race: refuse rather than audit a close that did not happen.
+  if (inPeriod.count + pastPeriod.count !== live.length) {
+    throw new IllegalTransitionError("ProgramAssignment", "CLOSED");
+  }
+
+  await tx.orgAuditLog.createMany({
+    data: live.map((seat) => ({
+      organizationId,
+      actorMembershipId,
+      targetMembershipId: seat.membershipId,
+      category: "PROGRAM" as const,
+      action: AUDIT_ACTIONS.PROGRAM.ASSIGNMENT_CLOSED_BY_CONTRACT,
+      description: `Seat ${seat.id} closed: contract ${contractId} ${args.contractStatus.toLowerCase()}`,
+      details: {
+        contractId,
+        programId: seat.programId,
+        assignmentId: seat.id,
+        membershipId: seat.membershipId,
+        contractStatus: args.contractStatus,
+      },
+    })),
+  });
+
+  const closedPerProgram = new Map<string, number>();
+  for (const seat of live) {
+    closedPerProgram.set(
+      seat.programId,
+      (closedPerProgram.get(seat.programId) ?? 0) + 1,
+    );
+  }
+  for (const [programId, count] of closedPerProgram) {
+    await releaseSeatsForClosedAssignments(tx, programId, count);
+  }
+  return live.length;
 }

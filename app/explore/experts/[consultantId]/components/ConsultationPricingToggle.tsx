@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  HELD_BY_SOMEONE_ELSE,
+  NotifyWhenFreeButton,
+  type BackupWindowRequest,
+} from "@/components/booking/NotifyWhenFreeButton";
 import { CalendarIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { requireJsonResponse } from "@/lib/fetch-helpers";
+import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +38,8 @@ import {
   CONSULTANT_PAUSED_HINT,
   consultationCtaFor,
 } from "@/lib/booking/booking-mode";
+import { SlotList } from "./SlotList";
+import type { SlotWithStatus } from "./slot-list-policy";
 
 interface ConsultantDetailsForBooking {
   id: string;
@@ -63,12 +70,6 @@ interface ConsultationPricingToggleProps {
   onRefreshSlots?: () => void;
 }
 
-type SlotWithStatus = TIntervalTiming & {
-  isAllocated: boolean;
-  bookingStatus: "available" | "partially-booked" | "fully-booked";
-  _isPast: boolean;
-};
-
 export default function ConsultationPricingToggle({
   consultationOptions,
   handleConsultationBooking,
@@ -93,6 +94,10 @@ export default function ConsultationPricingToggle({
   const [activeConsultationOption, setActiveConsultationOption] =
     useState<string>(consultationOptions[0]?.id ?? "");
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
+  // #1778 — the window another learner holds, offered as "notify me".
+  const [heldWindow, setHeldWindow] = useState<BackupWindowRequest | null>(
+    null,
+  );
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const activePlanOption = useMemo(
@@ -292,6 +297,19 @@ export default function ConsultationPricingToggle({
       setSelectedSlot(null);
     } catch (error) {
       console.error("Error requesting approval:", error);
+      if (
+        error instanceof ApiResponseError &&
+        error.code &&
+        HELD_BY_SOMEONE_ELSE.has(error.code)
+      ) {
+        setHeldWindow({
+          consultantProfileId: consultantDetails.id,
+          windowStart: selectedSlot.startsAt,
+          windowEnd: selectedSlot.endsAt,
+          planKind: "CONSULTATION",
+          planId: activePlan.id,
+        });
+      }
       toast({
         title: "Couldn't submit approval request",
         description:
@@ -455,44 +473,60 @@ export default function ConsultationPricingToggle({
                       </h3>
                       <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
                         <div className="flex justify-between items-center mb-5">
-                          <Button
-                            variant="ghost"
-                            size="default"
-                            className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
-                            onClick={() =>
-                              setCurrentDate(
-                                new Date(
-                                  currentDate.getFullYear(),
-                                  currentDate.getMonth() - 1,
-                                  1,
-                                ),
-                              )
-                            }
-                          >
-                            &lt;
-                          </Button>
                           <span className="font-semibold text-white text-lg">
                             {currentDate.toLocaleString("default", {
                               month: "long",
                               year: "numeric",
                             })}
                           </span>
-                          <Button
-                            variant="ghost"
-                            size="default"
-                            className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
-                            onClick={() =>
-                              setCurrentDate(
-                                new Date(
-                                  currentDate.getFullYear(),
-                                  currentDate.getMonth() + 1,
-                                  1,
-                                ),
-                              )
-                            }
-                          >
-                            &gt;
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            {/* #1785 L-4 — back to the current month and today's date. */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
+                              onClick={handleBookNowClick}
+                            >
+                              Today
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="default"
+                              aria-label="Previous month"
+                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              onClick={() =>
+                                setCurrentDate(
+                                  new Date(
+                                    currentDate.getFullYear(),
+                                    currentDate.getMonth() - 1,
+                                    1,
+                                  ),
+                                )
+                              }
+                            >
+                              &lt;
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="default"
+                              aria-label="Next month"
+                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              onClick={() =>
+                                setCurrentDate(
+                                  new Date(
+                                    currentDate.getFullYear(),
+                                    currentDate.getMonth() + 1,
+                                    1,
+                                  ),
+                                )
+                              }
+                            >
+                              &gt;
+                            </Button>
+                          </div>
                         </div>
                         <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
                           <div>Mo</div>
@@ -557,113 +591,14 @@ export default function ConsultationPricingToggle({
                         </div>
                       )}
                       <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
-                        {availableSlots.length > 0 ? (
-                          <>
-                            {availableSlots.map((slot, index) => {
-                              const isSelected =
-                                selectedSlot?.slotId === slot.slotId &&
-                                selectedSlot?.localStartTime ===
-                                  slot.localStartTime;
-                              const isPast = slot._isPast;
-                              const bookingStatus =
-                                slot.bookingStatus || "available";
-                              const isFullyBooked =
-                                bookingStatus === "fully-booked";
-                              const isPartiallyBooked =
-                                bookingStatus === "partially-booked";
-                              const isAllocated = slot.isAllocated;
-                              const isDisabled = isPast || isFullyBooked;
-
-                              return (
-                                <button
-                                  key={`${slot.slotId}-${index}`}
-                                  className={`w-full p-4 text-base font-medium transition-all duration-200 rounded-xl text-left
-                                    ${
-                                      isSelected
-                                        ? "bg-white text-zinc-900 shadow-md ring-2 ring-white"
-                                        : isPast
-                                          ? "bg-zinc-800/30 text-zinc-600 border border-zinc-700/30 cursor-not-allowed opacity-60"
-                                          : isFullyBooked
-                                            ? "bg-rose-500/10 text-rose-400 border border-rose-500/30 cursor-not-allowed"
-                                            : isPartiallyBooked || isAllocated
-                                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                                              : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-400"
-                                    }`}
-                                  onClick={() =>
-                                    !isDisabled && setSelectedSlot(slot)
-                                  }
-                                  disabled={isDisabled}
-                                >
-                                  <div className="flex items-center">
-                                    <ClockIcon className="mr-3 h-5 w-5 opacity-70" />
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span>
-                                          {slot.localStartTime} -{" "}
-                                          {slot.localEndTime}
-                                        </span>
-                                        {slot.type && (
-                                          <span className="px-2 py-0.5 rounded text-xs bg-zinc-700/50 text-zinc-400">
-                                            {slot.type === "WEEKLY"
-                                              ? "📅"
-                                              : "🎯"}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    {isPast && (
-                                      <span className="ml-auto text-xs font-medium text-zinc-500">
-                                        Past
-                                      </span>
-                                    )}
-                                    {isFullyBooked && !isPast && (
-                                      <span className="ml-auto text-xs font-medium text-rose-400">
-                                        Fully booked
-                                      </span>
-                                    )}
-                                    {isPartiallyBooked &&
-                                      !isPast &&
-                                      !isAllocated && (
-                                        <span className="ml-auto text-xs font-medium text-amber-400">
-                                          Partially booked
-                                        </span>
-                                      )}
-                                    {isAllocated &&
-                                      !isPast &&
-                                      !isFullyBooked && (
-                                        <span className="ml-auto text-xs font-medium text-amber-400">
-                                          Request approval
-                                        </span>
-                                      )}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                            {/* Legend strip */}
-                            <div className="flex flex-wrap gap-3 pt-3 border-t border-zinc-800/50 mt-1">
-                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />{" "}
-                                Available
-                              </div>
-                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                                <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />{" "}
-                                Partially booked
-                              </div>
-                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                                <div className="w-2.5 h-2.5 rounded-full bg-rose-400" />{" "}
-                                Fully booked
-                              </div>
-                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                                <div className="w-2.5 h-2.5 rounded-full bg-zinc-600" />{" "}
-                                Past
-                              </div>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="text-zinc-500 text-sm py-4 text-center">
-                            No available slots for the selected date.
-                          </p>
-                        )}
+                        <SlotList
+                          slots={availableSlots}
+                          selectedSlot={selectedSlot as SlotWithStatus | null}
+                          onSelect={setSelectedSlot}
+                          bookingMode={
+                            consultantDetails.bookingMode ?? "INSTANT"
+                          }
+                        />
                       </div>
                     </div>
                   </div>
@@ -690,6 +625,10 @@ export default function ConsultationPricingToggle({
                     >
                       {isRequestingApproval ? "Submitting..." : cta.label}
                     </Button>
+                    {heldWindow &&
+                      heldWindow.windowStart === selectedSlot?.startsAt && (
+                        <NotifyWhenFreeButton window={heldWindow} />
+                      )}
                   </div>
                 </DialogContent>
               </Dialog>

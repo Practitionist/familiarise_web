@@ -23,6 +23,11 @@ export interface PaymentIntentParams {
   metadata: Record<string, string>;
   paymentGateway: PaymentGateway;
   isMockPayment?: boolean; // For development: skip actual gateway calls
+  // #1771 row 1 — a Razorpay Customer, so Checkout can offer to save the card.
+  customerId?: string;
+  // #1861 L1 — end of the slot hold this order pays for; Razorpay bounds the
+  // order's capture window by it. Unset for goods without a hold.
+  holdExpiresAt?: Date;
 }
 
 export interface PaymentIntent {
@@ -31,6 +36,8 @@ export interface PaymentIntent {
   amount: number;
   currency: string;
   status: string;
+  // #1771 row 1 — echoed so the Checkout sheet can pass `customer_id`.
+  customerId?: string;
 }
 
 // ============================================================================

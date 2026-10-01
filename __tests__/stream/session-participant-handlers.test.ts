@@ -12,10 +12,15 @@
  *  - missing session / missing user id are skipped, not thrown
  */
 jest.mock("../../lib/prisma", () => {
-  const client = {
+  const client: Record<string, unknown> = {
     meeting: { findUnique: jest.fn() },
     meetingAttendance: { upsert: jest.fn().mockResolvedValue({}) },
+    meetingPresence: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
+  client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });
 jest.mock("../../lib/stream-logger", () => ({
@@ -39,6 +44,9 @@ const mockFindUnique = (
 const mockUpsert = (
   prisma as unknown as { meetingAttendance: { upsert: jest.Mock } }
 ).meetingAttendance.upsert;
+const mockPresenceCreate = (
+  prisma as unknown as { meetingPresence: { createMany: jest.Mock } }
+).meetingPresence.createMany;
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -80,8 +88,24 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
       userId: "user_1",
       firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
     });
-    // Rejoin path must only bump the counter, never reset firstJoinedAt.
+    // A new device session bumps the counter, never resets firstJoinedAt.
     expect(arg.update).toEqual({ joinCount: { increment: 1 } });
+  });
+
+  it("does not bump joinCount when the device session was already seen (#1746)", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "ms_1",
+      appointmentOccurrenceId: "occ_1",
+    });
+    mockPresenceCreate.mockResolvedValueOnce({ count: 0 });
+    await handleSessionParticipantJoined({
+      call_cid: "default:call_abc",
+      type: "call.session_participant_joined",
+      created_at: "2026-06-16T10:00:00.000Z",
+      session_id: "sess_1",
+      participant: { user: { id: "user_1" }, user_session_id: "dev_1" },
+    });
+    expect(mockUpsert.mock.calls[0][0].update).toEqual({});
   });
 
   it("skips when meeting session does not exist (no throw)", async () => {
@@ -134,12 +158,20 @@ describe("handleSessionParticipantLeft (STR-4)", () => {
     });
     expect(arg.update).toEqual({
       lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),
+      joinCount: { increment: 1 },
     });
-    // A leave without a recorded join still creates the row defensively.
+    // #1569 — join lost, leave arrives: one closed interval rebuilt from duration_seconds.
+    expect(mockPresenceCreate.mock.calls[0][0].data).toEqual([
+      expect.objectContaining({
+        userSessionId: "sess_1:user_1",
+        joinedAt: new Date("2026-06-16T10:00:00.000Z"),
+        leftAt: new Date("2026-06-16T10:30:00.000Z"),
+      }),
+    ]);
     expect(arg.create).toMatchObject({
       meetingId: "ms_1",
       userId: "user_1",
-      firstJoinedAt: new Date("2026-06-16T10:30:00.000Z"),
+      firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
       lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),
     });
   });

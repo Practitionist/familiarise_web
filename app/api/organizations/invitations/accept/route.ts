@@ -15,16 +15,21 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { checkConsent } from "@/lib/compliance/dpdp";
+import {
+  buildSignupConsentArtifacts,
+  checkConsent,
+} from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
+import { transitionMembership } from "@/lib/enterprise/transitions";
 import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
+  recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
@@ -33,6 +38,8 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
+  /** #1854 — the invitee agreed to the sign-up purposes on the accept page. */
+  grantConsent: z.literal(true).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -47,7 +54,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { invitationId } = parsed.data;
+  const { invitationId, grantConsent } = parsed.data;
 
   // Verify the invitation against the authenticated user's email before
   // doing anything mutative. Preventing accept-by-id-guessing means a
@@ -106,18 +113,17 @@ export async function POST(req: NextRequest) {
 
   // #701 — DPDP: the invitee must hold live core-processing consent before we
   // provision membership (which processes their PII on the org's behalf).
-  // Everyone gets PRIMARY_PROCESSING at signup; a withdrawal blocks acceptance
-  // until re-granted. TODO(#701): offer an inline grant step in the accept UI.
-  if (
-    !(await checkConsent({
-      userId,
-      purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
-    }))
-  ) {
+  // #1854 — an SSO-created account (or a withdrawal) has none; the accept
+  // page shows the sign-up consent inline and re-posts with grantConsent,
+  // which stamps the sign-up rows in the accept transaction.
+  const needsConsent = !(await checkConsent({
+    userId,
+    purposeCode: PURPOSE_CODES.PRIMARY_PROCESSING,
+  }));
+  if (needsConsent && !grantConsent) {
     return NextResponse.json(
       {
-        error:
-          "Consent required to join an organization. Restore data-processing consent in your privacy settings, then accept again.",
+        error: "Agree to how we process your data to join this organization.",
         code: "CONSENT_REQUIRED",
       },
       { status: 403 },
@@ -168,7 +174,7 @@ export async function POST(req: NextRequest) {
     scheduleAfter(async () => {
       for (const row of stagedBells) await attemptTrigger(row);
       if (stagedWelcome) await attemptOnboardingEmail(stagedWelcome);
-    });
+    }, "org.invitation.accept.post-commit");
   }
 
   // Client contract (app/organizations/invite/[token]/page.tsx): expects
@@ -198,6 +204,12 @@ export async function POST(req: NextRequest) {
           httpStatus: 409,
         });
       }
+      // #1854 — consent commits with the join or rolls back with it.
+      if (needsConsent) {
+        await tx.consentArtifact.createMany({
+          data: buildSignupConsentArtifacts(userId),
+        });
+      }
 
       // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
       // can't be onboarded into via a stale invite link. The pre-check
@@ -221,9 +233,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // User may already have a Membership in this org from a direct
-      // admin add or an SSO auto-join. Idempotent upsert keeps the
-      // UI's "accept" button safe to click twice.
+      // The user may already hold a Membership here from SSO JIT or SCIM.
+      // A live row makes the accept idempotent, so the button is safe to
+      // click twice. A REMOVED row, or a PENDING row from a pre-#1846 bulk
+      // import, is what an invitation brings back: accepting is the only
+      // door into ACTIVE for it (#1846 bucket C). An ERASED tombstone never
+      // comes back.
       const existing = await tx.membership.findUnique({
         where: {
           userId_organizationId: {
@@ -232,7 +247,15 @@ export async function POST(req: NextRequest) {
           },
         },
       });
-      if (existing) {
+      if (existing?.status === "ERASED") {
+        throw Object.assign(
+          new Error("This membership was erased and cannot be restored."),
+          { httpStatus: 409 },
+        );
+      }
+      const rejoining =
+        existing?.status === "REMOVED" || existing?.status === "PENDING";
+      if (existing && !rejoining) {
         return {
           membership: existing,
           organization: org,
@@ -248,9 +271,9 @@ export async function POST(req: NextRequest) {
       // "invite-accept as LEARNER" as a sanctioned creation point — gating
       // it broke sponsored-employee onboarding). EXPERT stays strict: a
       // consultant identity carries domain/rates/verification/payout
-      // prerequisites that no invite click can substitute for. Admin
-      // direct-add (POST /members) stays strict for BOTH roles, and SSO
-      // JIT keeps its own lazy path.
+      // prerequisites that no invite click can substitute for. SSO JIT and
+      // SCIM keep their own lazy path; there is no admin direct-add any
+      // more (#1846).
       if (normalizedRole === "EXPERT") {
         const existingConsultant = await tx.consultantProfile.findUnique({
           where: { userId },
@@ -282,32 +305,15 @@ export async function POST(req: NextRequest) {
         role: normalizedRole,
       });
 
-      // BetterAuth Member row is kept for org-scoped session flows.
-      // Membership.betterAuthMemberId preserves the linkage even after
-      // BetterAuth's own adapter writes are done.
-      const betterAuthMember = await tx.member.create({
-        data: {
-          organizationId: inv.organizationId,
-          userId,
-          // BetterAuth's Member.role is a free-form string; we write the
-          // typed MemberRole value here so third-party tools that read
-          // the BetterAuth table see the correct role.
-          role: normalizedRole,
-        },
-      });
-
-      const created = await tx.membership.create({
-        data: {
-          userId,
-          organizationId: inv.organizationId,
-          role: normalizedRole,
-          status: "ACTIVE",
-          consulteeProfileId: roleEffects.consulteeProfileId,
-          consultantProfileId: roleEffects.consultantProfileId,
-          payoutRecipient: roleEffects.payoutRecipient,
-          betterAuthMemberId: betterAuthMember.id,
-        },
-      });
+      const roleData = {
+        role: normalizedRole,
+        consulteeProfileId: roleEffects.consulteeProfileId,
+        consultantProfileId: roleEffects.consultantProfileId,
+        payoutRecipient: roleEffects.payoutRecipient,
+      };
+      const created = rejoining
+        ? await rejoin(tx, existing.id, roleData)
+        : await createMembership(tx, roleData);
 
       await tx.orgAuditLog.create({
         data: {
@@ -317,7 +323,11 @@ export async function POST(req: NextRequest) {
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.INVITE_ACCEPTED,
           description: `User ${userId} accepted invitation to join as ${normalizedRole}`,
-          details: { invitationId: inv.id, role: normalizedRole },
+          details: {
+            invitationId: inv.id,
+            role: normalizedRole,
+            ...(rejoining && { rejoinedFrom: existing.status }),
+          },
         },
       });
 
@@ -362,5 +372,57 @@ export async function POST(req: NextRequest) {
         stagedWelcome,
       };
     });
+  }
+
+  type RoleData = {
+    role: typeof normalizedRole;
+    consulteeProfileId: string | null;
+    consultantProfileId: string | null;
+    payoutRecipient: "SELF" | "ORGANIZATION";
+  };
+
+  /** A first-time joiner: the BetterAuth Member sibling plus the Membership. */
+  async function createMembership(tx: Tx, roleData: RoleData) {
+    // BetterAuth's Member row is kept for org-scoped session flows; its role
+    // is a free-form string, so the typed value is written for third-party
+    // readers. Membership.betterAuthMemberId preserves the linkage.
+    const betterAuthMember = await tx.member.create({
+      data: {
+        organizationId: inv.organizationId,
+        userId,
+        role: normalizedRole,
+      },
+    });
+    return tx.membership.create({
+      data: {
+        userId,
+        organizationId: inv.organizationId,
+        status: "ACTIVE",
+        betterAuthMemberId: betterAuthMember.id,
+        ...roleData,
+      },
+    });
+  }
+
+  /**
+   * A removed member invited back (or a legacy PENDING import row) keeps the
+   * same Membership row, so ProgramAssignment and audit FKs stay intact. The
+   * invitation's role applies: "remove, then re-invite with the new role" is
+   * exactly how a LEARNER becomes an EXPERT. The CAS refuses a row that
+   * changed underneath (for example an erasure landing first).
+   */
+  async function rejoin(tx: Tx, membershipId: string, roleData: RoleData) {
+    await transitionMembership(tx, {
+      where: { id: membershipId, organizationId: inv.organizationId },
+      to: "ACTIVE",
+      data: roleData,
+    });
+    const rejoined = await tx.membership.findUniqueOrThrow({
+      where: { id: membershipId },
+    });
+    if (rejoined.role === "EXPERT" && rejoined.consultantProfileId) {
+      await recomputeConsultantIsIndependent(tx, rejoined.consultantProfileId);
+    }
+    return rejoined;
   }
 }

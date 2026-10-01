@@ -22,7 +22,8 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 const SETTINGS_DIR = "app/dashboard/organization/[orgId]/settings";
-const TABS = `${SETTINGS_DIR}/SettingsTabs.tsx`;
+// #1527 — the tabs became route sections; the gates live in the registry.
+const TABS = "lib/dashboard/org-settings-sections.ts";
 const PANEL = `${SETTINGS_DIR}/BillingSettingsPanel.tsx`;
 const ORG_PATCH = "app/api/organizations/[orgId]/route.ts";
 
@@ -53,18 +54,18 @@ describe("the UI now matches the server contract", () => {
     );
   });
 
-  it("the Billing tab is gated on billing.manage, not settings.manage", () => {
+  it("the Billing section is gated on billing.manage, not settings.manage", () => {
     const src = read(TABS);
-    const tab = src.slice(src.indexOf('value: "billing"'));
+    const tab = src.slice(src.indexOf('key: "billing"'));
     const end = tab.indexOf("},");
-    expect(tab.slice(0, end)).toContain('show: can("billing.manage")');
+    expect(tab.slice(0, end)).toContain('can("billing.manage")');
   });
 
   it("General stays on settings.manage", () => {
     const src = read(TABS);
-    const general = src.slice(src.indexOf('value: "general"'));
+    const general = src.slice(src.indexOf('key: "general"'));
     expect(general.slice(0, general.indexOf("},"))).toContain(
-      'show: can("settings.manage")',
+      'can("settings.manage")',
     );
   });
 

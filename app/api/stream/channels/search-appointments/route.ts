@@ -42,7 +42,7 @@ function resolveCounterparty(
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to search appointments" },

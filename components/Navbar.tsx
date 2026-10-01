@@ -19,10 +19,9 @@ import {
   Layers,
   Star,
 } from "lucide-react";
-import { signOut, useSession } from "@/lib/auth-client";
-// Import the logout helper from the SDK-free module (not @/providers/StreamProvider)
-// so the root navbar no longer statically links the Stream video/chat SDK. #248
-import { disconnectStreamClients } from "@/lib/stream/disconnect";
+import { useSession } from "@/lib/auth-client";
+import { accountSettingsHref } from "@/lib/dashboard/account-href";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import Link from "next/link";
@@ -546,18 +545,8 @@ const Navbar = () => {
   if (isChromeHidden(pathname)) return null;
 
   const handleSignOut = async () => {
-    try {
-      await disconnectStreamClients();
-    } catch {
-      // Don't block sign-out if disconnect fails
-    }
-    signOut({
-      fetchOptions: {
-        onSuccess: () => {
-          window.location.href = "/auth/signin";
-        },
-      },
-    });
+    // signOutEverywhere keeps the #248 SDK-free disconnect path internally.
+    await signOutEverywhere("/auth/signin");
     closeMenu();
   };
 
@@ -698,7 +687,14 @@ const Navbar = () => {
                 </div>
               ) : isAuthedView ? (
                 <div className="flex items-center gap-3">
-                  <Link href="/profile">
+                  {/* #1527 — straight to the viewer's Settings › Account;
+                      /profile would only 308 there. */}
+                  <Link
+                    href={
+                      accountSettingsHref(session?.user ?? {}) ?? "/profile"
+                    }
+                    aria-label="Account settings"
+                  >
                     <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
                       <AvatarImage src={getUserImage()} alt="Profile" />
                       <AvatarFallback className="bg-zinc-900 text-white text-sm">

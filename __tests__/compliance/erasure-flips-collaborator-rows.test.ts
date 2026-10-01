@@ -55,6 +55,7 @@ const db = {
     })),
   },
   membership: { findMany: jest.fn(async () => []) },
+  payoutAccount: { findMany: jest.fn(async () => []) },
   streamRevocationRetry: { update: jest.fn(async () => ({})) },
   $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
 };
