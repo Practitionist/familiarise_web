@@ -23,6 +23,7 @@ import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 /**
  * The terminal marker written when a deferred event ages past the give-up cap.
@@ -328,6 +329,20 @@ async function sweepStuckWebhookEventsUnlocked(
         })
         .catch(() => {});
     }
+  }
+
+  // #1756 — one page per run: the route's 207 and the job log reach no one.
+  if (stillFailing > 0) {
+    reportSentryMessage(
+      `sweep-stuck-webhook-events: ${stillFailing} re-driven webhook event(s) still failing`,
+      {
+        subsystem: "jobs",
+        op: "sweep-stuck-webhook-events",
+        level: "error",
+        expected: false,
+        extra: { stillFailing, errors: errors.slice(0, 20) },
+      },
+    );
   }
 
   return {
