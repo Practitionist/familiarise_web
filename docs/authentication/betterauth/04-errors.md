@@ -432,7 +432,7 @@ status, not in the catalog as a code.
 | 2 | `SCIM_USER_NOT_ACTIVE` has copy but no minting site | The code and its sentence exist; the pre-session check that would refuse a deactivated directory identity before a session is created does not. The current behaviour is a *successful* login to an empty dashboard. |
 | 3 | The `Retry-After` value is not surfaced in the sign-in UI | The number reaches `humanizeAuthError` correctly and becomes "Try again in 12 minutes."; a pool-exhaustion 503's `Retry-After` is the one case where a page-level countdown is still missing. |
 | 4 | `TWO_FACTOR_REQUIRED` arrives as a bare 428 body, not through the catalog | The guard in `lib/auth-helpers.ts` writes `{ error, code: "TWO_FACTOR_REQUIRED" }` with `X-Auth-Action: enroll-2fa` itself, so the code resolves and the copy is right — but the sentence is hand-written rather than read from `AUTH_ERROR_COPY`, which is the one place in the auth surface where two sources of truth exist for the same string. |
-| 5 | `INVITATION_REVOKED` resolves on the client but has no base catalog row | `StaffInvitationRefusalCode` (see [`08-staff-onboarding.md`](./08-staff-onboarding.md#the-codes)) includes it and the accept route emits it, but there is no `INVITATION_REVOKED` entry in `AUTH_ERROR_COPY`, so `humanizeAuthError` falls through to the code-less `GENERIC[flow]`. The `SETUP_TOKEN_*` half of the family is complete. |
+| 5 | `INVITATION_REVOKED` and `SETUP_TOKEN_*` have no emitter | The staff invitation flow they belonged to is removed (staff are added from the Team page, see [`08-staff-onboarding.md`](./08-staff-onboarding.md)). The codes are dead and can be dropped from the catalog. |
 
 ## 13. Related docs
 

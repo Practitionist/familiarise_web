@@ -1,19 +1,18 @@
-# The four authorization matrices
+# The three authorization matrices
 
 | Field | Value |
 |---|---|
 | Status | Stable |
 | Audience | All engineers |
 | Last reviewed | 2026-09-29 |
-| Sibling doc | [`02-b2c-entitlements.md`](./02-b2c-entitlements.md) for the plan ladder in depth |
-| Source files | `lib/auth/backoffice-permissions.ts`, `lib/auth/org-permissions.ts`, `lib/auth/role-ranks.ts`, `lib/entitlements/plan-entitlements.ts` |
+| Source files | `lib/auth/backoffice-permissions.ts`, `lib/auth/org-permissions.ts`, `lib/auth/role-ranks.ts` |
 
 ## 1. Background
 
-This folder documents **what a user may do**. That question has four answers in
-this codebase, held in four places, and the tempting move is to merge them. This
-document is the argument against that, because the four are not four views of
-one thing — they are four different questions that happen to arrive in the same
+This folder documents **what a user may do**. That question has three answers in
+this codebase, held in three places, and the tempting move is to merge them. This
+document is the argument against that, because the three are not three views of
+one thing — they are three different questions that happen to arrive in the same
 request.
 
 | # | Matrix | Cardinality | Key | Source |
@@ -21,19 +20,19 @@ request.
 | 1 | `UserRole` | 5 values | `User.role` | `prisma/schema.prisma:6618` |
 | 2 | `MemberRole` × `OrgSurface` | 7 × 57 | `Membership.role` | [`lib/auth/org-permissions.ts`](../../lib/auth/org-permissions.ts) |
 | 3 | `UserRole` × `BackofficeSurface` | 5 × 37 | `User.role` | [`lib/auth/backoffice-permissions.ts`](../../lib/auth/backoffice-permissions.ts) |
-| 4 | `B2CPlan` × `Entitlement` | 4 × 14 | the buyer's plan | [`lib/entitlements/plan-entitlements.ts`](../../lib/entitlements/plan-entitlements.ts) |
 
-A fifth axis exists and is **not** in this folder: the session count, which is a
-property of one *purchased subscription* and is owned by
+A fourth axis exists and is **not** in this folder: the session count, which is
+a property of one *purchased subscription* and is owned by
 `subscriptionEntitlement()` in [`lib/booking/entitlement.ts`](../../lib/booking/entitlement.ts)
-(#1766). §6 is about why that one is deliberately not a rung on matrix 4.
+(#1766). There is no plan-entitlement matrix; §6 says why a session cap must not
+become one.
 
 ## 2. Scope
 
 | In scope | Out of scope |
 |---|---|
-| What each matrix authorises and where it is enforced | The plan ladder's contents — see [`02-b2c-entitlements.md`](./02-b2c-entitlements.md) |
-| Why there are four and they are not merged | `PlanLevel`, which is a catalogue facet and gates nothing |
+| What each matrix authorises and where it is enforced | Session counts — see `lib/booking/entitlement.ts` |
+| Why there are three and they are not merged | `PlanLevel`, which is a catalogue facet and gates nothing |
 | Why a matrix beat a rank ladder | The `Refusal` rail — see [`docs/errors/01-refusals.md`](../errors/01-refusals.md) |
 | The capability gates and the 401/403/404/409 conventions ([`README.md`](./README.md) §7–§8) | |
 
@@ -110,8 +109,8 @@ sign-out) is admin-only while `users.read` and `users.verify` are not.
 `team.read` (#1927) is the newest row and the shape to copy. It is split out of
 `users.read` because "who else is on staff" is a normal ticket while a roster
 listing every operator's 2FA state, last login and live session count is
-reconnaissance for the door that suspends them. Its **mutations** — invite,
-revoke, suspend, reactivate — deliberately reuse `users.moderate` rather than a
+reconnaissance for the door that suspends them. Its **mutations** — add staff,
+reset 2FA, suspend, reactivate — deliberately reuse `users.moderate` rather than a
 `team.manage` key, because they are the same act as "role change / delete
 someone's access" and a second key for the same act is a second place to get the
 policy wrong.
@@ -126,37 +125,7 @@ If a surface needs a role distinction, add the key.
 whose only difference was which route tree you landed in. Merging them into one
 `(backoffice)/[tree]` (#1527) means the difference has to live somewhere real.
 
-## 6. Matrix 4 — `B2CPlan` × `Entitlement`: what was paid for
-
-Four rungs (`BASIC`, `EXTENDED`, `COMPREHENSIVE`, `CUSTOM`) and 14 capabilities.
-**This section states only the axis, not the ladder** — the rungs, the
-cumulative invariant, the `publish ⊆ permanentStorage` relationship, the two
-refusal statuses and the `Refusal`-shaped call sites are all in
-[`02-b2c-entitlements.md`](./02-b2c-entitlements.md), and they are not repeated
-here.
-
-**What it authorises.** A *paid capability*, and nothing about the person.
-"Upgrade your plan to unlock this" is the whole sentence. It is keyed on what the
-buyer purchased, not on who they are, which is why the four axes are composed at
-the consumer and never ranked against each other: a refusal from this matrix
-means *"your plan does not include this"*, never *"your role is too low"*.
-
-**Where it is enforced.** `requireEntitlement` / `entitlementRefusal` from
-`lib/entitlements/`, consumed by whatever route owns the gate. It is deliberately
-**Prisma-free and free of server-only imports**, so a client component may read
-`hasEntitlement(b2cPlan, capability)` — while the recommended shape is still to
-read the boolean in the server component that owns the gate and pass it down.
-
-**Why the key is not `PlanLevel`.** `PlanLevel` is
-`BEGINNER | INTERMEDIATE | ADVANCED | ALL_LEVELS` and describes *the offering the
-expert authored*. It is a catalogue facet used to sort browse results, it is
-author-supplied, and it gates nothing for anyone. A ₹500 beginner course and a
-₹50,000 beginner course are the same `PlanLevel`, and an advanced course is not
-a *better* plan — it is a *harder* one. §5 of the entitlements doc has the full
-argument; the one-line version is that a label table is not an authorization
-axis, and `lib/labels/plan-labels.ts` is the standing proof.
-
-## 7. Why four, and why not merged
+## 6. Why three, and why not merged
 
 ### The load-bearing reason: privilege here is not one-dimensional
 
@@ -220,57 +189,40 @@ plugin's full `adminAc` statement, including `impersonate-admins` and
 `set-password`, and the failure would be a *grant*, not a refusal — the class of
 bug that is found in an incident rather than in review.
 
-None of the four matrices uses `hasPermission` as its guard. The plugin's
-statements are wired for the plugin's own endpoints; our own guards read our own
-maps. That separation is the mitigation, and it is also why the two-`React`
+None of the three matrices uses `hasPermission` as its guard. The plugin's
+statements are wired for the plugin's own endpoints, and those endpoints are
+all in `disabledPaths` (lib/auth.ts), so nothing reachable over HTTP consults
+them; our own guards read our own maps. That separation is the mitigation, and it is also why the two-`React`
 tables are not the place a third-party authorisation library gets introduced.
 
-### The deliberate non-merge: session caps are not a plan rung
+### The deliberate non-merge: session caps belong to the subscription
 
 This is the one that gets re-proposed roughly once a quarter, so it is worth
 stating with its consequence.
 
-A **B2C session cap belongs to a purchased subscription, not to a plan rung.**
-One person on `COMPREHENSIVE` may hold three subscriptions from three different
+A **B2C session cap belongs to a purchased subscription, not to a plan.**
+One person may hold three subscriptions from three different
 experts, each with its own `sessionsTotal`, its own cycle and its own expiry.
 `subscriptionEntitlement()` in `lib/booking/entitlement.ts` is the ONE counter
 every surface reads (#1766): it freezes `sessionsTotal` at purchase and derives
 cycles from it.
 
-Add a `sessionsRemaining` to `PLAN_LIMITS` and there are two answers to *"how
+Add a per-plan session limit anywhere else and there are two answers to *"how
 many sessions are left"*. That is not a style disagreement — **two answers is
 how an allocator oversells a subscription.** The allocator writes to one
-counter; the gate reads the other; a customer who bought three sessions is told
-by the gate that they have none because their plan rung does not include a
-number that describes a different object. There is no reconciliation, because
-the two numbers are not comparable.
+counter; the gate reads the other, and the two numbers are not comparable.
+Every session limit routes through the counter.
 
-So matrix 4 declares capabilities, and `planLimit` returns `null` for unlimited —
-a real answer, not "unknown". A caller that cannot tell those two apart will
-tell an unlimited customer they have hit a limit. Session counts are not a
-`PlanLimit`; they are `lib/booking/entitlement.ts`, and every session limit
-routes through the counter.
+## 7. The three axes side by side
 
-### What a fifth axis would look like, and why there isn't one yet
-
-A `User.plan` column does not exist. `User` has no plan column and
-`ConsulteeProfile` (schema:3334) carries only `careerStage`,
-`budgetPreference`, `isIndependent` and a GST code, so `B2CPlan` is declared
-locally in `lib/entitlements/plan-entitlements.ts` and closed. When the enum
-lands in the schema, the union becomes a type-only import and every `Record` in
-the module is already exhaustive over it — so the new rung is a compile error
-until someone has decided what it grants.
-
-## 8. The four axes side by side
-
-| | Platform | Organisation | Back office | Plan |
-|---|---|---|---|---|
-| **Key** | `User.role` | `Membership.role` | `User.role` | the buyer's plan |
-| **Shape** | 5 values | 7 × 57 matrix | 5 × 37 matrix | 4 × 14 matrix |
-| **Answers** | "is this person an operator?" | "what may this member do in this org?" | "which internal surface may this operator reach?" | "what has this customer paid for?" |
-| **Enforced by** | `requireAdminAuth` / `requireStaffAuth` | `requireOrgAccess` | `requireBackofficeSurface` | `requireEntitlement` |
-| **Composed with** | capability gates | capability gates | the impersonation block | nothing — it is not about the person |
-| **Never merged because** | the other three are per-tenant or per-purchase | the platform axis has no org | the back-office axis is internal-only | the other three are not about money |
+| | Platform | Organisation | Back office |
+|---|---|---|---|
+| **Key** | `User.role` | `Membership.role` | `User.role` |
+| **Shape** | 5 values | 7 × 57 matrix | 5 × 37 matrix |
+| **Answers** | "is this person an operator?" | "what may this member do in this org?" | "which internal surface may this operator reach?" |
+| **Enforced by** | `requireAdminAuth` / `requireStaffAuth` | `requireOrgAccess` | `requireBackofficeSurface` |
+| **Composed with** | the operator 2FA gate | capability gates | the operator 2FA gate |
+| **Never merged because** | the other two are per-tenant or internal | the platform axis has no org | the back-office axis is internal-only |
 
 The composition rule is the last row of that table: a route that needs two axes
 checks both, and neither is allowed to imply the other. A platform `ADMIN`
@@ -280,26 +232,19 @@ WALLET-only endpoint on an INVOICE org gets a **404**, because that endpoint
 genuinely does not exist for that org shape. Authority to look is not authority
 to call a route that does not apply.
 
-## 9. Open items
+## 8. Open items
 
 | # | Item | Why it is open |
 |---|---|---|
-| 1 | `B2CPlan` has no persisted home | Schema change owned outside this folder. Until then callers must supply the rung. |
-| 2 | Two recording routes still gate inline instead of naming an entitlement | Both routes belong to another owner; `lib/entitlements/` is additive by design. A handler that infers the gate is a handler whose entitlement cannot be grepped. |
-| 3 | The `retentionDays` constant lives in a user-facing string | The `14` in the transfer route's copy is the stale one; the entitlements table is the first coded home. |
-| 4 | No test walks the declaration rule | The list of route-level entitlement gates does not exist yet, so there is nothing to walk. |
-| 5 | `hasPermission` (#7822) is not pinned by a test | The mitigation is that no guard uses it. A pin asserting "no route calls `authClient.admin.hasPermission`" would make that structural rather than remembered. |
+| 1 | `hasPermission` (#7822) is not pinned by a test | No guard uses it, and `__tests__/security/admin-plugin-fenced.test.ts` pins every admin endpoint (including `/admin/has-permission`) to `disabledPaths`. A pin on server-side `auth.api.userHasPermission` calls would close the rest. |
 
-## 10. Related docs
+## 9. Related docs
 
 - [`README.md`](./README.md) — the helper inventory, the capability gates and the
   401/403/404/409 conventions, including the structural-404 pattern.
-- [`02-b2c-entitlements.md`](./02-b2c-entitlements.md) — the plan ladder, the
-  cumulative invariant, the refusal shapes and how to add a rung.
 - [`lib/booking/entitlement.ts`](../../lib/booking/entitlement.ts) — the one
   session counter this folder does not duplicate.
 - [`../authentication/betterauth/04-errors.md`](../authentication/betterauth/04-errors.md)
-  — why a refusal's code must be one the client already knows, which is why the
-  entitlement gates reuse `PLAN_FEATURE_NOT_INCLUDED` / `PLAN_LIMIT_REACHED`.
+  — why a refusal's code must be one the client already knows.
 - [`../enterprise/20-iam-and-security/01-sso-and-authentication.md`](../enterprise/20-iam-and-security/01-sso-and-authentication.md)
   — `enforceSSO`, which is a *policy* about an axis, not a role.
