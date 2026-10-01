@@ -24,48 +24,17 @@ import {
 } from "../../../../schemas/webhooks/stripe";
 
 /**
- * Read a captured-amount figure off the RAW event object, in the currency's
- * smallest unit, or `undefined` when the field is absent or not an integer.
- *
- * The RAW object is deliberate: `stripePaymentIntentSucceededEventSchema` and
- * `stripeCheckoutSessionCompletedEventSchema` model only the fields this route
- * consumes, and zod strips everything else, so `amount_received` does not
- * survive the parse. The figure is never taken from `metadata` either —
- * metadata is written before the capture, so it can only restate the order
- * total, and feeding that into the parity check compares the gateway against
- * itself.
- *
- * No currency conversion is needed: `createStripeCheckoutSession` runs
- * `assertInrSettlement` as its first statement and prices `unit_amount` from
- * that, so paise is the only unit this rail can produce.
- */
-function readCapturedAmountPaise(
-  raw: unknown,
-  field: string,
-): number | undefined {
-  const amount = (raw as Record<string, unknown> | null | undefined)?.[field];
-  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0) {
-    return undefined;
-  }
-  return amount;
-}
-
-/**
- * Strict variant for the door that owns the gateway truth. `amount_received` is
- * a required field of a `payment_intent.succeeded` object, so a missing figure
- * means a payload this route cannot reason about — and a door that cannot state
- * what was captured must not confirm a booking for it. That argument used to be
- * optional and omitted here entirely, so an under-captured Stripe order
- * confirmed a FULL booking with no parity check at all: silent under-collection.
- * Throwing makes the route 500, which is what makes Stripe redeliver.
+ * The captured amount (paise; the rail is INR-only) off the RAW event, since
+ * zod strips fields the schema does not model. Throws (-> 500 -> Stripe
+ * redelivers) rather than confirm a booking without a known captured amount.
  */
 function requireCapturedAmountPaise(
   raw: unknown,
   field: string,
   source: string,
 ): number {
-  const amount = readCapturedAmountPaise(raw, field);
-  if (amount === undefined) {
+  const amount = (raw as Record<string, unknown> | null | undefined)?.[field];
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0) {
     throw new Error(
       `Stripe ${field} missing or non-integer on ${source}; refusing to confirm a booking without a known captured amount`,
     );
@@ -197,14 +166,7 @@ export async function POST(req: NextRequest) {
         // createStripeCheckoutSession stores session.id (cs_...) in Payment.paymentIntent,
         // so we must handle checkout.session.completed to match by cs_... ID.
         // NOTE: Ensure these events are enabled in the Stripe Dashboard webhook settings.
-        //
-        // #ADR-21 — this door used to call handlePaymentSuccess(session.id,
-        // session.metadata) with no amount and no gateway payment id, so the
-        // capture-amount parity check and the `gatewayPaymentId` write (which
-        // the refund and dispute webhooks resolve against) were both skipped
-        // here. It now goes through the SAME router as `payment.captured`,
-        // `order.paid` and both client-return doors, so notes.type routing and
-        // the parity check cannot drift per-gateway again.
+        // Routed through the same router as every other capture door (#ADR-21).
         case "checkout.session.completed": {
           const sessionEvent =
             stripeCheckoutSessionCompletedEventSchema.parse(event);
@@ -213,89 +175,21 @@ export async function POST(req: NextRequest) {
           // `payment_intent` (pi_...) is this rail's `pay_…`: the object the
           // refund/dispute webhooks can be resolved against.
           //
-          // INVARIANT: a Checkout Session with no collected money must not
-          // confirm a booking.
-          //
-          // `checkout.session.completed` fires for a session that is `complete`
-          // but whose payment is NOT yet collected — `payment_status` is `unpaid`
-          // whenever an async/delayed method is in flight, and also on the
-          // window between a card's authorisation and a 3DS step the buyer has
-          // not finished. `status: "complete"` means the CHECKOUT finished, not
-          // that money arrived. This door used to route every completed session
-          // regardless, so a `unpaid` one confirmed a consultant's time with
-          // nothing received: a real under-collection behind a live commitment.
-          // Since the amount is withheld below, `payment_status` is the only
-          // gateway-truth signal left on this payload, and it answers exactly the
-          // one question this door has to ask — did money arrive?
-          //
-          // Allow-list, not a deny-list: only `paid` collects. `no_payment_required`
-          // is a zero-total session, and a zero-amount checkout is confirmed
-          // synchronously in lib/payments/operations/checkout.ts and never becomes
-          // a PENDING B2C row, so it cannot be the row this door would confirm.
-          // An unrecognised future value must also fall on the refuse side.
-          //
-          // Why parking is safe, and why it is NOT a lost booking: the Payment
-          // row stays PENDING, which is the durable park, and
-          // `reconcile-payment-status` (every 30m) is Stripe-capable — it
-          // resolves the `cs_…` to its `pi_…` and reads gateway truth
-          // (scripts/payments/reconcile-payment-status.ts), so a 3DS that later
-          // completes is still picked up. If the money never lands,
-          // `cleanup-abandoned-payments` EXPIREs the row and releases the hold,
-          // so the slot is re-sellable and the buyer can re-book. Either way no
-          // money is stranded and no slot is sold twice.
-          //
-          // The sibling `payment_intent.succeeded` door does NOT rescue this, and
-          // the reason matters: it calls routeCapturedPayment with `intent.id`
-          // (`pi_…`), but handlePaymentSuccess resolves the row with a strict
-          // `findUnique({ paymentIntent })` and this rail stores the `cs_…`
-          // there (createStripeCheckoutSession returns session.id). So the
-          // intent door throws "Payment record not found" on a Checkout row and
-          // confirms nothing. `verify?sync=true` is gated on `order_` and does
-          // not help either. The PENDING row plus those two sweeps is the whole
-          // durable path, which is why the guard below writes nothing itself.
-          //
-          // 200, not 500: the event is durably recorded, Stripe will not re-fire
-          // a completed session, and `logWebhookEvent` short-circuits a retry of
-          // the same `evt_…` as a duplicate — so a 500 would burn the retry
-          // schedule on a payload that can never succeed, which is the failure
-          // mode the envelope check above already avoids. This is the same
-          // 200-and-log an unhandled event gets.
+          // Only `paid` collects money; anything else (async method in flight,
+          // unfinished 3DS, unknown value) stays PENDING for
+          // reconcile-payment-status / cleanup-abandoned-payments. 200, not 500:
+          // Stripe will not re-fire a completed session.
           if (session.payment_status !== "paid") {
             console.warn(
               `⚠️ Stripe checkout.session.completed ${session.id}: payment_status="${session.payment_status}" is not "paid" — NOT confirming a booking (no money collected); the Payment row stays PENDING for reconcile-payment-status, or cleanup-abandoned-payments releases the hold if the money never lands`,
             );
             break;
           }
-          //
-          // A Checkout Session carries no CAPTURED amount. `amount_total` is
-          // the session's ORDER total — what was asked for — and it does not
-          // move when a payment is partially captured. Passing it as
-          // `amountPaise` would make the parity check compare the gateway
-          // against itself, which is the same defect removed from the Razorpay
-          // `order.paid` fallback in W1b, and it would read as "verified" while
-          // proving nothing. So this door deliberately WITHHOLDS the amount and
-          // the parity check is skipped — the org rail's existing conservatism.
-          //
-          // The rail is not blind to a short capture ON THE DIRECT-INTENT FLOW:
-          // Stripe fires `payment_intent.succeeded`, which does carry
-          // `amount_received`, and the door below passes that through. On a
-          // CHECKOUT row that door cannot resolve the row (see the payment_status
-          // guard above), so it is `reconcile-payment-status` that re-reads a
-          // `cs_…` and catches a short capture. This one only adds the session
-          // as a second entry point.
-          const sessionTotalPaise = readCapturedAmountPaise(
-            event.data.object,
-            "amount_total",
-          );
-          if (sessionTotalPaise !== undefined) {
-            console.warn(
-              `⚠️ Stripe checkout.session.completed ${session.id}: amount_total is the session ORDER total (${sessionTotalPaise}p), not a captured amount — confirming without a capture-amount parity check; the payment_intent.succeeded door carries amount_received`,
-            );
-          }
+          // No amount: `amount_total` is the order total, not a captured
+          // amount, so the parity check is skipped on this door.
           await routeCapturedPayment({
             orderId: session.id,
             notes: session.metadata || {},
-            // Intentionally undefined — see above.
             gatewayPaymentId: session.payment_intent ?? undefined,
           });
           break;
