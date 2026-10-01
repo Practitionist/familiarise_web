@@ -1527,7 +1527,12 @@ export async function handleDisputeUpdated(
           // #738-B — payment amount/TCS needed for the lost-dispute tax parity.
           include: {
             payment: {
-              select: { id: true, amount: true, gstTcsCollectedPaise: true },
+              select: {
+                id: true,
+                amount: true,
+                gstTcsCollectedPaise: true,
+                organizationId: true,
+              },
             },
           },
         });
@@ -1691,14 +1696,8 @@ export async function handleDisputeUpdated(
           let consultantManualRecoveryPaise = 0; // NET auto-booked (what we can actually collect)
           let consultantGrossReversedPaise = 0; // GROSS share reversed (earnings, not cash)
           let consultantManualRecoveryCount = 0;
-          /**
-           * Automatic clawback of money a COMPLETED ConsultantPayout already
-           * sent, accumulated per payout and posted ONCE per (dispute, payout)
-           * after the loop. Posting inside the loop would not work: one batch
-           * payout covers many earnings of the same payment, so the second
-           * earning would re-derive the first's `clawback:<dispute>:<payoutId>`
-           * key and be silently dropped as a replay.
-           */
+          // Accumulated per payout and posted once after the loop: earnings
+          // sharing a batch payout share one `clawback:<dispute>:<payout>` key.
           const consultantClawbacks = new Map<
             string,
             { consultantProfileId: string; amountPaise: number }
@@ -1715,17 +1714,8 @@ export async function handleDisputeUpdated(
             );
             const reversalNow = Math.min(proratedReversal, remainingRefundable);
 
-            // W1c — CAS-in-WHERE, matching the doctrine the other three
-            // REFUNDED writers now follow. The WHERE repeats the money
-            // predicate (source status) AND pins `refundedShareAmount` to the
-            // pre-read; the write is an ABSOLUTE value, not an `increment`.
-            // An `increment` here, capped in JS from a pre-read, is exactly the
-            // shape that let two concurrent reversals sum past the share.
-            //
-            // `count === 0` is a lost race and is treated as one below: the TDS
-            // reversal and the manual-recovery page are gated on the write
-            // having actually landed, or a concurrent reversal double-pages
-            // ops and double-reverses the withholding.
+            // CAS: source status + pinned `refundedShareAmount`, absolute write.
+            // Side effects below run only when this write landed.
             const { count: consultantReversalCount } =
               await tx.consultantEarnings.updateMany({
                 where: {
@@ -1765,12 +1755,6 @@ export async function handleDisputeUpdated(
             const netClawbackPaise = Math.floor(reversalNow * netFraction);
 
             if (earning.status === "PAID" && reversalNow > 0) {
-              // W1c — only count and page for a reversal THIS call actually
-              // wrote. Gating on the CAS result is what stops a concurrent
-              // reversal from double-paging ops for one lost dispute, and from
-              // raising a clawback against a share another writer already
-              // reversed (the clawback's own idempotency key would collapse the
-              // journal, but the page and the counter would not).
               if (consultantReversalApplied) {
                 consultantManualRecoveryPaise += netClawbackPaise;
                 consultantGrossReversedPaise += reversalNow;
@@ -1780,18 +1764,15 @@ export async function handleDisputeUpdated(
                   `⚠️ Earnings ${earning.id}: dispute ${disputeId} LOST reversal lost the CAS (status or refundedShareAmount moved) — skipping the recovery page and clawback for this writer`,
                 );
               }
-              // Only a COMPLETED payout moved cash; a BATCHED/PENDING one has
-              // nothing out, and the earnings reversal above has already
-              // returned the share to the pool. Mirrors the org loop's
-              // `orgPayout.status === "COMPLETED"` gate below. Also gated on the
-              // CAS, so a lost race raises no clawback for a share another
-              // writer already reversed.
+              // Only a COMPLETED payout moved cash, and only the CAS winner claws back.
+              // B2C only: on an org-funded payment the org already bore the
+              // chargeback (applyOrgChargeback), so no consultant receivable.
               if (
                 consultantReversalApplied &&
+                !dispute.payment.organizationId &&
                 earning.payoutId &&
                 earning.payout?.status === "COMPLETED"
               ) {
-
                 if (netClawbackPaise > 0) {
                   const prior = consultantClawbacks.get(earning.payoutId);
                   if (prior) {
@@ -1810,10 +1791,7 @@ export async function handleDisputeUpdated(
               `💸 Earnings ${earning.id} refunded (${reversalNow} paise) — dispute ${disputeId} lost`,
             );
           }
-          // One clawback per (dispute, payout), mirroring the org earnings loop
-          // below — the org rail recovers cash (`Dr CASH / Cr ORG_PAYABLE`);
-          // this one books the receivable, because the consultant rail has no
-          // reverse-transfer to pull the money back through.
+          // One receivable per (dispute, payout).
           const clawbackRefundId = `dispute:${dispute.id}`;
           for (const [consultantPayoutId, claw] of consultantClawbacks) {
             const applied = await applyReversal(tx, {
@@ -1826,11 +1804,7 @@ export async function handleDisputeUpdated(
               reason: `chargeback lost (dispute ${disputeId})`,
               refundId: clawbackRefundId,
             });
-            // Name the key only for a journal that ACTUALLY posted. A key for a
-            // journal that was never written sends an operator to reconcile
-            // against a transaction id that does not exist — the page is the
-            // only thing that tells them what to collect, so a phantom key in it
-            // is worse than a missing one.
+            // Name only keys whose journal actually posted.
             if (applied.clawbackPosted) {
               consultantClawbackKeys.push(
                 consultantClawbackKey(clawbackRefundId, consultantPayoutId),
@@ -1839,14 +1813,7 @@ export async function handleDisputeUpdated(
           }
 
           if (consultantManualRecoveryCount > 0) {
-            // Staged for POST-COMMIT dispatch (see consultantClawbackPage):
-            // paging from inside the tx meant an SSI abort reached ops with a
-            // reversal total that was never persisted, and the gateway
-            // redelivery would double-page. The page SURVIVES the clawback on
-            // purpose — the journal says what we are owed, the page says which
-            // earnings and which dispute an operator has to go and collect, and
-            // a PAID earning whose payout cannot be resolved posts no journal at
-            // all and would otherwise leave no trace whatsoever.
+            // Paged post-commit; names the earnings ops must collect.
             consultantClawbackPage = {
               disputeId,
               paymentId: dispute.paymentId,

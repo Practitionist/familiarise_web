@@ -515,6 +515,22 @@ describe("LOST dispute — cases with no cash out stay untouched", () => {
   });
 });
 
+describe("LOST dispute on an org-funded payment", () => {
+  test("never books a consultant receivable: the org already bore the chargeback", async () => {
+    seedPayment(10_000);
+    store.payments.get("pay_db_1")!.organizationId = "org_1";
+    // Prior refunds cover the dispute, so applyOrgChargeback no-ops here.
+    tx.refund.aggregate = async () => ({ _sum: { amountPaise: 10_000 } });
+    seedEarning({ id: "ce_paid", consultantSharePaise: 6_000 });
+    seedOpenDispute(10_000);
+
+    await handleDisputeUpdated("disp_1", "lost", null);
+
+    expect(store.consultantEarnings[0].status).toBe("REFUNDED");
+    expect(consultantClawbackCalls()).toHaveLength(0);
+  });
+});
+
 describe("the ops page survives the clawback", () => {
   test("one page per dispute, carrying the journal keys to reconcile against", async () => {
     seedPayment(10_000);
