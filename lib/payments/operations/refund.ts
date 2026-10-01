@@ -875,7 +875,6 @@ export type ApplyRefundCascadeResult = {
   memberOverageRefundDue: { overagePaymentId: string } | null;
 };
 
-
 /**
  * Inner cascade — runs steps 4–8 of the refund operation against an
  * already-existing Refund row. Caller must pass a transaction client;
@@ -1210,13 +1209,9 @@ export async function applyRefundCascade(
       : (trancheAbsorb.get(earnings.id) ?? 0);
 
   let consultantEarningsReversed = 0;
-  // What each row ACTUALLY absorbed, keyed by earning id. Step 9's journal
-  // debits and this loop's TDS filing must read this, never `reversalOf(row)`:
-  // the helper caps at `share - refundedShareAmount` and takes only the
-  // residual after a lost race, so the request can exceed the write — and
-  // booking the request while the column advanced by less is exactly the
-  // EARNINGS_LEDGER_DRIFT `reconcile-ledgers` raises. Rows skipped below are
-  // absent, which reads as 0.
+  // What each row ACTUALLY absorbed, by earning id (absent = 0). Step 9's
+  // debits and the TDS filing read this, never `reversalOf(row)`: booking the
+  // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
   const appliedByEarning = new Map<string, number>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
@@ -1225,15 +1220,8 @@ export async function applyRefundCascade(
     // a second reversal (e.g. app refund THEN a lost-dispute chargeback creates a
     // new Refund → new cascadedAt → Step 6 re-runs) would otherwise inflate
     // refundedShareAmount past consultantSharePaise and corrupt readyAmount/over-refund math.
-    // #CASC — the cap and the status predicate now live in the WHERE as well
-    // (applyCappedEarningReversal), so the re-run above is refused by the
-    // database rather than only by this function's pre-read.
-    //
-    // No `assertEarningStatusTransitionLegal` here any more: with `to` fixed at
-    // REFUNDED, that guard can only ever throw for `from === REFUNDED` (the one
-    // case the `!== REFUNDED` check excluded), so this call site was
-    // unreachable-by-throw, and the helper now asserts the same transition
-    // itself on every attempt, including the first, before it writes.
+    // #CASC — the cap and status predicate live in the WHERE
+    // (applyCappedEarningReversal), which also asserts the transition.
     const reversal = await applyCappedEarningReversal(
       tx,
       earnings,
@@ -1259,13 +1247,8 @@ export async function applyRefundCascade(
     // the dedup/cap against double-reversal, and the filed-aware FY/quarter
     // policy (pending CA sign-off).
     //
-    // Skipped outright when this call applied 0 paise (the CAS was refused):
-    // filing a TDS reversal against an `earningsId` whose earning was not
-    // clawed back would net withholding back out for money the consultant never
-    // had taken back. The proportion BASIS stays booking-level
-    // (`input.amountPaise / payment.amount`) — 26Q is filed per payout, not per
-    // earning row, so scaling the numerator to this row's applied share would
-    // both change a compliance figure and multiply-reverse a multi-row payment.
+    // Skipped when the CAS applied 0. The basis stays booking-level
+    // (`input.amountPaise / payment.amount`): 26Q is filed per payout.
     if (earnings.payoutId && reversal.reversedPaise > 0) {
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
@@ -1305,16 +1288,8 @@ export async function applyRefundCascade(
     // otherwise inflate refundedAmountPaise past orgSharePaise and drive the
     // payout readyAmount negative, blocking the whole batch.
     //
-    // #CASC — that cap and the legal-source predicate now live in the WHERE as
-    // well, in the SAME shared writer the consultant rows above use (the org
-    // twin differs only in column names). A bare `update({ where: { id } })`
-    // plus the advisory `assertEarningStatusTransitionLegal` let two concurrent
-    // org reversals both read READY and both write.
-    //
-    // No `assertEarningStatusTransitionLegal` here any more: the helper asserts
-    // the same transition itself, unconditionally and BEFORE the write, on every
-    // attempt including the first — so a shared primitive reached without a
-    // caller guard cannot slip an unguarded PAID → REFUNDED through.
+    // #CASC — that cap and the legal-source predicate live in the shared CAS
+    // writer's WHERE, which also asserts the transition before writing.
     const orgReversal = await applyCappedOrgEarningReversal(
       tx,
       orgEarn,
@@ -1330,13 +1305,8 @@ export async function applyRefundCascade(
           `(${orgReversal.refundedAmountPaise}/${orgEarn.orgSharePaise}).`,
       );
     }
-    // What this row ACTUALLY absorbed. Everything below — the counter on the
-    // row, the payout clawback increment, the audit figure and the clawback
-    // journal — reads this, never `orgShareRev`: the request can exceed the
-    // write (cap, or a residual after a lost race), and claiming the request
-    // would diverge the clawback counter from refundedAmountPaise and over-book
-    // the journal. 0 means "post nothing" — `postLedgerTxn` THROWS on a
-    // non-positive posting, so a zero must never reach it.
+    // What this row ACTUALLY absorbed; everything below reads it, never
+    // `orgShareRev`. 0 means post nothing (`postLedgerTxn` throws on 0).
     const orgApplied = orgReversal.reversedPaise;
     appliedByOrgEarning.set(orgEarn.id, orgApplied);
     if (orgApplied > 0) organizationEarningsReversed++;
@@ -1607,19 +1577,13 @@ export async function applyRefundCascade(
 
     const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
     if (fundingTotal > 0) {
-      // The APPLIED total (Step 6's map), not the requested total — see that
-      // comment. `platformPlug` below is the residual that keeps this
-      // transaction balanced, so a smaller `consRev` lands the un-clawed-back
-      // remainder on PLATFORM_FEE instead of silently debiting a payable for
-      // paise the earning never took back.
+      // APPLIED total (Step 6); `platformPlug` lands any un-clawed remainder on
+      // PLATFORM_FEE rather than debiting a payable for paise never taken back.
       const consRev = payment.earnings.reduce(
         (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
         0,
       );
-      // APPLIED (Step 7's `appliedByOrgEarning`), not the requested proportion —
-      // same reason as `consRev` above, and the same reason the clawback counter
-      // reads it: booking a payable debit for paise the row never gave up is the
-      // EARNINGS_LEDGER_DRIFT `reconcile-ledgers` raises.
+      // APPLIED (Step 7's `appliedByOrgEarning`), for the same reason as consRev.
       const orgRev = payment.organizationEarnings.reduce(
         (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
         0,
@@ -1673,11 +1637,8 @@ export async function applyRefundCascade(
       // left collaborators' payables un-reversed in the ledger — an invisible
       // per-account divergence on every multi-collaborator refund.
       for (const earning of payment.earnings) {
-        // #Bugfix — the amount this cascade ACTUALLY applied to this row, not
-        // `reversalOf(earning)` (the request). Debiting the payable for the
-        // request when the CAS applied less is precisely the ledger-vs-earnings
-        // divergence `EARNINGS_LEDGER_DRIFT` reports, and it is unrepairable
-        // because the journal is append-only.
+        // #Bugfix — debit what the CAS ACTUALLY applied, not the request;
+        // anything else is unrepairable EARNINGS_LEDGER_DRIFT.
         const earningRev = appliedByEarning.get(earning.id) ?? 0;
         if (earningRev > 0) {
           debits.push({

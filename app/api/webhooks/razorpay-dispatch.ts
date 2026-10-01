@@ -198,17 +198,9 @@ export async function processRazorpayWebhookEvent(
         // #1582 F-P0-01 — the `pay_*` id rides along when Razorpay ships the
         // payment entity; without it the org branch still refuses to mark PAID.
         const paidEntity = paidEvent.payload.payment?.entity;
-        // `amountPaise` means WHAT WAS CAPTURED, so it may only ever come off a
-        // payment entity. It used to fall back to `order.entity.amount` — the
-        // order total — which made the parity check in handlePaymentSuccess
-        // compare the gateway against itself and always pass, so an under-
-        // captured order confirmed a full booking. `checkout/verify` already
-        // withholds it the same way. Withholding it here is the conservative
-        // choice: no figure means the parity check is SKIPPED, which is the
-        // status quo for a first delivery, rather than a false pass on a wrong
-        // figure. (The org/overage/recording branches were already conservative
-        // and are unchanged: the org branch withholds the amount unless a
-        // `pay_*` id came with it, and overage/recording key on ids alone.)
+        // `amountPaise` is what was captured: only a payment entity supplies it.
+        // Otherwise withheld, so the parity check skips rather than falsely
+        // passing against the order total.
         await routeCapturedPayment({
           orderId: paidEvent.payload.order.entity.id,
           notes: paidEvent.payload.order.entity.notes ?? {},

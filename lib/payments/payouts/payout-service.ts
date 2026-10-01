@@ -253,15 +253,8 @@ const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
 const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
 
 /**
- * The refund-side sibling of `DISPUTE_INACTIVE_FOR_GATING`: refund statuses
- * that must NOT block a payout, because the money was never returned. FAILED
- * is a gateway rejection; CANCELLED is our own withdrawal. Both are terminal
- * and settled. PENDING and SUCCEEDED are the two that move (or have moved) the
- * money and are therefore the ones the disbursement guard screens for.
- *
- * Deliberately local: dispute-status.ts owns the dispute state machine, and
- * there is no equivalent refund-status constant today. Naming it here keeps the
- * "which statuses are safe" convention visible at the point of use.
+ * Refund statuses that must NOT block a payout: FAILED and CANCELLED never
+ * returned the money. Refund-side sibling of `DISPUTE_INACTIVE_FOR_GATING`.
  */
 const REFUND_INACTIVE_FOR_GATING: RefundStatus[] = [
   RefundStatus.FAILED,

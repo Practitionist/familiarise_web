@@ -205,16 +205,10 @@ async function banOrSuspendUser(
 // doctrine — the guard below enforces it per row. Returns undefined when the
 // target has no consultant profile (earningsHeld stays unset, as before).
 //
-// #1020-1 — a ban is a freeze like any other, so it records the row's PRIOR
-// status in preDisputeStatus exactly as the dispute hold does: three CAS groups
-// (one per source status, mirroring app/api/webhooks/utils.ts) instead of one
-// blind updateMany, so an operator release can put a PENDING_TRUST row back in
-// PENDING_TRUST rather than force-maturing it to READY and paying out a
-// consultant whose sponsoring org has never been verified or paid. Every hold
-// in the codebase transitions FROM a non-HELD status and excludes HELD in its
-// WHERE, so the first freeze to land owns the column and no second one — a
-// dispute landing on a ban-held row, or a ban on a dispute-held row — can
-// clobber the recorded prior.
+// #1020-1 — a ban records the row's PRIOR status in preDisputeStatus like the
+// dispute hold (one CAS group per source status), so release restores
+// PENDING_TRUST instead of READY. Every hold excludes HELD, so the first
+// freeze owns the column.
 async function holdBannedConsultantEarnings(
   tx: Tx,
   targetUserId: string,

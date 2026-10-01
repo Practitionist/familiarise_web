@@ -11,11 +11,7 @@ import {
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
-/**
- * Actionable copy for a missing/malformed `idempotencyKey`. Surfaced verbatim
- * by `withOpsAction` as `{ error, code: "INVALID_BODY" }` with a 400 — the
- * route's existing validation convention, so no new pattern is introduced here.
- */
+/** 400 copy for a missing/malformed `idempotencyKey` (via withOpsAction). */
 const KEY_REQUIRED_COPY =
   "idempotencyKey is required and must be a UUID — send the per-dialog key the refund dialog already mints. Without it this door cannot tell a double-click from a second refund, and would mint a fresh one instead, leaving the unique dedupe column inert.";
 
@@ -31,18 +27,8 @@ export const POST = withOpsAction(
   {
     paymentId: z.string().min(1),
     /**
-     * REQUIRED, and refused when omitted — never defaulted here.
-     *
-     * Invariant: this door's `Refund.dedupeKey` is a pure function of a
-     * caller-minted key, so `Refund.dedupeKey @unique` is what collapses a
-     * double-click. The defect was the `?? opsActionId` fallback: a per-request
-     * `randomUUID()` is unique on every click BY CONSTRUCTION, so the unique
-     * column never fired, the in-transaction refundable-balance re-derivation
-     * still saw the full balance, and one double-click issued two real refunds.
-     * A server-minted key is that same inert column, so omission is a 4xx with
-     * this message rather than a silently fresh key.
-     *
-     * One key per dialog: a double-click or a retry reuses the first refund.
+     * Required, never defaulted: `Refund.dedupeKey @unique` collapses a
+     * double-click only when the key is caller-minted. One key per dialog.
      */
     idempotencyKey: z
       .string({
@@ -82,9 +68,7 @@ export const POST = withOpsAction(
       }
       const amountPaise = override?.amountPaise ?? body.amountPaise;
       // Deterministic in the caller's key, so `Refund.dedupeKey @unique` fires
-      // on the second click. The credits door namespaces under `ops:credits:`;
-      // that cannot collide with this bare `ops:` slot because a validated UUID
-      // contains no colon — `ops:<uuid>` never equals `ops:credits:<uuid>`.
+      // on a second click. A UUID has no colon: never equals `ops:credits:…`.
       const dedupeKey = body.occurrenceId
         ? occurrenceRefundKey(body.occurrenceId, body.paymentId)
         : `ops:${body.idempotencyKey}`;

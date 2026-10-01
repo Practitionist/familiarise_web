@@ -137,10 +137,8 @@ export const moneyResultExtensions = {
     amount: f("amount"),
     tdsDeducted: f("tdsDeducted"),
     netAmount: fn("netAmount"),
-    // W1a — the clawback counter. Without this it would be the one BigInt money
-    // column on the payout row that crosses the JS boundary as a `bigint`:
-    // JSON.stringify throws on it, and arithmetic against it silently mixes
-    // bigint with number. Mirrors organizationPayout's own clawback mapping.
+    // W1a — the clawback counter crosses the JS boundary as a number, like
+    // organizationPayout's own clawback mapping.
     clawbackAmountPaise: f("clawbackAmountPaise"),
   },
   tDSRecord: {

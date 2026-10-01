@@ -171,14 +171,9 @@ export async function POST(req: NextRequest) {
           const sessionEvent =
             stripeCheckoutSessionCompletedEventSchema.parse(event);
           const session = sessionEvent.data.object;
-          // Use session.id (cs_...) which matches Payment.paymentIntent.
-          // `payment_intent` (pi_...) is this rail's `pay_…`: the object the
-          // refund/dispute webhooks can be resolved against.
-          //
-          // Only `paid` collects money; anything else (async method in flight,
-          // unfinished 3DS, unknown value) stays PENDING for
-          // reconcile-payment-status / cleanup-abandoned-payments. 200, not 500:
-          // Stripe will not re-fire a completed session.
+          // session.id (cs_...) matches Payment.paymentIntent; `payment_intent`
+          // (pi_...) is what refund/dispute webhooks resolve against. Only `paid`
+          // collects money; anything else stays PENDING (200: no re-fire).
           if (session.payment_status !== "paid") {
             console.warn(
               `⚠️ Stripe checkout.session.completed ${session.id}: payment_status="${session.payment_status}" is not "paid" — NOT confirming a booking (no money collected); the Payment row stays PENDING for reconcile-payment-status, or cleanup-abandoned-payments releases the hold if the money never lands`,
@@ -204,10 +199,8 @@ export async function POST(req: NextRequest) {
 
         // Payment Intent events — kept for backward compatibility.
         // If a payment was stored with pi_... (legacy flow), this handler catches it.
-        // Idempotency: routeCapturedPayment is a no-op if already SUCCEEDED
-        // AND the redelivered amount still matches what we booked — a redelivery
-        // whose amount does not match now trips the parity check instead of
-        // being waved through by that short-circuit.
+        // routeCapturedPayment no-ops on SUCCEEDED only while the redelivered
+        // amount still matches; a mismatch trips the parity check.
         case "payment_intent.succeeded": {
           const succeededEvent =
             stripePaymentIntentSucceededEventSchema.parse(event);

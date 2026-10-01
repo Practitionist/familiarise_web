@@ -1476,7 +1476,6 @@ export async function getConsultantEarnings(
   };
 }
 
-
 /**
  * Refund earnings (called when a payment is refunded).
  *
@@ -1569,16 +1568,9 @@ export async function refundEarnings(
 
     if (orgRefundAmount <= 0) continue;
 
-    // #CASC — the org row goes through the same shared CAS writer the
-    // consultant rows use. It was an `update({ where: { id } })` carrying an
-    // `increment`, which is the worst of both: the cap above was derived from
-    // a pre-read, and an `increment` re-adds that delta, so two concurrent
-    // `refundEarnings` (an app refund racing a webhook, or two cascades) both
-    // read `alreadyRefunded = 0`, both pass, and both increment — summing past
-    // the share and driving the org payout's readyAmount negative. The helper
-    // repeats the legal-source set AND the prior amount in the WHERE and writes
-    // an absolute value, so concurrent writers can only compose into
-    // `min(share, a + b)`.
+    // #CASC — the shared CAS writer pins the legal-source set and prior amount
+    // and writes an absolute value: concurrent writers compose to
+    // min(share, a + b).
     const orgReversal = await applyCappedOrgEarningReversal(
       db,
       orgEarning,
@@ -1656,20 +1648,9 @@ export async function refundEarnings(
         shareToReverse,
       );
 
-      // #813 — force refund of PAID earnings: record the proportional TDS
-      // reversal via the shared helper (integer proportion + dedup/cap +
-      // filed-aware FY/quarter). Previously this path used float ratio math and
-      // no cap, and it diverged from the gateway/cron cascade
-      // (operations/refund.ts).
-      //
-      // AFTER the CAS, and gated on `reversedPaise > 0`. Filing before the CAS
-      // meant it could not know how much was actually applied: the helper caps
-      // at the remaining share and, after a lost race, takes only the residual.
-      // Reversing TDS for a share that was never reversed would understate the
-      // 26Q figure in the government's favour by mistake. The basis stays
-      // `refundNumPaise / refundDenPaise` — a BOOKING-level proportion, not this
-      // share — so substituting the applied amount would change a compliance
-      // figure and multiply-reverse a multi-row payment.
+      // #813 — proportional TDS reversal via the shared helper, AFTER the CAS
+      // and only when `reversedPaise > 0`. The basis stays booking-level
+      // (`refundNumPaise / refundDenPaise`): a compliance figure.
       if (earnings.payoutId && paidReversal.reversedPaise > 0) {
         await recordTdsReversal(db, {
           payoutId: earnings.payoutId,

@@ -656,7 +656,6 @@ function assertReturnable(
   }
 }
 
-
 /**
  * In-ledger settlement of a fully-credit-funded cancellation (#1161).
  *
@@ -734,24 +733,14 @@ async function reverseFreeCreditSettlement(
   )
     return;
 
-  // Consultant earnings net in full — same cap as cascade Step 6, via the same
-  // shared CAS writer. `appliedByEarning` records what each row ACTUALLY
-  // absorbed: the helper clamps to `share - refundedShareAmount` and, on a lost
-  // race, takes only the residual, so the request can exceed the write. The TDS
-  // filing and the counter-posting below must read the applied figure, never the
-  // request.
+  // Consultant earnings net in full via the shared CAS writer.
+  // `appliedByEarning` is what each row ACTUALLY absorbed (<= request); the TDS
+  // filing and counter-posting below must read it, never the request.
   const appliedByEarning = new Map<string, number>();
   for (const earnings of payment.earnings) {
     const delta = part(earnings.consultantSharePaise);
-    // #CASC — the cap and the legal-source predicate are repeated in the WHERE,
-    // so a concurrent gateway refund that already took this row wins the race
-    // here instead of both writers landing.
-    //
-    // No `assertEarningStatusTransitionLegal` here any more: with `to` fixed at
-    // REFUNDED that guard can only throw for `from === REFUNDED` — the one case
-    // the old `!== REFUNDED` check excluded — so this call site could never
-    // actually throw, and the helper now asserts the same transition itself on
-    // every attempt, including the first, before it writes.
+    // #CASC — the shared writer repeats the cap and legal-source predicate in
+    // the WHERE and asserts the transition itself, so a concurrent refund wins.
     const reversal = await applyCappedEarningReversal(tx, earnings, delta);
     appliedByEarning.set(earnings.id, reversal.reversedPaise);
     if (reversal.lostRace) {
@@ -763,11 +752,8 @@ async function reverseFreeCreditSettlement(
     }
     if (earnings.payoutId && reversal.reversedPaise > 0) {
       // Full reversal of this share → full TDS reversal for it; the helper's
-      // own dedup + original-cap keeps a re-run bounded. The numerator is the
-      // APPLIED paise against the same share denominator, so the proportion
-      // keeps its exact meaning (fraction of this earning's share reversed)
-      // while no longer claiming paise the earning never absorbed. Skipped
-      // entirely at 0 — a refused CAS must not net withholding back out.
+      // own dedup + original-cap keeps a re-run bounded. Numerator is the
+      // APPLIED paise; skipped at 0 so a refused CAS nets no withholding out.
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
@@ -783,21 +769,12 @@ async function reverseFreeCreditSettlement(
   // sponsor; referral credits never fund org-sponsored checkouts). Mirrors
   // cascade Step 7 including the COMPLETED-payout clawback record.
   //
-  // `appliedByOrgEarning` is the org twin of `appliedByEarning` above and is
-  // read by both the clawback counter below and the ORG_PAYABLE debit further
-  // down: the helper clamps to `orgSharePaise - refundedAmountPaise` and, on a
-  // lost race, takes only the residual, so the request can exceed the write.
+  // `appliedByOrgEarning` is the org twin of `appliedByEarning` above.
   const appliedByOrgEarning = new Map<string, number>();
   for (const orgEarn of payment.organizationEarnings) {
     const orgDelta = part(orgEarn.orgSharePaise);
-    // #CASC — the same shared CAS writer the consultant rows above use: the cap
-    // and the legal-source predicate are repeated in the WHERE, so a concurrent
-    // gateway refund that already took this row wins the race here instead of
-    // both writers landing. The org twin differs only in column names.
-    //
-    // No `assertEarningStatusTransitionLegal` here any more: the helper asserts
-    // the same transition itself, unconditionally and before the write, on
-    // every attempt including the first.
+    // #CASC — same shared CAS writer as the consultant rows (org column names);
+    // it asserts the transition itself before writing.
     const orgReversal = await applyCappedOrgEarningReversal(
       tx,
       orgEarn,
@@ -890,10 +867,8 @@ async function reverseFreeCreditSettlement(
   }
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
-  // APPLIED, not requested (see `appliedByEarning` / `appliedByOrgEarning`).
-  // `platformPlug` is the residual that keeps this transaction balanced, so a
-  // smaller `consRev`/`orgRev` puts the un-clawed-back remainder on
-  // PLATFORM_FEE rather than over-debiting the payables.
+  // APPLIED, not requested: `platformPlug` absorbs the un-clawed remainder on
+  // PLATFORM_FEE instead of over-debiting the payables.
   const consRev = payment.earnings.reduce(
     (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
     0,
@@ -1118,7 +1093,11 @@ async function refundInternalFundedPayment(input: {
         );
 
         if (!input.keepSeat) {
-          await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
+          await transitionParticipant(
+            tx,
+            { paymentId: payment.id },
+            "REFUNDED",
+          );
         }
         notice = await stageRefundNotice(tx, payment, requested);
         return {

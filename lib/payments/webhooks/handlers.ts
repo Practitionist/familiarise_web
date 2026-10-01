@@ -412,11 +412,8 @@ export async function handlePaymentSuccess(
             recovering &&
             payment.paymentStatus === PaymentStatus.SUCCEEDED &&
             payment.appointmentId === null;
-          // The SUCCEEDED short-circuit below and the capture-amount parity
-          // check are now mutually exclusive guards, so name the short-circuit's
-          // own predicate once. `recoverable` is excluded on purpose: a recovery
-          // on a SUCCEEDED row with no appointment has NOT been confirmed yet, so
-          // a wrong-amount capture there must still block and refund.
+          // The SUCCEEDED short-circuit's own predicate; `recoverable` excluded so
+          // a wrong-amount capture on an unconfirmed recovery still blocks.
           const alreadyProcessed =
             payment.paymentStatus === PaymentStatus.SUCCEEDED && !recoverable;
 
@@ -427,10 +424,7 @@ export async function handlePaymentSuccess(
           // SUCCEEDED — gateway truth — so Phase 2 can refund through the
           // front door; the CAS keeps a concurrent writer honest (ADR 21).
           // Mutually exclusive with `alreadyProcessed` (SUCCEEDED vs
-          // EXPIRED/FAILED), so hoisting the parity check above the
-          // short-circuit did not need to move this one: a capture on an
-          // already-released hold is refused for the stronger reason, and
-          // #1695's own refund front door is what moves the money back.
+          // EXPIRED/FAILED), so it stays where it was.
           if (
             payment.paymentStatus === PaymentStatus.EXPIRED ||
             payment.paymentStatus === PaymentStatus.FAILED
@@ -469,16 +463,9 @@ export async function handlePaymentSuccess(
           // money. Mark for manual recovery + page (like the metadata-failure path) and
           // skip confirmation; the captured funds are reconciled by hand.
           //
-          // This check sits ABOVE the SUCCEEDED short-circuit, where it used to sit
-          // below: a redelivered `payment_intent.succeeded` / `payment.captured` /
-          // `order.paid` for an under-captured order therefore returned null before
-          // the comparison was ever evaluated, so a redelivery could never re-validate
-          // and the short-circuit looked like agreement. Comparing first costs nothing
-          // on the happy path and is the only way a replay of a wrong-amount capture is
-          // still recognised as one. The REMEDIATION (stamp + auto-refund) stays
-          // behind `!alreadyProcessed` — a mismatch on a row that is already terminal
-          // was stamped and refunded by the delivery that first saw it, so re-running
-          // it here would issue a second refund.
+          // Sits ABOVE the SUCCEEDED short-circuit so a redelivered wrong-amount
+          // capture is still caught; the remediation stays behind
+          // `!alreadyProcessed` so it never refunds twice.
           if (
             gatewayAmountPaise !== undefined &&
             gatewayAmountPaise !== payment.amount

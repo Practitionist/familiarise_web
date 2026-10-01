@@ -33,12 +33,8 @@ export const REFUNDABLE_ORG_EARNING_SOURCE: EarningStatus[] = [
 
 export type EarningReversalOutcome = {
   /**
-   * Paise this call actually wrote — the ONLY figure a caller may post to the
-   * ledger or TDS with. It is `<= requestPaise`: the cap clamps it, and a lost
-   * race re-reads and takes only the residual. Posting the requested amount
-   * instead books paise the earning never absorbed (EARNINGS_LEDGER_DRIFT at
-   * reconcile). 0 means the CAS was refused: post nothing at all — a
-   * zero-amount `postLedgerTxn` THROWS (each posting must be positive paise).
+   * Paise actually written (<= request): the ONLY figure to post to the ledger
+   * or TDS. 0 = refused, post nothing (`postLedgerTxn` throws on 0).
    */
   reversedPaise: number;
   /** `refundedShareAmount` as it stands after this call. */

@@ -1,13 +1,9 @@
 /**
  * #1771 K-3 — an operator's hold and release of consultant earnings.
  *
- * Hold: PENDING|READY → HELD. Release: HELD → the row's recorded
- * preDisputeStatus when one exists (#1020-1 — so a PENDING_TRUST freeze goes
- * back to PENDING_TRUST, not READY), else READY once the hold has matured and
- * PENDING until then for the release cron; never while the payment has an open
- * refund or dispute (the cascade still has to size itself). Both are one CAS per
- * status group, the predicates repeated in the WHERE, and a count that falls
- * short rolls the caller's transaction back as a 409.
+ * Hold: PENDING|READY → HELD. Release: HELD → the recorded preDisputeStatus
+ * (#1020-1), else READY/PENDING by hold maturity; never while the payment has
+ * an open refund or dispute. One CAS per status group; a short count is a 409.
  */
 
 import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
@@ -126,11 +122,8 @@ export async function releaseHeldEarnings(
     );
   }
 
-  // #1020-1 — the recorded prior wins over the hold-window heuristic. A row
-  // frozen from PENDING_TRUST returns to PENDING_TRUST: releasing it to READY is
-  // the invoice-fraud bypass (#687's park would never see that row again), so
-  // the fraud gate has to resume owning the release decision exactly as the
-  // dispute's WON/CLOSED branch does in app/api/webhooks/utils.ts.
+  // #1020-1 — the recorded prior wins: a PENDING_TRUST freeze returns to
+  // PENDING_TRUST so the invoice-fraud gate keeps owning the release.
   const trust: string[] = [];
   const priorPending: string[] = [];
   const priorReady: string[] = [];
@@ -148,13 +141,8 @@ export async function releaseHeldEarnings(
         priorReady.push(r.id);
         break;
       default: {
-        // No recorded prior (and any value no hold could have written): a
-        // dispute hold always records one, so this is an operator hold or a
-        // freeze from before #1020. Fall back to the hold-window rule the
-        // release has always used — READY once holdUntil has passed, PENDING
-        // until then. Flattening these to PENDING would buy nothing (the release
-        // cron READYs a matured PENDING row on its next pass) and flattening to
-        // READY would mature a row ahead of its own hold window.
+        // No recorded prior (operator hold, or pre-#1020): the hold-window rule,
+        // READY once holdUntil has passed, PENDING until then.
         const matured = Boolean(r.holdUntil && r.holdUntil <= now);
         (matured ? blankReady : blankPending).push(r.id);
       }

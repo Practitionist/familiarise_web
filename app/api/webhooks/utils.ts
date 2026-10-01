@@ -1489,20 +1489,12 @@ export async function handleDisputeUpdated(
     /** NET auto-booked as receivable — the figure an operator can collect. */
     amountPaise: number;
     /**
-     * GROSS share reversed on the earnings. Larger than `amountPaise` by the
-     * withheld TDS, which is NOT collectible: the transfer was net and the tax
-     * is reversed separately by `recordTdsReversal`. Stated so nobody reads the
-     * earnings figure as a recovery target.
+     * GROSS share reversed; exceeds `amountPaise` by withheld TDS, which is
+     * reversed by `recordTdsReversal`, never collected.
      */
     grossReversedPaise: number;
     earnings: number;
-    /**
-     * Ledger idempotency keys of the automatic clawbacks ACTUALLY posted for
-     * this dispute, so ops can tie the manual-recovery worklist back to the
-     * journal instead of reconciling two sets of numbers by eye. Empty when
-     * nothing was auto-clawed back (no COMPLETED payout on any affected
-     * earning, or every attempt was already journaled by an earlier delivery).
-     */
+    /** Ledger keys of the auto-clawbacks actually posted for this dispute. */
     clawbackKeys: string[];
   } | null = null;
   // #1654 — the bell is staged inside the tx and sent only after COMMIT.
@@ -1608,14 +1600,9 @@ export async function handleDisputeUpdated(
             },
             data: { status: "PENDING", preDisputeStatus: null },
           });
-          // W1e — a HELD row whose prior was PENDING_TRUST goes BACK to
-          // PENDING_TRUST, never to READY. Without this group the catch-all
-          // below force-readies it, and a moderation-held trust-parked earning
-          // (an org that has never been verified and never paid an invoice)
-          // would be released to the consultant the moment a dispute resolved
-          // in our favour — walking straight through the invoice-fraud gate.
-          // The dispute hold deliberately skips PENDING_TRUST, so such a row is
-          // only ever held by moderation; this is the group that respects it.
+          // W1e — a HELD row whose prior was PENDING_TRUST returns to
+          // PENDING_TRUST, never READY: only moderation holds such a row, and
+          // force-readying it would bypass the invoice-fraud gate.
           const relTrust = await tx.consultantEarnings.updateMany({
             where: {
               paymentId: dispute.paymentId,
@@ -1679,11 +1666,8 @@ export async function handleDisputeUpdated(
               consultantProfileId: true,
               payoutId: true,
               status: true,
-              // #R-06 — whether the cash actually left. Only a COMPLETED payout
-              // has anything to claw back. `amount` (gross) + `tdsDeducted`
-              // are here for the GROSS→NET scale: the clawback recovers the
-              // net the consultant actually received, never the withheld tax
-              // (W1a).
+              // #R-06 — only a COMPLETED payout has cash to claw back; gross
+              // `amount` + `tdsDeducted` scale the recovery to NET (W1a).
               payout: {
                 select: {
                   status: true,
@@ -1852,25 +1836,15 @@ export async function handleDisputeUpdated(
               remaining,
             );
 
-            // #CASC — the capped amount now comes from the shared CAS writer.
-            // This was `update({ where: { id } })` + `increment` of a pre-read
-            // delta, so two disputes on ONE payment (a chargeback plus a
-            // separate refund, both resolving LOST) each read
-            // `alreadyRefunded = 0`, each incremented, and each posted its own
-            // full clawback to the reversal engine — over-recovering the host
-            // org. The helper pins the prior amount in the WHERE and writes an
-            // absolute value, so the two writers can only compose into
-            // `min(share, a + b)`.
+            // #CASC — the shared CAS writer pins the prior amount and writes an
+            // absolute value, so two LOST disputes compose to min(share, a + b).
             const orgApplied = (
               await applyCappedOrgEarningReversal(tx, oe, requested)
             ).reversedPaise;
 
-            // Terminalisation is NOT this loop's job and deliberately does not
-            // go through the helper: a lost dispute beats the host, so the row
-            // must become terminal even when the proration recovers less than
-            // the whole share (the helper would leave it non-terminal). The
-            // status predicate makes exactly one writer win and the loser a
-            // no-op, so "force terminal" can never be applied twice.
+            // Terminalised here, not by the helper: a LOST dispute makes the row
+            // terminal even when proration recovers less than the share. The
+            // status predicate makes exactly one writer win.
             if (requested > 0) {
               await tx.organizationEarnings.updateMany({
                 where: { id: oe.id, status: { in: ["HELD", "PAID"] } },
