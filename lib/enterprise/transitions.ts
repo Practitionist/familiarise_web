@@ -373,14 +373,15 @@ export const WALLET_TOPUP_ALLOWED_FROM: Record<
 
 // #1846 — EarningStatus, shared by ConsultantEarnings and
 // OrganizationEarnings. Derived from the live write sites: PENDING_TRUST is an
-// entry state released by release-pending-trust-earnings; HELD returns to its
+// entry state released by release-pending-trust-earnings, re-entered when a
+// hold or dispute frozen from it is released; HELD returns to its
 // pre-dispute or pre-hold state; BATCHED goes back to READY when its payout
 // fails or is cancelled; PAID re-opens to READY only on a bank reversal
 // (#812); REFUNDED is terminal. A release of a payout's earnings must name
 // BATCHED in its WHERE, never a bare payout id, or a REFUNDED row flips back
 // to READY.
 export const EARNING_ALLOWED_FROM: Record<EarningStatus, EarningStatus[]> = {
-  PENDING_TRUST: [],
+  PENDING_TRUST: ["HELD"],
   PENDING: ["PENDING_TRUST", "HELD"],
   // Moderation also holds PENDING_TRUST rows.
   HELD: ["PENDING_TRUST", "PENDING", "READY"],
