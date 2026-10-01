@@ -302,7 +302,7 @@ export const AUTH_ERROR_COPY = {
   SSO_REQUIRED: {
     title: "Use your organisation's sign-in",
     description:
-      "This email domain signs in through your organisation's SSO. Use the SSO button below.",
+      "Your organisation requires its own sign-in for this email, so password and Google sign-in are turned off. Use the SSO button below.",
     field: "email",
     action: "switch-to-sso",
   },

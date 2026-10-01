@@ -35,21 +35,22 @@ stateDiagram-v2
   Registered --> Approved: ADMIN approves in back office (re-checks DNS claim)
   Approved --> Registered: ADMIN revokes
   Approved --> Registered: OWNER releases the domain claim
-  Approved --> Enforced: OWNER turns on enforceSSO
-  Enforced --> Approved: OWNER turns off enforceSSO
+  Approved --> Enforced: OWNER or ADMIN turns on enforceSSO
+  Enforced --> Approved: OWNER or ADMIN turns off enforceSSO
   Registered --> [*]: OWNER deletes provider
   Approved --> [*]: OWNER deletes provider (refused if last approved and enforced)
 ```
 
-| Step                 | Route                                                                       | Who                                     | Notes                                                                                                                                                  |
-| -------------------- | --------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claim, verify domain | `POST /api/organizations/[orgId]/domain-claims`, `.../[domain]/verify`      | Org OWNER                               | `OrgDomainClaim.domain` is unique: one domain, one org                                                                                                 |
-| Register provider    | `POST /api/organizations/[orgId]/sso/providers`                             | Org OWNER (`identity.manage`)           | Needs a verified claim (422 otherwise). Server-generated `providerId` (`oidc-<16 hex>`). OIDC discovery runs now, with an SSRF guard                   |
-| View provider        | `GET /api/organizations/[orgId]/sso/providers[/providerId]`                 | OWNER, MAINTAINER (`identity.read`)     | Client secret redacted for every role. Includes the callback URL                                                                                       |
-| Approve or revoke    | `POST /api/admin/organizations/[orgId]/sso-providers/[providerId]/approval` | Platform ADMIN (`organizations.manage`) | `{ approve, reason }`, `OpsActionLog` row. Approval re-checks the DNS claim. Buttons on the back-office org detail page                                |
-| Enforce              | `PATCH /api/organizations/[orgId]/sso` `{ enforceSSO: true }`               | Org OWNER                               | Needs a verified domain **and** at least one approved provider (409)                                                                                   |
-| Release domain       | `DELETE /api/organizations/[orgId]/domain-claims/[domain]`                  | Org OWNER                               | Sets `domainVerified = false` on that domain's providers in the same transaction. Refused if it would remove the last approved provider while enforced |
-| Delete provider      | `DELETE /api/organizations/[orgId]/sso/providers/[providerId]`              | Org OWNER                               | Refused for the last approved provider while enforced. No PATCH: a config change is delete and recreate                                                |
+| Step                 | Route                                                                       | Who                                     | Notes                                                                                                                                                                                        |
+| -------------------- | --------------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claim, verify domain | `POST /api/organizations/[orgId]/domain-claims`, `.../[domain]/verify`      | Org OWNER                               | `OrgDomainClaim.domain` is unique: one domain, one org                                                                                                                                       |
+| Register provider    | `POST /api/organizations/[orgId]/sso/providers`                             | Org OWNER (`identity.manage`)           | Needs a verified claim (422 otherwise). Server-generated `providerId` (`oidc-<16 hex>`). OIDC discovery runs now, with an SSRF guard                                                         |
+| View provider        | `GET /api/organizations/[orgId]/sso/providers[/providerId]`                 | OWNER, MAINTAINER (`identity.read`)     | Client secret redacted for every role. Includes the callback URL                                                                                                                             |
+| Approve or revoke    | `POST /api/admin/organizations/[orgId]/sso-providers/[providerId]/approval` | Platform ADMIN (`organizations.manage`) | `{ approve, reason }`, `OpsActionLog` row. Approval re-checks the DNS claim; revoking the last approved provider while enforced is refused (409). Buttons on the back-office org detail page |
+| Enforce              | `PATCH /api/organizations/[orgId]/sso` `{ enforceSSO: true }`               | Org OWNER                               | Needs a verified domain **and** at least one approved provider (409)                                                                                                                         |
+| Enforce (staff)      | `POST /api/admin/organizations/[orgId]/sso-enforcement`                     | Platform ADMIN (`organizations.manage`) | `{ enforce, reason }`, `OpsActionLog` row. On needs an approved provider (409). Off is the recovery path when the org's IdP breaks                                                           |
+| Release domain       | `DELETE /api/organizations/[orgId]/domain-claims/[domain]`                  | Org OWNER                               | Sets `domainVerified = false` on that domain's providers in the same transaction. Refused if it would remove the last approved provider while enforced                                       |
+| Delete provider      | `DELETE /api/organizations/[orgId]/sso/providers/[providerId]`              | Org OWNER                               | Refused for the last approved provider while enforced. No PATCH: a config change is delete and recreate                                                                                      |
 
 The IdP is configured with one redirect URI per provider:
 
@@ -96,20 +97,27 @@ and the plugin's own `organizationProvisioning` is disabled.
 
 `session.create.before` calls `shouldRejectSession`
 (`lib/sso/enforce-session.ts`) on every session creation: password, social,
-SSO and verification. A user is refused with `SSO_REQUIRED` when all of these
-hold:
+SSO, verification and password change. When all of these hold:
 
-- their email domain has a verified `OrgDomainClaim`,
-- the owning org is `ACTIVE` and has `enforceSSO = true`,
-- the org has at least one approved provider, and
-- the user has no `Account` with one of those providers' ids.
+- the user's email domain has a verified `OrgDomainClaim`,
+- the owning org is `ACTIVE` and has `enforceSSO = true`, and
+- the org has at least one approved provider,
 
-If the enforcing org has no approved provider, enforcement fails open so the
-owner is not locked out mid-setup. The settings route refuses to turn
-enforcement on in that state, so it only arises if approval is revoked later.
+the session is minted only by `/sso/callback/:providerId` for one of that
+org's approved providers. Every other path is refused with `SSO_REQUIRED`,
+whatever accounts the user has linked. The sign-in page shows the copy with a
+button that runs the domain check and starts SSO; a refused Google sign-in
+returns to the page with `?error=SSO_REQUIRED` for the same button.
 
-A personal Google account never satisfies enforcement: only an `Account`
-whose `providerId` is one of the org's provider ids counts.
+If the enforcing org has no approved provider, enforcement fails open so
+nobody is locked out with nowhere to go. Both the org settings route and the
+staff door refuse to turn enforcement on in that state, and revoking or
+deleting the last approved provider is refused while it is on.
+
+**Recovery when the IdP breaks.** The org's users cannot sign in at all, and
+an OWNER on that domain cannot reach the settings page either. An ADMIN turns
+enforcement off with **Stop enforcing SSO** on the back-office org page; the
+users can then sign in with a password (or **Forgot password**) or Google.
 
 ## 4. Client secret encryption
 

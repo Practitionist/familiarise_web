@@ -44,34 +44,67 @@ const columns: ResponsiveColumn<Provider>[] = [
 ];
 
 /**
- * D22 — staff approve or revoke an org's SSO providers. The plugin refuses
- * sign-in through a provider until it is approved; the route re-checks the
- * DNS claim and writes the OpsActionLog row. The page is ADMIN-only
- * (`organizations.manage`), as is the route.
+ * D22 — staff approve or revoke an org's SSO providers, and turn the org's SSO
+ * enforcement on or off. The plugin refuses sign-in through a provider until
+ * it is approved; the route re-checks the DNS claim and writes the
+ * OpsActionLog row. Turning enforcement off is the recovery path when the
+ * org's IdP breaks. The page is ADMIN-only (`organizations.manage`), as are
+ * both routes.
  */
 export function OrgSsoProviders({
   orgId,
   providers,
-}: Readonly<{ orgId: string; providers: Provider[] }>) {
+  enforced,
+}: Readonly<{ orgId: string; providers: Provider[]; enforced: boolean }>) {
   const router = useRouter();
 
-  const setApproval = async (p: Provider, approve: boolean, reason = "") => {
-    const res = await fetch(
-      `/api/admin/organizations/${orgId}/sso-providers/${encodeURIComponent(p.providerId)}/approval`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approve, reason }),
-      },
-    );
+  const post = async (path: string, body: object) => {
+    const res = await fetch(`/api/admin/organizations/${orgId}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok)
       throw new Error(json.error ?? "The change did not go through.");
     router.refresh();
   };
 
+  const setApproval = (p: Provider, approve: boolean, reason = "") =>
+    post(`sso-providers/${encodeURIComponent(p.providerId)}/approval`, {
+      approve,
+      reason,
+    });
+
   return (
-    <Section title="SSO providers" variant="card">
+    <Section
+      title="SSO providers"
+      variant="card"
+      actions={
+        <ConfirmDialog
+          trigger={
+            <Button variant="outline" size="sm">
+              {enforced ? "Stop enforcing SSO" : "Enforce SSO"}
+            </Button>
+          }
+          title={enforced ? "Stop enforcing SSO?" : "Enforce SSO?"}
+          description={
+            enforced
+              ? "Members can sign in with a password or Google again. Use this when the organisation's identity provider is broken."
+              : "Members on the organisation's verified domains will only be able to sign in through an approved provider."
+          }
+          confirmLabel={enforced ? "Stop enforcing" : "Enforce"}
+          tone={enforced ? "destructive" : "default"}
+          requireReason={{ label: "Reason" }}
+          onConfirm={({ reason }) =>
+            post("sso-enforcement", { enforce: !enforced, reason })
+          }
+        />
+      }
+    >
+      <p className="mb-3 text-sm text-muted-foreground">
+        SSO enforcement: {enforced ? "on" : "off"}
+      </p>
       <ResponsiveTable<Provider>
         columns={columns}
         rows={providers}

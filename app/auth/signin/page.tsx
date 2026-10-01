@@ -12,6 +12,7 @@ import {
   type AuthErrorAction,
   type AuthErrorField,
 } from "@/lib/labels/auth-errors";
+import { normalizeAuthErrorCode } from "@/lib/labels/auth-error-codes";
 import {
   signIn,
   useSession,
@@ -148,6 +149,21 @@ function SignInContent() {
   // (another device, or "sign out other devices"). Exact-match on a fixed
   // string: the param carries no data, so there is nothing to inject.
   const wasRevokedElsewhere = searchParams.get("reason") === "session-revoked";
+
+  // A refused Google or SSO callback lands back here as `?error=<code>`, e.g.
+  // SSO_REQUIRED, whose action button runs the domain check and the SSO
+  // redirect. Unknown codes are ignored, so the param cannot inject copy.
+  const callbackError = normalizeAuthErrorCode(searchParams.get("error"));
+  useEffect(() => {
+    if (!callbackError) return;
+    const copy = humanizeAuthError("signin", { code: callbackError });
+    setErrorAction(copy.action ?? null);
+    toast({
+      title: copy.title,
+      description: copy.description,
+      variant: "destructive",
+    });
+  }, [callbackError, toast]);
 
   // #booking-journey — is this sign-in a detour out of a purchase? Derived
   // from the ALREADY-VALIDATED callbackUrl, never the raw param, so a crafted

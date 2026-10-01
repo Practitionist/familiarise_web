@@ -48,6 +48,24 @@ export const POST = withOpsAction(
             `This organization has no verified DNS claim for ${provider.domain}, so its provider cannot be approved.`,
           );
         }
+      } else if (provider.domainVerified) {
+        // Same rule as the org-side delete: enforcement with no approved
+        // provider fails open, so revoking the last one would silently undo it.
+        const settings = await tx.organizationSSOSettings.findUnique({
+          where: { organizationId: params.orgId },
+          select: { enforceSSO: true },
+        });
+        const approved = settings?.enforceSSO
+          ? await tx.ssoProvider.count({
+              where: { organizationId: params.orgId, domainVerified: true },
+            })
+          : Infinity;
+        if (approved <= 1) {
+          throw new OpsRefusal(
+            "LAST_APPROVED_SSO_PROVIDER",
+            "This is the organization's last approved provider and SSO is enforced. Turn enforcement off first.",
+          );
+        }
       }
 
       await tx.ssoProvider.update({

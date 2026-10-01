@@ -525,11 +525,9 @@ export const auth = betterAuth({
     // `/api/auth/sign-in/email` that bypasses our signin UI is rejected here
     // at the source rather than flagged reactively.
     //
-    // Legitimate first-time SSO users are allowed because the SSO plugin
-    // creates the `account` row with `providerId = ssoProvider.providerId`
-    // BEFORE the session is created; returning SSO users already have that
-    // account. The hook fails open when the enforcing org has no
-    // staff-approved `ssoProvider` rows yet — see `lib/sso/enforce-session.ts`.
+    // For an enforced email domain only the org's own SSO callback may mint
+    // the session. The hook fails open when the enforcing org has no
+    // staff-approved `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
     //
     // The same hook keeps operators on password + TOTP: the twoFactor plugin
     // never challenges a social or SSO callback, so those are refused here
@@ -553,25 +551,15 @@ export const auth = betterAuth({
 
           const decision = await shouldRejectSession({
             email: user?.email ?? null,
-            userId: session.userId,
-            // Delegate to the shared `lookupEnforcedOrg` (audit B.6).
-            // The previous inline implementation lived here AND at
-            // `customSession` AND at `/api/auth/sso/domain-check`,
-            // with subtle drift between them — see issue #673.
+            path: ctx?.path,
+            providerId: ctx?.params?.providerId,
             lookupEnforcedOrg: (domain) => lookupEnforcedOrg(prisma, domain),
-            hasAccountInProviders: async (userId, providerIds) => {
-              const match = await prisma.account.findFirst({
-                where: { userId, providerId: { in: providerIds } },
-                select: { id: true },
-              });
-              return !!match;
-            },
           });
 
           if (decision.reject) {
             throw new APIError("FORBIDDEN", {
               message:
-                "This email domain requires SSO sign-in. Please use your organization's SSO provider at /auth/signin.",
+                "This email domain requires SSO sign-in through your organization's provider. Password and Google sign-in are off for it.",
               code: "SSO_REQUIRED",
             });
           }
@@ -808,8 +796,8 @@ export const auth = betterAuth({
       // SSO enforcement: the primary gate lives in
       // `databaseHooks.session.create.before` (above) — every session-creation
       // path (credential, OAuth, SSO, signup) is vetoed there when the user's
-      // email domain is under an enforced org without a linked provider
-      // account (issue #673).
+      // email domain is under an enforced org and the session did not come
+      // through that org's SSO callback (issue #673).
       //
       // A read-time recheck that flagged bypassed sessions via
       // `ssoEnforcementFailed` used to live here. It was removed: no layout,

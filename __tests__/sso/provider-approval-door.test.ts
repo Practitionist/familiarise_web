@@ -16,8 +16,9 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 
 const tx = {
-  ssoProvider: { findFirst: jest.fn(), update: jest.fn() },
+  ssoProvider: { findFirst: jest.fn(), update: jest.fn(), count: jest.fn() },
   orgDomainClaim: { findUnique: jest.fn() },
+  organizationSSOSettings: { findUnique: jest.fn() },
   opsActionLog: { create: jest.fn(async () => ({ id: "row" })) },
 };
 jest.mock("../../lib/prisma", () => ({
@@ -112,4 +113,40 @@ it("404s a provider that is not this org's", async () => {
       where: { providerId: "oidc-abc", organizationId: "org_1" },
     }),
   );
+});
+
+describe("revoking an approved provider", () => {
+  beforeEach(() => {
+    tx.ssoProvider.findFirst.mockResolvedValue({
+      id: "row_1",
+      domain: "acme.com",
+      domainVerified: true,
+    });
+  });
+
+  it("refuses the last one while SSO is enforced", async () => {
+    tx.organizationSSOSettings.findUnique.mockResolvedValue({
+      enforceSSO: true,
+    });
+    tx.ssoProvider.count.mockResolvedValue(1);
+
+    const res = await call({ approve: false, reason: "customer asked us to" });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("LAST_APPROVED_SSO_PROVIDER");
+    expect(tx.ssoProvider.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["enforcement is off", { enforceSSO: false }, 1],
+    ["another approved provider remains", { enforceSSO: true }, 2],
+  ])("allows it when %s", async (_label, settings, approved) => {
+    tx.organizationSSOSettings.findUnique.mockResolvedValue(settings);
+    tx.ssoProvider.count.mockResolvedValue(approved);
+
+    const res = await call({ approve: false, reason: "customer asked us to" });
+
+    expect(res.status).toBe(200);
+    expect(tx.ssoProvider.update).toHaveBeenCalled();
+  });
 });

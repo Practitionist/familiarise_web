@@ -33,6 +33,7 @@ export async function readOrgDetail(orgId: string) {
       },
       kybVerification: { select: { kybVerifiedAt: true } },
       billingAccount: { select: { id: true, fundingSource: true } },
+      ssoSettings: { select: { enforceSSO: true } },
       _count: { select: { memberships: true, contracts: true } },
     },
   });

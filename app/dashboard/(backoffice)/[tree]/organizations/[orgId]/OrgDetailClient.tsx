@@ -158,7 +158,11 @@ export function OrgDetailClient({ org }: Readonly<{ org: OrgDetail }>) {
           )}
         </Section>
 
-        <OrgSsoProviders orgId={org.id} providers={org.ssoProviders} />
+        <OrgSsoProviders
+          orgId={org.id}
+          providers={org.ssoProviders}
+          enforced={org.ssoSettings?.enforceSSO ?? false}
+        />
       </DashboardContent>
       {org.billingAccount && (
         <InvoiceComposer

@@ -2,38 +2,21 @@ import type { PrismaLike } from "@/lib/prisma";
 /**
  * Server-side SSO enforcement decision for BetterAuth `session.create.before`.
  *
- * Runs just before a session cookie is issued (every authenticated path —
- * credential signin, OAuth signin, SSO signin, signup). Returns whether the
- * session creation should be rejected and why. Pure helper — all I/O is
- * injected so this can be unit-tested without a live DB.
+ * Runs just before a session cookie is issued, on every path that mints one.
+ * For a user whose email domain an org enforces, only that org's own SSO
+ * callback may mint it: a linked SSO account is not enough, since it would
+ * also let a password, a Google sign-in or a verification auto sign-in through.
+ * Pure helper — all I/O is injected so this can be unit-tested without a DB.
  *
- * See issue #673 for the specific bypass this closes.
- *
- * Fails OPEN in one case: the org has `enforceSSO=true` but has no
- * staff-approved (`domainVerified`) `ssoProvider` rows yet. Locking everyone
- * out mid-setup would trap the org owner after they flip the switch but
- * before their IdP is registered and approved.
+ * Fails OPEN in one case: the org has `enforceSSO=true` but no staff-approved
+ * (`domainVerified`) provider, so there is nowhere to send its users. Staff
+ * recover an org whose IdP breaks by turning enforcement off from the back
+ * office (app/api/admin/organizations/[orgId]/sso-enforcement).
  */
 
 export type EnforceDecision =
   | { reject: false }
   | { reject: true; reason: "SSO_REQUIRED"; organizationId: string };
-
-/**
- * The customer-visible sentence for each rejection, kept beside the decision so
- * `reason` and its wording cannot drift and so the throw site in `lib/auth.ts`
- * is one line rather than a branch per reason. It is deliberately *not* read
- * from `AUTH_ERROR_COPY`: that is a `Record` over a closed union and a refusal
- * raised before a session exists has no catalog code of its own — `SSO_REQUIRED`
- * is minted with a hand-written message there today.
- */
-export const SESSION_REJECTION_MESSAGES = {
-  SSO_REQUIRED:
-    "This email domain requires SSO sign-in. Please use your organization's SSO provider at /auth/signin.",
-} as const satisfies Record<
-  Extract<EnforceDecision, { reject: true }>["reason"],
-  string
->;
 
 export interface EnforcedOrgInfo {
   organizationId: string;
@@ -107,48 +90,36 @@ export async function lookupEnforcedOrg(
 }
 
 export interface EnforceInputs {
-  /** Email of the user attempting to create a session (must already be lowercased). */
+  /** Email of the user the session is for. */
   email: string | null | undefined;
-  /** The user ID — used to look up the user's linked accounts. */
-  userId: string;
-  /** Returns org id + allowed provider IDs for the enforcing org, or null if the domain is not enforced. */
-  lookupEnforcedOrg: (domain: string) => Promise<{
-    organizationId: string;
-    registeredProviderIds: string[];
-  } | null>;
-  /** Returns true if the user has any `account` row whose `providerId` is in the given list. */
-  hasAccountInProviders: (
-    userId: string,
-    providerIds: string[],
-  ) => Promise<boolean>;
+  /** BetterAuth's route template for the request, e.g. `/sso/callback/:providerId`. */
+  path: string | null | undefined;
+  /** `ctx.params.providerId` on the SSO callback. */
+  providerId: string | null | undefined;
+  /** The enforcing org and its approved provider ids, or null if the domain is not enforced. */
+  lookupEnforcedOrg: (domain: string) => Promise<EnforcedOrgInfo | null>;
 }
 
 export async function shouldRejectSession(
   inputs: EnforceInputs,
 ): Promise<EnforceDecision> {
-  const email = inputs.email?.toLowerCase();
-  const domain = email?.split("@")[1];
+  const domain = inputs.email?.toLowerCase().split("@")[1];
   if (!domain) return { reject: false };
 
   const enforced = await inputs.lookupEnforcedOrg(domain);
-  if (!enforced) return { reject: false };
-
-  // Fail-open: org is enforced but has no providers configured yet.
-  // Better to let the admin finish setup than to lock the whole domain out.
-  if (enforced.registeredProviderIds.length === 0) return { reject: false };
-
-  const linked = await inputs.hasAccountInProviders(
-    inputs.userId,
-    enforced.registeredProviderIds,
-  );
-
-  if (!linked) {
-    return {
-      reject: true,
-      reason: "SSO_REQUIRED",
-      organizationId: enforced.organizationId,
-    };
+  if (!enforced || enforced.registeredProviderIds.length === 0) {
+    return { reject: false };
   }
 
-  return { reject: false };
+  const viaOwnSso =
+    inputs.path === "/sso/callback/:providerId" &&
+    !!inputs.providerId &&
+    enforced.registeredProviderIds.includes(inputs.providerId);
+  if (viaOwnSso) return { reject: false };
+
+  return {
+    reject: true,
+    reason: "SSO_REQUIRED",
+    organizationId: enforced.organizationId,
+  };
 }
