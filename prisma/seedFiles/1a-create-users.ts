@@ -558,7 +558,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
       "  ! No privileged accounts were created. For a real one, run:",
     );
     console.log(
-      "    npx tsx -r dotenv/config scripts/bootstrap-admin.ts --email you@localhost --print",
+      '    npx tsx -r dotenv/config scripts/bootstrap-admin.ts --email you@localhost --name "Your Name" --print-link',
     );
   }
 

@@ -341,8 +341,8 @@ export function getTotalAppointments(): number {
  *
  * The dev-only "I need to click around the console" case is now served by the
  * real flow instead: `npx tsx -r dotenv/config scripts/bootstrap-admin.ts
- * --email you@localhost --print`, which mints one real admin with a password
- * you choose.
+ * --email you@localhost --name "You" --print-link`, which mints one real admin
+ * and prints the link where you choose its password.
  */
 export function getSeedWithStaff(): boolean {
   return process.env.SEED_WITH_STAFF?.trim().toLowerCase() === "true";
@@ -393,7 +393,7 @@ export function assertStaffSeedAllowed(withStaff: boolean): void {
       "Refusing to seed STAFF/ADMIN rows while NODE_ENV=production. A faker " +
         "person holding refunds.manage on a live database is an attacker with a " +
         "known password. To create a real administrator, run: " +
-        "npx tsx -r dotenv/config scripts/bootstrap-admin.ts --email you@company.com",
+        'npx tsx -r dotenv/config scripts/bootstrap-admin.ts --email you@company.com --name "Your Name"',
     );
   }
 }

@@ -30,7 +30,6 @@ import {
   isOperatorRole,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
-import { hashStaffPassword } from "@/lib/auth/staff-invitations";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
 // defaultAc so statements line up. No `session:*`: the plugin's session
@@ -207,26 +206,25 @@ export const auth = betterAuth({
     // OAuth/SSO are unaffected — the IdP already asserts a verified email.
     requireEmailVerification: true,
     password: {
-      // Single-sourced with the staff-invitation accept path. `bcrypt.hash(x,
-      // 12)` used to be written here AND in `app/api/user/staff/route.ts`,
-      // and the second copy bypassed BetterAuth entirely — so "the cost factor
-      // is 12" was a fact about two files that could disagree, and one of them
-      // was unreachable from sign-in if it drifted. BetterAuth is the owner;
-      // the staff module borrows. One literal `12` in the codebase.
-      hash: (password) => hashStaffPassword(password),
+      hash: (password) => bcrypt.hash(password, 12),
       verify: async ({ password, hash }) => {
         return bcrypt.compare(password, hash);
       },
     },
-    sendResetPassword: async ({ user, url }) => {
-      // Extract token from URL for the email template
-      const urlObj = new URL(url);
-      const token = urlObj.searchParams.get("token") || "";
+    sendResetPassword: async ({ user, token }) => {
+      // A new operator's first "reset" is their invitation: the account was
+      // created with a random password (lib/auth/operators.ts), so the email
+      // says "set your password" until they have enrolled 2FA.
+      const { role, twoFactorEnabled } = user as {
+        role?: string | null;
+        twoFactorEnabled?: boolean | null;
+      };
       await sendPasswordResetEmail({
         email: user.email,
         name: user.name || "User",
         token,
         userId: user.id,
+        invite: isOperatorRole(role) && twoFactorEnabled !== true,
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
@@ -441,11 +439,17 @@ export const auth = betterAuth({
             // for them here. Their first sign-in into the org shows the
             // consent step (JoinConsentGate), and accepting an invitation
             // shows it inline (#1854); both write these same rows.
+            //
+            // An operator account created by an admin (lib/auth/operators.ts,
+            // through `auth.api.createUser`) is not that person's signup
+            // either; they give consent themselves on first sign-in.
             const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
+            const operatorCreated = ctx?.path === "/admin/create-user";
             try {
-              const drafts = ssoProvisioned
-                ? []
-                : buildSignupConsentArtifacts(user.id);
+              const drafts =
+                ssoProvisioned || operatorCreated
+                  ? []
+                  : buildSignupConsentArtifacts(user.id);
               for (const draft of drafts) {
                 await prisma.consentArtifact.create({ data: draft });
               }
@@ -482,13 +486,16 @@ export const auth = betterAuth({
             }
 
             // #1298 — awaited: an un-awaited send is dropped when the instance
-            // freezes after the response (same class as #1616).
+            // freezes after the response (same class as #1616). Operators get
+            // the setup email instead of the consumer welcome.
             try {
-              await sendWelcomeEmail({
-                email: user.email,
-                name: user.name || "User",
-                userId: user.id,
-              });
+              if (!operatorCreated) {
+                await sendWelcomeEmail({
+                  email: user.email,
+                  name: user.name || "User",
+                  userId: user.id,
+                });
+              }
             } catch (err) {
               console.error("[AUTH_HOOK] Welcome email error:", err);
               Sentry.captureException(

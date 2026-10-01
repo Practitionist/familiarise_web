@@ -8,11 +8,8 @@ import { TeamPageClient } from "./TeamPageClient";
  *
  * The `users` page is the *whole platform's* directory — 400+ consultees and
  * consultants, paginated, with User 360 drill-down. This page is the
- * twenty-person list of people who can reach the console, and the four actions
- * that change their access. Mixing them meant the privileged dozen were
- * twenty rows down a paginated consumer directory, and — the reason it
- * mattered — the invite action had no home at all, which is how the onboarding
- * form came to promise an "admin dashboard" that did not exist.
+ * twenty-person list of people who can reach the console, and the actions
+ * that change their access (add staff, reset 2FA).
  *
  * ## Why both trees
  *

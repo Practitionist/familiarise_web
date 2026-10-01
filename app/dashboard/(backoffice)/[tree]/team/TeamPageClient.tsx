@@ -1,29 +1,14 @@
 "use client";
 
 /**
- * #1927 — the Team page client.
- *
- * Lists the ~20 people who can reach the console, plus every invitation in
- * flight, and offers the four actions that change access: invite, revoke a
- * pending invite, suspend, reactivate, force sign-out.
- *
- * ## The 2FA column is the point of this page
- *
- * Not decoration. `lib/auth-helpers.ts` now refuses a staff-or-admin session
- * with `twoFactorEnabled !== true` at 428 `TWO_FACTOR_REQUIRED`, so a console
- * with no 2FA is one that cannot issue a refund. Showing the gap here, on the
- * page an admin already visits, is what makes that requirement actionable
- * instead of a support ticket the first time it fires.
- *
- * ## `can()` is not decoration either
- *
- * The action buttons are gated on `can("users.moderate")` — the same matrix the
- * API enforces — so a staff member reading the roster does not see four
- * buttons that 403. Server-side enforcement is the real gate; this is the
- * honesty half of it.
+ * The Team page: everyone who can reach the console, whether they have
+ * enrolled 2FA, and when they were last seen. ADMINs can add an operator and
+ * reset a lost second factor; both buttons ask `can("users.moderate")`, the
+ * same matrix the API enforces, so staff reading the roster see no buttons
+ * that would 403.
  */
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
@@ -54,62 +39,32 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 
-/* -------------------------------------------------------------------------- */
-/* Wire types — mirror the route's selects exactly                            */
-/* -------------------------------------------------------------------------- */
-
-interface OperatorRow {
+/** Mirrors GET /api/admin/team/members. */
+interface MemberRow {
   id: string;
   name: string | null;
   email: string;
   role: "STAFF" | "ADMIN";
   banned: boolean | null;
-  banExpires: string | null;
-  twoFactorEnabled: boolean | null;
-  onboardingCompleted: boolean | null;
-  createdAt: string;
-  staffProfile: {
-    id: string;
-    department: string | null;
-    position: string | null;
+  twoFactorEnabled: boolean;
+  lastActiveAt: string | null;
+}
+
+type Role = MemberRow["role"];
+
+async function call(url: string, init: RequestInit): Promise<unknown> {
+  const response = await fetch(url, {
+    ...init,
+    headers: { "Content-Type": "application/json" },
+  });
+  const payload = (await response.json().catch(() => null)) as {
+    error?: string;
   } | null;
-  adminProfile: { id: string } | null;
-  lastSeenAt: string | null;
-  activeSessions: number;
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "That action could not be completed.");
+  }
+  return payload;
 }
-
-interface InvitationRow {
-  id: string;
-  email: string;
-  role: "STAFF" | "ADMIN";
-  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
-  sentCount: number;
-  lastSentAt: string | null;
-  createdAt: string;
-  expiresAt: string;
-  acceptedAt: string | null;
-  revokedAt: string | null;
-  acceptedUserId: string | null;
-  invitedBy: { id: string; name: string | null; email: string } | null;
-}
-
-interface TeamResponse {
-  operators: OperatorRow[];
-  invitations: InvitationRow[];
-}
-
-/** Suspension lengths offered. Mirrors the route's 1–365 day cap. */
-const SUSPENSION_OPTIONS = [1, 3, 7, 14, 30, 90] as const;
-
-const dateOr = (value: string | null, fallback = "Never") =>
-  value ? new Date(value).toLocaleDateString() : fallback;
-
-const timeOr = (value: string | null) =>
-  value ? new Date(value).toLocaleString() : "Never";
-
-/* -------------------------------------------------------------------------- */
-/* Page                                                                       */
-/* -------------------------------------------------------------------------- */
 
 export function TeamPageClient() {
   const { can, viewerId } = useBackofficeCapability();
@@ -117,209 +72,73 @@ export function TeamPageClient() {
   const queryClient = useQueryClient();
   const mayManage = can("users.moderate");
 
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"STAFF" | "ADMIN">("STAFF");
-  const [inviteReason, setInviteReason] = useState("");
-  const [inviteResend, setInviteResend] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<Role>("STAFF");
+  const [addReason, setAddReason] = useState("");
 
-  const [suspendTarget, setSuspendTarget] = useState<OperatorRow | null>(null);
-  const [suspendDays, setSuspendDays] = useState<string>("7");
-  const [suspendReason, setSuspendReason] = useState("");
-
-  const [reactivateTarget, setReactivateTarget] = useState<OperatorRow | null>(
-    null,
-  );
-  const [reactivateReason, setReactivateReason] = useState("");
+  const [resetTarget, setResetTarget] = useState<MemberRow | null>(null);
+  const [resetReason, setResetReason] = useState("");
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["team"],
-    queryFn: async (): Promise<TeamResponse> => {
-      const response = await fetch("/api/admin/staff-invitations");
+    queryFn: async (): Promise<{ members: MemberRow[] }> => {
+      const response = await fetch("/api/admin/team/members");
       if (!response.ok) throw new Error("Failed to load the team roster");
       return response.json();
     },
   });
+  const members = data?.members ?? [];
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["team"] });
+  const fail = (title: string) => (cause: Error) =>
+    toast({ title, description: cause.message, variant: "destructive" });
 
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["team"] });
-
-  const invite = useMutation({
-    mutationFn: async () => {
-      const response = await fetch("/api/admin/staff-invitations", {
+  const add = useMutation({
+    mutationFn: () =>
+      call("/api/admin/team/members", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: inviteEmail,
-          role: inviteRole,
-          resend: inviteResend,
-          // Required by `withOpsAction`'s schema: every admin action carries a
-          // reason, and this one is no exception. It lands in the OpsActionLog.
-          reason: inviteReason,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Could not create that invitation");
-      }
-      return payload as { invitationId: string; resent: boolean } | null;
-    },
+        body: JSON.stringify({ email, name, role, reason: addReason }),
+      }) as Promise<{ setupLinkSent?: boolean }>,
     onSuccess: (result) => {
       toast({
-        title: result?.resent ? "Invitation resent" : "Invitation sent",
-        description: `${inviteEmail} will receive a setup link. It works once, for 72 hours.`,
+        title: "Account created",
+        description: result.setupLinkSent
+          ? `${email} has been emailed a link to set their password. It expires in 30 minutes; they can request another with "Forgot password".`
+          : `The email did not send. Ask ${email} to use "Forgot password" on the sign-in page.`,
       });
-      setInviteOpen(false);
-      setInviteEmail("");
-      setInviteReason("");
-      setInviteResend(false);
-      void invalidate();
+      setAddOpen(false);
+      setEmail("");
+      setName("");
+      setAddReason("");
+      void refresh();
     },
-    onError: (cause: Error) =>
-      toast({
-        title: "Could not invite",
-        description: cause.message,
-        variant: "destructive",
-      }),
+    onError: fail("Could not add that person"),
   });
 
-  const revoke = useMutation({
-    mutationFn: async (invitationId: string) => {
-      const response = await fetch(
-        `/api/admin/staff-invitations/${invitationId}`,
-        {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason: "Revoked from the Team page" }),
-        },
-      );
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Could not revoke that invitation");
-      }
-    },
+  const resetTwoFactor = useMutation({
+    mutationFn: (target: MemberRow) =>
+      call(`/api/admin/team/members/${target.id}/two-factor`, {
+        method: "DELETE",
+        body: JSON.stringify({ reason: resetReason }),
+      }),
     onSuccess: () => {
       toast({
-        title: "Invitation revoked",
-        description: "That link can no longer be used.",
-      });
-      void invalidate();
-    },
-    onError: (cause: Error) =>
-      toast({
-        title: "Could not revoke",
-        description: cause.message,
-        variant: "destructive",
-      }),
-  });
-
-  const setMemberState = useMutation({
-    mutationFn: async (input: {
-      userId: string;
-      action: "suspend" | "reactivate";
-      reason: string;
-      suspensionDays?: number;
-    }) => {
-      const response = await fetch(`/api/admin/team/members/${input.userId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: input.action,
-          reason: input.reason,
-          suspensionDays: input.suspensionDays,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "That action could not be completed");
-      }
-    },
-    onSuccess: (_result, input) => {
-      toast({
-        title:
-          input.action === "suspend"
-            ? "Operator suspended"
-            : "Operator reactivated",
+        title: "Two-factor reset",
         description:
-          input.action === "suspend"
-            ? "Every session they had was ended."
-            : "They can sign in again.",
+          "They have been signed out and will set up a new authenticator at their next sign-in.",
       });
-      setSuspendTarget(null);
-      setSuspendReason("");
-      setReactivateTarget(null);
-      setReactivateReason("");
-      void invalidate();
+      setResetTarget(null);
+      setResetReason("");
+      void refresh();
     },
-    onError: (cause: Error) =>
-      toast({
-        title: "Action failed",
-        description: cause.message,
-        variant: "destructive",
-      }),
+    onError: fail("Could not reset two-factor"),
   });
 
-  const forceSignOut = useMutation({
-    mutationFn: async (userId: string) => {
-      // The existing, audited revoke door — not a new one. Deliberate reuse:
-      // "end someone's sessions" already has a home with a reason requirement
-      // and a surface gate, and a second implementation would be a second
-      // place to forget the cross-device signal.
-      const response = await fetch(
-        `/api/admin/users/${userId}/sessions/revoke`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason: "Force sign-out from the Team page" }),
-        },
-      );
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string;
-        revoked?: number;
-      } | null;
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Could not sign them out");
-      }
-      return payload?.revoked ?? 0;
-    },
-    onSuccess: (revoked) => {
-      toast({
-        title: "Signed out everywhere",
-        description: `${revoked} session${revoked === 1 ? "" : "s"} ended.`,
-      });
-      void invalidate();
-    },
-    onError: (cause: Error) =>
-      toast({
-        title: "Sign-out failed",
-        description: cause.message,
-        variant: "destructive",
-      }),
-  });
-
-  const operators = useMemo(() => data?.operators ?? [], [data]);
-  const pendingInvites = useMemo(
-    () =>
-      (data?.invitations ?? []).filter(
-        (invitation) => invitation.status === "PENDING",
-      ),
-    [data],
-  );
-  const pastInvites = useMemo(
-    () => (data?.invitations ?? []).filter((i) => i.status !== "PENDING"),
-    [data],
-  );
-
-  const columns: ResponsiveColumn<OperatorRow>[] = [
+  const columns: ResponsiveColumn<MemberRow>[] = [
     {
       key: "person",
-      header: "Operator",
+      header: "Name",
       primary: true,
       cell: (row) => (
         <div className="min-w-0">
@@ -328,109 +147,52 @@ export function TeamPageClient() {
             {row.id === viewerId ? (
               <span className="ml-2 text-xs text-muted-foreground">(you)</span>
             ) : null}
+            {row.banned ? (
+              <span className="ml-2 text-xs text-destructive">suspended</span>
+            ) : null}
           </p>
           <p className="text-sm text-muted-foreground">{row.email}</p>
         </div>
       ),
     },
-    {
-      key: "role",
-      header: "Role",
-      cell: (row) => row.role,
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (row) =>
-        row.banned ? (
-          <StatusBadge
-            label={row.banExpires ? "Suspended" : "Suspended (no end)"}
-            tone="critical"
-            variant="dot"
-          />
-        ) : (
-          <StatusBadge label="Active" tone="success" variant="dot" />
-        ),
-    },
+    { key: "role", header: "Role", cell: (row) => row.role },
     {
       key: "twofa",
-      header: "Two-factor",
-      // The column that makes the 428 recoverable: an admin who cannot issue a
-      // refund sees why, here, before they try.
+      header: "2FA",
       cell: (row) =>
         row.twoFactorEnabled ? (
-          <StatusBadge label="Enrolled" tone="success" variant="dot" />
+          <StatusBadge label="Yes" tone="success" variant="dot" />
         ) : (
-          <StatusBadge label="Not set up" tone="caution" variant="dot" />
+          <StatusBadge label="No" tone="caution" variant="dot" />
         ),
     },
     {
-      key: "lastSeen",
-      header: "Last seen",
+      key: "lastActive",
+      header: "Last active",
       className: "text-sm text-muted-foreground",
-      // Deliberately "last seen", never "active now" — see
-      // lib/auth/session-select.ts. Most requests never reach the database, so
-      // any claim of liveness would be a guess.
-      cell: (row) => timeOr(row.lastSeenAt),
-    },
-    {
-      key: "sessions",
-      header: "Sessions",
       cell: (row) =>
-        row.activeSessions === 0 ? (
-          <span className="text-muted-foreground">0</span>
-        ) : (
-          String(row.activeSessions)
-        ),
+        row.lastActiveAt
+          ? new Date(row.lastActiveAt).toLocaleDateString()
+          : "Never",
     },
     ...(mayManage
       ? [
           {
             key: "actions",
             header: "",
-            cell: (row: OperatorRow) => (
-              <div className="flex flex-wrap justify-end gap-2">
-                {!row.banned ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={forceSignOut.isPending}
-                      onClick={() => forceSignOut.mutate(row.id)}
-                    >
-                      Sign out
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={row.id === viewerId}
-                      // Self-suspension is refused server-side with a 409 that
-                      // says why; disabling it here saves the round trip and the
-                      // pointless error toast.
-                      title={
-                        row.id === viewerId
-                          ? "You cannot suspend your own account"
-                          : undefined
-                      }
-                      onClick={() => setSuspendTarget(row)}
-                    >
-                      Suspend
-                    </Button>
-                  </>
-                ) : (
+            cell: (row: MemberRow) =>
+              row.twoFactorEnabled ? (
+                <div className="flex justify-end">
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() => setReactivateTarget(row)}
+                    onClick={() => setResetTarget(row)}
                   >
-                    Reactivate
+                    Reset 2FA
                   </Button>
-                )}
-              </div>
-            ),
+                </div>
+              ) : null,
           },
         ]
       : []),
@@ -440,207 +202,140 @@ export function TeamPageClient() {
     <div className="space-y-6">
       <PageHeader
         title="Team"
-        description="Everyone who can reach this console, and everyone who has been invited to. Staff accounts are created by invitation only — there is no other way in."
+        description="Everyone who can reach this console. Staff sign in with a password and an authenticator app."
       />
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">
-            Operators ({operators.length})
+            Members ({members.length})
           </h2>
           {mayManage ? (
-            <Button type="button" size="sm" onClick={() => setInviteOpen(true)}>
-              Invite someone
+            <Button type="button" size="sm" onClick={() => setAddOpen(true)}>
+              Add staff
             </Button>
           ) : null}
         </div>
-        <ResponsiveTable<OperatorRow>
+        <ResponsiveTable<MemberRow>
           columns={columns}
-          rows={operators}
+          rows={members}
           getRowId={(row) => row.id}
           isLoading={isPending && !data}
           error={error && !data ? error : undefined}
           onRetry={() => void refetch()}
           empty={
             <p className="py-10 text-center text-sm text-muted-foreground">
-              No operators on this deployment yet.
+              No staff on this deployment yet.
             </p>
           }
         />
       </section>
 
-      {pendingInvites.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-foreground">
-            Pending invitations ({pendingInvites.length})
-          </h2>
-          <ResponsiveTable<InvitationRow>
-            columns={invitationColumns(mayManage, revoke.isPending, (id) =>
-              revoke.mutate(id),
-            )}
-            rows={pendingInvites}
-            getRowId={(row) => row.id}
-            empty={
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                None.
-              </p>
-            }
-          />
-        </section>
-      )}
-
-      {pastInvites.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-foreground">
-            Invitation history
-          </h2>
-          <ResponsiveTable<InvitationRow>
-            columns={invitationColumns(false, false, () => {})}
-            rows={pastInvites}
-            getRowId={(row) => row.id}
-            empty={
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                None.
-              </p>
-            }
-          />
-        </section>
-      )}
-
-      {/* ---------------------------------------------------------------- */}
-
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Invite an operator</DialogTitle>
+            <DialogTitle>Add staff</DialogTitle>
             <DialogDescription>
-              They receive a single-use link, choose their own password, and are
-              asked to set up two-factor authentication before they can use the
-              console. Any email address works — a personal one is fine.
+              They get an email to set their password, then set up two-factor
+              authentication at their first sign-in.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-2">
-              <Label htmlFor="invite-email">Email address</Label>
+              <Label htmlFor="member-email">Email address</Label>
               <Input
-                id="invite-email"
+                id="member-email"
                 type="email"
-                value={inviteEmail}
-                onChange={(event) => setInviteEmail(event.target.value)}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
                 placeholder="colleague@example.com"
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="invite-role">Role</Label>
+              <Label htmlFor="member-name">Full name</Label>
+              <Input
+                id="member-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="member-role">Role</Label>
               <Select
-                value={inviteRole}
+                value={role}
                 onValueChange={(value) =>
-                  setInviteRole(value === "ADMIN" ? "ADMIN" : "STAFF")
+                  setRole(value === "ADMIN" ? "ADMIN" : "STAFF")
                 }
               >
-                <SelectTrigger id="invite-role">
+                <SelectTrigger id="member-role">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="STAFF">
-                    Staff — support, tickets, read-only money
+                    Staff: support, tickets, read-only money
                   </SelectItem>
                   <SelectItem value="ADMIN">
-                    Administrator — refunds, payouts, accounts
+                    Administrator: refunds, payouts, accounts
                   </SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="invite-reason">
-                Reason (recorded in the audit log)
-              </Label>
-              <Textarea
-                id="invite-reason"
-                value={inviteReason}
-                onChange={(event) => setInviteReason(event.target.value)}
-                placeholder="Joining the support team from Monday"
-                rows={2}
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={inviteResend}
-                onChange={(event) => setInviteResend(event.target.checked)}
-              />
-              Rotate the existing link for this address
-            </label>
+            <ReasonField
+              id="add-reason"
+              value={addReason}
+              onChange={setAddReason}
+            />
           </div>
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setInviteOpen(false)}
+              onClick={() => setAddOpen(false)}
             >
               Cancel
             </Button>
             <Button
               type="button"
               disabled={
-                invite.isPending ||
-                inviteEmail.trim().length === 0 ||
-                inviteReason.trim().length < 5
+                add.isPending ||
+                !email.trim() ||
+                !name.trim() ||
+                addReason.trim().length < 5
               }
-              onClick={() => invite.mutate()}
+              onClick={() => add.mutate()}
             >
-              {invite.isPending ? "Sending…" : "Send invitation"}
+              {add.isPending ? "Adding…" : "Add"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog
-        open={suspendTarget !== null}
-        onOpenChange={(open) => !open && setSuspendTarget(null)}
+        open={resetTarget !== null}
+        onOpenChange={(open) => !open && setResetTarget(null)}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Suspend {suspendTarget?.name ?? suspendTarget?.email}
+              Reset two-factor for {resetTarget?.email}?
             </DialogTitle>
             <DialogDescription>
-              Every session they have is ended immediately, and the suspension
-              lifts itself when the time is up. This is reversible — you can
-              reactivate them from this page.
+              Their authenticator and backup codes stop working and they are
+              signed out everywhere. Whoever signs in next with their password
+              enrols a new authenticator, so confirm who you are talking to
+              before you do this.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor="suspend-days">Length</Label>
-              <Select value={suspendDays} onValueChange={setSuspendDays}>
-                <SelectTrigger id="suspend-days">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SUSPENSION_OPTIONS.map((days) => (
-                    <SelectItem key={days} value={String(days)}>
-                      {days} {days === 1 ? "day" : "days"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="suspend-reason">Reason</Label>
-              <Textarea
-                id="suspend-reason"
-                value={suspendReason}
-                onChange={(event) => setSuspendReason(event.target.value)}
-                rows={2}
-              />
-            </div>
-          </div>
+          <ReasonField
+            id="reset-reason"
+            value={resetReason}
+            onChange={setResetReason}
+          />
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setSuspendTarget(null)}
+              onClick={() => setResetTarget(null)}
             >
               Cancel
             </Button>
@@ -648,69 +343,11 @@ export function TeamPageClient() {
               type="button"
               variant="destructive"
               disabled={
-                setMemberState.isPending || suspendReason.trim().length < 5
+                resetTwoFactor.isPending || resetReason.trim().length < 5
               }
-              onClick={() =>
-                suspendTarget &&
-                setMemberState.mutate({
-                  userId: suspendTarget.id,
-                  action: "suspend",
-                  reason: suspendReason,
-                  suspensionDays: Number(suspendDays),
-                })
-              }
+              onClick={() => resetTarget && resetTwoFactor.mutate(resetTarget)}
             >
-              {setMemberState.isPending ? "Suspending…" : "Suspend"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={reactivateTarget !== null}
-        onOpenChange={(open) => !open && setReactivateTarget(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Reactivate {reactivateTarget?.name ?? reactivateTarget?.email}
-            </DialogTitle>
-            <DialogDescription>
-              Clears the suspension and restores their chat access.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2">
-            <Label htmlFor="reactivate-reason">Reason</Label>
-            <Textarea
-              id="reactivate-reason"
-              value={reactivateReason}
-              onChange={(event) => setReactivateReason(event.target.value)}
-              rows={2}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setReactivateTarget(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={
-                setMemberState.isPending || reactivateReason.trim().length < 5
-              }
-              onClick={() =>
-                reactivateTarget &&
-                setMemberState.mutate({
-                  userId: reactivateTarget.id,
-                  action: "reactivate",
-                  reason: reactivateReason,
-                })
-              }
-            >
-              {setMemberState.isPending ? "Working…" : "Reactivate"}
+              {resetTwoFactor.isPending ? "Resetting…" : "Reset 2FA"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -719,109 +356,20 @@ export function TeamPageClient() {
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Invitation columns                                                         */
-/* -------------------------------------------------------------------------- */
-
-function invitationColumns(
-  mayManage: boolean,
-  revoking: boolean,
-  onRevoke: (id: string) => void,
-): ResponsiveColumn<InvitationRow>[] {
-  const base: ResponsiveColumn<InvitationRow>[] = [
-    {
-      key: "email",
-      header: "Address",
-      primary: true,
-      cell: (row) => (
-        <div className="min-w-0">
-          <p className="font-medium text-foreground">{row.email}</p>
-          <p className="text-sm text-muted-foreground">
-            invited {dateOr(row.createdAt)}
-            {row.invitedBy
-              ? ` by ${row.invitedBy.name ?? row.invitedBy.email}`
-              : " from the CLI"}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (row) => (
-        <StatusBadge
-          label={invitationStatusLabel(row)}
-          tone={invitationStatusTone(row.status)}
-          variant="dot"
-        />
-      ),
-    },
-    {
-      key: "expires",
-      header: "Expires",
-      className: "text-sm text-muted-foreground",
-      cell: (row) =>
-        row.status === "PENDING"
-          ? dateOr(row.expiresAt)
-          : row.status === "ACCEPTED"
-            ? dateOr(row.acceptedAt)
-            : dateOr(row.revokedAt ?? row.expiresAt),
-    },
-    {
-      key: "sends",
-      header: "Sends",
-      className: "text-sm text-muted-foreground",
-      // Visible because it is the abuse signal: a row sent six times is either
-      // a mailbox that is not delivering or someone guessing.
-      cell: (row) => String(row.sentCount),
-    },
-  ];
-  if (!mayManage) return base;
-  return [
-    ...base,
-    {
-      key: "actions",
-      header: "",
-      cell: (row: InvitationRow) =>
-        row.status === "PENDING" ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={revoking}
-            onClick={() => onRevoke(row.id)}
-          >
-            Revoke
-          </Button>
-        ) : null,
-    },
-  ];
-}
-
-function invitationStatusLabel(row: InvitationRow): string {
-  switch (row.status) {
-    case "PENDING":
-      return "Pending";
-    case "ACCEPTED":
-      return "Accepted";
-    case "REVOKED":
-      return "Revoked";
-    case "EXPIRED":
-      return "Expired";
-  }
-}
-
-function invitationStatusTone(
-  status: InvitationRow["status"],
-): "success" | "caution" | "critical" | "neutral" {
-  switch (status) {
-    case "PENDING":
-      return "caution";
-    case "ACCEPTED":
-      return "success";
-    case "REVOKED":
-      return "critical";
-    case "EXPIRED":
-      return "neutral";
-  }
+function ReasonField(props: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={props.id}>Reason (recorded in the audit log)</Label>
+      <Textarea
+        id={props.id}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        rows={2}
+      />
+    </div>
+  );
 }

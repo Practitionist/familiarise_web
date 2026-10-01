@@ -10,7 +10,7 @@ import {
   type ModerationReportRef,
   type TransactionalEffectResult,
 } from "@/lib/moderation/side-effects";
-import { INVITABLE_STAFF_ROLES } from "@/lib/auth/staff-invitations";
+import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -39,7 +39,7 @@ import { reportSentryError } from "@/lib/observability/report";
  * Suspension is per-USER. There is deliberately no "suspend everyone at
  * familiarisenow.com": staff addresses are a mix of personal and company mail,
  * so a domain-wide action removes exactly the people a domain-shaped mental
- * model says are safest. See the `StaffInvitation` doc in prisma/schema.prisma.
+ * model says are safest.
  */
 export const PATCH = withOpsAction(
   // Admin-only: the same grant that removes a role also removes access.
@@ -92,7 +92,7 @@ export const PATCH = withOpsAction(
       // a `userId` is a `userId` — without this check it would be the most
       // convenient ban-a-customer route in the app, reached through an
       // operator-only URL.
-      if (!target.role || !INVITABLE_STAFF_ROLES.includes(target.role)) {
+      if (!isOperatorRole(target.role)) {
         throw new OpsRefusal(
           "NOT_AN_OPERATOR",
           "That account is not a staff member or administrator.",

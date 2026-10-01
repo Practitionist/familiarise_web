@@ -17,7 +17,7 @@ import { requireApiAuth, requireAdminAuth } from "@/lib/auth-helpers";
  * (see the comment at that branch for why a silent, unaudited address move is
  * the worse of the two fixes), and the file is no longer a `role: STAFF`
  * write site at all — onboarding goes through
- * `POST /api/admin/staff-invitations`.
+ * `POST /api/admin/team/members`.
  */
 async function requireSelfOrAdmin(staffProfileId: string) {
   const auth = await requireApiAuth();

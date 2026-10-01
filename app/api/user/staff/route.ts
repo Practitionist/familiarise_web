@@ -29,8 +29,7 @@ import {
  *     `lib/auth.ts` is the control that stops someone pre-registering a
  *     victim's address and hijacking it later through an OAuth
  *     login. This route wrote `emailVerified: true` outright, and wrote a
- *     second, unwatched copy of the hash algorithm — the exact hazard
- *     `hashStaffPassword` in `lib/auth/staff-invitations.ts` now prevents.
+ *     second, unwatched copy of the hash algorithm.
  *  3. **It was unaudited.** No `OpsActionLog` row, so "who granted this person
  *     platform access" had no answer, and `lib/auth/backoffice-permissions.ts`
  *     states the reason `users.moderate` is admin-only.
@@ -40,12 +39,12 @@ import {
  *
  * ## Why a refusal and not a silent delegation
  *
- * The alternative was to keep the route and have it mint an invitation. That
+ * The alternative was to keep the route and delegate. That
  * would keep any not-yet-found caller (a Postman collection — this repo has
  * one, see `npm run scripts:update-postman`) working. It was rejected because
- * the response could not keep its shape: the old contract is "here is the User
- * you created, with its profile", and an invitation has no User, so every
- * caller would have to change anyway while being told nothing had changed. A
+ * the request could not keep its shape: the old contract took an admin-chosen
+ * password, and the replacement takes none, so every caller would have to
+ * change anyway while being told nothing had changed. A
  * loud 410 with the replacement path is strictly better than a 201 whose body
  * is a different shape: the first finds every stale caller immediately and
  * points at the fix, the second finds them in production.
@@ -58,9 +57,9 @@ export async function POST(_request: NextRequest) {
   return NextResponse.json(
     {
       message:
-        "Staff accounts can no longer be created with an admin-chosen password. Invite them instead — they choose their own password and the action is audited.",
-      code: "USE_STAFF_INVITATION",
-      replacement: "POST /api/admin/staff-invitations",
+        "Staff accounts can no longer be created with an admin-chosen password. Add them from the Team page instead: they choose their own password and the action is audited.",
+      code: "USE_TEAM_MEMBERS",
+      replacement: "POST /api/admin/team/members",
     },
     { status: 410 },
   );
