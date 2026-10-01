@@ -54,6 +54,7 @@ function passwordFieldFor(
   if (
     code === "PASSWORD_TOO_SHORT" ||
     code === "PASSWORD_TOO_LONG" ||
+    code === "PASSWORD_COMPROMISED" ||
     copy.field === "newPassword"
   ) {
     return "next";
@@ -126,9 +127,10 @@ export function PasswordSection() {
         //
         // Flow is `"signin"` because `AuthFlow` has no "account" member and
         // none of the codes reachable here (`INVALID_PASSWORD`,
-        // `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`, `FAILED_TO_UPDATE_USER`,
-        // the session pair) has a per-flow override — the flow only chooses
-        // the last-resort generic, and "signin" is the closest of the five.
+        // `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`, `PASSWORD_COMPROMISED`,
+        // `FAILED_TO_UPDATE_USER`, the session pair) has a per-flow override —
+        // the flow only chooses the last-resort generic, and "signin" is the
+        // closest of the five.
         const copy = humanizeAuthError("signin", error);
         setErrors({
           [passwordFieldFor(copy, error)]: copy.description,

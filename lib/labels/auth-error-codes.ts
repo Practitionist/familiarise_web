@@ -118,11 +118,18 @@ export type TwoFactorPluginErrorCode =
   | "OTP_HAS_EXPIRED"
   | "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE";
 
+/**
+ * `have-i-been-pwned` plugin.
+ * @see node_modules/better-auth/dist/plugins/haveibeenpwned/index.mjs
+ */
+export type HaveIBeenPwnedErrorCode = "PASSWORD_COMPROMISED";
+
 export type BetterAuthErrorCode =
   | BetterAuthCoreErrorCode
   | AdminPluginErrorCode
   | OrganizationPluginErrorCode
-  | TwoFactorPluginErrorCode;
+  | TwoFactorPluginErrorCode
+  | HaveIBeenPwnedErrorCode;
 
 /* -------------------------------------------------------------------------- */
 /* Ours                                                                      */
@@ -247,6 +254,8 @@ export const AUTH_ERROR_CODES = {
   INVALID_TWO_FACTOR_COOKIE: "INVALID_TWO_FACTOR_COOKIE",
   OTP_HAS_EXPIRED: "OTP_HAS_EXPIRED",
   TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE",
+  // have-i-been-pwned plugin
+  PASSWORD_COMPROMISED: "PASSWORD_COMPROMISED",
   // ours
   SSO_REQUIRED: "SSO_REQUIRED",
   SSO_PROVIDER_MISCONFIGURED: "SSO_PROVIDER_MISCONFIGURED",

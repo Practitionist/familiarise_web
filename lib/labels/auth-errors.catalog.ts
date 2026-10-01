@@ -201,6 +201,12 @@ export const AUTH_ERROR_COPY = {
     description: "Use at most 128 characters.",
     field: "password",
   },
+  PASSWORD_COMPROMISED: {
+    title: "Choose a different password",
+    description:
+      "This password has appeared in a data breach, so attackers try it first. Pick one you don't use anywhere else.",
+    field: "password",
+  },
   FAILED_TO_CREATE_SESSION: {
     title: "We couldn't start your session",
     description: "Nothing was changed. Please try again.",
@@ -561,6 +567,7 @@ export const AUTH_ERROR_COPY_BY_FLOW: Readonly<
       description: "Reset links last 30 minutes. Request a new one.",
       action: "request-new-link" as const,
     },
+    PASSWORD_COMPROMISED: { field: "newPassword" as const },
   },
   verify: {
     INVALID_TOKEN: {

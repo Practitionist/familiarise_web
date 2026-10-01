@@ -30,6 +30,7 @@ import {
   isOperatorRole,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
+import { breachedPasswordCheck } from "@/lib/auth/password-policy";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
@@ -600,6 +601,9 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // Rejects breached passwords on sign-up, reset and change.
+    breachedPasswordCheck,
+
     // Two-factor: TOTP (authenticator app) + single-use backup codes, used by
     // operators only. Mandatory for STAFF/ADMIN: `session.create.before`
     // limits them to credential + TOTP sessions, and the API/page guards in
