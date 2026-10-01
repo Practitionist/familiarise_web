@@ -53,6 +53,8 @@ const LOCK_EXEMPT: Record<string, string> = {
   // extra API call, so a lock would buy nothing and would give a read-only
   // guard a hard dependency on Redis.
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // Catalog reads only (pg_constraint/pg_enum); a double-run costs nothing.
+  "db-live-drift.yml": "deliberately unlocked — read-only catalog check",
 };
 
 interface Row {

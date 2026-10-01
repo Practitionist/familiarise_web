@@ -342,6 +342,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "create-payout-batch.yml": "scheduled",
   "cron-heartbeat.yml": "scheduled",
   "databreach-deadline-alerts.yml": "scheduled",
+  "db-live-drift.yml": "scheduled",
   "deactivate-expired-discounts.yml": "scheduled",
   "detect-consultant-no-shows.yml": "scheduled",
   "dispatch-outbound-webhooks.yml": "scheduled",

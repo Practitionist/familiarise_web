@@ -64,9 +64,10 @@ survives as `db:push:no-sidecars-DANGEROUS` and should be treated as its name
 suggests. "The Prisma schema is up to date" says nothing at all about whether
 the sidecars are present.
 
-CI runs both guards on every pull request, via `scripts/ci/check-db-sidecars.ts`
-and `scripts/ci/check-db-drift.ts`. They skip cleanly when no database URL is
-available, which is what lets forks run CI.
+CI's `db-guards` job runs both guards (`scripts/ci/check-db-sidecars.ts` and
+`scripts/ci/check-db-drift.ts`) on every pull request, against a throwaway
+Postgres that gets the branch's `db push` + `db:sidecars`. `db-live-drift.yml`
+runs them against the live database daily and on every push to `dev`.
 
 ## Connections
 
