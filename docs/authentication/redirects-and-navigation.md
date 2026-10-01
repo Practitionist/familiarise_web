@@ -111,9 +111,8 @@ middleware, the answer is "you don't" — extend a server guard instead.
 
 ## Related context
 
-- `01-architecture.md` — customSession hot path & why the cookie cache is
-  off; guards force-refresh by design.
-- `02-middleware.md` — edge request lifecycle.
+- [`architecture.md`](./architecture.md) — the session read path, why the
+  cookie cache is off, and the request lifecycle through `middleware.ts`.
 - [#1241](https://github.com/Practitionist/familiarise_web/issues/1241) —
   SSO enforcement lifecycle: the read-time `ssoEnforcementFailed` flag was
   removed in #1242 because nothing consumed it; if you want read-time SSO

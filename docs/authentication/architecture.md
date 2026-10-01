@@ -160,6 +160,9 @@ sequenceDiagram
   end
 ```
 
+In local development without `RESEND_API_KEY`, the verification link is
+logged to the server console (`[verify-email] <email> -> <url>`).
+
 ### 5.2 Social sign-in (Google, GitHub)
 
 1. `POST /sign-in/social` redirects to the provider; the callback is
