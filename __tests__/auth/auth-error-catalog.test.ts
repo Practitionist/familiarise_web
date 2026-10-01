@@ -31,13 +31,7 @@ import {
   normalizeAuthErrorCode,
 } from "../../lib/labels/auth-error-codes";
 
-const ALL_FLOWS = [
-  "signin",
-  "signup",
-  "forgot",
-  "reset",
-  "verify",
-] as const;
+const ALL_FLOWS = ["signin", "signup", "forgot", "reset", "verify"] as const;
 
 /** A representative hostile payload: every real Better Auth code, one per flow. */
 const HOSTILE_MESSAGES = [
@@ -165,7 +159,9 @@ describe("sign-in copy does not enumerate accounts", () => {
     // (one suggests SSO, the other suggests a password) as long as neither
     // states that an account exists or does not.
     for (const copy of [wrongPassword, unknownAddress]) {
-      expect(copy.description).not.toMatch(/no account|not found|does not exist/i);
+      expect(copy.description).not.toMatch(
+        /no account|not found|does not exist/i,
+      );
     }
   });
 });
@@ -185,15 +181,30 @@ describe("status fallbacks", () => {
       expect(copy.description).toMatch(/security policy/i);
       expect(copy.description).toMatch(/preview deployment/i);
       // And it must not read as a credential problem.
-      expect(`${copy.title} ${copy.description}`).not.toMatch(/password|sign-in failed/i);
+      expect(`${copy.title} ${copy.description}`).not.toMatch(
+        /password|sign-in failed/i,
+      );
     }
   });
 
   it("429 carries a real wait when Retry-After is known", () => {
-    const copy = humanizeAuthError("signin", { status: 429 }, {
-      retryAfterSeconds: 731,
-    });
+    const copy = humanizeAuthError(
+      "signin",
+      { status: 429 },
+      {
+        retryAfterSeconds: 731,
+      },
+    );
     expect(copy.description).toMatch(/13 minutes/);
+  });
+
+  it("the two-factor lockout 429 keeps its own copy", () => {
+    const copy = humanizeAuthError("signin", {
+      code: "ACCOUNT_TEMPORARILY_LOCKED",
+      status: 429,
+    });
+    expect(copy.title).toBe("Too many wrong codes");
+    expect(copy.description).toMatch(/15 minutes/);
   });
 
   it("a 5xx and a thrown fetch share the unreachable copy", () => {

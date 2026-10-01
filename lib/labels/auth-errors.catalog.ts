@@ -3,11 +3,10 @@
  * `AuthErrorCode` — and by construction complete.
  *
  * The type is `Record<AuthErrorCode, AuthErrorCopy>`, not
- * `Record<string, AuthErrorCopy>`. That is the whole productionisation story of
- * this file: a code that exists but has no entry here is a **compile error**,
- * so it can never reach a customer as "Something went wrong on our side". A
- * Better Auth minor that adds an error code fails the build in CI instead of
- * quietly degrading every one of those paths.
+ * `Record<string, AuthErrorCopy>`: a listed code with no entry here is a
+ * **compile error**, so it can never reach a customer as "Something went wrong
+ * on our side". Codes Better Auth returns that are not listed fall back to the
+ * status-based sentence (see `lib/labels/auth-error-codes.ts`).
  *
  * ## Why a code is not enough on its own
  *
@@ -181,11 +180,6 @@ export const AUTH_ERROR_COPY = {
     description: "Enter a valid email address.",
     field: "email",
   },
-  EMAIL_CAN_NOT_BE_UPDATED: {
-    title: "This email can't be changed",
-    description: `Contact ${SUPPORT} to change the address on your account.`,
-    action: "contact-support",
-  },
   EMAIL_MISMATCH: {
     title: "Different address",
     description: "That address doesn't match the account you're signed in to.",
@@ -235,21 +229,10 @@ export const AUTH_ERROR_COPY = {
     description: "This email is verified — you can sign in.",
     action: "sign-in",
   },
-  VERIFICATION_EMAIL_NOT_ENABLED: {
-    title: "We can't send that link",
-    description: "Email verification isn't switched on for this deployment.",
-    action: "contact-support",
-  },
   FAILED_TO_CREATE_VERIFICATION: {
     title: "We couldn't create that link",
     description: "Please try again in a moment.",
     action: "retry",
-  },
-  CALLBACK_URL_REQUIRED: {
-    title: "This link is incomplete",
-    description:
-      "It looks like part of the address is missing. Request a new one.",
-    action: "request-new-link",
   },
 
   /* ── Linked accounts ─────────────────────────────────────────────────── */
@@ -279,11 +262,6 @@ export const AUTH_ERROR_COPY = {
     description: "Use your email and password instead.",
     action: "sign-in",
   },
-  ID_TOKEN_NOT_SUPPORTED: {
-    title: "That provider isn't supported",
-    description: "Use your email and password instead.",
-    action: "sign-in",
-  },
   FAILED_TO_GET_USER_INFO: {
     title: "We couldn't read your profile",
     description: "The provider didn't send the details we need. Try again.",
@@ -303,18 +281,6 @@ export const AUTH_ERROR_COPY = {
       "It may have been revoked. Ask whoever invited you for a new one.",
     action: "contact-support",
   },
-  YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION: {
-    title: "This invitation isn't for you",
-    description:
-      "It was sent to a different email address. Ask for one for this address.",
-    action: "contact-support",
-  },
-  USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION: {
-    title: "You're already on the team",
-    description:
-      "No need to accept again — open the organisation from your dashboard.",
-    action: "retry",
-  },
   INVITATION_EXPIRED: {
     title: "This invitation has expired",
     description: "Ask for a new one — invitations last 14 days.",
@@ -328,33 +294,6 @@ export const AUTH_ERROR_COPY = {
   INVITATION_NOT_FOR_YOU: {
     title: "This invitation isn't for you",
     description: "It was sent to a different email address.",
-    action: "contact-support",
-  },
-  INVITATION_REVOKED: {
-    title: "This invitation was withdrawn",
-    description:
-      "An administrator withdrew it. Ask them to send a new one if you still need access.",
-    action: "contact-support",
-  },
-
-  /* ── Staff / admin setup ─────────────────────────────────────────────── */
-
-  SETUP_TOKEN_INVALID: {
-    title: "This setup link isn't valid",
-    description:
-      "It may have been revoked. Ask an administrator for a new one.",
-    action: "contact-support",
-  },
-  SETUP_TOKEN_EXPIRED: {
-    title: "This setup link has expired",
-    description:
-      "Setup links last 72 hours. Ask an administrator for a new one.",
-    action: "contact-support",
-  },
-  SETUP_TOKEN_ALREADY_USED: {
-    title: "This setup link was already used",
-    description:
-      "If that wasn't you, contact support — your account may be at risk.",
     action: "contact-support",
   },
 
@@ -401,24 +340,20 @@ export const AUTH_ERROR_COPY = {
     description:
       "Staff accounts sign in with email, password and an authenticator code.",
   },
+  TRUST_DEVICE_DISABLED: {
+    title: "Trusted devices aren't available",
+    description:
+      "Enter a code from your authenticator app each time you sign in.",
+  },
   TWO_FACTOR_NOT_ENABLED: {
     title: "Two-factor isn't switched on",
     description: "Switch it on in Settings, then try again.",
     action: "enroll-2fa",
   },
-  TWO_FACTOR_PLUGIN_DISABLED: {
-    title: "Two-factor isn't available",
-    description: "Contact support — this deployment is misconfigured.",
-    action: "contact-support",
-  },
   TOTP_NOT_ENABLED: {
     title: "Authenticator app not set up",
     description: "Add an authenticator app, or use a backup code instead.",
     action: "enroll-2fa",
-  },
-  OTP_NOT_ENABLED: {
-    title: "Email codes aren't available",
-    description: "Use your authenticator app or a backup code instead.",
   },
   BACKUP_CODES_NOT_ENABLED: {
     title: "No backup codes",
@@ -441,14 +376,18 @@ export const AUTH_ERROR_COPY = {
     description: "Sign in again to start a new one.",
     action: "sign-in",
   },
-  OTP_HAS_EXPIRED: {
-    title: "That code has expired",
-    description: "Request a new one — codes are short-lived.",
-    action: "retry",
-  },
   TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: {
     title: "Too many code attempts",
     description: "Request a fresh code, then try again.",
+    action: "retry",
+  },
+  // The two-factor plugin's lockout: 10 wrong codes lock verification for
+  // 15 minutes (plugin default), whichever device the codes came from.
+  ACCOUNT_TEMPORARILY_LOCKED: {
+    title: "Too many wrong codes",
+    description:
+      "For your security, two-factor sign-in is paused. Wait 15 minutes, then try again.",
+    field: "code",
     action: "retry",
   },
 
@@ -497,15 +436,6 @@ export const AUTH_ERROR_COPY = {
     action: "request-new-link",
   },
 
-  /* ── Impersonation ───────────────────────────────────────────────────── */
-
-  IMPERSONATION_BLOCKED: {
-    title: "Not allowed while viewing another account",
-    description:
-      "This action changes real money or data, so it can't be done on someone's behalf. Sign back in as yourself.",
-    action: "sign-in",
-  },
-
   /* ── Validation (Better Auth's zod layer) ────────────────────────────── */
 
   VALIDATION_ERROR: {
@@ -515,25 +445,6 @@ export const AUTH_ERROR_COPY = {
   MISSING_FIELD: {
     title: "Check the form",
     description: "One of the fields is empty.",
-  },
-  FIELD_NOT_ALLOWED: {
-    title: "We can't change that",
-    description: "That field isn't editable here.",
-  },
-  BODY_MUST_BE_AN_OBJECT: {
-    title: "We couldn't read that request",
-    description: "Please try again.",
-    action: "retry",
-  },
-  ASYNC_VALIDATION_NOT_SUPPORTED: {
-    title: "We couldn't read that request",
-    description: "Please try again.",
-    action: "retry",
-  },
-  METHOD_NOT_ALLOWED_DEFER_SESSION_REQUIRED: {
-    title: "We couldn't read that request",
-    description: "Please refresh the page and try again.",
-    action: "retry",
   },
 } as const satisfies Record<AuthErrorCode, AuthErrorCopy>;
 

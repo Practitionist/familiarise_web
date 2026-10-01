@@ -3,34 +3,31 @@
  *
  * Two sources, deliberately kept apart:
  *
- *   - `BetterAuthErrorCode` — the codes Better Auth itself can return. Read off
- *     `@better-auth/core`'s `BASE_ERROR_CODES` plus the `admin`, `organization`
- *     and `two-factor` plugin tables. NOT hand-invented: each entry
- *     below is a literal that appears in the installed package, so a typo here
- *     cannot silently become an unreachable branch.
+ *   - `BetterAuthErrorCode` — Better Auth codes a customer can actually reach
+ *     through our UI. Each one is checked against `auth.$ERROR_CODES`, the
+ *     table of the configured instance, so a code that a Better Auth upgrade
+ *     renames or a removed plugin takes with it fails the build.
  *
  *   - `AppAuthErrorCode` — codes this codebase mints itself: the SSO veto in
  *     `lib/auth.ts`'s `session.create.before`, the edge rate limiter and the
  *     session-lookup tri-state.
  *
- * Why the union is closed: `lib/labels/auth-errors.catalog.ts` is a
- * `Record<AuthErrorCode, AuthErrorCopy>`. Adding a code to either half makes
- * that record fail to compile until it also has copy. A Better Auth upgrade
- * that introduces a new code therefore surfaces as a **build failure**, not as
- * a customer staring at "Something went wrong on our side".
- *
- * That inversion is the whole point. The previous catalog was
- * `Record<string, AuthErrorCopy>`, which silently accepted every unhandled code
- * and fell through to a generic sentence — so every code Better Auth ever
- * added became a support ticket nobody could diagnose.
+ * `lib/labels/auth-errors.catalog.ts` is a `Record<AuthErrorCode, AuthErrorCopy>`,
+ * so every listed code must have copy. A code Better Auth returns that is NOT
+ * listed (developer-facing validation errors, plugins we do not use) falls back
+ * to the status-based sentence in `humanizeAuthError`, which never echoes the
+ * server's message.
  */
+
+import type { auth } from "@/lib/auth";
 
 /* -------------------------------------------------------------------------- */
 /* Better Auth                                                                */
 /* -------------------------------------------------------------------------- */
 
 /**
- * `@better-auth/core` `BASE_ERROR_CODES`.
+ * `@better-auth/core` `BASE_ERROR_CODES`, minus the ones only a malformed
+ * request or a misconfigured deployment can produce.
  * @see node_modules/@better-auth/core/dist/error/codes.mjs
  */
 export type BetterAuthCoreErrorCode =
@@ -47,7 +44,6 @@ export type BetterAuthCoreErrorCode =
   | "PROVIDER_NOT_FOUND"
   | "INVALID_TOKEN"
   | "TOKEN_EXPIRED"
-  | "ID_TOKEN_NOT_SUPPORTED"
   | "FAILED_TO_GET_USER_INFO"
   | "USER_EMAIL_NOT_FOUND"
   | "EMAIL_NOT_VERIFIED"
@@ -55,14 +51,12 @@ export type BetterAuthCoreErrorCode =
   | "PASSWORD_TOO_LONG"
   | "USER_ALREADY_EXISTS"
   | "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"
-  | "EMAIL_CAN_NOT_BE_UPDATED"
   | "CREDENTIAL_ACCOUNT_NOT_FOUND"
   | "SESSION_EXPIRED"
   | "FAILED_TO_UNLINK_LAST_ACCOUNT"
   | "ACCOUNT_NOT_FOUND"
   | "USER_ALREADY_HAS_PASSWORD"
   | "CROSS_SITE_NAVIGATION_LOGIN_BLOCKED"
-  | "VERIFICATION_EMAIL_NOT_ENABLED"
   | "EMAIL_ALREADY_VERIFIED"
   | "EMAIL_MISMATCH"
   | "SESSION_NOT_FRESH"
@@ -73,14 +67,9 @@ export type BetterAuthCoreErrorCode =
   | "INVALID_ERROR_CALLBACK_URL"
   | "INVALID_NEW_USER_CALLBACK_URL"
   | "MISSING_OR_NULL_ORIGIN"
-  | "CALLBACK_URL_REQUIRED"
   | "FAILED_TO_CREATE_VERIFICATION"
-  | "FIELD_NOT_ALLOWED"
-  | "ASYNC_VALIDATION_NOT_SUPPORTED"
   | "VALIDATION_ERROR"
   | "MISSING_FIELD"
-  | "METHOD_NOT_ALLOWED_DEFER_SESSION_REQUIRED"
-  | "BODY_MUST_BE_AN_OBJECT"
   | "PASSWORD_ALREADY_SET";
 
 /**
@@ -93,30 +82,18 @@ export type BetterAuthCoreErrorCode =
 export type AdminPluginErrorCode = "BANNED_USER" | "USER_NOT_FOUND";
 
 /**
- * `organization` plugin, narrowed to the two the invite-accept path surfaces.
- * The rest are authorisation refusals that `lib/labels/org-errors.ts` owns.
- * @see node_modules/better-auth/dist/plugins/organization/error-codes.mjs
- */
-export type OrganizationPluginErrorCode =
-  | "INVITATION_NOT_FOUND"
-  | "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION"
-  | "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION";
-
-/**
- * `two-factor` plugin.
+ * `two-factor` plugin, TOTP and backup codes only (email OTP is not enabled).
  * @see node_modules/better-auth/dist/plugins/two-factor/error-code.mjs
  */
 export type TwoFactorPluginErrorCode =
   | "TWO_FACTOR_NOT_ENABLED"
-  | "TWO_FACTOR_PLUGIN_DISABLED"
   | "TOTP_NOT_ENABLED"
-  | "OTP_NOT_ENABLED"
   | "BACKUP_CODES_NOT_ENABLED"
   | "INVALID_CODE"
   | "INVALID_BACKUP_CODE"
   | "INVALID_TWO_FACTOR_COOKIE"
-  | "OTP_HAS_EXPIRED"
-  | "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE";
+  | "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE"
+  | "ACCOUNT_TEMPORARILY_LOCKED";
 
 /**
  * `have-i-been-pwned` plugin.
@@ -127,9 +104,21 @@ export type HaveIBeenPwnedErrorCode = "PASSWORD_COMPROMISED";
 export type BetterAuthErrorCode =
   | BetterAuthCoreErrorCode
   | AdminPluginErrorCode
-  | OrganizationPluginErrorCode
   | TwoFactorPluginErrorCode
   | HaveIBeenPwnedErrorCode;
+
+/** Every code the configured Better Auth instance (core + plugins) can return. */
+type InstalledBetterAuthErrorCode = keyof typeof auth.$ERROR_CODES & string;
+
+type AssertNoneMissing<T extends never> = T;
+
+/**
+ * Fails to compile, naming the code, when a listed code is not in the
+ * installed table. Exported only so the alias is not flagged as unused.
+ */
+export type StaleBetterAuthErrorCode = AssertNoneMissing<
+  Exclude<BetterAuthErrorCode, InstalledBetterAuthErrorCode>
+>;
 
 /* -------------------------------------------------------------------------- */
 /* Ours                                                                      */
@@ -155,20 +144,13 @@ export type AppAuthErrorCode =
   | "TWO_FACTOR_REQUIRED"
   /* lib/auth.ts `session.create.before` — an operator on a social/SSO path. */
   | "STAFF_PASSWORD_SIGN_IN_ONLY"
-  /* Staff/admin onboarding. */
+  /* lib/auth.ts `hooks.before` — trustDevice on a 2FA verify. */
+  | "TRUST_DEVICE_DISABLED"
+  /* app/organizations/invite/[token]/page.tsx — organisation invitations. */
+  | "INVITATION_NOT_FOUND"
   | "INVITATION_EXPIRED"
   | "INVITATION_ALREADY_ACCEPTED"
-  | "INVITATION_NOT_FOR_YOU"
-  /* lib/auth/staff-invitations.ts — a staff invite somebody withdrew. Kept
-     distinct from EXPIRED because nobody chose it, and from NOT_FOUND because
-     saying "not found" about a link a customer holds is how they learn the
-     difference between a typo and a revocation. */
-  | "INVITATION_REVOKED"
-  | "SETUP_TOKEN_INVALID"
-  | "SETUP_TOKEN_EXPIRED"
-  | "SETUP_TOKEN_ALREADY_USED"
-  /* lib/auth-helpers.ts — impersonation blocks a privileged action. */
-  | "IMPERSONATION_BLOCKED";
+  | "INVITATION_NOT_FOR_YOU";
 
 export type AuthErrorCode = BetterAuthErrorCode | AppAuthErrorCode;
 
@@ -198,7 +180,6 @@ export const AUTH_ERROR_CODES = {
   PROVIDER_NOT_FOUND: "PROVIDER_NOT_FOUND",
   INVALID_TOKEN: "INVALID_TOKEN",
   TOKEN_EXPIRED: "TOKEN_EXPIRED",
-  ID_TOKEN_NOT_SUPPORTED: "ID_TOKEN_NOT_SUPPORTED",
   FAILED_TO_GET_USER_INFO: "FAILED_TO_GET_USER_INFO",
   USER_EMAIL_NOT_FOUND: "USER_EMAIL_NOT_FOUND",
   EMAIL_NOT_VERIFIED: "EMAIL_NOT_VERIFIED",
@@ -207,14 +188,12 @@ export const AUTH_ERROR_CODES = {
   USER_ALREADY_EXISTS: "USER_ALREADY_EXISTS",
   USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL:
     "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
-  EMAIL_CAN_NOT_BE_UPDATED: "EMAIL_CAN_NOT_BE_UPDATED",
   CREDENTIAL_ACCOUNT_NOT_FOUND: "CREDENTIAL_ACCOUNT_NOT_FOUND",
   SESSION_EXPIRED: "SESSION_EXPIRED",
   FAILED_TO_UNLINK_LAST_ACCOUNT: "FAILED_TO_UNLINK_LAST_ACCOUNT",
   ACCOUNT_NOT_FOUND: "ACCOUNT_NOT_FOUND",
   USER_ALREADY_HAS_PASSWORD: "USER_ALREADY_HAS_PASSWORD",
   CROSS_SITE_NAVIGATION_LOGIN_BLOCKED: "CROSS_SITE_NAVIGATION_LOGIN_BLOCKED",
-  VERIFICATION_EMAIL_NOT_ENABLED: "VERIFICATION_EMAIL_NOT_ENABLED",
   EMAIL_ALREADY_VERIFIED: "EMAIL_ALREADY_VERIFIED",
   EMAIL_MISMATCH: "EMAIL_MISMATCH",
   SESSION_NOT_FRESH: "SESSION_NOT_FRESH",
@@ -225,35 +204,21 @@ export const AUTH_ERROR_CODES = {
   INVALID_ERROR_CALLBACK_URL: "INVALID_ERROR_CALLBACK_URL",
   INVALID_NEW_USER_CALLBACK_URL: "INVALID_NEW_USER_CALLBACK_URL",
   MISSING_OR_NULL_ORIGIN: "MISSING_OR_NULL_ORIGIN",
-  CALLBACK_URL_REQUIRED: "CALLBACK_URL_REQUIRED",
   FAILED_TO_CREATE_VERIFICATION: "FAILED_TO_CREATE_VERIFICATION",
-  FIELD_NOT_ALLOWED: "FIELD_NOT_ALLOWED",
-  ASYNC_VALIDATION_NOT_SUPPORTED: "ASYNC_VALIDATION_NOT_SUPPORTED",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   MISSING_FIELD: "MISSING_FIELD",
-  METHOD_NOT_ALLOWED_DEFER_SESSION_REQUIRED:
-    "METHOD_NOT_ALLOWED_DEFER_SESSION_REQUIRED",
-  BODY_MUST_BE_AN_OBJECT: "BODY_MUST_BE_AN_OBJECT",
   PASSWORD_ALREADY_SET: "PASSWORD_ALREADY_SET",
   // admin plugin
   BANNED_USER: "BANNED_USER",
-  // organization plugin
-  INVITATION_NOT_FOUND: "INVITATION_NOT_FOUND",
-  YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION:
-    "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION",
-  USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION:
-    "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
   // two-factor plugin
   TWO_FACTOR_NOT_ENABLED: "TWO_FACTOR_NOT_ENABLED",
-  TWO_FACTOR_PLUGIN_DISABLED: "TWO_FACTOR_PLUGIN_DISABLED",
   TOTP_NOT_ENABLED: "TOTP_NOT_ENABLED",
-  OTP_NOT_ENABLED: "OTP_NOT_ENABLED",
   BACKUP_CODES_NOT_ENABLED: "BACKUP_CODES_NOT_ENABLED",
   INVALID_CODE: "INVALID_CODE",
   INVALID_BACKUP_CODE: "INVALID_BACKUP_CODE",
   INVALID_TWO_FACTOR_COOKIE: "INVALID_TWO_FACTOR_COOKIE",
-  OTP_HAS_EXPIRED: "OTP_HAS_EXPIRED",
   TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE",
+  ACCOUNT_TEMPORARILY_LOCKED: "ACCOUNT_TEMPORARILY_LOCKED",
   // have-i-been-pwned plugin
   PASSWORD_COMPROMISED: "PASSWORD_COMPROMISED",
   // ours
@@ -265,14 +230,11 @@ export const AUTH_ERROR_CODES = {
   REQUEST_REJECTED: "REQUEST_REJECTED",
   TWO_FACTOR_REQUIRED: "TWO_FACTOR_REQUIRED",
   STAFF_PASSWORD_SIGN_IN_ONLY: "STAFF_PASSWORD_SIGN_IN_ONLY",
+  TRUST_DEVICE_DISABLED: "TRUST_DEVICE_DISABLED",
+  INVITATION_NOT_FOUND: "INVITATION_NOT_FOUND",
   INVITATION_EXPIRED: "INVITATION_EXPIRED",
   INVITATION_ALREADY_ACCEPTED: "INVITATION_ALREADY_ACCEPTED",
   INVITATION_NOT_FOR_YOU: "INVITATION_NOT_FOR_YOU",
-  INVITATION_REVOKED: "INVITATION_REVOKED",
-  SETUP_TOKEN_INVALID: "SETUP_TOKEN_INVALID",
-  SETUP_TOKEN_EXPIRED: "SETUP_TOKEN_EXPIRED",
-  SETUP_TOKEN_ALREADY_USED: "SETUP_TOKEN_ALREADY_USED",
-  IMPERSONATION_BLOCKED: "IMPERSONATION_BLOCKED",
 } as const satisfies Record<AuthErrorCode, AuthErrorCode>;
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(
