@@ -2021,13 +2021,18 @@ export async function mintInvoiceRefundCreditNote(
   tx: Tx,
   params: {
     invoiceId: string;
-    refundId: string;
     amountPaise: number;
     reason: string;
-  },
+  } & (
+    | { refundId: string; overageEventId?: never }
+    | { overageEventId: string; refundId?: never }
+  ),
 ): Promise<OrgCreditNoteMintResult> {
+  // Idempotent on whichever trigger raised it (both are @unique).
   const existing = await tx.creditNote.findUnique({
-    where: { refundId: params.refundId },
+    where: params.overageEventId
+      ? { overageEventId: params.overageEventId }
+      : { refundId: params.refundId },
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };
@@ -2064,7 +2069,7 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: params.amountPaise,
-      refundId: params.refundId,
+      refundId: params.refundId ?? params.overageEventId,
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
@@ -2094,7 +2099,8 @@ export async function mintInvoiceRefundCreditNote(
       fiscalYear,
       organizationId: org.id,
       invoiceId: invoice.id,
-      refundId: params.refundId,
+      refundId: params.refundId ?? null,
+      overageEventId: params.overageEventId ?? null,
       reason: params.reason,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,

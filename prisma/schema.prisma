@@ -6132,6 +6132,9 @@ model CreditNote {
   // #738-B — triggering dispute (chargeback LOST), when the CN arises from one.
   // Same idempotency discipline as refundId: one credit note per dispute.
   disputeId      String?              @unique
+  // #1894 — non-refund trigger: an overage base already invoiced and credited
+  // back. A statutory document must name its real trigger, not borrow refundId.
+  overageEventId String?              @unique
   reason         String?
 
   // #778 §D — IRP reports credit/debit notes as their own document types for

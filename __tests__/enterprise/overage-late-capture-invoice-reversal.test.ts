@@ -105,6 +105,7 @@ const side = {
 };
 
 const invoicedParent = {
+  id: "oe1",
   basePaise: BASE,
   payment: { parentPayment: { billableToOrgInvoiceId: "inv1" } },
 };
@@ -214,7 +215,8 @@ describe("late capture after the parent was invoiced", () => {
     // tax-inclusive Sec-34 amount (base grossed up at the invoice's own 18%).
     expect(mockMint).toHaveBeenCalledWith(tx, {
       invoiceId: "inv1",
-      refundId: REVERSAL_KEY,
+      // #1894 — the note names its real trigger, never a borrowed refundId.
+      overageEventId: "oe1",
       amountPaise: 118_000,
       reason: expect.stringContaining("side1"),
     });

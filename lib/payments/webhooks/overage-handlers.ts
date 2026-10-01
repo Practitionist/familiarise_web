@@ -111,7 +111,11 @@ export async function handleOverageMemberSuccess(
     // org invoice. Held, not acted on inline: the correction must post AFTER
     // the org-relief journal below, so the journal reads
     // "credit the full marginal, then reverse the part already invoiced".
-    let invoicedBase: { basePaise: number; invoiceId: string } | null = null;
+    let invoicedBase: {
+      basePaise: number;
+      invoiceId: string;
+      overageEventId: string;
+    } | null = null;
     let moved = await transitionOverage(
       tx,
       { paymentId: side.id },
@@ -141,6 +145,7 @@ export async function handleOverageMemberSuccess(
           const ctx = await tx.overageEvent.findFirst({
             where: { paymentId: side.id },
             select: {
+              id: true,
               basePaise: true,
               payment: {
                 select: {
@@ -153,7 +158,11 @@ export async function handleOverageMemberSuccess(
           });
           const invoiceId = ctx?.payment?.parentPayment?.billableToOrgInvoiceId;
           if (ctx && invoiceId && ctx.basePaise > 0) {
-            invoicedBase = { basePaise: ctx.basePaise, invoiceId };
+            invoicedBase = {
+              basePaise: ctx.basePaise,
+              invoiceId,
+              overageEventId: ctx.id,
+            };
           } else {
             // The event vanished or lost its parent link between the recarve
             // and this read. Nothing can be neutralised, so say so durably
@@ -264,6 +273,7 @@ async function neutraliseInvoicedOverageBase(
     paymentIntentId: string;
     basePaise: number;
     invoiceId: string;
+    overageEventId: string;
   },
 ): Promise<void> {
   const {
@@ -272,6 +282,7 @@ async function neutraliseInvoicedOverageBase(
     paymentIntentId,
     basePaise,
     invoiceId,
+    overageEventId,
   } = args;
   // Same key space for the journal and the document: this side-Payment's base
   // is reversed exactly once, on either rail or both.
@@ -324,11 +335,7 @@ async function neutraliseInvoicedOverageBase(
 
   const { creditNoteId, outcome } = await mintInvoiceRefundCreditNote(tx, {
     invoiceId,
-    // The writer's only unique idempotency key is its refund/dispute trigger,
-    // so a non-refund correction has to borrow it. See the report: CreditNote
-    // needs its own `overageEventId String? @unique` before this stops being a
-    // naming convention rather than a lie in a statutory document.
-    refundId: key,
+    overageEventId,
     amountPaise: grossBasePaise,
     reason:
       `Overage base for side-payment ${sidePaymentId} was paid ` +
