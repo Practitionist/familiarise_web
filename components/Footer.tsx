@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowUpRight, MessageSquare } from "lucide-react";
+import { reportSentryError } from "@/lib/observability/report";
 
 // Brand glyphs as inline SVGs — lucide deprecated brand icons, so the footer
 // owns these five paths (Font Awesome 6 brand geometry) instead of pulling
@@ -213,10 +214,15 @@ const Footer: React.FC = () => {
         // Tagged by surface so the admin list can tell where signups come from.
         body: JSON.stringify({ email, source: "FOOTER" }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error(`Waitlist subscribe failed: ${res.status}`);
       setEmail("");
       setWaitlistStatus("success");
-    } catch {
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "waitlist",
+        op: "newsletter_subscribe",
+        expected: false,
+      });
       setWaitlistStatus("error");
     }
   };

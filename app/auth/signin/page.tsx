@@ -207,7 +207,11 @@ function SignInContent() {
           );
         }
       }
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "sso_domain_check" } },
+      );
       // ignore — fall through to normal login
     } finally {
       setSsoChecking(false);
@@ -292,7 +296,11 @@ function SignInContent() {
           variant: "destructive",
         });
       }
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "manual_sso_check" } },
+      );
       toast({
         title: "SSO check failed",
         description: "Could not verify SSO for this domain. Please try again.",
@@ -326,7 +334,11 @@ function SignInContent() {
         title: "Verification email sent",
         description: `If ${email} belongs to an unverified account, the link is on its way.`,
       });
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "resend_verification_email" } },
+      );
       toast({
         title: "Couldn't resend the email",
         description: "Please try again in a moment.",

@@ -166,7 +166,11 @@ function SignUpContent() {
         title: "Verification email sent",
         description: `If ${email} belongs to an unverified account, the link is on its way.`,
       });
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "signup_resend_verification" } },
+      );
       toast({
         title: "Couldn't resend the email",
         description: "Please try again in a moment.",
@@ -231,7 +235,11 @@ function SignUpContent() {
             : null,
         );
       }
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "signup_sso_domain_check" } },
+      );
       // ignore — fall through to normal signup
     } finally {
       setSsoChecking(false);

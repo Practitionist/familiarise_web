@@ -11,7 +11,6 @@ import {
 import { BODY_FONT } from "./statutory-document-frame";
 import { groupCurriculumBySection } from "@/lib/labels/plan-labels";
 import type { PlanBrochureData } from "./plan-brochure-data";
-import { Fragment } from "@/lib/pdf/react-runtime/jsx-runtime";
 
 const styles = StyleSheet.create({
   page: {
@@ -45,13 +44,18 @@ const styles = StyleSheet.create({
     color: "#fafafa",
   },
   facts: { fontSize: 10, color: "#52525b", marginBottom: 20 },
-  sectionGap: { height: 16 },
+  sectionBlock: { marginBottom: 16 },
   heading: { fontSize: 12, fontWeight: 700, marginBottom: 6, color: "#18181b" },
   bodyText: { fontSize: 10, lineHeight: 1.45, color: "#3f3f46" },
   bullet: { marginBottom: 4, color: "#3f3f46" },
   topicsText: { fontSize: 9.5, color: "#52525b" },
   faqBlock: { marginBottom: 8 },
-  faqQuestion: { fontSize: 10, fontWeight: 700, color: "#27272a", marginBottom: 2 },
+  faqQuestion: {
+    fontSize: 10,
+    fontWeight: 700,
+    color: "#27272a",
+    marginBottom: 2,
+  },
   faqAnswer: { fontSize: 9.5, color: "#52525b", lineHeight: 1.4 },
   curriculumTitle: { fontSize: 20, fontWeight: 700, marginBottom: 18 },
   group: {
@@ -88,17 +92,14 @@ function Bullets({
 }: Readonly<{ title: string; items: string[] }>) {
   if (!items.length) return null;
   return (
-    <Fragment>
-      <Text style={styles.heading} minPresenceAhead={30}>
-        {title}
-      </Text>
-      {items.map((item) => (
-        <Text key={item} style={styles.bullet}>
+    <View style={styles.sectionBlock}>
+      <Text style={styles.heading}>{title}</Text>
+      {items.map((item, idx) => (
+        <Text key={`${idx}-${item}`} style={styles.bullet}>
           • {item}
         </Text>
       ))}
-      <View style={styles.sectionGap} />
-    </Fragment>
+    </View>
   );
 }
 
@@ -123,7 +124,7 @@ export async function renderPlanBrochure(
     year: "numeric",
     timeZone: "UTC",
   });
-  return renderToBuffer(
+  const pdfBuffer = await renderToBuffer(
     <Document
       title={data.title}
       author="Familiarise"
@@ -135,83 +136,68 @@ export async function renderPlanBrochure(
             FAMILIARISE / {data.kind.toUpperCase()}
           </Text>
           <Text style={styles.title}>{data.title}</Text>
-          {data.subtitle && (
+          {data.subtitle ? (
             <Text style={styles.subtitle}>{data.subtitle}</Text>
-          )}
-          {(data.expertName || data.priceFormatted) && (
+          ) : null}
+          {data.expertName || data.priceFormatted ? (
             <View style={styles.heroMetaRow}>
               <View>
-                {data.expertName && (
+                {data.expertName ? (
                   <Text style={styles.expert}>With {data.expertName}</Text>
-                )}
-                {data.expertHeadline && (
+                ) : null}
+                {data.expertHeadline ? (
                   <Text style={styles.expertHeadline}>
                     {data.expertHeadline}
                   </Text>
-                )}
+                ) : null}
               </View>
-              {data.priceFormatted && (
+              {data.priceFormatted ? (
                 <Text style={styles.priceBadge}>{data.priceFormatted}</Text>
-              )}
+              ) : null}
             </View>
-          )}
+          ) : null}
         </View>
-        {data.facts.length > 0 && (
+        {data.facts.length > 0 ? (
           <Text style={styles.facts}>{data.facts.join(" · ")}</Text>
-        )}
-        {data.description && (
-          <Fragment>
-            <Text style={styles.heading} minPresenceAhead={30}>
-              About this plan
-            </Text>
+        ) : null}
+        {data.description ? (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.heading}>About this plan</Text>
             <Text style={styles.bodyText}>{data.description}</Text>
-            <View style={styles.sectionGap} />
-          </Fragment>
-        )}
+          </View>
+        ) : null}
         <Bullets title="Who this is for" items={data.targetAudience} />
         <Bullets title="What you’ll learn" items={data.learningOutcomes} />
         <Bullets title="What’s included" items={data.whatsIncluded} />
-        {data.prerequisites && (
-          <Fragment>
-            <Text style={styles.heading} minPresenceAhead={30}>
-              Prerequisites
-            </Text>
+        {data.prerequisites ? (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.heading}>Prerequisites</Text>
             <Text style={styles.bodyText}>{data.prerequisites}</Text>
-            <View style={styles.sectionGap} />
-          </Fragment>
-        )}
-        {data.materialProvided && (
-          <Fragment>
-            <Text style={styles.heading} minPresenceAhead={30}>
-              Materials provided
-            </Text>
+          </View>
+        ) : null}
+        {data.materialProvided ? (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.heading}>Materials provided</Text>
             <Text style={styles.bodyText}>{data.materialProvided}</Text>
-            <View style={styles.sectionGap} />
-          </Fragment>
-        )}
-        {data.topics.length > 0 && (
-          <Fragment>
-            <Text style={styles.heading} minPresenceAhead={30}>
-              Topics covered
-            </Text>
+          </View>
+        ) : null}
+        {data.topics.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.heading}>Topics covered</Text>
             <Text style={styles.topicsText}>{data.topics.join(" · ")}</Text>
-            <View style={styles.sectionGap} />
-          </Fragment>
-        )}
-        {data.faqs.length > 0 && (
-          <Fragment>
-            <Text style={styles.heading} minPresenceAhead={30}>
-              Frequently asked questions
-            </Text>
-            {data.faqs.map((faq) => (
-              <View key={faq.question} style={styles.faqBlock}>
+          </View>
+        ) : null}
+        {data.faqs.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.heading}>Frequently asked questions</Text>
+            {data.faqs.map((faq, idx) => (
+              <View key={`${idx}-${faq.question}`} style={styles.faqBlock}>
                 <Text style={styles.faqQuestion}>Q: {faq.question}</Text>
                 <Text style={styles.faqAnswer}>{faq.answer}</Text>
               </View>
             ))}
-            <View style={styles.sectionGap} />
-          </Fragment>
-        )}
+          </View>
+        ) : null}
         <Text style={styles.note}>
           Your plan brochure, prepared on {generated}. Explore this offering
           online for the latest pricing, available dates, and booking options.
@@ -221,20 +207,18 @@ export async function renderPlanBrochure(
         </Link>
         <Footer />
       </Page>
-      {data.curriculum.length > 0 && (
+      {data.curriculum.length > 0 ? (
         <Page size="A4" style={styles.page}>
           <Text style={styles.curriculumTitle}>{data.curriculumHeading}</Text>
           {groupCurriculumBySection(data.curriculum).map(
             (group, groupIndex) => (
-              <Fragment key={group.label ?? `group-${groupIndex}`}>
-                {group.label && (
-                  <Text style={styles.group} minPresenceAhead={50}>
-                    {group.label}
-                  </Text>
-                )}
+              <View key={group.label ?? `group-${groupIndex}`}>
+                {group.label ? (
+                  <Text style={styles.group}>{group.label}</Text>
+                ) : null}
                 {group.items.map((item) => (
-                  <Fragment key={`${item.order}-${item.title}`}>
-                    <Text orphans={3} widows={2}>
+                  <View key={`${item.order}-${item.title}`}>
+                    <Text>
                       <Text style={styles.itemTitle}>
                         {item.order}. {item.title}
                         {item.hoursAllotted ? ` · ${item.hoursAllotted}h` : ""}
@@ -243,21 +227,22 @@ export async function renderPlanBrochure(
                       <Text style={styles.itemDescription}>
                         {item.description}
                       </Text>
-                      {item.outcomes?.map((outcome) => (
-                        <Text key={outcome}>
+                      {item.outcomes?.map((outcome, outcomeIdx) => (
+                        <Text key={`${outcomeIdx}-${outcome}`}>
                           {"\n"}• {outcome}
                         </Text>
                       ))}
                     </Text>
                     <View style={styles.divider} />
-                  </Fragment>
+                  </View>
                 ))}
-              </Fragment>
+              </View>
             ),
           )}
           <Footer />
         </Page>
-      )}
+      ) : null}
     </Document>,
   );
+  return Buffer.from(pdfBuffer);
 }

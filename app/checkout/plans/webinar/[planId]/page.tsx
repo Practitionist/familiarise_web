@@ -246,7 +246,8 @@ export default function WebinarCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -477,7 +478,8 @@ export default function WebinarCheckoutPage({
         return false;
       }
       return true;
-    } catch {
+    } catch (revalidateErr) {
+      reportPaymentsError(revalidateErr);
       return true;
     }
   }, [

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { sendVerificationEmail, useSession, getSession } from "@/lib/auth-client";
+import { reportSentryError } from "@/lib/observability/report";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
@@ -108,7 +109,12 @@ function VerifyEmailContent() {
         title: "Verification email sent",
         description: `If ${email} belongs to an unverified account, the link is on its way. It expires in 1 hour.`,
       });
-    } catch {
+    } catch (err) {
+      reportSentryError(err, {
+        subsystem: "auth",
+        op: "verify_email_resend",
+        expected: false,
+      });
       toast({
         title: "Couldn't send the email",
         description: "Please try again in a moment.",

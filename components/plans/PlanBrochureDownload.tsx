@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { FileDown, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { reportSentryError } from "@/lib/observability/report";
 import type { BrochurePlanType } from "@/lib/pdf/plan-brochure-data";
 import { cn } from "@/utils/tailwind";
 
@@ -34,6 +35,23 @@ export function PlanBrochureDownload({
         !response.ok ||
         !response.headers.get("Content-Type")?.includes("application/pdf")
       ) {
+        if (response.status !== 429) {
+          reportSentryError(
+            new Error(
+              `Brochure download failed with status ${response.status}`,
+            ),
+            {
+              subsystem: "plans",
+              op: "brochure_download",
+              expected: false,
+              extra: {
+                planId,
+                planType,
+                status: response.status,
+              },
+            },
+          );
+        }
         setError(
           response.status === 429
             ? "Too many downloads. Please try again in a minute."
@@ -52,7 +70,13 @@ export function PlanBrochureDownload({
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
+    } catch (err) {
+      reportSentryError(err, {
+        subsystem: "plans",
+        op: "brochure_download",
+        expected: false,
+        extra: { planId, planType },
+      });
       setError("Couldn’t prepare the PDF. Please try again.");
     } finally {
       setPending(false);

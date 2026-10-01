@@ -159,25 +159,27 @@ export function createPlanBrochureData(
 
   return {
     title: source.title,
-    subtitle: source.subtitle ?? null,
-    description: source.description ?? null,
+    subtitle: normaliseOptionalText(source.subtitle),
+    description: normaliseOptionalText(source.description),
     kind: PLAN_KIND_LABEL[type],
-    expertName: source.consultantProfile?.user.name ?? null,
-    expertHeadline: source.consultantProfile?.headline ?? null,
+    expertName: normaliseOptionalText(source.consultantProfile?.user.name),
+    expertHeadline: normaliseOptionalText(source.consultantProfile?.headline),
     priceFormatted,
     facts: buildPlanFacts(source, type),
-    learningOutcomes: [...(source.learningOutcomes ?? [])],
-    targetAudience: [...(source.targetAudience ?? [])],
-    whatsIncluded: [...(source.whatsIncluded ?? [])],
+    learningOutcomes: (source.learningOutcomes ?? []).filter(Boolean),
+    targetAudience: (source.targetAudience ?? []).filter(Boolean),
+    whatsIncluded: (source.whatsIncluded ?? []).filter(Boolean),
     prerequisites: normaliseOptionalText(source.prerequisites),
     materialProvided: normaliseOptionalText(source.materialProvided),
     topics: (source.topics ?? [])
       .map((topic) => (typeof topic === "string" ? topic : topic.name))
       .filter(Boolean),
-    faqs: (source.faqs ?? []).map((faq) => ({
-      question: faq.question,
-      answer: faq.answer,
-    })),
+    faqs: (source.faqs ?? [])
+      .filter((faq) => Boolean(faq.question && faq.answer))
+      .map((faq) => ({
+        question: faq.question,
+        answer: faq.answer,
+      })),
     curriculum: (rawCurriculum ?? [])
       .map((item) => ({
         title: item.title,

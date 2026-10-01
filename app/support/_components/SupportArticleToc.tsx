@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { ArrowUpRight, LifeBuoy } from "lucide-react";
+import { useScrollSpy } from "@/hooks/use-scroll-spy";
 
 export interface SupportTocSection {
   readonly id: string;
@@ -26,124 +27,12 @@ export function SupportArticleToc({
       })),
     [sections],
   );
-
-  const [activeSectionId, setActiveSectionId] = useState<string>(
-    () => sectionItems[0]?.id ?? "",
+  const sectionIds = useMemo(
+    () => sectionItems.map((item) => item.id),
+    [sectionItems],
   );
-  const tocNavRef = useRef<HTMLElement | null>(null);
-  const clickLockUntilRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (sectionItems.length === 0) return;
-
-    const sectionIds = sectionItems.map((item) => item.id);
-    const elements = sectionIds
-      .map((id) => document.getElementById(id))
-      .filter((el): el is HTMLElement => el !== null);
-
-    if (elements.length === 0) return;
-
-    const computeActiveFromScroll = () => {
-      if (Date.now() < clickLockUntilRef.current) return;
-
-      const scrollOffset = 160;
-      let currentId = sectionIds[0];
-
-      for (const el of elements) {
-        const rect = el.getBoundingClientRect();
-        if (rect.top <= scrollOffset) {
-          currentId = el.id;
-        } else {
-          break;
-        }
-      }
-
-      if (
-        window.innerHeight + window.scrollY >=
-        document.documentElement.scrollHeight - 32
-      ) {
-        currentId = elements[elements.length - 1]?.id ?? currentId;
-      }
-
-      setActiveSectionId((prev) => (prev === currentId ? prev : currentId));
-    };
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (Date.now() < clickLockUntilRef.current) return;
-        const intersecting = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
-          );
-        if (intersecting.length > 0) {
-          const targetId = intersecting[0].target.id;
-          if (targetId) {
-            setActiveSectionId((prev) => (prev === targetId ? prev : targetId));
-            return;
-          }
-        }
-        computeActiveFromScroll();
-      },
-      {
-        rootMargin: "-120px 0px -65% 0px",
-        threshold: [0, 0.1, 0.5, 1],
-      },
-    );
-
-    for (const el of elements) {
-      observer.observe(el);
-    }
-
-    const handleHashChange = () => {
-      const hashId = window.location.hash.replace(/^#/, "");
-      if (hashId && sectionIds.includes(hashId)) {
-        clickLockUntilRef.current = Date.now() + 700;
-        setActiveSectionId(hashId);
-      }
-    };
-
-    if (window.location.hash) {
-      handleHashChange();
-    } else {
-      computeActiveFromScroll();
-    }
-
-    window.addEventListener("scroll", computeActiveFromScroll, {
-      passive: true,
-    });
-    window.addEventListener("hashchange", handleHashChange);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("scroll", computeActiveFromScroll);
-      window.removeEventListener("hashchange", handleHashChange);
-    };
-  }, [sectionItems]);
-
-  useEffect(() => {
-    const nav = tocNavRef.current;
-    if (!nav || !activeSectionId) return;
-    const activeLink = nav.querySelector<HTMLElement>(
-      `[data-toc-id="${activeSectionId}"]`,
-    );
-    if (!activeLink) return;
-
-    const navRect = nav.getBoundingClientRect();
-    const linkRect = activeLink.getBoundingClientRect();
-    if (linkRect.top < navRect.top + 8 || linkRect.bottom > navRect.bottom - 8) {
-      const targetScrollTop =
-        linkRect.top -
-        navRect.top +
-        nav.scrollTop -
-        nav.clientHeight / 2 +
-        linkRect.height / 2;
-      nav.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: "smooth",
-      });
-    }
-  }, [activeSectionId]);
+  const { activeSectionId, tocNavRef, selectSection } =
+    useScrollSpy(sectionIds);
 
   return (
     <div className="space-y-4">
@@ -165,10 +54,7 @@ export function SupportArticleToc({
                     href={`#${section.id}`}
                     data-toc-id={section.id}
                     aria-current={isActive ? "location" : undefined}
-                    onClick={() => {
-                      clickLockUntilRef.current = Date.now() + 700;
-                      setActiveSectionId(section.id);
-                    }}
+                    onClick={() => selectSection(section.id)}
                     className={`group flex items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
                       isActive
                         ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 font-medium shadow-2xs"

@@ -235,7 +235,8 @@ export default function ConsultationCheckoutPage({
             const slotJson = await slotRes.json();
             slot = slotJson.data;
           }
-        } catch {
+        } catch (slotErr) {
+          reportPaymentsError(slotErr);
           slotFailed = true;
         }
       } else if (slotUrl) {
@@ -317,7 +318,8 @@ export default function ConsultationCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);

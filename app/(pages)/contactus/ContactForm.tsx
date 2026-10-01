@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { reportSentryError } from "@/lib/observability/report";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { INQUIRY_CATEGORIES } from "../constants";
 
@@ -75,7 +76,12 @@ export function ContactForm() {
 
       setValues(EMPTY);
       setStatus("sent");
-    } catch {
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "support",
+        op: "contact_form_submit",
+        expected: false,
+      });
       setFormError(
         "We could not reach the server. Check your connection and try again.",
       );

@@ -5,7 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PlanDetailBody } from "../../../components/PlanDetailBody";
+import {
+  PlanCollaboratorsCard,
+  PlanDetailBody,
+} from "../../../components/PlanDetailBody";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,59 +22,16 @@ import {
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 import { BackNavigationButton } from "@/components/navigation/BackNavigationButton";
-import { formatRole } from "@/components/collaborators/format";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { useCurrency } from "@/hooks/useCurrency";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
-import type { ICollaboratorInfo } from "../../../types";
 import type { TWebinarPlanData, TSessionStatus } from "../types";
 
 interface WebinarDetailsProps {
   readonly plan: TWebinarPlanData;
   readonly nextSession: Date | string | undefined;
   readonly webinarId?: string;
-}
-
-function CollaboratorItem({ collab }: Readonly<{ collab: ICollaboratorInfo }>) {
-  const collaboratorId = collab.consultantProfile?.id;
-  const content = (
-    <>
-      <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
-        <Image
-          src={collab.consultantProfile.user.image ?? "/placeholder-user.jpg"}
-          alt={collab.consultantProfile.user.name ?? "Co-host"}
-          fill
-          className="object-cover"
-        />
-      </div>
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground group-hover:underline truncate">
-          {collab.consultantProfile.user.name}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {formatRole(collab.role)}
-        </p>
-      </div>
-    </>
-  );
-
-  if (collaboratorId) {
-    return (
-      <Link
-        href={`/explore/experts/${collaboratorId}`}
-        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors group"
-      >
-        {content}
-      </Link>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-3 rounded-lg p-2 -mx-2">
-      {content}
-    </div>
-  );
 }
 
 function computeSessionInfo(
@@ -360,21 +320,11 @@ export function WebinarDetails({
               )}
 
               {/* Collaborators */}
-              {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="border-border shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      Co-Hosts
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {plan.collaborators.map((collab) => (
-                      <CollaboratorItem key={collab.id} collab={collab} />
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
+              <PlanCollaboratorsCard
+                collaborators={plan.collaborators}
+                title="Co-Hosts"
+                fallbackAlt="Co-host"
+              />
             </div>
           </motion.div>
         </div>

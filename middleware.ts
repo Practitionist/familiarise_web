@@ -82,16 +82,19 @@ const ROUTE_PATTERNS = {
   // public even though /api/user/ is private). Order matters — see middleware().
   // Notes:
   //   - /api/auth/ must stay public for BetterAuth to work.
-  //   - /api/plans/classes|webinars are public for browse/detail; their
-  //     sub-routes (recordings, materials) enforce auth in their own handlers.
+  //   - /api/plans/classes|webinars|consultations|subscriptions are public for
+  //     browse/detail/brochure; their mutation and private sub-routes
+  //     (recordings, materials) enforce auth in their own handlers.
   PUBLIC_API_PREFIXES: [
     "/api/auth/", // BetterAuth core + SSO endpoints (including /api/auth/sso/domain-check)
     "/api/health/",
     "/api/organizations/public", // Public: explore organisations directory (shadows the private /api/organizations/ parent)
     "/api/user/consultants", // Public: explore experts list and individual profiles
     "/api/user/reviews", // Public: consultant reviews
-    "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
-    "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
+    "/api/plans/classes", // Public: browse, view, and download brochure for class plans (sub-routes enforce their own auth)
+    "/api/plans/webinars", // Public: browse, view, and download brochure for webinar plans (sub-routes enforce their own auth)
+    "/api/plans/consultations", // Public: browse, view, and download brochure for consultation plans (sub-routes enforce their own auth)
+    "/api/plans/subscriptions", // Public: browse, view, and download brochure for subscription plans (sub-routes enforce their own auth)
     "/api/explore/recordings", // Public: #366 recordings library listing (metadata only; playback is authed)
     "/api/scheduling/availability/", // Public: consultant availability for booking page
     "/api/scheduling/availability-with-allocation/", // Public: consultant availability with allocation info

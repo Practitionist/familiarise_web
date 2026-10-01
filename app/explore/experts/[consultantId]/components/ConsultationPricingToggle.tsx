@@ -21,6 +21,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import { reportSentryError } from "@/lib/observability/report";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -833,17 +834,22 @@ export default function ConsultationPricingToggle({
       setDialogOpen(false);
     } catch (error) {
       console.error("Error requesting approval:", error);
-      if (
+      const isHeldConflict =
         error instanceof ApiResponseError &&
-        error.code &&
-        HELD_BY_SOMEONE_ELSE.has(error.code)
-      ) {
+        Boolean(error.code && HELD_BY_SOMEONE_ELSE.has(error.code));
+      if (isHeldConflict) {
         setHeldWindow({
           consultantProfileId: consultantDetails.id,
           windowStart: selectedSlot.startsAt,
           windowEnd: selectedSlot.endsAt,
           planKind: "CONSULTATION",
           planId: activePlan.id,
+        });
+      } else {
+        reportSentryError(error, {
+          subsystem: "booking",
+          op: "request_for_approval",
+          expected: false,
         });
       }
       toast({

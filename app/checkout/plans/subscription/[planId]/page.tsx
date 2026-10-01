@@ -251,7 +251,8 @@ export default function SubscriptionCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
