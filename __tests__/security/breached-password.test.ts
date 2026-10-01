@@ -21,13 +21,14 @@ describe("haveIBeenPwned", () => {
     expect(plugins).toMatch(/^\s*breachedPasswordCheck,/m);
   });
 
-  it("is the HIBP plugin, on every path that sets a password", () => {
+  it("is the HIBP plugin, on every path where a user picks a password", () => {
     expect(policySrc).toMatch(
       /export const breachedPasswordCheck = haveIBeenPwned\(/,
     );
-    // The default paths cover sign-up, reset, change and admin set-password;
-    // overriding them could silently drop one.
-    expect(policySrc).not.toMatch(/\bpaths\s*:/);
+    // Admin create-user is left out: staff get a random password nobody sees.
+    expect(policySrc).toMatch(
+      /paths: \["\/sign-up\/email", "\/change-password", "\/reset-password"\]/,
+    );
     expect(policySrc).not.toMatch(/\benabled\s*:/);
   });
 });
