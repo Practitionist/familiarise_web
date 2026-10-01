@@ -207,11 +207,16 @@ export async function readAppointmentDetail(appointmentId: string) {
         },
       },
       occurrences: slotsInclude,
-      // #1675 / #1760 — the EXPIRED edge tells a lapsed pay link apart from
-      // a request nobody answered (lib/dashboard/money-state.ts).
+      // EXPIRED edge: lapsed pay link vs unanswered request. CANCELLED +
+      // WITHDRAWN_BY_CONSULTANT: the withdraw copy (lib/dashboard/money-state.ts).
       statusHistory: {
-        where: { toStatus: "EXPIRED" },
-        select: { fromStatus: true, toStatus: true },
+        where: {
+          OR: [
+            { toStatus: "EXPIRED" },
+            { toStatus: "CANCELLED", reason: "WITHDRAWN_BY_CONSULTANT" },
+          ],
+        },
+        select: { fromStatus: true, toStatus: true, reason: true },
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
