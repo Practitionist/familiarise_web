@@ -131,8 +131,6 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | **Understand the DST stub**                                                    | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)                                                                                                             |
 | Know what a grid poll costs                                                    | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                                                                                                                 |
 | Look up booking table columns and indexes                                      | [21-schema-reference.md](./21-schema-reference.md)                                                                                                                             |
-| **Check what enforces a booking invariant, and where it is tested**           | [24-booking-invariant-registry.md](./24-booking-invariant-registry.md)                                                                                                       |
-| **Read the lock families, the global order and the failure posture**          | [25-lock-families-order-and-failure-posture.md](./25-lock-families-order-and-failure-posture.md)                                                                             |
 | Learn why a Prisma create must not mix `connect` with scalar ids               | [engineering-log-2026-09-18-prisma-create-input-shape.md](./engineering-log-2026-09-18-prisma-create-input-shape.md)                                                           |
 | Read the requests/heat-map train's Sentry evidence, PRs and follow-ups         | [engineering-log-2026-09-18-requests-heatmap-train.md](./engineering-log-2026-09-18-requests-heatmap-train.md)                                                                 |
 | Read the Muse Spark booking sweep's verdict split, money P0s and follow-ups    | [engineering-log-2026-09-19-muse-spark-sweep.md](./engineering-log-2026-09-19-muse-spark-sweep.md)                                                                             |
@@ -159,8 +157,6 @@ Then reference these as needed:
 
 - [07-rescheduling-flow.md](./07-rescheduling-flow.md), [08-cancellation-flow.md](./08-cancellation-flow.md) -- Modify existing bookings
 - [09-trials.md](./09-trials.md) -- Trial session specifics
-- [24-booking-invariant-registry.md](./24-booking-invariant-registry.md) -- Which layer enforces each booking invariant, and which have no DB backstop
-- [25-lock-families-order-and-failure-posture.md](./25-lock-families-order-and-failure-posture.md) -- ADR B13: lock order, fail-closed posture, TTL arithmetic, and the three known gaps
 - [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md) -- Debug errors
 
 ## Related Documentation
