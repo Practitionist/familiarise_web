@@ -4,7 +4,7 @@
 |---|---|
 | Status | Stable |
 | Audience | All engineers |
-| Last reviewed | 2026-09-29 |
+| Last reviewed | 2026-10-01 |
 | Source files | `lib/auth/backoffice-permissions.ts`, `lib/auth/org-permissions.ts`, `lib/auth/role-ranks.ts` |
 
 ## 1. Background
@@ -34,7 +34,7 @@ become one.
 | What each matrix authorises and where it is enforced | Session counts — see `lib/booking/entitlement.ts` |
 | Why there are three and they are not merged | `PlanLevel`, which is a catalogue facet and gates nothing |
 | Why a matrix beat a rank ladder | The `Refusal` rail — see [`docs/errors/01-refusals.md`](../errors/01-refusals.md) |
-| The capability gates and the 401/403/404/409 conventions ([`README.md`](./README.md) §7–§8) | |
+| The capability gates and the 401/403/404/409 conventions ([`README.md`](./README.md)) | |
 
 ## 3. Matrix 1 — `UserRole`: the platform axis
 
@@ -103,17 +103,18 @@ it is an ordering question: picking the most operator-like org to land on
   takes the destructive user actions.**
 
 `refunds.manage` is admin-only while `refunds.read` is not;
-`payments.manage` likewise; `users.moderate` (ban / role change / force
-sign-out) is admin-only while `users.read` and `users.verify` are not.
+`payments.manage` likewise; `users.moderate` (suspend / reactivate, add staff,
+reset 2FA, force sign-out) is admin-only while `users.read` and `users.verify`
+are not. There is no in-app role change.
 
 `team.read` (#1927) is the newest row and the shape to copy. It is split out of
 `users.read` because "who else is on staff" is a normal ticket while a roster
-listing every operator's 2FA state, last login and live session count is
-reconnaissance for the door that suspends them. Its **mutations** — add staff,
-reset 2FA, suspend, reactivate — deliberately reuse `users.moderate` rather than a
-`team.manage` key, because they are the same act as "role change / delete
-someone's access" and a second key for the same act is a second place to get the
-policy wrong.
+listing every operator's 2FA state and last activity is reconnaissance for the
+door that suspends them. Its **mutations** — add staff, resend setup link, reset
+2FA, suspend, reactivate — deliberately reuse `users.moderate` rather than a
+`team.manage` key, because they are the same act as "change someone's access"
+and a second key for the same act is a second place to get the policy wrong.
+See [`../authentication/staff-onboarding.md`](../authentication/staff-onboarding.md).
 
 **Where it is enforced.** `requireBackofficeSurface(surface)` in
 `lib/auth-helpers.ts`, backed by `hasBackofficePermission(role, surface)`. A
@@ -173,27 +174,30 @@ on it.** better-auth issue **#7822** reports that `hasPermission` skips the
 so a role literally called `admin` or `user` is authorised from the built-in
 `defaultRoles` statement regardless of what the `roles` configuration says.
 
-In the installed `better-auth@1.6.5` the mechanism is visible in
+In the installed `better-auth@1.7.6` the mechanism is visible in
 `node_modules/better-auth/dist/plugins/admin/has-permission.mjs`:
 
 ```js
 const acRoles = input.options?.roles || defaultRoles;
-for (const role of roles) if (acRoles[role]?.authorize(input.permissions)) return true;
+for (const role of roles) if ((acRoles[role]?.authorize(input.permissions))?.success) return true;
 ```
 
 and `defaultRoles` is `{ admin: adminAc, user: userAc }` — **lowercase**. Our
 enum is uppercase (`ADMIN`, `STAFF`), and `lib/auth.ts` supplies an explicit
 `roles` map with uppercase keys, so today the two do not collide. The shape is
 live, though: renaming `ADMIN` to `admin` would silently promote it to the
-plugin's full `adminAc` statement, including `impersonate-admins` and
-`set-password`, and the failure would be a *grant*, not a refusal — the class of
-bug that is found in an incident rather than in review.
+plugin's full `adminAc` statement, including `impersonate` and `set-password`,
+and the failure would be a *grant*, not a refusal — the class of bug that is
+found in an incident rather than in review.
+
+`staffAc` grants only `user: ["list", "get"]`: no `set-role`, no `ban`, no
+`session:*` (#1132 — `/admin/set-role` never compared actor to target rank, so
+holding it let STAFF make themselves ADMIN).
 
 None of the three matrices uses `hasPermission` as its guard. The plugin's
 statements are wired for the plugin's own endpoints, and those endpoints are
 all in `disabledPaths` (lib/auth.ts), so nothing reachable over HTTP consults
-them; our own guards read our own maps. That separation is the mitigation, and it is also why the two-`React`
-tables are not the place a third-party authorisation library gets introduced.
+them; our own guards read our own maps. That separation is the mitigation.
 
 ### The deliberate non-merge: session caps belong to the subscription
 
@@ -244,7 +248,7 @@ to call a route that does not apply.
   401/403/404/409 conventions, including the structural-404 pattern.
 - [`lib/booking/entitlement.ts`](../../lib/booking/entitlement.ts) — the one
   session counter this folder does not duplicate.
-- [`../authentication/betterauth/04-errors.md`](../authentication/betterauth/04-errors.md)
-  — why a refusal's code must be one the client already knows.
-- [`../enterprise/20-iam-and-security/01-sso-and-authentication.md`](../enterprise/20-iam-and-security/01-sso-and-authentication.md)
-  — `enforceSSO`, which is a *policy* about an axis, not a role.
+- [`../authentication/errors.md`](../authentication/errors.md) — why a
+  refusal's code must be one the client already knows.
+- [`../authentication/sso.md`](../authentication/sso.md) — `enforceSSO`, which
+  is a *policy* about an axis, not a role.
