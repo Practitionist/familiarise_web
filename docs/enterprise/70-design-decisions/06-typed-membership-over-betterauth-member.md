@@ -13,6 +13,7 @@ last-reviewed: 2026-06-05
 > are gone. SSO JIT writes `Membership` directly from the sso() `provisionUser`
 > hook (`lib/sso/jit-membership.ts`). The decision below — gate only on the
 > typed `Membership` — stands; the bridge it describes no longer exists.
+> SCIM was removed as well, and with it `Membership.externalScimId`.
 
 ## Context
 
