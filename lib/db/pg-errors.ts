@@ -1,24 +1,13 @@
 /**
- * Postgres error predicates — structured SQLSTATE detection, not message sniffing.
- *
- * Classifying a database error by substring-matching its human-readable message
- * is fragile (wording changes, i18n, refactors) and is the anti-pattern these
- * helpers exist to replace. Prefer the structured signal: Prisma's `code`
- * (e.g. P2002) for modelled constraints, and the underlying Postgres SQLSTATE in
- * `meta.code` for raw-query paths (P2010).
- *
- * Exclusion constraints are the one unavoidable exception. Prisma has a
- * documented gap (prisma/prisma#25562, #26366): a violation of a constraint it
- * does not model — like the `occurrence_no_confirmed_overlap` btree_gist EXCLUDE that
- * lives in the raw-SQL sidecar — surfaces as a `PrismaClientUnknownRequestError`
- * with no `.code` and an undefined `.cause`. The SQLSTATE is then only present in
- * the message text, so a NARROW text probe (the SQLSTATE token and the constraint
- * name) is the only signal available. That heuristic is quarantined here, behind
- * a structured check and a name, rather than scattered through business logic.
+ * Postgres error predicates keyed on the SQLSTATE, not the message prose.
+ * Exclusion violations keep a narrow constraint-name probe because Prisma does
+ * not model EXCLUDE constraints (prisma/prisma#25562).
  */
 
 type MaybePgError = {
   code?: unknown;
+  name?: unknown;
+  cause?: { originalCode?: unknown };
   meta?: {
     code?: unknown;
     driverAdapterError?: { cause?: { originalCode?: unknown } };
@@ -26,23 +15,20 @@ type MaybePgError = {
   message?: unknown;
 };
 
-/** The Postgres SQLSTATE, when Prisma exposes it structurally (raw-query/P2010). */
+/**
+ * The SQLSTATE wherever Prisma 7 + adapter-pg put it: on a P-coded error under
+ * `meta.driverAdapterError`, or, for unmapped kinds (`kind: "postgres"`, e.g.
+ * 40P01/23P01), on the raw rethrown DriverAdapterError's `cause`.
+ */
 function sqlState(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
-  const code = (error as MaybePgError).meta?.code;
-  return typeof code === "string" ? code : undefined;
-}
-
-/**
- * The Postgres SQLSTATE as the driver adapter reports it: the pg adapter
- * classifies what it recognises and carries the untouched driver error under
- * `meta.driverAdapterError.cause`, with the code as `originalCode`. This is the
- * only structured route to a SQLSTATE the adapter has no Prisma mapping for.
- */
-function adapterCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const code = (error as MaybePgError).meta?.driverAdapterError?.cause
-    ?.originalCode;
+  const e = error as MaybePgError;
+  const candidates = [
+    e.meta?.code,
+    e.meta?.driverAdapterError?.cause?.originalCode,
+    e.name === "DriverAdapterError" ? e.cause?.originalCode : undefined,
+  ];
+  const code = candidates.find((c) => typeof c === "string");
   return typeof code === "string" ? code : undefined;
 }
 
@@ -59,11 +45,7 @@ export function isUniqueViolation(error: unknown): boolean {
   return sqlState(error) === "23505";
 }
 
-/**
- * Postgres 23P01 — exclusion-constraint violation (e.g. `occurrence_no_confirmed_overlap`).
- * Structured SQLSTATE first; narrow text probe second, only for Prisma's
- * unmodelled-constraint gap (see the module note).
- */
+/** Postgres 23P01 — exclusion-constraint violation (e.g. `occurrence_no_confirmed_overlap`). */
 export function isExclusionViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   if (sqlState(error) === "23P01") return true;
@@ -73,22 +55,10 @@ export function isExclusionViolation(error: unknown): boolean {
   );
 }
 
-/**
- * Postgres 40P01 — deadlock detected.
- *
- * Unlike 23P01, this one is not Prisma's modelling gap: upstream Prisma maps
- * 40P01 alongside 40001. The pinned driver adapter does not, so a row-lock
- * deadlock lands in its generic `kind: "postgres"` fall-through and reaches us
- * with no Prisma code to key on — hence its own predicate, and hence the text
- * probe below. The probe is on the SQLSTATE token and not on the prose: "40P01"
- * is the SQL-standard code for deadlock_detected and nothing else, so unlike a
- * phrase match it cannot promote a business rejection into a retry.
- */
+/** Postgres 40P01 — deadlock detected. adapter-pg 7.7 has no mapping for it. */
 export function isDeadlock(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  if (sqlState(error) === "40P01") return true;
-  if (adapterCode(error) === "40P01") return true;
-  return message(error).includes("40P01");
+  return sqlState(error) === "40P01" || message(error).includes("40P01");
 }
 
 /**
