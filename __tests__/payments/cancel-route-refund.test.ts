@@ -307,6 +307,7 @@ function sessionAs(role: "consultant" | "consultee" | "admin") {
         id: "admin-1",
         name: "Ops",
         role: "ADMIN",
+        twoFactorEnabled: true,
         consultantProfileId: null,
         consulteeProfileId: null,
       },
