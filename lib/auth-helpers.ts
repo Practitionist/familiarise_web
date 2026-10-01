@@ -1,6 +1,5 @@
 import { lookupSession } from "@/lib/auth-session-lookup";
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   setSentryIdentityFromSession,
@@ -25,14 +24,33 @@ import {
  * Use this at the start of protected API route handlers.
  *
  * Always reads force-fresh, and there is deliberately no opt-out. Session
- * revocation is invisible to a cached read, and `session.user.role` comes from
- * the cookie payload — ~86 call sites branch on that role directly (e.g. the
- * ADMIN gate on DELETE /api/bookings/subscriptions/[id]), so a stale read
- * honours a demotion up to 5 minutes late. The cookie cache would save roughly
- * one query in four anyway, because customSession re-runs its enrichment on
- * every call regardless.
+ * revocation is invisible to a cached read, and ~86 call sites branch on
+ * `session.user.role` directly (e.g. the ADMIN gate on DELETE
+ * /api/bookings/subscriptions/[id]), so a stale read would honour a demotion
+ * late.
+ *
+ * A STAFF/ADMIN session without enrolled 2FA is refused here with 428
+ * `TWO_FACTOR_REQUIRED`, so the inline role checks behind this helper cannot
+ * hand operator powers to a password-only session. Enrolment itself runs on
+ * BetterAuth's /two-factor/* endpoints, which never reach this helper.
  */
 export async function requireApiAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiSession();
+  if (auth.error) return auth;
+  const refused = twoFactorPrecondition(auth.session);
+  if (refused) return { error: refused };
+  return auth;
+}
+
+/**
+ * {@link requireApiAuth} without the operator 2FA precondition: the session
+ * exists and is not banned, nothing more. Only for routes an operator must
+ * reach before enrolling, and which hand out nothing privileged — today the
+ * session liveness probe (app/api/user/sessions/current).
+ */
+export async function requireApiSession(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const lookup = await lookupSession(true);
@@ -69,6 +87,30 @@ export async function requireApiAuth(): Promise<
   return { session };
 }
 
+/**
+ * 428 for an operator whose account has no enrolled second factor, else null.
+ *
+ * `twoFactorEnabled` comes from the session payload, which customSession
+ * rebuilds from the user row on every read (the cookie cache is off), so it is
+ * as fresh as a column read. 428 rather than 403: the operator may do this
+ * once enrolled, and the `enroll-2fa` action points the client at the
+ * enrolment page.
+ */
+function twoFactorPrecondition(session: Session): NextResponse | null {
+  if (!isPrivileged(session.user.role)) return null;
+  if (session.user.twoFactorEnabled === true) return null;
+  return NextResponse.json(
+    {
+      error: "Set up two-factor authentication before using the back office.",
+      code: "TWO_FACTOR_REQUIRED",
+    },
+    {
+      status: 428,
+      headers: { "X-Auth-Action": "enroll-2fa" },
+    },
+  );
+}
+
 /** Seconds a client waits before retrying a failed session lookup (#1716). */
 export const SESSION_LOOKUP_RETRY_AFTER_SECONDS = 2;
 
@@ -97,90 +139,8 @@ export function isPrivileged(role: string | undefined | null): boolean {
 }
 
 // ============================================================================
-// #1927 — OPERATOR PRECONDITIONS: mandatory 2FA, and no money under
-// impersonation. Applied by every privileged helper below.
+// #1927 — no money under impersonation. Applied by every privileged helper.
 // ============================================================================
-
-/**
- * Paths that answer the `TWO_FACTOR_REQUIRED` refusal, or that are part of
- * answering it. Enumerated exhaustively, with an owner per entry, because the
- * failure mode of getting this wrong is silent and total: the gate refuses a
- * staff session, the refusal points at `enroll-2fa`, and the target is
- * unreachable — so nobody can ever hold a privileged account again. That is a
- * self-inflicted permanent outage, and it would be introduced by a security
- * change, which is the worst possible time to find it.
- *
- * Matching is by exact path or by directory prefix (an entry ending in `/`
- * covers everything beneath it), against the `x-pathname` header the
- * middleware forwards on protected routes. It is checked, not merely
- * documented: the BetterAuth two-factor endpoints are served by
- * `app/api/auth/[...all]/route.ts` and never reach the helpers in this file, so
- * today the list is the thing that guarantees the day someone moves this gate
- * into middleware the enrolment endpoints are not caught by it.
- *
- * Deliberately NOT exempt, and this is the point of the exercise:
- *  - `/dashboard/{admin,staff}/**` — the console itself. An unenrolled admin
- *    sees a 428 from every API, not a console.
- *  - `app/api/admin/staff-invitations` — inviting the SECOND admin. It is not
- *    exempt because the first admin can reach `/dashboard/admin/settings`
- *    (below) and enrol first; exempting the door that mints privileged
- *    accounts from the very control that makes an account privileged would
- *    hand the gate its own bypass.
- */
-export const TWO_FACTOR_EXEMPT_PATHS: readonly string[] = [
-  // BetterAuth's two-factor plugin (better-auth 1.6.5,
-  // dist/plugins/two-factor/client.mjs:14-21), minus the email-OTP legs
-  // (send-otp / verify-otp): no `sendOTP` is configured, so no code can ever
-  // be issued and they are not a way to answer the gate. `enable` and the
-  // verifications are the enrolment; the rest are recovery, and a locked-out
-  // operator must be able to rotate them.
-  "/api/auth/two-factor/enable",
-  "/api/auth/two-factor/verify-totp",
-  "/api/auth/two-factor/verify-backup-code",
-  "/api/auth/two-factor/generate-backup-codes",
-  "/api/auth/two-factor/get-totp-uri",
-  "/api/auth/two-factor/disable",
-  // The operator's own account surface, where the enrolment UI mounts. Two
-  // entries because the back-office tree is addressed by tree segment and the
-  // staff tree must reach it too (requireBackofficePage gates these on
-  // `users.read`, which every operator holds — see the page in
-  // app/dashboard/(backoffice)/[tree]/settings).
-  "/dashboard/admin/settings",
-  "/dashboard/staff/settings",
-  // The sign-in / invite / bootstrap pages themselves. An operator arriving
-  // from a setup link has no 2FA and no session at all, so these are not
-  // privileged routes — but they are listed so a future widening of this gate
-  // to "any authenticated user" cannot catch the one screen a brand-new
-  // operator is shown.
-  "/auth/setup-admin",
-  "/auth/staff-invite",
-];
-
-/** Exact match, or a `/`-terminated prefix (a directory covers its subtree). */
-export function isTwoFactorExemptPath(path: string): boolean {
-  return TWO_FACTOR_EXEMPT_PATHS.some(
-    (exempt) =>
-      path === exempt || (exempt.endsWith("/") && path.startsWith(exempt)),
-  );
-}
-
-/**
- * The path middleware forwarded, or null.
- *
- * Read through a try/catch because `headers()` throws outside a request scope
- * (a cron, a bare test), and this file's helpers are called from both. An
- * absent path is NOT treated as an exemption: the safe answer to "I cannot
- * tell where this came from" is to enforce, and the API routes that matter
- * pass the opt-out explicitly.
- */
-async function forwardedPathname(): Promise<string | null> {
-  try {
-    const raw = (await headers()).get("x-pathname");
-    return raw ? raw.split("?")[0] : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Surfaces that MOVE MONEY, or destroy an account irrecoverably.
@@ -227,27 +187,11 @@ export interface OperatorGateOptions {
    * passes it, and only it consults {@link IMPERSONATION_DENIED_SURFACES}.
    */
   surface?: BackofficeSurface;
-  /**
-   * Skip the second-factor precondition. ONLY a route that is itself part of
-   * answering `TWO_FACTOR_REQUIRED` may set this, and it must say in a comment
-   * which of {@link TWO_FACTOR_EXEMPT_PATHS} it is. There is no way to set it
-   * by configuration, so granting an exemption is a reviewed code change —
-   * the same posture {@link requireApiAuth} takes with its (absent) cache
-   * opt-out.
-   */
-  twoFactorExempt?: boolean;
 }
 
 /**
- * The shared body of every privileged guard: no money under impersonation,
- * then a second factor for a staff-or-admin session.
- *
- * Order matters and is not arbitrary. Impersonation is decided from the
- * session payload — free, no query — and it is the more dangerous of the two,
- * because a support agent holding someone's session is exactly the situation
- * where "I am an admin, I may issue refunds" reads true. The 2FA check costs
- * one indexed read and only runs for staff-or-admin, so a customer's session
- * pays nothing.
+ * The shared body of every privileged guard: no money under impersonation.
+ * The 2FA precondition already ran in {@link requireApiAuth}.
  */
 async function enforceOperatorPreconditions(
   session: Session,
@@ -265,39 +209,7 @@ async function enforceOperatorPreconditions(
       );
     }
   }
-
-  if (!isPrivileged(session.user.role)) return null;
-  if (opts.twoFactorExempt) return null;
-  if (isTwoFactorExemptPath((await forwardedPathname()) ?? "")) return null;
-
-  // `twoFactorEnabled` is NOT in the session payload (it is not one of the
-  // `user.additionalFields` in lib/auth.ts, and adding it would put it in
-  // every cached cookie payload for every user including customers). So this
-  // is a targeted column read. It is the price of not making a second factor
-  // a client-side claim — a payload boolean is whatever the cookie said when
-  // it was signed, which is precisely the thing a stolen cookie carries.
-  const row = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { twoFactorEnabled: true },
-  });
-  // A user row that no longer exists cannot be authorised to do anything; the
-  // session is stale. Fail closed rather than open.
-  if (row?.twoFactorEnabled === true) return null;
-
-  // 428, not 403. The request is not forbidden, it is unready: the operator
-  // is allowed to do this, and must first satisfy a precondition. 403 tells a
-  // client the door is shut forever and sends an operator to support instead
-  // of to the enrolment page named in the catalog's `enroll-2fa` action.
-  return NextResponse.json(
-    {
-      error: "Set up two-factor authentication before using the back office.",
-      code: "TWO_FACTOR_REQUIRED",
-    },
-    {
-      status: 428,
-      headers: { "X-Auth-Action": "enroll-2fa" },
-    },
-  );
+  return null;
 }
 
 /**

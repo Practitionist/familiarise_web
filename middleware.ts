@@ -740,8 +740,12 @@ async function routeRequest(
 
   /** Pass-through, forwarding the degradation flag when one is set. */
   const next = (extra?: Record<string, string>): NextResponse => {
-    if (!degraded && !extra) return NextResponse.next();
+    // `x-pathname` is set only by the protected-page branch below; a copy the
+    // client sent must never reach a server guard that reads it.
+    const spoofedPath = req.headers.has("x-pathname");
+    if (!degraded && !extra && !spoofedPath) return NextResponse.next();
     const requestHeaders = new Headers(req.headers);
+    requestHeaders.delete("x-pathname");
     for (const [key, value] of Object.entries({
       ...degradedForward,
       ...extra,

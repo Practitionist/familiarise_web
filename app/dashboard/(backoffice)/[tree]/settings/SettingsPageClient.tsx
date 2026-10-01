@@ -18,7 +18,7 @@ import { NotificationPreferencesPanel } from "@/components/notifications";
 import { useToast } from "@/hooks/use-toast";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
-import { TwoFactorSettings } from "./TwoFactorSettings";
+import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 
@@ -173,10 +173,8 @@ export default function BackofficeProfilePage() {
     <div className="space-y-6">
       <PageHeader title="Settings" description={PROFILE_DESCRIPTION} />
 
-      {/* Two-factor. Mounted FIRST, and not because of visual order: this is
-          the only page `TWO_FACTOR_EXEMPT_PATHS` exempts, so until enrolment
-          completes every other back-office control on every other page answers
-          428. See lib/auth-helpers.ts. */}
+      {/* Operators reach this page only once enrolled (lib/auth-guard.ts
+          requireOperator), so this manages backup codes rather than enrolling. */}
       <TwoFactorSettings />
 
       {/* Personal Information */}

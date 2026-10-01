@@ -202,6 +202,31 @@ export async function requireUserRole(allowed: UserRole | UserRole[]) {
   return session;
 }
 
+/** The one page an operator without enrolled 2FA may open. */
+export const TWO_FACTOR_SETUP_PATH = "/auth/two-factor/setup";
+
+/**
+ * Require an onboarded STAFF/ADMIN with an enrolled second factor. An operator
+ * who has not enrolled yet is sent to {@link TWO_FACTOR_SETUP_PATH}; the API
+ * twin is the 428 in `requireApiAuth`.
+ */
+export async function requireOperator() {
+  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  if (session.user.twoFactorEnabled !== true) redirect(TWO_FACTOR_SETUP_PATH);
+  return session;
+}
+
+/**
+ * The enrolment page's guard: an operator who has NOT enrolled yet. This is
+ * the only page-level exemption from {@link requireOperator}, and it is keyed
+ * on the page that calls it, not on anything the request says about itself.
+ */
+export async function requireOperatorAwaitingTwoFactor() {
+  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  if (session.user.twoFactorEnabled === true) redirect("/dashboard");
+  return session;
+}
+
 /**
  * Require back-office access to a specific surface in one tree (#1527 Q3).
  * The page-level twin of `requireBackofficeSurface` (which returns a 403 for
@@ -218,7 +243,7 @@ export async function requireBackofficePage(
   surface: BackofficeSurface,
   tree: string,
 ) {
-  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  const session = await requireOperator();
   const cap = isBackofficeTree(tree)
     ? resolveBackofficeCapability(session.user.role, tree)
     : null;

@@ -11,22 +11,14 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-session-lookup", () => ({
   lookupSession: async () => ({
     kind: "found",
-    session: { user: { id: "staff_1", role: "STAFF" } },
+    // A fully-enrolled staff member: the mandatory-2FA gate in
+    // lib/auth-helpers.ts answers 428 for an operator session without it.
+    session: {
+      user: { id: "staff_1", role: "STAFF", twoFactorEnabled: true },
+    },
   }),
 }));
-// The mandatory-2FA gate (lib/auth-helpers.ts) reads `twoFactorEnabled` with a
-// targeted column lookup, because it is deliberately NOT in the session
-// payload: a payload boolean is whatever the cookie said when it was signed,
-// which is exactly what a stolen cookie carries. So a fixture that stubs
-// prisma as `{}` answers 500 rather than the 200 the matrix allows — the gate
-// cannot prove enrolment and fails closed. The session below therefore has to
-// represent a fully-enrolled staff member, which is what it is testing.
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    user: { findUnique: async () => ({ twoFactorEnabled: true }) },
-  },
-}));
+jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/payments/payouts", () => ({}));
 jest.mock("../../lib/api/operators", () => ({
   getOperatorPayouts: async () => ({ payouts: [], total: 0 }),

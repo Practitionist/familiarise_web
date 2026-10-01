@@ -1,6 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { admin, customSession, twoFactor } from "better-auth/plugins";
@@ -22,6 +26,10 @@ import {
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
+import {
+  isOperatorRole,
+  refusesOperatorSession,
+} from "@/lib/auth/operator-session-policy";
 import { hashStaffPassword } from "@/lib/auth/staff-invitations";
 
 // STAFF = moderator: read users (a subset of the full admin AC). Shares
@@ -101,6 +109,30 @@ export const auth = betterAuth({
         throw new APIError("BAD_REQUEST", {
           message: "organizationSlug is not supported",
         });
+      }
+      // Only operators use 2FA, and a trusted device would let a stolen
+      // password skip the authenticator for 30 days. The UI never offers it.
+      if (
+        (ctx.path === "/two-factor/verify-totp" ||
+          ctx.path === "/two-factor/verify-backup-code") &&
+        ctx.body?.trustDevice
+      ) {
+        throw new APIError("BAD_REQUEST", {
+          message: "Trusted devices are not available.",
+          code: "TRUST_DEVICE_DISABLED",
+        });
+      }
+      // 2FA is mandatory for operators. Recovery from a lost authenticator is
+      // a backup code or an admin reset (app/api/admin/team/members/[userId]/
+      // two-factor), never self-service removal.
+      if (ctx.path === "/two-factor/disable") {
+        const current = await getSessionFromCtx(ctx);
+        if (isOperatorRole((current?.user as { role?: string })?.role)) {
+          throw new APIError("FORBIDDEN", {
+            message: "Two-factor authentication is required for staff.",
+            code: "TWO_FACTOR_REQUIRED",
+          });
+        }
       }
     }),
   },
@@ -485,13 +517,25 @@ export const auth = betterAuth({
     // BEFORE the session is created; returning SSO users already have that
     // account. The hook fails open when the enforcing org has no
     // staff-approved `ssoProvider` rows yet — see `lib/sso/enforce-session.ts`.
+    //
+    // The same hook keeps operators on password + TOTP: the twoFactor plugin
+    // never challenges a social or SSO callback, so those are refused here
+    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts).
     session: {
       create: {
-        before: async (session) => {
+        before: async (session, ctx) => {
           const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { email: true },
+            select: { email: true, role: true },
           });
+
+          if (refusesOperatorSession(user?.role, ctx?.path)) {
+            throw new APIError("FORBIDDEN", {
+              message:
+                "Staff accounts sign in with email, password and an authenticator code.",
+              code: "STAFF_PASSWORD_SIGN_IN_ONLY",
+            });
+          }
 
           const decision = await shouldRejectSession({
             email: user?.email ?? null,
@@ -562,18 +606,15 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    // Two-factor. TOTP (authenticator app) + single-use backup codes.
+    // Two-factor: TOTP (authenticator app) + single-use backup codes, used by
+    // operators only. Mandatory for STAFF/ADMIN: `session.create.before`
+    // limits them to credential + TOTP sessions, and the API/page guards in
+    // lib/auth-helpers.ts and lib/auth-guard.ts confine an unenrolled
+    // operator to /auth/two-factor/setup.
     //
-    // `allowPasswordless` is NOT set, so enabling 2FA requires the account's
-    // password: a user who signs in only through Google/GitHub/SSO cannot
-    // enrol. Staff accounts always have a password (they are created through
-    // the invite / bootstrap flows), which is who the rule below targets.
-    //
-    // Only the credential endpoints are challenged. The "must 2FA" rule for
-    // staff is enforced server-side in `lib/auth-helpers.ts` (an admin without
-    // 2FA gets TWO_FACTOR_REQUIRED and is routed to settings) rather than by
-    // making BetterAuth hard-fail the session, which would also lock them out
-    // of the very page they need to enrol on.
+    // `allowPasswordless` stays off, so enrolling needs the account password.
+    // Every operator account is created with a credential account, so nobody
+    // is stranded by it.
     twoFactor({
       issuer: "Familiarise",
       // The pending-2FA cookie is the window in which a correct password has
@@ -581,7 +622,6 @@ export const auth = betterAuth({
       // default and is right: long enough to fetch an authenticator, short
       // enough that a shoulder-surfed six-digit code is not worth waiting for.
       twoFactorCookieMaxAge: 600,
-      trustDeviceMaxAge: 30 * 24 * 60 * 60,
       backupCodeOptions: {
         amount: 10,
         length: 10,
@@ -625,6 +665,7 @@ export const auth = betterAuth({
         adminProfileId?: string | null;
         orgWorkspaceProfileId?: string | null;
         sessionGeneration?: number | null;
+        twoFactorEnabled?: boolean | null;
       };
 
       // The session-generation marker is carried in the payload for
@@ -731,6 +772,10 @@ export const auth = betterAuth({
           // stale session by comparing this against its cached payload.
           sessionGeneration: liveSessionGeneration,
           banned: effectivelyBanned,
+          // Read by the operator 2FA gates (lib/auth-helpers.ts,
+          // lib/auth-guard.ts). Fresh per request: the cookie cache is off,
+          // so `user` is the row BetterAuth just read.
+          twoFactorEnabled: user.twoFactorEnabled === true,
           organizationMemberships,
         },
         // The token is the cookie's value — a bearer credential. The

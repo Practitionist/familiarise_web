@@ -390,6 +390,11 @@ export const AUTH_ERROR_COPY = {
     description: "Staff accounts need a second factor before you can continue.",
     action: "enroll-2fa",
   },
+  STAFF_PASSWORD_SIGN_IN_ONLY: {
+    title: "Sign in with your password",
+    description:
+      "Staff accounts sign in with email, password and an authenticator code.",
+  },
   TWO_FACTOR_NOT_ENABLED: {
     title: "Two-factor isn't switched on",
     description: "Switch it on in Settings, then try again.",

@@ -111,6 +111,7 @@ export default function SignIn() {
 }
 
 function SignInContent() {
+  const router = useRouter();
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const { data: session, isPending } = useSession();
@@ -363,10 +364,7 @@ function SignInContent() {
     const settle = pendingToast({ title: "Signing in..." });
 
     /** Everything that depends on the *result* of `signIn.email`. */
-    const applyResult = (
-      data: { user: { id: string } } | null | undefined,
-      error: unknown,
-    ) => {
+    const applyResult = (data: object | null | undefined, error: unknown) => {
       if (error) {
         const copy = humanizeAuthError("signin", error, {
           retryAfterSeconds: retryAfter.take(),
@@ -386,6 +384,18 @@ function SignInContent() {
         return;
       }
       if (!data) return;
+      // An enrolled operator: the password was right, but there is no session
+      // yet (and no `user` on this response) until the authenticator code is
+      // verified on the challenge page.
+      if ("twoFactorRedirect" in data && data.twoFactorRedirect) {
+        settle({ title: "Enter your authenticator code" });
+        router.push(
+          callbackUrl
+            ? `/auth/two-factor?callbackUrl=${encodeURIComponent(callbackUrl)}`
+            : "/auth/two-factor",
+        );
+        return;
+      }
       // The Sentry user is NOT set here. `AuthSyncProvider` mirrors the
       // resolved session onto the identity, which also covers the SSO and
       // social sign-in redirects that never touch this handler.

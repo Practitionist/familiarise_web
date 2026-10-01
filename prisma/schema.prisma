@@ -148,18 +148,16 @@ model User {
   banReason  String?
   banExpires DateTime? @db.Timestamptz
 
-  // BetterAuth two-factor plugin. `false` is the safe default and is also what
-  // every existing row gets, so enabling the plugin cannot lock anyone out.
-  // Enforced for staff in lib/auth-helpers.ts (TWO_FACTOR_REQUIRED), not by
-  // hard-failing session creation — a hard failure would also block the admin
-  // from reaching the page they must enrol on.
+  // BetterAuth two-factor plugin. Mandatory for STAFF/ADMIN: lib/auth.ts
+  // limits their sessions to credential + TOTP sign-in, and until this is true
+  // the API and page guards only let them reach /auth/two-factor/setup.
   twoFactorEnabled Boolean? @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   invitations                   Invitation[]
-  twoFactors                    TwoFactor[]
+  twoFactor                     TwoFactor?
   ssoproviders                  SsoProvider[]
   erasureRequests               ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
@@ -7197,7 +7195,9 @@ enum EmailSuppressionReason {
 // (`sessions`, `accounts`, `verifications`, `ssoProvider`).
 model TwoFactor {
   id     String @id @default(cuid())
-  userId String
+  // One row per user: the plugin looks the row up by userId, and an admin
+  // 2FA reset deletes it by userId.
+  userId String @unique
 
   // AES-encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
   secret      String
@@ -7213,7 +7213,6 @@ model TwoFactor {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@map("twoFactor")
 }
 
