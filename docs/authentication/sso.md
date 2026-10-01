@@ -74,7 +74,11 @@ ssoBody }` only when the domain's org enforces SSO and has an approved
    `lib/sso/signin-with-toast.ts`), which generates the PKCE pair.
 3. On the callback BetterAuth finds or creates the user and an `Account` with
    `providerId = SsoProvider.providerId`. `account.create.before` and
-   `session.create.before` refuse STAFF and ADMIN users.
+   `session.create.before` refuse STAFF and ADMIN users. `user.create.before`
+   and `account.create.before` refuse, with `SSO_EMAIL_DOMAIN_MISMATCH`, an
+   email whose domain is not the approved provider's own
+   (`lib/sso/account-domain.ts`), so an IdP cannot claim an outside address
+   such as a gmail.com one before its owner signs up.
 4. The plugin's `provisionUser` hook (`lib/sso/plugin-options.ts`) calls
    `provisionSsoMembership` (`lib/sso/jit-membership.ts`) on **every** login.
    It writes the typed `Membership` for the provider's organization with

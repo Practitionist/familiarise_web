@@ -134,6 +134,9 @@ export type AppAuthErrorCode =
   /* lib/sso/enforce-session.ts — a provider row that cannot serve a sign-in. */
   | "SSO_PROVIDER_MISCONFIGURED"
   | "SSO_PROVIDER_UNREACHABLE"
+  /* lib/auth.ts `user`/`account.create.before` — an IdP asserted an email
+     outside its provider's domain. */
+  | "SSO_EMAIL_DOMAIN_MISMATCH"
   /* lib/rate-limit/* — 429. `scope` in the body says which limiter fired. */
   | "RATE_LIMITED"
   /* lib/auth-session-lookup.ts — the lookup threw; it did not answer "no". */
@@ -226,6 +229,7 @@ export const AUTH_ERROR_CODES = {
   SSO_REQUIRED: "SSO_REQUIRED",
   SSO_PROVIDER_MISCONFIGURED: "SSO_PROVIDER_MISCONFIGURED",
   SSO_PROVIDER_UNREACHABLE: "SSO_PROVIDER_UNREACHABLE",
+  SSO_EMAIL_DOMAIN_MISMATCH: "SSO_EMAIL_DOMAIN_MISMATCH",
   RATE_LIMITED: "RATE_LIMITED",
   SESSION_LOOKUP_FAILED: "SESSION_LOOKUP_FAILED",
   REQUEST_REJECTED: "REQUEST_REJECTED",

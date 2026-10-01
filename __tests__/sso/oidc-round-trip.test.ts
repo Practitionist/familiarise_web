@@ -18,6 +18,7 @@
  *   so Prisma-level behaviour (unique constraints, the SsoProvider secret
  *   encryption extension) and lib/auth.ts's other plugins and databaseHooks
  *   (SSO enforcement veto, welcome email, customSession) are not exercised.
+ *   Only its email-domain check is wired in, the way lib/auth.ts calls it.
  * - The JIT module's own Prisma calls hit a small in-memory fake, and
  *   `applyMembershipRoleEffects` is stubbed; the gate logic itself has unit
  *   coverage in jit-membership.test.ts.
@@ -65,6 +66,10 @@ const fakePrisma = {
   organization: {
     findUnique: async () => ({ status: "ACTIVE", ssoSettings: null }),
   },
+  ssoProvider: {
+    findUnique: async ({ where }: { where: { providerId: string } }) =>
+      db.ssoProvider.find((p) => p.providerId === where.providerId) ?? null,
+  },
   $transaction: async (fn: (tx: unknown) => unknown) => fn(fakePrisma),
 };
 jest.mock("../../lib/prisma", () => ({
@@ -90,6 +95,10 @@ jest.mock("../../lib/enterprise/outbound-webhooks/ssrf-guard", () => ({
 
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
+  assertSsoEmailOnDomain,
+  isSsoProviderId,
+} from "@/lib/sso/account-domain";
+import {
   buildStoredOidcConfig,
   discoverOidcConfigForTenant,
 } from "@/lib/sso/oidc-discovery";
@@ -99,6 +108,7 @@ const CLIENT_ID = "familiarise-test";
 const ORG_ID = "org_acme";
 const PROVIDER_ID = "oidc-acme";
 const IDP_USER = { sub: "idp-user-1", email: "asha@acme.test", name: "Asha" };
+let idpUser = IDP_USER;
 
 type Db = Record<string, Record<string, unknown>[]>;
 type CookieJar = Map<string, string>;
@@ -125,6 +135,30 @@ function buildAuth() {
     trustedOrigins: [issuer],
     database: memoryAdapter(db),
     plugins: [sso(ssoPluginOptions)],
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (user, ctx) => {
+            if (ctx?.path?.startsWith("/sso/")) {
+              await assertSsoEmailOnDomain(ctx.params?.providerId, user.email);
+            }
+          },
+        },
+      },
+      account: {
+        create: {
+          before: async (account, ctx) => {
+            if (!isSsoProviderId(account.providerId)) return;
+            // Through the adapter: the user row may only exist inside the
+            // callback's transaction so far.
+            const user = await ctx?.context.internalAdapter.findUserById(
+              account.userId,
+            );
+            await assertSsoEmailOnDomain(account.providerId, user?.email);
+          },
+        },
+      },
+    },
   });
 }
 
@@ -178,7 +212,7 @@ beforeAll(async () => {
     "beforeTokenSigning",
     (token: { payload: Record<string, unknown> }) => {
       Object.assign(token.payload, {
-        ...IDP_USER,
+        ...idpUser,
         email_verified: true,
         aud: CLIENT_ID,
       });
@@ -187,7 +221,7 @@ beforeAll(async () => {
   idp.service.on(
     "beforeUserinfo",
     (res: { body: Record<string, unknown>; statusCode: number }) => {
-      res.body = { ...IDP_USER, email_verified: true };
+      res.body = { ...idpUser, email_verified: true };
     },
   );
 });
@@ -197,6 +231,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  idpUser = IDP_USER;
   memberships.length = 0;
   db = {
     user: [],
@@ -299,4 +334,38 @@ it("refuses to start sign-in through a provider staff have not approved", async 
   expect(start.status).toBe(401);
   expect(db.session).toHaveLength(0);
   expect(memberships).toHaveLength(0);
+});
+
+it("refuses an IdP that asserts an email outside the provider's domain", async () => {
+  idpUser = { ...IDP_USER, email: "victim@gmail.test" };
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toContain(
+    "error=SSO_EMAIL_DOMAIN_MISMATCH",
+  );
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.user).toHaveLength(0);
+  expect(db.account).toHaveLength(0);
+  expect(memberships).toHaveLength(0);
+});
+
+it("never links an out-of-domain IdP account to an existing user", async () => {
+  db.user.push({
+    id: "victim",
+    email: "victim@gmail.test",
+    emailVerified: true,
+    name: "Victim",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  idpUser = { ...IDP_USER, email: "victim@gmail.test" };
+
+  const { done } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toContain("error=");
+  expect(db.account).toHaveLength(0);
+  expect(db.session).toHaveLength(0);
 });

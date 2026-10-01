@@ -317,6 +317,11 @@ export const AUTH_ERROR_COPY = {
       "The organisation's sign-in service didn't answer. Wait a minute and try again.",
     action: "retry",
   },
+  SSO_EMAIL_DOMAIN_MISMATCH: {
+    title: "This email isn't on your organisation's domain",
+    description: `Sign in another way, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
+    action: "contact-support",
+  },
 
   /* ── Throttling ──────────────────────────────────────────────────────── */
 

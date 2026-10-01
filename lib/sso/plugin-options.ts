@@ -23,6 +23,10 @@ export const ssoPluginOptions = {
   // should go through once a seat frees up. A no-op for existing members.
   provisionUserOnEveryLogin: true,
   provisionUser: async ({ user, provider }) => {
+    // Belt to the account hooks in lib/auth.ts, which refuse the sign-in
+    // outright: never join an org on an email outside its provider's domain.
+    const domain = user.email.toLowerCase().split("@")[1];
+    if (domain !== provider.domain.toLowerCase()) return;
     await provisionSsoMembership({
       userId: user.id,
       providerId: provider.providerId,

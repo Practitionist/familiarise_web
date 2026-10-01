@@ -24,6 +24,10 @@ import {
   lookupEnforcedOrg,
 } from "@/lib/sso/enforce-session";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
+import {
+  assertSsoEmailOnDomain,
+  isSsoProviderId,
+} from "@/lib/sso/account-domain";
 import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
 import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 import {
@@ -376,6 +380,14 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        // Checked here as well as in account.create.before: the adapter runs
+        // without transactions, so a refusal at the account step would leave
+        // the user row (and its welcome email) behind, squatting the address.
+        before: async (user, ctx) => {
+          if (ctx?.path?.startsWith("/sso/")) {
+            await assertSsoEmailOnDomain(ctx.params?.providerId, user.email);
+          }
+        },
         after: async (user, ctx) => {
           try {
             // NOTE: ConsulteeProfile used to be auto-created here for every
@@ -603,7 +615,7 @@ export const auth = betterAuth({
           if (account.providerId === "credential") return;
           const user = await prisma.user.findUnique({
             where: { id: account.userId },
-            select: { role: true },
+            select: { role: true, email: true },
           });
           if (refusesOperatorAccount(user?.role, account.providerId)) {
             throw new APIError("FORBIDDEN", {
@@ -611,6 +623,9 @@ export const auth = betterAuth({
                 "Staff accounts sign in with email, password and an authenticator code.",
               code: "STAFF_PASSWORD_SIGN_IN_ONLY",
             });
+          }
+          if (isSsoProviderId(account.providerId)) {
+            await assertSsoEmailOnDomain(account.providerId, user?.email);
           }
         },
         after: async (account) => {

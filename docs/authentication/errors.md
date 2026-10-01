@@ -45,6 +45,7 @@
 | `REQUEST_REJECTED`                                                      | Copy for a code-less 401/403 from `/api/auth/*` (origin or CSRF rejection)                  | 401, 403           |
 | `SSO_PROVIDER_MISCONFIGURED`                                            | SSO provider routes when `oidcConfig` cannot be decrypted                                   | 200 body           |
 | `SSO_PROVIDER_UNREACHABLE`                                              | `lib/sso/signin-with-toast.ts` when the IdP does not answer                                 | client             |
+| `SSO_EMAIL_DOMAIN_MISMATCH`                                             | `user.create.before`, `account.create.before` on an SSO email outside the provider's domain | 302 to `?error=`   |
 | `INVITATION_NOT_FOUND`, `_EXPIRED`, `_ALREADY_ACCEPTED`, `_NOT_FOR_YOU` | Copy keys the org invite page (`app/organizations/invite/[token]`) picks by response status | 404, 410, 409, 403 |
 
 Two twoFactor codes are worth knowing: `INVALID_CODE` (wrong TOTP) and
