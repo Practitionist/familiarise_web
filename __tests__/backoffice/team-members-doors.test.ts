@@ -10,6 +10,8 @@
  *   profile, sends the set-password link and writes one OpsActionLog row.
  * - DELETE /api/admin/team/members/{id}/two-factor removes the second factor
  *   and every session, for operators only.
+ * - POST /api/admin/team/members/{id}/setup-link re-sends the set-password
+ *   email, for operators only.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -69,6 +71,7 @@ jest.mock("../../lib/observability/report", () => ({
 import { NextRequest } from "next/server";
 import { POST as createMember } from "../../app/api/admin/team/members/route";
 import { DELETE as resetTwoFactor } from "../../app/api/admin/team/members/[userId]/two-factor/route";
+import { POST as resendSetupLink } from "../../app/api/admin/team/members/[userId]/setup-link/route";
 
 const request = (method: string, body: unknown) =>
   new NextRequest("http://localhost/", {
@@ -202,5 +205,41 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
   it("requires a reason", async () => {
     const res = await resetTwoFactor(request("DELETE", {}), params);
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/admin/team/members/[userId]/setup-link", () => {
+  const params = { params: Promise.resolve({ userId: "op1" }) };
+  const body = { reason: "First link expired before they used it" };
+
+  it("emails an operator a new set-password link", async () => {
+    mockDb.user.findUnique.mockResolvedValue({
+      id: "op1",
+      email: "op@example.com",
+      role: "STAFF",
+    });
+
+    const res = await resendSetupLink(request("POST", body), params);
+
+    expect(res.status).toBe(200);
+    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith("users.moderate");
+    expect(mockRequestPasswordReset).toHaveBeenCalledWith({
+      body: { email: "op@example.com", redirectTo: "/auth/reset-password" },
+    });
+    expect(mockDb.opsActionLog.create.mock.calls[0][0].data).toMatchObject({
+      action: "team.member.setup-link",
+      targetId: "op1",
+    });
+  });
+
+  it("answers 404 for a customer account", async () => {
+    mockDb.user.findUnique.mockResolvedValue({
+      id: "op1",
+      email: "customer@example.com",
+      role: "CONSULTEE",
+    });
+    const res = await resendSetupLink(request("POST", body), params);
+    expect(res.status).toBe(404);
+    expect(mockRequestPasswordReset).not.toHaveBeenCalled();
   });
 });

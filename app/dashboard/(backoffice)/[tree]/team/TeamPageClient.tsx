@@ -2,10 +2,10 @@
 
 /**
  * The Team page: everyone who can reach the console, whether they have
- * enrolled 2FA, and when they were last seen. ADMINs can add an operator and
- * reset a lost second factor; both buttons ask `can("users.moderate")`, the
- * same matrix the API enforces, so staff reading the roster see no buttons
- * that would 403.
+ * enrolled 2FA, and when they were last seen. ADMINs can add an operator,
+ * resend a setup link, suspend or reactivate, and reset a lost second factor;
+ * every button asks `can("users.moderate")`, the same matrix the API
+ * enforces, so staff reading the roster see no buttons that would 403.
  */
 
 import { useState } from "react";
@@ -39,16 +39,12 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 
-/** Mirrors GET /api/admin/team/members. */
-interface MemberRow {
-  id: string;
-  name: string | null;
-  email: string;
-  role: "STAFF" | "ADMIN";
-  banned: boolean | null;
-  twoFactorEnabled: boolean;
-  lastActiveAt: string | null;
-}
+import {
+  ROW_ACTIONS,
+  actionsFor,
+  type MemberRow,
+  type RowAction,
+} from "./team-row-actions";
 
 type Role = MemberRow["role"];
 
@@ -78,8 +74,12 @@ export function TeamPageClient() {
   const [role, setRole] = useState<Role>("STAFF");
   const [addReason, setAddReason] = useState("");
 
-  const [resetTarget, setResetTarget] = useState<MemberRow | null>(null);
-  const [resetReason, setResetReason] = useState("");
+  const [pending, setPending] = useState<{
+    action: RowAction;
+    row: MemberRow;
+  } | null>(null);
+  const [reason, setReason] = useState("");
+  const [days, setDays] = useState("30");
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["team"],
@@ -116,24 +116,24 @@ export function TeamPageClient() {
     onError: fail("Could not add that person"),
   });
 
-  const resetTwoFactor = useMutation({
-    mutationFn: (target: MemberRow) =>
-      call(`/api/admin/team/members/${target.id}/two-factor`, {
-        method: "DELETE",
-        body: JSON.stringify({ reason: resetReason }),
-      }),
-    onSuccess: () => {
-      toast({
-        title: "Two-factor reset",
-        description:
-          "They have been signed out and will set up a new authenticator at their next sign-in.",
+  const runAction = useMutation({
+    mutationFn: ({ action, row }: { action: RowAction; row: MemberRow }) => {
+      const { path, method, body } = ROW_ACTIONS[action];
+      const suspension = action === "suspend" ? { suspensionDays: +days } : {};
+      return call(`/api/admin/team/members/${row.id}${path}`, {
+        method,
+        body: JSON.stringify({ ...body, ...suspension, reason }),
       });
-      setResetTarget(null);
-      setResetReason("");
+    },
+    onSuccess: (_result, { action }) => {
+      toast({ title: ROW_ACTIONS[action].done });
+      setPending(null);
+      setReason("");
       void refresh();
     },
-    onError: fail("Could not reset two-factor"),
+    onError: fail("That action could not be completed"),
   });
+  const daysValid = /^\d+$/.test(days) && +days >= 1 && +days <= 365;
 
   const columns: ResponsiveColumn<MemberRow>[] = [
     {
@@ -147,10 +147,10 @@ export function TeamPageClient() {
             {row.id === viewerId ? (
               <span className="ml-2 text-xs text-muted-foreground">(you)</span>
             ) : null}
-            {row.banned ? (
-              <span className="ml-2 text-xs text-destructive">suspended</span>
-            ) : null}
           </p>
+          {row.banned ? (
+            <StatusBadge label="Suspended" tone="critical" variant="dot" />
+          ) : null}
           <p className="text-sm text-muted-foreground">{row.email}</p>
         </div>
       ),
@@ -180,19 +180,21 @@ export function TeamPageClient() {
           {
             key: "actions",
             header: "",
-            cell: (row: MemberRow) =>
-              row.twoFactorEnabled ? (
-                <div className="flex justify-end">
+            cell: (row: MemberRow) => (
+              <div className="flex flex-wrap justify-end gap-2">
+                {actionsFor(row, viewerId).map((action) => (
                   <Button
+                    key={action}
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() => setResetTarget(row)}
+                    onClick={() => setPending({ action, row })}
                   >
-                    Reset 2FA
+                    {ROW_ACTIONS[action].label}
                   </Button>
-                </div>
-              ) : null,
+                ))}
+              </div>
+            ),
           },
         ]
       : []),
@@ -311,45 +313,65 @@ export function TeamPageClient() {
       </Dialog>
 
       <Dialog
-        open={resetTarget !== null}
-        onOpenChange={(open) => !open && setResetTarget(null)}
+        open={pending !== null}
+        onOpenChange={(open) => !open && setPending(null)}
       >
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Reset two-factor for {resetTarget?.email}?
-            </DialogTitle>
-            <DialogDescription>
-              Their authenticator and backup codes stop working and they are
-              signed out everywhere. Whoever signs in next with their password
-              enrols a new authenticator, so confirm who you are talking to
-              before you do this.
-            </DialogDescription>
-          </DialogHeader>
-          <ReasonField
-            id="reset-reason"
-            value={resetReason}
-            onChange={setResetReason}
-          />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setResetTarget(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={
-                resetTwoFactor.isPending || resetReason.trim().length < 5
-              }
-              onClick={() => resetTarget && resetTwoFactor.mutate(resetTarget)}
-            >
-              {resetTwoFactor.isPending ? "Resetting…" : "Reset 2FA"}
-            </Button>
-          </DialogFooter>
+          {pending ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {ROW_ACTIONS[pending.action].label}: {pending.row.email}
+                </DialogTitle>
+                <DialogDescription>
+                  {ROW_ACTIONS[pending.action].description}
+                </DialogDescription>
+              </DialogHeader>
+              {pending.action === "suspend" ? (
+                <div className="grid gap-2">
+                  <Label htmlFor="suspend-days">Suspend for (days)</Label>
+                  <Input
+                    id="suspend-days"
+                    inputMode="numeric"
+                    value={days}
+                    onChange={(event) => setDays(event.target.value)}
+                  />
+                </div>
+              ) : null}
+              <ReasonField
+                id="action-reason"
+                value={reason}
+                onChange={setReason}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPending(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant={
+                    ROW_ACTIONS[pending.action].destructive
+                      ? "destructive"
+                      : "default"
+                  }
+                  disabled={
+                    runAction.isPending ||
+                    reason.trim().length < 5 ||
+                    (pending.action === "suspend" && !daysValid)
+                  }
+                  onClick={() => runAction.mutate(pending)}
+                >
+                  {runAction.isPending
+                    ? "Working…"
+                    : ROW_ACTIONS[pending.action].label}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
