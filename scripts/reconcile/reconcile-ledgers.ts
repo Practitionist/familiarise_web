@@ -163,14 +163,8 @@ export type Finding = {
     // reversal case (REVERSED + no txn) self-reports via system error and
     // is deliberately not flagged here.
     | "OVERAGE_SETTLEMENT_MISMATCH"
-    // PENDING_TRUST_PARK_STALE — an anti-invoice-fraud park (#687 E-01/E-02)
-    // that has outlived the doctrine's 24h hard window. The park itself is
-    // CORRECT and the money is owed; the finding exists because the release
-    // valve is condition-driven only (sponsor ACTIVE, or ≥1 PAID invoice), so a
-    // sponsor that does neither withholds a consultant's earnings with no
-    // timeout anywhere in the system. NEVER a release predicate — releasing on
-    // age would defeat the entire anti-fraud purpose. See
-    // PENDING_TRUST_PARK_WARN_MS.
+    // An anti-invoice-fraud park older than 24h. Detect-only: age never
+    // releases a park.
     | "PENDING_TRUST_PARK_STALE";
   organizationId?: string;
   billingAccountId?: string;
@@ -1654,79 +1648,16 @@ async function stepMoneyRange(ctx: StepCtx): Promise<void> {
 }
 
 // --- (R) #687 E-01/E-02 — PENDING_TRUST park watchdog ---------------------
-//
-// PENDING_TRUST is an anti-invoice-fraud park, born at accrual time when the
-// SPONSORING org is PENDING_VERIFICATION + INVOICE-funded + has zero PAID
-// invoices (earnings-service.ts, createEarningsFromPayment). It is released by
-// exactly one job (`jobs/cleanup/release-pending-trust-earnings.ts`) and ONLY
-// on those two conditions. There is no timeout, so a sponsor that is never
-// verified and never pays parks the consultant's money forever — silently.
-//
-// `EARNING_ALLOWED_FROM.PENDING_TRUST` is `[]` (lib/enterprise/transitions.ts):
-// the state has no inbound transition, so a row can only ever be BORN parked.
-// `createdAt` is therefore an exact proxy for the park time and no `parkedAt`
-// column is needed.
-//
-// The two thresholds are DETECT-ONLY. Neither may ever gate a release — that
-// is stated on the constants and pinned by a test, because an age-based release
-// would hand the withheld money straight back to the fraud case the park
-// exists to stop.
-//
-// 24h (`PENDING_TRUST_PARK_WARN_MS`) is the doctrine's hard money window — the
-// same 24h the other reconcilers treat as "this should never still be open by
-// tomorrow" (cf. `RECONCILE_RUN_STALE_MS` at 45m, `RECONCILE_UNJOURNALED_GRACE_MS`
-// at 30m for the in-flight case). A sponsor that has neither been verified nor
-// paid an invoice across a full business day is not "pending verification" in
-// any useful sense.
-//
-// 72h (`PENDING_TRUST_PARK_PAGE_MS`) escalates that to a page. One extra
-// business day covers an admin verifying a queue over a weekend, and past
-// three days the withholding is the answer, not the question. Both the auditor
-// and the release job run on a fixed cadence (resumable ticker chunks; hourly
-// Actions), so crossing a threshold raises once rather than continuously — the
-// schedule is the throttle and no dedupe state is required.
-
-/** Non-negative env override, falling back on a malformed or negative value. */
-function positiveMsEnv(name: string, fallbackMs: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw >= 0 ? raw : fallbackMs;
-}
-
-export const PENDING_TRUST_PARK_WARN_MS = positiveMsEnv(
-  "PENDING_TRUST_PARK_WARN_MS",
-  24 * 60 * 60 * 1000,
-);
-export const PENDING_TRUST_PARK_PAGE_MS = positiveMsEnv(
-  "PENDING_TRUST_PARK_PAGE_MS",
-  3 * 24 * 60 * 60 * 1000,
-);
-
-export type PendingTrustParkSeverity = "NONE" | "WARN" | "ERROR";
-
-/**
- * Severity of a single parked row's age. Returns a LEVEL and nothing else —
- * there is deliberately no "old enough to release" answer here, and the job
- * that releases must never consume this function.
- */
-export function pendingTrustParkSeverity(
-  createdAt: Date,
-  now: Date,
-  warnMs: number = PENDING_TRUST_PARK_WARN_MS,
-  pageMs: number = PENDING_TRUST_PARK_PAGE_MS,
-): PendingTrustParkSeverity {
-  const age = now.getTime() - createdAt.getTime();
-  // ERROR is checked first so a misconfigured pageMs below warnMs still pages
-  // rather than silently downgrading a long-stalled park to a warning.
-  if (age >= pageMs) return "ERROR";
-  if (age >= warnMs) return "WARN";
-  return "NONE";
-}
+// A park is released only when its sponsor is verified or pays an invoice, so
+// one that does neither withholds earnings forever. Report parks older than
+// 24h per sponsor (graded on the oldest row's createdAt, which is conservative
+// for a row re-parked from HELD). Detect-only: age must never release a park.
+export const PENDING_TRUST_PARK_STALE_MS = 24 * 60 * 60 * 1000;
 
 /** One PENDING_TRUST row, normalised across the two earnings tables. */
 export type PendingTrustParkRow = {
   earningId: string;
-  table: "ConsultantEarnings" | "OrganizationEarnings";
-  /** The org that owes the invoice — the park keys on it, not on the host org. */
+  /** The org that owes the invoice (the park's key), not the host org. */
   sponsorOrganizationId: string;
   amountPaise: number;
   createdAt: Date;
@@ -1735,22 +1666,14 @@ export type PendingTrustParkRow = {
 export type PendingTrustParkGroup = {
   organizationId: string;
   earningCount: number;
-  /** Money owed to consultants/hosts and withheld by this sponsor, in paise. */
   parkedPaise: number;
   oldestCreatedAt: Date;
-  severity: PendingTrustParkSeverity;
   sampleEarningIds: string[];
 };
 
-/**
- * Group parked rows by withholding sponsor and grade each group. Pure, so the
- * pins drive it without a run, and shared by the auditor step and the release
- * job so the two cannot drift on what "stale" means. The sponsor is the
- * actionable unit: it is the party that can unblock the money.
- */
+/** Group parked rows by sponsor, largest withheld amount first. */
 export function groupPendingTrustParks(
   rows: PendingTrustParkRow[],
-  now: Date,
 ): PendingTrustParkGroup[] {
   const byOrg = new Map<string, PendingTrustParkGroup>();
   for (const row of rows) {
@@ -1761,7 +1684,6 @@ export function groupPendingTrustParks(
         earningCount: 0,
         parkedPaise: 0,
         oldestCreatedAt: row.createdAt,
-        severity: "NONE",
         sampleEarningIds: [],
       };
       byOrg.set(row.sponsorOrganizationId, g);
@@ -1771,27 +1693,16 @@ export function groupPendingTrustParks(
     if (row.createdAt < g.oldestCreatedAt) g.oldestCreatedAt = row.createdAt;
     if (g.sampleEarningIds.length < 10) g.sampleEarningIds.push(row.earningId);
   }
-  const out: PendingTrustParkGroup[] = [];
-  for (const g of byOrg.values()) {
-    g.severity = pendingTrustParkSeverity(g.oldestCreatedAt, now);
-    out.push(g);
-  }
-  // Worst first, then largest amount — the operator reads this list top-down.
-  out.sort((a, b) => {
-    if (a.severity !== b.severity) return a.severity === "ERROR" ? -1 : 1;
-    if (a.parkedPaise !== b.parkedPaise) return b.parkedPaise - a.parkedPaise;
-    return a.oldestCreatedAt.getTime() - b.oldestCreatedAt.getTime();
-  });
-  return out;
+  return [...byOrg.values()].sort((a, b) => b.parkedPaise - a.parkedPaise);
 }
 
 async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
-  const warnCutoff = new Date(ctx.now.getTime() - PENDING_TRUST_PARK_WARN_MS);
+  const cutoff = new Date(ctx.now.getTime() - PENDING_TRUST_PARK_STALE_MS);
   const [consultantParks, orgParks] = await Promise.all([
     prisma.consultantEarnings.findMany({
       where: {
         status: "PENDING_TRUST",
-        createdAt: { lte: warnCutoff },
+        createdAt: { lte: cutoff },
         ...(ctx.opts.organizationId
           ? { payment: { organizationId: ctx.opts.organizationId } }
           : {}),
@@ -1806,7 +1717,7 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
     prisma.organizationEarnings.findMany({
       where: {
         status: "PENDING_TRUST",
-        createdAt: { lte: warnCutoff },
+        createdAt: { lte: cutoff },
         ...(ctx.opts.organizationId
           ? { organizationId: ctx.opts.organizationId }
           : {}),
@@ -1822,12 +1733,10 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
 
   const rows: PendingTrustParkRow[] = [];
   for (const ce of consultantParks) {
-    // A consultant row without a sponsor org was never parked by the gate
-    // (payment.organizationId is the park's key), so it is out of scope here.
+    // No sponsor org means the gate never parked it.
     if (!ce.payment.organizationId) continue;
     rows.push({
       earningId: ce.id,
-      table: "ConsultantEarnings",
       sponsorOrganizationId: ce.payment.organizationId,
       amountPaise: sumPaise(ce.consultantSharePaise),
       createdAt: ce.createdAt,
@@ -1836,38 +1745,29 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
   for (const oe of orgParks) {
     rows.push({
       earningId: oe.id,
-      table: "OrganizationEarnings",
       sponsorOrganizationId: oe.organizationId,
       amountPaise: sumPaise(oe.orgSharePaise),
       createdAt: oe.createdAt,
     });
   }
 
-  for (const g of groupPendingTrustParks(rows, ctx.now)) {
-    if (g.severity === "NONE") continue;
-    const ageHours = Math.round(
-      (ctx.now.getTime() - g.oldestCreatedAt.getTime()) / (60 * 60 * 1000),
-    );
+  for (const g of groupPendingTrustParks(rows)) {
     ctx.findings.push({
       kind: "PENDING_TRUST_PARK_STALE",
       organizationId: g.organizationId,
-      // expected = the money owed and currently withheld; actual = 0 released.
-      // Same "cash left, journal never saw it" shape as
-      // COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN.
       expectedPaise: g.parkedPaise,
       actualPaise: 0,
       deltaPaise: g.parkedPaise,
       details: {
         unit: "paise",
         scope: "pending-trust-park",
-        severity: g.severity,
         earningCount: g.earningCount,
         oldestCreatedAt: g.oldestCreatedAt.toISOString(),
-        ageHours,
-        warnAfterHours: PENDING_TRUST_PARK_WARN_MS / (60 * 60 * 1000),
-        pageAfterHours: PENDING_TRUST_PARK_PAGE_MS / (60 * 60 * 1000),
+        ageHours: Math.round(
+          (ctx.now.getTime() - g.oldestCreatedAt.getTime()) / 3_600_000,
+        ),
         sampleEarningIds: g.sampleEarningIds,
-        note: "PENDING_TRUST earnings parked past the 24h hard window. The park is working as designed and is NEVER auto-released on age — the anti-invoice-fraud guard would be defeated. This money stays owed and is excluded from the owner's totalEarnings until the sponsor is verified. To unblock: verify the sponsoring org (status=ACTIVE) or have it pay one OrganizationInvoice, then the release job promotes PENDING_TRUST → PENDING. If neither is intended, the sponsor is withholding a consultant's earnings and needs an operator decision.",
+        note: "PENDING_TRUST earnings parked past 24h. Never auto-released on age. Unblock by verifying the sponsoring org (status=ACTIVE) or having it pay one invoice; otherwise it needs an operator decision.",
       },
     });
   }
@@ -1916,10 +1816,7 @@ const STEPS: Step[] = [
   { name: "overage-settlement", kind: "set", run: stepOverageSettlement },
   { name: "assignment-overlap", kind: "set", run: stepAssignmentOverlap },
   { name: "money-range", kind: "set", run: stepMoneyRange },
-  // Appended, not inserted: `ReconcileRunProgress.step` is an INDEX into this
-  // array and is persisted on the report row, so a new step in the middle
-  // would renumber the steps of any run already in flight. At the end, no
-  // existing index moves.
+  // Appended: `ReconcileRunProgress.step` is a persisted index into this array.
   { name: "pending-trust-parks", kind: "set", run: stepPendingTrustParks },
 ];
 
