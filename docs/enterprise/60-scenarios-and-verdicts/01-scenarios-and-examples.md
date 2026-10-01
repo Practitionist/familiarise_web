@@ -10,7 +10,7 @@ last-reviewed: 2026-06-05
 
 **What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant, and a product company on the credit-pool money-meter — §5.10a) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
 
-> Every steady-state example uses the seed cohort (`prisma/seedFiles/15a-create-organizations.ts`) so the numbers are real and reproducible. The v2 scenarios (§5.11–§5.16) are **time-based** — they only fire when a cron advances state past a `periodEnd` / `dueDate`, which the static seed hasn't yet hit; each one says explicitly whether it's seed-grounded or a hypothetical with exact field values. Postings are transcribed from [ledger & postings §4](../10-money-and-ledger/03-ledger-and-postings.md); read that first if a `Dr/Cr` block is unfamiliar. ₹ amounts are paise in code (₹1 = 100 paise).
+> Every steady-state example uses the seed cohort (`prisma/seedFiles/15a-create-organizations.ts`) so the numbers are real and reproducible. The v2 scenarios (§5.11–§5.15) are **time-based** — they only fire when a cron advances state past a `periodEnd` / `dueDate`, which the static seed hasn't yet hit; each one says explicitly whether it's seed-grounded or a hypothetical with exact field values. Postings are transcribed from [ledger & postings §4](../10-money-and-ledger/03-ledger-and-postings.md); read that first if a `Dr/Cr` block is unfamiliar. ₹ amounts are paise in code (₹1 = 100 paise).
 
 ---
 
@@ -84,7 +84,7 @@ Two knobs ride on top of the marginal (both per [programs §6](../30-programs-an
 
 ## 5. Worked examples
 
-Each shows **setup → a booking → the leg(s) → the ledger posting → settlement → reconcile**. They build up in capability order — **SPONSOR** (5.1–5.3) → **HOST** (5.4–5.5) → **HYBRID** (5.6, which combines both) → cross-cutting cases (5.7–5.10, plus the product-company CREDIT_POOL money-meter §5.10a) → **v2 lifecycle & money-safety** (5.11–5.16: cycle rollover, surcharge + breaker overage, dunning, wallet floor, contract supersession, SSO break-glass).
+Each shows **setup → a booking → the leg(s) → the ledger posting → settlement → reconcile**. They build up in capability order — **SPONSOR** (5.1–5.3) → **HOST** (5.4–5.5) → **HYBRID** (5.6, which combines both) → cross-cutting cases (5.7–5.10, plus the product-company CREDIT_POOL money-meter §5.10a) → **v2 lifecycle & money-safety** (5.11–5.15: cycle rollover, surcharge + breaker overage, dunning, wallet floor, contract supersession).
 
 ### 5.1 A startup — SPONSOR · PERSONAL (attribution-only, the simplest)
 
@@ -410,32 +410,6 @@ The **`wallet-low-balance`** cron (`jobs/billing/wallet-low-balance.ts`, GitHub 
 **Auto-renew (the unattended RENEWAL path).** `jobs/contracts/auto-renew-contracts.ts` (GitHub Action `auto-renew-contracts.yml`, **02:30 UTC**) runs **30 min before** the expiry cron (03:00) so renewal wins the race. Per contract due (`status = ACTIVE`, `autoRenew = true`, `autoRenewedAt = null`, `effectiveTo <= now`): **claim** by stamping `autoRenewedAt` via conditional `updateMany` (the gate *is* the distributed lock — `count === 0` ⇒ another replica won → skip), mint the RENEWAL successor (`effectiveFrom = old.effectiveTo`, `effectiveTo = old.effectiveTo + old duration`), re-point programs, flip the old row → `EXPIRED` in the same tx, emit `CONTRACT_AUTO_RENEWED`. The renewal is a **fresh Contract**, not an in-place `effectiveTo` bump — keeps each term's invoices anchored to the term that billed them.
 
 > 🟡 **Route/cron only — no dashboard button.** Supersede/amend/renew exist as the route + the auto-renew cron; there's **no UI control** yet (#777 §B). The Wipro dashboard shows `Auto-renew` read-only; drive supersession via the route and confirm the old row reads superseded + the new row ACTIVE.
-
-### 5.16 SSO break-glass — IdP-outage escape hatch (v2)
-
-**Hypothetical (no seed org enables `enforceSSO`).** The seed ships no `OrganizationSSOSettings` with `enforceSSO = true`, so to walk this, turn **Enforce SSO** on for an org first (password login is then blocked for its claimed domains).
-
-Now the IdP goes down and members are locked out. An **OWNER** opens a window: `POST /api/organizations/[orgId]/sso/break-glass` with `{ hours, reason }` — `hours` is `1–72`, **default 4**; `reason` is required (≥5 chars). The route (OWNER-only through the `identity.manage` matrix key):
-1. Refuses with `404` if `enforceSSO` isn't on for this org ("nothing to break").
-2. Sets `OrganizationSSOSettings.breakGlassUntil = now + hours`.
-3. Writes an `OrgAuditLog` row (`SETTINGS_CHANGED`, "SSO break-glass opened") carrying **who** (`actorMembershipId`) + **why** (`details.reason`/`hours`/`until`) — the window's who/why lives only in the audit row, not on columns.
-
-While `breakGlassUntil > now`, the auth layer (`lib/sso/enforce-session.ts`) **skips** the `enforceSSO` gate for that org, so credential login is permitted again. **Closing:** let it lapse, or `DELETE /api/organizations/[orgId]/sso/break-glass` (clears `breakGlassUntil`, writes a "break-glass closed" audit row). No dashboard control yet — verify via the route + the audit entry (#779 §E).
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant O as OWNER
-  participant R as POST /sso/break-glass
-  participant S as OrganizationSSOSettings
-  participant A as enforce-session (auth layer)
-  O->>R: { hours: 4, reason: "Okta outage INC-123" }
-  R->>R: identity.manage check, refuse 404 if !enforceSSO
-  R->>S: breakGlassUntil = now + 4h
-  R->>R: OrgAuditLog (who + why)
-  Note over A: while breakGlassUntil > now → skip enforceSSO gate, password login allowed
-  O->>R: DELETE (or let it lapse) → breakGlassUntil = null
-```
 
 ---
 
