@@ -138,7 +138,6 @@ async function fetchSso(orgId: string): Promise<SsoSettingsResponse> {
 }
 
 type PatchPayload = {
-  allowedEmailDomains?: string[];
   enforceSSO?: boolean;
   // Locked to LEARNER per JIT principle-of-least-privilege (audit
   // Phase A.1). The API rejects any other role with 400 even if the
@@ -218,22 +217,16 @@ export function SsoPanel({ orgId }: { orgId: string }) {
     enabled: allowed,
   });
 
-  const [domains, setDomains] = useState("");
   const [enforce, setEnforce] = useState(false);
 
   useEffect(() => {
     if (!data) return;
-    setDomains(data.settings.allowedEmailDomains.join(", "));
     setEnforce(data.settings.enforceSSO);
   }, [data]);
 
   const settingsMutation = useMutation({
     mutationFn: () =>
       patchSso(orgId, {
-        allowedEmailDomains: domains
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
         enforceSSO: enforce,
         // defaultRoleForAutoJoin is locked to LEARNER server-side; we
         // don't send it in the PATCH so the API can keep its existing
@@ -306,8 +299,8 @@ export function SsoPanel({ orgId }: { orgId: string }) {
           <CardHeader>
             <CardTitle>Domain policy</CardTitle>
             <CardDescription>
-              Users signing up with these email domains can be auto-joined to
-              this organization.
+              Applies to every verified domain claimed by this organization.
+              Enforcement takes effect once an SSO provider is approved.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -318,20 +311,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 settingsMutation.mutate();
               }}
             >
-              <div className="space-y-2">
-                <Label htmlFor="domains">Allowed email domains</Label>
-                <Input
-                  id="domains"
-                  value={domains}
-                  onChange={(e) => setDomains(e.target.value)}
-                  placeholder="acme.com, acme.edu"
-                  disabled={!canEdit}
-                />
-                <p className="text-xs text-zinc-500">
-                  Comma-separated list of domains.
-                </p>
-              </div>
-
               <div className="flex items-center justify-between rounded-lg border border-zinc-200 p-3">
                 <div>
                   <p className="text-sm font-medium">Enforce SSO</p>
@@ -359,6 +338,12 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                   trail of role grants deliberate and least-privilege.
                 </p>
               </div>
+
+              {settingsMutation.error && (
+                <p className="text-sm text-red-600">
+                  {settingsMutation.error.message}
+                </p>
+              )}
 
               {canEdit && (
                 <div>

@@ -340,7 +340,6 @@ export const SsoProviderRowSchema = z.object({
 
 export const SsoSettingsResponseSchema = z.object({
   settings: z.object({
-    allowedEmailDomains: z.array(z.string()).default([]),
     enforceSSO: z.boolean(),
     // JIT auto-join is hard-locked to LEARNER (audit Phase A.1). The
     // server enforces this; the client schema mirrors it so a stale
@@ -352,11 +351,7 @@ export const SsoSettingsResponseSchema = z.object({
 export type SsoSettingsResponse = z.infer<typeof SsoSettingsResponseSchema>;
 
 // PATCH /api/organizations/[orgId]/sso — outbound.
-// Domain validation lives in `lib/enterprise/validators#DomainSchema`;
-// we keep the array element loose here because the server is the
-// authoritative validator and we already trim+filter at the UI level.
 export const PatchSsoSettingsPayloadSchema = z.object({
-  allowedEmailDomains: z.array(z.string()).optional(),
   enforceSSO: z.boolean().optional(),
   // Locked to LEARNER per audit Phase A.1 — client cannot pick the
   // role anymore; if some legacy caller still sends one, the server

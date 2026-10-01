@@ -56,7 +56,6 @@ Three Prisma models support SSO:
 | Field | Type | Purpose |
 |---|---|---|
 | `enforceSSO` | `Boolean` | When true, users with this domain must sign in via SSO |
-| `allowedEmailDomains` | `String[]` | Curated allowlist. Empty = all claimed domains enforced |
 | `defaultRoleForAutoJoin` | `MemberRole` | Role assigned to SSO auto-joined members (default: `LEARNER`) |
 
 **`OrgDomainClaim`** — Maps email domains to organizations:
@@ -87,11 +86,10 @@ Three Prisma models support SSO:
 
 1. Extract email domain → look up `OrgDomainClaim` (must be verified)
 2. Check `OrganizationSSOSettings.enforceSSO` (must be true, org must be ACTIVE)
-3. Honour `allowedEmailDomains` allowlist if non-empty
-4. Find registered `SsoProvider.providerId` values for the org
-5. **Fail open** if no providers are registered yet (prevents setup lockout)
-6. Check if user has an `Account` row with a matching `providerId`
-7. If no match → throw `FORBIDDEN` with `code: "SSO_REQUIRED"`
+3. Find the org's staff-approved (`domainVerified`) `SsoProvider.providerId` values
+4. **Fail open** if none is approved yet (prevents setup lockout)
+5. Check if user has an `Account` row with a matching `providerId`
+6. If no match → throw `FORBIDDEN` with `code: "SSO_REQUIRED"`
 
 **Layer 2: Read-time (removed in #1242)**
 
@@ -190,7 +188,7 @@ If an org enables `enforceSSO` but hasn't registered any providers yet, enforcem
 1. **`userId` on `SsoProvider` must be null.** Setting it to the creating owner causes FK cascade — deleting the owner deletes the provider, killing SSO for the whole org.
 2. **Personal OAuth ≠ SSO.** A Google OAuth account does not satisfy enforcement. Only `account.providerId` matching a registered `ssoProvider.providerId` counts.
 3. **Domain overlap.** `OrgDomainClaim.domain` is `@unique` — one domain, one org. If two orgs try to claim the same domain, the first wins.
-4. **Allowlist + claim interaction.** A domain can be in `OrgDomainClaim` but NOT in `allowedEmailDomains`. In that case, SSO is not enforced for that domain (graceful transition).
+4. **One domain truth.** Enforcement covers every verified `OrgDomainClaim` of the org; there is no separate allowlist. Releasing a claim un-approves the org's providers for that domain.
 
 ## 6. Related Docs
 

@@ -154,22 +154,26 @@ export async function DELETE(
         });
       }
 
-      // Refuse if removing the last provider would leave the org in an
-      // inconsistent state — enforceSSO=true with zero providers and no
-      // allowed domains would lock every user out. Admins must drop
-      // enforcement or add a domain first.
-      const settings = await tx.organizationSSOSettings.findUnique({
-        where: { organizationId: orgId },
-      });
-      if (settings?.enforceSSO) {
-        const remaining = await tx.ssoProvider.count({
-          where: { organizationId: orgId, id: { not: current.id } },
+      // Enforcement fails open without an approved provider, so deleting the
+      // last one would silently switch it off. Make the owner do that openly.
+      if (current.domainVerified) {
+        const settings = await tx.organizationSSOSettings.findUnique({
+          where: { organizationId: orgId },
+          select: { enforceSSO: true },
         });
-        const effectiveDomains = settings.allowedEmailDomains ?? [];
-        if (remaining === 0 && effectiveDomains.length === 0) {
+        const remaining = settings?.enforceSSO
+          ? await tx.ssoProvider.count({
+              where: {
+                organizationId: orgId,
+                domainVerified: true,
+                id: { not: current.id },
+              },
+            })
+          : 1;
+        if (remaining === 0) {
           throw Object.assign(
             new Error(
-              "Cannot delete the last SSO provider while enforceSSO=true and no allowed domains. Disable enforcement or add a domain first.",
+              "Cannot delete the last approved SSO provider while SSO is enforced. Disable enforcement first.",
             ),
             { httpStatus: 409 },
           );

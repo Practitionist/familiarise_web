@@ -5,10 +5,6 @@
  * string directly (after URI-decode) rather than the row uuid, so an
  * admin can hit `DELETE .../domain-claims/wipro.com` without first having
  * to look up the row id.
- *
- * Safety guard: refuse the release if SSO enforcement would be left in an
- * inconsistent state (no domains + no providers on an enforceSSO=true
- * org), to prevent locking every user out.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -43,40 +39,7 @@ export async function DELETE(
         });
       }
 
-      const settings = await tx.organizationSSOSettings.findUnique({
-        where: { organizationId: orgId },
-      });
-      if (settings?.enforceSSO) {
-        const providerCount = await tx.ssoProvider.count({
-          where: { organizationId: orgId },
-        });
-        const otherDomains = settings.allowedEmailDomains.filter(
-          (d) => d !== domain,
-        );
-        if (providerCount === 0 && otherDomains.length === 0) {
-          throw Object.assign(
-            new Error(
-              "Cannot release the last claimed domain while enforceSSO=true and no SSO providers configured.",
-            ),
-            { httpStatus: 409 },
-          );
-        }
-      }
-
       await tx.orgDomainClaim.delete({ where: { domain } });
-
-      // If the released domain was also listed in allowedEmailDomains,
-      // drop it from there too so the two surfaces stay consistent.
-      if (settings?.allowedEmailDomains.includes(domain)) {
-        await tx.organizationSSOSettings.update({
-          where: { organizationId: orgId },
-          data: {
-            allowedEmailDomains: settings.allowedEmailDomains.filter(
-              (d) => d !== domain,
-            ),
-          },
-        });
-      }
 
       await tx.orgAuditLog.create({
         data: {
@@ -93,11 +56,13 @@ export async function DELETE(
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

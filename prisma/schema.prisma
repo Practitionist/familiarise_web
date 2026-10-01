@@ -2579,7 +2579,6 @@ model OrganizationSSOSettings {
   organizationId String       @unique
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  allowedEmailDomains    String[]   @default([])
   enforceSSO             Boolean    @default(false)
   defaultRoleForAutoJoin MemberRole @default(LEARNER)
 

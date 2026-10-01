@@ -148,7 +148,7 @@ describe("lookupEnforcedOrg", () => {
           verifiedAt: new Date(),
           organization: {
             status: "ACTIVE",
-            ssoSettings: { enforceSSO: true, allowedEmailDomains: [] },
+            ssoSettings: { enforceSSO: true },
           },
         }),
       },

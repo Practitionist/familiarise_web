@@ -58,7 +58,9 @@ export interface EnforcedOrgInfo {
  *     users).
  *   - Owning org is not ACTIVE (PENDING_VERIFICATION, SUSPENDED, DEACTIVATED).
  *   - `OrganizationSSOSettings.enforceSSO` is false.
- *   - `allowedEmailDomains` is set but does not include this domain.
+ *
+ * The verified claim is the only domain truth: every verified domain of an
+ * enforcing org is enforced.
  *
  * Audit Phase B.6. See `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`.
  */
@@ -74,12 +76,7 @@ export async function lookupEnforcedOrg(
       organization: {
         select: {
           status: true,
-          ssoSettings: {
-            select: {
-              enforceSSO: true,
-              allowedEmailDomains: true,
-            },
-          },
+          ssoSettings: { select: { enforceSSO: true } },
         },
       },
     },
@@ -92,11 +89,6 @@ export async function lookupEnforcedOrg(
     claim.organization.status !== "ACTIVE" ||
     !claim.organization.ssoSettings?.enforceSSO
   ) {
-    return null;
-  }
-
-  const allowed = claim.organization.ssoSettings.allowedEmailDomains;
-  if (allowed.length > 0 && !allowed.includes(domain)) {
     return null;
   }
 
