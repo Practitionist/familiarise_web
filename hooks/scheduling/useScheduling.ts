@@ -73,13 +73,7 @@ export type { ValidationResult, EventConstraints, SlotLimits };
  * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
  * illegal transition, transient lock) and must neither close the dialog
  * nor say that they did.
- *
- * `stay-open-refresh` and `stay-open-raw-refresh` used to be two names for
- * the same toast plus refetch, distinguishable only by a regex over the
- * server's PROSE (`isPreservedAllocationMessage`). Rewording a message three
- * files from here silently changed whether the dialog closed on a slot
- * conflict, which is not a thing a copy edit should be able to do. The two are
- * collapsed: the branch is the structured `errorCode` alone.
+ * The branch is the structured `errorCode` alone, never the server's prose.
  */
 type AllocationFailureAction =
   | "rate-limited"

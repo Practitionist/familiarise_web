@@ -74,9 +74,6 @@ async function postAnswer(
   });
   const data = (await res.json().catch(() => ({}))) as {
     message?: string;
-    // Type-only import of the policy module's own union, so the two routes and
-    // this card agree on the words; `RESCHEDULE_TERMINAL_EVENT_CODES` beside it
-    // is what says how they relate to the propose route's vocabulary.
     outcome?: RescheduleRespondCode;
     error?: string;
     // #1863 — the refusal's stable half. Every branch of the propose route

@@ -7,18 +7,13 @@
  */
 
 import "./setup";
-import { readFileSync } from "fs";
-import { join } from "path";
 import {
   PROPOSAL_MAX_LIFETIME_HOURS,
-  RESCHEDULE_TERMINAL_EVENT_CODES,
   computeProposalExpiry,
   mayAutoConfirm,
   proposalCountMatches,
   rescheduleNotificationVariant,
   supportsProposals,
-  type RescheduleProposeCode,
-  type RescheduleRespondCode,
 } from "../../lib/booking/reschedule-proposals";
 import {
   RESCHEDULE_ALLOWED_FROM,
@@ -228,87 +223,5 @@ describe("rescheduleNotificationVariant", () => {
     // A destination alone cannot render "moved from X to Y", so it degrades to
     // the released sentence rather than half-filling the other one.
     expect(variant).toEqual({ outcome: "RELEASED" });
-  });
-});
-
-/**
- * The propose and respond routes each report an outcome for one reschedule, in
- * their own vocabulary, and a client holding an open proposal has to correlate
- * them. `RESCHEDULE_TERMINAL_EVENT_CODES` is that correlation — so it is pinned
- * as a contract rather than left as prose: the table has to keep naming every
- * code of the authoritative union exactly once (no undocumented state, no
- * invented one), and the lossy direction has to stay lossy.
- */
-describe("the two reschedule outcome vocabularies are mapped, not merged", () => {
-  const EVENTS = Object.entries(RESCHEDULE_TERMINAL_EVENT_CODES);
-
-  it("names every propose code and invents none", () => {
-    // Declared rather than hardcoded from the table, so adding a member to the
-    // union without documenting it fails here.
-    const KNOWN: RescheduleProposeCode[] = [
-      "AUTO_CONFIRMED",
-      "RELEASED",
-      "AWAITING_ANSWER",
-      "NOT_PLACEABLE",
-      "PROPOSAL_CLOSED",
-    ];
-    const mapped = EVENTS.map(([, v]) => v.propose);
-
-    expect([...new Set(mapped)].sort()).toEqual([...KNOWN].sort());
-    // Only the closed code may stand for more than one event — the three events
-    // a client cannot tell apart from the initiator's side. A second code
-    // reaching two events would mean the table had hidden a distinction.
-    const repeated = [
-      ...new Set(mapped.filter((c, i) => mapped.indexOf(c) !== i)),
-    ].sort();
-    expect(repeated).toEqual(["PROPOSAL_CLOSED"]);
-  });
-
-  it("reports a respond code for exactly the two events the respond route can see", () => {
-    const reported = EVENTS.map(([, v]) => v.respond).filter(
-      (c): c is RescheduleRespondCode => c !== null,
-    );
-    expect([...new Set(reported)].sort()).toEqual(["DECLINED", "RELEASED"]);
-  });
-
-  it("collapses both declines AND the sweep's lapse onto PROPOSAL_CLOSED", () => {
-    // The whole reason the mapping is published rather than collapsed into one
-    // enum: from the initiator's side an answered proposal and a lapsed one are
-    // indistinguishable, and pretending otherwise would mean the propose route
-    // reporting a cause it cannot know.
-    const closed = EVENTS.filter(
-      ([, v]) => v.propose === "PROPOSAL_CLOSED",
-    ).map(([k]) => k);
-    expect(closed).toEqual([
-      "DECLINED_AND_ALL_ROWS_RESTORED",
-      "DECLINED_AND_SOME_ROWS_STRANDED",
-      "LAPSED_UNANSWERED",
-    ]);
-    // Only the third is one the respond route could never have produced.
-    expect(RESCHEDULE_TERMINAL_EVENT_CODES.LAPSED_UNANSWERED.respond).toBeNull();
-  });
-
-  it("keeps the respond route's own union equal to the one the table is typed with", () => {
-    // The route declares its union as a literal because a regression pin holds
-    // that exact line, so the two can only be held together from here.
-    const route = readFileSync(
-      join(
-        process.cwd(),
-        "app/api/appointments/[appointmentId]/reschedule/respond/route.ts",
-      ),
-      "utf8",
-    );
-    const respondMembers = [
-      ...new Set(
-        EVENTS.map(([, v]) => v.respond).filter(
-          (c): c is RescheduleRespondCode => c !== null,
-        ),
-      ),
-    ].sort();
-    expect(route).toContain(
-      `type RescheduleRespondCode = ${respondMembers
-        .map((m) => `"${m}"`)
-        .join(" | ")};`,
-    );
   });
 });

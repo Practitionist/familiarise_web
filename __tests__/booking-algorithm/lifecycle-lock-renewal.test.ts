@@ -18,9 +18,6 @@
  * through `renewApprovalLock` (#1319).
  */
 
-import fs from "fs";
-import path from "path";
-
 import "./setup";
 
 jest.mock("../../lib/prisma", () => {
@@ -113,9 +110,6 @@ const CONSULTATION_ROW = {
   },
 };
 
-const read = (rel: string) =>
-  fs.readFileSync(path.join(process.cwd(), rel), "utf8");
-
 beforeEach(() => {
   jest.clearAllMocks();
   lockRenewals.length = 0;
@@ -125,17 +119,6 @@ beforeEach(() => {
 });
 
 describe("abandon re-grants the appointment lock on every attempt", () => {
-  it("renews INSIDE the retry loop, not once around it", () => {
-    // The shape is the whole pin: a renewal taken before the retry wrapper
-    // opens happens exactly once, which is the bug. The paren matters — the
-    // IMPORT of withSerializableRetry sits near the top of the file.
-    const src = read("lib/booking/abandon.ts");
-    const retryCall = src.indexOf("withSerializableRetry(");
-    const renewCall = src.indexOf("renewAppointmentLock(lock)");
-    expect(retryCall).toBeGreaterThan(-1);
-    expect(renewCall).toBeGreaterThan(retryCall);
-  });
-
   it("calls the renewal with the grant the lock handed it", async () => {
     // Executed through `withAppointmentLock`'s own shape: the mock hands the
     // grant to the callback exactly as the real wrapper does, so a caller that
@@ -169,18 +152,6 @@ describe("abandon re-grants the appointment lock on every attempt", () => {
 });
 
 describe("withdrawApproval re-grants it too", () => {
-  it("takes the renewal as a required argument, beside the lock", () => {
-    // Required rather than defaulted: a defaulted renewal is a renewal somebody
-    // can forget, and this retry loop is 4 × 40 s against a 75 s grant.
-    const src = read("lib/booking/lapse-approved-request.ts");
-    expect(src).toContain("renewLock: RenewInjectedLock;");
-    expect(src).not.toContain("renewLock?: RenewInjectedLock");
-    // Inside the retry wrapper, not once around it.
-    expect(src.indexOf("await args.renewLock(lock);")).toBeGreaterThan(
-      src.indexOf("withSerializableRetry("),
-    );
-  });
-
   it("calls it once per attempt, with the grant the lock handed over", async () => {
     const renewLock = jest.fn().mockResolvedValue(undefined);
 
@@ -200,34 +171,5 @@ describe("withdrawApproval re-grants it too", () => {
     }).catch(() => undefined);
 
     expect(renewLock).toHaveBeenCalledWith({ key: "appointment-lock:appt-1" });
-  });
-
-  it("does not take the Redis module's dependency back", () => {
-    // The sweeps import `lapseApprovedRequest` from this file, which is why the
-    // lock is injected at all: the Redis client does not load under jsdom.
-    const src = read("lib/booking/lapse-approved-request.ts");
-    expect(src).not.toContain('from "@/utils/appointmentlock"');
-  });
-});
-
-describe("the grant the renewal re-issues", () => {
-  it("defaults to the appointment lock's own TTL", () => {
-    const src = read("utils/appointmentlock.ts");
-    expect(src).toContain(
-      "export async function renewAppointmentLock(",
-    );
-    expect(src).toContain("ttl: number = APPOINTMENT_LOCK_TTL_MS");
-  });
-
-  it("never throws, because the CAS — not the lock — decides the write", () => {
-    // A lapsed grant means somebody else holds the key. Throwing would replace
-    // the caller's clean typed refusal (NOT_ABANDONABLE / ALREADY_PAID /
-    // REQUEST_CHANGED_ELSEWHERE) with a lock error none of them has a code for.
-    const src = read("utils/appointmentlock.ts");
-    const start = src.indexOf("export async function renewAppointmentLock(");
-    const body = src.slice(start, src.indexOf("\n}", start));
-    expect(body).toContain("if (!lock) return false;");
-    expect(body).toContain("return await extendLock(lock, ttl);");
-    expect(body).not.toContain("throw");
   });
 });

@@ -7,6 +7,7 @@ import {
   acceptProposal,
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
+import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
@@ -31,34 +32,6 @@ const ACCEPT_FAILURE_COPY: Record<string, string> = {
     "This proposal has expired. The released times are back with the consultant to place.",
 };
 const ACCEPT_FAILURE_FALLBACK = "The proposed times could not be confirmed.";
-
-/**
- * What a decline did to the released sessions, as a code a client may branch
- * on.
- *
- * Deliberately NOT `RescheduleProposeCode` (lib/booking/reschedule-proposals.ts)
- * even though that union is the sibling route's: it answers "is my proposal
- * still waiting for somebody", which is the initiator's question minutes after
- * proposing, and none of its members says "the original times are back".
- * `RESCHEDULE_TERMINAL_EVENT_CODES` in that module is where the two vocabularies
- * are reconciled — it names this route's code for every event, including the one
- * (a proposal that lapsed unanswered) this route can never report, so a client
- * holding an open proposal has one table rather than a pair of unions to
- * correlate. Read it before adding a member here.
- *
- * The declaration below repeats that module's `RescheduleRespondCode` rather than
- * importing it, because a regression pin holds this exact line; the two are held
- * equal by `__tests__/booking-algorithm/reschedule-proposals.test.ts`, which reads
- * this file. Update both together.
- *
- * These are also the two codes the NOTIFICATION for this same event already sends
- * — `declineProposal` picks DECLINED when its restore landed and RELEASED when
- * the original time was gone — so the toast the counterparty reads and the one
- * the initiator gets cannot describe one event two different ways, and RELEASED
- * carries the same meaning in both vocabularies: slots released with no
- * replacement time.
- */
-type RescheduleRespondCode = "DECLINED" | "RELEASED";
 
 const DECLINE_OUTCOME_COPY: Record<RescheduleRespondCode, string> = {
   DECLINED:

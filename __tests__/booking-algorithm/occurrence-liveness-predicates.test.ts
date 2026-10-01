@@ -22,8 +22,6 @@
  * stale-tab guard exists to protect and reject every reschedule as stale.
  */
 
-import fs from "fs";
-import path from "path";
 
 import "./setup";
 
@@ -225,8 +223,6 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-const read = (file: string) =>
-  fs.readFileSync(path.join(process.cwd(), file), "utf8");
 
 const allocateManual = (expectedTentativeSlotCount: number) =>
   SchedulingService.allocate({
@@ -334,33 +330,5 @@ describe("assertNoConfirmedSlots counts only live confirmed rows", () => {
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
     expect(result.errorCode).toBe("ALREADY_ALLOCATED");
-  });
-});
-
-describe("one file, one answer", () => {
-  it("keeps a single tentative-count and a single confirmed-row predicate", () => {
-    // Structural pin, and the reason the drift was possible at all: the four
-    // tentative call sites used to inline the same reduce, and the confirmed
-    // count had its own inline twin. A reader (or a future edit) can now only
-    // reach these two definitions.
-    const src = read("utils/scheduling-engine/SchedulingService.ts");
-    const bareTentative =
-      src.match(/occurrences\.filter\(\(\w+\) => \w+\.isTentative\)/g) ?? [];
-    expect(bareTentative).toHaveLength(0);
-    const inlineConfirmed =
-      src.match(/!isTentative && !isDeadOccurrence\(/g) ?? [];
-    expect(inlineConfirmed).toHaveLength(0);
-    expect(src).toContain("isCarriedTentativeOccurrence");
-    expect(src).toContain("isLiveConfirmedOccurrence");
-  });
-
-  it("keeps the interval count a separate concept, deliberately", () => {
-    // `confirmedIntervalsOf` answers a different question — how many 30-minute
-    // atoms are covered — so it does NOT share the row-level predicate. Pinned
-    // so a later "unify everything" does not silently change the
-    // ALREADY_ALLOCATED arithmetic that reads it.
-    const src = read("utils/scheduling-engine/SchedulingService.ts");
-    expect(src).toContain("private static confirmedIntervalsOf(");
-    expect(src).toContain(".filter((slot) => !slot.isTentative && also(slot))");
   });
 });

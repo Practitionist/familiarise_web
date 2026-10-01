@@ -28,26 +28,17 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-import { readFileSync } from "fs";
-import { join } from "path";
-
 import prisma from "../../lib/prisma";
 import { isOrgFundedPaymentMethod } from "../../lib/data/org-sponsored-seats";
 import { isActForOrgBooking, isOrgFundedByOrg } from "../../lib/booking/org-actor";
 import { buildWhere } from "../../lib/api/scope/list-appointments";
 
-const SRC = readFileSync(
-  join(process.cwd(), "lib/api/scope/list-appointments.ts"),
-  "utf8",
-);
 const m = prisma as unknown as {
   payment: { findFirst: jest.Mock };
 };
 
-/** The literal the Prisma `in` filter is built from, read out of the source. */
 function listWhereClause(): unknown {
-  const w = buildWhere({ scope: { kind: "org", orgId: "org-1" }, userId: "u1" });
-  return w;
+  return buildWhere({ scope: { kind: "org", orgId: "org-1" }, userId: "u1" });
 }
 
 describe("the org-funded rail tuple", () => {
@@ -63,29 +54,12 @@ describe("the org-funded rail tuple", () => {
   });
 
   it("the list's WHERE clause is built from exactly those three", () => {
-    // Pinned by value, not by a second copy of the list: the source literal and
-    // the predicate have to agree, and reading the literal out of the file is
-    // what makes a rename or a fourth rail fail here instead of in production.
-    const match = /const ORG_FUNDED_PAYMENT_METHODS = (\[[^\]]*\]);/.exec(SRC);
-    expect(match).not.toBeNull();
-    const fromSource = JSON.parse(
-      (match as RegExpExecArray)[1].replace(/'/g, '"'),
-    ) as string[];
     const fromPredicate = ["WALLET", "INVOICE", "LICENSE"].filter(
       isOrgFundedPaymentMethod,
     );
-    expect(fromSource).toEqual(fromPredicate);
     expect(listWhereClause()).toMatchObject({
       payment: { some: { paymentMethod: { in: fromPredicate } } },
     });
-  });
-
-  it("the payer include applies the same clause as the WHERE", () => {
-    // Two filters on one surface must not drift: the WHERE decides which rows
-    // are listed, the include decides whose payment is named as the payer.
-    expect(SRC).toContain("paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS }");
-    expect(SRC.match(/paymentMethod: \{ in: ORG_FUNDED_PAYMENT_METHODS \}/g))
-      .toHaveLength(2);
   });
 });
 

@@ -402,41 +402,6 @@ export const invalidEventId = (): AllocationToast => ({
   description: "This booking can't be scheduled as shown. Please reload.",
 });
 
-/**
- * #1132 — the server 409 messages that must render AS THEMSELVES instead of
- * being relabelled "already allocated in another tab". A slot conflict
- * ("Slot taken during allocation: [CONFLICT] Slot already booked: …",
- * ScheduleValidationService/SchedulingService) means the SLOT went to
- * someone else — the request is still allocatable with different times, so
- * the honest message keeps the dialog open instead of kicking the
- * consultant back to the list.
- *
- * SUPERSEDED (#1863). These regexes matched SERVER PROSE, which made a
- * reworded message silently change whether the consultant's dialog stayed
- * open — a copy edit three files away could close a dialog on a slot
- * conflict and strand the request. The decision is now made on the structured
- * `errorCode` (`classifyAllocationFailure` in hooks/scheduling/useScheduling.ts)
- * and both the slot-conflict and the lock-contention codes already route to the
- * stay-open branch, which is what these two patterns were approximating.
- *
- * Kept exported because the shape is still meaningful to read against the
- * switch, and deleting a pinned behaviour on the strength of a comment is how
- * the next person re-adds it worse. Nothing branches on it.
- */
-export const preservedMessages: readonly RegExp[] = [
-  /slot already booked/i,
-  /slot taken during allocation/i,
-];
-
-/**
- * DEPRECATED (#1863) — the prose matcher the 409 branch used to consult. Kept
- * only so the pinned test keeps describing the strings it described; NO
- * production code reads it. The decision is `classifyAllocationFailure` on
- * `errorCode` (hooks/scheduling/useScheduling.ts).
- */
-export const isPreservedAllocationMessage = (message: string): boolean =>
-  preservedMessages.some((pattern) => pattern.test(message));
-
 /** 409 — another tab or teammate already allocated this request. "Session"
  * is deliberately avoided here: it means a bookable session everywhere else
  * in this dialog. */
