@@ -22,6 +22,18 @@ export default [
     ],
   },
 
+  // No inline escape hatches (owner policy, 2026-10-02): a rule that is wrong
+  // for a path is turned off for that path here, with a reason, never in code.
+  // `@typescript-eslint/ban-ts-comment` (error in the recommended set) keeps
+  // `@ts-ignore`, `@ts-expect-error` and `@ts-nocheck` out as well.
+  // https://eslint.org/docs/latest/use/configure/rules#disabling-inline-comments
+  {
+    linterOptions: {
+      noInlineConfig: true,
+      reportUnusedDisableDirectives: "error",
+    },
+  },
+
   // Jest test files configuration
   {
     files: ["**/*.{test,spec}.{js,ts,jsx,tsx}", "jest.setup.ts"],
