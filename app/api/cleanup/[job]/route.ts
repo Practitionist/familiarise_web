@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCleanupJobHandlers } from "@/lib/cron/cleanup-registry";
 
 type RouteContext = {
-  params?: Promise<{ job?: string }> | { job?: string };
+  params: Promise<{ job: string }>;
 };
 
 async function resolveJobSlug(
@@ -24,7 +24,7 @@ async function resolveJobSlug(
 
 export async function GET(
   req: NextRequest,
-  context?: RouteContext,
+  context: RouteContext,
 ): Promise<NextResponse> {
   const slug = await resolveJobSlug(req, context);
   const handlers = slug ? getCleanupJobHandlers(slug) : null;
@@ -39,7 +39,7 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  context?: RouteContext,
+  context: RouteContext,
 ): Promise<NextResponse> {
   const slug = await resolveJobSlug(req, context);
   const handlers = slug ? getCleanupJobHandlers(slug) : null;

@@ -62,7 +62,9 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
   });
 
   it("answers 401 without the cron secret and never reaches the detector", async () => {
-    const res = await POST(request(null) as never);
+    const res = await POST(request(null) as never, {
+      params: Promise.resolve({ job: "detect-consultant-no-shows" }),
+    });
 
     expect(res.status).toBe(401);
     expect(mockDetect).not.toHaveBeenCalled();
@@ -79,7 +81,9 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       timestamp: "2026-09-13T00:00:00.000Z",
     });
 
-    const res = await POST(request() as never);
+    const res = await POST(request() as never, {
+      params: Promise.resolve({ job: "detect-consultant-no-shows" }),
+    });
 
     expect(mockDetect).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(200);
