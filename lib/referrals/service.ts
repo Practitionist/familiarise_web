@@ -795,7 +795,7 @@ export async function getUserReferrals(
 
   if (!referralCode) return [];
 
-  return prisma.referral.findMany({
+  const rows = await prisma.referral.findMany({
     where: { referralCodeId: referralCode.id },
     include: {
       referredUser: {
@@ -803,6 +803,19 @@ export async function getUserReferrals(
       },
     },
     orderBy: { createdAt: "desc" },
+  });
+
+  const now = new Date();
+  const windowCutoff = new Date(
+    now.getTime() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+  return rows.map((r) => {
+    const expiresAt = (r as { expiresAt?: Date | null }).expiresAt;
+    const isStale =
+      (r.status === "SIGNED_UP" || (r.status as string) === "PENDING") &&
+      ((expiresAt != null && expiresAt < now) ||
+        (r.signedUpAt != null && r.signedUpAt < windowCutoff));
+    return isStale ? { ...r, status: "EXPIRED" as const } : r;
   });
 }
 
@@ -816,22 +829,6 @@ export async function getCreditHistory(
     where: { userId },
     orderBy: { createdAt: "desc" },
   });
-}
-
-/**
- * Expires credits that are past their expiry date.
- * Called by cron job.
- */
-export async function expireStaleCredits(): Promise<number> {
-  const result = await prisma.referralCredit.updateMany({
-    where: {
-      remainingAmount: { gt: 0 },
-      expiresAt: { lt: new Date() },
-    },
-    data: { remainingAmount: 0 },
-  });
-
-  return result.count;
 }
 
 /**

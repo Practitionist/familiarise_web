@@ -2,7 +2,6 @@
  * Novu Notification Service
  * High-level methods for triggering notifications in business logic.
  * Non-throwing: logs errors and returns success/failure status.
- * Pattern follows lib/email/deliver.ts (graceful degradation).
  */
 import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -94,38 +93,15 @@ import {
 } from "./humanize";
 
 // ============================================================================
-// Core trigger function
+// Core trigger orchestration
 // ============================================================================
 
-/**
- * #1654 — every trigger is stage + attempt (lib/novu/outbox.ts): the
- * NotificationOutbox row is written first, then one inline attempt runs under
- * the client's timeout, and the drain finishes whatever that left PENDING.
- * With `tx` the row is staged in the caller's transaction and only staged:
- * the result carries `staged` for `attemptTrigger` after the commit.
- */
 export interface TriggerOptions {
-  // #691 — "membership" too, so the org roster reads through the same tx
-  // (PG_POOL_MAX=1 deadlocks a global-client read inside an open transaction).
-  // #1697 item 5 — "user" too: the recipient-timezone read must ride the
-  // caller's transaction for the same single-connection reason.
-  // Quiet-hours reads ride it too (via the `user` → `notificationPreferences`
-  // include in resolveRecipientBellPolicy, so no extra delegate is needed).
   tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
-  /**
-   * Urgent workflows (payment failure) bypass quiet-hours deferral entirely:
-   * no `notBefore` is stamped, so every path — inline, post-commit, drain —
-   * sends immediately. Defaults true (routine product notices defer).
-   */
+  /** Urgent workflows (payment/payout failure) bypass quiet-hours deferral. */
   deferrable?: boolean;
-  /**
-   * #1861 P2r — stage the outbox row and return without attempting delivery,
-   * same as passing `tx`, but for a caller with no open transaction to ride:
-   * the business write already committed, so this call only needs to exist
-   * (and be awaited) before the response returns. The caller runs
-   * `attemptTrigger(result.staged)` itself, typically inside `after()`.
-   */
+  /** Stage the outbox row and return without attempting inline delivery. */
   deferAttempt?: boolean;
 }
 
@@ -163,12 +139,6 @@ type BellUserRow = {
   > | null;
 };
 
-/**
- * Evaluates the same four bell gates as `inAppSkipRule` (`lib/novu/templates/conditions.ts`)
- * directly against the database row (`OrgWorkspaceProfile.notificationRoutingMode`,
- * `NotificationPreference.allNotifications`, `inAppEnabled`, and the workflow's
- * category switch) before an outbox row is ever staged.
- */
 function isBellAllowedForRecipient(
   row: BellUserRow | undefined,
   category: PreferenceCategory | null,
@@ -182,23 +152,12 @@ function isBellAllowedForRecipient(
   if (!pref) return true;
   if (pref.allNotifications === false) return false;
   if (pref.inAppEnabled === false) return false;
-  if (
-    category !== null &&
-    pref[EMAIL_CATEGORY_COLUMN[category]] === false
-  ) {
+  if (category !== null && pref[EMAIL_CATEGORY_COLUMN[category]] === false) {
     return false;
   }
   return true;
 }
 
-/**
- * Loads each recipient's bell preferences, workspace routing mode, and
- * quiet-hours config in a single query (riding the caller's tx when one is
- * open, per the PG_POOL_MAX=1 note above). Filters out opted-out recipients
- * and computes the latest quiet-hours window-end across the remaining
- * recipients. BROADCAST has no recipients and is never filtered or deferred.
- * Never throws: on any failure returns all recipients and `notBefore: undefined`.
- */
 async function resolveRecipientBellPolicy(
   workflowId: NovuWorkflowId,
   recipients: string[],
@@ -214,12 +173,8 @@ async function resolveRecipientBellPolicy(
       select: {
         id: true,
         timezone: true,
-        orgWorkspaceProfile: {
-          select: { notificationRoutingMode: true },
-        },
-        notificationPreferences: {
-          select: BELL_PREFERENCE_SELECT,
-        },
+        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
+        notificationPreferences: { select: BELL_PREFERENCE_SELECT },
       },
     })) as BellUserRow[];
 
@@ -268,9 +223,6 @@ async function resolveRecipientBellPolicy(
   }
 }
 
-// Unconfigured Novu in a deployed env means notifications silently vanish —
-// a console.warn nobody reads is not enough. Local dev stays console-only.
-// #1654 — the row is still staged, so the relay delivers once configured.
 function reportNotConfigured(workflowId: string): void {
   console.warn(`[Novu] Not configured. Staged only: ${workflowId}`);
   if (process.env.NODE_ENV === "production") {
@@ -281,13 +233,10 @@ function reportNotConfigured(workflowId: string): void {
   }
 }
 
-/** Stage, then attempt unless the caller's transaction owns the commit. */
 async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
-  // Evaluate user/org bell preferences, workspace routing mode, and quiet-hours
-  // deferral in Postgres/TypeScript before staging NotificationOutbox.
   const policy =
     args.kind === "BROADCAST"
       ? { allowedRecipients: args.recipients, notBefore: undefined }
@@ -299,10 +248,7 @@ async function stageAndAttempt(
   if (args.kind !== "BROADCAST" && policy.allowedRecipients.length === 0) {
     return { success: true };
   }
-  const effectiveArgs = {
-    ...args,
-    recipients: policy.allowedRecipients,
-  };
+  const effectiveArgs = { ...args, recipients: policy.allowedRecipients };
   const notBefore = effectiveArgs.notBefore ?? policy.notBefore;
   const staged = await stageTrigger({
     ...effectiveArgs,
@@ -314,25 +260,15 @@ async function stageAndAttempt(
     return { success: false, error: "Novu not configured" };
   }
   if (!staged) {
-    // Staging failed outside a transaction. A quiet-hours floor lives only in
-    // the row, so a deferred notice has nowhere to wait: fail closed rather
-    // than wake the recipient early (stageTrigger already reported to Sentry).
     if (notBefore && notBefore.getTime() > Date.now()) {
       return {
         success: false,
         error: "Stage failed; quiet-hours notice not sent",
       };
     }
-    // Otherwise send-first, as before #1654, so a database hiccup does not
-    // also drop the bell.
     return sendUnstaged(effectiveArgs);
   }
-  // #1861 P2r — deferAttempt is the no-tx sibling of tx: the row is staged
-  // (so it exists even if the process dies before the caller's after()
-  // runs), and the caller attempts delivery itself, typically in after().
   if (opts?.tx || opts?.deferAttempt) return { success: true, staged };
-  // attemptTrigger holds future-notBefore rows for the drain (single
-  // enforcement point — covers inline and post-commit attempts alike).
   return attemptTrigger(staged);
 }
 
@@ -396,10 +332,6 @@ export async function triggerWorkflow<T extends NovuPayload>(
   );
 }
 
-/**
- * Helper to trigger the same workflow for multiple users (e.g. both parties).
- * Uses a single API call with array `to` field (max 100 per call).
- */
 export async function triggerForMultiple<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   userIds: string[],
@@ -415,7 +347,6 @@ export async function triggerForMultiple<T extends NovuPayload>(
 
   const BATCH_SIZE = 100;
   const results: TriggerResult[] = [];
-
   for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
     const batch = userIds.slice(i, i + BATCH_SIZE);
     const result = await stageAndAttempt(
@@ -424,14 +355,9 @@ export async function triggerForMultiple<T extends NovuPayload>(
     );
     results.push(...batch.map(() => result));
   }
-
   return results;
 }
 
-/**
- * Trigger a broadcast workflow to all existing subscribers.
- * Uses Novu's triggerBroadcast API — no need to fetch user IDs.
- */
 async function triggerBroadcastWorkflow<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   payload: T,
@@ -443,24 +369,6 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
   );
 }
 
-// ============================================================================
-// Customer-ready payloads (#536)
-// ============================================================================
-
-/**
- * Trigger once per distinct recipient timezone.
- *
- * `triggerForMultiple` sends ONE payload to a list of subscribers, so a
- * rendered date inside it can only be correct for whichever recipient happens
- * to share the zone it was rendered in. Every other recipient reads a time that
- * is not theirs. Splitting on the zone is cheaper than it looks: both parties
- * to a booking are usually in the same zone, so this is one trigger in the
- * common case and two in the cross-border one.
- *
- * The zones are loaded in a single query; see `resolveRecipientTimezones` for
- * why that read is bounded and never throws. The zone only shapes the rendered
- * payload; nothing here defers the send, so the row's `notBefore` stays null.
- */
 export async function triggerForMultipleZoned(
   workflowId: NovuWorkflowId,
   userIds: string[],
@@ -469,7 +377,6 @@ export async function triggerForMultipleZoned(
   opts?: TriggerOptions,
 ): Promise<TriggerResult[]> {
   if (userIds.length === 0) return [];
-
   const zones = await resolveRecipientTimezones(userIds, opts?.tx);
   const results: TriggerResult[] = [];
   for (const [timezone, recipients] of groupRecipientsByTimezone(
@@ -489,7 +396,6 @@ export async function triggerForMultipleZoned(
   return results;
 }
 
-/** Single-recipient sibling of {@link triggerForMultipleZoned}. */
 export async function triggerWorkflowZoned(
   workflowId: NovuWorkflowId,
   subscriberId: string,
@@ -508,15 +414,126 @@ export async function triggerWorkflowZoned(
   );
 }
 
-/** Raw enum in, sentence label plus the original out. */
+// ============================================================================
+// Declarative notifier factories & wire mappers
+// ============================================================================
+
+function resolveTriggerArgs(
+  dedupeKeyOrOpts?: string | TriggerOptions,
+  opts?: TriggerOptions,
+  defaultOpts?: TriggerOptions,
+): { dedupeKey: string | undefined; opts: TriggerOptions | undefined } {
+  const dedupeKey =
+    typeof dedupeKeyOrOpts === "string" ? dedupeKeyOrOpts : undefined;
+  const callerOpts =
+    typeof dedupeKeyOrOpts === "string" ? opts : dedupeKeyOrOpts;
+  const mergedOpts =
+    defaultOpts && callerOpts
+      ? { ...defaultOpts, ...callerOpts }
+      : (callerOpts ?? defaultOpts);
+  return { dedupeKey, opts: mergedOpts };
+}
+
+function defineSingleNotifier<TInput>(
+  workflowId: NovuWorkflowId,
+  mapPayload: (input: TInput) => NovuPayload = (p) => p as NovuPayload,
+  defaultOpts?: TriggerOptions,
+) {
+  return (
+    subscriberId: string,
+    payload: TInput,
+    dedupeKeyOrOpts?: string | TriggerOptions,
+    opts?: TriggerOptions,
+  ): Promise<TriggerResult> => {
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    return triggerWorkflow(
+      workflowId,
+      subscriberId,
+      mapPayload(payload),
+      r.dedupeKey,
+      r.opts,
+    );
+  };
+}
+
+function defineMultiNotifier<TInput>(
+  workflowId: NovuWorkflowId,
+  mapPayload: (input: TInput) => NovuPayload = (p) => p as NovuPayload,
+  defaultOpts?: TriggerOptions,
+) {
+  return (
+    userIds: string[],
+    payload: TInput,
+    dedupeKeyOrOpts?: string | TriggerOptions,
+    opts?: TriggerOptions,
+  ): Promise<TriggerResult[]> => {
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    return triggerForMultiple(
+      workflowId,
+      userIds,
+      mapPayload(payload),
+      r.dedupeKey,
+      r.opts,
+    );
+  };
+}
+
+function defineZonedSingleNotifier<TInput>(
+  workflowId: NovuWorkflowId,
+  mapPayload: (input: TInput, timezone: string) => NovuPayload,
+  defaultOpts?: TriggerOptions,
+) {
+  return (
+    subscriberId: string,
+    payload: TInput,
+    dedupeKeyOrOpts?: string | TriggerOptions,
+    opts?: TriggerOptions,
+  ): Promise<TriggerResult> => {
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    return triggerWorkflowZoned(
+      workflowId,
+      subscriberId,
+      (tz) => mapPayload(payload, tz),
+      r.dedupeKey,
+      r.opts,
+    );
+  };
+}
+
+function defineZonedMultiNotifier<TInput>(
+  workflowId: NovuWorkflowId,
+  mapPayload: (input: TInput, timezone: string) => NovuPayload,
+  defaultOpts?: TriggerOptions,
+) {
+  return (
+    userIds: string[],
+    payload: TInput,
+    dedupeKeyOrOpts?: string | TriggerOptions,
+    opts?: TriggerOptions,
+  ): Promise<TriggerResult[]> => {
+    const r = resolveTriggerArgs(dedupeKeyOrOpts, opts, defaultOpts);
+    return triggerForMultipleZoned(
+      workflowId,
+      userIds,
+      (tz) => mapPayload(payload, tz),
+      r.dedupeKey,
+      r.opts,
+    );
+  };
+}
+
+function defineBroadcastNotifier<TInput>(
+  workflowId: NovuWorkflowId,
+  mapPayload: (input: TInput) => NovuPayload = (p) => p as NovuPayload,
+) {
+  return (payload: TInput, opts?: TriggerOptions): Promise<TriggerResult> =>
+    triggerBroadcastWorkflow(workflowId, mapPayload(payload), opts);
+}
+
 function appointmentWire(
   input: AppointmentPayloadInput,
   timezone: string,
 ): AppointmentPayload {
-  // The raw instant is lifted out BEFORE the spread: the templates gate on
-  // `{{#if payload.dateTime}}`, which any non-empty string satisfies, so a
-  // value the formatter rejects must not ride through under the display key.
-  // Omitted rather than blanked for the same reason.
   const { dateTime: rawDateTime, ...rest } = input;
   const dateTime = formatNotificationDateTime(rawDateTime, timezone);
   return {
@@ -551,16 +568,6 @@ function cancelledWire(
   };
 }
 
-/**
- * #1085 — what fills `newDateTime` when the outcome has no destination time.
- *
- * The `appointment-rescheduled` template renders "from X to Y" unconditionally,
- * and three of the five outcomes have no Y, which is how the inbox came to show
- * "rescheduled the CONSULTATION for Basic Consultation from&nbsp;&nbsp;to". A
- * phrase completes the sentence in every case. The MOVED and PROPOSED entries
- * are reachable only if a stored instant fails to parse, which would otherwise
- * reintroduce the blank.
- */
 const RESCHEDULE_AWAITING_TIME: Record<
   RescheduleOutcomeFields["outcome"],
   string
@@ -577,15 +584,12 @@ function rescheduledWire(
   input: AppointmentRescheduledInput,
   timezone: string,
 ): AppointmentRescheduledPayload {
-  // Both raw instants leave the input before it reaches `appointmentWire`, so
-  // neither can survive that spread unformatted.
   const { oldDateTime: rawOld, newDateTime: rawNew, ...base } = input;
   const oldDateTime = formatNotificationDateTime(rawOld, timezone);
   const hasDestination =
     input.outcome === "MOVED" || input.outcome === "PROPOSED";
   const newDateTimeIso = hasDestination ? rawNew : undefined;
   const newDateTime = formatNotificationDateTime(newDateTimeIso, timezone);
-
   return {
     ...appointmentWire(base, timezone),
     outcome: input.outcome,
@@ -622,101 +626,8 @@ function bookingRequestWire(
   };
 }
 
-// ============================================================================
-// Appointment Notifications
-// ============================================================================
-
-export async function notifyAppointmentBooked(
-  userIds: string[],
-  payload: AppointmentPayloadInput,
-  opts?: TriggerOptions,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.APPOINTMENT_BOOKED,
-    userIds,
-    (timezone) => appointmentWire(payload, timezone),
-    undefined,
-    opts,
-  );
-}
-
-/**
- * #1206 — sent to the CONSULTEE only. The consultant already knows: they were
- * shown "only N of M fit" and confirmed it. This is the half of that exchange
- * the consultee never saw.
- */
-export async function notifyAppointmentPartiallyScheduled(
-  userIds: string[],
-  payload: AppointmentPartiallyScheduledInput,
-  opts?: TriggerOptions,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.APPOINTMENT_PARTIALLY_SCHEDULED,
-    userIds,
-    (timezone) => partiallyScheduledWire(payload, timezone),
-    undefined,
-    opts,
-  );
-}
-
-export async function notifyAppointmentCancelled(
-  userIds: string[],
-  payload: AppointmentCancelledInput,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.APPOINTMENT_CANCELLED,
-    userIds,
-    (timezone) => cancelledWire(payload, timezone),
-  );
-}
-
-export async function notifyAppointmentRescheduled(
-  userIds: string[],
-  payload: AppointmentRescheduledInput,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.APPOINTMENT_RESCHEDULED,
-    userIds,
-    (timezone) => rescheduledWire(payload, timezone),
-  );
-}
-
-export async function notifyAppointmentCompleted(
-  userIds: string[],
-  payload: AppointmentPayloadInput,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.APPOINTMENT_COMPLETED,
-    userIds,
-    (timezone) => appointmentWire(payload, timezone),
-  );
-}
-
-// `dedupeKey` (appointment + window) keeps the 1h reminder from being
-// swallowed as a duplicate of the 24h one — their payloads are identical.
-export async function notifyAppointmentReminder(
-  userIds: string[],
-  payload: AppointmentPayloadInput,
-  dedupeKey?: string,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.APPOINTMENT_REMINDER,
-    userIds,
-    (timezone) => appointmentWire(payload, timezone),
-    dedupeKey,
-  );
-}
-
-// ============================================================================
-// Payment Notifications
-// ============================================================================
-
-export async function notifyPaymentSuccess(
-  userId: string,
-  payload: PaymentSuccessInput,
-  opts?: TriggerOptions,
-) {
-  const wire: PaymentSuccessPayload = {
+function paymentSuccessWire(payload: PaymentSuccessInput): PaymentSuccessPayload {
+  return {
     ...payload,
     amount: formatNotificationAmountBare(payload.amount, payload.currency),
     amountFormatted: formatNotificationMoney(payload.amount, payload.currency),
@@ -724,21 +635,10 @@ export async function notifyPaymentSuccess(
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
   };
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.PAYMENT_SUCCESS,
-    userId,
-    wire,
-    undefined,
-    opts,
-  );
 }
 
-export async function notifyPaymentFailed(
-  userId: string,
-  payload: PaymentFailedInput,
-  opts?: TriggerOptions,
-) {
-  const wire: PaymentFailedPayload = {
+function paymentFailedWire(payload: PaymentFailedInput): PaymentFailedPayload {
+  return {
     ...payload,
     amount: formatNotificationAmountBare(payload.amount, payload.currency),
     amountFormatted: formatNotificationMoney(payload.amount, payload.currency),
@@ -747,26 +647,9 @@ export async function notifyPaymentFailed(
     appointmentTypeCode: payload.appointmentType,
     failureReason: failureReasonLabel(payload.failureReason),
   };
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.PAYMENT_FAILED,
-    userId,
-    wire,
-    undefined,
-    opts,
-  );
 }
 
-/**
- * Paise become money before the payer reads them. `amount` is symbol-free
- * because `refund-processed` and `refund-requested` print `{{currency}}`
- * themselves; `refund-failed` shares this payload type and so shares its shape,
- * which is the point — one type cannot mean two things depending on which
- * workflow happens to carry it.
- */
 function refundWire(payload: RefundInput): RefundPayload {
-  // The bell gets the human reason; the Refund row keeps the machine one.
-  // Destructured out first so an unmappable reason is omitted (the template
-  // gates on `{% if payload.reason %}`) rather than riding through raw.
   const { reason: rawReason, ...rest } = payload;
   const reason = refundReasonLabel(rawReason);
   return {
@@ -784,390 +667,26 @@ function refundWire(payload: RefundInput): RefundPayload {
   };
 }
 
-export async function notifyRefundProcessed(
-  userId: string,
-  payload: RefundInput,
-  opts?: TriggerOptions,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.REFUND_PROCESSED,
-    userId,
-    refundWire(payload),
-    undefined,
-    opts,
-  );
-}
-
-// #779 §A — the gateway rejected a refund (Refund.status = FAILED). Notifies
-// the payer; `reason` on the payload carries the gateway failure reason.
-export async function notifyRefundFailed(userId: string, payload: RefundInput) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.REFUND_FAILED,
-    userId,
-    refundWire(payload),
-  );
-}
-
-// `dedupeKey` should be the Refund row id: the wire payload carries no refund
-// identifier, so two refunds of the same amount/reason/scope would otherwise
-// hash to one outbox row and ops would see only the first (#1738 review).
-export async function notifyRefundRequested(
-  adminUserIds: string[],
-  payload: RefundInput,
-  dedupeKey?: string,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.REFUND_REQUESTED,
-    adminUserIds,
-    refundWire(payload),
-    dedupeKey,
-  );
-}
-
-// ============================================================================
-// Support Ticket Notifications
-// ============================================================================
-
-export async function notifySupportTicketCreated(
-  staffUserIds: string[],
-  payload: SupportTicketPayload,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.SUPPORT_TICKET_CREATED,
-    staffUserIds,
-    payload,
-  );
-}
-
-export async function notifySupportTicketUpdate(
-  userId: string,
-  payload: SupportTicketPayload,
-) {
-  return triggerWorkflow(NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE, userId, payload);
-}
-
-/**
- * #705 — the ops side of a ticket: the customer replied or reopened, fanned
- * out to the assignee or the whole queue. Its own workflow, not the owner's
- * SUPPORT_TICKET_UPDATE, so staff can digest it later without touching the
- * customer's bell.
- */
-export async function notifySupportTicketActivity(
-  staffUserIds: string[],
-  payload: SupportTicketPayload,
-  dedupeKey?: string,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY,
-    staffUserIds,
-    payload,
-    dedupeKey,
-  );
-}
-
-export async function notifySupportTicketResponse(
-  userId: string,
-  payload: SupportTicketPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.SUPPORT_TICKET_RESPONSE,
-    userId,
-    payload,
-  );
-}
-
-// ============================================================================
-// Feedback & Review Notifications
-// ============================================================================
-
-export async function notifyFeedbackReceived(
-  adminUserIds: string[],
-  payload: FeedbackPayload,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.FEEDBACK_RECEIVED,
-    adminUserIds,
-    payload,
-  );
-}
-
-export async function notifyNewReview(
-  consultantUserId: string,
-  payload: ReviewPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.NEW_REVIEW_RECEIVED,
-    consultantUserId,
-    payload,
-  );
-}
-
-// ============================================================================
-// Trial Session Notifications
-// ============================================================================
-
-export async function notifyTrialRequested(
-  consultantUserId: string,
-  payload: TrialInput,
-) {
-  return triggerWorkflowZoned(
-    NOVU_WORKFLOWS.TRIAL_SESSION_REQUESTED,
-    consultantUserId,
-    (timezone) => trialWire(payload, timezone),
-  );
-}
-
-export async function notifyTrialScheduled(
-  consulteeUserId: string,
-  payload: TrialInput,
-) {
-  return triggerWorkflowZoned(
-    NOVU_WORKFLOWS.TRIAL_SESSION_SCHEDULED,
-    consulteeUserId,
-    (timezone) => trialWire(payload, timezone),
-  );
-}
-
-export async function notifyTrialCompleted(
-  userIds: string[],
-  payload: TrialInput,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.TRIAL_SESSION_COMPLETED,
-    userIds,
-    (timezone) => trialWire(payload, timezone),
-  );
-}
-
-export async function notifyTrialCancelled(
-  userIds: string[],
-  payload: TrialInput,
-) {
-  return triggerForMultipleZoned(
-    NOVU_WORKFLOWS.TRIAL_SESSION_CANCELLED,
-    userIds,
-    (timezone) => trialWire(payload, timezone),
-  );
-}
-
-// ============================================================================
-// Subscription Notifications
-// ============================================================================
-
-export async function notifySubscriptionStarted(
-  userId: string,
-  payload: SubscriptionPayload,
-) {
-  return triggerWorkflow(NOVU_WORKFLOWS.SUBSCRIPTION_STARTED, userId, payload);
-}
-
-export async function notifySubscriptionCancelled(
-  userIds: string[],
-  payload: SubscriptionPayload,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.SUBSCRIPTION_CANCELLED,
-    userIds,
-    payload,
-  );
-}
-
-/**
- * #1766 — staged from the completion path when a cycle's last live session
- * completes with entitlement left; `dedupeKey` is `sub:<id>:cycle:<ordinal>`
- * so a second completion pass over the same state reuses the outbox row.
- */
-export async function notifySubscriptionRenewed(
-  userId: string,
-  payload: SubscriptionPayload,
-  dedupeKey?: string,
-  opts?: TriggerOptions,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED,
-    userId,
-    payload,
-    dedupeKey,
-    opts,
-  );
-}
-
-// ============================================================================
-// Consultant-Specific Notifications
-// ============================================================================
-
-export async function notifyNewBookingRequest(
-  consultantUserId: string,
-  payload: BookingRequestInput,
-) {
-  return triggerWorkflowZoned(
-    NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
-    consultantUserId,
-    (timezone) => bookingRequestWire(payload, timezone),
-  );
-}
-
-/**
- * #1703 / #1775 C-4 — a paid plan still without session times, nudged at
- * hours 12, 24 and 36. Rides the new-booking-request event with `nudgeHours`; the
- * dedupe key makes each stage exactly-once through the outbox.
- */
-export async function notifyUnscheduledSubscriptionNudge(
-  consultantUserId: string,
-  payload: BookingRequestInput & { nudgeHours: number },
-  dedupeKey: string,
-) {
-  return triggerWorkflowZoned(
-    NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
-    consultantUserId,
-    (timezone) => bookingRequestWire(payload, timezone),
-    dedupeKey,
-  );
-}
-
-export async function notifyVerificationStatusChanged(
-  consultantUserId: string,
-  payload: VerificationPayload,
-  opts?: TriggerOptions,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.VERIFICATION_STATUS_CHANGED,
-    consultantUserId,
-    payload,
-    undefined,
-    opts,
-  );
-}
-
-// Moderation (#693) — fire-and-forget; callers run these in the best-effort
-// phase, never inside the moderation transaction.
-export async function notifyModerationWarning(
-  targetUserId: string,
-  payload: ModerationWarningPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.MODERATION_WARNING,
-    targetUserId,
-    payload,
-  );
-}
-
-export async function notifyAccountSuspended(
-  targetUserId: string,
+function accountSuspendedWire(
   payload: AccountSuspendedInput,
-) {
-  return triggerWorkflowZoned(
-    NOVU_WORKFLOWS.ACCOUNT_SUSPENDED,
-    targetUserId,
-    (timezone): AccountSuspendedPayload => {
-      // An indefinite suspension has no `banExpires`, and the moderation
-      // caller sends "" for it — the sentence reads "until {{suspendedUntil}}",
-      // so the blank needs words, and the ISO twin is only sent for a real date.
-      const { suspendedUntil: raw, ...rest } = payload;
-      const suspendedUntil = formatNotificationDateTime(raw, timezone);
-      return {
-        ...rest,
-        suspendedUntil: suspendedUntil ?? "further notice",
-        ...(suspendedUntil ? { suspendedUntilIso: raw } : {}),
-      };
-    },
-  );
+  timezone: string,
+): AccountSuspendedPayload {
+  const { suspendedUntil: raw, ...rest } = payload;
+  const suspendedUntil = formatNotificationDateTime(raw, timezone);
+  return {
+    ...rest,
+    suspendedUntil: suspendedUntil ?? "further notice",
+    ...(suspendedUntil ? { suspendedUntilIso: raw } : {}),
+  };
 }
 
-export async function notifyAccountBanned(
-  targetUserId: string,
-  payload: AccountBannedPayload,
-) {
-  return triggerWorkflow(NOVU_WORKFLOWS.ACCOUNT_BANNED, targetUserId, payload);
-}
-
-export async function notifyPayoutProcessed(
-  consultantUserId: string,
-  payload: PayoutInput,
-) {
-  const wire: PayoutPayload = {
+function payoutWire(payload: PayoutInput): PayoutPayload {
+  return {
     ...payload,
     amount: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
   };
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.PAYOUT_PROCESSED,
-    consultantUserId,
-    wire,
-  );
 }
-
-/**
- * The consultant, when a payout FAILS or is CANCELLED (earnings released
- * back to READY). Urgent money news — never deferred by quiet hours.
- */
-export async function notifyPayoutFailed(
-  consultantUserId: string,
-  payload: PayoutInput,
-) {
-  // The row id stays out of the prose: the template printed it in
-  // parentheses after the amount, and a UUID is not something a person
-  // can act on — the payouts queue is the lookup path.
-  const { payoutId: _payoutId, ...rest } = payload;
-  const wire: PayoutPayload = {
-    ...rest,
-    amount: formatNotificationMoney(payload.amount, payload.currency),
-    amountPaise: payload.amount,
-  };
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.PAYOUT_FAILED,
-    consultantUserId,
-    wire,
-    undefined,
-    { deferrable: false },
-  );
-}
-
-/**
- * A7: notify a consultant that their EXPERT membership at an organization
- * was soft-deleted. Fire-and-forget — a Novu outage must not block the
- * member-DELETE API response. Caller is expected to wrap in try/catch.
- */
-export async function notifyOrgExpertRemoved(
-  consultantUserId: string,
-  payload: OrgExpertRemovedPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.ORG_EXPERT_REMOVED,
-    consultantUserId,
-    {
-      organizationId: payload.organizationId ?? null,
-      scope: "org",
-      ...payload,
-    },
-  );
-}
-
-// ============================================================================
-// Admin / System Notifications
-// ============================================================================
-
-export async function notifyGeneralAnnouncement(payload: AnnouncementPayload) {
-  return triggerBroadcastWorkflow(NOVU_WORKFLOWS.GENERAL_ANNOUNCEMENT, payload);
-}
-
-export async function notifyNewConsultantApplication(
-  adminUserIds: string[],
-  payload: ConsultantApplicationPayload,
-  opts?: TriggerOptions,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION,
-    adminUserIds,
-    payload,
-    undefined,
-    opts,
-  );
-}
-
-// ============================================================================
-// Dispute Notifications
-// ============================================================================
 
 function disputeWire(payload: DisputeInput): DisputePayload {
   const { reason: rawReason, status: rawStatus, ...rest } = payload;
@@ -1182,170 +701,33 @@ function disputeWire(payload: DisputeInput): DisputePayload {
   };
 }
 
-export async function notifyDisputeCreated(
-  userIds: string[],
-  payload: DisputeInput,
-  opts?: TriggerOptions,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.DISPUTE_CREATED,
-    userIds,
-    disputeWire(payload),
-    undefined,
-    opts,
-  );
-}
-
-export async function notifyDisputeResolved(
-  userIds: string[],
-  payload: DisputeInput,
-  opts?: TriggerOptions,
-) {
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.DISPUTE_RESOLVED,
-    userIds,
-    disputeWire(payload),
-    undefined,
-    opts,
-  );
-}
-
-// ============================================================================
-// Recording Notifications
-// ============================================================================
-
-export async function notifyRecordingAvailable(
-  userIds: string[],
-  payload: Omit<RecordingPayload, "appointmentTypeCode">,
-  opts?: TriggerOptions,
-) {
-  const wire: RecordingPayload = {
-    ...payload,
-    appointmentType: appointmentTypeLabel(payload.appointmentType),
-    appointmentTypeCode: payload.appointmentType,
-  };
-  return triggerForMultiple(
-    NOVU_WORKFLOWS.RECORDING_AVAILABLE,
-    userIds,
-    wire,
-    undefined,
-    opts,
-  );
-}
-
-export async function notifyRecordingFailed(
-  subscriberId: string,
-  payload: RecordingFailedPayload,
-  opts?: TriggerOptions,
-) {
-  // The vendor's raw error (an ffmpeg exit, an SDK message) is not prose
-  // anyone can act on — it stays in the logs and Sentry, and the template
-  // renders its clean sentence without it.
-  const { errorMessage: _vendorDetail, ...rest } = payload;
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.RECORDING_FAILED,
-    subscriberId,
-    rest,
-    undefined,
-    opts,
-  );
-}
-
-// STR-3 — warn a consultant their STREAM_ONLY recording(s) expire soon.
-export async function notifyRecordingExpiring(
-  consultantUserId: string,
+function recordingExpiringWire(
   payload: RecordingExpiringInput,
-) {
-  return triggerWorkflowZoned(
-    NOVU_WORKFLOWS.RECORDING_EXPIRING,
-    consultantUserId,
-    (timezone): RecordingExpiringPayload => {
-      const { expiresAt: raw, ...rest } = payload;
-      const expiresAt = formatNotificationDateTime(raw, timezone);
-      return {
-        ...rest,
-        expiresAt: expiresAt ?? "the date shown in your dashboard",
-        ...(expiresAt ? { expiresAtIso: raw } : {}),
-      };
-    },
-  );
+  timezone: string,
+): RecordingExpiringPayload {
+  const { expiresAt: raw, ...rest } = payload;
+  const expiresAt = formatNotificationDateTime(raw, timezone);
+  return {
+    ...rest,
+    expiresAt: expiresAt ?? "the date shown in your dashboard",
+    ...(expiresAt ? { expiresAtIso: raw } : {}),
+  };
 }
 
-// ============================================================================
-// Document Review Notifications
-// ============================================================================
-
-/** A document (or revision/response) landed on an appointment. */
-export async function notifyDocumentUploaded(
-  subscriberId: string,
-  payload: DocumentUploadedPayload,
-  opts?: TriggerOptions,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.DOCUMENT_UPLOADED,
-    subscriberId,
-    payload,
-    undefined,
-    opts,
-  );
-}
-
-/** A consultant set a review decision on a submitted document. */
-export async function notifyDocumentReviewed(
-  subscriberId: string,
-  payload: DocumentReviewedPayload,
-  opts?: TriggerOptions,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.DOCUMENT_REVIEWED,
-    subscriberId,
-    payload,
-    undefined,
-    opts,
-  );
-}
-
-// ============================================================================
-// Referral Notifications
-// ============================================================================
-
-export async function notifyReferralBonusEarned(
-  referrerUserId: string,
-  payload: ReferralBonusInput,
-) {
-  const wire: ReferralBonusPayload = {
+function referralBonusWire<
+  T extends ReferralBonusInput | RefereeWelcomeBonusInput,
+>(payload: T): ReferralBonusPayload | RefereeWelcomeBonusPayload {
+  return {
     ...payload,
     bonusAmount: formatNotificationMoney(payload.bonusAmount, payload.currency),
     bonusAmountPaise: payload.bonusAmount,
   };
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.REFERRAL_BONUS_EARNED,
-    referrerUserId,
-    wire,
-  );
 }
 
-export async function notifyRefereeWelcomeBonus(
-  refereeUserId: string,
-  payload: RefereeWelcomeBonusInput,
-) {
-  const wire: RefereeWelcomeBonusPayload = {
-    ...payload,
-    bonusAmount: formatNotificationMoney(payload.bonusAmount, payload.currency),
-    bonusAmountPaise: payload.bonusAmount,
-  };
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.REFEREE_WELCOME_BONUS,
-    refereeUserId,
-    wire,
-  );
-}
-
-export async function notifyReferralCreditsApplied(
-  userId: string,
+function referralCreditsAppliedWire(
   payload: ReferralCreditsAppliedInput,
-) {
-  const wire: ReferralCreditsAppliedPayload = {
+): ReferralCreditsAppliedPayload {
+  return {
     ...payload,
     creditsUsed: formatNotificationMoney(payload.creditsUsed, payload.currency),
     creditsUsedPaise: payload.creditsUsed,
@@ -1357,77 +739,8 @@ export async function notifyReferralCreditsApplied(
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
   };
-  return triggerWorkflow(NOVU_WORKFLOWS.REFERRAL_CREDITS_APPLIED, userId, wire);
 }
 
-// ============================================================================
-// Collaborator Notifications
-// ============================================================================
-
-export async function notifyCollaboratorInvited(
-  consultantUserId: string,
-  payload: CollaboratorInvitedPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.COLLABORATOR_INVITED,
-    consultantUserId,
-    payload,
-  );
-}
-
-export async function notifyCollaboratorAccepted(
-  ownerUserId: string,
-  payload: CollaboratorAcceptedPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.COLLABORATOR_ACCEPTED,
-    ownerUserId,
-    payload,
-  );
-}
-
-/** #1580 C-P1-5 — the host learns that the invitee declined. */
-export async function notifyCollaboratorDeclined(
-  ownerUserId: string,
-  payload: CollaboratorDeclinedPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.COLLABORATOR_DECLINED,
-    ownerUserId,
-    payload,
-  );
-}
-
-export async function notifyCollaboratorRemoved(
-  consultantUserId: string,
-  payload: CollaboratorRemovedPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.COLLABORATOR_REMOVED,
-    consultantUserId,
-    payload,
-  );
-}
-
-/** #1580 C-P1-7 — the host learns that a collaborator withdrew their own row. */
-export async function notifyCollaboratorWithdrawn(
-  ownerUserId: string,
-  payload: CollaboratorWithdrawnPayload,
-) {
-  return triggerWorkflow(
-    NOVU_WORKFLOWS.COLLABORATOR_WITHDRAWN,
-    ownerUserId,
-    payload,
-  );
-}
-
-// Maintenance notifications (broadcast to all users)
-
-/**
- * A broadcast has no recipient list to load zones from, so the ETA renders in
- * the platform default zone — which the rendered string names, so nobody has to
- * guess which zone they are reading (#536).
- */
 function maintenanceWire(payload: MaintenanceInput): MaintenancePayload {
   const { estimatedEnd: raw, ...rest } = payload;
   const estimatedEnd = formatNotificationDateTime(
@@ -1440,23 +753,89 @@ function maintenanceWire(payload: MaintenanceInput): MaintenancePayload {
   };
 }
 
-export async function notifyMaintenanceScheduled(payload: MaintenanceInput) {
-  return triggerBroadcastWorkflow(
-    NOVU_WORKFLOWS.MAINTENANCE_SCHEDULED,
-    maintenanceWire(payload),
-  );
-}
+// ============================================================================
+// Notification Senders
+// ============================================================================
 
-export async function notifyMaintenanceStarted(payload: MaintenanceInput) {
-  return triggerBroadcastWorkflow(
-    NOVU_WORKFLOWS.MAINTENANCE_STARTED,
-    maintenanceWire(payload),
-  );
-}
+const W = NOVU_WORKFLOWS;
 
-export async function notifyMaintenanceEnded(payload: MaintenanceInput) {
-  return triggerBroadcastWorkflow(
-    NOVU_WORKFLOWS.MAINTENANCE_ENDED,
-    maintenanceWire(payload),
-  );
-}
+// Appointments
+export const notifyAppointmentBooked = defineZonedMultiNotifier(W.APPOINTMENT_BOOKED, appointmentWire);
+export const notifyAppointmentPartiallyScheduled = defineZonedMultiNotifier(W.APPOINTMENT_PARTIALLY_SCHEDULED, partiallyScheduledWire);
+export const notifyAppointmentCancelled = defineZonedMultiNotifier(W.APPOINTMENT_CANCELLED, cancelledWire);
+export const notifyAppointmentRescheduled = defineZonedMultiNotifier(W.APPOINTMENT_RESCHEDULED, rescheduledWire);
+export const notifyAppointmentCompleted = defineZonedMultiNotifier(W.APPOINTMENT_COMPLETED, appointmentWire);
+export const notifyAppointmentReminder = defineZonedMultiNotifier(W.APPOINTMENT_REMINDER, appointmentWire);
+
+// Payments & Refunds
+export const notifyPaymentSuccess = defineSingleNotifier(W.PAYMENT_SUCCESS, paymentSuccessWire);
+export const notifyPaymentFailed = defineSingleNotifier(W.PAYMENT_FAILED, paymentFailedWire);
+export const notifyRefundProcessed = defineSingleNotifier(W.REFUND_PROCESSED, refundWire);
+export const notifyRefundFailed = defineSingleNotifier(W.REFUND_FAILED, refundWire);
+export const notifyRefundRequested = defineMultiNotifier(W.REFUND_REQUESTED, refundWire);
+
+// Support Tickets
+export const notifySupportTicketCreated = defineMultiNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_CREATED);
+export const notifySupportTicketUpdate = defineSingleNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_UPDATE);
+export const notifySupportTicketActivity = defineMultiNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_ACTIVITY);
+export const notifySupportTicketResponse = defineSingleNotifier<SupportTicketPayload>(W.SUPPORT_TICKET_RESPONSE);
+
+// Feedback & Reviews
+export const notifyFeedbackReceived = defineMultiNotifier<FeedbackPayload>(W.FEEDBACK_RECEIVED);
+export const notifyNewReview = defineSingleNotifier<ReviewPayload>(W.NEW_REVIEW_RECEIVED);
+
+// Trials
+export const notifyTrialRequested = defineZonedSingleNotifier(W.TRIAL_SESSION_REQUESTED, trialWire);
+export const notifyTrialScheduled = defineZonedSingleNotifier(W.TRIAL_SESSION_SCHEDULED, trialWire);
+export const notifyTrialCompleted = defineZonedMultiNotifier(W.TRIAL_SESSION_COMPLETED, trialWire);
+export const notifyTrialCancelled = defineZonedMultiNotifier(W.TRIAL_SESSION_CANCELLED, trialWire);
+
+// Subscriptions
+export const notifySubscriptionStarted = defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_STARTED);
+export const notifySubscriptionCancelled = defineMultiNotifier<SubscriptionPayload>(W.SUBSCRIPTION_CANCELLED);
+export const notifySubscriptionRenewed = defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_RENEWED);
+
+// Consultant-Specific
+export const notifyNewBookingRequest = defineZonedSingleNotifier(W.NEW_BOOKING_REQUEST, bookingRequestWire);
+export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<BookingRequestInput & { nudgeHours: number }>(W.NEW_BOOKING_REQUEST, bookingRequestWire);
+export const notifyVerificationStatusChanged = defineSingleNotifier<VerificationPayload>(W.VERIFICATION_STATUS_CHANGED);
+export const notifyModerationWarning = defineSingleNotifier<ModerationWarningPayload>(W.MODERATION_WARNING);
+export const notifyAccountSuspended = defineZonedSingleNotifier(W.ACCOUNT_SUSPENDED, accountSuspendedWire);
+export const notifyAccountBanned = defineSingleNotifier<AccountBannedPayload>(W.ACCOUNT_BANNED);
+export const notifyPayoutProcessed = defineSingleNotifier(W.PAYOUT_PROCESSED, payoutWire);
+export const notifyPayoutFailed = defineSingleNotifier(W.PAYOUT_FAILED, ({ payoutId: _id, ...rest }: PayoutInput) => payoutWire(rest), { deferrable: false });
+export const notifyOrgExpertRemoved = defineSingleNotifier<OrgExpertRemovedPayload>(W.ORG_EXPERT_REMOVED, (p) => ({ organizationId: p.organizationId ?? null, scope: "org", ...p }));
+
+// Admin / System
+export const notifyGeneralAnnouncement = defineBroadcastNotifier<AnnouncementPayload>(W.GENERAL_ANNOUNCEMENT);
+export const notifyNewConsultantApplication = defineMultiNotifier<ConsultantApplicationPayload>(W.NEW_CONSULTANT_APPLICATION);
+
+// Disputes
+export const notifyDisputeCreated = defineMultiNotifier(W.DISPUTE_CREATED, disputeWire);
+export const notifyDisputeResolved = defineMultiNotifier(W.DISPUTE_RESOLVED, disputeWire);
+
+// Recordings
+export const notifyRecordingAvailable = defineMultiNotifier<Omit<RecordingPayload, "appointmentTypeCode">>(W.RECORDING_AVAILABLE, (p) => ({ ...p, appointmentType: appointmentTypeLabel(p.appointmentType), appointmentTypeCode: p.appointmentType }));
+export const notifyRecordingFailed = defineSingleNotifier<RecordingFailedPayload>(W.RECORDING_FAILED, ({ errorMessage: _vendorDetail, ...rest }) => rest);
+export const notifyRecordingExpiring = defineZonedSingleNotifier(W.RECORDING_EXPIRING, recordingExpiringWire);
+
+// Document Review
+export const notifyDocumentUploaded = defineSingleNotifier<DocumentUploadedPayload>(W.DOCUMENT_UPLOADED);
+export const notifyDocumentReviewed = defineSingleNotifier<DocumentReviewedPayload>(W.DOCUMENT_REVIEWED);
+
+// Referrals
+export const notifyReferralBonusEarned = defineSingleNotifier<ReferralBonusInput>(W.REFERRAL_BONUS_EARNED, referralBonusWire);
+export const notifyRefereeWelcomeBonus = defineSingleNotifier<RefereeWelcomeBonusInput>(W.REFEREE_WELCOME_BONUS, referralBonusWire);
+export const notifyReferralCreditsApplied = defineSingleNotifier(W.REFERRAL_CREDITS_APPLIED, referralCreditsAppliedWire);
+
+// Collaborators
+export const notifyCollaboratorInvited = defineSingleNotifier<CollaboratorInvitedPayload>(W.COLLABORATOR_INVITED);
+export const notifyCollaboratorAccepted = defineSingleNotifier<CollaboratorAcceptedPayload>(W.COLLABORATOR_ACCEPTED);
+export const notifyCollaboratorDeclined = defineSingleNotifier<CollaboratorDeclinedPayload>(W.COLLABORATOR_DECLINED);
+export const notifyCollaboratorRemoved = defineSingleNotifier<CollaboratorRemovedPayload>(W.COLLABORATOR_REMOVED);
+export const notifyCollaboratorWithdrawn = defineSingleNotifier<CollaboratorWithdrawnPayload>(W.COLLABORATOR_WITHDRAWN);
+
+// Maintenance
+export const notifyMaintenanceScheduled = defineBroadcastNotifier(W.MAINTENANCE_SCHEDULED, maintenanceWire);
+export const notifyMaintenanceStarted = defineBroadcastNotifier(W.MAINTENANCE_STARTED, maintenanceWire);
+export const notifyMaintenanceEnded = defineBroadcastNotifier(W.MAINTENANCE_ENDED, maintenanceWire);
