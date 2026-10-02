@@ -325,10 +325,12 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 
-    // #1933 — previews keep visibility at a tenth of the volume; production
-    // reports every error (the throttle above bounds floods).
+    // #1933 — previews keep visibility at a tenth of the volume; everything
+    // else reports every error (the throttle above bounds floods). Keyed on
+    // "preview" rather than "not production" so an unset environment (a bare
+    // job runner, a test) fails open instead of silently dropping 90%.
     sampleRate:
-      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production" ? 1 : 0.1,
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" ? 0.1 : 1,
 
     // #1086 — deploy previews used to report to a SEPARATE Sentry project, so
     // an error found on a preview was invisible in the one anybody watches and

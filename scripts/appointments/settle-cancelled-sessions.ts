@@ -42,6 +42,7 @@ import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
 import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
 
@@ -110,9 +111,12 @@ async function settleUnlocked(
       result.errors += 1;
       firstError ??= error;
       failedIds.push(session.id);
+      // #1932: console bypasses the Sentry scrubber, so log a scrubbed message only.
       console.error(
-        `settle-cancelled-sessions: occurrence ${session.id} failed`,
-        error,
+        `settle-cancelled-sessions: occurrence ${session.id} failed:`,
+        scrubStringValue(
+          error instanceof Error ? error.message : String(error),
+        ),
       );
     }
   }

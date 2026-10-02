@@ -43,6 +43,7 @@ import {
 } from "@/lib/payments/webhooks/handlers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
 export interface RetryAutoRefundsResult {
   success: boolean;
@@ -122,7 +123,13 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       result.errors += 1;
       firstError ??= error;
       failedIds.push(payment.id);
-      console.error(`retry-auto-refunds: payment ${payment.id} failed`, error);
+      // #1932: console bypasses the Sentry scrubber, so log a scrubbed message only.
+      console.error(
+        `retry-auto-refunds: payment ${payment.id} failed:`,
+        scrubStringValue(
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     }
   }
   if (failedIds.length > 0) {
