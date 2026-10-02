@@ -148,10 +148,10 @@ export async function POST(req: NextRequest) {
         contexts: { webhook: { eventType, eventId } },
       });
       if (handlerError instanceof ZodError) {
-        return NextResponse.json(
-          { error: "Invalid webhook payload" },
-          { status: 400 },
-        );
+        return NextResponse.json({
+          status: "ignored",
+          reason: "invalid_payload",
+        });
       }
       throw handlerError;
     } finally {

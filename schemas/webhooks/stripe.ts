@@ -28,6 +28,7 @@ const paymentIntentSchema = z.object({
   id: z.string(),
   object: z.literal("payment_intent"),
   amount: z.number(),
+  amount_received: z.number().nullable().optional(),
   currency: z.string(),
   metadata: metadataSchema,
   status: z.string(),

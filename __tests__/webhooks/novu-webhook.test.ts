@@ -74,7 +74,7 @@ describe("POST /api/webhooks/novu (#399)", () => {
     (isDbHealthy as jest.Mock).mockResolvedValue(true);
     (logWebhookEvent as jest.Mock).mockResolvedValue({
       isNew: true,
-      claim: new Date("2026-10-02T00:00:00Z"),
+      claim: { claimedAt: new Date("2026-10-02T00:00:00Z") },
     });
   });
 
@@ -109,7 +109,7 @@ describe("POST /api/webhooks/novu (#399)", () => {
   it("skips duplicate events via logWebhookEvent deduplication", async () => {
     (logWebhookEvent as jest.Mock).mockResolvedValueOnce({
       isNew: false,
-      claim: null,
+      claim: undefined,
     });
     const payload = {
       id: "evt_dup_1",
@@ -161,7 +161,7 @@ describe("POST /api/webhooks/novu (#399)", () => {
     expect(markWebhookEventProcessed).toHaveBeenCalledWith(
       "evt_fail_1",
       undefined,
-      expect.any(Date),
+      expect.objectContaining({ claimedAt: expect.any(Date) }),
     );
   });
 
@@ -190,7 +190,7 @@ describe("POST /api/webhooks/novu (#399)", () => {
     expect(markWebhookEventProcessed).toHaveBeenCalledWith(
       "evt_sent_1",
       undefined,
-      expect.any(Date),
+      expect.objectContaining({ claimedAt: expect.any(Date) }),
     );
   });
 });

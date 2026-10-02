@@ -46,7 +46,14 @@ export async function dispatchStripeEventByType(
         ? stripeCheckoutSessionCompletedEventSchema.parse(eventOrObject).data
             .object
         : stripeCheckoutSessionObjectSchema.parse(eventOrObject);
-      await handlePaymentSuccess(session.id, session.metadata || {});
+      await handlePaymentSuccess(
+        session.id,
+        session.metadata || {},
+        session.amount_total ?? undefined,
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : undefined,
+      );
       break;
     }
 
@@ -67,7 +74,12 @@ export async function dispatchStripeEventByType(
         ? stripePaymentIntentSucceededEventSchema.parse(eventOrObject).data
             .object
         : stripePaymentIntentObjectSchema.parse(eventOrObject);
-      await handlePaymentSuccess(pi.id, pi.metadata || {});
+      await handlePaymentSuccess(
+        pi.id,
+        pi.metadata || {},
+        pi.amount_received ?? pi.amount,
+        pi.id,
+      );
       break;
     }
 

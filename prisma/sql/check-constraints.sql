@@ -770,7 +770,25 @@ END $$;
 -- SPLIT
 -- #1926 — Enforce at most one RUNNING SystemJobExecution row per jobName at a time
 -- so concurrent callers (cron-tick.mts vs GitHub Actions) cannot both acquire the
--- same cron lock in the check-then-insert window.
+-- same cron lock in the check-then-insert window. First sweep any pre-existing
+-- older duplicate RUNNING rows so index creation is guaranteed to succeed.
+WITH ranked_running AS (
+  SELECT
+    "id",
+    ROW_NUMBER() OVER (
+      PARTITION BY "jobName"
+      ORDER BY "startedAt" DESC, "id" DESC
+    ) AS rn
+  FROM "SystemJobExecution"
+  WHERE "status" = 'RUNNING'
+)
+UPDATE "SystemJobExecution"
+SET
+  "status" = 'FAILED',
+  "endedAt" = COALESCE("endedAt", NOW()),
+  "errorLog" = COALESCE("errorLog", 'deduplicated stale RUNNING row before unique index')
+WHERE "id" IN (SELECT "id" FROM ranked_running WHERE rn > 1);
+-- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "SystemJobExecution_running_jobName_key"
   ON "SystemJobExecution" ("jobName")
   WHERE "status" = 'RUNNING';
