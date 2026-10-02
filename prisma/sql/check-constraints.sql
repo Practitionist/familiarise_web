@@ -124,7 +124,7 @@ DROP INDEX IF EXISTS "invitations_org_email_pending_key";
 -- SPLIT
 CREATE UNIQUE INDEX "invitations_org_email_pending_key"
   ON "invitations" ("organizationId", lower("email"))
-  WHERE "status" = 'pending';
+  WHERE "status" = 'PENDING';
 
 -- SPLIT
 -- #676 PM-17 — extend the payment_amounts_nonnegative pattern to every other
@@ -145,7 +145,7 @@ ALTER TABLE "Dispute" ADD CONSTRAINT "dispute_amount_nonnegative" CHECK ("amount
 ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_amounts_nonnegative";
 -- SPLIT
 ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_amounts_nonnegative"
-  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
+  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND "clawbackAmountPaise" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
 -- SPLIT
 ALTER TABLE "OrganizationPayout" DROP CONSTRAINT IF EXISTS "org_payout_amounts_nonnegative";
 -- SPLIT
@@ -335,17 +335,9 @@ ALTER TABLE "DiscountCode" ADD CONSTRAINT "discount_code_uses_within_cap"
   );
 
 -- SPLIT
--- #1093 §4 — two partial uniques the schema doc-comments always claimed.
--- Verified duplicate-free on the live database before adding (2026-08-13), so
--- these apply cleanly outside a reset. Two orgs may map the same IdP user;
--- one org must not map them twice — without this, deprovisionScimUser's
--- findFirst picks arbitrarily and an IdP DELETE can leave a twin ACTIVE.
-DROP INDEX IF EXISTS "membership_org_scim_key";
--- SPLIT
-CREATE UNIQUE INDEX "membership_org_scim_key"
-  ON "Membership" ("organizationId", "externalScimId")
-  WHERE "externalScimId" IS NOT NULL;
--- SPLIT
+-- #1093 §4 — a partial unique the schema doc-comment always claimed. Verified
+-- duplicate-free on the live database before adding (2026-08-13), so it
+-- applies cleanly outside a reset.
 DROP INDEX IF EXISTS "erasure_request_active_user_key";
 -- SPLIT
 CREATE UNIQUE INDEX "erasure_request_active_user_key"
@@ -369,7 +361,7 @@ ALTER TABLE "OrganizationInvoice" ADD CONSTRAINT "org_invoice_amounts_nonnegativ
     "subtotalPaise" >= 0
     AND "igstPaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0
     AND "totalPaise" >= 0
-    AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
+    AND "subtotalPaise" + "igstPaise" + "cgstPaise" + "sgstPaise" = "totalPaise"
   );
 -- SPLIT
 ALTER TABLE "InvoiceLineItem" DROP CONSTRAINT IF EXISTS "invoice_line_item_amounts_nonnegative";
@@ -387,13 +379,12 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
     AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
   );
 -- SPLIT
--- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund or a
--- Dispute. Both minters (lib/payments/operations/refund.ts) set exactly one and
--- no seed file writes CreditNote, so the strict XOR is the true shape.
+-- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund, a
+-- Dispute, or an OverageEvent reversal.
 ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
 -- SPLIT
 ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
-  CHECK (("refundId" IS NULL) <> ("disputeId" IS NULL));
+  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1);
 -- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT
@@ -742,3 +733,62 @@ ALTER TABLE "Appointment" ADD CONSTRAINT "appointment_parent_matches_type"
     WHEN 'CLASS'        THEN "classId" IS NOT NULL        AND num_nonnulls("consultationId","subscriptionId","webinarId") = 0
     WHEN 'TRIAL'        THEN num_nonnulls("consultationId","subscriptionId","webinarId","classId") = 0
     ELSE FALSE END);
+-- SPLIT
+-- An SSO providerId is the slug in /api/auth/sso/callback/{providerId} and
+-- shares a namespace with Account.providerId. A provider named after a
+-- social or credential id would shadow that sign-in method and make
+-- enforceSSO's "has an account with this provider" check trivially true.
+-- The create route now generates ids itself (`oidc-<hex>`) and still
+-- refuses these, so this is the backstop for any other writer. Keep the list
+-- equal to RESERVED_PROVIDER_IDS in lib/sso/provider-schemas.ts;
+-- __tests__/sso/provider-schemas.test.ts pins the two together.
+ALTER TABLE "ssoProvider" DROP CONSTRAINT IF EXISTS "sso_provider_id_not_reserved";
+-- SPLIT
+ALTER TABLE "ssoProvider" ADD CONSTRAINT "sso_provider_id_not_reserved"
+  CHECK (lower(btrim("providerId")) NOT IN ('credential', 'facebook', 'github', 'google', 'sso'));
+-- SPLIT
+-- D18 — the app reaches Postgres only as the owner role, through Prisma.
+-- Supabase grants its PostgREST roles (anon, authenticated) full access to
+-- public by default, and the anon key ships in the browser bundle, so without
+-- this every table (sessions, accounts, verifications) is readable over the
+-- Data API. Revoke, and stop future tables created by this role from being
+-- granted. Skipped where the roles do not exist (local and CI Postgres).
+-- Re-apply after every `prisma db push` (npm run db:sidecars).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
+  END IF;
+END $$;
+-- SPLIT
+-- #1926 — Enforce at most one RUNNING SystemJobExecution row per jobName at a time
+-- so concurrent callers (cron-tick.mts vs GitHub Actions) cannot both acquire the
+-- same cron lock in the check-then-insert window. First sweep any pre-existing
+-- older duplicate RUNNING rows so index creation is guaranteed to succeed.
+WITH ranked_running AS (
+  SELECT
+    "id",
+    ROW_NUMBER() OVER (
+      PARTITION BY "jobName"
+      ORDER BY "startedAt" DESC, "id" DESC
+    ) AS rn
+  FROM "SystemJobExecution"
+  WHERE "status" = 'RUNNING'
+)
+UPDATE "SystemJobExecution"
+SET
+  "status" = 'FAILED',
+  "endedAt" = COALESCE("endedAt", NOW()),
+  "errorLog" = COALESCE("errorLog", 'deduplicated stale RUNNING row before unique index')
+WHERE "id" IN (SELECT "id" FROM ranked_running WHERE rn > 1);
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "SystemJobExecution_running_jobName_key"
+  ON "SystemJobExecution" ("jobName")
+  WHERE "status" = 'RUNNING';
+

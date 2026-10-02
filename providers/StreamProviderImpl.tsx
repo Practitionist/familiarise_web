@@ -822,8 +822,10 @@ const StreamProviderImpl = ({
       // Intentionally not calling disconnect() here
       // Global clients are reused across component remounts
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userDetails?.id, isLoading, connectServices]);
+    // `userDetails` is listed (not just its id) as the rule requires: no new
+    // re-fires, because `connectServices` already depends on `userDetails` and
+    // changes identity whenever it does.
+  }, [userDetails, isLoading, connectServices]);
 
   // Publish to the store rather than wrapping children. The wrapper set used to
   // be derived here — `children` → `<StreamVideo>` → `<Chat>` — which changed

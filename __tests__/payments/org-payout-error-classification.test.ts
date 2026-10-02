@@ -3,60 +3,20 @@
  */
 
 /**
- * #1846 N1 — the org payout rail classified RazorpayX submission failures by
- * string-sniffing the error message for "400" / "401" / "403" / "422" /
- * "invalid" / "bad request". A message match cannot tell a rejection from a
- * throttle, so a 429, a 408, a 409, or a 5xx whose description happened to
- * contain the word "invalid" all read as PERMANENT_4XX.
- *
- * That is a money-loss bug, not a cosmetic one. PERMANENT_4XX routes into
- * `markPayoutFailedFromSubmission`, which releases the organization's BATCHED
- * earnings back to READY. The next `createOrgPayoutBatch` re-claims them under
- * a NEW payout row with a NEW idempotency key
- * (`opts.idempotencyKey ?? globalThis.crypto.randomUUID()`), and RazorpayX
- * documents the consequence verbatim:
- *
- *   "Do not retry the same payout using a fresh Idempotency Key when the first
- *    attempt is still processing. The system will treat them as different
- *    payouts and will process both resulting in duplication."
- *
- * So a misclassified transient permanently double-pays the organization.
- *
- * These tests pin the classification the org rail now performs — the same
- * status-based gate the consultant rail uses (`isDefinitiveGatewayRejection`,
- * razorpay-payouts.ts:342) — so the invariant holds on both rails: ONLY a
- * definitive gateway rejection may fail a payout and release its earnings.
- * Everything the gate does not recognise must be treated as still-in-flight
- * and retried under the SAME idempotency key.
+ * Only a definitive gateway rejection may fail a payout and release its
+ * earnings. Anything else stays in flight and is retried under the SAME
+ * idempotency key; a fresh key would make RazorpayX pay the batch twice.
  */
-
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    organizationPayout: { findMany: jest.fn(), update: jest.fn() },
-    organizationPayoutAccount: { findUnique: jest.fn() },
-    organizationEarnings: { updateMany: jest.fn(), findFirst: jest.fn() },
-    orgAuditLog: { create: jest.fn() },
-    $transaction: jest.fn(),
-  },
-}));
-
-jest.mock("../../lib/novu/org-workflows", () => ({
-  __esModule: true,
-  notifyOrgPayoutCompleted: jest.fn(),
-  notifyOrgPayoutFailed: jest.fn(),
-}));
 
 import {
   RazorpayXHttpError,
   isDefinitiveGatewayRejection,
 } from "@/lib/payments/payouts/razorpay-payouts";
-import { classifyGatewaySubmissionError } from "@/lib/payments/payouts/org-payout-service";
+import { classifyGatewaySubmissionError } from "@/lib/payments/payouts/shared-lifecycle";
 
 /**
- * Build the error the RazorpayX `apiRequest` non-2xx branch actually throws
- * (razorpay-payouts.ts:451): a `RazorpayXHttpError` carrying `httpStatus` plus
- * the gateway's own description.
+ * Build the error the RazorpayX `apiRequest` non-2xx branch throws: a
+ * `RazorpayXHttpError` carrying `httpStatus` plus the gateway's description.
  */
 const gatewayError = (httpStatus: number, description: string) =>
   new RazorpayXHttpError(
@@ -68,7 +28,7 @@ const gatewayError = (httpStatus: number, description: string) =>
 
 type Case = { label: string; err: unknown };
 
-describe("org payout submission error classification (#1846 N1)", () => {
+describe("payout submission error classification", () => {
   // The gateway refused the payout outright, so no transfer exists: the row may
   // be failed and its earnings released. These are the ONLY statuses that may
   // do so.
@@ -86,9 +46,8 @@ describe("org payout submission error classification (#1846 N1)", () => {
   );
 
   // 408/409/429 are answers about the REQUEST, not about the payout — the
-  // transfer may still exist at RazorpayX. Failing these released the
-  // organization's earnings and let the next batch pay it a second time under
-  // a fresh idempotency key.
+  // transfer may still exist at RazorpayX, so releasing its earnings would let
+  // the next batch pay it a second time under a fresh idempotency key.
   const REQUEST_LEVEL: Case[] = [
     {
       label: "a 408 (request timeout)",
@@ -123,9 +82,8 @@ describe("org payout submission error classification (#1846 N1)", () => {
     },
   );
 
-  // THE REGRESSION. Each of these descriptions contains a substring the old
-  // sniffer matched. Reading prose cannot tell a 429 from a 422, so every one
-  // of them must now be TRANSIENT.
+  // Each description contains a substring a prose sniffer would match. Prose
+  // cannot tell a 429 from a 422, so only the status decides.
   const PROSE_TRAPS: Case[] = [
     {
       label: "a 429 whose description says invalid",
@@ -173,7 +131,6 @@ describe("org payout submission error classification (#1846 N1)", () => {
     { label: "null", err: null },
     { label: "a plain object", err: { message: "invalid" } },
     {
-      // The old sniffer matched "invalid" here and released the earnings.
       label: "a statusless Error whose message says invalid",
       err: new Error("RazorpayX API error: Invalid fund_account_id"),
     },

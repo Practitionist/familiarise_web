@@ -149,8 +149,6 @@ Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to t
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | From Google Cloud Console |
 | `GITHUB_CLIENT_ID` | GitHub OAuth client ID | Optional |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret | Optional |
-| `FACEBOOK_CLIENT_ID` | Facebook OAuth client ID | Optional |
-| `FACEBOOK_CLIENT_SECRET` | Facebook OAuth client secret | Optional |
 
 ### Database & Cache
 

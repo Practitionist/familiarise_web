@@ -14,12 +14,13 @@
  * - jobs/alert-orphaned-payments.ts (GitHub Actions)
  * - app/api/cleanup/alert-orphaned-payments/route.ts (API endpoint)
  *
- * Schedule: Every 6 hours
+ * Schedule: every 15 minutes via the Netlify ticker, daily Actions backstop.
  */
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 // Only check payments within the last 7 days
 const ALERT_WINDOW_DAYS = 7;
@@ -29,6 +30,8 @@ export interface OrphanedPaymentsAlertResult {
   totalOrphaned: number;
   criticalCount: number;
   totalAmount: number;
+  /** By-design null-appointment side-charges, excluded from the critical cohort. */
+  sideChargeCount: number;
   orphanedPayments: Array<{
     id: string;
     paymentIntent: string | null;
@@ -47,13 +50,17 @@ export interface OrphanedPaymentsAlertResult {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
-export async function alertOrphanedPayments(): Promise<OrphanedPaymentsAlertResult> {
+export async function alertOrphanedPayments(
+  opts: { limit?: number } = {},
+): Promise<OrphanedPaymentsAlertResult> {
   return withCronLock("alert-orphaned-payments", { failMode: "open" }, () =>
-    alertOrphanedPaymentsUnlocked(),
+    alertOrphanedPaymentsUnlocked(opts),
   );
 }
 
-async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertResult> {
+async function alertOrphanedPaymentsUnlocked(
+  opts: { limit?: number } = {},
+): Promise<OrphanedPaymentsAlertResult> {
   const errors: string[] = [];
   let criticalCount = 0;
   let totalAmount = 0;
@@ -62,11 +69,15 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
     Date.now() - ALERT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // Find all succeeded payments without appointments
+  // Find succeeded payments without appointments, oldest first so a backlog
+  // drains in arrival order. Side-charges carry appointmentId null by design,
+  // so they are excluded from the critical cohort and counted separately.
   const orphanedPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
       appointmentId: null,
+      parentPaymentId: null,
+      NOT: { paymentIntent: { startsWith: "overage:" } },
       createdAt: { gte: sevenDaysAgo },
     },
     include: {
@@ -74,7 +85,20 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
         select: { email: true, name: true },
       },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
+    ...(opts.limit !== undefined ? { take: opts.limit } : {}),
+  });
+
+  const sideChargeCount = await prisma.payment.count({
+    where: {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: null,
+      createdAt: { gte: sevenDaysAgo },
+      OR: [
+        { parentPaymentId: { not: null } },
+        { paymentIntent: { startsWith: "overage:" } },
+      ],
+    },
   });
 
   console.log(
@@ -121,6 +145,22 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
     console.log("These customers were charged but have no appointment!");
     console.log("Manual recovery is required for each case.");
     console.log("========================================\n");
+    // One page per run, never per row: the detail rides as context so Sentry
+    // groups every orphan run into a single issue.
+    reportSentryMessage(
+      `orphaned-payments: ${orphanedPayments.length} SUCCEEDED payment(s) with no appointment need recovery`,
+      {
+        subsystem: "payments",
+        op: "alert-orphaned-payments",
+        fingerprint: ["orphaned-payments"],
+        extra: {
+          totalOrphaned: orphanedPayments.length,
+          totalAmount,
+          sideChargeCount,
+          sample: formattedOrphaned.slice(0, 10).map((p) => p.id),
+        },
+      },
+    );
   } else {
     console.log("No orphaned payments found - all payments have appointments.");
   }
@@ -130,6 +170,7 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
     totalOrphaned: orphanedPayments.length,
     criticalCount,
     totalAmount,
+    sideChargeCount,
     orphanedPayments: formattedOrphaned,
     errors,
     timestamp: new Date().toISOString(),

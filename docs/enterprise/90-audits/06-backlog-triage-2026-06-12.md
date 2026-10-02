@@ -133,7 +133,7 @@ Residual tails from closed issues, consolidated in one place (mirrored as a sing
 10. **`/billing` vs `/credits` surface decision** (#712 item 4) — two pages exist; docs and UX disagree on the single-surface design.
 11. **Dispute admin-assignment UI** (#269) — columns shipped pre-freeze in this PR; the admin surface remains.
 12. **Org-creation wizard slug field** (#719) — Settings-page control shipped; the wizard nicety remains.
-13. **`ScimToken.expiresAt` enforcement** — column exists, expiry check does not.
+13. **`ScimToken.expiresAt` enforcement** — column exists, expiry check does not. *(Moot: SCIM was removed before launch, PR #1878.)*
 14. **Milestone holds for recurring events** (#630) — re-file narrowly if delivery-risk on multi-session events materializes.
 15. **Slack `SLACK_OPS_WEBHOOK_URL` secret provisioning** — the workflows now call the notify script, which no-ops with a visible warning until the secret exists in repo settings.
 16. **MSME deadline anchor + §16 interest** — `computeMsmePaymentDeadline` keys off invoice date (defensible proxy for acceptance) and alerts only; the statutory interest is not computed (see `07-payout-pipeline.md` §5).

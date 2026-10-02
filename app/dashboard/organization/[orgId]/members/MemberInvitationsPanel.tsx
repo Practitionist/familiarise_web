@@ -13,15 +13,11 @@ import {
 import { parseJsonResponse, errorMessageFromBody } from "@/lib/fetch-helpers";
 import type { Tone } from "@/lib/ui/tone";
 
-// Invitation.status is stored as a free-form string to stay aligned with
-// BetterAuth's `member_invitations` bridge table. The three states the
-// dashboard emits are lower-case; keep the label map scoped to those
-// and fall back to the raw value for anything we don't recognise.
 const INVITATION_STATUS: Record<string, { label: string; tone: Tone }> = {
-  pending: { label: "Pending", tone: "caution" },
-  accepted: { label: "Accepted", tone: "success" },
-  revoked: { label: "Revoked", tone: "neutral" },
-  expired: { label: "Expired", tone: "neutral" },
+  PENDING: { label: "Pending", tone: "caution" },
+  ACCEPTED: { label: "Accepted", tone: "success" },
+  CANCELED: { label: "Canceled", tone: "neutral" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
 };
 
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
@@ -151,7 +147,7 @@ export function MemberInvitationsPanel({ orgId }: { orgId: string }) {
       >
         <Copy className="h-4 w-4" />
       </Button>
-      {inv.status === "pending" && (
+      {inv.status === "PENDING" && (
         <Button
           variant="ghost"
           size="icon"

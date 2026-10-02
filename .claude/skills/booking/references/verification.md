@@ -80,8 +80,9 @@ three `lib/stream/` files, `claude-code-review.yml` only on a `labeled` event,
 and `claude.yml` only when a comment or review body contains `@claude`.
 
 CI's `test-and-build` job is the gate: `npx tsc --noEmit`, `npx prisma generate`,
-the SSO invariant script, the money-column, workflow-hygiene, DB-sidecar and
-DB-drift guards, `npm run test`, and `npm run build`. There is no `typecheck`
+the SSO invariant script, the money-column and workflow-hygiene guards,
+`npm run test`, and `npm run build`. The `db-guards` job runs the DB-sidecar and
+DB-drift guards against a throwaway Postgres. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
 The separate `lint` job is advisory: both the ESLint and Prettier steps carry
@@ -190,11 +191,11 @@ mock payment deletes its own payment graph first (legs, and any
 (`aaaaaaaa-…-aa01`) is never touched by any QA cleanup — it is a fixed,
 permanently-present fixture other tests and demos rely on.
 
-**The preview's own sign-in limiter.** `authLimiter` (10 requests per 15
-minutes per IP, `lib/rate-limit.ts`) applies to a preview exactly as it does to
-production, and switching test identities in the same browser context burns
-through it fast. Budget for one full 15-minute cooldown if a QA pass needs more
-than a handful of sign-ins from one IP; the #1724 QA run paid this cost once.
+**The preview's own sign-in limiter.** BetterAuth's limiter
+(`lib/auth/rate-limit.ts`, Upstash-backed; `/sign-in/email` allows 30 requests
+per 15 minutes per IP) applies to a preview exactly as it does to production,
+and switching test identities in the same browser context burns through it. Budget for one full 15-minute cooldown if a QA pass needs more
+than about 30 sign-ins from one IP; the #1724 QA run paid this cost once.
 
 **The Sentry sweep.** After each preview case, sweep Sentry filtered to
 `branch:pull/<N>/head` (the PR's own preview release) rather than the whole

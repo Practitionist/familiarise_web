@@ -734,113 +734,6 @@ export async function tombstoneAbortedGatewayOrder(input: {
   }
 }
 
-export class PaymentIntentManager {
-  // intentId -> userId. Bounded FIFO: this Map lives on module scope of a
-  // warm serverless instance, and an entry that never reaches cancelIntent
-  // (caller crash before cleanup) would otherwise grow monotonically for the
-  // life of the instance (#audit: unbounded-cache finding).
-  private static activeIntents = new Map<string, string>(); // intentId -> userId
-  private static readonly MAX_TRACKED_INTENTS = 500;
-
-  /**
-   * Create payment intent with automatic cleanup tracking
-   */
-  static async createWithCleanup(params: {
-    amount: number;
-    currency: string;
-    metadata: {
-      appointmentId: string;
-      appointmentType: string;
-      [key: string]: string;
-    };
-    paymentGateway: PaymentGateway;
-    isMockPayment?: boolean;
-    customerId?: string;
-    holdExpiresAt?: Date;
-  }) {
-    try {
-      // Imported at call time so the checkout bundle does not evaluate the
-      // Razorpay core (and its #1219 test-key guard) at module load.
-      const { createPaymentIntent } = await import("../index");
-      const paymentResponse = await createPaymentIntent(params);
-
-      // Evict oldest entries first (Map iterates in insertion order) so a
-      // warm instance can't accumulate unbounded tracked intents. Eviction
-      // drops cleanup ownership for that intent - only reachable at >500
-      // concurrent un-cancelled intents on one instance, and strictly better
-      // than the previous behaviour (no bound at all) - but surface it so a
-      // sustained-eviction pattern is visible in Sentry, not silent.
-      while (
-        this.activeIntents.size >= PaymentIntentManager.MAX_TRACKED_INTENTS
-      ) {
-        const oldest = this.activeIntents.keys().next().value;
-        if (oldest === undefined) break;
-        this.activeIntents.delete(oldest);
-        reportSentryError(
-          new Error(
-            `PaymentIntentManager evicted tracked intent ${oldest} before cancellation`,
-          ),
-          {
-            subsystem: "payments",
-            level: "warning",
-            expected: true,
-            extra: { evictedIntentId: oldest },
-          },
-        );
-      }
-
-      // Track the intent for potential cleanup
-      this.activeIntents.set(
-        paymentResponse.id,
-        params.metadata.userId || "unknown",
-      );
-
-      return paymentResponse;
-    } catch (error) {
-      console.error("Payment intent creation failed:", error);
-      reportSentryError(error, { subsystem: "payments" });
-      // A typed gateway error (the #1219 test-key guard, an UNKNOWN_GATEWAY)
-      // keeps its code so the route can answer with the right status; only
-      // untyped failures are flattened into the retry-later message.
-      if (error instanceof PaymentError) throw error;
-      throw new Error(
-        "Failed to create payment intent. Please try again later.",
-      );
-    }
-  }
-
-  /**
-   * Cancel a payment intent and clean up tracking
-   */
-  static async cancelIntent(
-    intentId: string,
-    reason: string = "Database operation failed",
-  ) {
-    try {
-      const { cancelPaymentIntent } = await import("../index");
-      await cancelPaymentIntent(intentId, reason);
-    } catch (error) {
-      console.error(`Failed to cancel payment intent ${intentId}:`, error);
-      reportSentryError(error, { subsystem: "payments", level: "warning" });
-      // Don't throw - cleanup should be best-effort
-    } finally {
-      // Untrack regardless of outcome: the tracking map only decides whether
-      // a future cleanup() should re-attempt cancellation. Leaving failed
-      // cancels tracked was a slow memory leak on long-lived instances.
-      this.activeIntents.delete(intentId);
-    }
-  }
-
-  /**
-   * Cleanup tracked payment intent
-   */
-  static async cleanup(intentId: string, reason: string) {
-    if (this.activeIntents.has(intentId)) {
-      await this.cancelIntent(intentId, reason);
-    }
-  }
-}
-
 // ============================================================================
 // Amount Calculation and Validation
 // ============================================================================
@@ -3748,7 +3641,8 @@ export async function handleCheckout(
       );
     } else {
       try {
-        paymentResponse = await PaymentIntentManager.createWithCleanup({
+        const { createPaymentIntent } = await import("../index");
+        paymentResponse = await createPaymentIntent({
           amount,
           currency,
           metadata: buildPaymentMetadata(validatedData, userId, {
@@ -4645,10 +4539,22 @@ export async function handleCheckout(
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
       if (paymentResponse && !isZeroAmountPayment) {
-        await PaymentIntentManager.cleanup(
-          paymentResponse.id,
-          "Database operation failed - preventing orphaned payment intent",
-        );
+        try {
+          const { cancelPaymentIntent } = await import("../index");
+          await cancelPaymentIntent(
+            paymentResponse.id,
+            "Database operation failed - preventing orphaned payment intent",
+          );
+        } catch (cancelErr) {
+          console.error(
+            `Failed to cancel payment intent ${paymentResponse.id}:`,
+            cancelErr,
+          );
+          reportSentryError(cancelErr, {
+            subsystem: "payments",
+            level: "warning",
+          });
+        }
       }
 
       // #1695 — Razorpay cannot void a minted order, so a buyer who completes

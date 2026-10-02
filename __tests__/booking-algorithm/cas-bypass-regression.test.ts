@@ -42,19 +42,17 @@ describe("group-event status writes go through the CAS helpers", () => {
 });
 
 describe("sweeps cancel only from a cancellable state", () => {
-  it("cleanup-invalid-appointments CASes each request before releasing its slots, in one tx", () => {
-    const src = read("scripts/appointments/cleanup-invalid-appointments.ts");
-    // Four sweeps, one helper: the request CAS (CANCELLABLE_FROM) commits
-    // first and the slot release is scoped to that request, inside one tx.
+  // #1487 — cleanup-invalid-appointments was an unscheduled script with no
+  // cron/API entry point; assert it stays retired alongside #1732's retired sweep.
+  it("the retired cleanup-invalid-appointments script does not come back", () => {
     expect(
-      (
-        src.match(
-          /cancelRequestsAndReleaseSlots\(\s*"(consultation|subscription)"/g,
-        ) ?? []
-      ).length,
-    ).toBe(4);
-    expect((src.match(/fromIn: CANCELLABLE_FROM/g) ?? []).length).toBe(2);
-    expect(src).not.toMatch(/transitionOccurrenceCompletion\(prisma,/);
+      fs.existsSync(
+        path.join(
+          process.cwd(),
+          "scripts/appointments/cleanup-invalid-appointments.ts",
+        ),
+      ),
+    ).toBe(false);
   });
 
   // #1589 P-P1-01 / #1732 — cleanup-stale-pending-consultations is retired:

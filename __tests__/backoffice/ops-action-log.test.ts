@@ -24,6 +24,11 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+const scheduled = jest.fn();
+jest.mock("../../lib/api/after-safe", () => ({
+  scheduleAfter: (task: () => unknown) => scheduled(task),
+}));
+
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { withOpsAction } from "../../lib/backoffice/ops-action-log";
@@ -50,7 +55,10 @@ const post = (body: unknown) =>
     { params: Promise.resolve({} as never) },
   );
 
-beforeEach(() => create.mockClear());
+beforeEach(() => {
+  create.mockClear();
+  scheduled.mockClear();
+});
 
 it("writes one row with the actor, the role and the reason", async () => {
   const res = await post({ classId: "cls_1", reason: "learner asked twice" });
@@ -73,4 +81,45 @@ it("refuses a door without a reason and writes nothing", async () => {
   const res = await post({ classId: "cls_1", reason: "ok" });
   expect(res.status).toBe(400);
   expect(create).not.toHaveBeenCalled();
+});
+
+describe("afterCommit", () => {
+  const sideEffect = jest.fn();
+  const doorWithEffect = withOpsAction(
+    "appointments.manage",
+    "class.note",
+    { classId: z.string() },
+    {
+      mode: "tx",
+      run: async (_tx, ctx) => ({
+        target: { kind: "Class", id: ctx.body.classId },
+        response: { ok: true },
+        afterCommit: sideEffect,
+      }),
+    },
+  );
+  const postWithEffect = () =>
+    doorWithEffect(
+      new NextRequest("https://x.test/api", {
+        method: "POST",
+        body: JSON.stringify({
+          classId: "cls_1",
+          reason: "learner asked twice",
+        }),
+      }),
+      { params: Promise.resolve({} as never) },
+    );
+
+  it("is scheduled once the transaction commits", async () => {
+    expect((await postWithEffect()).status).toBe(200);
+    expect(scheduled).toHaveBeenCalledWith(sideEffect);
+  });
+
+  // BREAKS IF DELETED: a suspension whose audit row failed would still cancel
+  // the user's bookings after the ban itself rolled back.
+  it("is not scheduled when the transaction rolls back", async () => {
+    create.mockRejectedValueOnce(new Error("audit write failed"));
+    expect((await postWithEffect()).status).toBe(500);
+    expect(scheduled).not.toHaveBeenCalled();
+  });
 });

@@ -101,7 +101,7 @@ export function getRazorpayClient(): Razorpay | null {
 }
 
 // ============================================================================
-// SDK call timeout
+// SDK call timeout & Circuit Breaker (#697 INF-3 / #1450 §0.4)
 // ============================================================================
 
 // razorpay-node exposes no timeout option — a hung connection to
@@ -112,7 +112,104 @@ export function getRazorpayClient(): Razorpay | null {
 // Bound every SDK call; the raw-HTTP refund path already uses AbortSignal.
 const SDK_CALL_TIMEOUT_MS = 30_000;
 
-export function withRazorpaySdkTimeout<T>(
+/**
+ * #697 (INF-3) — 4xx client/validation errors (e.g. BAD_REQUEST_ERROR on an
+ * unknown order/refund ID or invalid contact) prove Razorpay is reachable and
+ * must NEVER trip the circuit breaker. Only 5xx gateway faults and network /
+ * timeout errors count toward opening the circuit.
+ */
+export function shouldTripRazorpayCircuitBreaker(error: unknown): boolean {
+  if (!error || typeof error !== "object") return true;
+
+  const nestedError = (error as { error?: unknown }).error;
+  const statusCode =
+    (error as { statusCode?: unknown; status?: unknown }).statusCode ??
+    (error as { status?: unknown }).status ??
+    (nestedError && typeof nestedError === "object"
+      ? ((nestedError as { statusCode?: unknown; status?: unknown })
+          .statusCode ?? (nestedError as { status?: unknown }).status)
+      : undefined);
+
+  if (typeof statusCode === "number") {
+    if (statusCode === 429) {
+      return true;
+    }
+    if (statusCode >= 400 && statusCode < 500) {
+      return false;
+    }
+    if (statusCode >= 500) {
+      return true;
+    }
+  }
+
+  const body = readRazorpayErrorBody(error);
+  if (body?.code === "BAD_REQUEST_ERROR") {
+    return false;
+  }
+
+  return true;
+}
+
+type RazorpayCircuitBreakerLike = {
+  run: <T>(
+    operation: () => Promise<T>,
+    fallback?: () => T,
+    shouldTrip?: (error: unknown) => boolean,
+  ) => Promise<T>;
+  reset: () => void;
+  status: () => {
+    name: string;
+    state: string;
+    failures: number;
+    totalRequests?: number;
+    lastFailure: number | null;
+  };
+};
+
+let razorpayCircuitBreakerInstance: RazorpayCircuitBreakerLike | null = null;
+
+async function getRazorpayCircuitBreaker(): Promise<RazorpayCircuitBreakerLike> {
+  if (razorpayCircuitBreakerInstance) return razorpayCircuitBreakerInstance;
+  try {
+    // Lazy dynamic import so `lib/payments/core/razorpay.ts` does not evaluate
+    // `lib/redis.ts` at module load (preserving the PM-10 boot guard order in
+    // `razorpay-test-key-guard.test.ts`). Dynamic `import()` is the ESM form
+    // of the lazy load; the no-inline-disable policy forbids `require`.
+    const redisMod = (await import("@/lib/redis")) as {
+      createCircuitBreaker?: (name: string) => RazorpayCircuitBreakerLike;
+    };
+    if (razorpayCircuitBreakerInstance) return razorpayCircuitBreakerInstance;
+    if (typeof redisMod.createCircuitBreaker === "function") {
+      razorpayCircuitBreakerInstance =
+        redisMod.createCircuitBreaker("razorpay");
+      return razorpayCircuitBreakerInstance;
+    }
+  } catch {
+    // Fallback if Redis env is absent in isolated unit tests
+  }
+  razorpayCircuitBreakerInstance = {
+    run: (op) => op(),
+    reset: () => {},
+    status: () => ({
+      name: "razorpay",
+      state: "CLOSED",
+      failures: 0,
+      totalRequests: 0,
+      lastFailure: null,
+    }),
+  };
+  return razorpayCircuitBreakerInstance;
+}
+
+export async function getRazorpayCircuitStatus() {
+  return (await getRazorpayCircuitBreaker()).status();
+}
+
+export function resetRazorpayCircuitBreakerForTesting(): void {
+  razorpayCircuitBreakerInstance?.reset();
+}
+
+function runWithTimeout<T>(
   op: string,
   call: () => Promise<T>,
   timeoutMs: number = SDK_CALL_TIMEOUT_MS,
@@ -141,6 +238,18 @@ export function withRazorpaySdkTimeout<T>(
       throw err;
     }
   });
+}
+
+export async function withRazorpaySdkTimeout<T>(
+  op: string,
+  call: () => Promise<T>,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
+): Promise<T> {
+  return (await getRazorpayCircuitBreaker()).run(
+    () => runWithTimeout(op, call, timeoutMs),
+    undefined,
+    shouldTripRazorpayCircuitBreaker,
+  );
 }
 
 // ============================================================================

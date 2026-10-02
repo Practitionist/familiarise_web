@@ -61,12 +61,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  // One allowlist per direction: a schema-only entry must never excuse a
-  // db-only drift (P2023 on every read).
-  const driftFile = JSON.parse(fs.readFileSync(KNOWN_DRIFT, "utf8"));
-  const knownDbOnly: KnownEntry[] = driftFile.enumLabelsInDbNotInSchema ?? [];
-  const knownSchemaOnly: KnownEntry[] =
-    driftFile.enumLabelsInSchemaNotInDb ?? [];
+  const known: KnownEntry[] = JSON.parse(
+    fs.readFileSync(KNOWN_DRIFT, "utf8"),
+  ).enumLabelsInDbNotInSchema;
 
   // `now` is only used to expire allowlist entries; a stale allowlist must not
   // outlive its own deadline.
@@ -98,7 +95,7 @@ async function main(): Promise<void> {
     const schemaOnly = schemaLabels.filter((l) => !liveLabels.includes(l));
 
     if (dbOnly.length > 0) {
-      const entry = knownDbOnly.find((k) => k.enum === name);
+      const entry = known.find((k) => k.enum === name);
       const covered =
         entry && dbOnly.every((l) => entry.labels.includes(l)) ? entry : null;
       if (covered && covered.expires >= today) {
@@ -120,27 +117,10 @@ async function main(): Promise<void> {
     }
 
     if (schemaOnly.length > 0) {
-      // A pre-merge schema PR is legitimately ahead of the shared DB until
-      // the post-merge `db push`; allow it only with a short-expiry entry.
-      const entry = knownSchemaOnly.find((k) => k.enum === name);
-      const covered =
-        entry && schemaOnly.every((l) => entry.labels.includes(l))
-          ? entry
-          : null;
-      if (covered && covered.expires >= today) {
-        tolerated.push(
-          `${name}: schema-only ${schemaOnly.join(", ")} — known drift, tracked by ${covered.trackedBy}, expires ${covered.expires}`,
-        );
-      } else if (covered) {
-        errors.push(
-          `${name}: schema-only label(s) ${schemaOnly.join(", ")} — the allowlist entry EXPIRED on ${covered.expires} (tracked by ${covered.trackedBy}). Either run \`npm run db:push\` or re-review the entry.`,
-        );
-      } else {
-        errors.push(
-          `${name}: schema has label(s) the database does not: ${schemaOnly.join(", ")}. ` +
-            `Any write using one will fail. Run \`npm run db:push\`.`,
-        );
-      }
+      errors.push(
+        `${name}: schema has label(s) the database does not: ${schemaOnly.join(", ")}. ` +
+          `Any write using one will fail. Run \`npm run db:push\`.`,
+      );
     }
   }
 

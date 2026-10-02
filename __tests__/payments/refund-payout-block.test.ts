@@ -306,7 +306,7 @@ describe("consultant rail — uncascaded-refund disbursement block", () => {
 });
 
 describe("consultant rail — payout.amount vs what its earnings still owe", () => {
-  it("a refund cascaded onto a BATCHED earning after batching blocks the payout", async () => {
+  it("a refund cascaded onto a BATCHED earning after batching fails the payout and releases BATCHED earnings back to READY", async () => {
     stubEarnings([
       { status: RefundStatus.SUCCEEDED, cascadedAt: new Date("2026-09-01") },
     ]);
@@ -317,9 +317,24 @@ describe("consultant rail — payout.amount vs what its earnings still owe", () 
 
     const results = await processApprovedPayouts();
 
-    expect(mocks.consultantPayout.updateMany).not.toHaveBeenCalled();
     expect(gatewayFetch).not.toHaveBeenCalled();
-    expect(results[0]).toMatchObject({ success: false, skipped: true });
+    expect(mocks.consultantPayout.updateMany).toHaveBeenCalledWith({
+      where: { id: "po_1", status: "APPROVED" },
+      data: expect.objectContaining({
+        status: "FAILED",
+        failureReason: expect.stringContaining("SHORTFALL_BEFORE_DISBURSEMENT:"),
+        tdsDeducted: 0,
+        netAmount: null,
+      }),
+    });
+    expect(mocks.consultantEarnings.updateMany).toHaveBeenCalledWith({
+      where: { payoutId: "po_1", status: "BATCHED" },
+      data: { payoutId: null, status: "READY" },
+    });
+    expect(results[0]).toMatchObject({
+      success: false,
+      error: expect.stringContaining("SHORTFALL_BEFORE_DISBURSEMENT:"),
+    });
   });
 });
 

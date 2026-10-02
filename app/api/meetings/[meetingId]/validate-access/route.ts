@@ -1,5 +1,4 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { resolveMeetingAccess } from "@/lib/meetings/access";
@@ -23,14 +22,9 @@ export async function GET(
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { hasAccess: false, role: null, message: "Authentication required" },
-        { status: 401 },
-      );
-    }
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const { meetingId } = await params;
 

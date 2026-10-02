@@ -20,7 +20,10 @@ jest.mock("@sentry/nextjs", () => ({
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { user: { findFirst: jest.fn() } },
+  default: {
+    user: { findFirst: jest.fn() },
+    systemJobExecution: { findFirst: jest.fn() },
+  },
 }));
 
 jest.mock("../../lib/redis", () => ({
@@ -56,6 +59,8 @@ import prisma from "@/lib/prisma";
 import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
 const findFirst = prisma.user.findFirst as unknown as jest.Mock;
+const jobFindFirst = prisma.systemJobExecution
+  .findFirst as unknown as jest.Mock;
 const warn = Sentry.logger.warn as jest.Mock;
 const mockIsMockRedis = isMockRedis as jest.Mock;
 const mockRedisGet = redis.get as jest.Mock;
@@ -75,6 +80,7 @@ function blockLoopSoon(ms: number): void {
 beforeEach(() => {
   jest.clearAllMocks();
   findFirst.mockResolvedValue({ id: "u1" });
+  jobFindFirst.mockResolvedValue(null);
   mockIsMockRedis.mockReturnValue(true);
   mockRedisGet.mockReset();
 });
@@ -150,7 +156,7 @@ describe("GET /api/health", () => {
   describe("redis probe (#1822 Q-7)", () => {
     it("reports ok and leaves status alone when Redis is healthy", async () => {
       mockIsMockRedis.mockReturnValue(false);
-      mockRedisGet.mockResolvedValueOnce(null);
+      mockRedisGet.mockResolvedValue(null);
 
       const body = await (await GET(request())).json();
 
@@ -179,7 +185,7 @@ describe("GET /api/health", () => {
 
     it("reports degraded when the GET succeeds but the breaker is open", async () => {
       mockIsMockRedis.mockReturnValue(false);
-      mockRedisGet.mockResolvedValueOnce(null);
+      mockRedisGet.mockResolvedValue(null);
       (isRedisCircuitOpen as jest.Mock).mockReturnValueOnce(true);
 
       const body = await (await GET(request())).json();
@@ -198,6 +204,44 @@ describe("GET /api/health", () => {
 
       expect(body.redis).toEqual({ status: "ok" });
       expect(mockRedisGet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cron freshness probe (Redis + SystemJobExecution fallback)", () => {
+    it("uses the fresher SystemJobExecution.startedAt when Redis cron:heartbeat:last is stale", async () => {
+      mockIsMockRedis.mockReturnValue(false);
+      const staleIso = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
+      const freshDate = new Date(Date.now() - 2 * 60 * 1000);
+      mockRedisGet.mockImplementation(async (key: string) =>
+        key === "cron:heartbeat:last" ? staleIso : null,
+      );
+      jobFindFirst.mockResolvedValueOnce({ startedAt: freshDate });
+
+      const body = await (await GET(request())).json();
+
+      expect(body.cron).toEqual({
+        configured: true,
+        lastRunAt: freshDate.toISOString(),
+        stale: false,
+      });
+      expect(body.status).toBe("healthy");
+    });
+
+    it("marks cron stale when both Redis and SystemJobExecution are older than the 6h threshold", async () => {
+      mockIsMockRedis.mockReturnValue(false);
+      const staleDate = new Date(Date.now() - 7 * 60 * 60 * 1000);
+      mockRedisGet.mockImplementation(async (key: string) =>
+        key === "cron:heartbeat:last" ? staleDate.toISOString() : null,
+      );
+      jobFindFirst.mockResolvedValueOnce({ startedAt: staleDate });
+
+      const body = await (await GET(request())).json();
+
+      expect(body.cron).toEqual({
+        configured: true,
+        lastRunAt: staleDate.toISOString(),
+        stale: true,
+      });
     });
   });
 });

@@ -281,8 +281,8 @@ export async function processQualifyingAction(
         // within the qualification window, both asserted in the WHERE. Folding the
         // window into the guarded write (rather than an app-side Date.now() check
         // separate from the status guard) makes reward-vs-expire a single decision
-        // against the committed row, closing the gap where a stale read or the
-        // expireStaleReferrals cron disagrees with the app-computed window.
+        // against the committed row, closing the gap where a stale read
+        // disagrees with the app-computed window.
         const windowCutoff = new Date(
           Date.now() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
         );
@@ -795,7 +795,7 @@ export async function getUserReferrals(
 
   if (!referralCode) return [];
 
-  return prisma.referral.findMany({
+  const rows = await prisma.referral.findMany({
     where: { referralCodeId: referralCode.id },
     include: {
       referredUser: {
@@ -803,6 +803,19 @@ export async function getUserReferrals(
       },
     },
     orderBy: { createdAt: "desc" },
+  });
+
+  const now = new Date();
+  const windowCutoff = new Date(
+    now.getTime() - QUALIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+  return rows.map((r) => {
+    const expiresAt = (r as { expiresAt?: Date | null }).expiresAt;
+    const isStale =
+      (r.status === "SIGNED_UP" || (r.status as string) === "PENDING") &&
+      ((expiresAt != null && expiresAt < now) ||
+        (r.signedUpAt != null && r.signedUpAt < windowCutoff));
+    return isStale ? { ...r, status: "EXPIRED" as const } : r;
   });
 }
 
@@ -816,41 +829,6 @@ export async function getCreditHistory(
     where: { userId },
     orderBy: { createdAt: "desc" },
   });
-}
-
-/**
- * Expires unqualified referrals that are past the qualification window.
- * Called by cron job.
- */
-export async function expireStaleReferrals(): Promise<number> {
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - QUALIFICATION_WINDOW_DAYS);
-
-  const result = await prisma.referral.updateMany({
-    where: {
-      status: "SIGNED_UP",
-      signedUpAt: { lt: cutoffDate },
-    },
-    data: { status: "EXPIRED" },
-  });
-
-  return result.count;
-}
-
-/**
- * Expires credits that are past their expiry date.
- * Called by cron job.
- */
-export async function expireStaleCredits(): Promise<number> {
-  const result = await prisma.referralCredit.updateMany({
-    where: {
-      remainingAmount: { gt: 0 },
-      expiresAt: { lt: new Date() },
-    },
-    data: { remainingAmount: 0 },
-  });
-
-  return result.count;
 }
 
 /**

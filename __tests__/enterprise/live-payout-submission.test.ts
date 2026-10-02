@@ -44,6 +44,7 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
       // #1020 — the disbursement dispute guard probes for live disputes.
       findFirst: jest.fn().mockResolvedValue(null),
+      aggregate: jest.fn(),
     },
     orgAuditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -88,7 +89,7 @@ const mockedPrisma = prisma as unknown as {
     update: jest.Mock;
   };
   organizationPayoutAccount: { findUnique: jest.Mock };
-  organizationEarnings: { updateMany: jest.Mock };
+  organizationEarnings: { updateMany: jest.Mock; aggregate: jest.Mock };
   orgAuditLog: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -228,13 +229,8 @@ describe("processOrgPayout — live submission gating", () => {
     process.env.ENABLE_LIVE_PAYOUTS = "true";
     setupHappyClaim();
     setupVerifiedAccount();
-    // A REAL 400. The pre-#1846 code matched the substring "invalid" in the
-    // message, so a bare `new Error("...Invalid fund_account_id")` used to
-    // pass here — and that is precisely the defect: any 5xx or throttle whose
-    // prose contains "invalid" took the same branch and released the org's
-    // earnings, which the next batch then re-paid under a NEW idempotency
-    // key. Classification is now by `httpStatus`, so the test states the
-    // status the gateway would actually have returned.
+    // A real 400: classification is by `httpStatus`, never by message prose,
+    // so the test states the status the gateway would actually return.
     const createPayout = jest
       .fn()
       .mockRejectedValue(
@@ -438,5 +434,43 @@ describe("processOrgPayout — live submission gating", () => {
     });
     expect(run.advanced).toBe(1);
     expect(createPayout).toHaveBeenCalledTimes(1);
+  });
+
+  it("post-batch refund shortfall fails the org payout and releases BATCHED earnings back to READY without calling gateway", async () => {
+    process.env.ENABLE_LIVE_PAYOUTS = "true";
+    setupHappyClaim();
+    mockedPrisma.organizationPayout.findUniqueOrThrow.mockResolvedValue({
+      id: PAYOUT_ID,
+      organizationId: ORG_ID,
+      amountPaise: 247500,
+      netPayoutPaise: 250000,
+      currency: "INR",
+    });
+    mockedPrisma.organizationEarnings.aggregate.mockResolvedValue({
+      _sum: { orgSharePaise: 250000, refundedAmountPaise: 10000 },
+    });
+    const createPayout = jest.fn();
+    setupGatewayService({ createPayout });
+
+    const result = await processOrgPayout(PAYOUT_ID);
+
+    expect(result).toEqual({
+      status: "FAILED",
+      submittedToGateway: false,
+      claimed: true,
+    });
+    expect(createPayout).not.toHaveBeenCalled();
+    expect(mockedPrisma.organizationPayout.updateMany).toHaveBeenCalledWith({
+      where: { id: PAYOUT_ID, status: "PROCESSING" },
+      data: expect.objectContaining({
+        status: "FAILED",
+        failureReason: expect.stringContaining("SHORTFALL_BEFORE_DISBURSEMENT:"),
+        failedAt: expect.any(Date),
+      }),
+    });
+    expect(mockedPrisma.organizationEarnings.updateMany).toHaveBeenCalledWith({
+      where: { orgPayoutId: PAYOUT_ID, status: "BATCHED" },
+      data: { status: "READY", orgPayoutId: null },
+    });
   });
 });

@@ -11,7 +11,7 @@
  *   - dpdp.ts         — `buildConsentArtifact` + `checkConsent` (fail-closed)
  *                       live. `checkConsent` is now wired at org-sponsored
  *                       checkout, invite acceptance, and data export (#701);
- *                       the remaining call-site cascade (SCIM / Stream /
+ *                       the remaining call-site cascade (Stream /
  *                       analytics) is tracked in #701.
  *   - form15.ts       — schema-only; cross-border remittance refs not
  *                       yet captured. See compliance doc 07.

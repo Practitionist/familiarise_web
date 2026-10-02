@@ -301,7 +301,6 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   general: "General",
   branding: "Branding",
   sso: "Domains & SSO",
-  scim: "Directory sync",
   webhooks: "Webhooks",
   "data-exports": "Data exports",
   new: "New",

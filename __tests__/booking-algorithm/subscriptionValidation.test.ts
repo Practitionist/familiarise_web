@@ -27,7 +27,7 @@ import {
   makeMockPrisma,
   makeAppointmentWithSlots,
   makeConsecutiveSlotISOs,
-} from "./__mocks__/booking.mockData";
+} from "../fixtures/booking.mockData";
 
 // ─── Test Setup ─────────────────────────────────────────────────────────────
 

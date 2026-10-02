@@ -27,7 +27,7 @@ describe("humanizeOrgError", () => {
     ["PO_BALANCE_INSUFFICIENT", /remaining budget/i],
     ["DOMAIN_NOT_OWNED", /Add it under Settings → SSO → Domains/i],
     ["DOMAIN_NOT_VERIFIED", /TXT-record/i],
-    ["SSO_PROVIDER_MISCONFIGURED", /X\.509 PEM/i],
+    ["SSO_PROVIDER_MISCONFIGURED", /re-add the provider/i],
   ];
 
   test.each(KNOWN_CODES)(

@@ -18,9 +18,7 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "create-payout-batch",
   "handle-stuck-payouts",
   "reconcile-payout-status",
-  "cascade-refund-earnings",
   "reconcile-pending-refunds",
-  "handle-lost-disputes",
   "reconcile-disputes",
   "cleanup-abandoned-payments",
   "release-earnings",
@@ -42,10 +40,11 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "settle-cancelled-sessions",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
+  // Orphan auto-heal refunds stranded captures through the refund front door.
+  "reconcile-orphaned-payments",
   // Added by the wave-5 sweep: each of these either moves money directly or
   // mutates the org contract/program state the checkout sponsorship resolver
   // reads, so a partial deployment can bill against a half-written entitlement.
-  "release-pending-trust-earnings",
   "auto-renew-contracts",
   "dunning",
   "timeout-member-overages",

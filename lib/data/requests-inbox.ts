@@ -868,21 +868,30 @@ async function readCounts(
 }
 
 /**
- * #1527 — the consultant nav badge: the inbox's own tab counts, so badge and
- * tabs cannot disagree. Personal scope by default (#1345: org-funded requests
- * belong to that org's dashboard).
+ * Rows only this consultant can clear (the REQUESTED state): the nav
+ * badge and Home's "requests to answer". Awaiting-payment and next-cycle rows
+ * wait on the client, so they stay on the tabs but not on the badge. Personal
+ * scope by default (org-funded requests belong to that org's dashboard).
  */
-export async function readRequestsInboxCounts(args: {
+export async function readRequestsToAnswerCount(args: {
   consultantProfileId: string;
   orgScope?: Scope;
-  now?: Date;
-}): Promise<Record<InboxType, number>> {
-  return readCounts(
-    args.consultantProfileId,
-    args.orgScope ?? PERSONAL,
-    args.now ?? new Date(),
-    null,
-  );
+}): Promise<number> {
+  const cp = args.consultantProfileId;
+  const scope = args.orgScope ?? PERSONAL;
+  const tasks: (() => Promise<number>)[] = [
+    () =>
+      prisma.consultation.count({
+        where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
+      }),
+    () =>
+      prisma.subscription.count({
+        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
+      }),
+    () => prisma.trial.count({ where: trialWhere(cp, scope, ["PENDING"]) }),
+  ];
+  const results = await mapLimit(tasks, poolLimit(), (run) => run());
+  return results.reduce((sum, n) => sum + n, 0);
 }
 
 export async function readRequestsInbox(

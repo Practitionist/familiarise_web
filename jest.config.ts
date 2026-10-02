@@ -49,8 +49,12 @@ const config: Config = {
   //   "clover"
   // ],
 
-  // An object that configures minimum threshold enforcement for coverage results
-  // coverageThreshold: undefined,
+  // An object that configures minimum threshold enforcement for coverage results (#1885)
+  coverageThreshold: {
+    global: {
+      branches: 60,
+    },
+  },
 
   // A path to a custom dependency extractor
   // dependencyExtractor: undefined,
@@ -221,4 +225,44 @@ const config: Config = {
   // watchman: true,
 };
 
-export default createJestConfig(config);
+// ESM-only packages that __tests__/sso/oidc-round-trip.test.ts loads for real
+// (better-auth, @better-auth/sso, the mock IdP and their ESM-only
+// dependencies). next/jest leaves node_modules untransformed, and jest's CJS
+// runtime cannot `require` them, so they are added to the lookahead next/jest
+// already uses for `transpilePackages`.
+const ESM_ONLY_PACKAGES = [
+  "better-auth",
+  "@better-auth",
+  "better-call",
+  "@better-fetch",
+  "jose",
+  "oauth2-mock-server",
+  "basic-auth",
+  "kysely",
+  "rou3",
+  "@noble",
+];
+
+export default async (): Promise<Config> => {
+  const resolved = await createJestConfig(config)();
+  const NODE_MODULES_LOOKAHEAD = "/node_modules/(?!.pnpm)(?!(";
+  const patterns = resolved.transformIgnorePatterns ?? [];
+  if (!patterns.some((p) => p.startsWith(NODE_MODULES_LOOKAHEAD))) {
+    // Fail loudly if a next/jest upgrade changes the pattern shape, rather
+    // than silently skipping the transform and breaking the OIDC test.
+    throw new Error(
+      "jest.config.ts: next/jest transformIgnorePatterns changed shape",
+    );
+  }
+  return {
+    ...resolved,
+    transformIgnorePatterns: patterns.map((p) =>
+      p.startsWith(NODE_MODULES_LOOKAHEAD)
+        ? p.replace(
+            NODE_MODULES_LOOKAHEAD,
+            `${NODE_MODULES_LOOKAHEAD}${ESM_ONLY_PACKAGES.join("|")}|`,
+          )
+        : p,
+    ),
+  };
+};

@@ -47,44 +47,41 @@ export * from "./senders/people";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
-/** Per-call overrides a sender accepts on top of its own entity and budget. */
 export type SendOptions = Partial<DeliverOptions>;
 
-/**
- * #1298 — every sender is render → build → deliver. A render-stage throw has
- * nothing to replay (no message yet), so it is reported and returned as a
- * failure here; everything after render dead-letters inside deliver().
- */
-async function send(
+export interface StagedSend {
+  emailType: string;
+  staged: StagedEmail | null;
+  message: RenderedEmail;
+}
+
+async function renderEnvelope(
   emailType: string,
   element: ReactElement,
   envelope: Omit<RenderedEmail, "html" | "text">,
-  opts: DeliverOptions,
-): Promise<DeliverResult> {
-  let rendered: { html: string; text: string };
+): Promise<RenderedEmail | { error: unknown }> {
   try {
-    rendered = await renderEmail(element);
+    const rendered = await renderEmail(element);
+    return { ...envelope, ...rendered };
   } catch (error) {
     console.error(`[email] ${emailType} render failed:`, error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "email", emailType }, level: "warning" },
     );
-    return { success: false, error };
+    return { error };
   }
-  return deliver({ ...envelope, ...rendered }, emailType, opts);
 }
 
-/**
- * The stage half of `send()` for a route that answers before the vendor
- * call: the FailedEmail row is written now (`stage`), the send runs later
- * through `attemptStagedEmail()` inside `after()`. A render failure is
- * reported and yields null — nothing to attempt, nothing lost but the mail.
- */
-export interface StagedSend {
-  emailType: string;
-  staged: StagedEmail | null;
-  message: RenderedEmail;
+async function send(
+  emailType: string,
+  element: ReactElement,
+  envelope: Omit<RenderedEmail, "html" | "text">,
+  opts: DeliverOptions,
+): Promise<DeliverResult> {
+  const message = await renderEnvelope(emailType, element, envelope);
+  if ("error" in message) return { success: false, error: message.error };
+  return deliver(message, emailType, opts);
 }
 
 async function stageSend(
@@ -93,23 +90,12 @@ async function stageSend(
   envelope: Omit<RenderedEmail, "html" | "text">,
   opts: StageOptions,
 ): Promise<StagedSend | null> {
-  let rendered: { html: string; text: string };
-  try {
-    rendered = await renderEmail(element);
-  } catch (error) {
-    console.error(`[email] ${emailType} render failed:`, error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType }, level: "warning" },
-    );
-    return null;
-  }
-  const message = { ...envelope, ...rendered };
+  const message = await renderEnvelope(emailType, element, envelope);
+  if ("error" in message) return null;
   const staged = await stage(message, emailType, opts);
   return { emailType, staged, message };
 }
 
-/** The `after()` half of `stageSend()`. Never throws. */
 export async function attemptStagedEmail(
   staged: StagedSend | null,
   budgetMs: number,
@@ -120,144 +106,124 @@ export async function attemptStagedEmail(
       budgetMs,
     });
   } catch (error) {
-    // `attempt` arms its AbortSignal before its own try; keep the caller's
-    // never-throws contract whatever the budget was.
     console.error(`[email] ${staged.emailType} attempt failed:`, error);
   }
 }
 
-// #1654 — the entity anchor a sender stamps on its outbox row.
+function defineDirectEmailSender<TArgs>(
+  build: (args: TArgs) => {
+    emailType: string;
+    element: ReactElement;
+    envelope: Omit<RenderedEmail, "html" | "text">;
+    defaults: DeliverOptions;
+  },
+) {
+  return (args: TArgs, opts: SendOptions = {}): Promise<DeliverResult> => {
+    const spec = build(args);
+    return send(spec.emailType, spec.element, spec.envelope, {
+      ...spec.defaults,
+      ...opts,
+    });
+  };
+}
+
 const userRef = (userId?: string) => (userId ? `user:${userId}` : undefined);
 const paymentRef = (paymentId?: string) =>
   paymentId ? `payment:${paymentId}` : undefined;
+const capitalize = (value: string) =>
+  value.charAt(0).toUpperCase() + value.slice(1);
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
+// ── Auth & Account Senders ──────────────────────────────────────────────────
 
-/** Welcome email for a newly registered user. */
-export async function sendWelcomeEmail(
-  {
-    email,
-    name,
-    userId,
-    dashboardUrl = `${getAppUrl()}/dashboard`,
-  }: {
-    email: string;
-    name: string;
-    userId?: string;
-    dashboardUrl?: string;
+export const sendWelcomeEmail = defineDirectEmailSender<{
+  email: string;
+  name: string;
+  userId?: string;
+  dashboardUrl?: string;
+}>(({ email, name, userId, dashboardUrl = `${getAppUrl()}/dashboard` }) => ({
+  emailType: "WELCOME",
+  element: WelcomeEmail({ name, dashboardUrl }),
+  envelope: {
+    from: SENDERS.onboarding,
+    to: email,
+    subject: "Welcome to Familiarise!",
   },
-  opts: SendOptions = {},
-) {
-  return send(
-    "WELCOME",
-    WelcomeEmail({ name, dashboardUrl }),
-    {
-      from: SENDERS.onboarding,
-      to: email,
-      subject: "Welcome to Familiarise!",
-    },
-    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
-  );
-}
+  defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+}));
 
-/** Password reset link. The token is valid for 30 minutes (lib/auth.ts). */
-export async function sendPasswordResetEmail(
-  {
-    email,
+export const sendPasswordResetEmail = defineDirectEmailSender<{
+  email: string;
+  name: string;
+  token: string;
+  userId?: string;
+  invite?: boolean;
+}>(({ email, name, token, userId, invite = false }) => ({
+  emailType: "PASSWORD_RESET",
+  element: PasswordResetEmail({
     name,
-    token,
-    userId,
-  }: {
-    email: string;
-    name: string;
-    token: string;
-    userId?: string;
+    resetLink: `${getAppUrl()}/auth/reset-password?token=${token}`,
+    invite,
+  }),
+  envelope: {
+    from: SENDERS.security,
+    to: email,
+    subject: invite
+      ? "Set your Familiarise staff password"
+      : "Reset your Familiarise password",
   },
-  opts: SendOptions = {},
-) {
-  const resetLink = `${getAppUrl()}/auth/reset-password?token=${token}`;
-  return send(
-    "PASSWORD_RESET",
-    PasswordResetEmail({ name, resetLink }),
-    {
-      from: SENDERS.security,
-      to: email,
-      subject: "Reset your Familiarise password",
-    },
-    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
-  );
-}
+  defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+}));
 
-/**
- * Email-address verification link. `verificationUrl` is the ready-to-use link
- * BetterAuth hands the hook (token + callbackURL included), passed verbatim.
- */
-export async function sendVerificationEmail(
-  {
-    email,
-    name,
-    verificationUrl,
-    userId,
-  }: {
-    email: string;
-    name: string;
-    verificationUrl: string;
-    userId?: string;
-  },
-  opts: SendOptions = {},
-) {
-  // Dev affordance gated on NODE_ENV, not on the key being absent: the link is
-  // a bearer token, and a misconfigured production must not print it.
+export const sendVerificationEmail = defineDirectEmailSender<{
+  email: string;
+  name: string;
+  verificationUrl: string;
+  userId?: string;
+}>(({ email, name, verificationUrl, userId }) => {
   if (process.env.NODE_ENV === "development") {
     console.log(`[verify-email] ${email} -> ${verificationUrl}`);
   }
-  return send(
-    "EMAIL_VERIFICATION",
-    VerificationEmail({ name, verificationLink: verificationUrl }),
-    {
+  return {
+    emailType: "EMAIL_VERIFICATION",
+    element: VerificationEmail({ name, verificationLink: verificationUrl }),
+    envelope: {
       from: SENDERS.onboarding,
       to: email,
       subject: "Verify your Familiarise email address",
     },
-    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
-  );
-}
+    defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+  };
+});
 
-/** Notice that an OAuth provider was linked to the account. */
-export async function sendAccountLinkedEmail(
-  {
+export const sendAccountLinkedEmail = defineDirectEmailSender<{
+  email: string;
+  name: string;
+  provider: string;
+  userId?: string;
+  dashboardUrl?: string;
+}>(
+  ({
     email,
     name,
     provider,
     userId,
     dashboardUrl = `${getAppUrl()}/dashboard`,
-  }: {
-    email: string;
-    name: string;
-    provider: string;
-    userId?: string;
-    dashboardUrl?: string;
-  },
-  opts: SendOptions = {},
-) {
-  return send(
-    "ACCOUNT_LINKED",
-    AccountLinkedEmail({ name, provider, dashboardUrl }),
-    {
+  }) => ({
+    emailType: "ACCOUNT_LINKED",
+    element: AccountLinkedEmail({ name, provider, dashboardUrl }),
+    envelope: {
       from: SENDERS.security,
       to: email,
       subject: `Your Familiarise account now linked with ${provider}`,
     },
-    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
-  );
-}
+    defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+  }),
+);
 
-/** #1703 D2 — the reminder's `FailedEmail.emailType`; the sweep's once-guard reads it. */
+// ── Payment Senders ─────────────────────────────────────────────────────────
+
 export const PAYMENT_LINK_REMINDER_EMAIL_TYPE = "PAYMENT_LINK_REMINDER";
 
-/** #1775 P-1 — a Razorpay pay-link is an order id; mail our absolute pay page. */
 export function emailPayUrl(
   paymentId: string | undefined,
   paymentUrl: string,
@@ -267,9 +233,19 @@ export function emailPayUrl(
   return href.startsWith("/") ? `${getAppUrl()}${href}` : href;
 }
 
-/** Payment link once a consultant approves a request. */
-export async function sendPaymentLinkEmail(
-  {
+export const sendPaymentLinkEmail = defineDirectEmailSender<{
+  email: string;
+  name: string;
+  consultantName: string;
+  appointmentType: AppointmentType;
+  amount: number;
+  currency: string;
+  paymentUrl: string;
+  expiresAt: Date;
+  paymentId?: string;
+  reminder?: boolean;
+}>(
+  ({
     email,
     name,
     consultantName,
@@ -280,24 +256,9 @@ export async function sendPaymentLinkEmail(
     expiresAt,
     paymentId,
     reminder = false,
-  }: {
-    email: string;
-    name: string;
-    consultantName: string;
-    appointmentType: AppointmentType;
-    amount: number;
-    currency: string;
-    paymentUrl: string;
-    expiresAt: Date;
-    paymentId?: string;
-    /** #1703 D2 — the half-window reminder, a distinct email type for the once-guard. */
-    reminder?: boolean;
-  },
-  opts: SendOptions = {},
-) {
-  return send(
-    reminder ? PAYMENT_LINK_REMINDER_EMAIL_TYPE : "PAYMENT_LINK",
-    PaymentLinkEmail({
+  }) => ({
+    emailType: reminder ? PAYMENT_LINK_REMINDER_EMAIL_TYPE : "PAYMENT_LINK",
+    element: PaymentLinkEmail({
       name,
       consultantName,
       appointmentType,
@@ -307,20 +268,19 @@ export async function sendPaymentLinkEmail(
       expiresAt: expiresAt.toISOString(),
       reminder,
     }),
-    {
+    envelope: {
       from: SENDERS.payments,
       to: email,
       subject: reminder
         ? `Reminder: payment due - ${capitalize(appointmentType)} with ${consultantName}`
         : `Payment Required - ${capitalize(appointmentType)} with ${consultantName}`,
     },
-    {
+    defaults: {
       entityRef: paymentRef(paymentId),
       budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
-      ...opts,
     },
-  );
-}
+  }),
+);
 
 export interface PaymentSuccessEmailArgs {
   email: string;
@@ -334,11 +294,6 @@ export interface PaymentSuccessEmailArgs {
   paymentReference?: string;
 }
 
-/**
- * #1654 — render only, for a caller that stages inside its own transaction
- * and attempts after commit (the payment webhook). Throws on a render failure;
- * the caller reports it and skips the email, as `send()` does.
- */
 export async function renderPaymentSuccessEmail({
   email,
   name,
@@ -350,8 +305,6 @@ export async function renderPaymentSuccessEmail({
   dashboardUrl = `${getAppUrl()}/dashboard`,
   paymentReference,
 }: PaymentSuccessEmailArgs): Promise<RenderedEmail> {
-  // #1298 — the reference is part of the rendered body, so two same-amount
-  // receipts to one customer within 24 h get distinct idempotency keys.
   const rendered = await renderEmail(
     PaymentSuccessEmail({
       name,
@@ -385,7 +338,6 @@ export interface PaymentFailedEmailArgs {
   paymentId?: string;
 }
 
-/** #1654 — render only; see {@link renderPaymentSuccessEmail}. */
 export async function renderPaymentFailedEmail({
   email,
   name,
@@ -417,7 +369,6 @@ export async function renderPaymentFailedEmail({
   };
 }
 
-/** Staged org invitation; attempt after the response. */
 export async function stageOrgInvitationEmail(
   {
     email,
@@ -448,14 +399,8 @@ export async function stageOrgInvitationEmail(
   );
 }
 
-// ============================================================================
-// Newsletter
-// ============================================================================
+// ── Waitlist & Contact Senders ──────────────────────────────────────────────
 
-/**
- * Double opt-in confirmation. The link carries its own issue time so it can
- * expire without a token column — see lib/waitlist/tokens.ts.
- */
 export async function sendWaitlistConfirmEmail(
   {
     email,
@@ -470,20 +415,14 @@ export async function sendWaitlistConfirmEmail(
 ) {
   let confirmLink: string;
   try {
-    // Signing throws when WAITLIST_HMAC_SECRET is unset in production, and a
-    // sender must never throw into its caller.
     confirmLink = buildConfirmUrl(email, issuedAt);
   } catch (error) {
     console.error("Failed to sign waitlist confirmation link:", error);
     return { success: false as const, error };
   }
-
-  // Dev affordance gated on NODE_ENV, not on the key being absent: the link is
-  // a bearer token, and a misconfigured production must not print it.
   if (process.env.NODE_ENV === "development") {
     console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
   }
-
   return send(
     "WAITLIST_CONFIRM",
     WaitlistConfirmEmail({ name, confirmLink }),
@@ -500,21 +439,12 @@ export async function sendWaitlistConfirmEmail(
   );
 }
 
-/** Sent once the confirm link is clicked. */
 export async function sendWaitlistWelcomeEmail(
-  {
-    email,
-    name,
-  }: {
-    email: string;
-    name?: string | null;
-  },
+  { email, name }: { email: string; name?: string | null },
   opts: SendOptions = {},
 ) {
   let unsubscribeLink: string;
   try {
-    // Same never-throw contract as the confirm sender. Unreachable in practice:
-    // confirmSubscription verified the confirm token with this secret first.
     unsubscribeLink = buildUnsubscribeUrl(email);
   } catch (error) {
     console.error("Failed to sign waitlist unsubscribe link:", error);
@@ -536,11 +466,6 @@ export async function sendWaitlistWelcomeEmail(
   );
 }
 
-/**
- * #1132 — contact / enterprise-sales inquiry, routed to the ops inbox with the
- * visitor on Reply-To. Inherits the FailedEmail retry path so a Resend outage
- * does not lose the lead.
- */
 export async function sendContactInquiryEmail(
   {
     firstName,
@@ -606,7 +531,6 @@ export async function sendContactInquiryEmail(
       subject: `[Contact] ${subject}`,
       html,
       text,
-      // Ops replies go straight to the person who wrote in.
       replyTo: email,
     },
     "CONTACT_INQUIRY",

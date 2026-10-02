@@ -65,6 +65,10 @@ jest.mock("../../lib/novu/service", () => ({
   notifyRefundFailed: jest.fn().mockResolvedValue(undefined),
   notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
+const mockApplyRefundCascade = jest.fn().mockResolvedValue({});
+jest.mock("../../lib/payments/operations/refund", () => ({
+  applyRefundCascade: (...a: unknown[]) => mockApplyRefundCascade(...a),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
   // matcher semantics.
@@ -77,6 +81,7 @@ import prisma from "../../lib/prisma";
 import { listRefunds, getRefund } from "../../lib/payments";
 import { RefundError } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
+import { notifyRefundFailed } from "../../lib/novu/service";
 import { reconcilePendingRefunds } from "../../scripts/refunds/reconcile-pending-refunds";
 
 /** The Prisma refund surface the reconcile core touches. */
@@ -96,6 +101,7 @@ const refundTable = (prisma as unknown as ReconcilePrismaMock).refund;
 const mockList = listRefunds as jest.Mock;
 const mockGet = getRefund as jest.Mock;
 const mockPage = reportSentryMessage as jest.Mock;
+const mockNotifyFailed = notifyRefundFailed as jest.Mock;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -558,5 +564,43 @@ describe("reconcilePendingRefunds — no live client past 24h (#1757)", () => {
       if (previous === undefined) delete process.env.STRIPE_ENABLED;
       else process.env.STRIPE_ENABLED = previous;
     }
+  });
+});
+
+// The notify pass runs inside the core, after both reconcile passes, so every
+// door that reconciles also pages the payer of a FAILED refund exactly once.
+describe("reconcilePendingRefunds — failed-refund notice", () => {
+  test("pages the payer of an un-notified FAILED refund after reconciling", async () => {
+    refundTable.findMany
+      .mockResolvedValueOnce([]) // placeholder pass
+      .mockResolvedValueOnce([]) // real-id pass
+      .mockResolvedValueOnce([
+        {
+          id: "row_failed",
+          paymentId: "pay_1",
+          amountPaise: 10_000,
+          currency: "INR",
+          metadata: {},
+          failureReason: null,
+          failedAt: null,
+          payment: { userId: "user_1", organizationId: null },
+        },
+      ]);
+
+    await reconcilePendingRefunds();
+
+    expect(refundTable.findMany).toHaveBeenCalledTimes(3);
+    expect(refundTable.findMany.mock.calls[2][0]).toMatchObject({
+      where: { status: "FAILED", failedNotifiedAt: null },
+    });
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "row_failed", failedNotifiedAt: null },
+      }),
+    );
+    expect(mockNotifyFailed).toHaveBeenCalledWith(
+      "user_1",
+      expect.objectContaining({ amount: 10_000 }),
+    );
   });
 });

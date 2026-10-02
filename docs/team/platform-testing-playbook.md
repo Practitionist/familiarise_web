@@ -206,7 +206,7 @@ You'll need accounts for each role to test features:
 
 **What to look for:** Successful account creation, correct role assignment, proper redirect.
 
-**Also supports:** Google, GitHub, and Facebook OAuth login via BetterAuth.
+**Also supports:** Google and GitHub OAuth login via BetterAuth.
 
 ### Sign In
 

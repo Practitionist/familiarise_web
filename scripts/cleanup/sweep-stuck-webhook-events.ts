@@ -96,186 +96,160 @@ async function sweepStuckWebhookEventsUnlocked(
   const staleMinutes = opts.staleMinutes ?? 6;
   const warnAgeHours = opts.maxAgeHours ?? 72;
   const giveUpAfterHours = opts.giveUpAfterHours ?? 168;
-  const limit = opts.limit ?? 200;
-  const now = Date.now();
-  const staleBefore = new Date(now - staleMinutes * 60_000);
-  const warnOlderThan = new Date(now - warnAgeHours * 3_600_000);
-  const alertOlderThan = new Date(now - ALERT_AGE_HOURS * 3_600_000);
-  const giveUpOlderThan = new Date(now - giveUpAfterHours * 3_600_000);
-
-  // Stuck = after() crashed before markWebhookEventProcessed ran. Only razorpay
-  // for now (stripe dispatch not yet extracted — tracked separately).
-  // #812: No lower-age floor — events stuck between the old 72h floor and the
-  // 90d archive window were left with no actor. Keep only the upper bound
-  // (don't race in-flight after() callbacks via staleBefore); re-driving an old
-  // event is safe (per-row idempotency keys + status guards).
-  // A handler that THREW is also stuck, and until now nothing re-drove it.
-  //
-  // `markWebhookEventProcessed(eventId, error)` runs in the dispatch's
-  // `finally`, so a thrown handler lands as `processed=true, error!=null`.
-  // Razorpay already received its 200 (the route ACKs before processing) and
-  // will not redeliver, and `logWebhookEvent`'s "previously failed, allow
-  // retry" reset only fires on a redelivery that can never come. So the
-  // sweeper's `processed: false, error: null` selector — which reads as "crashed
-  // before we recorded anything" — silently excluded every handler that failed
-  // loudly. A transient error inside handleRefundCreated meant the gateway had
-  // refunded the customer and the platform kept no record of it: no Refund row
-  // for cascade-refund-earnings to find, no `pending_` placeholder for
-  // reconcile-pending-refunds, and this sweep looking the other way.
-  //
-  // Both shapes are re-driven now. Re-driving is safe for the same reason the
-  // comment above already gives — per-row idempotency keys and status guards —
-  // and `logWebhookEvent` resets an errored row before reprocessing it.
-  const stuck = await prisma.webhookEvent.findMany({
-    where: {
-      // #1134 P1-2 — Stream events belong here too. The Stream route now
-      // acknowledges before processing (its retry budget is 15 seconds
-      // total, which a cold instance cannot fit), so a handler failure has
-      // no redelivery to rescue it. This sweep is the only thing that will.
-      provider: { in: ["razorpay", "stream"] },
-      receivedAt: { lt: staleBefore },
-      // #1205-triage — claim freshness rides the dedicated claimedAt column;
-      // receivedAt stays untouched so give-up aging cannot be reset by our
-      // own re-drives.
-      AND: [
-        {
-          OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
-        },
-      ],
-      OR: [
-        // Crashed before recording anything.
-        { processed: false, error: null },
-        // Recorded a failure. Nothing else will ever retry these. Bounded by
-        // the existing give-up window so a deterministically-failing row
-        // retries for a week and then stops, rather than churning until the
-        // 90-day archive collects it. A row still failing after seven days
-        // needs a human, not another attempt.
-        {
-          error: { not: null },
-          receivedAt: { gte: giveUpOlderThan },
-          // Never re-drive a terminal marker: our own give-up cap, or a
-          // permanent failure stamped at dispatch (a payload that does not
-          // match its schema will not match it in six days either).
-          AND: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
-            NOT: { error: { startsWith: prefix } },
-          })),
-        },
-      ],
-    },
-    orderBy: { receivedAt: "asc" },
-    take: limit,
-  });
-
-  // #812: Surface events that aged past the old 72h window — these are exactly
-  // the rows the previous lower bound would have silently orphaned.
-  const aged = stuck.filter((ev) => ev.receivedAt < warnOlderThan);
-  if (aged.length > 0) {
-    console.warn(
-      `⚠️  Sweeping ${aged.length} stuck webhook event(s) older than ${warnAgeHours}h ` +
-        `(oldest: ${aged[0].eventId} @ ${aged[0].receivedAt.toISOString()}) — ` +
-        `these were orphaned by the removed lower-age floor.`,
-    );
-  }
-
-  // #1356 6.2 — page ONCE per run on the events that are quietly going nowhere.
-  // The 72h console warning above only reaches whoever is reading logs, and the
-  // 168h give-up cap is the point at which we abandon the event rather than a
-  // point at which anyone is told. An event that has deferred five times, or
-  // that has sat unprocessed for over an hour, has stopped being a transient
-  // ordering artefact and is worth a human's attention while there is still
-  // time to act on it.
-  const stalling = stuck.filter(
-    (ev) =>
-      !ev.processed &&
-      (ev.deferCount >= DEFER_ALERT_THRESHOLD ||
-        ev.receivedAt < alertOlderThan),
-  );
-  if (stalling.length > 0) {
-    Sentry.captureMessage(
-      `sweep-stuck-webhook-events: ${stalling.length} webhook event(s) still unprocessed ` +
-        `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`,
-      {
-        level: "warning",
-        tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
-        contexts: {
-          stuckWebhooks: {
-            count: stalling.length,
-            events: stalling.slice(0, 20).map((ev) => ({
-              eventId: ev.eventId,
-              provider: ev.provider,
-              eventType: ev.eventType,
-              deferCount: ev.deferCount,
-              receivedAt: ev.receivedAt.toISOString(),
-            })),
-          },
-        },
-      },
-    );
-  }
+  const BATCH_SIZE = opts.limit ?? 200;
+  const startMs = Date.now();
+  const staleBefore = new Date(startMs - staleMinutes * 60_000);
+  const warnOlderThan = new Date(startMs - warnAgeHours * 3_600_000);
+  const alertOlderThan = new Date(startMs - ALERT_AGE_HOURS * 3_600_000);
+  const giveUpOlderThan = new Date(startMs - giveUpAfterHours * 3_600_000);
 
   const errors: string[] = [];
+  let scanned = 0;
   let recovered = 0;
   let stillFailing = 0;
   let deferred = 0;
   let gaveUp = 0;
+  let warnedAged = false;
+  let alertedStalling = false;
 
-  for (const ev of stuck) {
-    // Claim the row before re-driving: bump receivedAt conditioned on it
-    // still holding the value we selected. Without this, two drivers (this
-    // sweep and a slow live after() callback, or two overlapping entries)
-    // could both re-run the same event. The Razorpay SDK now times out at
-    // 30s per call, so "still alive past the staleness window" is rare —
-    // but a claim makes sweep-vs-sweep double-drive impossible outright.
-    const claimed = await prisma.webhookEvent.updateMany({
+  while (Date.now() - startMs < 15_000) {
+    const stuck = await prisma.webhookEvent.findMany({
       where: {
-        eventId: ev.eventId,
-        OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
+        provider: { in: ["razorpay", "stream", "stripe"] },
+        receivedAt: { lt: staleBefore },
+        AND: [
+          {
+            OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+          },
+        ],
+        OR: [
+          { processed: false, error: null },
+          {
+            error: { not: null },
+            receivedAt: { gte: giveUpOlderThan },
+            AND: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
+              NOT: { error: { startsWith: prefix } },
+            })),
+          },
+        ],
       },
-      data: { claimedAt: new Date() },
+      orderBy: [
+        { claimedAt: { sort: "asc", nulls: "first" } },
+        { receivedAt: "asc" },
+      ],
+      take: BATCH_SIZE,
     });
-    if (claimed.count === 0) {
-      console.log(
-        `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
-      );
-      continue;
+
+    if (stuck.length === 0) break;
+    scanned += stuck.length;
+
+    if (!warnedAged) {
+      const aged = stuck.filter((ev) => ev.receivedAt < warnOlderThan);
+      if (aged.length > 0) {
+        warnedAged = true;
+        console.warn(
+          `⚠️  Sweeping ${aged.length} stuck webhook event(s) older than ${warnAgeHours}h ` +
+            `(oldest: ${aged[0].eventId} @ ${aged[0].receivedAt.toISOString()}) — ` +
+            `these were orphaned by the removed lower-age floor.`,
+        );
+      }
     }
 
-    // WebhookEvent.payload stores only `event.payload`; the per-event schemas
-    // also require the envelope's entity/account_id/contains/created_at, so
-    // supply them — the handlers route on eventType + payload.* and never read
-    // these. `contains` mirrors Razorpay (the payload's top-level entity keys).
-    const payloadKeys = Object.keys(
-      (ev.payload ?? {}) as Record<string, unknown>,
-    );
-    const envelope = {
-      entity: "event",
-      account_id: "swept",
-      event: ev.eventType,
-      contains: payloadKeys,
-      created_at: Math.floor(ev.receivedAt.getTime() / 1000),
-      payload: ev.payload,
-    } as unknown as RazorpayWebhookEnvelope;
-
-    try {
-      if (ev.provider === "stream") {
-        // Stream stores the whole event as the payload, so there is no envelope
-        // to rebuild. processStreamEvent owns its own logWebhookEvent /
-        // markWebhookEventProcessed bookkeeping, exactly like the Razorpay
-        // dispatch below.
-        const streamEvent = ev.payload as { call_cid?: string } | null;
-        await processStreamEvent(
-          ev.payload,
-          ev.eventType,
-          ev.eventId,
-          undefined,
-          { call_cid: streamEvent?.call_cid },
+    if (!alertedStalling) {
+      const stalling = stuck.filter(
+        (ev) =>
+          !ev.processed &&
+          (ev.deferCount >= DEFER_ALERT_THRESHOLD ||
+            ev.receivedAt < alertOlderThan),
+      );
+      if (stalling.length > 0) {
+        alertedStalling = true;
+        Sentry.captureMessage(
+          `sweep-stuck-webhook-events: ${stalling.length} webhook event(s) still unprocessed ` +
+            `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`,
+          {
+            level: "warning",
+            tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
+            contexts: {
+              stuckWebhooks: {
+                count: stalling.length,
+                events: stalling.slice(0, 20).map((ev) => ({
+                  eventId: ev.eventId,
+                  provider: ev.provider,
+                  eventType: ev.eventType,
+                  deferCount: ev.deferCount,
+                  receivedAt: ev.receivedAt.toISOString(),
+                })),
+              },
+            },
+          },
         );
-      } else {
-        // processRazorpayWebhookEvent catches handler errors and marks the row
-        // processed (stamping error on failure) in its finally — so this both
-        // re-runs the side-effects AND clears the stuck flag.
-        await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
       }
+    }
+
+    let passProgress = 0;
+
+    for (const ev of stuck) {
+      const claimed = await prisma.webhookEvent.updateMany({
+        where: {
+          eventId: ev.eventId,
+          OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
+        },
+        data: { claimedAt: new Date() },
+      });
+      if (claimed.count === 0) {
+        console.log(
+          `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
+        );
+        continue;
+      }
+      passProgress++;
+
+      // WebhookEvent.payload stores only `event.payload`; the per-event schemas
+      // also require the envelope's entity/account_id/contains/created_at, so
+      // supply them — the handlers route on eventType + payload.* and never read
+      // these. `contains` mirrors Razorpay (the payload's top-level entity keys).
+      const payloadKeys = Object.keys(
+        (ev.payload ?? {}) as Record<string, unknown>,
+      );
+      const envelope = {
+        entity: "event",
+        account_id: "swept",
+        event: ev.eventType,
+        contains: payloadKeys,
+        created_at: Math.floor(ev.receivedAt.getTime() / 1000),
+        payload: ev.payload,
+      } as unknown as RazorpayWebhookEnvelope;
+
+      try {
+        if (ev.provider === "stream") {
+          // Stream stores the whole event as the payload, so there is no envelope
+          // to rebuild. processStreamEvent owns its own logWebhookEvent /
+          // markWebhookEventProcessed bookkeeping, exactly like the Razorpay
+          // dispatch below.
+          const streamEvent = ev.payload as { call_cid?: string } | null;
+          await processStreamEvent(
+            ev.payload,
+            ev.eventType,
+            ev.eventId,
+            undefined,
+            { call_cid: streamEvent?.call_cid },
+          );
+        } else if (ev.provider === "stripe") {
+          const { processStripeWebhookEvent } = await import(
+            "@/app/api/webhooks/stripe-dispatch"
+          );
+          await processStripeWebhookEvent(
+            ev.payload,
+            ev.eventType,
+            ev.eventId,
+          );
+        } else {
+          // processRazorpayWebhookEvent catches handler errors and marks the row
+          // processed (stamping error on failure) in its finally — so this both
+          // re-runs the side-effects AND clears the stuck flag.
+          await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
+        }
       const after = await prisma.webhookEvent.findUnique({
         where: { eventId: ev.eventId },
         select: { error: true, processed: true },
@@ -328,7 +302,10 @@ async function sweepStuckWebhookEventsUnlocked(
           data: { processed: true, error: `sweep-failed: ${msg}` },
         })
         .catch(() => {});
+      }
     }
+
+    if (stuck.length < BATCH_SIZE || passProgress === 0) break;
   }
 
   // #1756 — one page per run: the route's 207 and the job log reach no one.
@@ -347,7 +324,7 @@ async function sweepStuckWebhookEventsUnlocked(
 
   return {
     success: true,
-    scanned: stuck.length,
+    scanned,
     recovered,
     stillFailing,
     deferred,

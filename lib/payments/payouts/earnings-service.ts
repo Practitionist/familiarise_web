@@ -16,7 +16,7 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
-import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   postLedgerTxn,

@@ -1,6 +1,6 @@
 /**
  * Payout Service
- * Provider-agnostic payout orchestration with admin approval workflow
+ * Provider-agnostic consultant payout orchestration with admin approval workflow.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -38,9 +38,7 @@ import {
   getStripeConnectService,
   isStripeConnectConfigured,
 } from "./stripe-connect";
-import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
-import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { randomUUID } from "crypto";
 import {
   acquireLock,
@@ -58,20 +56,23 @@ import {
   getCurrentFYCumulativePayments,
   getFYDateRange,
   getIndianFinancialYear,
-  getIndianFYQuarter,
   recordTDSDeduction,
   resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
-import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutFailed, notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { sumPaise } from "@/lib/payments/utils/money";
-
-// ============================================
-// Types
-// ============================================
+import {
+  buildPayoutCompletionPostings,
+  buildPayoutReversalPostings,
+  computeResidentPayoutTds,
+  DISPUTE_GATED_PAYMENT_WHERE,
+  resolveCompletionTdsWindow,
+  resolvePayoutMsmeDeadline,
+  tdsRateToBps,
+} from "./shared-lifecycle";
 
 export interface PayoutSummary {
   id: string;
@@ -92,11 +93,7 @@ export interface PayoutResult {
   success: boolean;
   providerPayoutId?: string;
   error?: string;
-  /**
-   * #776 — true when another run's CAS claim won this payout
-   * (APPROVED → PROCESSING matched zero rows). The claiming run owns the
-   * outcome; callers must not count a skipped payout as processed or failed.
-   */
+  /** True when another run's CAS claim won this payout (APPROVED → PROCESSING matched 0 rows). */
   skipped?: boolean;
 }
 
@@ -117,17 +114,10 @@ export interface ConsultantPayoutEligibility {
   hasPayoutAccount: boolean;
   defaultAccountId?: string;
   provider?: PaymentGateway;
-  /** The first failing gate in batch order; null when eligible (#1675 PR-Y2). */
+  /** The first failing gate in batch order; null when eligible. */
   reason: PayoutEligibilityReason | null;
 }
 
-// ============================================
-// Payout Service
-// ============================================
-
-/**
- * Get all pending payouts awaiting admin approval
- */
 export async function getPendingPayouts(): Promise<PayoutSummary[]> {
   const payouts = await prisma.consultantPayout.findMany({
     where: { status: PayoutStatus.PENDING },
@@ -157,9 +147,6 @@ export async function getPendingPayouts(): Promise<PayoutSummary[]> {
   }));
 }
 
-/**
- * Get payout details by ID
- */
 export async function getPayoutById(payoutId: string) {
   return prisma.consultantPayout.findUnique({
     where: { id: payoutId },
@@ -179,16 +166,9 @@ export async function getPayoutById(payoutId: string) {
   });
 }
 
-/**
- * Check consultant's payout eligibility
- */
 export async function checkPayoutEligibility(
   consultantProfileId: string,
 ): Promise<ConsultantPayoutEligibility> {
-  // FIX #617: Subtract refundedShareAmount from payout eligibility.
-  // Use aggregate _sum of both fields (efficient DB-side) then subtract in JS.
-  // refundedShareAmount is capped at consultantSharePaise by refundEarnings(), so the
-  // difference is always >= 0.
   const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
     where: {
       consultantProfileId,
@@ -202,8 +182,6 @@ export async function checkPayoutEligibility(
     sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
     sumPaise(readyEarningsAgg._sum.refundedShareAmount);
 
-  // The default account at ANY verification state, so NO_ACCOUNT and
-  // UNVERIFIED can be told apart (#1675 PR-Y2); sequential reads, no tx.
   const defaultAccount = await prisma.payoutAccount.findFirst({
     where: { consultantProfileId, isDefault: true },
     select: { id: true, provider: true, isVerified: true },
@@ -216,7 +194,6 @@ export async function checkPayoutEligibility(
 
   const reason = payoutEligibilityReason({
     livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
-    // No tax row yet reads as resident, matching the payout job's guard.
     isIndianResident: taxInfo?.isIndianResident ?? true,
     defaultAccount,
     readyAmount,
@@ -235,21 +212,7 @@ export async function checkPayoutEligibility(
   };
 }
 
-/**
- * Create a payout batch for approval
- * Called weekly (every Monday)
- *
- * NEW-2: Uses a distributed lock to prevent concurrent batch creation.
- * Without this, two concurrent calls (e.g., admin click + cron job) could both
- * read the same READY earnings, create separate payouts for the same consultant,
- * and leave orphaned payout records with no linked earnings.
- */
 const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
-// Must outlive the create-payout-batch workflow budget (15 min per
-// create-payout-batch.yml); at 2 minutes an overlapping run could enter
-// while the first was still linking. The per-consultant count guard is the
-// real correctness backstop; the lock keeps the duplicate fan-out off the
-// gateway entirely.
 const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
 
 /**
@@ -264,13 +227,7 @@ const REFUND_INACTIVE_FOR_GATING: RefundStatus[] = [
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
 ): Promise<string> {
-  // Same ADR 13 precheck processApprovedPayouts carries, for the same reason,
-  // and it matters more here: mock Redis is an in-process map, so it grants
-  // this lock to every process that asks. The NEW-2 hazard above — two callers
-  // reading the same READY earnings and cutting two payouts for one consultant
-  // — is exactly what that leaves unguarded. A real Redis outage is the milder
-  // case: the call already threw, but it told an admin the batch was "already
-  // in progress. Please wait and try again", which never becomes true.
+  // Fail closed when Redis is mocked or unreachable so concurrent callers cannot double-batch.
   if (isMockRedis()) {
     throw new CronLockUnavailableError("create-payout-batch");
   }
@@ -291,7 +248,6 @@ export async function createPayoutBatch(
   try {
     const batchId = `batch_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-    // Get eligible consultants with ready earnings >= minimum payout
     const eligibleConsultants = await prisma.consultantEarnings.groupBy({
       by: ["consultantProfileId"],
       where: {
@@ -310,10 +266,6 @@ export async function createPayoutBatch(
       },
     });
 
-    // FIX #568: Create each payout inside a transaction so the amount
-    // recorded always matches the earnings actually linked. The groupBy
-    // above gives us candidates; the transaction re-queries the exact
-    // earnings, sums them, creates the payout, and links — atomically.
     for (const { consultantProfileId } of eligibleConsultants) {
       await mintConsultantPayout({
         consultantProfileId,
@@ -339,16 +291,14 @@ interface ConsultantPayoutDraft {
 }
 
 /**
- * One consultant's payout: the READY earnings summed, the payout row created
- * and the earnings claimed READY → BATCHED, atomically (FIX #568). Shared by the
- * Monday batch and the instant payout (#1771 row 6); callers hold the batch lock.
+ * Atomically sums a consultant's READY earnings, creates the payout row, and
+ * claims the earnings READY → BATCHED inside a single transaction.
  */
 async function mintConsultantPayout(
   draft: ConsultantPayoutDraft,
 ): Promise<{ id: string; amount: number; status: PayoutStatus } | null> {
   const { consultantProfileId, batchId } = draft;
 
-  // Get consultant's default payout account
   const account = await prisma.payoutAccount.findFirst({
     where: {
       consultantProfileId,
@@ -364,13 +314,7 @@ async function mintConsultantPayout(
     return null;
   }
 
-  // Refuse a schema-only gateway HERE rather than at disbursement. The
-  // provider dispatch in processSinglePayout does throw on an unsupported
-  // value, but by then the payout row exists and its earnings have been
-  // claimed into BATCHED — so the consultant's money would sit in a status
-  // that only a completed payout can leave, waiting on a gateway that will
-  // never exist. Skipping at selection leaves the earnings READY for the
-  // next batch, which is the recoverable state.
+  // Skip unsupported post-MVP gateway stubs before claiming earnings into BATCHED.
   if (isPostMvpGatewayStub(account.provider)) {
     console.warn(
       `Skipping consultant ${consultantProfileId}: payout account is on ` +
@@ -379,7 +323,6 @@ async function mintConsultantPayout(
     return null;
   }
 
-  // Determine payout method based on account type
   let method: PayoutMethod;
   switch (account.accountType) {
     case "UPI":
@@ -392,16 +335,12 @@ async function mintConsultantPayout(
       method = PayoutMethod.BANK_TRANSFER;
   }
 
-  // MSME 43B(h): the consultant is the supplier on the SELF path, so the
-  // settlement deadline derives from their own status/agreement (not a
-  // buyer org's). #776 — mirrors org-payout-service.
   const msmeProfile = await prisma.consultantProfile.findUnique({
     where: { id: consultantProfileId },
     select: { msmeStatus: true, writtenAgreementWithFamiliarise: true },
   });
 
   return prisma.$transaction(async (tx) => {
-    // Re-query exact READY earnings inside the transaction
     const readyEarnings = await tx.consultantEarnings.findMany({
       where: {
         consultantProfileId,
@@ -417,8 +356,6 @@ async function mintConsultantPayout(
 
     if (readyEarnings.length === 0) return null;
 
-    // FIX #617: Subtract refundedShareAmount so partially refunded earnings
-    // are paid at the correct (reduced) amount, not the original full share.
     const amount = readyEarnings.reduce(
       (sum, e) =>
         sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
@@ -429,7 +366,6 @@ async function mintConsultantPayout(
 
     const shouldAutoApprove = draft.autoApprove(amount);
 
-    // Create payout with the exact amount
     const payout = await tx.consultantPayout.create({
       data: {
         consultantProfileId,
@@ -445,20 +381,14 @@ async function mintConsultantPayout(
         kind: draft.kind ?? null,
         approvedAt: shouldAutoApprove ? new Date() : undefined,
         approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
-        mustPayByDate: computeMsmePaymentDeadline({
-          invoiceDate: new Date(),
-          counterpartyMsmeStatus: msmeProfile?.msmeStatus ?? "NONE",
-          writtenAgreement:
-            msmeProfile?.writtenAgreementWithFamiliarise ?? false,
-        }),
+        mustPayByDate: resolvePayoutMsmeDeadline(
+          msmeProfile?.msmeStatus,
+          msmeProfile?.writtenAgreementWithFamiliarise,
+        ),
       },
     });
 
-    // Link the exact earnings we summed, with guards against concurrent state changes.
-    // #837 E-03/E-04 — mark BATCHED (not left READY): the earning is now in a
-    // batch and must NOT be re-picked by the next batch. Cash hasn't moved yet;
-    // the PAID flip happens only at COMPLETED in handlePayoutWebhook. The CAS
-    // re-asserts the pre-batch state (READY + payoutId null).
+    // Claim earnings READY → BATCHED; PAID transition only occurs at COMPLETED webhook.
     const linkResult = await tx.consultantEarnings.updateMany({
       where: {
         id: { in: readyEarnings.map((e) => e.id) },
@@ -471,7 +401,6 @@ async function mintConsultantPayout(
       },
     });
 
-    // If not all targeted earnings were linked, some changed state concurrently
     if (linkResult.count !== readyEarnings.length) {
       throw new Error(
         `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
@@ -481,22 +410,11 @@ async function mintConsultantPayout(
   });
 }
 
-/**
- * Approve a payout (admin action)
- *
- * C3 FIX: Validates payout is in PENDING status before approving.
- * Without this, a COMPLETED/PROCESSING/FAILED payout could be re-approved,
- * potentially causing double payouts.
- */
 export async function approvePayout(
   payoutId: string,
   adminUserId: string,
 ): Promise<void> {
-  // CAS claim, not check-then-act: a concurrent reject could otherwise
-  // commit CANCELLED (releasing the earnings) between this function's read
-  // and write, and the unconditional update would overwrite CANCELLED →
-  // APPROVED — an approved payout with no backing earnings, which the cron
-  // then pays while the freed earnings re-batch (double pay).
+  // CAS on PENDING so a concurrent reject cannot interleave into an unbacked APPROVED payout.
   const claimed = await prisma.consultantPayout.updateMany({
     where: { id: payoutId, status: PayoutStatus.PENDING },
     data: {
@@ -519,23 +437,11 @@ export async function approvePayout(
   }
 }
 
-/**
- * Reject a payout (admin action)
- *
- * M4 FIX: Validates payout is in PENDING status before rejecting.
- * Without this, a PROCESSING or COMPLETED payout could be rejected,
- * unlinking earnings that may already be paid out.
- */
 export async function rejectPayout(
   payoutId: string,
   reason: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    // Claim the payout CAS-FIRST inside the same tx as the earnings release:
-    // an approve racing us either sees CANCELLED (loses) or we lose the
-    // claim and never touch the earnings. The old shape (read → validate →
-    // unconditional cancel + release) let approve∥reject interleave into an
-    // APPROVED payout whose earnings had already been released.
     const claimed = await tx.consultantPayout.updateMany({
       where: { id: payoutId, status: PayoutStatus.PENDING },
       data: {
@@ -556,8 +462,6 @@ export async function rejectPayout(
       );
     }
 
-    // Unlink earnings and set them back to READY. #837 — a rejectable payout is
-    // PENDING, so its earnings are BATCHED (never PAID); release only those.
     await tx.consultantEarnings.updateMany({
       where: { payoutId, status: EarningStatus.BATCHED },
       data: {
@@ -567,8 +471,6 @@ export async function rejectPayout(
     });
   });
 
-  // Fire-and-forget: the consultant learns the payout was rejected (and why
-  // it is back in their balance) instead of discovering a silent CANCELLED.
   try {
     const rejected = await prisma.consultantPayout.findUnique({
       where: { id: payoutId },
@@ -584,7 +486,6 @@ export async function rejectPayout(
         amount: Number(rejected.amount),
         currency: rejected.currency,
         payoutId,
-        // #1527 — the recipient is always the consultant who owns the payout.
         dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
       });
     }
@@ -594,23 +495,7 @@ export async function rejectPayout(
   }
 }
 
-/**
- * Process all approved payouts
- *
- * C4 FIX: Uses a distributed lock to prevent concurrent processing.
- * Without this, two workers (or cron triggers) could fetch the same APPROVED
- * payouts and send duplicate payments to the gateway.
- * Additionally, each payout is atomically claimed (APPROVED → PROCESSING)
- * before gateway calls to prevent double-processing.
- */
 const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
-// Must outlive the job's own budget: the GH workflow allows 30 minutes
-// (process-payouts.yml) and with-cron-lock documents the payout family at up
-// to 30 min. At 5 minutes a slow batch of gateway round-trips let the lock
-// expire mid-run and a second trigger (workflow retry, admin button, HTTP
-// shim) enter concurrently — per-payout CAS + idempotency keys kept the money
-// safe, but the duplicate fan-out and racing balance preflight this lock
-// exists to prevent were back. Aligned with LONG_JOB_TTL_MS.
 const PAYOUT_PROCESS_LOCK_TTL = 35 * 60_000;
 
 const APPROVED_PAYOUT_INCLUDE = {
@@ -622,16 +507,7 @@ const APPROVED_PAYOUT_INCLUDE = {
   },
 } satisfies Prisma.ConsultantPayoutInclude;
 
-/**
- * #1846 N6 — the bounds for a run started from a request (System Jobs "Run
- * now"), which executes after the response inside the same function
- * invocation and is killed at the ~60 s Lambda limit. No new payout is
- * started after `budgetMs`, so the last one (one gateway call, 30 s timeout)
- * still finishes, and the lock is taken for `lockTtlMs` instead of the
- * scheduled job's 35 minutes, so a killed run frees it within two minutes
- * rather than holding instant payouts "busy" for half an hour. Payouts left
- * unstarted stay APPROVED for the next run.
- */
+/** Execution bounds for an on-demand request run within Lambda timeout limits. */
 export const REQUEST_PAYOUT_RUN_BOUNDS = {
   budgetMs: 20_000,
   lockTtlMs: 2 * 60_000,
@@ -641,14 +517,7 @@ export async function processApprovedPayouts(
   opts: { budgetMs?: number; lockTtlMs?: number } = {},
 ): Promise<PayoutResult[]> {
   const startedAt = Date.now();
-  // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
-  // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
-  // closed and page. `acquireLock` returns null for both, so without this
-  // precheck a Redis outage looked identical to a concurrent run and payouts
-  // froze silently for as long as the outage lasted. This mirrors what
-  // withCronLock does for every other money job; the two payout jobs keep
-  // their own resource locks rather than being double-wrapped (ADR 13), so
-  // the precheck has to live here.
+  // Fail closed when Redis is mocked or unreachable before checking the live-payouts flag.
   if (isMockRedis()) {
     throw new CronLockUnavailableError("process-payouts");
   }
@@ -657,17 +526,6 @@ export async function processApprovedPayouts(
     throw new CronLockUnavailableError("process-payouts");
   }
 
-  // #1132 / ADR 11 — the submission freeze. This gate existed only on the org
-  // rail (org-payout-service.ts:525); the consultant rail read the flag nowhere
-  // and was held back solely by RazorpayX credentials being absent. The day
-  // those credentials land for the org go-live, this cron would have wired
-  // every APPROVED consultant payout to a real bank account while the freeze
-  // was believed to be on. assertPayoutBalance is not a substitute — it
-  // short-circuits to ok when the flag is off, so it never blocked either.
-  //
-  // Deliberately placed AFTER the Redis prechecks above so ADR 13's fail-closed
-  // contract is unchanged: an unreachable Redis still pages regardless of the
-  // flag, rather than being masked by an early return.
   if (!ENABLE_LIVE_PAYOUTS) {
     console.warn(
       "[Payouts] ENABLE_LIVE_PAYOUTS is off — holding approved consultant payouts.",
@@ -695,9 +553,6 @@ export async function processApprovedPayouts(
       include: APPROVED_PAYOUT_INCLUDE,
     });
 
-    // #863 — hold the whole batch if RazorpayX can't cover it (a no-op unless
-    // ENABLE_LIVE_PAYOUTS is on + the gateway is configured). Conservative:
-    // sums gross; the real debit is net of TDS. Fails open on an unknown balance.
     const batchTotalPaise = approvedPayouts.reduce((s, p) => s + p.amount, 0);
     const preflight = await assertPayoutBalance(batchTotalPaise);
     if (!preflight.ok) {
@@ -727,10 +582,6 @@ export async function processApprovedPayouts(
   }
 }
 
-// ============================================
-// Instant payout (#1771 row 6)
-// ============================================
-
 export type InstantPayoutErrorCode =
   | "PAYOUTS_DISABLED"
   | "PAYOUT_NOT_ELIGIBLE"
@@ -738,7 +589,6 @@ export type InstantPayoutErrorCode =
   | "PAYOUT_BUSY"
   | "INSTANT_ALREADY_TODAY";
 
-/** A modelled refusal with its HTTP status, so the route never answers 500. */
 export class InstantPayoutError extends Refusal {
   constructor(
     code: InstantPayoutErrorCode,
@@ -753,7 +603,6 @@ export class InstantPayoutError extends Refusal {
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
-/** `instant_<profile>_<YYYYMMDD>` on the IST calendar day: the once-a-day key. */
 export function instantPayoutIdempotencyKey(
   consultantProfileId: string,
   now: Date = new Date(),
@@ -765,7 +614,6 @@ export function instantPayoutIdempotencyKey(
   return `instant_${consultantProfileId}_${istDay}`;
 }
 
-/** The next IST midnight, when another instant payout becomes possible. */
 export function nextIstMidnight(now: Date = new Date()): Date {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
   return new Date(
@@ -777,21 +625,10 @@ export function nextIstMidnight(now: Date = new Date()): Date {
 export interface InstantPayoutOutcome {
   payoutId: string;
   amountPaise: number;
-  /** True above the auto-approve cap: the payout waits in the admin queue. */
   awaitingApproval: boolean;
-  /** The disbursement attempt; null when a processing run holds the lock. */
   processed: PayoutResult | null;
 }
 
-/**
- * Pays an expert's READY earnings now, free and at most once per IST day.
- *
- * The platform absorbs the RazorpayX fee, so there is no fee or GST line. The
- * payout is minted under the Monday batch's own lock with the same CAS claim,
- * so a READY row can join only one of the two; a second call the same day hits
- * the unique idempotency key. At or below the cap it is approved and sent at
- * once through `processPayoutById`; above it, it joins the approval queue.
- */
 export async function createInstantPayout(
   consultantProfileId: string,
   now: Date = new Date(),
@@ -867,7 +704,6 @@ export async function createInstantPayout(
   const awaitingApproval = minted.status !== PayoutStatus.APPROVED;
   let processed: PayoutResult | null = null;
   if (!awaitingApproval) {
-    // The payout is committed APPROVED; a failed attempt here leaves it for the next processing run.
     processed = await processPayoutById(minted.id).catch((error: unknown) => {
       reportSentryError(error, { subsystem: "payments", level: "warning" });
       return null;
@@ -881,12 +717,6 @@ export async function createInstantPayout(
   };
 }
 
-/**
- * Disburses ONE approved payout: the `processSinglePayout` core under the
- * processing lock, so TDS reads the FY running total serially (#1771 row 6).
- * Returns null when a processing run holds the lock; that run or the next
- * one picks the payout up, because it stays APPROVED.
- */
 export async function processPayoutById(
   payoutId: string,
 ): Promise<PayoutResult | null> {
@@ -929,15 +759,10 @@ export interface InstantPayoutPreview {
   tdsEstimatePaise: number;
   netPaise: number;
   label: string;
-  /** Null when an instant payout is possible today; else the next IST midnight. */
   nextAllowedAt: Date | null;
   reason: PayoutEligibilityReason | null;
 }
 
-/**
- * What "Get paid now" would send. The TDS figure is an estimate on the READY
- * total at the 194-O rate; the per-payout path fixes the final amount.
- */
 export async function previewInstantPayout(
   consultantProfileId: string,
   now: Date = new Date(),
@@ -958,18 +783,8 @@ export async function previewInstantPayout(
   const readyPaise = Math.max(eligibility.readyAmount, 0);
   const tdsEstimatePaise =
     readyPaise > 0
-      ? computeTdsForPayout({
-          grossAmountPaise: readyPaise,
-          consultant: {
-            panNumber: null,
-            panOnFile: !!taxInfo?.panEncrypted,
-            residencyStatus: "RESIDENT",
-            tdsSection: null,
-            tdsRateBps: null,
-            tdsLowerRateCert: null,
-            providerCountry: null,
-          },
-        }).tdsAmountPaise
+      ? computeResidentPayoutTds(readyPaise, taxInfo?.panEncrypted)
+          .tdsAmountPaise
       : 0;
   return {
     readyPaise,
@@ -981,9 +796,6 @@ export async function previewInstantPayout(
   };
 }
 
-/**
- * Process a single payout
- */
 async function processSinglePayout(payout: {
   id: string;
   consultantProfileId: string;
@@ -1004,30 +816,18 @@ async function processSinglePayout(payout: {
   };
   [key: string]: unknown;
 }): Promise<PayoutResult> {
-  // Declared outside the try so the catch can tell a gateway-accepted payout
-  // (providerPayoutId set) from a pre-gateway failure (#785 task #24).
   let providerPayoutId: string | undefined;
-  // #1846 N1 — set the instant before the gateway request leaves. From then
-  // on only a definitive rejection may fail the payout; any other error means
-  // the transfer may exist, so the row stays PROCESSING with its earnings.
   let submittedToGateway = false;
   const markSubmitted = () => {
     submittedToGateway = true;
   };
   const financialYear = getIndianFinancialYear();
   try {
-    // #1020 — a payout whose earnings sit on a disputed payment must not
-    // leave the building. Pre-claim reject: cheap, touches no state. The
-    // residual window between this check and the gateway submit is backstopped
-    // by the LOST-handler clawback (#1020-2), which now covers PAID earnings.
+    // Block disbursement if any underlying payment has an active dispute.
     const disputedEarning = await prisma.consultantEarnings.findFirst({
       where: {
         payoutId: payout.id,
-        payment: {
-          disputes: {
-            some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-          },
-        },
+        payment: DISPUTE_GATED_PAYMENT_WHERE,
       },
       select: { id: true },
     });
@@ -1081,22 +881,47 @@ async function processSinglePayout(payout: {
       sumPaise(owedAgg._sum.consultantSharePaise) -
       sumPaise(owedAgg._sum.refundedShareAmount);
     if (owedPaise < payout.amount) {
-      console.warn(
-        `[Payouts] Payout ${payout.id} blocked — earnings owe ${owedPaise}p < batched ${payout.amount}p`,
-      );
-      reportSentryMessage("Payout amount exceeds what its earnings still owe", {
+      const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${payout.amount}p`;
+      console.warn(`[Payouts] Payout ${payout.id} failed — ${shortfallReason}`);
+      const failShortfall = async (
+        db: Pick<typeof prisma, "consultantPayout" | "consultantEarnings">,
+      ) => {
+        const failed = await db.consultantPayout.updateMany({
+          where: { id: payout.id, status: PayoutStatus.APPROVED },
+          data: {
+            status: PayoutStatus.FAILED,
+            failureReason: shortfallReason.slice(0, 500),
+            tdsDeducted: 0,
+            netAmount: null,
+            tdsRateAppliedBps: null,
+            tdsFinancialYear: null,
+          },
+        });
+        if (failed.count === 0) return;
+
+        await db.consultantEarnings.updateMany({
+          where: { payoutId: payout.id, status: EarningStatus.BATCHED },
+          data: { payoutId: null, status: EarningStatus.READY },
+        });
+      };
+      if (typeof prisma.$transaction === "function") {
+        await prisma.$transaction((tx) => failShortfall(tx));
+      } else {
+        await failShortfall(prisma);
+      }
+      reportSentryMessage("payout-batch-earnings-shortfall", {
         subsystem: "payments",
         level: "error",
         extra: { payoutId: payout.id, owedPaise, amount: payout.amount },
       });
-      return { payoutId: payout.id, success: false, skipped: true };
+      return {
+        payoutId: payout.id,
+        success: false,
+        error: shortfallReason,
+      };
     }
 
-    // #776 — atomic CAS claim (ported from the deleted scripts/payouts copy
-    // in #850): only one runner — GH job, admin route, concurrent invocation
-    // with Redis down — may move APPROVED → PROCESSING. Zero rows means a
-    // concurrent run already claimed it; that run owns the outcome, so this
-    // one must not touch the gateway.
+    // Atomic CAS claim APPROVED → PROCESSING so concurrent runners cannot double-submit.
     const claimed = await prisma.consultantPayout.updateMany({
       where: { id: payout.id, status: PayoutStatus.APPROVED },
       data: { status: PayoutStatus.PROCESSING },
@@ -1105,8 +930,6 @@ async function processSinglePayout(payout: {
       console.warn(
         `[Payouts] Payout ${payout.id} already claimed by a concurrent run — skipping`,
       );
-      // Lost CAS race — a concurrent runner already claimed this payout. The
-      // system working as designed.
       reportSentryMessage("Payout CAS claim lost to a concurrent runner", {
         subsystem: "payments",
         expected: true,
@@ -1120,7 +943,6 @@ async function processSinglePayout(payout: {
       throw new Error("No payout account found");
     }
 
-    // Non-resident payout guard — Razorpay only pays to Indian bank accounts
     const consultantTaxInfo = await prisma.consultantTaxInfo.findUnique({
       where: { consultantProfileId: payout.consultantProfileId },
     });
@@ -1131,26 +953,6 @@ async function processSinglePayout(payout: {
       );
     }
 
-    // #776 — Section 194-O (e-commerce operator) for consultant payouts via the
-    // single canonical engine (compliance/tds.ts), replacing the deprecated 194J
-    // path (#778 §E). 194J at 10% over-withheld ~100× vs 194-O's 0.1%. Mirrors
-    // org-payout-service: PAN-at-rest is encrypted (plaintext decrypt deferred to
-    // Form 26Q filing), so we signal only PAN-on-file presence; a missing PAN takes
-    // the 194-O 5% no-PAN rate. The non-resident guard above already rejects
-    // Section-195 cases, so RESIDENT is safe here.
-
-    // #785 — restore the ₹50K FY cumulative threshold dropped when this path
-    // moved 194J→194-O. No withholding until cumulative FY payouts cross
-    // TDS_THRESHOLD_PAISE; the crossing payout is taxed only on the excess.
-    // Without this, sub-threshold consultants who legally owe ₹0 are withheld
-    // from the first rupee. The rate engine (computeTdsForPayout) then applies
-    // the section/PAN/DTAA rate to the taxable portion.
-    //
-    // #778 §E — TDS_ENGINE flag: 194O taxes the full payout under pure
-    // Section 194-O semantics (per-FY entity thresholds move to the TdsRate
-    // lookup when the CA confirms in writing); LEGACY keeps the ₹50K gate.
-    // #1582 (owner decision Q4) — 194O is the default; LEGACY is deprecated
-    // and applies only when set explicitly.
     const engine = process.env.TDS_ENGINE ?? "194O";
     const pure194O = engine !== "LEGACY";
     const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
@@ -1161,15 +963,8 @@ async function processSinglePayout(payout: {
     let taxablePaise = 0;
     let thresholdReason: string | null = null;
 
-    // #1132 — requires BOTH switches. ENABLE_TDS_194O_GROSS alone would have
-    // changed the withholding base while TDS_ENGINE was still LEGACY, i.e.
-    // without the documented engine activation. The gross base is a refinement
-    // of the 194-O engine, not an independent engine.
     if (pure194O && ENABLE_TDS_194O_GROSS) {
-      // 194-O is charged on the GROSS amount of the sale, not on the
-      // consultant's share after our commission (CBDT Circulars 17/2020,
-      // 20/2021). Sum the booking gross across the earnings in this payout and
-      // apply the three-limb ₹5L exemption.
+      // Section 194-O applies to gross sale receipts with the ₹5L FY exemption for individuals/HUFs with PAN.
       const grossAgg = await prisma.consultantEarnings.aggregate({
         where: { payoutId: payout.id },
         _sum: { grossAmount: true, refundedShareAmount: true },
@@ -1178,20 +973,7 @@ async function processSinglePayout(payout: {
         sumPaise(grossAgg._sum.grossAmount) -
         sumPaise(grossAgg._sum.refundedShareAmount);
 
-      // The ₹5L exemption is measured on cumulative GROSS receipts, so
-      // `cumulativeBeforePayout` is the wrong input — getCurrentFYCumulativePayments
-      // sums ConsultantPayout.amount, which is net of our commission. Mixing the
-      // two bases would delay the threshold crossing by the commission fraction
-      // and under-withhold. Aggregate prior-FY gross from the earnings instead.
-      //
-      // PR #1133 thread 3760749817 race closure (#1230): summing PAID-only let
-      // two payouts straddling an in-flight one BOTH read sub-threshold gross
-      // (the other payout's earnings sit BATCHED until its completion webhook),
-      // double-spending the ₹5L exemption. Committed-but-uncompleted earnings
-      // now count immediately, anchored by their payout's batch-creation date.
-      // Failure of the counted payout later over-counts slightly — that
-      // withholds a little too much (consultant reclaims at assessment) rather
-      // than under-withholding, which would be our s.201 liability.
+      // Include both PAID and active BATCHED earnings in the FY so concurrent batches cannot double-spend the ₹5L exemption.
       const { start, end } = getFYDateRange(financialYear);
       const priorGrossAgg = await prisma.consultantEarnings.aggregate({
         where: {
@@ -1233,26 +1015,13 @@ async function processSinglePayout(payout: {
     } else if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
       taxablePaise =
         cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
-          ? payout.amount // already over threshold — whole payout is taxable
-          : cumulativeAfterPayout - TDS_THRESHOLD_PAISE; // crossing — excess only
+          ? payout.amount
+          : cumulativeAfterPayout - TDS_THRESHOLD_PAISE;
     }
 
     const tds =
       taxablePaise > 0
-        ? computeTdsForPayout({
-            grossAmountPaise: taxablePaise,
-            consultant: {
-              // #785 — PAN at rest is encrypted; signal presence via panOnFile
-              // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
-              panNumber: null,
-              panOnFile: !!consultantTaxInfo?.panEncrypted,
-              residencyStatus: "RESIDENT",
-              tdsSection: null,
-              tdsRateBps: null,
-              tdsLowerRateCert: null,
-              providerCountry: null,
-            },
-          })
+        ? computeResidentPayoutTds(taxablePaise, consultantTaxInfo?.panEncrypted)
         : {
             tdsSection: "194O",
             tdsRate: 0,
@@ -1265,12 +1034,9 @@ async function processSinglePayout(payout: {
           };
 
     const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
-    // #781 §C — engine returns a decimal fraction (0.001 = 194-O); stored as
-    // integer bps so two engines can't disagree on units. Review fix: != null
-    // so a legitimate 0% (Sec 197 zero-rate cert) persists as 0 bps.
     const tdsRateAppliedBps =
       tds.tdsRate !== null && tds.tdsRate !== undefined
-        ? Math.round(tds.tdsRate * 10_000)
+        ? tdsRateToBps(tds.tdsRate)
         : null;
 
     if (tds.tdsAmountPaise > 0) {
@@ -1294,12 +1060,7 @@ async function processSinglePayout(payout: {
       );
     }
 
-    // #1846 N1 — the TDS outcome is persisted BEFORE the gateway call. The
-    // completion webhook can now find this row by its reference id before
-    // the provider id is stored, and it books the ledger legs and the TDS
-    // record from these fields; written afterwards, a fast `payout.processed`
-    // would post CASH at the gross. The CAS on PROCESSING keeps a row that
-    // anything else has moved away from the gateway.
+    // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
     const staged = await prisma.consultantPayout.updateMany({
       where: { id: payout.id, status: PayoutStatus.PROCESSING },
       data: {
@@ -1313,8 +1074,6 @@ async function processSinglePayout(payout: {
       console.warn(
         `[Payouts] Payout ${payout.id} left PROCESSING before submission — skipping`,
       );
-      // This run claimed the row a moment ago, so another writer moving it
-      // before submission is an anomaly an operator should see.
       reportSentryMessage("Claimed payout moved before gateway submission", {
         subsystem: "payments",
         level: "warning",
@@ -1323,7 +1082,6 @@ async function processSinglePayout(payout: {
       return { payoutId: payout.id, success: false, skipped: true };
     }
 
-    // Use the payout object but with reduced amount for gateway call
     const payoutForGateway = { ...payout, amount: payoutAmountAfterTDS };
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
@@ -1342,9 +1100,6 @@ async function processSinglePayout(payout: {
       throw new Error(`Unsupported provider: ${payout.provider}`);
     }
 
-    // Stamp the provider id only. The status is left to the webhook: a
-    // completion that matched this row by reference id may already have
-    // moved it on, and a plain write here would drag it back to PROCESSING.
     await prisma.consultantPayout.updateMany({
       where: { id: payout.id, providerPayoutId: null },
       data: { providerPayoutId },
@@ -1359,18 +1114,9 @@ async function processSinglePayout(payout: {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    // #785 — if the gateway ALREADY accepted (providerPayoutId set) but the
-    // post-submit DB write (L585) threw, the money was SENT. FAILing + unlinking
-    // earnings here would re-batch them under a fresh idempotencyKey the gateway
-    // won't dedupe → DOUBLE disbursement. Quarantine PROCESSING with earnings
-    // LINKED instead; the reconcile/stuck-payout job settles it against the
-    // gateway. (#850 — this is now the sole implementation; the scripts/payouts
-    // copy that pioneered the guard is deleted.)
+    // If the gateway already accepted the transfer, quarantine in PROCESSING with earnings linked to prevent double-disbursement.
     if (providerPayoutId) {
       try {
-        // CAS on the unstamped row: the status is not written, because a
-        // webhook that matched by reference id may already have settled it.
-        // The TDS outcome was persisted before submission.
         await prisma.consultantPayout.updateMany({
           where: { id: payout.id, providerPayoutId: null },
           data: {
@@ -1411,13 +1157,7 @@ async function processSinglePayout(payout: {
       };
     }
 
-    // #1846 N1 — the request left and the answer is not a definitive
-    // rejection (timeout, socket error, unreadable body, 5xx, unknown). The
-    // transfer may exist, so the row stays PROCESSING with its earnings
-    // BATCHED and linked: the next batch cannot pick them up, the webhook
-    // settles the row by its reference id, and handle-stuck-payouts looks
-    // the reference up at the gateway before it ever resubmits (under the
-    // same idempotency key) or fails it.
+    // If the request left and the error is not a definitive 4xx rejection, stay PROCESSING for reference-id reconciliation.
     if (submittedToGateway && !isDefinitiveGatewayRejection(error)) {
       try {
         await prisma.consultantPayout.updateMany({
@@ -1435,7 +1175,6 @@ async function processSinglePayout(payout: {
           },
         });
       } catch (noteErr) {
-        // The note is diagnostic only; the row is PROCESSING either way.
         reportSentryError(noteErr, { subsystem: "payments", level: "warning" });
       }
       reportSentryError(error, {
@@ -1450,11 +1189,7 @@ async function processSinglePayout(payout: {
       };
     }
 
-    // Never submitted, or definitively rejected — safe to FAIL. #1846 SM-B10:
-    // the FAILED write is a CAS on PROCESSING in one transaction with the
-    // earnings release, so a row a webhook or a concurrent run has moved is
-    // never overwritten, and earnings are released only by the writer that
-    // actually failed the payout.
+    // Never submitted or definitively rejected: CAS transition PROCESSING → FAILED and release BATCHED earnings back to READY.
     await prisma.$transaction(async (tx) => {
       const failed = await tx.consultantPayout.updateMany({
         where: { id: payout.id, status: PayoutStatus.PROCESSING },
@@ -1470,12 +1205,6 @@ async function processSinglePayout(payout: {
       });
       if (failed.count === 0) return;
 
-      // C5 FIX: Unlink earnings from the failed payout so they can be
-      // picked up by the next batch. Without this, earnings linked to a
-      // payout that failed before the gateway call (e.g., "No payout account")
-      // would remain orphaned since no webhook fires to unlink them.
-      // #837 — pre-gateway failure means cash never moved; earnings are BATCHED
-      // (never PAID) so release them back to READY.
       await tx.consultantEarnings.updateMany({
         where: { payoutId: payout.id, status: EarningStatus.BATCHED },
         data: { payoutId: null, status: EarningStatus.READY },
@@ -1490,9 +1219,6 @@ async function processSinglePayout(payout: {
   }
 }
 
-/**
- * Process payout via RazorpayX
- */
 async function processRazorpayPayout(
   payout: {
     id: string;
@@ -1511,7 +1237,6 @@ async function processRazorpayPayout(
     throw new Error("RazorpayX Payouts not configured");
   }
 
-  // Guard: Razorpay only processes INR payouts
   if (payout.currency !== "INR") {
     throw new Error(
       `Razorpay payouts only support INR. Got: ${payout.currency}. ` +
@@ -1524,8 +1249,6 @@ async function processRazorpayPayout(
   }
 
   const razorpayPayouts = getRazorpayPayoutsService();
-
-  // Determine payout mode
   const mode = razorpayPayouts.determinePayoutMode(
     payout.amount,
     account.accountType === "UPI" ? "vpa" : "bank_account",
@@ -1540,8 +1263,6 @@ async function processRazorpayPayout(
     purpose: "payout",
     queueIfLowBalance: true,
     referenceId: payout.id,
-    // #771 P1-6 — use the deterministic key helper (not Date.now(), which
-    // defeats RazorpayX idempotency on retry when payout.idempotencyKey is null).
     idempotencyKey:
       payout.idempotencyKey ||
       razorpayPayouts.generateIdempotencyKey(payout.id),
@@ -1554,9 +1275,6 @@ async function processRazorpayPayout(
   return result.id;
 }
 
-/**
- * Process payout via Stripe Connect
- */
 async function processStripePayout(
   payout: {
     id: string;
@@ -1579,21 +1297,12 @@ async function processStripePayout(
 
   const stripeConnect = getStripeConnectService();
 
-  // Create a transfer from platform to connected account.
-  // Idempotency is mandatory on money-out: a timeout after Stripe accepted
-  // the transfer used to surface as a generic failure, and re-batching under
-  // a fresh row minted a SECOND transfer. The row's unique idempotencyKey
-  // (same deterministic key RazorpayX receives) makes the retry return the
-  // original transfer instead.
   onSubmit();
   const transfer = await stripeConnect.createTransfer({
     amount: payout.amount,
     currency: payout.currency.toLowerCase(),
     destinationAccountId: account.stripeAccountId,
     description: `Payout ${payout.id}`,
-    // #1846 — a legacy row with no stored key falls back to the same
-    // deterministic per-row key the RazorpayX path derives
-    // (generateIdempotencyKey), never to none.
     idempotencyKey: payout.idempotencyKey || `payout_${payout.id}`,
     metadata: {
       payoutId: payout.id,
@@ -1604,18 +1313,6 @@ async function processStripePayout(
   return transfer.id;
 }
 
-/**
- * Handle payout webhook from provider
- *
- * C6 FIX: Wrapped in a prisma.$transaction() to ensure atomicity.
- * Without this, the payout status, earnings status, and consultant stats
- * could get out of sync if any individual DB call fails mid-way.
- */
-/**
- * R-5 — a payout status the mapping does not know. The caller keeps the row's
- * current status and returns; this leaves a Sentry breadcrumb and a WARN
- * system event so a new gateway status is noticed instead of silently mapped.
- */
 export async function reportUnknownPayoutStatus(input: {
   provider: PaymentGateway;
   providerPayoutId: string;
@@ -1641,21 +1338,13 @@ export async function handlePayoutWebhook(
   providerPayoutId: string,
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
   failureReason?: string,
-  // UTR — bank settlement reference the gateway returns on a completed payout
-  // (mirrors the OrganizationPayout branch). Optional + only persisted when
-  // present, so PROCESSING/FAILED deliveries and pre-UTR gateways leave it null.
   gatewayUtr?: string,
-  // #1846 N1 — the `reference_id` RazorpayX echoes back, which is our payout
-  // row id. A submit whose reply was lost never stored the provider id, so
-  // the event is matched by this instead of being dropped.
   referenceId?: string,
 ): Promise<void> {
   let payout = await prisma.consultantPayout.findFirst({
     where: { providerPayoutId },
     include: { earnings: true },
   });
-  // True when the row was found by reference id and the provider id still
-  // has to be stamped; the stamp rides the status CAS below.
   let stampProviderId = false;
   if (!payout && referenceId) {
     payout = await prisma.consultantPayout.findFirst({
@@ -1666,8 +1355,6 @@ export async function handlePayoutWebhook(
   }
 
   if (!payout) {
-    // An event for money that left with no row to settle it against is an
-    // operator problem, not a log line.
     await recordSystemEvent({
       category: "PAYOUT",
       severity:
@@ -1684,7 +1371,6 @@ export async function handlePayoutWebhook(
   }
   const matched = payout;
 
-  // Map external status to our enum
   let payoutStatus: PayoutStatus;
   switch (status) {
     case "COMPLETED":
@@ -1703,7 +1389,6 @@ export async function handlePayoutWebhook(
       payoutStatus = PayoutStatus.PENDING;
       break;
     default:
-      // R-5 — an unknown status keeps the row as it is; it never downgrades to PENDING.
       await reportUnknownPayoutStatus({
         provider: _provider,
         providerPayoutId,
@@ -1712,22 +1397,11 @@ export async function handlePayoutWebhook(
       return;
   }
 
-  // A row matched by reference id is stamped in the same CAS, and only while
-  // it is still unstamped.
   const stampWhere = stampProviderId ? { providerPayoutId: null } : {};
   const stampData = stampProviderId ? { providerPayoutId } : {};
 
   await prisma.$transaction(async (tx) => {
-    // Atomic conditional update. Two guards:
-    //  - Terminal incoming statuses (COMPLETED/FAILED/CANCELLED) may claim any
-    //    non-terminal row, but never COMPLETED/CANCELLED/REVERSED — a late
-    //    `payout.processed` after a bank reversal used to overwrite
-    //    REVERSED → COMPLETED and re-run the TDS delete/recreate.
-    //  - Non-terminal incoming statuses (PENDING/PROCESSING from queued/
-    //    pending webhooks) apply only to PROCESSING rows: the old guard let a
-    //    late `payout.queued` flip FAILED → PENDING after the FAILED handler
-    //    had already released the earnings, leaving a payable-looking row
-    //    with none.
+    // Terminal events claim any non-terminal row; non-terminal events only update PROCESSING rows.
     const terminalIncoming =
       payoutStatus === PayoutStatus.COMPLETED ||
       payoutStatus === PayoutStatus.FAILED ||
@@ -1751,8 +1425,6 @@ export async function handlePayoutWebhook(
         processedAt:
           payoutStatus === PayoutStatus.COMPLETED ? new Date() : undefined,
         failureReason: failureReason,
-        // UTR — persist only on a completing payout that carried one; absent
-        // value leaves the column untouched (idempotent re-drive safe).
         gatewayUtr:
           payoutStatus === PayoutStatus.COMPLETED && gatewayUtr
             ? gatewayUtr
@@ -1765,8 +1437,6 @@ export async function handlePayoutWebhook(
       console.log(
         `Payout ${matched.id} already in terminal state, skipping duplicate ${status} webhook`,
       );
-      // Idempotency short-circuit — a redelivered/duplicate gateway webhook.
-      // The system working as designed.
       reportSentryMessage("Payout webhook idempotency short-circuit", {
         subsystem: "payments",
         expected: true,
@@ -1775,17 +1445,9 @@ export async function handlePayoutWebhook(
       return;
     }
 
-    // If completed, update earnings and consultant stats
     if (payoutStatus === PayoutStatus.COMPLETED) {
-      // #1582 E-P0-02 — mirrors #1354 on the org rail: TDS is dated at PAYMENT,
-      // so year and quarter both come from the completion instant, never from
-      // the batch-time stamp (a March batch settling in April would file
-      // FY 2025-26 Q1). `tdsFinancialYear` stays the audit stamp of the batch.
-      // One instant for both halves — two clock reads could straddle 1 April.
-      const completedAt = new Date();
-      const financialYear = getIndianFinancialYear(completedAt);
-      const quarter = getIndianFYQuarter(completedAt);
-      const { start, end } = getFYDateRange(financialYear);
+      const { financialYear, quarter, start, end } =
+        resolveCompletionTdsWindow();
       const previousCompletedPayouts = await tx.consultantPayout.aggregate({
         where: {
           consultantProfileId: matched.consultantProfileId,
@@ -1798,9 +1460,6 @@ export async function handlePayoutWebhook(
       const cumulativeCreditedPayments =
         sumPaise(previousCompletedPayouts._sum.amount) + matched.amount;
 
-      // Update earnings to PAID. #837 E-03/E-04 — this COMPLETED webhook (with
-      // gatewayUtr above) is the ONLY place consultant earnings become PAID;
-      // createPayoutBatch staged them as BATCHED.
       await tx.consultantEarnings.updateMany({
         where: { payoutId: matched.id, status: EarningStatus.BATCHED },
         data: {
@@ -1809,52 +1468,26 @@ export async function handlePayoutWebhook(
         },
       });
 
-      // #771 D1/D5 — double-entry (dual-write): clear what we owed the
-      // consultant.
-      //
-      // #1132 — `payout.amount` is the GROSS payable, not the cash that left.
-      // The gateway is called with `payout.amount - tds` (see
-      // payoutAmountAfterTDS above), so crediting CASH with the gross
-      // over-stated it by the withheld amount on every deduction and pushed
-      // CONSULTANT_PAYABLE toward a debit balance. The transaction still
-      // balanced, so neither the deferred trigger nor the reconciler caught it.
-      //   Dr CONSULTANT_PAYABLE (gross)  Cr CASH (gross − tds)  Cr TDS_PAYABLE (tds)
       if (matched.amount > 0) {
         const tdsPaise = matched.tdsDeducted ?? 0;
         const cashPaise = matched.amount - tdsPaise;
-        const payoutPostings: Posting[] = [
-          {
-            account: {
-              kind: "CONSULTANT_PAYABLE",
-              consultantProfileId: matched.consultantProfileId,
-            },
-            direction: "DEBIT",
-            amountPaise: matched.amount,
-          },
-          {
-            account: { kind: "CASH" },
-            direction: "CREDIT",
-            amountPaise: cashPaise,
-          },
-        ];
-        if (tdsPaise > 0) {
-          payoutPostings.push({
-            account: { kind: "TDS_PAYABLE" },
-            direction: "CREDIT",
-            amountPaise: tdsPaise,
-          });
-        }
         await postLedgerTxn(tx, {
           idempotencyKey: `payout:${matched.id}`,
           kind: "PAYOUT",
           payoutId: matched.id,
-          postings: payoutPostings,
+          postings: buildPayoutCompletionPostings({
+            payableAccount: {
+              kind: "CONSULTANT_PAYABLE",
+              consultantProfileId: matched.consultantProfileId,
+            },
+            grossPayablePaise: matched.amount,
+            netCashPaise: cashPaise,
+            tdsPaise,
+          }),
         });
       }
 
       if (matched.tdsDeducted > 0 && matched.tdsRateAppliedBps) {
-        // Reversal rows (isReversal=true) belong to the refund cascade and must
-        // survive a FAILED → re-batched → COMPLETED rewrite (#1582 E-P0-02).
         await tx.tDSRecord.deleteMany({
           where: { payoutId: matched.id, isReversal: false },
         });
@@ -1867,20 +1500,16 @@ export async function handlePayoutWebhook(
           tdsRateBps: matched.tdsRateAppliedBps,
           cumulativeAmountCredited: cumulativeCreditedPayments,
           payoutId: matched.id,
-          // #776 — consultant payouts withhold under Section 194-O (ECO).
           tdsSection: "194O",
           db: tx,
         });
       }
     }
 
-    // If failed or cancelled, unlink earnings and reverse TDS records
     if (
       payoutStatus === PayoutStatus.FAILED ||
       payoutStatus === PayoutStatus.CANCELLED
     ) {
-      // #837 — a FAILED/CANCELLED payout never disbursed; its earnings are
-      // BATCHED (never PAID) so release them back to READY for the next batch.
       await tx.consultantEarnings.updateMany({
         where: { payoutId: matched.id, status: EarningStatus.BATCHED },
         data: {
@@ -1889,12 +1518,10 @@ export async function handlePayoutWebhook(
         },
       });
 
-      // Delete TDS records — payout never completed, so TDS was never actually withheld
       await tx.tDSRecord.deleteMany({
         where: { payoutId: matched.id },
       });
 
-      // Reset TDS fields on the payout record
       await tx.consultantPayout.update({
         where: { id: matched.id },
         data: {
@@ -1907,7 +1534,6 @@ export async function handlePayoutWebhook(
     }
   });
 
-  // Fire-and-forget: notify consultant when payout completes
   if (payoutStatus === PayoutStatus.COMPLETED) {
     const profile = await prisma.consultantProfile.findUnique({
       where: { id: matched.consultantProfileId },
@@ -1918,7 +1544,6 @@ export async function handlePayoutWebhook(
         amount: Number(matched.amount),
         currency: matched.currency,
         payoutId: matched.id,
-        // #1527 — the recipient is always the consultant who owns the payout.
         dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
@@ -1927,8 +1552,6 @@ export async function handlePayoutWebhook(
     }
   }
 
-  // Fire-and-forget: a FAILED/CANCELLED payout never disbursed (earnings are
-  // back to READY above) — the consultant must hear it from us, not silence.
   if (
     payoutStatus === PayoutStatus.FAILED ||
     payoutStatus === PayoutStatus.CANCELLED
@@ -1942,7 +1565,6 @@ export async function handlePayoutWebhook(
         amount: Number(matched.amount),
         currency: matched.currency,
         payoutId: matched.id,
-        // #1527 — the recipient is always the consultant who owns the payout.
         dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout-failed notice:", error);
@@ -1953,15 +1575,8 @@ export async function handlePayoutWebhook(
 }
 
 /**
- * #813/#812 — consultant `payout.reversed` arriving AFTER the payout already
- * COMPLETED. Mirrors markOrgPayoutReversed: handlePayoutWebhook maps `reversed`
- * to FAILED and claims `status notIn [COMPLETED, CANCELLED]`, so a bounce on an
- * already-COMPLETED payout was a SILENT no-op — cash had left (Dr
- * CONSULTANT_PAYABLE / Cr CASH / Cr TDS_PAYABLE, key `payout:<id>`), earnings
- * stayed PAID, nothing reversed. This atomically claims COMPLETED → REVERSED,
- * posts the exact inverse journal, and re-opens the earnings to READY. No-ops via
- * the claim if the payout is not COMPLETED, so the caller can attempt it first and
- * still fall through to the FAILED path for a pre-settlement bounce.
+ * Atomically transitions COMPLETED → REVERSED when a bank reversal arrives
+ * after completion, posting the inverse journal and reopening PAID earnings to READY.
  */
 export async function markConsultantPayoutReversed(
   providerPayoutId: string,
@@ -1993,7 +1608,6 @@ export async function markConsultantPayoutReversed(
       return { wasNoOp: true, notify: null };
     }
 
-    // Atomic claim: only a COMPLETED payout has cash to bring back.
     const claim = await tx.consultantPayout.updateMany({
       where: { id: payout.id, status: PayoutStatus.COMPLETED },
       data: {
@@ -2002,8 +1616,6 @@ export async function markConsultantPayoutReversed(
       },
     });
     if (claim.count === 0) {
-      // Modelled no-op — caller falls through to the pre-settlement FAILED
-      // path when the payout wasn't COMPLETED.
       reportSentryMessage(
         "markConsultantPayoutReversed: no-op (not COMPLETED)",
         {
@@ -2015,60 +1627,30 @@ export async function markConsultantPayoutReversed(
       return { wasNoOp: true, notify: null };
     }
 
-    // Re-open the earnings this payout had marked PAID so a future batch re-pays
-    // them — the inverse of the completion path's PAID flip. Unlike the FAILED
-    // path we do NOT delete TDS records (mirrors the org reversal, which only
-    // reverses the TDS_PAYABLE accrual in the journal below).
     await tx.consultantEarnings.updateMany({
       where: { payoutId: payout.id, status: EarningStatus.PAID },
       data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
     });
 
-    // Exact inverse of the completion posting `payout:<id>`:
-    //   original  Dr CONSULTANT_PAYABLE (gross)  Cr CASH (net)  Cr TDS_PAYABLE (tds)
-    //   reversal  Dr CASH (net)  Cr CONSULTANT_PAYABLE (gross)  Dr TDS_PAYABLE (tds)
-    //
-    // #1132 — the comment above already described this shape, but the code did
-    // not match it: CASH was debited by the gross and CONSULTANT_PAYABLE
-    // credited by gross+tds. Now that the completion leg credits CASH with
-    // gross-tds, an unadjusted reversal would leave excess cash and an
-    // overstated payable behind on every reversed payout that withheld TDS.
     if (payout.amount > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
       const cashPaise = payout.amount - tdsPaise;
-      const reversal: Posting[] = [
-        {
-          account: { kind: "CASH" },
-          direction: "DEBIT",
-          amountPaise: cashPaise,
-        },
-        {
-          account: {
-            kind: "CONSULTANT_PAYABLE",
-            consultantProfileId: payout.consultantProfileId,
-          },
-          direction: "CREDIT",
-          amountPaise: payout.amount,
-        },
-      ];
-      if (tdsPaise > 0) {
-        reversal.push({
-          account: { kind: "TDS_PAYABLE" },
-          direction: "DEBIT",
-          amountPaise: tdsPaise,
-        });
-      }
       await postLedgerTxn(tx, {
         idempotencyKey: `payout-reversal:${payout.id}`,
         kind: "PAYOUT",
         payoutId: payout.id,
-        postings: reversal,
+        postings: buildPayoutReversalPostings({
+          payableAccount: {
+            kind: "CONSULTANT_PAYABLE",
+            consultantProfileId: payout.consultantProfileId,
+          },
+          grossPayablePaise: payout.amount,
+          netCashPaise: cashPaise,
+          tdsPaise,
+        }),
       });
     }
 
-    // No consultant-scoped audit table (OrgAuditLog is org-only) and no
-    // consultant payout-reversal Novu workflow exists — the structured log is the
-    // mirror of the org path's PAYOUT_REVERSED audit entry.
     console.log(
       `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
     );
@@ -2079,9 +1661,6 @@ export async function markConsultantPayoutReversed(
   return { wasNoOp: result.wasNoOp };
 }
 
-/**
- * Get payout statistics for dashboard
- */
 export async function getPayoutStats() {
   const [pending, processing, completed, failed] = await Promise.all([
     prisma.consultantPayout.aggregate({
@@ -2126,16 +1705,7 @@ export async function getPayoutStats() {
   };
 }
 
-// ============================================
-// Consultant-facing payout history (#1675 PR-Y)
-// ============================================
-
-/**
- * The earner-safe payout select: the money walk (share → TDS → net), the
- * dates, the failure reason and the UTR. Never `providerPayoutId`, the dedupe
- * key or batch internals — the UTR is the only gateway reference a consultant
- * needs to trace a transfer with their bank.
- */
+/** Consultant-safe payout projection excluding internal gateway and dedupe identifiers. */
 export const CONSULTANT_PAYOUT_SELECT = {
   id: true,
   status: true,
@@ -2151,7 +1721,6 @@ export const CONSULTANT_PAYOUT_SELECT = {
   createdAt: true,
 } as const;
 
-/** Newest first; a plain read on the global client, never inside a transaction. */
 export async function getConsultantPayouts(
   consultantProfileId: string,
   options: { take?: number } = {},

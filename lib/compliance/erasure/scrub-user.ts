@@ -47,7 +47,7 @@
  *
  * Webhook fan-out
  * ---------------
- * Emits `member.removed` per affected organization so SCIM-managed and
+ * Emits `member.removed` per affected organization so
  * webhook-subscribed downstreams see the deprovisioning. The
  * dispatching is fire-and-forget inside the same transaction so a
  * rollback (e.g. constraint violation we didn't anticipate) takes the
@@ -420,7 +420,7 @@ export async function scrubUser(
         },
       });
 
-      // Fan webhook events so SCIM + integrators see the deprovisioning.
+      // Fan webhook events so integrators see the deprovisioning.
       // The data payload uses pseudonymousId — never the raw userId or
       // email — to keep with the erasure semantics.
       await dispatchWebhookEvent({

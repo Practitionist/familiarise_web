@@ -44,11 +44,6 @@ jest.mock("../../lib/auth/sign-out", () => ({
   signOutEverywhere: jest.fn(),
 }));
 
-jest.mock("../../lib/auth-broadcast", () => ({
-  __esModule: true,
-  postAuthSync: jest.fn(),
-}));
-
 jest.mock("../../components/auth/auth-icons", () => ({
   __esModule: true,
   PROVIDER_ICONS: {},

@@ -30,7 +30,10 @@ jest.mock("../../lib/prisma", () => {
     },
     paymentLeg: { upsert: jest.fn() },
     overageEvent: { findFirst: jest.fn() },
-    organizationInvoice: { findUnique: jest.fn() },
+    organizationInvoice: {
+      findUnique: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
   return {
     __esModule: true,
@@ -73,7 +76,7 @@ type MockTx = {
   payment: { findUnique: jest.Mock; updateMany: jest.Mock };
   paymentLeg: { upsert: jest.Mock };
   overageEvent: { findFirst: jest.Mock };
-  organizationInvoice: { findUnique: jest.Mock };
+  organizationInvoice: { findUnique: jest.Mock; updateMany: jest.Mock };
 };
 type MockPosting = {
   account: { kind: string; organizationId?: string };
@@ -297,6 +300,57 @@ describe("late capture after the parent was invoiced", () => {
         context: expect.objectContaining({ sidePaymentId: "side1" }),
       }),
     );
+  });
+
+  it("neutralising two overage events sequentially on the same ISSUED invoice mints two full credit notes and clears providerPaymentOrderId", async () => {
+    mockRecarve.mockResolvedValue("invoiced");
+    tx.organizationInvoice.findUnique.mockResolvedValue({
+      invoiceNumber: "ACME-2026-0001",
+      subtotalPaise: 200_000,
+      igstPaise: 0,
+      cgstPaise: 18_000,
+      sgstPaise: 18_000,
+    });
+    mockMint
+      .mockResolvedValueOnce({ creditNoteId: "cn1" })
+      .mockResolvedValueOnce({ creditNoteId: "cn2" });
+
+    // First overage event on inv1
+    await handleOverageMemberSuccess("order_abc_1");
+
+    // Second overage event on the same inv1
+    tx.payment.findUnique.mockResolvedValue({
+      ...side,
+      id: "side2",
+      parentPaymentId: "parent2",
+    });
+    tx.overageEvent.findFirst.mockResolvedValue({
+      id: "oe2",
+      basePaise: BASE,
+      payment: { parentPayment: { billableToOrgInvoiceId: "inv1" } },
+    });
+    mockTransition.mockReset().mockResolvedValueOnce(0).mockResolvedValue(1);
+
+    await handleOverageMemberSuccess("order_abc_2");
+
+    expect(mockMint).toHaveBeenNthCalledWith(1, tx, {
+      invoiceId: "inv1",
+      overageEventId: "oe1",
+      amountPaise: 118_000,
+      reason: expect.stringContaining("side1"),
+    });
+    expect(mockMint).toHaveBeenNthCalledWith(2, tx, {
+      invoiceId: "inv1",
+      overageEventId: "oe2",
+      amountPaise: 118_000,
+      reason: expect.stringContaining("side2"),
+    });
+    expect(tx.organizationInvoice.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.organizationInvoice.updateMany).toHaveBeenCalledWith({
+      where: { id: "inv1", providerPaymentOrderId: { not: null } },
+      data: { providerPaymentOrderId: null },
+    });
+    expect(netPosted("ORG_PAYABLE", "org1")).toBe(2 * SURCHARGE);
   });
 });
 

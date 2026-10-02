@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { PlayCircle, Clock } from "lucide-react";
 import { listPublicRecordings } from "@/lib/data/recordings-explore";
@@ -49,11 +50,14 @@ async function RecordingsGrid() {
         >
           <div className="aspect-video relative bg-muted">
             {rec.thumbnailUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              // `unoptimized`: the thumbnail host is not allow-listed in
+              // next.config, so the image is served as-is.
+              <Image
                 src={rec.thumbnailUrl}
                 alt={rec.listingTitle}
-                className="h-full w-full object-cover"
+                fill
+                unoptimized
+                className="object-cover"
               />
             ) : (
               <div className="flex h-full items-center justify-center">

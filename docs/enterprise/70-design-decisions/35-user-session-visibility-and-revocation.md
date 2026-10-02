@@ -118,7 +118,7 @@ for. A short session TTL was rejected on the same grounds as ADR 10
 - **`session-revoked` BroadcastChannel ping.** Same-browser tabs share
   the session, so the login/logout ping already covers them.
 - **Per-user session cap (10, Serializable eviction).** Hygiene with no
-  security value (`authLimiter` owns brute force), plus a
+  security value (BetterAuth's rate limiter owns brute force), plus a
   `session.create.after` hook on the sign-in path.
 - **`Session.lastSeenAt` / `Session.deviceLabel` columns.** A throttled
   write on every request and a push-before-traffic migration, to show

@@ -111,7 +111,9 @@ export async function POST(req: NextRequest) {
     // reads defensively with `in` rather than assuming a field on every
     // branch. Read-only: never affects the response.
     const gatewayOrderId =
-      ("orderId" in result && typeof result.orderId === "string" && result.orderId) ||
+      ("orderId" in result &&
+        typeof result.orderId === "string" &&
+        result.orderId) ||
       ("paymentIntent" in result &&
         result.paymentIntent &&
         typeof result.paymentIntent === "object" &&

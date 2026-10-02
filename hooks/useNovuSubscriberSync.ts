@@ -46,6 +46,11 @@ export function useNovuSubscriberSync() {
             httpStatus: res.status,
           });
         }
+        // #1443 — gateway / captive-portal HTML responses must not throw a
+        // SyntaxError inside res.json().
+        if (!res.headers.get("content-type")?.includes("application/json")) {
+          return { success: false };
+        }
         return await res.json();
       } catch (error) {
         const httpStatus =

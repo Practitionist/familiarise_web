@@ -6,30 +6,31 @@
  * needing a live database.
  */
 
+import type { PrismaLike } from "@/lib/prisma";
 import {
+  lookupEnforcedOrg,
   shouldRejectSession,
   type EnforceInputs,
 } from "@/lib/sso/enforce-session";
 
+const ENFORCED = {
+  organizationId: "org-1",
+  registeredProviderIds: ["acme-okta", "acme-azure"],
+};
+const SSO_CALLBACK = "/sso/callback/:providerId";
+
 function makeInputs(
   overrides: Partial<EnforceInputs> & {
-    email?: string | null;
-    userId?: string;
-    enforcedOrg?: { organizationId: string; registeredProviderIds: string[] } | null;
-    linkedProviderIds?: string[];
+    enforcedOrg?: typeof ENFORCED | null;
   },
 ): EnforceInputs {
-  const linkedProviderIds = overrides.linkedProviderIds ?? [];
   return {
-    email: overrides.email ?? "user@acme.com",
-    userId: overrides.userId ?? "user-1",
-    lookupEnforcedOrg:
-      overrides.lookupEnforcedOrg ??
-      (async () => overrides.enforcedOrg ?? null),
-    hasAccountInProviders:
-      overrides.hasAccountInProviders ??
-      (async (_userId, providerIds) =>
-        providerIds.some((p) => linkedProviderIds.includes(p))),
+    email: "user@acme.com",
+    path: "/sign-in/email",
+    providerId: undefined,
+    lookupEnforcedOrg: async () =>
+      overrides.enforcedOrg === undefined ? ENFORCED : overrides.enforcedOrg,
+    ...overrides,
   };
 }
 
@@ -46,61 +47,41 @@ describe("shouldRejectSession", () => {
     expect(decision.reject).toBe(false);
   });
 
-  test("enforced domain + credential-only account → REJECT", async () => {
-    const decision = await shouldRejectSession(
-      makeInputs({
-        email: "user@acme.com",
-        enforcedOrg: { organizationId: "org-1", registeredProviderIds: ["acme-okta"] },
-        linkedProviderIds: ["credential"],
-      }),
-    );
-    expect(decision.reject).toBe(true);
-    if (decision.reject) {
-      expect(decision.reason).toBe("SSO_REQUIRED");
-      expect(decision.organizationId).toBe("org-1");
-    }
+  test.each([
+    "/sign-in/email",
+    "/callback/:id",
+    "/verify-email",
+    "/change-password",
+    "/two-factor/verify-totp",
+    undefined,
+  ])("enforced domain, session minted by %s → REJECT", async (path) => {
+    const decision = await shouldRejectSession(makeInputs({ path }));
+    expect(decision).toEqual({
+      reject: true,
+      reason: "SSO_REQUIRED",
+      organizationId: "org-1",
+    });
   });
 
-  test("enforced domain + personal Google OAuth (not registered for org) → REJECT", async () => {
+  test("enforced domain through one of the org's own providers → ALLOW", async () => {
     const decision = await shouldRejectSession(
-      makeInputs({
-        enforcedOrg: { organizationId: "org-1", registeredProviderIds: ["acme-okta"] },
-        linkedProviderIds: ["credential", "google"],
-      }),
-    );
-    expect(decision.reject).toBe(true);
-  });
-
-  test("enforced domain + account linked via registered SSO provider → ALLOW", async () => {
-    const decision = await shouldRejectSession(
-      makeInputs({
-        enforcedOrg: { organizationId: "org-1", registeredProviderIds: ["acme-okta"] },
-        linkedProviderIds: ["acme-okta"],
-      }),
+      makeInputs({ path: SSO_CALLBACK, providerId: "acme-azure" }),
     );
     expect(decision.reject).toBe(false);
   });
 
-  test("enforced domain + multiple providers, user linked via any one → ALLOW", async () => {
+  test("enforced domain through another org's provider → REJECT", async () => {
     const decision = await shouldRejectSession(
-      makeInputs({
-        enforcedOrg: {
-          organizationId: "org-1",
-          registeredProviderIds: ["acme-okta", "acme-azure"],
-        },
-        linkedProviderIds: ["acme-azure"],
-      }),
+      makeInputs({ path: SSO_CALLBACK, providerId: "beta-okta" }),
     );
-    expect(decision.reject).toBe(false);
+    expect(decision.reject).toBe(true);
   });
 
-  test("fail-open: enforced domain but org has zero registered providers → ALLOW", async () => {
-    // Otherwise an org owner who flipped enforceSSO=true before finishing
-    // IdP setup would lock themselves out and couldn't recover.
+  test("fail-open: enforced domain but org has zero approved providers → ALLOW", async () => {
+    // Nowhere to send the user, so refusing would only lock the org out.
     const decision = await shouldRejectSession(
       makeInputs({
         enforcedOrg: { organizationId: "org-1", registeredProviderIds: [] },
-        linkedProviderIds: ["credential"],
       }),
     );
     expect(decision.reject).toBe(false);
@@ -112,11 +93,42 @@ describe("shouldRejectSession", () => {
         email: "User@ACME.COM",
         lookupEnforcedOrg: async (domain) => {
           expect(domain).toBe("acme.com");
-          return { organizationId: "org-1", registeredProviderIds: ["acme-okta"] };
+          return ENFORCED;
         },
-        linkedProviderIds: ["credential"],
       }),
     );
     expect(decision.reject).toBe(true);
+  });
+});
+
+describe("lookupEnforcedOrg", () => {
+  test("only staff-approved (domainVerified) providers count as registered", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ providerId: "oidc-1" }]);
+    const prisma = {
+      orgDomainClaim: {
+        findUnique: jest.fn().mockResolvedValue({
+          organizationId: "org-1",
+          verifiedAt: new Date(),
+          organization: {
+            status: "ACTIVE",
+            ssoSettings: { enforceSSO: true },
+          },
+        }),
+      },
+      ssoProvider: { findMany },
+    } as unknown as PrismaLike;
+
+    const result = await lookupEnforcedOrg(prisma, "acme.com");
+
+    // An unapproved provider cannot sign anyone in, so enforcing against it
+    // would lock the org out; it must not reach registeredProviderIds.
+    expect(findMany).toHaveBeenCalledWith({
+      where: { organizationId: "org-1", domainVerified: true },
+      select: { providerId: true },
+    });
+    expect(result).toEqual({
+      organizationId: "org-1",
+      registeredProviderIds: ["oidc-1"],
+    });
   });
 });

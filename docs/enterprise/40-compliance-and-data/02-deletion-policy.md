@@ -126,7 +126,7 @@ does to them: their `User.name`/`email`/`phone`/`bio` become tombstones,
 their `Membership` on IIT Madras flips to `ERASED`, their BetterAuth
 `Session` + `Account` rows are hard-deleted (immediate sign-out
 everywhere), and a `member.removed` webhook fires to IIT Madras with
-`source: "dpdp_erasure"` so any SCIM/HRIS downstream deprovisions too.
+`source: "dpdp_erasure"` so any HRIS downstream deprovisions too.
 What **survives**: the `LedgerTransaction`/`LedgerEntry` rows for every
 booking they paid for (immutable, retained), and a `USER_ERASURE_PROCESSED`
 audit row on the org — _pseudonymized_, but kept past the user's own
@@ -211,8 +211,6 @@ The process route refuses to scrub a user while their money cannot yet be settle
 
 #### Cross-feature interactions
 
-- **SCIM**: subsequent SCIM PUT/POST for an erased user returns
-  `410 Gone` so the IdP marks the user as permanently un-provisionable.
 - **Outbound webhooks**: a `member.removed` event fires per affected
   organization with `source: "dpdp_erasure"` so integrators see the
   deprovisioning even when the user was IdP-managed.
@@ -255,8 +253,8 @@ are not the same thing:
 
 Small configurational rows whose history lives in the audit log, not in the row itself:
 
-- **`OrgDomainClaim`** — released via `DELETE /api/organizations/[orgId]/domain-claims/[domain]`. The release is captured as an `OrgAuditLog(SETTINGS / DOMAIN_RELEASED)` entry, so deleting the row loses no information. Anti-lockout guard refuses the delete if releasing would leave the org inconsistent (enforceSSO=true + zero providers + zero domains).
-- **`SsoProvider`** — deleted via `DELETE /api/organizations/[orgId]/sso/providers/[providerId]`. Same reasoning: deletion captured as `SSO_DISABLED` audit row; anti-lockout guard prevents deleting the last provider when enforceSSO is on.
+- **`OrgDomainClaim`** — released via `DELETE /api/organizations/[orgId]/domain-claims/[domain]`. The release is captured as an `OrgAuditLog(SETTINGS / DOMAIN_RELEASED)` entry, so deleting the row loses no information. Releasing a claim resets `domainVerified=false` on that domain's providers in the same transaction, and the anti-lockout guard refuses it if that would revoke the org's last approved provider while `enforceSSO` is on.
+- **`SsoProvider`** — deleted via `DELETE /api/organizations/[orgId]/sso/providers/[providerId]`. Same reasoning: deletion captured as `SSO_DISABLED` audit row; anti-lockout guard prevents deleting the last approved provider when enforceSSO is on.
 
 Both are OWNER-gated and guarded, so accidental deletion is unlikely.
 
@@ -332,16 +330,16 @@ Out of this epic's scope but observed during the grep:
 Five vectors are guarded inside transactions; three more were closed in
 the cleanup PR following the foundation work. The full list:
 
-| #   | Vector                                                                 | Guard                                                                                                                                                                                                                                           | Test                                               |
-| --- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| 1   | Demote the only ACTIVE OWNER                                           | PATCH `/members/[memberId]` runs `count(role=OWNER, status=ACTIVE)` inside a Serializable transaction; refuses if the demotion leaves zero.                                                                                                     | `__tests__/enterprise/member-anti-lockout.test.ts` |
-| 2   | Remove the only ACTIVE OWNER                                           | Same route, same guard — `status: REMOVED` is treated identically to a demote.                                                                                                                                                                  | Same                                               |
-| 3   | Hard-delete the last verified domain claim on an `enforceSSO=true` org | Domain-claim `DELETE` rejects when the result would leave zero verified claims AND the org enforces SSO.                                                                                                                                        | Manual (no unit test today)                        |
-| 4   | Hard-delete the last `SsoProvider` on an `enforceSSO=true` org         | SSO provider `DELETE` rejects when the result would leave zero registered providers AND the org enforces SSO.                                                                                                                                   | Manual                                             |
-| 5   | Cascade-orphan an org via member soft-delete                           | All member removal goes through `status=REMOVED`, never raw `DELETE`. The soft-delete keeps audit + payment FKs intact.                                                                                                                         | Same as #1                                         |
-| 6   | **Bulk member operations**                                             | `/api/organizations/[orgId]/members/bulk` returns a deterministic `405` with `BULK_REMOVAL_NOT_SUPPORTED`. Closes the door on a future loop-bypass that skips the per-member Serializable guard.                                                | `__tests__/enterprise/anti-lockout-gaps.test.ts`   |
-| 7   | **Terminate ACTIVE contract with live assignments**                    | Contract `PATCH status=TERMINATED` refuses when `programAssignment.count(periodEnd >= now)` > 0 on the contract's programs. Forces operator to cancel assignments (or wait for cycle roll) so checkout can't 500 on orphaned-assignment lookup. | Same                                               |
-| 8   | **Hard-delete program with utilization history**                       | Program `DELETE` runs at Serializable isolation, and refuses both when `_count.assignments > 0` _and_ when any `BookingUtilization` row still references the program. The audit trail and refund path both rely on the FK target staying alive. | Same                                               |
+| #   | Vector                                                                                 | Guard                                                                                                                                                                                                                                           | Test                                               |
+| --- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 1   | Demote the only ACTIVE OWNER                                                           | PATCH `/members/[memberId]` runs `count(role=OWNER, status=ACTIVE)` inside a Serializable transaction; refuses if the demotion leaves zero.                                                                                                     | `__tests__/enterprise/member-anti-lockout.test.ts` |
+| 2   | Remove the only ACTIVE OWNER                                                           | Same route, same guard — `status: REMOVED` is treated identically to a demote.                                                                                                                                                                  | Same                                               |
+| 3   | Release the domain claim behind the last approved provider on an `enforceSSO=true` org | Domain-claim `DELETE` rejects when releasing would revoke every approved provider AND the org enforces SSO.                                                                                                                                     | Manual (no unit test today)                        |
+| 4   | Hard-delete the last approved `SsoProvider` on an `enforceSSO=true` org                | SSO provider `DELETE` rejects when the result would leave zero approved (`domainVerified`) providers AND the org enforces SSO.                                                                                                                  | Manual                                             |
+| 5   | Cascade-orphan an org via member soft-delete                                           | All member removal goes through `status=REMOVED`, never raw `DELETE`. The soft-delete keeps audit + payment FKs intact.                                                                                                                         | Same as #1                                         |
+| 6   | **Bulk member operations**                                                             | `/api/organizations/[orgId]/members/bulk` returns a deterministic `405` with `BULK_REMOVAL_NOT_SUPPORTED`. Closes the door on a future loop-bypass that skips the per-member Serializable guard.                                                | `__tests__/enterprise/anti-lockout-gaps.test.ts`   |
+| 7   | **Terminate ACTIVE contract with live assignments**                                    | Contract `PATCH status=TERMINATED` refuses when `programAssignment.count(periodEnd >= now)` > 0 on the contract's programs. Forces operator to cancel assignments (or wait for cycle roll) so checkout can't 500 on orphaned-assignment lookup. | Same                                               |
+| 8   | **Hard-delete program with utilization history**                                       | Program `DELETE` runs at Serializable isolation, and refuses both when `_count.assignments > 0` _and_ when any `BookingUtilization` row still references the program. The audit trail and refund path both rely on the FK target staying alive. | Same                                               |
 
 The two unguarded vectors (#9 contract concurrent termination, #10
 batched program-config edits) are not user-exposed in the v1 UI and

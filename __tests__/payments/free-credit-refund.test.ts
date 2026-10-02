@@ -60,19 +60,13 @@ const tx = {
     // zero-parameter `jest.fn` types `calls` as `[][]` and the assertions
     // against the write silently stop type-checking.
     updateMany: jest.fn(
-      async (
-        ..._a: unknown[]
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ): Promise<{ count: number }> => ({ count: 1 }),
+      async (..._a: unknown[]): Promise<{ count: number }> => ({ count: 1 }),
     ),
   },
   organizationEarnings: {
     update: jest.fn(),
     updateMany: jest.fn(
-      async (
-        ..._a: unknown[]
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ): Promise<{ count: number }> => ({ count: 1 }),
+      async (..._a: unknown[]): Promise<{ count: number }> => ({ count: 1 }),
     ),
   },
   organizationPayout: {

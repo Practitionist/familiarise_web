@@ -305,6 +305,13 @@ async function neutraliseInvoicedOverageBase(
       `${invoice?.invoiceNumber ?? invoiceId}`,
   });
 
+  if (creditNoteId) {
+    await tx.organizationInvoice.updateMany({
+      where: { id: invoiceId, providerPaymentOrderId: { not: null } },
+      data: { providerPaymentOrderId: null },
+    });
+  }
+
   // Awaited through the tx (#1582 B-P1-02) so a rollback drops it too; `*Safe`
   // never throws.
   const creditNoteLabel = creditNoteId

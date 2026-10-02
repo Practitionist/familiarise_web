@@ -18,12 +18,12 @@ import { stageOrgInvitationEmail } from "@/lib/email";
  * #1846 bucket C rule 3 — joining is invite + accept only. "Add people" and
  * bulk import both land here, so every human-initiated add is an Invitation
  * the person accepts (with the DPDP consent check at accept), never a
- * membership an operator switches on. SSO JIT and SCIM stay automatic.
+ * membership an operator switches on. SSO JIT stays automatic.
  *
  * Runs inside the caller's Serializable transaction: the unverified-org seat
  * cap is a count-then-insert, and the pending-invite dedupe is a
  * read-then-write that the partial unique index on (organizationId,
- * lower(email)) WHERE status='pending' backstops.
+ * lower(email)) WHERE status='PENDING' backstops.
  */
 
 export interface IssueInvitationInput {
@@ -82,7 +82,7 @@ export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
   }
 
   const existing = await tx.invitation.findFirst({
-    where: { organizationId: orgId, email, status: "pending" },
+    where: { organizationId: orgId, email, status: "PENDING" },
   });
 
   // PR-1d / #675: an unverified org onboards a small founding team and is
@@ -93,7 +93,7 @@ export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
         where: { organizationId: orgId, status: "ACTIVE" },
       }),
       tx.invitation.count({
-        where: { organizationId: orgId, status: "pending" },
+        where: { organizationId: orgId, status: "PENDING" },
       }),
     ]);
     if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
@@ -112,7 +112,7 @@ export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
           organizationId: orgId,
           email,
           role,
-          status: "pending",
+          status: "PENDING",
           expiresAt,
           inviterId: inviter.userId,
         },

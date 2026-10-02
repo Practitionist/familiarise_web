@@ -22,7 +22,6 @@
  * modified.
  */
 
-import type { Prisma } from "@prisma/client";
 import { RefundError } from "@/lib/payments/core/types";
 
 // ---------------------------------------------------------------------------

@@ -4,13 +4,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { humanizeAuthError } from "@/lib/labels/auth-errors";
-import { sendVerificationEmail, useSession, getSession } from "@/lib/auth-client";
+import {
+  humanizeAuthError,
+  type AuthErrorAction,
+  type AuthErrorCopy,
+} from "@/lib/labels/auth-errors";
+import {
+  AuthErrorAffordance,
+  type AuthActionTarget,
+} from "@/components/auth/AuthErrorAffordance";
+import {
+  sendVerificationEmail,
+  useSession,
+  getSession,
+} from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthCardSkeleton } from "../AuthCardSkeleton";
+
+/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
 
 export default function VerifyEmail() {
   return (
@@ -20,12 +36,15 @@ export default function VerifyEmail() {
   );
 }
 
-// Friendly copy for the error codes BetterAuth appends to the callbackURL when
-// the verification link is bad (see api/routes/email-verification redirectOnError).
-function errorMessage(code: string | null): string | null {
+// Better Auth appends the failing code to the callbackURL when the
+// verification link is bad (see api/routes/email-verification redirectOnError),
+// so the whole copy for this page is derived once, from the code, in the
+// catalog — including which affordance to offer. The returned object is the
+// catalog entry, not a pre-joined string, so the action survives to the
+// renderer below.
+function copyFromCallbackError(code: string | null): AuthErrorCopy | null {
   if (!code) return null;
-  const copy = humanizeAuthError("verify", { code });
-  return `${copy.title}. ${copy.description}`;
+  return humanizeAuthError("verify", { code });
 }
 
 function VerifyEmailContent() {
@@ -33,7 +52,10 @@ function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, isPending } = useSession();
-  const error = errorMessage(searchParams.get("error"));
+  const errorCopy = copyFromCallbackError(searchParams.get("error"));
+  const error = errorCopy
+    ? `${errorCopy.title}. ${errorCopy.description}`
+    : null;
   // Preserve an upstream invite/deep-link destination through verification.
   // E2E-audit fix — hardened validator: the naive prefix check passed
   // "/\attacker.example" (WHATWG backslash normalization → off-origin).
@@ -61,7 +83,9 @@ function VerifyEmailContent() {
     let cancelled = false;
     const resolveAndGo = (completed: boolean) => {
       if (cancelled) return;
-      const target = completed ? safeCallbackUrl || "/dashboard" : onboardingUrl;
+      const target = completed
+        ? safeCallbackUrl || "/dashboard"
+        : onboardingUrl;
       if (navigatedRef.current === target) return;
       navigatedRef.current = target;
       router.replace(target);
@@ -118,6 +142,35 @@ function VerifyEmailContent() {
     }
   };
 
+  /**
+   * Which catalog actions this page can service.
+   *
+   * `resend-verification` is the whole point of this page: the
+   * `verify`-flow overrides in the catalog rewrite `INVALID_TOKEN` and
+   * `TOKEN_EXPIRED` to name the 1-hour window and answer with *this* action,
+   * so a bad link now says "request a fresh one" in words and in one click.
+   * The button below the form is that affordance's permanent twin; the copy
+   * no longer has to describe it.
+   *
+   * `request-new-link` is absent for the same reason — it means the same
+   * thing here, and two controls for one action is noise. `sign-in` is
+   * `EMAIL_ALREADY_VERIFIED`'s answer, and the link at the foot of the card
+   * is already it; it is mapped anyway so the failure names its own exit.
+   */
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "resend-verification": {
+      kind: "callback",
+      onClick: () => void handleResend(),
+      disabled: resending,
+    },
+    "sign-in": { kind: "link", href: "/auth/signin" },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
+
+  const errorTarget = errorCopy?.action
+    ? actionTargets[errorCopy.action]
+    : undefined;
+
   if (isPending || session?.user) {
     return <AuthCardSkeleton />;
   }
@@ -155,6 +208,10 @@ function VerifyEmailContent() {
         >
           {resending ? "Sending…" : "Resend verification email"}
         </Button>
+
+        {/* The catalog's next step for the bad-link copy above, when it is not
+            already the button directly above. */}
+        <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
 
         <p className="mt-6 text-xs text-zinc-400">
           Already verified?{" "}

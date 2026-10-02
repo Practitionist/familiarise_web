@@ -184,7 +184,6 @@ erDiagram
         string userId
         datetime expiresAt
         string ipAddress
-        string activeOrganizationId
     }
     Verification {
         string id
@@ -199,6 +198,15 @@ erDiagram
         string organizationId
         string domain
         string userId
+        string oidcConfig
+        boolean domainVerified
+    }
+    TwoFactor {
+        string id
+        string userId
+        boolean verified
+        int failedVerificationCount
+        datetime lockedUntil
     }
     CookiePreference {
         string id
@@ -220,6 +228,7 @@ erDiagram
 
     User ||--o{ Account : "has"
     User ||--o{ Session : "has"
+    User ||--o| TwoFactor : "has"
     User ||--o| CookiePreference : "has"
     User ||--o| NotificationPreference : "has"
     User ||--o{ SsoProvider : "has"
@@ -1224,7 +1233,7 @@ erDiagram
 
 ## 18. Enterprise Core — Org & Membership
 
-An Organization can sponsor employees (`canSponsor`) and/or host consultants (`canHost`). `Membership` is the source of truth; `Member` is kept for BetterAuth invite-token compatibility.
+An Organization can sponsor employees (`canSponsor`) and/or host consultants (`canHost`). `Membership` is the only membership table.
 
 ```mermaid
 erDiagram
@@ -1257,13 +1266,6 @@ erDiagram
         string rateCardOverrideId
         boolean exclusiveEngagement
         string departmentLabel
-        string betterAuthMemberId
-    }
-    Member {
-        string id
-        string organizationId
-        string userId
-        string role
     }
     Invitation {
         string id
@@ -1278,8 +1280,8 @@ erDiagram
         string id
         string organizationId
         boolean enforceSSO
-        datetime breakGlassUntil
         MemberRole defaultRoleForAutoJoin
+        int version
     }
     OrgDomainClaim {
         string id
@@ -1297,14 +1299,12 @@ erDiagram
     }
 
     Organization ||--o{ Membership : "typed members"
-    Organization ||--o{ Member : "BetterAuth members"
     Organization ||--o{ Invitation : "pending invites"
     Organization ||--o| OrganizationSSOSettings : "SSO"
     Organization ||--o{ OrgDomainClaim : "domain claims"
     Organization ||--o{ OrgAuditLog : "audit trail"
     Organization ||--o{ OrgInvoiceCounter : "fiscal-year seq"
     User ||--o{ Membership : "member of orgs"
-    Membership ||--o| Member : "bridges BetterAuth"
 ```
 
 ### 18.1 New 2026-05-15 fields on `Organization`

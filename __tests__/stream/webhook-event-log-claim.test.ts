@@ -49,6 +49,7 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+import prisma from "../../lib/prisma";
 import {
   logWebhookEvent,
   markWebhookEventProcessed,
@@ -176,8 +177,6 @@ describe("the SUCCESS path stays idempotent", () => {
 describe("closing a delivery out", () => {
   const mockUpdate = jest.fn();
   beforeEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const prisma = require("../../lib/prisma").default;
     prisma.webhookEvent.update = mockUpdate;
     mockUpdate.mockResolvedValue({});
   });

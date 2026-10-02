@@ -62,12 +62,10 @@ const paymentUpdateMany = jest.fn(
   }) => ({ count: 1 }),
 );
 const paymentFindUnique = jest.fn(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
 );
 const appointmentFindUnique = jest.fn(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
 );
 const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
@@ -103,8 +101,7 @@ jest.mock("../../lib/payments/payouts", () => ({
     createEarningsFromPayment(...a),
 }));
 const refundPayment = jest.fn(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
 );
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => refundPayment(...a),
@@ -280,6 +277,7 @@ async function postStripe(event: unknown) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   mockRouterCalls.length = 0;
   paymentUpdateMany.mockImplementation(async () => ({ count: 1 }));
   validateWebhookMetadata.mockImplementation(() => undefined);
@@ -415,7 +413,7 @@ describe("a paid session still confirms, and still withholds the amount", () => 
 });
 
 describe("a missing payment_status is refused by the schema, not assumed paid", () => {
-  it("500s without routing, so the delivery is recorded as failed and can be retried", async () => {
+  it("refuses without routing and records a permanent schema failure on the webhook event row", async () => {
     // `payment_status` is REQUIRED by
     // stripeCheckoutSessionCompletedEventSchema (schemas/webhooks/stripe.ts),
     // so a payload without it cannot parse. That is the whole deliberate
@@ -427,18 +425,19 @@ describe("a missing payment_status is refused by the schema, not assumed paid", 
 
     const res = await postStripe(event);
 
-    // 500 (not the 400 an envelope failure gets): a completed-session shape
-    // Stripe itself produced failing its own schema is a transient contract
-    // mismatch, and 500 is what makes the delivery retryable.
-    expect(res.status).toBe(500);
+    // ZodError answers 200 `{ status: "ignored", reason: "invalid_payload" }`
+    // (#1935) so Stripe does not burn its retry schedule on a structurally
+    // invalid event payload, while recording the failure on the event row.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      status: "ignored",
+      reason: "invalid_payload",
+    });
     expect(mockRouterCalls).toHaveLength(0);
     expect(paymentFindUnique).not.toHaveBeenCalled();
     expect(appointmentFindUnique).not.toHaveBeenCalled();
     expect(paymentUpdateMany).not.toHaveBeenCalled();
 
-    // The failure is recorded on the event row, which is what makes
-    // logWebhookEvent treat a redelivery as retryable (processed=true +
-    // error set) rather than a duplicate.
     expect(mockMarkWebhookEventProcessed).toHaveBeenCalled();
     const [, processingError] = mockMarkWebhookEventProcessed.mock.calls[0];
     expect(typeof processingError).toBe("string");

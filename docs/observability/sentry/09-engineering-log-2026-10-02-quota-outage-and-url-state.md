@@ -1,0 +1,7 @@
+# Sentry quota outage and URL-state fixes, 2026-10-02
+
+This entry records the two pull requests of 2026-10-02 so that nobody has to rediscover why they exist.
+
+PR #1928 fixed the Requests inbox tabs. The address bar changed but `useSearchParams` did not, because Next 15 skips its router sync when the history state carries `__NA`; the fix routes URL writes through `replaceUrl()` and bans passing `.state` in ESLint, with the explore writers left for #1927. The same day, the Subscriptions tab returned 500 because the live enum `RescheduleRequestStatus` lacked `COUNTERED`; the enum was repaired with SQL, and the remaining drift waits for the reset in #1934. The dashboard error boundary now retries once with `router.refresh()` plus `reset()`, which also stops a self-healed blip from spending Sentry quota.
+
+PR #1938 added the error budget guardrails after Sentry ingested no errors from 2026-09-23 to 2026-10-02 because the 5,000 error monthly allowance was spent by 2026-09-22. The incident, the diagnosis ladder, the guardrails and the owner follow-ups are recorded in `.claude/skills/observability/SKILL.md` under "Error budget guardrails (#1933)", the schema note is in `.claude/skills/schema/references/this-repo.md`, and the App Router lessons are in `.claude/skills/maintenance/references/serverless-gotchas.md`. Issue #1933 stays open until the owner sets `SENTRY_STATS_TOKEN` and upgrades the plan.

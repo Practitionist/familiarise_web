@@ -5,6 +5,7 @@
  */
 
 import "dotenv/config";
+import { appendFileSync } from "node:fs";
 
 import {
   processDataExports,
@@ -25,9 +26,7 @@ function outputToGitHubActions(result: DataExportResult): void {
     `failed=${result.failed}`,
     `success=${result.success}`,
   ].join("\n");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("fs") as typeof import("fs");
-  fs.appendFileSync(outputFile, lines + "\n");
+  appendFileSync(outputFile, lines + "\n");
 }
 
 if (require.main === module) {

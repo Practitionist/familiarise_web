@@ -3,11 +3,9 @@
  */
 
 /**
- * #1633 — the ticker's backstop for a background driver that is never
- * invoked. `POST /api/cleanup/reconcile-ledgers?resume=1` must advance the
- * newest RUNNING full-scope run by one chunk, answer IDLE when none is in
- * flight, and ignore a run older than the stale window. The auditor and the
- * lock are mocked; this pins the twin's routing, not the reconcile itself.
+ * #1943 — `POST /api/cleanup/reconcile-ledgers` runs a full-scope ledger
+ * reconciliation directly via `runReconcileLedgers({ scope: "full" })` under
+ * its cron lock.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -20,25 +18,15 @@ jest.mock("../../lib/maintenance-cron", () => ({
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   CronLockHeldError: class CronLockHeldError extends Error {},
+  CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   withCronLock: jest.fn(),
 }));
 
-const findMany = jest.fn(async (_args: unknown): Promise<unknown[]> => []);
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    ledgerReconciliationReport: {
-      findMany: (args: unknown) => findMany(args),
-    },
-  },
-}));
-
-const advanceReconcileRun = jest.fn(async (args: { runId: string }) => ({
-  runId: args.runId,
-  scope: "full",
-  status: "RUNNING" as const,
-  progress: { step: 3, cursor: null, calls: 2, startedAt: "" },
-  report: null,
+const runReconcileLedgers = jest.fn(async (args: { scope: string }) => ({
+  id: "rep_full",
+  scope: args.scope,
+  ok: true,
+  summary: { discrepanciesCount: 0 },
 }));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
   const actual = jest.requireActual<
@@ -46,22 +34,21 @@ jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
   >("../../scripts/reconcile/reconcile-ledgers");
   return {
     ...actual,
-    advanceReconcileRun: (...args: [{ runId: string }]) =>
-      advanceReconcileRun(...args),
-    markReconcileRunFailed: jest.fn(),
+    runReconcileLedgers: (...args: [{ scope: string }]) =>
+      runReconcileLedgers(...args),
   };
 });
 
 import { NextRequest } from "next/server";
-import { POST } from "../../app/api/cleanup/reconcile-ledgers/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 
 const SECRET = "test-cron-secret";
 
-function resume(): NextRequest {
-  return new NextRequest(
-    "https://x.test/api/cleanup/reconcile-ledgers?resume=1",
-    { method: "POST", headers: { authorization: `Bearer ${SECRET}` } },
-  );
+function invokeReconcile(): NextRequest {
+  return new NextRequest("https://x.test/api/cleanup/reconcile-ledgers", {
+    method: "POST",
+    headers: { authorization: `Bearer ${SECRET}` },
+  });
 }
 
 beforeEach(() => {
@@ -69,40 +56,17 @@ beforeEach(() => {
   process.env.CRON_SECRET = SECRET;
 });
 
-describe("POST /api/cleanup/reconcile-ledgers?resume=1", () => {
-  it("advances the newest RUNNING full-scope run by one chunk", async () => {
-    findMany.mockResolvedValueOnce([
-      { id: "run_done", summary: { status: "COMPLETED" } },
-      { id: "run_live", summary: { status: "RUNNING" } },
-    ]);
-
-    const res = await POST(resume());
-
-    expect(res.status).toBe(200);
-    expect(advanceReconcileRun).toHaveBeenCalledWith({ runId: "run_live" });
-    expect(await res.json()).toMatchObject({
-      status: "RUNNING",
-      runId: "run_live",
+describe("POST /api/cleanup/reconcile-ledgers", () => {
+  it("runs a full-scope ledger reconciliation and answers OK", async () => {
+    const res = await POST(invokeReconcile(), {
+      params: Promise.resolve({ job: "reconcile-ledgers" }),
     });
-    // The lookup itself excludes stale rows: it asks only for the window.
-    const where = findMany.mock.calls[0][0] as {
-      where: { scope: string; runAt: { gte: Date } };
-    };
-    expect(where.where.scope).toBe("full");
-    expect(Date.now() - where.where.runAt.gte.getTime()).toBeGreaterThan(
-      40 * 60 * 1000,
-    );
-  });
-
-  it("answers IDLE, and opens nothing, when no run is in flight", async () => {
-    findMany.mockResolvedValueOnce([
-      { id: "run_failed", summary: { status: "FAILED" } },
-    ]);
-
-    const res = await POST(resume());
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: "IDLE", runId: null });
-    expect(advanceReconcileRun).not.toHaveBeenCalled();
+    expect(runReconcileLedgers).toHaveBeenCalledWith({ scope: "full" });
+    expect(await res.json()).toMatchObject({
+      status: "OK",
+      report: { id: "rep_full", scope: "full", ok: true },
+    });
   });
 });

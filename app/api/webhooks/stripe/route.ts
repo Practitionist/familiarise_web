@@ -2,45 +2,17 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import {
-  handlePaymentFailure,
-  handleRefundCreated,
-  handleDisputeCreated,
-  handleDisputeUpdated,
   verifyWebhookSignature,
   logWebhookEvent,
   markWebhookEventProcessed,
-  handleStripePayoutWebhook,
   isDbHealthy,
 } from "../utils";
-import { routeCapturedPayment } from "../razorpay-dispatch";
+import { dispatchStripeEventByType } from "../stripe-dispatch";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import { MAX_WEBHOOK_BODY_BYTES } from "@/lib/webhooks/read-body";
-import {
-  stripeBaseEventSchema,
-  stripePaymentIntentSucceededEventSchema,
-  stripePaymentIntentFailedEventSchema,
-  stripeCheckoutSessionCompletedEventSchema,
-  stripeCheckoutSessionExpiredEventSchema,
-} from "../../../../schemas/webhooks/stripe";
-
-/**
- * The captured amount (paise; the rail is INR-only) off the RAW event, since
- * zod strips fields the schema does not model. Throws (-> 500 -> Stripe
- * redelivers) rather than confirm a booking without a known captured amount.
- */
-function requireCapturedAmountPaise(
-  raw: unknown,
-  field: string,
-  source: string,
-): number {
-  const amount = (raw as Record<string, unknown> | null | undefined)?.[field];
-  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0) {
-    throw new Error(
-      `Stripe ${field} missing or non-integer on ${source}; refusing to confirm a booking without a known captured amount`,
-    );
-  }
-  return amount;
-}
+import { stripeBaseEventSchema } from "../../../../schemas/webhooks/stripe";
+import { permanentFailure } from "@/lib/webhooks/event-log";
+import { ZodError } from "zod";
 
 export async function POST(req: NextRequest) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -161,212 +133,26 @@ export async function POST(req: NextRequest) {
     let processingError: string | undefined;
 
     try {
-      switch (eventType) {
-        // FIX CF-3: Checkout Session events — primary handler for Stripe Checkout flow.
-        // createStripeCheckoutSession stores session.id (cs_...) in Payment.paymentIntent,
-        // so we must handle checkout.session.completed to match by cs_... ID.
-        // NOTE: Ensure these events are enabled in the Stripe Dashboard webhook settings.
-        // Routed through the same router as every other capture door (#ADR-21).
-        case "checkout.session.completed": {
-          const sessionEvent =
-            stripeCheckoutSessionCompletedEventSchema.parse(event);
-          const session = sessionEvent.data.object;
-          // session.id (cs_...) matches Payment.paymentIntent; `payment_intent`
-          // (pi_...) is what refund/dispute webhooks resolve against. Only `paid`
-          // collects money; anything else stays PENDING (200: no re-fire).
-          if (session.payment_status !== "paid") {
-            console.warn(
-              `⚠️ Stripe checkout.session.completed ${session.id}: payment_status="${session.payment_status}" is not "paid" — NOT confirming a booking (no money collected); the Payment row stays PENDING for reconcile-payment-status, or cleanup-abandoned-payments releases the hold if the money never lands`,
-            );
-            break;
-          }
-          // No amount: `amount_total` is the order total, not a captured
-          // amount, so the parity check is skipped on this door.
-          await routeCapturedPayment({
-            orderId: session.id,
-            notes: session.metadata || {},
-            gatewayPaymentId: session.payment_intent ?? undefined,
-          });
-          break;
-        }
-
-        case "checkout.session.expired": {
-          const sessionEvent =
-            stripeCheckoutSessionExpiredEventSchema.parse(event);
-          await handlePaymentFailure(sessionEvent.data.object.id);
-          break;
-        }
-
-        // Payment Intent events — kept for backward compatibility.
-        // If a payment was stored with pi_... (legacy flow), this handler catches it.
-        // routeCapturedPayment no-ops on SUCCEEDED only while the redelivered
-        // amount still matches; a mismatch trips the parity check.
-        case "payment_intent.succeeded": {
-          const succeededEvent =
-            stripePaymentIntentSucceededEventSchema.parse(event);
-          const intent = succeededEvent.data.object;
-          await routeCapturedPayment({
-            orderId: intent.id,
-            notes: intent.metadata || {},
-            // `amount_received` is what Stripe actually took, which is NOT
-            // `intent.amount` (the authorised figure) on a partial capture.
-            amountPaise: requireCapturedAmountPaise(
-              event.data.object,
-              "amount_received",
-              `payment_intent.succeeded ${intent.id}`,
-            ),
-            // A PaymentIntent is both the order and the charge-bearing object
-            // on this rail, so its id is both keys.
-            gatewayPaymentId: intent.id,
-          });
-          break;
-        }
-
-        case "payment_intent.payment_failed": {
-          const failedEvent = stripePaymentIntentFailedEventSchema.parse(event);
-          await handlePaymentFailure(failedEvent.data.object.id);
-          break;
-        }
-
-        // Refund events
-        case "charge.refunded": {
-          const refundEvent = event.data.object;
-          // Stripe includes the refunds array in the charge object, newest
-          // first. Drive EVERY refund in the array, not just data[0]: with
-          // two refunds on one charge and delayed/out-of-order delivery,
-          // both events resolved data[0] to the newer refund and refund #1
-          // never got a row or a cascade. handleRefundCreated is idempotent
-          // per gateway refund id (unique + terminal-status guard), so
-          // re-processing an already-booked entry is a no-op.
-          const refunds = refundEvent.refunds?.data ?? [];
-          for (const latestRefund of refunds) {
-            await handleRefundCreated(
-              latestRefund.id,
-              refundEvent.payment_intent || refundEvent.id,
-              latestRefund.amount,
-              latestRefund.currency.toUpperCase(),
-              latestRefund.status,
-              "STRIPE",
-              // 7th arg — the provider payment id the org-level branches key
-              // on (WalletTopUp / OrganizationInvoice.providerPaymentId); only
-              // the B2C Payment lookup uses `payment_intent`. `ch_<…>` is the
-              // Stripe analogue of the `pay_<…>` razorpay-dispatch passes here.
-              // Org billing mints Razorpay orders today, so nothing matches on
-              // this rail yet; what it changes now is the not-found case, which
-              // stopped silently ACKing (#813/#812 calls that permanent death)
-              // and now 5xxs so Stripe re-delivers.
-              typeof latestRefund.charge === "string"
-                ? latestRefund.charge
-                : (latestRefund.charge?.id ?? refundEvent.id),
-            );
-          }
-          break;
-        }
-
-        // Dispute events
-        case "charge.dispute.created": {
-          const disputeCreatedEvent = event.data.object;
-          await handleDisputeCreated(
-            disputeCreatedEvent.id,
-            disputeCreatedEvent.charge,
-            disputeCreatedEvent.amount,
-            disputeCreatedEvent.currency.toUpperCase(),
-            disputeCreatedEvent.reason,
-            disputeCreatedEvent.status,
-            disputeCreatedEvent.evidence_details?.due_by || null,
-            disputeCreatedEvent.is_charge_refundable,
-            "STRIPE",
-          );
-          break;
-        }
-
-        case "charge.dispute.updated": {
-          const disputeUpdatedEvent = event.data.object;
-          await handleDisputeUpdated(
-            disputeUpdatedEvent.id,
-            disputeUpdatedEvent.status,
-            disputeUpdatedEvent.evidence || null,
-          );
-          break;
-        }
-
-        case "charge.dispute.closed": {
-          const disputeClosedEvent = event.data.object;
-          await handleDisputeUpdated(
-            disputeClosedEvent.id,
-            disputeClosedEvent.status,
-            null,
-          );
-          break;
-        }
-
-        // Stripe Connect Payout/Transfer events.
-        //
-        // Payouts are India-first via RazorpayX; Stripe Connect payout
-        // integration is opt-in. Production environments that haven't
-        // onboarded Connect will otherwise receive noisy webhooks (e.g.
-        // for the platform's own Stripe balance movements). Gate both
-        // the handler and the subsequent `account.updated` /
-        // `transfer.*` logs behind ENABLE_STRIPE_PAYOUTS so we can
-        // enable the full Connect flow atomically once ready.
-        case "payout.created":
-        case "payout.paid":
-        case "payout.failed":
-        case "payout.canceled": {
-          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") {
-            console.log(
-              `⏭️  Stripe Connect payout event ${eventType} ignored (ENABLE_STRIPE_PAYOUTS!=true)`,
-            );
-            break;
-          }
-          const payoutEvent = event.data.object;
-          await handleStripePayoutWebhook(eventType, {
-            id: payoutEvent.id,
-            status: payoutEvent.status,
-            failure_code: payoutEvent.failure_code,
-            failure_message: payoutEvent.failure_message,
-          });
-          break;
-        }
-
-        // Stripe Connect Account events — only meaningful when Connect
-        // payouts are enabled.
-        case "account.updated": {
-          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
-          const accountEvent = event.data.object;
-          console.log(`📄 Stripe Connect account updated: ${accountEvent.id}`, {
-            chargesEnabled: accountEvent.charges_enabled,
-            payoutsEnabled: accountEvent.payouts_enabled,
-            detailsSubmitted: accountEvent.details_submitted,
-          });
-          break;
-        }
-
-        // Transfer events (platform to connected account)
-        case "transfer.created":
-        case "transfer.reversed": {
-          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
-          const transferEvent = event.data.object;
-          console.log(`📄 Stripe transfer ${eventType}: ${transferEvent.id}`, {
-            amount: transferEvent.amount,
-            destination: transferEvent.destination,
-            reversed: transferEvent.reversed,
-          });
-          break;
-        }
-
-        default:
-          console.log(`📄 Unhandled Stripe event type: ${eventType}`);
-      }
+      await dispatchStripeEventByType(eventType, event, true);
     } catch (handlerError) {
-      processingError =
+      const rawMessage =
         handlerError instanceof Error
           ? handlerError.message
           : String(handlerError);
+      processingError =
+        handlerError instanceof ZodError
+          ? permanentFailure(rawMessage)
+          : rawMessage;
       Sentry.captureException(handlerError, {
         tags: { subsystem: "payments", provider: "stripe" },
         contexts: { webhook: { eventType, eventId } },
       });
+      if (handlerError instanceof ZodError) {
+        return NextResponse.json({
+          status: "ignored",
+          reason: "invalid_payload",
+        });
+      }
       throw handlerError;
     } finally {
       // Mark event as processed

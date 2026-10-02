@@ -10,7 +10,7 @@ last-reviewed: 2026-06-05
 
 This document is the **single source of truth** for sales conversations during the design-partner phase (first 3-6 months post-MVP enterprise launch). It translates current enterprise readiness — post the v2 mega-audit (#777/#778/#779) — into a concrete **yes / wait-list / hard-no** rubric for inbound prospects. _Last refreshed 2026-06-05._
 
-> **What v2 changed for this rubric (2026-06-05).** Several former wait-list blockers now ship: invoice **PDF rendering**, contract **lifecycle** (auto-renew / supersede / terminate-cascade), **cycle rollover**, program **config-lock + archive**, the **OverageEvent** system (surcharge + circuit-breaker + member-timeout), **invoice dunning reminders**, **wallet low-balance alerts**, **SSO break-glass**, self-serve **verification resubmit**, and **DPDP data export** (`OrgDataExportJob`). The hard gates that still hold the line are unchanged: **live payouts OFF** (`ENABLE_LIVE_PAYOUTS=false` — disbursement freezes at PROCESSING), **IRN e-invoice gated** (`ENABLE_IRP_UPLOADER` — fine sub-₹5cr), **dunning suspension config-gated** (`ENABLE_DUNNING_SUSPEND`, off by default — #812) **and wallet auto-charge designed-not-active**, and **PROJECT/RETAINER program subtypes unbuilt**. Per-row readiness lives in [harness-verdict](02-harness-verdict.md); the verify-it-live flows are in [verification-guide](../90-audits/03-verification-guide.md).
+> **What v2 changed for this rubric (2026-06-05).** Several former wait-list blockers now ship: invoice **PDF rendering**, contract **lifecycle** (auto-renew / supersede / terminate-cascade), **cycle rollover**, program **config-lock + archive**, the **OverageEvent** system (surcharge + circuit-breaker + member-timeout), **invoice dunning reminders**, **wallet low-balance alerts**, self-serve **verification resubmit**, and **DPDP data export** (`OrgDataExportJob`). The hard gates that still hold the line are unchanged: **live payouts OFF** (`ENABLE_LIVE_PAYOUTS=false` — disbursement freezes at PROCESSING), **IRN e-invoice gated** (`ENABLE_IRP_UPLOADER` — fine sub-₹5cr), **dunning suspension config-gated** (`ENABLE_DUNNING_SUSPEND`, off by default — #812) **and wallet auto-charge designed-not-active**, and **PROJECT/RETAINER program subtypes unbuilt**. Per-row readiness lives in [harness-verdict](02-harness-verdict.md); the verify-it-live flows are in [verification-guide](../90-audits/03-verification-guide.md).
 
 Reference for engineering: [#703](https://github.com/Practitionist/familiarise_web/issues/703) (Programs v2 + Compliance + Integrations) and [#706](https://github.com/Practitionist/familiarise_web/issues/706) (B2B Table-stakes + Deferred Integrations) contain the detailed sections linked below.
 
@@ -31,7 +31,7 @@ Reference for engineering: [#703](https://github.com/Practitionist/familiarise_w
 | BUYER-type organization (sponsoring their own staff) | Core checkout flow + wallet / invoice / license funding paths are live; no PROVIDER-specific features (collaborators 3-way split) are needed |
 | Pricing model is flat-fee OR pay-as-you-go | Programs v1 handles LICENSED_SEAT (flat-fee) + CREDIT_POOL (pay-as-you-go); milestone-billing (PROJECT) + hourly-retainer (RETAINER) are enum-reserved but unimplemented |
 | INR-only contracts | Multi-currency + Razorpay IBT are deferred ([#703 §14](https://github.com/Practitionist/familiarise_web/issues/703)) |
-| ≤100 active seats per org | SCIM 2.0 auto-provisioning + HRIS sync deferred ([#706 §13](https://github.com/Practitionist/familiarise_web/issues/706), [#703 §3](https://github.com/Practitionist/familiarise_web/issues/703)); manual invite management scales comfortably to ~100 |
+| ≤100 active seats per org | SCIM 2.0 provisioning + HRIS sync deferred ([#706 §13](https://github.com/Practitionist/familiarise_web/issues/706), [#703 §3](https://github.com/Practitionist/familiarise_web/issues/703)); OIDC SSO with JIT auto-join handles joiners, but leavers are removed by hand, which scales comfortably to ~100 |
 
 **Typical prospect that fits:**
 - Mid-sized Indian training company (80 employees, ₹3cr turnover) buying a flat-fee unlimited-coaching package for their managers.
@@ -65,7 +65,6 @@ Say **"this is on our roadmap, we're prioritizing customers like you — let's s
 | USD / EUR / GBP contracts | Multi-currency checkout + Razorpay IBT routing absent | [#703 §14](https://github.com/Practitionist/familiarise_web/issues/703) — 1.5 eng-weeks |
 | Requires downloadable invoice PDFs | Invoice PDF rendering ships in this push (#706 §2) | **AVAILABLE at launch** — re-categorize to Section 1 |
 | Requires per-org branded emails | Branded email templates deferred | [#706 §10](https://github.com/Practitionist/familiarise_web/issues/706) — 0.5 eng-weeks |
-| Needs IdP-driven auto-provisioning but <500 seats | SSO JIT provisioning deferred | [#706 §4](https://github.com/Practitionist/familiarise_web/issues/706) — 1 eng-week |
 | Needs Slack / Datadog / Splunk integration | Platform → tenant webhooks + audit streaming deferred | [#706 §17 + §19](https://github.com/Practitionist/familiarise_web/issues/706) — 1 eng-week each |
 | Asks for 2FA enforcement org-wide | Policy not wired | [#706 §14](https://github.com/Practitionist/familiarise_web/issues/706) — 0.5 eng-weeks |
 | Asks for org-scoped discount codes | Not implemented | [#706 §9](https://github.com/Practitionist/familiarise_web/issues/706) — 0.25 eng-weeks |
@@ -98,8 +97,8 @@ Example pipeline entry:
 ```
 Company: Tata Consultancy Services (TCS Fintech division)
 Contact: Priya Desai <priya.desai@tcs.com>
-Ask: 500-seat subscription for graduate trainees; requires SSO JIT provisioning and SCIM.
-Blockers: @section706-section-4 (SSO JIT) + @section706-section-13 (SCIM)
+Ask: 500-seat subscription for graduate trainees; requires SSO and SCIM de-provisioning.
+Blockers: @section706-section-13 (SCIM)
 Decision: wait-list. Confirmed fit otherwise (resident consultants, INR, sub-₹5cr-division-scoped).
 Last contact: 2026-06-05.
 ```

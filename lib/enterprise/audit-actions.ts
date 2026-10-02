@@ -169,11 +169,6 @@ export const AUDIT_ACTIONS = {
     // carries the filter params + row-count as evidence.
     AUDIT_LOG_EXPORTED: "AUDIT_LOG_EXPORTED",
     DOMAIN_RELEASED: "DOMAIN_RELEASED",
-    // Emitted by the SSO cert expiry cron at 30-day WARN and 7-day
-    // CRITICAL thresholds. `details.daysRemaining` + `details.providerId`
-    // carry the context so an OWNER scanning the audit log can tell which
-    // provider's cert is about to lapse.
-    SSO_CERT_EXPIRING: "SSO_CERT_EXPIRING",
     // #1499 — emitted by PUT /api/organizations/[orgId]/cancellation-policy. A
     // published version is immutable, so the audit row plus the version number is
     // the whole change history: `details` carries the ladder that was published.
@@ -259,18 +254,6 @@ export const AUDIT_ACTIONS = {
     DATA_EXPORT_GENERATED: "DATA_EXPORT_GENERATED",
     DATA_EXPORT_FAILED: "DATA_EXPORT_FAILED",
     DATA_EXPORT_DOWNLOADED: "DATA_EXPORT_DOWNLOADED",
-    // PR #655 Batch 4 — SCIM 2.0 provisioning events that don't map
-    // cleanly to MEMBER (because the actor is an IdP token, not a
-    // human). Grouped here so the SCIM trail is filterable as a unit.
-    SCIM_USER_CREATED: "SCIM_USER_CREATED",
-    SCIM_USER_UPDATED: "SCIM_USER_UPDATED",
-    SCIM_USER_DEPROVISIONED: "SCIM_USER_DEPROVISIONED",
-    SCIM_USER_REPROVISIONED: "SCIM_USER_REPROVISIONED",
-    SCIM_GROUP_MAPPED: "SCIM_GROUP_MAPPED",
-    SCIM_GROUP_UNMAPPED: "SCIM_GROUP_UNMAPPED",
-    SCIM_TOKEN_CREATED: "SCIM_TOKEN_CREATED",
-    SCIM_TOKEN_REVOKED: "SCIM_TOKEN_REVOKED",
-    SCIM_TOKEN_USED_AFTER_REVOKE: "SCIM_TOKEN_USED_AFTER_REVOKE",
   },
   // PR #655 Batch 3 — outbound webhook subsystem audit trail. One
   // category for both endpoint configuration (CRUD) and delivery

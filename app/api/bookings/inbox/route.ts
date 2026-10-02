@@ -20,7 +20,7 @@ import {
 } from "@/lib/dashboard/requests-inbox-state";
 import {
   readRequestsInbox,
-  readRequestsInboxCounts,
+  readRequestsToAnswerCount,
 } from "@/lib/data/requests-inbox";
 
 /**
@@ -30,8 +30,8 @@ import {
  * org-scope resolution mirror `/api/bookings/consultations`: a consultant
  * reads only their own profile, ADMIN/STAFF may read any.
  *
- * `?countsOnly=1` (#1527) answers the nav badge with the tab counts alone —
- * same predicates, no row scan.
+ * `?countsOnly=1` answers the nav badge with the to-answer count
+ * alone — same predicates as the REQUESTED rows, no row scan.
  */
 
 /** The inbox's own keys; page/limit ride the shared list-query contract. */
@@ -140,12 +140,12 @@ export async function GET(request: NextRequest) {
     const orgScope = scoped.scope;
 
     if (searchParams.get("countsOnly") === "1") {
-      const counts = await readRequestsInboxCounts({
+      const toAnswer = await readRequestsToAnswerCount({
         consultantProfileId,
         orgScope,
       });
       return NextResponse.json(
-        { counts },
+        { toAnswer },
         { headers: { "Cache-Control": "private, no-store" } },
       );
     }

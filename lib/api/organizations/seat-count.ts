@@ -146,7 +146,7 @@ export async function releaseSeatsForClosedAssignments(
  *
  * The assignment-cancel paths on the assignment routes already decrement the
  * billed seat, but the MEMBER-level cascades (removal via DELETE/PATCH,
- * SCIM deprovision, DPDP erasure) terminated live ProgramAssignments without
+ * DPDP erasure) terminated live ProgramAssignments without
  * releasing their seats — a deprovisioned member stayed fully counted against
  * `activeSeatCount` while any future PER_SEAT enablement would bill them.
  * Call AFTER the assignments have been stamped CANCELLED; pass the same
@@ -160,7 +160,7 @@ export async function releaseSeatsForTerminatedAssignments(
   // #1744 row 4 — the instant the caller stamped as `periodEnd`. Selecting
   // `periodEnd >= new Date()` here matched nothing: the caller's stamp is
   // always a few milliseconds older than this helper's clock, so every
-  // member-removal, SCIM and erasure cascade released zero seats.
+  // member-removal and erasure cascade released zero seats.
   closedAt: Date,
 ): Promise<number> {
   if (membershipIds.length === 0) return 0;

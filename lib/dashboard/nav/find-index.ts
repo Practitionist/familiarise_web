@@ -40,7 +40,6 @@ const SYNONYMS: Record<string, string[]> = {
   settings: ["preferences", "account", "configure"],
   notifications: ["alerts", "email"],
   sso: ["sign-in", "saml", "login", "domains"],
-  scim: ["directory", "provisioning"],
   webhooks: ["integrations", "api"],
   "data-exports": ["export", "download", "dpdp"],
   "get-paid": ["bank", "payouts", "tax"],

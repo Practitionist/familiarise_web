@@ -63,12 +63,10 @@ const paymentUpdateMany = jest.fn(
   }) => ({ count: 1 }),
 );
 const paymentFindUnique = jest.fn(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
 );
 const appointmentFindUnique = jest.fn(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
 );
 const txPaymentUpdate = jest.fn(async (..._a: unknown[]) => ({}));
 const trialUpdateMany = jest.fn(async (..._a: unknown[]) => ({ count: 1 }));
@@ -107,8 +105,7 @@ jest.mock("../../lib/payments/payouts", () => ({
     createEarningsFromPayment(...a),
 }));
 const refundPayment = jest.fn(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (..._a: unknown[]): Promise<any> => Promise.resolve(undefined),
+  (..._a: unknown[]): Promise<unknown> => Promise.resolve(undefined),
 );
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => refundPayment(...a),
@@ -291,6 +288,7 @@ function orderPaidEvent(orderTotalPaise: number, withPaymentEntity: boolean) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   paymentUpdateMany.mockImplementation(async () => ({ count: 1 }));
   validateWebhookMetadata.mockImplementation(() => undefined);
   refundPayment.mockResolvedValue({ id: "rfnd1" });
@@ -376,7 +374,7 @@ describe("Stripe enters the confirmation router with the amount it actually took
       ...pendingPayment,
       paymentIntent: "cs_test_1",
     });
-    const res = await postStripe({
+    await postStripe({
       id: "evt_2",
       object: "event",
       api_version: "2024-06-20",

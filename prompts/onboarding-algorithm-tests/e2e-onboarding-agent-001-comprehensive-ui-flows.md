@@ -829,37 +829,21 @@ DELETE FROM users WHERE id = 'test-onb-phase9';
 
 ---
 
-## PHASE 10: Staff Onboarding — Happy Path (Invite-Only Bypass)
+## PHASE 10: Operators Never See Onboarding
 
-**Goal:** Test the Staff onboarding flow. Staff is normally invite-only, but the form UI shows it as greyed out. However, we can test what happens when a user with `role = 'STAFF'` already set in the DB accesses onboarding.
+**Goal:** Confirm STAFF and ADMIN cannot be reached through public onboarding.
 
-**Important:** The backend rejects STAFF role from public onboarding. This phase tests the **UI-level behavior** — what the user sees if they try to select Staff, and what happens if a staff user hits the onboarding page.
+Operators are created by an ADMIN from the back office (`lib/auth/operators.ts:createOperator`): the account is born with `onboardingCompleted = true` and the person sets a password from an emailed setup link. There is no Staff card in the onboarding role picker, and `actions/forms/onboarding.action.ts` refuses `ADMIN`/`STAFF` from a client-driven submission.
 
 ### Setup
-Create test user with `role = 'STAFF'`, suffix `phase10`.
+Create test user with `role = 'CONSULTEE'`, `onboardingCompleted = false`, suffix `phase10`.
 
 ### Steps
 
-1. Sign in with the staff user
-2. Navigate to onboarding
-3. Take screenshot: **"phase10-staff-onboarding-page"**
-4. On step 1:
-   - Verify the "Staff" role card is **greyed out / disabled** with text "Invite only"
-   - Take screenshot: **"phase10-staff-role-disabled"**
-   - Try clicking the Staff card — verify it does NOT select
-   - Select "Consultee" instead (since Staff is disabled in UI)
-5. Fill required fields, proceed through the consultee flow to submission
-6. Verify the submission completes (backend should accept CONSULTEE role regardless of original DB role)
-
-### Alternative Test (if staff role card can somehow be selected):
-
-If you manage to select Staff and proceed:
-- Step 2 should be "Role Details" (department + position selection)
-- Step 3 should be "Responsibilities" (checkboxes for responsibilities and permissions)
-- Step 4 should be "Agreement"
-- Step 5 should be "Review"
-
-Take screenshots at each staff-specific step.
+1. Sign in and navigate to onboarding
+2. On step 1, verify the role picker offers only Consultee, Consultant and Organization — no Staff or Admin card
+3. Take screenshot: **"phase10-role-picker-no-staff"**
+4. Complete the consultee flow, then confirm in the DB that `users.role` is still `CONSULTEE`
 
 ### Cleanup
 
