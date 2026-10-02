@@ -1,0 +1,81 @@
+name: Wind Down Deactivated Orgs (Stream)
+
+on:
+  schedule:
+    # Daily 05:52 UTC (11:22 IST). Deliberately NOT next to `expire-event-channels`
+    # (04:35): both freeze channels, and `updatePartial({frozen:true})` is capped
+    # at 300 requests/min APP-WIDE on Stream. 77 minutes apart means the paced
+    # freeze loops cannot share a window even when one runs long. 05:52 is also
+    # free — `handle-stuck-payouts` is `52 */4` and 5 is not one of its hours.
+    - cron: "52 5 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+# Queue rather than cancel, as `expire-event-channels` does: a run part-way
+# through a backlog must finish, and every stage of this job is idempotent, so a
+# queued run simply resumes. Read-only: it runs a script and writes nothing back.
+permissions:
+  contents: read
+
+concurrency:
+  group: wind-down-deactivated-orgs
+  cancel-in-progress: false
+
+jobs:
+  wind-down-deactivated-orgs:
+    runs-on: ubuntu-latest
+    # Must stay under the job's 15-minute default cron-lock TTL so the lock
+    # always outlives any run that can exist.
+    timeout-minutes: 10
+
+    env:
+      # #1066 — jobs run as bare Node processes, so Sentry.init only sees what
+      # the step env carries. Without the DSN the runner initialises a disabled
+      # client and every captureException is a no-op again.
+      NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # #476 — the cron lock loads lib/redis at import, so the job needs these.
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
+      STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          # The job only reads the repo to run a script; it never pushes.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        # The runner holds deploy-scoped secrets, so a compromised transitive
+        # dependency's postinstall would run with them. Nothing here needs
+        # lifecycle scripts. Same posture as expire-event-channels.yml.
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx --no-install --ignore-scripts prisma generate
+
+      - name: Wind down deactivated orgs on Stream
+        run: node_modules/.bin/tsx jobs/stream/wind-down-deactivated-orgs.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is what
+          # actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Non-secret identifier the guard compares SENTRY_DSN against.
+          # vars.* is NOT auto-injected into a step env; it must be mapped here.
+          EXPECTED_SENTRY_PROJECT_ID: ${{ vars.EXPECTED_SENTRY_PROJECT_ID }}
+        run: bash scripts/ci/notify-ops-failure.sh "wind-down-deactivated-orgs"

@@ -11,12 +11,31 @@
  *
  *   Membership[].status   → ERASED (every active row across every org)
  *   Collaborator.status   → REMOVED (every PENDING/ACCEPTED row, #1580)
+ *   StreamRevocationRetry → one row per subject for the principal leg above,
+ *     plus one per flipped collaboration, all written in the scrub transaction
  *   ConsultantProfile.headline / videoIntroUrl → NULL, deletedAt → now()
  *   ConsulteeProfile.goals → NULL (#1598 P4-P0-05)
  *   Trial.notes and Consultation.requestNotes the consultee wrote → NULL
  *
  *   BetterAuth Session + Account rows → hard-deleted (forces sign-out
  *   across every device immediately; SSO accounts are dropped too).
+ *
+ *   Stream (the PRINCIPAL leg — the subject's identity itself, owed by every
+ *   erasure and owed unconditionally):
+ *     User name / email / image on Stream → hard-deleted
+ *     Every message the subject wrote      → hard-deleted
+ *     Every chat token minted before now  → revoked
+ *   run AFTER the transaction commits, from a `StreamRevocationRetry` outbox
+ *   row written INSIDE it. This leg used not to exist for anyone without a
+ *   consultant collaborator row: `removeCollaboratorStanding` returns `[]` for a
+ *   subject with no ConsultantProfile (and for one holding no PENDING/ACCEPTED
+ *   collaborator row), so a consultee — or a consultant who never sat on a plan
+ *   — committed with no Stream obligation recorded, Stream kept their name,
+ *   email, image and every message they ever wrote, `USER_ERASURE_PROCESSED`
+ *   was written, and `vendorFailures` came back empty. That is a false
+ *   attestation, not a transient failure: nothing alerted and nothing retried.
+ *   `scripts/stream/stream-sync.ts` does not compensate — it only soft-deletes
+ *   users ABSENT from the database, and an erased user is still present.
  *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the
@@ -43,7 +62,10 @@
  * Idempotency
  * -----------
  * If `User.erasedAt IS NOT NULL`, the function returns the existing
- * `pseudonymousId` without writing. Safe to call multiple times.
+ * `pseudonymousId` without writing. The VENDOR legs are still re-attempted —
+ * the Novu subscriber and now the Stream principal leg — because "already done"
+ * is per-side-effect and not per-function: a guard written for the database
+ * commit says nothing about whether a processor was ever reached.
  *
  * Webhook fan-out
  * ---------------
@@ -52,6 +74,17 @@
  * dispatching is fire-and-forget inside the same transaction so a
  * rollback (e.g. constraint violation we didn't anticipate) takes the
  * webhook rows with it.
+ *
+ * Stream audit trail
+ * ------------------
+ * `USER_ERASURE_PROCESSED` alone reads as "the subject is gone", which is a
+ * claim about four systems, not one. The audit row's `details.streamRevocation`
+ * therefore names the outbox row carrying the Stream obligation
+ * (`principalTaskId`) plus every collaboration key, so an auditor can follow
+ * the id to `StreamRevocationRetry` and read the LIVE status instead of
+ * inferring one. `principalTaskId: null` means no `ErasureRequest` anchored an
+ * outbox row on this path — the obligation is attempted but not durably
+ * tracked, which is itself recorded rather than smoothed over.
  */
 
 import { createHash } from "node:crypto";
@@ -74,8 +107,22 @@ export interface ScrubResult {
   scrubbed: boolean;
   pseudonymousId: string;
   affectedOrganizationIds: string[];
-  /// #1771 row 5 — Razorpay/RazorpayX steps that failed; each is also a system event.
+  /**
+   * Every vendor leg this run could not settle, in the order it was attempted.
+   * Each entry says WHICH processor and WHICH obligation, and is the only thing
+   * standing between an unlanded deletion and a clean `USER_ERASURE_PROCESSED`.
+   * An empty array means every leg was confirmed — including "not configured",
+   * which is reported as a failure because an unconfigured runtime cannot
+   * confirm anything (see offboardNotificationVendor).
+   */
   vendorFailures: string[];
+  /**
+   * The `StreamRevocationRetry` row for this subject's Stream IDENTITY
+   * (`{prefix}{userId}`), or null when no `ErasureRequest` anchors an outbox
+   * row on this path. Present so a caller can read the row's live status; its
+   * presence is not a claim that the deletion landed.
+   */
+  streamPrincipalOutboxId: string | null;
 }
 
 /**
@@ -212,6 +259,82 @@ export function hasMoneyInFlight(counts: MoneyInFlight): boolean {
   return Object.values(counts).some((n) => n > 0);
 }
 
+/**
+ * Reserved `StreamRevocationRetry.planId` namespace for the PRINCIPAL leg —
+ * deleting the subject's Stream identity and their messages, which owes Stream
+ * nothing about any plan.
+ *
+ * `StreamRevocationRetry` is plan-shaped: `planType` is `CollaboratorType` and
+ * `@@unique([erasureRequestId, planType, planId])` is built around a plan. The
+ * principal obligation is therefore addressed through a reserved namespace
+ * rather than a schema change nobody owns. Two properties make the address
+ * safe:
+ *
+ *  - Every real plan id is a cuid, and this one starts with `principal:`, so
+ *    the principal row can never collide with a plan's own revocation row for
+ *    the same erasure request.
+ *  - `planType` is `CLASS` because that is what the retry driver's
+ *    `planType === "WEBINAR" ? "webinar" : "class"` mapping carries. It is a
+ *    naming choice, not a claim that a class plan exists — see
+ *    PRINCIPAL_OUTBOX_SWEEP_PARK_MS for what the driver does with it.
+ */
+export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
+
+/** The plan-addressed outbox key for the principal leg. */
+export function principalStreamPlanId(userId: string): string {
+  return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
+}
+
+/**
+ * Deterministic PRIMARY KEY for that row.
+ *
+ * `createMany` returns a count, not rows, and the audit row has to name this
+ * row so an auditor can trace it. Deriving the id from the subject means the
+ * pointer is known without a read-back and stays stable across a re-drive, so
+ * an operator tracing the audit trail reaches the same row every time.
+ *
+ * Safe as a primary key because `scrubUser` reaches its transaction at most
+ * once per subject: every later call observes `erasedAt` and takes the
+ * idempotent path below. Two rows for one subject therefore cannot be created,
+ * and `skipDuplicates` covers the case where an earlier run committed the row
+ * and then died before the vendor calls.
+ */
+export function streamPrincipalOutboxId(userId: string): string {
+  return `stream-principal-revocation:${userId}`;
+}
+
+/**
+ * A principal outbox row left FAILED is parked here rather than given an
+ * ordinary backoff slot, and the reason is a defect in the drain, not a
+ * preference.
+ *
+ * `drainErasureRevocations` in `scripts/cleanup/retry-moderation-enforcement.ts`
+ * re-drives EVERY PENDING/FAILED row through
+ * `revokeCollaboratorAccess(planType, planId, userId)`. For a principal row
+ * that call addresses a plan which never existed, and it resolves
+ * `{ success: true }`: the `classPlanId` filters match zero rows, the
+ * participant transition is a no-op, and the `collab-class-principal:<id>`
+ * channel 404s into `isExpectedStreamError` and is swallowed. So with an
+ * ordinary `nextRetryAt(1, now)` the sweep stamps `SUCCEEDED` on the row
+ * within a minute — and Stream still holds the subject's name, email and every
+ * message they wrote. The sweep would manufacture exactly the false
+ * attestation this leg exists to remove, one cron later, and the operator
+ * reading the outbox would have no way to tell.
+ *
+ * Parking the row past any sweep window keeps the record truthful: it stays
+ * FAILED, indexed on `[status, nextRetryAt]`, with the reason in `lastError`,
+ * and it is re-driven by `scrubUser`'s own idempotent path — the same
+ * re-attempt mechanism the Novu leg already uses, and the only one that
+ * actually performs the deletion. An operator re-running the erasure is the
+ * repair.
+ *
+ * TODO: teach `drainErasureRevocations` to branch on
+ * STREAM_PRINCIPAL_PLAN_ID_PREFIX and re-drive the principal leg instead of the
+ * plan-shaped call. Once it does, this becomes `nextRetryAt(attempts, now)` like
+ * every other row and the manual re-run is no longer required.
+ */
+const PRINCIPAL_OUTBOX_SWEEP_PARK_MS = 100 * 365 * 24 * 3_600_000;
+
 // #780 — extended client, not bare PrismaClient, so the itx client passed to
 // dispatchWebhookEvent satisfies PrismaLike.
 export async function scrubUser(
@@ -242,19 +365,36 @@ export async function scrubUser(
     // its key. Returning `vendorFailures: []` here without retrying meant a
     // transient failure was permanent: re-running the erasure reported a
     // clean success and the processor kept the data forever. This is the
-    // retry path for exactly that.
+    // retry path for exactly that — and for the Stream principal leg it is the
+    // ONLY retry path (see PRINCIPAL_OUTBOX_SWEEP_PARK_MS).
     //
     // Payment vendors are NOT re-attempted: they are guarded by the cleared
-    // `razorpayCustomerId`, so a second pass has nothing to act on. A durable
-    // outbox is the correct answer for guaranteed vendor delivery across a
-    // process death between commit and the vendor calls — see the note on
-    // `StreamRevocationRetry`, which is the pattern to extend rather than
-    // reinvent.
+    // `razorpayCustomerId`, so a second pass has nothing to act on.
+    //
+    // One read, not two: the principal outbox row's id is derived from the
+    // subject, so whether one exists and how many attempts it has already had
+    // come back together.
+    const principalRow = await prisma.streamRevocationRetry
+      .findUnique({
+        where: { id: streamPrincipalOutboxId(userId) },
+        select: { id: true, attempts: true },
+      })
+      .catch(() => null);
+
     return {
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
       affectedOrganizationIds: [],
-      vendorFailures: await offboardNotificationVendor(userId),
+      streamPrincipalOutboxId: principalRow?.id ?? null,
+      vendorFailures: [
+        ...(await eraseStreamPrincipalFootprint(prisma, {
+          userId,
+          now: new Date(),
+          outboxTaskId: principalRow?.id ?? null,
+          attempts: principalRow?.attempts ?? 0,
+        })),
+        ...(await offboardNotificationVendor(userId)),
+      ],
     };
   }
 
@@ -285,6 +425,7 @@ export async function scrubUser(
 
   let collaborationsRemoved: CollaborationRef[] = [];
   let erasureRequestId: string | null = null;
+  let principalOutboxTaskId: string | null = null;
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
@@ -400,6 +541,32 @@ export async function scrubUser(
       });
     }
 
+    // …and the PRINCIPAL row: ONE per subject, not one per collaboration.
+    // Everything above is conditional on the subject holding collaborator rows,
+    // and `removeCollaboratorStanding` returns `[]` for anyone without a
+    // ConsultantProfile as well as for anyone holding no PENDING/ACCEPTED row.
+    // So a consultee reached this commit having recorded no Stream obligation
+    // at all — the whole Stream footprint survived, and the run reported clean.
+    //
+    // Its own `createMany` rather than an extra element on the one above,
+    // because that call's shape is asserted by the #1580 collaborator
+    // coverage and a row that can be absent for most subjects must not be
+    // riding along inside a `collaborationsRemoved.length > 0` branch.
+    if (erasureRequestId) {
+      principalOutboxTaskId = streamPrincipalOutboxId(userId);
+      await tx.streamRevocationRetry.createMany({
+        data: [
+          {
+            id: principalOutboxTaskId,
+            erasureRequestId,
+            planType: "CLASS",
+            planId: principalStreamPlanId(userId),
+          },
+        ],
+        skipDuplicates: true,
+      });
+    }
+
     // Hard-delete sessions + accounts so SSO and password-based logins
     // both break immediately. BetterAuth caches sessions in Redis;
     // those entries expire on TTL and are non-load-bearing.
@@ -416,7 +583,25 @@ export async function scrubUser(
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.USER_ERASURE_PROCESSED,
           description: `Erased user ${pseudonymousId.slice(0, 12)} per DPDP §12`,
-          details: { pseudonymousId, erasedAt: now.toISOString() },
+          details: {
+            pseudonymousId,
+            erasedAt: now.toISOString(),
+            // What Stream still owes. `USER_ERASURE_PROCESSED` is a claim
+            // about the database; this is the claim about Stream, addressed by
+            // something an auditor can open. `principalTaskId` names the
+            // StreamRevocationRetry row for the subject's Stream IDENTITY, so
+            // its LIVE status is one query away; null means no ErasureRequest
+            // anchored a row on this path and the obligation is not durably
+            // tracked. `collaborations` are the same table keyed by
+            // (erasureRequestId, planType, planId).
+            streamRevocation: {
+              principalTaskId: principalOutboxTaskId,
+              principalPlanId: principalStreamPlanId(userId),
+              collaborations: collaborationsRemoved.map(
+                ({ planType, planId }) => ({ planType, planId }),
+              ),
+            },
+          },
         },
       });
 
@@ -495,21 +680,289 @@ export async function scrubUser(
       );
   }
 
-  const vendorFailures = await offboardPaymentVendors(prisma, {
+  // The PRINCIPAL leg — after commit, like every vendor call above. Its outbox
+  // row was written inside the transaction, so a process death between the two
+  // leaves a recorded debt rather than a silent one.
+  const streamPrincipalFailures = await eraseStreamPrincipalFootprint(prisma, {
     userId,
-    razorpayCustomerId: existing.razorpayCustomerId,
-    payoutAccounts,
+    now,
+    outboxTaskId: principalOutboxTaskId,
   });
 
-  const notificationFailures = await offboardNotificationVendor(userId);
-  vendorFailures.push(...notificationFailures);
+  const vendorFailures = [
+    ...streamPrincipalFailures,
+    ...(await offboardPaymentVendors(prisma, {
+      userId,
+      razorpayCustomerId: existing.razorpayCustomerId,
+      payoutAccounts,
+    })),
+    ...(await offboardNotificationVendor(userId)),
+  ];
 
   return {
     scrubbed: true,
     pseudonymousId,
     affectedOrganizationIds,
+    streamPrincipalOutboxId: principalOutboxTaskId,
     vendorFailures,
   };
+}
+
+/**
+ * The response shape `chat.deleteUsers` actually answers with.
+ *
+ * The SDK types it as `APIResponse & TaskResponse` — a background `task_id` and
+ * nothing about the users. Stream may ALSO report per-user failures inline
+ * alongside the task id, which is what `scripts/stream/stream-sync.ts` reads
+ * through a cast. Reading it is the difference between "the call resolved" and
+ * "the deletion happened": the second is the only one that discharges the duty,
+ * so a batch that resolves with a failed entry must not settle the outbox row.
+ */
+interface StreamDeleteUsersResponse {
+  task_id?: string;
+  failed_delete_users?: { user_id: string; message?: string }[];
+}
+
+/**
+ * The Stream PRINCIPAL leg: erase the subject's identity and everything they
+ * wrote, and be honest about whether it happened.
+ *
+ * Runs AFTER the local transaction commits — never inside it, because a Stream
+ * call cannot be rolled back and the scrub's transaction holds a row lock on
+ * the subject. The obligation is durable before the attempt (the outbox row is
+ * written in the transaction), so this function's job is to settle that row and
+ * to tell the truth: every entry it returns is a processor still holding data,
+ * and an empty return is a claim that Stream was reached and complied.
+ *
+ * ## The two calls, and why this order
+ *
+ * `revokeUserToken(userId, new Date())` first. It sets
+ * `revoke_tokens_issued_before = now`, so every token minted before this
+ * instant stops working — the same revocation the moderation ban applies, and
+ * the reason the access is already cut even if the delete below then fails.
+ * Running it first means the failure mode of the delete is "the data is still
+ * there", not "the subject can still talk".
+ *
+ * `deleteUsers([userId], { user: "hard", messages: "hard" })` second.
+ * `user: "hard"` removes the user object — the name, email and image Stream
+ * holds. `messages: "hard"` removes what they wrote. Soft mode would keep all
+ * of it for Stream's 30-day grace window, and a grace window is not ours to
+ * grant for someone who has asked to be erased.
+ *
+ * Deliberately NOT `conversations: "hard"`: channels are shared artefacts
+ * holding other members' messages, a hard conversation delete needs a
+ * `new_channel_owner_id` we have no basis to nominate, and the collaborator
+ * rows above already strip the subject from every plan channel.
+ *
+ * ## DeleteUsers is 6/minute, and this design cannot storm it
+ *
+ * Verified against the live app (Stream's own `rateLimit` metadata on
+ * DeleteUsers: limit 6). Two structural properties hold it under the ceiling:
+ *
+ *  1. ONE request, ONE id. `scrubUser` handles exactly one subject, so the
+ *     array is a literal singleton and there is nothing to chunk. The usual way
+ *     a bulk endpoint gets stormed — a loop fanning ids across concurrent
+ *     calls — is structurally absent here rather than merely avoided, and
+ *     `Promise.all` appears nowhere on this path.
+ *  2. A 429 is a RETRY, never a success. `withStreamCircuitBreaker` already
+ *     exempts 429 from tripping the breaker and from Sentry (quota is not
+ *     availability), and this leg turns the rejection into a FAILED outbox row
+ *     plus a `vendorFailures` entry naming the quota. Reaching the ceiling
+ *     therefore makes the erasure honest and retriable; it can never make it
+ *     silently drop the obligation.
+ *
+ * Erasures are operator-initiated and money-gated (`ERASURE_BLOCKED_MONEY_IN_FLIGHT`),
+ * so the inbound rate is human. If a bulk-erasure sweep is ever built it MUST
+ * pace at ≥10s per DeleteUsers call — `lib/stream/batch.ts` holds the repo's
+ * pacing convention — and must not assume it shares the `revokeUserToken`
+ * budget.
+ */
+async function eraseStreamPrincipalFootprint(
+  prisma: Db,
+  input: {
+    userId: string;
+    now: Date;
+    /** The outbox row, or null when no ErasureRequest anchors one. */
+    outboxTaskId: string | null;
+    /** Attempts already recorded, so a re-drive advances the count. */
+    attempts?: number;
+  },
+): Promise<string[]> {
+  const { userId, now, outboxTaskId } = input;
+  const attempts = (input.attempts ?? 0) + 1;
+  const failures: string[] = [];
+  const asError = (caught: unknown) =>
+    caught instanceof Error ? caught : new Error(String(caught));
+
+  try {
+    // Lazy: lib/stream-client constructs the Redis-backed breaker at import
+    // time, and most of this module's importers must not pay for that.
+    const {
+      getStreamChatClient,
+      isRateLimitError,
+      isStreamConfigured,
+      withStreamCircuitBreaker,
+    } = await import("@/lib/stream-client");
+
+    if (!isStreamConfigured()) {
+      // The Novu leg's doctrine, applied here: "we could not ask" is not "we
+      // asked and it worked". A deployment that lost its Stream keys cannot
+      // confirm the processor's copy is gone, and an erasure that cannot
+      // confirm that has not discharged its duty.
+      failures.push(
+        "stream_identity: not configured in this runtime — cannot confirm the " +
+          "Stream copy was deleted; restore NEXT_PUBLIC_STREAM_API_KEY/" +
+          "STREAM_API_SECRET and re-run the erasure",
+      );
+    } else {
+      const chat = getStreamChatClient();
+      try {
+        await withStreamCircuitBreaker(() =>
+          chat.revokeUserToken(userId, new Date()),
+        );
+      } catch (caught) {
+        failures.push(
+          describeStreamFailure(
+            "stream_token_revocation",
+            caught,
+            isRateLimitError(caught),
+            outboxTaskId,
+          ),
+        );
+        reportSentryError(asError(caught), {
+          subsystem: "compliance",
+          op: "scrubUser.revokeStreamToken",
+          extra: { userId, outboxTaskId },
+        });
+      }
+
+      let response: StreamDeleteUsersResponse | undefined;
+      try {
+        await withStreamCircuitBreaker(async () => {
+          response = (await chat.deleteUsers([userId], {
+            user: "hard",
+            messages: "hard",
+          })) as StreamDeleteUsersResponse;
+        });
+      } catch (caught) {
+        failures.push(
+          describeStreamFailure(
+            "stream_identity_delete",
+            caught,
+            isRateLimitError(caught),
+            outboxTaskId,
+          ),
+        );
+        reportSentryError(asError(caught), {
+          subsystem: "compliance",
+          op: "scrubUser.deleteStreamUser",
+          extra: { userId, outboxTaskId },
+        });
+      }
+
+      if (response) {
+        // The vendor-side handle for an operator: Stream answers a batch delete
+        // with a background task id. It is not a confirmation — the sweep runs
+        // the work — so it is recorded, never used to settle the row.
+        if (response.task_id) {
+          reportSentryError(
+            new Error(`Stream deletion accepted for erased user ${userId}`),
+            {
+              subsystem: "compliance",
+              op: "scrubUser.deleteStreamUser",
+              expected: true,
+              extra: { userId, streamTaskId: response.task_id, outboxTaskId },
+            },
+          );
+        }
+        // …and an inline failure means the deletion did NOT happen even though
+        // the call resolved, which is the case a try/catch alone would miss.
+        const refused = (response.failed_delete_users ?? []).filter(
+          (failure) => failure.user_id === userId,
+        );
+        if (refused.length > 0) {
+          failures.push(
+            "stream_identity_delete: Stream accepted the request but reported " +
+              `the delete as failed for this user (${refused
+                .map((f) => f.message ?? "no reason given")
+                .join("; ")})`,
+          );
+        }
+      }
+    }
+  } catch (caught) {
+    // The Stream module graph itself failed to load — its Redis breaker needs
+    // credentials. Reported rather than swallowed, so a missing import can
+    // never present as a clean erasure.
+    failures.push(
+      `stream_identity: could not reach Stream at all — ${
+        caught instanceof Error ? caught.message : String(caught)
+      }`,
+    );
+    reportSentryError(asError(caught), {
+      subsystem: "compliance",
+      op: "scrubUser.loadStreamClient",
+      extra: { userId, outboxTaskId },
+    });
+  }
+
+  if (outboxTaskId) {
+    try {
+      await prisma.streamRevocationRetry.update({
+        where: { id: outboxTaskId },
+        data:
+          failures.length === 0
+            ? { status: "SUCCEEDED", attempts, completedAt: new Date() }
+            : {
+                status: "FAILED",
+                attempts,
+                lastError: failures.join(" | "),
+                nextRetryAt: new Date(
+                  now.getTime() + PRINCIPAL_OUTBOX_SWEEP_PARK_MS,
+                ),
+              },
+      });
+    } catch (caught) {
+      // A lost settlement is not a bookkeeping detail: it leaves the row
+      // PENDING while this function reports nothing, which is the same
+      // false attestation the leg exists to remove.
+      failures.push(
+        `stream_outbox_settle: the Stream obligation could not be recorded against ${outboxTaskId} — ${
+          caught instanceof Error ? caught.message : String(caught)
+        }`,
+      );
+      reportSentryError(asError(caught), {
+        subsystem: "compliance",
+        op: "scrubUser.settlePrincipalOutbox",
+        extra: { userId, outboxTaskId },
+      });
+    }
+  } else if (failures.length > 0) {
+    failures.push(
+      "stream_identity: no ErasureRequest anchors a StreamRevocationRetry row " +
+        "for this subject, so nothing on the outbox records what is still owed " +
+        "to Stream — only a re-run of this erasure can retry it",
+    );
+  }
+
+  return failures;
+}
+
+/** Names the step, the reason, and — for a throttle — the quota that refused. */
+function describeStreamFailure(
+  step: string,
+  caught: unknown,
+  throttled: boolean,
+  outboxTaskId: string | null,
+): string {
+  if (throttled) {
+    return (
+      `${step}: Stream refused on the DeleteUsers quota (6/minute — a quota, ` +
+      `not an outage, so this deliberately does not page); still owed on ` +
+      `outbox row ${outboxTaskId ?? "none"}`
+    );
+  }
+  return `${step}: ${caught instanceof Error ? caught.message : String(caught)}`;
 }
 
 /**

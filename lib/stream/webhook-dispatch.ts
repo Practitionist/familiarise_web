@@ -155,41 +155,87 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
 });
 
 /**
- * Process one verified Stream event.
+ * The Stream video call types this app OWNS, i.e. whose webhooks it handles.
  *
- * Called from the route's `after()` once the delivery has been acknowledged, and
- * again from sweep-stuck-webhook-events for anything that failed. It owns its own
- * idempotency (`logWebhookEvent`) and completion bookkeeping
- * (`markWebhookEventProcessed`), so both callers can invoke it blindly.
+ * `STREAM_CALL_TYPE` (`default`) is every appointment call. `livestream` is
+ * Stream's built-in broadcast type and is the shape a webinar-with-a-VOD takes
+ * once webinars graduate from "one call per slot" to "one broadcast with
+ * attendance around it" — it is here so that the FIRST `call.recording_ready` on
+ * a `livestream` call is not silently thrown away.
  *
- * It never throws. The response is already sent by the time it runs, so there is
- * nobody to signal — a handler failure is stamped on the WebhookEvent row and
- * the sweeper re-drives it.
+ * ## Why the previous single-type gate was a bug, not a guard
+ *
+ * It read `callTypeFromCid(cid) === STREAM_CALL_TYPE`, so a `livestream`
+ * delivery was refused at the boundary, its `WebhookEvent` row stamped
+ * processed, and Stream told 200. The result: no VOD transfer, no `Recording`
+ * row, no attendee notification, no `MeetingAttendance` — and no error
+ * anywhere, because a row marked done is one the sweeper will not re-drive. The
+ * customer who paid for the recording is the one who finds out.
+ *
+ * That was not a deliberate tightening. Nothing in `HANDLED_EVENT_TYPES` or in
+ * `ensure-webhook-subscription.ts` was call-type-scoped; the subscription is
+ * per-PRODUCT (`"video"`), and every event we handle is a generic `call.*`
+ * event that Stream emits for EVERY call type. So the dispatcher and the
+ * subscription already agreed, and this gate was the only thing disagreeing
+ * with both — invisibly, from inside the module nobody reads when a webhook
+ * "does not fire".
+ *
+ * ## Why this is safe TODAY
+ *
+ * Verified against the live app (`video_query_calls`, and `video_get_call_type`
+ * for all four types on this Stream app):
+ *
+ *   1. Only `default` calls exist. Every sampled call — most recent first —
+ *      is `default:`; no `livestream`, `audio_room` or `development` call has
+ *      ever existed. So widening changes no current behaviour at all; it only
+ *      stops a class of event being dropped on the day it first arrives.
+ *   2. `livestream` cannot be *forged* by a user, which is the attack this gate
+ *      exists for. Its `user` role holds NO `create-call`, NO `join-call` and no
+ *      un-scoped `start-recording` — only `admin` / `global_admin` can mint one.
+ *      `scripts/stream/harden-unused-call-types.ts` is what removed those
+ *      grants, and it lists `livestream` among the types it hardens.
+ *   3. The residual risk the gate still covers is the one grants cannot reach:
+ *      every handler resolves its row with `call_cid.split(":")[1]`, DISCARDING
+ *      the type half, and matches `Meeting.streamCallId` on the bare id. A call
+ *      on ANY unowned type whose id half coincides with a real meeting would
+ *      bind to it. So the set — not the comparison — is the control.
+ *
+ * `audio_room` and `development` stay OUT. `development` is Stream's sandbox:
+ * nothing here should ever run a call on it, and excluding it costs nothing.
+ * `audio_room` is a hold-the-line room this app has no use for. Add a type to
+ * this set in the same commit that makes the app mint calls on it — and read
+ * `scripts/stream/harden-unused-call-types.ts` first, because that script strips
+ * the reach grants from every type it calls "unused" and will happily strip the
+ * ones a newly-owned type needs.
  */
+const LIVESTREAM_CALL_TYPE = "livestream";
+
+export const OWNED_CALL_TYPES: ReadonlySet<string> = new Set([
+  STREAM_CALL_TYPE,
+  LIVESTREAM_CALL_TYPE,
+]);
+
 /**
  * Is this event for a call type this app actually uses?
  *
  * Every handler resolves its row with `call_cid.split(":")[1]`, discarding the
- * type half. The app only ever uses `default`, but the Stream app also carries
- * the built-in `livestream`, `audio_room` and `development` types, and on all
- * three the plain `user` role holds `create-call` — `development` grants it
- * `start-recording`, `start-transcription` and `start-broadcasting` outright.
- * Tokens here are app-wide (`generateUserToken`, no `call_cids`), so any
- * signed-in user holds one that works on them.
+ * type half. Tokens here are app-wide (`generateUserToken`, no `call_cids`), so
+ * any signed-in user holds one that works on every call type in the app; a call
+ * minted on an unowned type can therefore deliver a genuine, correctly-signed
+ * event whose id half collides with a real Meeting. Signature checking is no
+ * defence — the event IS authentic. The same collision reaches the session
+ * handlers, where injected participant events feed attendance, which feeds
+ * no-show detection, which issues refunds.
  *
- * That let a user who knew one of their own anchor slot ids call `getOrCreate`
- * on `development:occurrence-<id>`, record whatever they liked, and have Stream
- * deliver a genuine, correctly-signed `call.recording_ready` whose id half
- * collided with a real Meeting — binding their recording to someone
- * else's appointment. Signature checking is no defence: the event is authentic.
- * The same collision reached the session handlers, where injected participant
- * events feed attendance, which feeds no-show detection, which issues refunds.
+ * A bare id with no `:` prefix is accepted: `callTypeFromCid` reads it as the
+ * app default, and that is the historical shape of this value.
  *
- * Checked once, at the boundary, so a type added later cannot reintroduce it by
- * forgetting one of the eight call sites.
+ * Checked once, at the boundary, so a type added later cannot reintroduce the
+ * collision by forgetting one of the eight call sites.
  */
 function isOwnCallType(callCid: string | undefined): boolean {
-  return !callCid || callTypeFromCid(callCid) === STREAM_CALL_TYPE;
+  if (!callCid) return true;
+  return OWNED_CALL_TYPES.has(callTypeFromCid(callCid));
 }
 
 /**
@@ -345,6 +391,18 @@ const EVENT_HANDLERS = {
   { schema: z.ZodTypeAny; handle: (event: unknown) => Promise<void> }
 >;
 
+/**
+ * Process one verified Stream event.
+ *
+ * Called from the route's `after()` once the delivery has been acknowledged, and
+ * again from sweep-stuck-webhook-events for anything that failed. It owns its own
+ * idempotency (`logWebhookEvent`) and completion bookkeeping
+ * (`markWebhookEventProcessed`), so both callers can invoke it blindly.
+ *
+ * It never throws. The response is already sent by the time it runs, so there is
+ * nobody to signal — a handler failure is stamped on the WebhookEvent row and
+ * the sweeper re-drives it.
+ */
 export async function processStreamEvent(
   event: unknown,
   eventType: string,
@@ -443,11 +501,23 @@ export async function processStreamEvent(
     }
 
     if (!isOwnCallType(baseEvent.call_cid)) {
+      // `warn`, not `error`: a call type this app does not own cannot become
+      // one it does, so this is a refusal of an event we will never handle —
+      // the same shape as the unhandled-type branch above. It is still stamped
+      // done, deliberately: the sweeper re-drives on ERROR, and re-driving a
+      // permanently-refused event 168 hours' worth is pure churn. `owned` is in
+      // the context so a report of this line names the accepted set.
+      //
+      // `isOwnCallType` accepts an absent cid, so by this branch it is present —
+      // but the helper cannot narrow the field for the compiler, hence the
+      // local.
+      const foreignCid = baseEvent.call_cid ?? "";
       streamLogger.warn("Refused Stream webhook for a foreign call type", {
         eventId,
         eventType,
-        call_cid: baseEvent.call_cid,
-        expected: STREAM_CALL_TYPE,
+        call_cid: foreignCid,
+        callType: callTypeFromCid(foreignCid),
+        owned: [...OWNED_CALL_TYPES],
       });
       await markWebhookEventProcessed(eventId, undefined, claim);
       return;

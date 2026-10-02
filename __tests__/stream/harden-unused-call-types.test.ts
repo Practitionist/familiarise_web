@@ -14,10 +14,12 @@
 
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 import {
-  UNUSED_TYPES,
-  END_USER_ROLES,
-  REACH_PERMISSIONS,
   BILLABLE_PERMISSIONS,
+  END_USER_ROLES,
+  HOST_ROLE,
+  REACH_PERMISSIONS,
+  TRUSTED_ROLES,
+  UNUSED_TYPES,
 } from "../../scripts/stream/harden-unused-call-types";
 
 describe("harden-unused-call-types", () => {
@@ -59,5 +61,32 @@ describe("harden-unused-call-types", () => {
     for (const role of ["user", "guest", "anonymous", "call_member"]) {
       expect(END_USER_ROLES).toContain(role);
     }
+  });
+});
+
+describe("host survives hardening", () => {
+  /**
+   * `host` used to be in END_USER_ROLES. Running this script AFTER
+   * `--plan livestream-webinar` therefore stripped the webinar's own presenter of
+   * `join-call` and `start-broadcasting`, leaving the type unusable while the
+   * script reported success. It cannot be self-assigned — only `updateCallMembers`
+   * grants it — so stripping it removes nothing an attacker could hold, and a
+   * presenter needs `join-call` to reach the call at all.
+   */
+  it("does not strip `host`, which the webinar posture grants the starters to", () => {
+    expect(END_USER_ROLES).not.toContain(HOST_ROLE);
+    expect(TRUSTED_ROLES).toContain(HOST_ROLE);
+  });
+
+  /**
+   * A role in both lists is a contradiction the script cannot resolve: either the
+   * strip loop or the trusted-report counts it, and which one wins is an accident
+   * of ordering rather than a decision.
+   */
+  it("keeps END_USER_ROLES and TRUSTED_ROLES disjoint", () => {
+    const overlap = END_USER_ROLES.filter((r) =>
+      (TRUSTED_ROLES as readonly string[]).includes(r),
+    );
+    expect(overlap).toEqual([]);
   });
 });

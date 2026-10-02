@@ -17,6 +17,23 @@ jest.mock("../../lib/api/organizations/seat-count", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
+// The Stream PRINCIPAL leg (#e2ee erasure) is part of `scrubUser`, so it is now
+// mocked here as well. Without this the scrub reaches the real
+// `lib/stream-client`, whose `getStreamChatClient()` validates env at call time
+// and answers "not configured" — which `scrubUser` correctly reports as a vendor
+// failure, so every `vendorFailures` assertion below would be about Stream
+// rather than about its own subject. The leg's own coverage is
+// erasure-stream-principal-leg.test.ts.
+jest.mock("../../lib/stream-client", () => ({
+  getStreamChatClient: () => ({
+    revokeUserToken: jest.fn(async () => ({})),
+    deleteUsers: jest.fn(async () => ({ task_id: "task_test" })),
+  }),
+  isStreamConfigured: () => true,
+  isRateLimitError: () => false,
+  withStreamCircuitBreaker: async (op: () => Promise<unknown>) => op(),
+}));
+
 jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));

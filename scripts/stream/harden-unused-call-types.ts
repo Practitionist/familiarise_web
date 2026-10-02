@@ -66,9 +66,41 @@ export const END_USER_ROLES = [
   "guest",
   "anonymous",
   "speaker",
-  "host",
   "call_member",
 ];
+
+/**
+ * `host` is deliberately NOT in END_USER_ROLES.
+ *
+ * It used to be, and that was load-bearing wrong in a way the script reported as
+ * success. `livestream` is not unused — it is the type a webinar runs on, and
+ * `ensure-call-type-grants.ts --plan livestream-webinar` is what gives it its
+ * posture. `host` is the only role on that type a server client can designate as
+ * the presenter (it is never self-assignable; only `updateCallMembers` grants it),
+ * and it does not exist on `default` at all. Running this script after the webinar
+ * posture stripped `host` of `join-call` and `start-broadcasting`, leaving the
+ * webinar type unusable with its posture silently undone.
+ *
+ * Stripping it bought nothing either: a presenter cannot reach a call without
+ * `join-call`, and this script's whole job is to take reach away.
+ */
+export const HOST_ROLE = "host";
+
+/**
+ * Roles allowed to keep operational grants on an otherwise-hardened type.
+ *
+ * `admin`/`global_admin` must reach a call to inspect and end one. `host` is here
+ * for the same reason and is the load-bearing entry: it is the only role a server
+ * client can designate as a webinar presenter, it does not exist on `default`, and
+ * stripping it silently undoes `--plan livestream-webinar` while this script
+ * reports success.
+ */
+export const TRUSTED_ROLES = [
+  HOST_ROLE,
+  "admin",
+  "global_admin",
+  "global_read_only",
+] as const;
 
 /**
  * Reaching a call at all. Stripping these is what makes the type unusable;
@@ -92,6 +124,7 @@ export const REACH_PERMISSIONS = [
  * Billable, and startable by anyone holding them. Stripped from end-user roles
  * as well, so that a future change re-granting reach does not silently re-arm
  * the meter (#1160).
+ *
  */
 export const BILLABLE_PERMISSIONS = [
   "start-recording",
@@ -101,7 +134,20 @@ export const BILLABLE_PERMISSIONS = [
   "start-broadcasting",
 ];
 
-const STRIP = new Set([...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS]);
+const STRIP_FAMILY = new Set([...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS]);
+
+/**
+ * Strip a grant by family, so scope suffixes are covered.
+ *
+ * `livestream`'s `user` holds `start-broadcasting-OWNER` and
+ * `start-recording-OWNER`. Matching the bare names removed nothing at all on that
+ * type — the destructive grants survived intact while the script reported a clean
+ * type, which is worse than failing.
+ */
+function isStripped(grant: string): boolean {
+  const base = grant.replace(/-[A-Z][A-Z-]*$/, "");
+  return STRIP_FAMILY.has(base);
+}
 
 interface Options {
   apply: boolean;
@@ -129,11 +175,11 @@ async function hardenOne(
   for (const role of END_USER_ROLES) {
     const held = grants[role];
     if (!held) continue;
-    const kept = held.filter((perm) => !STRIP.has(perm));
+    const kept = held.filter((perm) => !isStripped(perm));
     if (kept.length === held.length) continue;
     removals.push(
       `  ${typeName}/${role}: -${held.length - kept.length} (${held
-        .filter((p) => STRIP.has(p))
+        .filter((p) => isStripped(p))
         .join(", ")})`,
     );
     grants[role] = kept;
@@ -163,7 +209,7 @@ async function hardenOne(
   const after = await client.video.getCallType({ name: typeName });
   const leaked = END_USER_ROLES.flatMap((role) =>
     (after.grants[role] ?? [])
-      .filter((perm) => STRIP.has(perm))
+      .filter((perm) => isStripped(perm))
       .map((perm) => `${role}:${perm}`),
   );
   if (leaked.length > 0) {

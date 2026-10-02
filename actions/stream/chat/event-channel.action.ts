@@ -1,5 +1,37 @@
 "use server";
 
+/**
+ * Lazy event-channel provisioning (webinar/class channels are minted on first
+ * join) plus the membership reconcile.
+ *
+ * "use server" — so EVERY export in this module is a remotely invocable RPC
+ * endpoint, precisely as the header of `channel.action.ts` records for the
+ * module that LOST the directive (F-HIGH-1). Two rules follow from that, and
+ * both are load-bearing:
+ *
+ *   1. An export that mutates chat membership opens the session with
+ *      `getSession(true)` and allows self-or-privileged only. Stream's
+ *      server-side API bypasses its own permission system entirely ("server-side
+ *      allows everything so long as a valid API key and secret is provided"),
+ *      so the session bind is the only boundary there is.
+ *   2. A caller-supplied `userId` is a REQUEST, never an authority. Each
+ *      membership mutation takes the ACTING user from the session and checks
+ *      the requested target against it — `requireEventChannelActor` below.
+ *      Before that gate, any authenticated browser session could add an
+ *      arbitrary user (including one belonging to an unrelated organisation)
+ *      to any `webinar-*` / `class-*` channel by id, mint that channel with
+ *      its full historic roster, or evict a legitimate participant from a paid
+ *      event — `removeUserFromEventChannel` being the more serious of the two,
+ *      because a removal is access revocation.
+ *
+ * The exports here are therefore NOT the surface for session-less server work.
+ * Three callers still arrive without a session (the post-payment ensure leg,
+ * the moderation-enforcement retry sweep, the DPDP erasure scrub); the gate
+ * refuses them, and each refuses as a RECORDED failure its own retry already
+ * owns rather than a silent no-op. `requireEventChannelActor`'s comment names
+ * the server-only home each of them belongs in.
+ */
+
 import * as Sentry from "@sentry/nextjs";
 import type { StreamChat } from "stream-chat";
 import { z } from "zod";
@@ -69,6 +101,123 @@ function getChannelType(eventType: EventType): "messaging" | "team" {
   return eventType === "consultation" || eventType === "subscription"
     ? "messaging"
     : "team";
+}
+
+/**
+ * The gate either clears the call or hands back the typed refusal the caller
+ * RETURNS. There is deliberately no "actor" payload: the acting user is the
+ * session's, and it is never forwarded to Stream — the requested target is what
+ * gets written, and it has just been authorised against that session.
+ */
+type EventChannelActorCheck = { ok: true } | { ok: false; refusal: Refusal };
+
+/**
+ * Is `userId` the consultant who owns this event's channel?
+ *
+ * The single extra capability `removeUserFromEventChannel` grants beyond
+ * self-or-privileged, and it is scoped to ONE event: the consultant whose
+ * profile the plan belongs to. That is the same rule the participant routes
+ * enforce before they call the removal (`isSelfLeave || isOrganiser`,
+ * app/api/participants/{webinar,class}/[id]/route.ts), so granting it here
+ * cannot widen access past what the app's own routes already permit — a
+ * consultant moderating their own roster, and the plan owner revoking a
+ * collaborator from their own plan's events, both keep working.
+ *
+ * `getEventData` is the same resolver the lazy-create path uses for
+ * `created_by_id`, so the grant follows the channel's real owner rather than a
+ * second, possibly-disagreeing derivation. It returns null for an event whose
+ * rows are gone — in which case there is nothing left to moderate.
+ */
+async function isEventChannelHost(
+  userId: string,
+  eventType: EventType,
+  eventId: string,
+): Promise<boolean> {
+  try {
+    const eventData = await getEventData(eventType, eventId);
+    return eventData?.consultantId === userId;
+  } catch (error) {
+    // A resolution failure must never WIDEN the grant. Deny and let the
+    // caller report it; the removal paths all surface a failure rather than
+    // swallowing one.
+    streamLogger.warn("Could not resolve event host; denying cross-user act", {
+      eventType,
+      eventId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * F-HIGH-1 sibling — the acting-user gate for this module's two membership
+ * mutations. Mirrors `assertCanMintToken` (stream.action.ts) and the gate on
+ * `syncUserEventChannels` below, and it is the ONLY thing standing between a
+ * browser and `channel.addMembers` / `channel.removeMembers`, because Stream's
+ * server API performs no permission check of its own.
+ *
+ *   MAY_ACT(target) :=
+ *        session exists            — read with the cookie cache DISABLED, so a
+ *                                    just-demoted operator or a just-banned
+ *                                    user cannot ride a stale session (#899)
+ *     && !session.user.banned
+ *     && ( session.user.id === target          — self-service
+ *       || isPrivileged(session.user.role)     — platform operator
+ *       || isEventChannelHost(session.user.id, eventType, eventId) )  — the
+ *                                    event's own consultant, removals only
+ *
+ * `target` is a request; `session.user.id` is the actor. A no-session call is
+ * REFUSED, not degraded: an expired tab and an anonymous caller are the same
+ * answer, and answering either with a Stream write is the defect.
+ *
+ * Follow-ups this surfaces (server-only work that must not come through a
+ * `"use server"` export, per the header of `channel.action.ts`):
+ *   - `lib/payments/webhooks/ensure-channels.ts` calls `addUserToEventChannel`
+ *     for each buyer from the payment webhook and the reconcile sweep, with no
+ *     session. It belongs on `createWebinarChannel` / `createClassChannel`
+ *     (`channel.action.ts`, the module that must never be a server action),
+ *     which builds the same roster from the same rows.
+ *   - the moderation-enforcement retry sweep and the DPDP erasure scrub reach
+ *     `removeUserFromEventChannel` through `revokeCollaboratorAccess` with no
+ *     session. They belong in a server-only revocation helper. Both record the
+ *     failure (`StreamRevocationRetry` / `retry-moderation-enforcement`), so a
+ *     refusal here fails CLOSED and loudly rather than silently — but it will
+ *     not clear until the caller moves.
+ */
+async function requireEventChannelActor(
+  forUserId: string,
+  eventType: EventType,
+  eventId: string,
+  { allowEventHost = false }: { allowEventHost?: boolean } = {},
+): Promise<EventChannelActorCheck> {
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    // Returned, never thrown: an expired tab is an ANSWER, and every throw out
+    // of a server action is captured by onRequestError (FAMILIARISE_WEB-30).
+    return {
+      ok: false,
+      refusal: new Refusal({
+        code: "UNAUTHENTICATED",
+        httpStatus: 401,
+        userMessage: "Please sign in again to continue.",
+        devMessage: "Unauthorized: sign in to manage event channel membership",
+      }),
+    };
+  }
+  if (session.user.banned) {
+    throw new Error("Forbidden: account suspended");
+  }
+  if (
+    session.user.id === forUserId ||
+    isPrivileged(session.user.role) ||
+    (allowEventHost &&
+      (await isEventChannelHost(session.user.id, eventType, eventId)))
+  ) {
+    return { ok: true };
+  }
+  throw new Error(
+    "Forbidden: cannot manage event channel membership for another user",
+  );
 }
 
 /**
@@ -191,17 +340,48 @@ async function tryAddToExistingChannel(
 /**
  * Add a user to an event channel, creating the channel if it doesn't exist
  * Uses caching to avoid redundant operations
+ *
+ * RPC surface: `userId` is the user to admit as a REQUEST. The acting user
+ * comes from the session (`requireEventChannelActor`), which admits only
+ * self-service or a platform operator — a browser cannot name a third party,
+ * cannot mint a channel for an event it has no claim to, and cannot do either
+ * without a session at all.
  */
 export async function addUserToEventChannel(
   eventType: EventType,
   eventId: string,
   userId: string,
-): Promise<{ success: boolean; channelId: string; created?: boolean }> {
+): Promise<{
+  success: boolean;
+  channelId: string;
+  created?: boolean;
+  /** Set when the call was refused rather than attempted (no session). */
+  refusal?: RefusalShape;
+}> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
   userIdSchema.parse(userId);
 
   const channelId = getChannelId(eventType, eventId);
+
+  // Before ANY cache read, Prisma read or Stream call: a refused caller must
+  // leave no trace in the membership cache and cost no metered write.
+  const actor = await requireEventChannelActor(userId, eventType, eventId);
+  if (!actor.ok) {
+    streamLogger.warn("Refused event channel join", {
+      channelId,
+      eventType,
+      eventId,
+      userId,
+      reason: actor.refusal.devMessage,
+    });
+    return {
+      success: false,
+      channelId,
+      refusal: actor.refusal.toShape(),
+    };
+  }
+
   const channelType = getChannelType(eventType);
 
   // Check membership cache first
@@ -368,6 +548,14 @@ export async function addUserToEventChannel(
 /**
  * Remove a user from an event channel.
  * Used when a collaborator is removed from a webinar/class plan.
+ *
+ * RPC surface, and the more serious half of the pair: a removal is ACCESS
+ * REVOCATION. `userId` is a request checked against the session by
+ * `requireEventChannelActor` — self, a platform operator, or the consultant
+ * who owns this event (the rule the participant routes already enforce before
+ * calling here). The gate runs BEFORE the try block on purpose: the failure
+ * path calls `markMembership(channelId, userId, false)`, and a refused caller
+ * must never poison the cache entry of a member who is still a member.
  */
 export async function removeUserFromEventChannel(
   eventType: EventType,
@@ -379,6 +567,21 @@ export async function removeUserFromEventChannel(
   userIdSchema.parse(userId);
 
   const channelId = getChannelId(eventType, eventId);
+
+  const actor = await requireEventChannelActor(userId, eventType, eventId, {
+    allowEventHost: true,
+  });
+  if (!actor.ok) {
+    streamLogger.warn("Refused event channel removal", {
+      channelId,
+      eventType,
+      eventId,
+      userId,
+      reason: actor.refusal.devMessage,
+    });
+    return { success: false };
+  }
+
   const channelType = getChannelType(eventType);
 
   const client = getStreamChatClient();

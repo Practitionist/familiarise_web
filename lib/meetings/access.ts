@@ -10,6 +10,8 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { occurrenceIdFromRoomId } from "@/lib/meetings/room-id";
+import { checkConsent } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
@@ -36,6 +38,14 @@ import {
  * moved off the `user` role, this answer is what Stream itself enforces, not
  * just what the UI draws. `validate-access` shares it too, as a read-only probe,
  * so the gate and the affordance can never give different answers.
+ *
+ * Since #1830 §5 it is also the DPDP purpose gate for the STREAM_DATA_PROCESSING
+ * purpose — see the first check inside `grant` below. That is the second of the
+ * two places the gate lives (the token mint is the first), and it is the one
+ * that makes the UI honest: the mint gate alone would leave
+ * `resolveMeetingAccess` answering "granted", the Join button drawn, and the
+ * join route handing out Stream call membership for a user who has withdrawn
+ * consent.
  */
 export type MeetingRole = "host" | "participant" | null;
 
@@ -244,6 +254,21 @@ function bookingStatusRefusal(status: string | null): string | null {
 const REJOIN_GRACE_MS = 30 * 60 * 1000;
 
 /**
+ * What a user with no `STREAM_DATA_PROCESSING` consent is told when they try to
+ * join a meeting.
+ *
+ * One string, two surfaces: this gate and the token mint in
+ * `actions/stream/chat/stream.action.ts`. They must not drift, because the two
+ * are read in sequence by the same person — the chat surface refuses, then the
+ * meeting page refuses — and two differently-worded denials for one legal act
+ * read as two problems. It deliberately names the remedy and not the mechanism:
+ * there is no self-serve re-grant page, so an org administrator is the only
+ * door, and "contact support" would send them somewhere that cannot help.
+ */
+export const STREAM_CONSENT_REFUSAL =
+  "Chat and video calls are unavailable because data-processing consent for messaging has not been granted (or was withdrawn). Contact your organization administrator.";
+
+/**
  * E2E-audit P1 fix — the SERVER-side policy gate. Identity ("are you on this
  * appointment?") was necessary but not sufficient: nothing refused a valid
  * participant days early, hours after the host ended the call, after
@@ -410,6 +435,41 @@ export async function resolveMeetingAccess(
     role: Exclude<MeetingRole, null>,
     message: string,
   ): Promise<MeetingAccess> => {
+    // DPDP Act 2023 — STREAM_DATA_PROCESSING purpose gate, FIRST, because it is
+    // a statement about the DATA PRINCIPAL and not about the booking. Placing it
+    // after the status checks would answer a withdrawn user "This session has
+    // ended" or "This booking is no longer active": sentences that are true of
+    // the booking, wrong as the reason, and the ones a support agent would then
+    // relay. It also answers the host and the co-presenter, not just the
+    // attendee — a consultant who withdrew is just as subject to it.
+    //
+    // Read at the point of processing, never from a value copied into the
+    // request (compliance doctrine): the consent artifact is queried here, on
+    // the join itself, so a withdrawal taken a second ago is honoured.
+    //
+    // Fail-closed by construction. `checkConsent` is false for a missing
+    // artifact, a withdrawn one, or one past its retention window, and a throw
+    // from the read propagates rather than being swallowed into a grant.
+    const hasStreamConsent = await checkConsent({
+      userId,
+      purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
+    });
+    if (!hasStreamConsent) {
+      // A deliberate refusal, not a failure — the same framing
+      // `upsertUserToStream` uses, so the wording matches the one the user was
+      // already given for the chat surface. No throw, no Sentry: the compliance
+      // skill's "collapse to deny at the gate" is a return, not an exception.
+      return {
+        hasAccess: false,
+        role: null,
+        message: STREAM_CONSENT_REFUSAL,
+        reason: "unauthorized",
+        streamCallId,
+        meetingId,
+        appointment,
+      };
+    }
+
     // The booking's status lives on its parent row, not on Appointment.
     //
     // #1270 — the trial's status is now passed through as itself. It used to be

@@ -6,20 +6,40 @@
  * #1280 — the webhook boundary must refuse call types this app does not use.
  *
  * Every handler resolves its row with `call_cid.split(":")[1]`, discarding the
- * type half. The app only ever uses `default`, but the Stream app also carries
- * the built-in `livestream`, `audio_room` and `development` types, and the plain
- * `user` role holds `create-call` on all three — on `development` it also holds
- * `start-recording`, `start-transcription` and `start-broadcasting` outright.
- * Video tokens here are app-wide (`generateUserToken`, no `call_cids` claim), so
- * every signed-in user already holds one that works on all of them.
+ * type half. Tokens here are app-wide (`generateUserToken`, no `call_cids`
+ * claim), so every signed-in user already holds one that works on every call
+ * type in the app.
  *
- * So a user who knew one of their own anchor slot ids could `getOrCreate`
- * `development:slot-<id>`, record anything, and have Stream deliver a genuine,
- * correctly-signed `call.recording_ready` whose id half collided with a real
- * Meeting — binding their recording to someone else's appointment.
- * Signature verification cannot help: the event really is from Stream.
+ * So a user who could mint a call on a type this app does not own could
+ * `getOrCreate` `<that-type>:slot-<id>`, record anything, and have Stream
+ * deliver a genuine, correctly-signed `call.recording_ready` whose id half
+ * collided with a real Meeting — binding their recording to someone else's
+ * appointment. Signature verification cannot help: the event really is from
+ * Stream.
  *
  * These tests fail without the guard.
+ *
+ * ## Changed in #1830 — `livestream` moved from refused to OWNED
+ *
+ * This suite used to assert that a `livestream` recording was refused. That
+ * assertion was not a security decision; it was the accident being pinned.
+ * Refusing it ran BEFORE dispatch and then stamped the `WebhookEvent` row
+ * processed, so a webinar broadcast on `livestream` lost its VOD, its
+ * `Recording` row, its notification and its `MeetingAttendance` — silently, and
+ * unrecoverably, because a row marked done is one the sweeper will not re-drive.
+ *
+ * `livestream` is safe to own because it is unreachable by an end user:
+ * `harden-unused-call-types.ts` strips `create-call` / `join-call` /
+ * `start-recording` from every non-admin role on it, and `video_get_call_type`
+ * on the live app confirms the plain `user` role holds none of them. So
+ * admitting it re-opens no route by which a user could have minted the call in
+ * the first place. `OWNED_CALL_TYPES` in `lib/stream/webhook-dispatch.ts` is now
+ * the single definition; `webhook-call-type-gate.test.ts` carries the widened
+ * end-to-end coverage.
+ *
+ * The docblock's earlier claim that "the plain `user` role holds `create-call`
+ * on all three" is also stale: those grants were removed when the types were
+ * hardened, which is verified live rather than assumed here.
  */
 
 const mockLogWebhookEvent = jest.fn();
@@ -31,6 +51,7 @@ jest.mock("../../lib/webhooks/event-log", () => ({
   logWebhookEvent: (...a: unknown[]) => mockLogWebhookEvent(...a),
   markWebhookEventProcessed: (...a: unknown[]) => mockMarkProcessed(...a),
   isDbHealthy: () => true,
+  permanentFailure: (reason: string) => `permanent: ${reason}`,
 }));
 
 jest.mock("../../lib/stream-logger", () => ({
@@ -99,7 +120,16 @@ describe("webhook call-type guard", () => {
     expect(mockHandleRecordingReady).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["development", "livestream", "audio_room"])(
+  // #1830 — the type a webinar broadcast runs on. It was in this list, and
+  // being in it is what silently destroyed the recording of every livestream
+  // call. It is owned now; see the module docblock for why that is safe.
+  it("processes a recording_ready on the livestream call type", async () => {
+    await dispatch(RECORDING_READY("livestream:slot-abc"), "evt-livestream");
+    expect(mockHandleRecordingReady).toHaveBeenCalledTimes(1);
+  });
+
+  // Only the two types we neither mint nor can be made to exist on.
+  it.each(["development", "audio_room"])(
     "refuses a recording_ready minted on the %s call type",
     async (foreignType) => {
       await dispatch(

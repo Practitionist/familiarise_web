@@ -163,7 +163,7 @@ const RECORDING_PERMISSIONS = ["start-recording", "stop-recording"];
  * for the key before touching it), so listing it here costs nothing and removes
  * a reason for the two call types to need different lists.
  */
-const BILLABLE_CALL_PERMISSIONS = [
+export const BILLABLE_CALL_PERMISSIONS = [
   "start-transcription",
   "stop-transcription",
   "start-closed-captions",

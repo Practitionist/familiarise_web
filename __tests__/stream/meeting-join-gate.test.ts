@@ -122,6 +122,11 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findMany: jest.fn(), findFirst: jest.fn() },
     appointmentParticipant: { findFirst: jest.fn() },
     collaborator: { findFirst: jest.fn() },
+    // `consentArtifact` is read by the REAL resolveMeetingAccess because #1830
+    // put the DPDP STREAM_DATA_PROCESSING gate inside it. Answer with a LIVE
+    // artifact so every case below stays a statement about STATUS and the time
+    // gate; the consent half has its own suite in `token-consent-gate.test.ts`.
+    consentArtifact: { findFirst: jest.fn(async () => ({ id: "consent-1" })) },
   },
 }));
 
