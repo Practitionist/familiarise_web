@@ -160,6 +160,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Direct checkout (assertPlanPurchasable) refuses non-VERIFIED
+    // consultants; the request→approve path must too, or an unverified
+    // profile could still mint a paid booking via the approval pay-link.
+    if (consultationPlan.consultantProfile.verificationStatus !== "VERIFIED") {
+      return NextResponse.json(
+        {
+          error: "This expert isn't accepting paid bookings yet.",
+          code: "CONSULTANT_NOT_VERIFIED",
+        },
+        { status: 409 },
+      );
+    }
+
     // #1527 Q4 — a DRAFT plan takes no new requests.
     if (planSaleRefusal(consultationPlan)) {
       return NextResponse.json(

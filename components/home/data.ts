@@ -29,30 +29,46 @@ import {
 export const FEATURES = [
   {
     icon: Video,
-    title: "1-on-1 Sessions",
+    title: "1-on-1 Consultations",
+    badge: "Personalised Advice",
+    meta: "30 – 60 min live video",
     description:
-      "Personal video consultations with industry experts tailored to your specific needs and goals.",
+      "Focused, private sessions tailored to your exact question — architecture reviews, mock interviews, portfolio critiques, or career strategy.",
+    href: "/explore/experts",
+    cta: "Find a 1:1 expert",
     gradient: "from-zinc-700 to-zinc-900",
   },
   {
     icon: Calendar,
-    title: "Subscriptions",
+    title: "Mentorship Subscriptions",
+    badge: "Ongoing Growth",
+    meta: "Recurring calls + async chat",
     description:
-      "Ongoing mentorship programs with regular check-ins and continuous support for your growth.",
+      "Long-term mentorship with recurring check-ins, shared action plans, and continuous support between sessions as you navigate a transition.",
+    href: "/explore/experts",
+    cta: "Explore mentors",
     gradient: "from-neutral-600 to-neutral-800",
   },
   {
     icon: GraduationCap,
-    title: "Expert Classes",
+    title: "Cohort Classes",
+    badge: "Multi-Week Curriculum",
+    meta: "Small-group structured learning",
     description:
-      "Structured learning programs led by professionals with hands-on projects and certifications.",
+      "Multi-session cohorts led by working practitioners with live instruction, hands-on assignments, and direct feedback alongside peers.",
+    href: "/explore/programs?type=class",
+    cta: "Browse classes",
     gradient: "from-stone-600 to-stone-800",
   },
   {
     icon: Users,
     title: "Live Webinars",
+    badge: "Interactive Workshops",
+    meta: "60 – 90 min live + Q&A",
     description:
-      "Interactive group sessions on trending topics with Q&A and networking opportunities.",
+      "Focused single-session deep dives on emerging tools, hiring playbooks, and industry trends with live Q&A and open seat counts.",
+    href: "/explore/programs?type=webinar",
+    cta: "See upcoming webinars",
     gradient: "from-gray-600 to-gray-800",
   },
 ];
@@ -64,37 +80,49 @@ export const CATEGORIES = [
   {
     icon: Code,
     name: "Technology",
+    description: "Software engineering, AI/ML, cloud & system design",
     color: "bg-zinc-900",
   },
   {
     icon: Briefcase,
     name: "Business",
+    description: "Product management, strategy, operations & finance",
     color: "bg-zinc-800",
   },
-  { icon: Palette, name: "Design", color: "bg-zinc-700" },
+  {
+    icon: Palette,
+    name: "Design",
+    description: "Product design, UX research, design systems & brand",
+    color: "bg-zinc-700",
+  },
   {
     icon: TrendingUp,
     name: "Marketing",
+    description: "Growth marketing, SEO, positioning & go-to-market",
     color: "bg-zinc-800",
   },
   {
     icon: HeartHandshake,
     name: "Career Coach",
+    description: "Interview prep, resume reviews & leadership coaching",
     color: "bg-zinc-900",
   },
   {
     icon: GraduationCap,
     name: "Education",
+    description: "Academic advising, research guidance & test prep",
     color: "bg-zinc-700",
   },
   {
     icon: Lightbulb,
     name: "Startups",
+    description: "Fundraising, pitch decks, zero-to-one & founder advisory",
     color: "bg-zinc-800",
   },
   {
     icon: Globe,
     name: "Languages",
+    description: "Business communication & cross-cultural fluency",
     color: "bg-zinc-900",
   },
 ];
@@ -129,27 +157,24 @@ export const BENEFITS = [
 export const HOW_IT_WORKS = [
   {
     step: 1,
-    title: "Find Your Expert",
+    number: "01",
+    title: "Discover & Filter Verified Experts",
     description:
-      "Browse our curated network of verified professionals across various domains.",
+      "Search by domain, company background, price range, and real participant reviews. Every listed consultant passes credential and profile verification before going live.",
   },
   {
     step: 2,
-    title: "Book a Session",
+    number: "02",
+    title: "Book a Time Slot with Protected Payments",
     description:
-      "Choose your preferred time slot and session type that fits your schedule.",
+      "Pick a 1:1 consultation, mentorship subscription, cohort class, or live webinar in your local timezone. Payouts are held until sessions take place, backed by our transparent cancellation and no-show refund policy.",
   },
   {
     step: 3,
-    title: "Connect & Learn",
+    number: "03",
+    title: "Meet Live in HD, Record & Follow Up",
     description:
-      "Join your session via our platform and start your transformation journey.",
-  },
-  {
-    step: 4,
-    title: "Grow Together",
-    description:
-      "Continue learning with follow-ups, resources, and our supportive community.",
+      "Join directly in your browser with HD video, screen sharing, in-app chat, shared learning materials, and one-click session recordings.",
   },
 ];
 
@@ -188,19 +213,37 @@ export const PLATFORM_FEATURES = [
     icon: Monitor,
     title: "HD Video Calls",
     description:
-      "Crystal clear video with screen sharing powered by Stream. Works on any device.",
+      "Browser-native HD video and screen sharing powered by Stream — no downloads required.",
   },
   {
     icon: Calendar,
     title: "Smart Scheduling",
     description:
-      "Automatic timezone detection with weekly and custom availability slots.",
+      "Automatic timezone detection with live weekly and custom availability slots.",
   },
   {
     icon: Lock,
-    title: "Secure Payments",
+    title: "Protected Payments",
     description:
-      "Protected transactions with Stripe & Razorpay. Refunds and dispute handling built-in.",
+      "Payouts are held until sessions take place, backed by our transparent cancellation and no-show refund policy.",
+  },
+  {
+    icon: Video,
+    title: "Session Recordings",
+    description:
+      "Record sessions with one click and revisit key explanations and action items anytime.",
+  },
+  {
+    icon: BadgeCheck,
+    title: "Verified Profiles",
+    description:
+      "Every consultant undergoes staff credential and profile review before appearing in search.",
+  },
+  {
+    icon: MessageSquare,
+    title: "In-App Messaging & Materials",
+    description:
+      "Share resumes, design files, code repos, and follow-up notes in one workspace.",
   },
   {
     icon: LayoutDashboard,
@@ -209,28 +252,10 @@ export const PLATFORM_FEATURES = [
       "Your command center for bookings, sessions, earnings, and analytics—all in one place.",
   },
   {
-    icon: Video,
-    title: "Session Recordings",
-    description:
-      "Record your sessions with one click. Review key moments and insights anytime.",
-  },
-  {
     icon: Star,
     title: "Reviews & Ratings",
     description:
       "Rate your sessions and read verified reviews to find the perfect expert.",
-  },
-  {
-    icon: BadgeCheck,
-    title: "Verified Profiles",
-    description:
-      "Document-based verification for consultants. Staff review ensures quality experts.",
-  },
-  {
-    icon: MessageSquare,
-    title: "In-app Messaging",
-    description:
-      "Direct communication with experts. Create support tickets and track issue resolution.",
   },
   {
     icon: HeadphonesIcon,
@@ -262,21 +287,22 @@ export const TRUST_BADGES = [
   {
     icon: Shield,
     label: "Verified Experts",
-    description: "All mentors are background-checked",
+    description: "Every profile is staff-reviewed before listing",
   },
   {
     icon: Lock,
-    label: "Secure Platform",
-    description: "Bank-level encryption for all data",
+    label: "Session-Backed Protection",
+    description:
+      "Payouts are held until sessions take place, backed by our transparent cancellation and no-show refund policy.",
   },
   {
     icon: Clock,
-    label: "Money-back Guarantee",
-    description: "Full refund if not satisfied",
+    label: "No-Show Refund Protection",
+    description: "Full refund protection if an expert misses a session",
   },
   {
     icon: Award,
-    label: "Quality Assured",
+    label: "Verified Reviews Only",
     // #1485 — was "4.9★ average session rating", a number with nothing behind
     // it. What replaces it is a property of the review system itself, so it
     // stays true at every scale.

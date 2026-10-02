@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { Calendar, CheckCircle2, ChevronRight } from "lucide-react";
 
 import { ArticleActions } from "../../_components/ArticleActions";
+import { SupportArticleToc } from "../../_components/SupportArticleToc";
 import {
   SupportSidebar,
   SupportSidebarMobile,
@@ -66,6 +67,10 @@ export default async function SupportArticlePage({
   // Carry the article's escalation category into Contact us so the form
   // arrives pre-categorised (ContactForm validates it before applying).
   const contactHref = `/contactus?category=${encodeURIComponent(article.contactCategory)}`;
+  const tocSections = article.sections.map((section) => ({
+    id: slugify(section.heading),
+    heading: section.heading,
+  }));
 
   return (
     <section className="w-full">
@@ -106,33 +111,106 @@ export default async function SupportArticlePage({
 
         <SupportSidebarMobile />
         <div className="flex gap-10">
-          <div className="hidden xl:block">
+          <div className="hidden lg:block">
             <SupportSidebar />
           </div>
           <article className="min-w-0 flex-1">
-            <h1 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight">
-              {article.title}
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Updated {article.updated}
-            </p>
+            {/* Article Header Card */}
+            <div className="rounded-2xl border border-border bg-card p-6 md:p-8 shadow-elevation-1">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
+                <span className="inline-flex items-center rounded-full border border-border bg-muted/60 px-2.5 py-0.5 text-foreground">
+                  {categoryData.title}
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5" aria-hidden />
+                  <span>Updated {article.updated}</span>
+                </span>
+              </div>
+              <h1 className="mt-3 text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-foreground">
+                {article.title}
+              </h1>
+              {article.excerpt && (
+                <p className="mt-2.5 text-sm md:text-base leading-relaxed text-muted-foreground">
+                  {article.excerpt}
+                </p>
+              )}
 
-            <div className="prose prose-slate mt-8 max-w-none">
-              {article.sections.map((section) => (
-                <section key={section.heading} id={slugify(section.heading)}>
-                  <h2>{section.heading}</h2>
-                  {section.paragraphs.map((p) => (
-                    <p key={p.slice(0, 48)}>{p}</p>
-                  ))}
-                  {section.list && (
-                    <ul>
-                      {section.list.map((item) => (
-                        <li key={item.slice(0, 48)}>{item}</li>
+              {/* Mobile Jump-to-Section Pill Strip */}
+              {tocSections.length > 1 && (
+                <div className="mt-5 border-t border-border pt-4 lg:hidden">
+                  <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Jump to section
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {tocSections.map((sec, idx) => (
+                      <a
+                        key={sec.id}
+                        href={`#${sec.id}`}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                      >
+                        <span className="font-mono text-[10px] font-semibold text-muted-foreground">
+                          {String(idx + 1).padStart(2, "0")}
+                        </span>
+                        <span>{sec.heading}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Structured Editorial Section Cards */}
+            <div className="mt-6 space-y-6">
+              {article.sections.map((section, index) => {
+                const sectionId = slugify(section.heading);
+                const numberBadge = String(index + 1).padStart(2, "0");
+                const bullets = section.list ?? [];
+
+                return (
+                  <section
+                    key={section.heading}
+                    id={sectionId}
+                    className="rounded-2xl border border-border bg-card p-6 md:p-8 shadow-elevation-1 scroll-mt-28"
+                  >
+                    <div className="flex items-start gap-3.5 border-b border-border pb-4">
+                      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-950 font-mono text-xs font-semibold text-white dark:bg-white dark:text-zinc-950">
+                        {numberBadge}
+                      </span>
+                      <h2 className="text-lg md:text-xl font-semibold tracking-tight text-foreground pt-0.5">
+                        {section.heading}
+                      </h2>
+                    </div>
+
+                    <div className="mt-4 space-y-3.5 text-sm md:text-[15px] leading-relaxed text-muted-foreground">
+                      {section.paragraphs.map((p) => (
+                        <p key={p.slice(0, 48)}>{p}</p>
                       ))}
-                    </ul>
-                  )}
-                </section>
-              ))}
+                    </div>
+
+                    {bullets.length > 0 && (
+                      <div className="mt-5 rounded-xl border border-border/70 bg-muted/35 p-4 md:p-5">
+                        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground/80">
+                          Key takeaways &amp; steps
+                        </p>
+                        <ul className="space-y-2.5">
+                          {bullets.map((item) => (
+                            <li
+                              key={item.slice(0, 48)}
+                              className="flex items-start gap-2.5 text-sm leading-relaxed text-foreground/90"
+                            >
+                              <CheckCircle2
+                                className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+                                aria-hidden
+                              />
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
             </div>
 
             {related.length > 0 && (
@@ -179,25 +257,14 @@ export default async function SupportArticlePage({
 
           <aside className="hidden w-64 shrink-0 space-y-4 lg:block xl:w-72">
             <div className="sticky top-24 space-y-4">
-              <div className="rounded-2xl border border-border bg-card p-5">
-                <p className="text-sm font-semibold">On this page</p>
-                <ul className="mt-3 space-y-1.5">
-                  {article.sections.map((section) => (
-                    <li key={section.heading}>
-                      <a
-                        href={`#${slugify(section.heading)}`}
-                        className="block text-sm text-muted-foreground hover:text-foreground"
-                      >
-                        {section.heading}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="rounded-2xl border border-border bg-card p-5">
+              <SupportArticleToc
+                sections={tocSections}
+                contactHref={contactHref}
+              />
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-elevation-1">
                 <ArticleActions article={article} />
               </div>
-              <div className="rounded-2xl border border-border bg-card p-5">
+              <div className="rounded-2xl border border-border bg-card p-5 shadow-elevation-1">
                 <p className="text-sm font-semibold">
                   More in {categoryData.title}
                 </p>

@@ -2,15 +2,18 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PlanDetailBody } from "../../../components/PlanDetailBody";
+import {
+  PlanCollaboratorsCard,
+  PlanDetailBody,
+} from "../../../components/PlanDetailBody";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Calendar, Clock, Users, GraduationCap, ArrowLeft } from "lucide-react";
+import { BackNavigationButton } from "@/components/navigation/BackNavigationButton";
 import { deriveBatchCards } from "@/lib/booking/batch-cards";
-import { formatRole } from "@/components/collaborators/format";
 import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -22,7 +25,7 @@ interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
 }
 
-export function ClassDetails({ plan }: ClassDetailsProps) {
+export function ClassDetails({ plan }: Readonly<ClassDetailsProps>) {
   const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
@@ -38,6 +41,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       }),
     [plan, userTimeZone, hostUserId],
   );
+
+  const durationLabel = `${plan.durationInMonths} ${plan.durationInMonths === 1 ? "month" : "months"}`;
+  const weeklyLabel = `${plan.sessionsPerWeek} ${plan.sessionsPerWeek === 1 ? "session/week" : "sessions/week"}`;
+  const instructor = plan.consultantProfile;
+  const hasInstructorProfile = Boolean(instructor?.id);
 
   return (
     <main className="min-h-screen bg-muted">
@@ -55,13 +63,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
+            <BackNavigationButton
+              fallbackHref="/explore/programs"
+              label="Back to Programs"
+              className="text-white/80 hover:text-white"
+            />
           </div>
         </div>
 
@@ -77,7 +83,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 {formatPrice(plan.price)}
               </span>
               <span className="text-white/60">•</span>
-              <span>{plan.durationInMonths} months</span>
+              <span>{durationLabel}</span>
             </div>
           </div>
         </div>
@@ -98,12 +104,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               <FeatureItem
                 icon={<Calendar className="h-5 w-5" />}
                 label="Duration"
-                value={`${plan.durationInMonths} months`}
+                value={durationLabel}
               />
               <FeatureItem
                 icon={<Clock className="h-5 w-5" />}
                 label="Weekly"
-                value={`${plan.sessionsPerWeek} sessions`}
+                value={weeklyLabel}
               />
               <FeatureItem
                 icon={<Users className="h-5 w-5" />}
@@ -128,6 +134,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               whatsIncluded={plan.whatsIncluded}
               curriculum={plan.classContents}
               curriculumHeading="Course content"
+              brochure={{ planId: plan.id, planType: "classes" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
               faqs={plan.faqs}
@@ -152,98 +159,90 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <div className="sticky top-24 space-y-6">
-              {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Your Instructor</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border">
-                      <Image
-                        src={
-                          plan.consultantProfile?.user?.image ??
-                          "/placeholder-user.jpg"
-                        }
-                        alt={plan.consultantProfile?.user?.name ?? "Instructor"}
-                        fill
-                        className="object-cover"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-foreground">
-                        {plan.consultantProfile?.user?.name}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Expert Instructor
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    An experienced professional dedicated to sharing knowledge
-                    and expertise.
-                  </p>
-                  <Link
-                    href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
-                  >
-                    View Full Profile
-                    <ArrowLeft className="w-4 h-4 rotate-180" />
-                  </Link>
-                </CardContent>
-              </Card>
+            <div className="lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)] space-y-6">
+              {/* Registration Card — primary enrollment CTA above the fold */}
+              <ClientClassRegistration
+                plan={plan}
+                maxParticipants={plan.maxParticipants ?? undefined}
+                consultantUserId={instructor?.user?.id}
+                batch={cards.find((c) => c.canEnrol) ?? cards[0]}
+              />
 
-              {/* Collaborators */}
-              {plan.collaborators && plan.collaborators.length > 0 && (
+              {/* Instructor Card */}
+              {instructor && (
                 <Card className="border-border shadow-sm">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      Co-Instructors
-                    </CardTitle>
+                    <CardTitle className="text-lg">Your Instructor</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    {plan.collaborators.map((collab) => (
+                  <CardContent>
+                    {hasInstructorProfile ? (
                       <Link
-                        key={collab.id}
-                        href={`/explore/experts/${collab.consultantProfile.id}`}
-                        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
+                        href={`/explore/experts/${instructor.id}`}
+                        className="flex items-center gap-4 mb-4 group"
                       >
-                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
+                        <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border shrink-0">
                           <Image
                             src={
-                              collab.consultantProfile.user.image ??
-                              "/placeholder-user.jpg"
+                              instructor.user?.image ?? "/placeholder-user.jpg"
                             }
-                            alt={
-                              collab.consultantProfile.user.name ??
-                              "Co-instructor"
-                            }
+                            alt={instructor.user?.name ?? "Instructor"}
                             fill
                             className="object-cover"
                           />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {collab.consultantProfile.user.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatRole(collab.role)}
+                          <h3 className="font-semibold text-foreground group-hover:underline truncate">
+                            {instructor.user?.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            Expert Instructor
                           </p>
                         </div>
                       </Link>
-                    ))}
+                    ) : (
+                      <div className="flex items-center gap-4 mb-4">
+                        <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border shrink-0">
+                          <Image
+                            src={
+                              instructor.user?.image ?? "/placeholder-user.jpg"
+                            }
+                            alt={instructor.user?.name ?? "Instructor"}
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-foreground truncate">
+                            {instructor.user?.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            Expert Instructor
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-sm text-muted-foreground">
+                      An experienced professional dedicated to sharing knowledge
+                      and expertise.
+                    </p>
+                    {hasInstructorProfile && (
+                      <Link
+                        href={`/explore/experts/${instructor.id}`}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                      >
+                        View Full Profile
+                        <ArrowLeft className="w-4 h-4 rotate-180" />
+                      </Link>
+                    )}
                   </CardContent>
                 </Card>
               )}
 
-              {/* Registration Card */}
-              <ClientClassRegistration
-                plan={plan}
-                maxParticipants={plan.maxParticipants ?? undefined}
-                consultantUserId={plan.consultantProfile?.user?.id}
-                batch={cards.find((c) => c.canEnrol) ?? cards[0]}
+              {/* Collaborators */}
+              <PlanCollaboratorsCard
+                collaborators={plan.collaborators}
+                title="Co-Instructors"
+                fallbackAlt="Co-instructor"
               />
             </div>
           </motion.div>

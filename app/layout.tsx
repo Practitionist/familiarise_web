@@ -4,6 +4,7 @@ import CookieConsentBanner from "@/components/CookieConsent";
 import Footer from "@/components/Footer";
 import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
+import InAppHistoryTracker from "@/components/navigation/InAppHistoryTracker";
 import NavigationProgress from "@/components/NavigationProgress";
 import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
@@ -79,6 +80,7 @@ export default function RootLayout({
       >
         <ReactQueryProvider>
           <AuthSyncProvider />
+          <InAppHistoryTracker />
           <MaintenanceProvider>
             <AnnouncementBarProvider>
               <NavigationProgress />

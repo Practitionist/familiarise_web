@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Building2, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { GlobeIcon } from "@/components/auth/auth-icons";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -332,10 +333,17 @@ export default function InviteAcceptPage({
   const orgLogo = preview.phase === "valid" ? preview.orgLogo : null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-muted/40 p-4">
+      <Link
+        href="/"
+        className="mb-6 inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-foreground uppercase transition-opacity hover:opacity-80"
+      >
+        <GlobeIcon className="h-4 w-4" />
+        Familiarise
+      </Link>
+      <Card className="w-full max-w-md rounded-2xl border-border shadow-elevation-2">
         <CardHeader className="text-center">
-          <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-100 flex items-center justify-center overflow-hidden">
+          <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-muted border border-border flex items-center justify-center overflow-hidden">
             {orgLogo ? (
               <Image
                 src={orgLogo}
@@ -345,7 +353,7 @@ export default function InviteAcceptPage({
                 className="object-cover"
               />
             ) : (
-              <Building2 className="w-6 h-6 text-zinc-600" />
+              <Building2 className="w-6 h-6 text-muted-foreground" />
             )}
           </div>
           <CardTitle>
@@ -354,7 +362,7 @@ export default function InviteAcceptPage({
           {preview.phase === "valid" && (
             <CardDescription>
               You&apos;ve been invited as a{" "}
-              <span className="font-medium text-zinc-700">
+              <span className="font-medium text-foreground">
                 {roleLabel(preview.role)}
               </span>
             </CardDescription>
@@ -385,18 +393,20 @@ export default function InviteAcceptPage({
             <>
               {status === "accepting" || status === "idle" ? (
                 <div className="flex flex-col items-center py-6 gap-2">
-                  <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-                  <p className="text-sm text-zinc-500">Accepting invitation…</p>
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Accepting invitation…
+                  </p>
                 </div>
               ) : status === "success" && result ? (
                 <div className="text-center space-y-2 py-2">
                   <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto" />
-                  <p className="text-base font-medium text-zinc-900">
+                  <p className="text-base font-medium text-foreground">
                     {result.alreadyMember
                       ? "You're already a member!"
                       : "You're in!"}
                   </p>
-                  <p className="text-sm text-zinc-500">
+                  <p className="text-sm text-muted-foreground">
                     {result.alreadyMember
                       ? `Taking you to ${result.organization.name}…`
                       : `Welcome to ${result.organization.name}. Redirecting you now…`}
@@ -404,8 +414,8 @@ export default function InviteAcceptPage({
                 </div>
               ) : (
                 <div className="text-center space-y-3 py-2">
-                  <AlertCircle className="h-10 w-10 text-red-500 mx-auto" />
-                  <p className="text-sm text-zinc-700">
+                  <AlertCircle className="h-10 w-10 text-destructive mx-auto" />
+                  <p className="text-sm text-foreground">
                     {error ?? "We could not accept this invitation."}
                   </p>
                   {errorCode === "NOT_A_CONSULTANT" ? (
@@ -433,8 +443,8 @@ export default function InviteAcceptPage({
             <>
               {preview.phase === "invalid" ? (
                 <div className="text-center space-y-3 py-2">
-                  <AlertCircle className="h-10 w-10 text-red-500 mx-auto" />
-                  <p className="text-sm text-zinc-700">{preview.message}</p>
+                  <AlertCircle className="h-10 w-10 text-destructive mx-auto" />
+                  <p className="text-sm text-foreground">{preview.message}</p>
                   <Link href="/">
                     <Button variant="outline" size="sm">
                       Go to homepage
@@ -443,7 +453,7 @@ export default function InviteAcceptPage({
                 </div>
               ) : (
                 <div className="text-center space-y-3">
-                  <p className="text-sm text-zinc-600">
+                  <p className="text-sm text-muted-foreground">
                     Sign in or create an account to accept this invitation.
                   </p>
                   <div className="flex flex-col gap-2">
@@ -481,23 +491,23 @@ export default function InviteAcceptPage({
 function InviteConsentStep({ onAgree }: Readonly<{ onAgree: () => void }>) {
   return (
     <div className="space-y-4 py-2">
-      <p className="text-sm text-zinc-700">
+      <p className="text-sm text-muted-foreground">
         To join, we need your consent to process your data for these purposes.
         You can withdraw it at any time in Account › Data consent.
       </p>
       <ul className="space-y-2 text-sm">
         {SIGNUP_PURPOSES.map((code) => (
           <li key={code}>
-            <p className="font-medium text-zinc-900">
+            <p className="font-medium text-foreground">
               {PURPOSE_CODE_META[code].label}
             </p>
-            <p className="text-zinc-500">
+            <p className="text-muted-foreground">
               {PURPOSE_CODE_META[code].description}
             </p>
           </li>
         ))}
       </ul>
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-muted-foreground">
         By clicking Agree and join, you agree to our Terms of Service and
         Privacy Policy.
       </p>

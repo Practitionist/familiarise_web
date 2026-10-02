@@ -3,12 +3,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { X, ExternalLink } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { isChromeHidden } from "@/lib/navigation/public-chrome";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import { useActiveAnnouncements } from "@/hooks/useActiveAnnouncements";
 
 const STORAGE_KEY_PREFIX = "announcement_closed_";
 
 const AnnouncementBar = () => {
+  const pathname = usePathname();
+  const chromeHidden = isChromeHidden(pathname);
   const [closedIds, setClosedIds] = useState<Set<string>>(new Set());
   const [mounted, setMounted] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
@@ -36,15 +40,20 @@ const AnnouncementBar = () => {
   );
   const announcement = visibleAnnouncements[0];
 
-  // Update context visibility when announcement changes
+  // Update context visibility when announcement or route changes
   useEffect(() => {
     if (!mounted) return;
+    if (chromeHidden) {
+      setVisible(false);
+      setHeight(0);
+      return;
+    }
     setVisible(!!announcement);
-  }, [announcement, mounted, setVisible]);
+  }, [announcement, chromeHidden, mounted, setHeight, setVisible]);
 
   // Measure actual height with ResizeObserver
   useEffect(() => {
-    if (!barRef.current || !announcement) return;
+    if (!barRef.current || !announcement || chromeHidden) return;
 
     const observer = new ResizeObserver(([entry]) => {
       const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
@@ -53,14 +62,14 @@ const AnnouncementBar = () => {
 
     observer.observe(barRef.current);
     return () => observer.disconnect();
-  }, [setHeight, announcement]);
+  }, [setHeight, announcement, chromeHidden]);
 
-  // Clean up CSS var when unmounting without an announcement
+  // Clean up CSS var when unmounting without an announcement or on non-chrome routes
   useEffect(() => {
-    if (mounted && !announcement) {
+    if (mounted && (!announcement || chromeHidden)) {
       setHeight(0);
     }
-  }, [mounted, announcement, setHeight]);
+  }, [mounted, announcement, chromeHidden, setHeight]);
 
   const handleClose = useCallback(
     (id: string) => {
@@ -75,10 +84,8 @@ const AnnouncementBar = () => {
     [setVisible],
   );
 
-  // Don't render until mounted (prevents hydration mismatch)
-  if (!mounted) return null;
-
-  if (!announcement) return null;
+  // Don't render until mounted (prevents hydration mismatch) or on non-chrome routes
+  if (!mounted || chromeHidden || !announcement) return null;
 
   const backgroundColor = announcement.backgroundColor || "#000000";
   const textColor = announcement.textColor || "#FFFFFF";
@@ -87,7 +94,7 @@ const AnnouncementBar = () => {
     <div
       ref={barRef}
       data-announcement-bar
-      className="w-full text-center py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] fixed top-maintenance z-[1001] flex items-center justify-center gap-4 px-4"
+      className="w-full text-center py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] fixed top-maintenance z-[1001] flex items-center justify-center gap-4 px-4 border-b border-white/10"
       style={{ backgroundColor, color: textColor }}
     >
       <span className="flex-1 text-center text-sm">
@@ -105,7 +112,7 @@ const AnnouncementBar = () => {
       </span>
       <button
         onClick={() => handleClose(announcement.id)}
-        className="p-1 hover:bg-white/20 rounded transition-colors flex-shrink-0"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-white/10 transition-colors flex-shrink-0"
         aria-label="Close announcement"
         style={{ color: textColor }}
       >

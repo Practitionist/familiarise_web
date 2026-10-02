@@ -5,7 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PlanDetailBody } from "../../../components/PlanDetailBody";
+import {
+  PlanCollaboratorsCard,
+  PlanDetailBody,
+} from "../../../components/PlanDetailBody";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -18,6 +21,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
+import { BackNavigationButton } from "@/components/navigation/BackNavigationButton";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -30,66 +34,85 @@ interface WebinarDetailsProps {
   readonly webinarId?: string;
 }
 
+function computeSessionInfo(
+  nextSession: Date | string | undefined,
+  durationInHours: number | null | undefined,
+  timeZone: string,
+): { status: TSessionStatus; display: string } {
+  if (!nextSession) {
+    return { status: "To be announced", display: "To be announced" };
+  }
+
+  const sessionStart = new Date(nextSession);
+  if (durationInHours === null || durationInHours === undefined) {
+    return {
+      status: "Upcoming",
+      display: formatInTimeZone(
+        sessionStart,
+        timeZone,
+        "MMMM d, yyyy 'at' h:mm a zzz",
+      ),
+    };
+  }
+
+  const durationInMilliseconds = durationInHours * 60 * 60 * 1000;
+  const sessionEnd = new Date(sessionStart.getTime() + durationInMilliseconds);
+  const now = new Date();
+
+  if (now > sessionEnd) {
+    return {
+      status: "Completed",
+      display: `Ended on ${formatInTimeZone(sessionEnd, timeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`,
+    };
+  }
+
+  if (now >= sessionStart && now <= sessionEnd) {
+    return {
+      status: "Happening Now",
+      display: `Ends at ${formatInTimeZone(sessionEnd, timeZone, "h:mm a zzz")}`,
+    };
+  }
+
+  return {
+    status: "Upcoming",
+    display: formatInTimeZone(
+      sessionStart,
+      timeZone,
+      "MMMM d, yyyy 'at' h:mm a zzz",
+    ),
+  };
+}
+
+function getStatusBadgeClass(status: TSessionStatus): string {
+  switch (status) {
+    case "Happening Now":
+      return "bg-emerald-500 text-white";
+    case "Completed":
+      return "bg-muted text-muted-foreground";
+    case "Upcoming":
+      return "bg-primary text-primary-foreground";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
 export function WebinarDetails({
   plan,
   nextSession,
   webinarId,
-}: WebinarDetailsProps) {
+}: Readonly<WebinarDetailsProps>) {
   const { formatPrice } = useCurrency();
   const [timeZone, setTimeZone] = useState("UTC");
   useEffect(() => {
     setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
-  let sessionStatus: TSessionStatus = "To be announced";
-  let formattedNextSessionDisplay = "To be announced";
 
-  if (
-    nextSession &&
-    plan.durationInHours !== null &&
-    plan.durationInHours !== undefined
-  ) {
-    const sessionStart = new Date(nextSession);
-    const durationInMilliseconds = plan.durationInHours * 60 * 60 * 1000;
-    const sessionEnd = new Date(
-      sessionStart.getTime() + durationInMilliseconds,
-    );
-    const now = new Date();
+  const { status: sessionStatus, display: formattedNextSessionDisplay } =
+    computeSessionInfo(nextSession, plan.durationInHours, timeZone);
 
-    if (now > sessionEnd) {
-      sessionStatus = "Completed";
-      formattedNextSessionDisplay = `Ended on ${formatInTimeZone(sessionEnd, timeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`;
-    } else if (now >= sessionStart && now <= sessionEnd) {
-      sessionStatus = "Happening Now";
-      formattedNextSessionDisplay = `Ends at ${formatInTimeZone(sessionEnd, timeZone, "h:mm a zzz")}`;
-    } else if (now < sessionStart) {
-      sessionStatus = "Upcoming";
-      formattedNextSessionDisplay = formatInTimeZone(
-        sessionStart,
-        timeZone,
-        "MMMM d, yyyy 'at' h:mm a zzz",
-      );
-    }
-  } else if (nextSession) {
-    sessionStatus = "Upcoming";
-    formattedNextSessionDisplay = formatInTimeZone(
-      new Date(nextSession),
-      timeZone,
-      "MMMM d, yyyy 'at' h:mm a zzz",
-    );
-  }
-
-  const getStatusBadgeClass = (status: TSessionStatus) => {
-    switch (status) {
-      case "Happening Now":
-        return "bg-emerald-500 text-white";
-      case "Completed":
-        return "bg-muted text-muted-foreground";
-      case "Upcoming":
-        return "bg-primary text-primary-foreground";
-      default:
-        return "bg-muted text-muted-foreground";
-    }
-  };
+  const durationLabel = `${plan.durationInHours} ${plan.durationInHours === 1 ? "hour" : "hours"}`;
+  const host = plan.consultantProfile;
+  const hasHostProfile = Boolean(host?.id);
 
   return (
     <main className="min-h-screen bg-muted">
@@ -107,13 +130,11 @@ export function WebinarDetails({
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
-            <Link
-              href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Programs
-            </Link>
+            <BackNavigationButton
+              fallbackHref="/explore/programs"
+              label="Back to Programs"
+              className="text-white/80 hover:text-white"
+            />
           </div>
         </div>
 
@@ -134,7 +155,7 @@ export function WebinarDetails({
                 {formatPrice(plan.price)}
               </span>
               <span className="text-white/60">•</span>
-              <span>{plan.durationInHours} hours</span>
+              <span>{durationLabel}</span>
             </div>
           </div>
         </div>
@@ -165,7 +186,7 @@ export function WebinarDetails({
               <FeatureItem
                 icon={<Clock className="h-5 w-5" />}
                 label="Duration"
-                value={`${plan.durationInHours} hours`}
+                value={durationLabel}
               />
               <FeatureItem
                 icon={<Users className="h-5 w-5" />}
@@ -196,6 +217,7 @@ export function WebinarDetails({
               learningOutcomes={plan.learningOutcomes}
               targetAudience={plan.targetAudience}
               whatsIncluded={plan.whatsIncluded}
+              brochure={{ planId: plan.id, planType: "webinars" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
               faqs={plan.faqs}
@@ -210,93 +232,10 @@ export function WebinarDetails({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <div className="sticky top-24 space-y-6">
-              {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Your Host</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border">
-                      <Image
-                        src={
-                          plan.consultantProfile?.user?.image ??
-                          "/placeholder-user.jpg"
-                        }
-                        alt={plan.consultantProfile?.user?.name ?? "Instructor"}
-                        fill
-                        className="object-cover"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-foreground">
-                        {plan.consultantProfile?.user?.name}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Expert Host
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    An experienced professional dedicated to sharing knowledge
-                    and expertise.
-                  </p>
-                  <Link
-                    href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
-                  >
-                    View Full Profile
-                    <ArrowLeft className="w-4 h-4 rotate-180" />
-                  </Link>
-                </CardContent>
-              </Card>
-
-              {/* Collaborators */}
-              {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      Co-Hosts
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {plan.collaborators.map((collab) => (
-                      <Link
-                        key={collab.id}
-                        href={`/explore/experts/${collab.consultantProfile.id}`}
-                        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
-                      >
-                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
-                          <Image
-                            src={
-                              collab.consultantProfile.user.image ??
-                              "/placeholder-user.jpg"
-                            }
-                            alt={
-                              collab.consultantProfile.user.name ?? "Co-host"
-                            }
-                            fill
-                            className="object-cover"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {collab.consultantProfile.user.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {collab.role.replace(/_/g, " ")}
-                          </p>
-                        </div>
-                      </Link>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Registration Card */}
+            <div className="lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)] space-y-6">
+              {/* Registration Card — primary registration CTA above the fold */}
               <ClientWebinarRegistration
+                title={plan.title}
                 webinarPlanId={plan.id}
                 webinarId={webinarId}
                 price={plan.price}
@@ -310,8 +249,81 @@ export function WebinarDetails({
                 instanceMaxParticipants={
                   plan.webinars?.[0]?.maxParticipants ?? null
                 }
-                consultantUserId={plan.consultantProfile?.user?.id}
+                consultantUserId={host?.user?.id}
                 refundWindowHours={plan.refundWindowHours}
+              />
+
+              {/* Host Card */}
+              {host && (
+                <Card className="border-border shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg">Your Host</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {hasHostProfile ? (
+                      <Link
+                        href={`/explore/experts/${host.id}`}
+                        className="flex items-center gap-4 mb-4 group"
+                      >
+                        <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border shrink-0">
+                          <Image
+                            src={host.user?.image ?? "/placeholder-user.jpg"}
+                            alt={host.user?.name ?? "Host"}
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-foreground group-hover:underline truncate">
+                            {host.user?.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            Expert Host
+                          </p>
+                        </div>
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-4 mb-4">
+                        <div className="relative h-16 w-16 rounded-full overflow-hidden ring-2 ring-border shrink-0">
+                          <Image
+                            src={host.user?.image ?? "/placeholder-user.jpg"}
+                            alt={host.user?.name ?? "Host"}
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-foreground truncate">
+                            {host.user?.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            Expert Host
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-sm text-muted-foreground">
+                      An experienced professional dedicated to sharing knowledge
+                      and expertise.
+                    </p>
+                    {hasHostProfile && (
+                      <Link
+                        href={`/explore/experts/${host.id}`}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                      >
+                        View Full Profile
+                        <ArrowLeft className="w-4 h-4 rotate-180" />
+                      </Link>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Collaborators */}
+              <PlanCollaboratorsCard
+                collaborators={plan.collaborators}
+                title="Co-Hosts"
+                fallbackAlt="Co-host"
               />
             </div>
           </motion.div>

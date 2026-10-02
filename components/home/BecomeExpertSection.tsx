@@ -4,81 +4,70 @@ import { motion } from "framer-motion";
 import { ArrowRight, Clock, Mic, Target } from "lucide-react";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 const EXPERT_BENEFITS = [
-  { icon: Target, label: "Set Your Rates" },
-  { icon: Clock, label: "Flexible Schedule" },
-  { icon: Mic, label: "Build Your Brand" },
+  { icon: Target, label: "Set Your Own Rates" },
+  { icon: Clock, label: "Flexible Availability" },
+  { icon: Mic, label: "1:1s, Classes & Webinars" },
 ];
 
 export function BecomeExpertSection() {
   return (
-    <section className="py-20 md:py-32 bg-gradient-to-br from-zinc-200 via-zinc-100 to-white relative overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute top-1/4 right-1/4 w-[400px] h-[400px] bg-zinc-300/50 rounded-full blur-[100px] animate-blob" />
-        <div className="absolute bottom-1/4 left-1/4 w-[500px] h-[500px] bg-zinc-200/50 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-      </div>
-      <div className="absolute inset-0 dot-pattern-light opacity-40" />
+    <section className="py-20 md:py-28 bg-zinc-950 text-white relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,255,255,0.08),transparent)]" />
+      <div className="pointer-events-none absolute inset-0 grid-pattern opacity-20" />
 
-      <div className="container mx-auto px-4 md:px-6 relative z-10">
+      <div className="max-w-4xl mx-auto px-4 sm:px-8 relative z-10 text-center">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
+          transition={{ duration: 0.45 }}
           viewport={{ once: true }}
-          className="max-w-3xl mx-auto text-center"
         >
-          <Badge
-            variant="secondary"
-            className="mb-4 bg-primary text-primary-foreground hover:bg-primary"
-          >
+          <span className="inline-flex items-center px-3.5 py-1.5 rounded-full bg-white/[0.06] border border-white/10 text-zinc-300 text-xs font-medium mb-6">
             Share Your Expertise
-          </Badge>
-          <h2 className="text-fluid-4xl font-bold text-foreground mb-6 tracking-tight">
-            Become an expert on{" "}
-            <span className="text-muted-foreground">Familiarise</span>
+          </span>
+          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold text-white mb-4 tracking-tight">
+            Become a verified expert on{" "}
+            <span className="silver-text">Familiarise</span>
           </h2>
-          <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-            Join our network of professionals. Share your knowledge, build your
-            personal brand, and earn while helping others grow.
+          <p className="text-base md:text-lg text-zinc-400 mb-8 max-w-2xl mx-auto leading-relaxed">
+            Monetize your domain expertise through 1-on-1 consultations,
+            mentorship subscriptions, cohort classes, and live webinars — while
+            we handle scheduling, video, and global payouts.
           </p>
 
-          {/* Expert benefits */}
-          <div className="grid sm:grid-cols-3 gap-6 mb-10">
-            {EXPERT_BENEFITS.map((item, i) => (
-              <motion.div
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8 mb-10">
+            {EXPERT_BENEFITS.map((item) => (
+              <div
                 key={item.label}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: i * 0.1 }}
-                viewport={{ once: true }}
-                className="flex items-center justify-center gap-2 text-foreground"
+                className="inline-flex items-center gap-2 text-sm text-zinc-300"
               >
-                <item.icon className="w-5 h-5" />
+                <item.icon className="w-4 h-4 text-zinc-400" />
                 <span className="font-medium">{item.label}</span>
-              </motion.div>
+              </div>
             ))}
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/become-an-expert">
-              <Button
-                size="lg"
-                className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 h-14 text-base rounded-xl shadow-elevation-3"
-              >
-                Apply as Expert
-                <ArrowRight className="ml-2 w-5 h-5" />
-              </Button>
-            </Link>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5">
+            <Button
+              asChild
+              size="lg"
+              className="h-12 px-8 rounded-xl bg-white text-zinc-900 hover:bg-zinc-100 font-medium w-full sm:w-auto"
+            >
+              <Link href="/become-an-expert">
+                Apply as an Expert
+                <ArrowRight className="ml-2 w-4 h-4" />
+              </Link>
+            </Button>
             <Button
               asChild
               size="lg"
               variant="outline"
-              className="px-8 h-14 text-base rounded-xl border-border hover:bg-muted"
+              className="h-12 px-8 rounded-xl border-white/15 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white w-full sm:w-auto"
             >
-              <Link href="#how-it-works">Learn More</Link>
+              <Link href="/explore/experts">Browse Verified Experts</Link>
             </Button>
           </div>
         </motion.div>

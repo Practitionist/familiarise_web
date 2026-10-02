@@ -1,7 +1,10 @@
 import { cache } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import {
+  eventPlanDiscoverableWhere,
+  oneOnOnePlanDiscoverableWhere,
+} from "@/lib/api/plans/visibility";
 import type { TReviewTrackPresence } from "@/types/review";
 import {
   publicReviewSelect,
@@ -10,7 +13,7 @@ import {
 
 /**
  * Server-side data access for the expert detail page.
- * Uses the public access pattern (verified only, public user fields).
+ * Uses the public access pattern (non-rejected, non-deleted, public user fields).
  */
 
 export const getConsultantDetail = cache(async (consultantId: string) => {
@@ -24,7 +27,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
   const consultant = await prisma.consultantProfile.findUnique({
     where: {
       id: consultantId,
-      verificationStatus: "VERIFIED",
+      verificationStatus: { not: "REJECTED" },
       // #781 §B — soft-deleted profiles leave public surfaces (treated as not-found)
       deletedAt: null,
     },
@@ -107,8 +110,8 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
           },
         },
       },
-      webinarPlans: true,
-      classPlans: true,
+      webinarPlans: { where: eventPlanDiscoverableWhere() },
+      classPlans: { where: eventPlanDiscoverableWhere() },
     },
   });
   if (!consultant) return null;

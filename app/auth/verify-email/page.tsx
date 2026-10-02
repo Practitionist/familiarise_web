@@ -18,7 +18,9 @@ import {
   useSession,
   getSession,
 } from "@/lib/auth-client";
+import { reportSentryError } from "@/lib/observability/report";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
+import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -131,7 +133,12 @@ function VerifyEmailContent() {
         title: "Verification email sent",
         description: `If ${email} belongs to an unverified account, the link is on its way. It expires in 1 hour.`,
       });
-    } catch {
+    } catch (err) {
+      reportSentryError(err, {
+        subsystem: "auth",
+        op: "verify_email_resend",
+        expected: false,
+      });
       toast({
         title: "Couldn't send the email",
         description: "Please try again in a moment.",
@@ -178,50 +185,60 @@ function VerifyEmailContent() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-6">
       <div className="w-full max-w-md text-white">
-        <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
-          {error ? "Link expired or invalid" : "Verify your email"}
-        </h1>
-        <p className="text-sm md:text-base text-zinc-400 mb-6">
-          {error ??
-            "Check your inbox for the verification link we sent. It expires in 1 hour. Enter your email below to send a new one."}
-        </p>
-
-        <div className="grid gap-2">
-          <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            placeholder="name@example.com"
-            autoCapitalize="none"
-            autoComplete="email"
-            autoCorrect="off"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={resending}
-          />
-        </div>
-        <Button
-          type="button"
-          className="w-full mt-4 bg-zinc-800 hover:bg-zinc-700"
-          onClick={handleResend}
-          disabled={resending}
-        >
-          {resending ? "Sending…" : "Resend verification email"}
-        </Button>
-
-        {/* The catalog's next step for the bad-link copy above, when it is not
-            already the button directly above. */}
-        <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
-
-        <p className="mt-6 text-xs text-zinc-400">
-          Already verified?{" "}
+        <div className="mb-6 flex justify-center">
           <Link
-            href="/auth/signin"
-            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            href="/"
+            className="inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-white uppercase"
           >
-            Sign in
+            <GlobeIcon className="h-5 w-5" /> Familiarise
           </Link>
-        </p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-zinc-900/50 p-8">
+          <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
+            {error ? "Link expired or invalid" : "Verify your email"}
+          </h1>
+          <p className="text-sm md:text-base text-zinc-400 mb-6">
+            {error ??
+              "Check your inbox for the verification link we sent. It expires in 1 hour. Enter your email below to send a new one."}
+          </p>
+
+          <div className="grid gap-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="name@example.com"
+              autoCapitalize="none"
+              autoComplete="email"
+              autoCorrect="off"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={resending}
+            />
+          </div>
+          <Button
+            type="button"
+            className="w-full mt-4 bg-white text-black hover:bg-white/90"
+            onClick={handleResend}
+            disabled={resending}
+          >
+            {resending ? "Sending…" : "Resend verification email"}
+          </Button>
+
+          {/* The catalog's next step for the bad-link copy above, when it is not
+              already the button directly above. */}
+          <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
+
+          <p className="mt-6 text-xs text-zinc-400">
+            Already verified?{" "}
+            <Link
+              href="/auth/signin"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );

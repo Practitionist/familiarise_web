@@ -1,9 +1,7 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
@@ -19,30 +17,29 @@ import {
   webinarSearchParamsSchema,
   type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
-  paymentGateways,
   reportPaymentsError,
 } from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
+import { calculatePricing } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import {
+  CheckoutConsultantHeader,
+  CheckoutErrorState,
+  CheckoutPaymentMethodsCard,
+  CheckoutPricingBreakdown,
+} from "@/app/checkout/components/CheckoutSharedSections";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -249,7 +246,8 @@ export default function WebinarCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -445,6 +443,24 @@ export default function WebinarCheckoutPage({
       queryClient.setQueryData(checkoutPlanKey, fresh);
 
       if (
+        freshWebinar.status === "COMPLETED" ||
+        freshWebinar.status === "CANCELLED"
+      ) {
+        toast({
+          title:
+            freshWebinar.status === "COMPLETED"
+              ? "This webinar has ended"
+              : "This webinar has been cancelled",
+          description:
+            freshWebinar.status === "COMPLETED"
+              ? "This webinar has already ended, so we stopped the payment before you were charged."
+              : "This webinar has been cancelled, so we stopped the payment before you were charged.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      if (
         getWebinarCapacity({
           webinar: freshWebinar,
           plan: { maxParticipants: fresh.data.maxParticipants },
@@ -462,7 +478,8 @@ export default function WebinarCheckoutPage({
         return false;
       }
       return true;
-    } catch {
+    } catch (revalidateErr) {
+      reportPaymentsError(revalidateErr);
       return true;
     }
   }, [
@@ -550,38 +567,7 @@ export default function WebinarCheckoutPage({
   }
 
   if (error) {
-    return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
-        <div
-          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
-          role="alert"
-        >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
-            <svg
-              className="h-6 w-6 text-background/70"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
-              />
-            </svg>
-          </div>
-          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-background/70 text-sm">{error}</p>
-          <button
-            onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Go back
-          </button>
-        </div>
-      </div>
-    );
+    return <CheckoutErrorState error={error} />;
   }
 
   const planDetails = planData?.data;
@@ -611,58 +597,25 @@ export default function WebinarCheckoutPage({
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)]">
         <p>Essential webinar data is missing. Please try again later.</p>
       </div>
     );
   }
 
   return (
-    <>
+    <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar className="w-12 h-12 border shrink-0">
-              <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
-              />
-              <AvatarFallback>
-                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">
-                {userDetails?.name || "Consultant Name"}
-              </div>
-              <div className="text-sm text-muted-foreground truncate">
-                {consultantDetails?.headline ||
-                  consultantDetails?.domain?.name ||
-                  "Consultant"}
-              </div>
-              {userDetails?.workExperiences &&
-                userDetails.workExperiences.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
-                        key={`checkout-webinar-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={20}
-                        className="border-border"
-                      />
-                    ))}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="text-right min-w-0">
-            <div className="font-semibold">Webinar</div>
-            <div className="text-sm text-muted-foreground truncate">
-              {planDetails?.title || "Online Session"}
-            </div>
-          </div>
-        </div>
+        <CheckoutConsultantHeader
+          name={userDetails?.name}
+          image={userDetails?.image}
+          headline={
+            consultantDetails?.headline || consultantDetails?.domain?.name
+          }
+          workExperiences={userDetails?.workExperiences}
+          planTypeLabel="Webinar"
+          planTitle={planDetails?.title || "Online Session"}
+        />
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Webinar Details</div>
@@ -757,7 +710,11 @@ export default function WebinarCheckoutPage({
             <Button
               variant="outline"
               onClick={() => handleApplyDiscount()}
-              disabled={isApplyingDiscount || !!appliedDiscount}
+              disabled={
+                isApplyingDiscount ||
+                !!appliedDiscount ||
+                !discountCodeInput.trim()
+              }
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
             </Button>
@@ -766,7 +723,7 @@ export default function WebinarCheckoutPage({
             <div className="text-sm text-red-500">{discountError}</div>
           )}
           {appliedDiscount && (
-            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-md">
+            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-lg border border-green-200">
               <div className="min-w-0">
                 <div className="font-medium text-green-700 truncate">
                   {appliedDiscount.code}
@@ -780,7 +737,7 @@ export default function WebinarCheckoutPage({
               <Button
                 variant="ghost"
                 size="sm"
-                className="shrink-0"
+                className="shrink-0 text-green-700 hover:text-green-800"
                 onClick={() => {
                   setAppliedDiscount(null);
                   setDiscountError(null);
@@ -790,27 +747,6 @@ export default function WebinarCheckoutPage({
               </Button>
             </div>
           )}
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium">WEBINAR10</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 10% off your webinar registration
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-muted-foreground">10% off</div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleApplyDiscount("WEBINAR10")}
-                  disabled={isApplyingDiscount || !!appliedDiscount}
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
         <Separator className="bg-border" />
         <ReferralCreditsBlock
@@ -822,186 +758,69 @@ export default function WebinarCheckoutPage({
           formatPrice={formatPrice}
         />
       </div>
-      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
-        <Card className="border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-foreground">Webinar Pricing</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Registration Fee</div>
-                <div>{formatPrice(planDetails?.price || 0)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <span className="font-semibold">Includes</span>
-                </div>
-                <div className="font-semibold">
-                  <ul className="list-disc">
-                    <li>Live webinar access</li>
-                    <li>Q&A session</li>
-                    <li>Recording access</li>
-                    <li>Certificate of attendance</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <Separator className="bg-border" />
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Subtotal</div>
-                <div>{formatPrice(pricing.subtotal)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.discountAmount > 0 && (
-                <div className="flex items-center justify-between text-green-600">
-                  <div>
-                    Discount{" "}
-                    {pricing.discountPercent > 0 &&
-                      `(${formatPercentage(pricing.discountPercent)})`}
-                  </div>
-                  <div>-{formatPrice(pricing.discountAmount)}</div>
-                </div>
-              )}
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              {/* #1780 D-6 — the host's free-cancellation window. */}
-              <FreeCancellationLine
-                startsAt={nextSession?.startsAt}
-                windowHours={planDetails?.refundWindowHours}
-                className="text-xs text-muted-foreground"
-              />
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-            </div>
-          </CardContent>
-        </Card>
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <div className="font-semibold">Payment</div>
-            <div className="text-muted-foreground">
-              Select your preferred payment method
-            </div>
-          </div>
-          {paymentGateways.map((gateway) => (
-            <Card key={gateway.name} className="border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">
-                  {gateway.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-foreground">
-                        Credit/Debit Card
-                      </div>
-                      <div className="text-sm text-muted-foreground/70">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {isSoldOut ? (
-                    <Button variant="outline" disabled>
-                      Sold out
-                    </Button>
-                  ) : gateway.isActive ? (
-                    <div className="flex gap-2">
-                      {validatedSearchParams &&
-                      gateway.gateway === "RAZORPAY" ? (
-                        <RazorpayCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
-                            planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
-                            paymentGateway: "RAZORPAY",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                          onPaymentError={razorpayHandlers.onPaymentError}
-                          onBeforeCheckout={revalidateSeatsBeforePayment}
-                          disabled={isMaintenanceBlocked || isSoldOut}
-                        />
-                      ) : validatedSearchParams &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
-                            planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
-                            paymentGateway: "STRIPE",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
-                          onBeforeCheckout={revalidateSeatsBeforePayment}
-                          disabled={isMaintenanceBlocked || isSoldOut}
-                        />
-                      ) : null}
-                      {process.env.NODE_ENV === "development" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
-                          }
-                        >
-                          {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                              Processing...
-                            </>
-                          ) : (
-                            `Mock Pay (${gateway.name})`
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <Button variant="outline" disabled>
-                      Coming Soon
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+      <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
+        <CheckoutPricingBreakdown
+          title="Webinar Pricing"
+          feeLabel="Registration Fee"
+          feeAmountPaise={planDetails?.price || 0}
+          includes={[
+            "Live webinar access",
+            "Q&A session",
+            "Recording access",
+            "Certificate of attendance",
+          ]}
+          pricing={pricing}
+          formatPrice={formatPrice}
+          selectedOrganizationId={selectedOrganizationId}
+          afterTotalNotice={
+            <FreeCancellationLine
+              startsAt={nextSession?.startsAt}
+              windowHours={planDetails?.refundWindowHours}
+              className="text-xs text-muted-foreground"
+            />
+          }
+        />
+        <CheckoutPaymentMethodsCard
+          buildCheckoutData={(gateway) => {
+            if (
+              !validatedSearchParams ||
+              !targetWebinar ||
+              targetWebinar.status === "COMPLETED" ||
+              targetWebinar.status === "CANCELLED"
+            ) {
+              return null;
+            }
+            return createCheckoutData({
+              appointmentType: "WEBINAR",
+              planId: planDetails.id,
+              eventId: validatedSearchParams.eventId,
+              paymentGateway: gateway,
+              discountCode: appliedDiscount?.code,
+              displayCurrency: currency,
+              useReferralCredits: selectedOrganizationId
+                ? false
+                : useReferralCredits,
+              organizationId: selectedOrganizationId ?? undefined,
+              ...billingState.bodyField,
+            });
+          }}
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={razorpayHandlers.onPaymentError}
+          onStripeSuccess={stripeHandlers.onPaymentSuccess}
+          onStripeError={stripeHandlers.onPaymentError}
+          onMockPay={(gateway) => handleCheckout(gateway, true)}
+          isCheckoutProcessing={isCheckoutProcessing}
+          processingGateway={processingGateway}
+          isMaintenanceBlocked={
+            isMaintenanceBlocked ||
+            !targetWebinar ||
+            targetWebinar.status === "COMPLETED" ||
+            targetWebinar.status === "CANCELLED"
+          }
+          isSoldOut={isSoldOut}
+          onBeforeCheckout={revalidateSeatsBeforePayment}
+        />
       </div>
-    </>
+    </div>
   );
 }

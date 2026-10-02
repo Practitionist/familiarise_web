@@ -2,30 +2,23 @@ import { Suspense } from "react";
 
 import { HeroSection } from "@/components/home/HeroSection";
 import { TrustedBySection } from "@/components/home/TrustedBySection";
-import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { CategoriesSection } from "@/components/home/CategoriesSection";
-import { BenefitsSection } from "@/components/home/BenefitsSection";
-import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
+import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
-import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
-import { TestimonialsSection } from "@/components/home/TestimonialsSection";
-import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
-import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
-import { EnterpriseSection } from "@/components/home/EnterpriseSection";
+import { TestimonialsSection } from "@/components/home/TestimonialsSection";
 import { FAQSection } from "@/components/home/FAQSection";
-import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
+import { EnterpriseSection } from "@/components/home/EnterpriseSection";
+import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
+import { LandingMotionProvider } from "@/components/home/LandingMotionProvider";
 import {
   getHomeExperts,
   getHomeReviews,
-  getHomeImages,
   getHomeStats,
 } from "@/lib/data/home";
 import { buildExpertHeroStats } from "@/lib/data/public-stats";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
-  BenefitsSkeleton,
   FeaturedExpertsSkeleton,
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
@@ -57,22 +50,9 @@ export const revalidate = 3600;
 // connect, #932) now throws past its Suspense boundary rather than rendering the
 // section empty, because this route is ISR and an empty section would be cached
 // and replayed for the whole window (#1119).
-//
-// Be clear about the trade, because it is worse for one visitor than it used to
-// be: this replaces the entire landing page with app/error.tsx, hero and all, not
-// just the section that failed. It is the right trade only because `/` is
-// prerendered at build, so a cached copy almost always exists and a failed
-// revalidation keeps serving it. The exposed window is a regeneration with no
-// cached copy — i.e. straight after a revalidatePath purge from a write site.
-// (FAMILIARISE_WEB-A)
-async function BenefitsLoader() {
-  const images = await withBuildTimeRetry(getHomeImages);
-  return <BenefitsSection images={images} />;
-}
-
 async function FeaturedExpertsLoader() {
   const experts = await withBuildTimeRetry(getHomeExperts);
-  // Hide the section rather than render an empty marquee under its headers when
+  // Hide the section rather than render an empty grid under its headers when
   // there's nothing to show — whether a transient timeout degraded it or the
   // platform genuinely has no featured experts yet. (#934 review.)
   if (experts.length === 0) return null;
@@ -82,12 +62,7 @@ async function FeaturedExpertsLoader() {
 async function ReviewsLoader() {
   const reviews = await withBuildTimeRetry(getHomeReviews);
   if (reviews.length === 0) return null;
-  return (
-    <>
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-      <UpcomingEventsSection reviews={reviews} />
-    </>
-  );
+  return <TestimonialsSection reviews={reviews} isLoading={false} />;
 }
 
 // #1490 — the hero and the category cards render real figures now, so the page
@@ -101,58 +76,40 @@ export default async function Home() {
   const stats = await withBuildTimeRetry(getHomeStats);
 
   return (
-    <main className="flex-1 w-full overflow-hidden">
-      {/* Hero - Black with animated orbs */}
-      <HeroSection stats={buildExpertHeroStats(stats)} />
+    <LandingMotionProvider>
+      <main className="flex-1 w-full overflow-hidden">
+        {/* 1. Hero — Dark two-column layout with inline search & booking preview */}
+        <HeroSection stats={buildExpertHeroStats(stats)} />
 
-      {/* Trusted By / Logo Cloud - Dark */}
-      <TrustedBySection />
+        {/* 2. Trusted By — Dark logo strip */}
+        <TrustedBySection />
 
-      {/* Our Offerings - Dark charcoal with dot pattern */}
-      <FeaturesSection />
+        {/* 3. Browse by Domain — Crisp light grid with real consultant counts */}
+        <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
 
-      {/* Browse by Category - Light gradient */}
-      <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
+        {/* 4. Session Formats & Built-in Platform Capabilities — Dark bento */}
+        <FeaturesSection />
 
-      {/* Why Familiarise / Benefits - Light silver gradient */}
-      <Suspense fallback={<BenefitsSkeleton />}>
-        <BenefitsLoader />
-      </Suspense>
+        {/* 5. Featured Experts — Static 4-column bento grid */}
+        <Suspense fallback={<FeaturedExpertsSkeleton />}>
+          <FeaturedExpertsLoader />
+        </Suspense>
 
-      {/* Success Stories - Dark gradient */}
-      <SuccessStoriesSection />
+        {/* 6. How It Works — 3-step horizontal flow on bg-muted */}
+        <HowItWorksSection />
 
-      {/* Featured Experts Marquee - White with dot pattern */}
-      <Suspense fallback={<FeaturedExpertsSkeleton />}>
-        <FeaturedExpertsLoader />
-      </Suspense>
+        {/* 7. Verified Reviews & Trust Guarantees — Static 3-column grid on dark */}
+        <Suspense fallback={<TestimonialsSkeleton />}>
+          <ReviewsLoader />
+        </Suspense>
 
-      {/* Platform Features - Light with diagonal stripes */}
-      <PlatformFeaturesSection />
+        {/* 8. FAQ — Single-container editorial accordion */}
+        <FAQSection />
 
-      {/* Testimonials Marquee + Upcoming Events - Dark */}
-      <Suspense fallback={<TestimonialsSkeleton />}>
-        <ReviewsLoader />
-      </Suspense>
-
-      {/* Trust & Security Badges - Dark strip */}
-      <TrustBadgesSection />
-
-      {/* How It Works - Light with circles */}
-      <HowItWorksSection />
-
-      {/* For teams & organisations - Dark. Sits next to the expert CTA so the
-          two "which side are you on?" paths are adjacent at the page's end. */}
-      <EnterpriseSection />
-
-      {/* Become an Expert CTA - Light mesh gradient */}
-      <BecomeExpertSection />
-
-      {/* Explore Testimonials - Dark */}
-      <SatisfiedTestimonial />
-
-      {/* FAQ - Clean white */}
-      <FAQSection />
-    </main>
+        {/* 9. Closing Audience Paths — Enterprise (bg-muted) + Become an Expert (bg-zinc-950) */}
+        <EnterpriseSection />
+        <BecomeExpertSection />
+      </main>
+    </LandingMotionProvider>
   );
 }

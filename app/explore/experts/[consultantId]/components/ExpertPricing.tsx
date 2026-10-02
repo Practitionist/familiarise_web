@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-import { User } from "@prisma/client";
+import type { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
 import { TIntervalTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,8 +13,8 @@ import {
   RotateCcw,
   CheckCircle,
 } from "lucide-react";
-import { motion } from "framer-motion";
-import { useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { useEffect, useState } from "react";
 
 import { PricingOption } from "../defaults";
 import { bookingModeBadge } from "@/lib/booking/booking-mode";
@@ -29,7 +28,7 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
 };
 
 interface ExpertPricingProps {
-  userDetails: User;
+  userDetails?: User;
   consultantDetails: ConsultantDetailData;
   handleConsultationBooking: (consultationPlanId: string) => Promise<void>;
   handleSubscriptionBooking: (
@@ -40,17 +39,27 @@ interface ExpertPricingProps {
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
-  renderCalendar: () => JSX.Element[];
+  renderCalendar: (durationInHours: number) => JSX.Element[];
   slotTimings: TIntervalTiming[];
   selectedSlot: TIntervalTiming | null;
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
   timezone: string;
   autoOpenTrial?: boolean;
   onRefreshSlots?: () => void;
+  slotsLoading?: boolean;
+  slotsError?: boolean;
+  initialPlanId?: string | null;
+  initialService?: "consultations" | "subscriptions";
+  activeServiceTab?: "consultations" | "subscriptions";
+  onServiceTabChange?: (tab: "consultations" | "subscriptions") => void;
+  selectedConsultationPlanId?: string;
+  onSelectConsultationPlanId?: (planId: string) => void;
+  selectedSubscriptionPlanId?: string;
+  onSelectSubscriptionPlanId?: (planId: string) => void;
+  bookingRequest?: number;
 }
 
 export function ExpertPricing({
-  userDetails,
   consultantDetails,
   handleConsultationBooking,
   handleSubscriptionBooking,
@@ -65,10 +74,40 @@ export function ExpertPricing({
   timezone,
   autoOpenTrial,
   onRefreshSlots,
+  slotsLoading,
+  slotsError,
+  initialPlanId,
+  initialService,
+  activeServiceTab: controlledServiceTab,
+  onServiceTabChange,
+  selectedConsultationPlanId,
+  onSelectConsultationPlanId,
+  selectedSubscriptionPlanId,
+  onSelectSubscriptionPlanId,
+  bookingRequest = 0,
 }: Readonly<ExpertPricingProps>) {
-  const [activeServiceTab, setActiveServiceTab] = useState<
+  const reduceMotion = useReducedMotion();
+  const [internalServiceTab, setInternalServiceTab] = useState<
     "consultations" | "subscriptions"
-  >(autoOpenTrial ? "subscriptions" : "consultations");
+  >(
+    initialService ??
+      (autoOpenTrial ? "subscriptions" : "consultations"),
+  );
+  const activeServiceTab = controlledServiceTab ?? internalServiceTab;
+  const handleServiceTabChange = (tab: "consultations" | "subscriptions") => {
+    setInternalServiceTab(tab);
+    onServiceTabChange?.(tab);
+  };
+
+  useEffect(() => {
+    if (initialService) {
+      setInternalServiceTab(initialService);
+      onServiceTabChange?.(initialService);
+    } else if (autoOpenTrial) {
+      setInternalServiceTab("subscriptions");
+      onServiceTabChange?.("subscriptions");
+    }
+  }, [initialService, autoOpenTrial, onServiceTabChange]);
 
   const formatPricingOptions = (
     // Rows from the detail fetcher, not raw Prisma types — keeps price: number (#780)
@@ -107,10 +146,6 @@ export function ExpertPricing({
           plan.durationInHours,
         );
 
-        // The consultant's own inclusions win. The duration switch below is a
-        // placeholder from before `whatsIncluded` existed: it asserted
-        // "Document verification" and "Priority support" for every plan of a
-        // given length, whether or not that consultant offered either.
         let features: string[] = plan.whatsIncluded ?? [];
         if (features.length === 0) {
           switch (plan.durationInHours) {
@@ -140,9 +175,6 @@ export function ExpertPricing({
         return {
           id: plan.id,
           title: durationLabel,
-          // Surface the real plan title so duplicate-duration plans
-          // (e.g. "Career Strategy Session" vs "[ATEST] Career Strategy
-          // Session") stay distinguishable in the panel.
           description:
             plan.subtitle ||
             plan.title ||
@@ -180,10 +212,6 @@ export function ExpertPricing({
           ],
         };
       }
-      // Both branches above cover every (type, plan-shape) combination
-      // we ever pass in. Throw rather than returning a dummy `id: ""`
-      // option — that empty id used to risk colliding with real plan ids
-      // as a tab key, even though the branch is unreachable in practice.
       throw new Error(
         `formatPricingOptions: unreachable plan shape (type=${type}, plan id=${"id" in plan ? plan.id : "?"})`,
       );
@@ -191,13 +219,13 @@ export function ExpertPricing({
   };
 
   const consultationOptions = formatPricingOptions(
-    consultantDetails.consultationPlans.sort(
+    [...consultantDetails.consultationPlans].sort(
       (a, b) => a.durationInHours - b.durationInHours,
     ),
     "consultation",
   );
   const subscriptionOptions = formatPricingOptions(
-    consultantDetails.subscriptionPlans.sort(
+    [...consultantDetails.subscriptionPlans].sort(
       (a, b) => a.durationInMonths - b.durationInMonths,
     ),
     "subscription",
@@ -207,33 +235,22 @@ export function ExpertPricing({
   const hasSubscriptions = subscriptionOptions.length > 0;
 
   return (
-    <div className="sticky top-24 space-y-4">
-      {/* Profile Image Card — refined, no flat border */}
-      <div className="rounded-3xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
-        <div className="aspect-[4/3] relative">
-          <Image
-            alt="Profile"
-            className="object-cover"
-            fill
-            src={userDetails.image || "/placeholder.svg"}
-            sizes="(max-width: 768px) 100vw, 400px"
-          />
-        </div>
-      </div>
-
-      {/* Pricing Card — glassmorphism dark */}
-      <div className="bg-zinc-950/90 backdrop-blur-xl rounded-3xl p-6 shadow-2xl shadow-black/40 border border-white/[0.07] ring-1 ring-white/[0.04]">
+    <div className="space-y-4 xl:sticky xl:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)]">
+      {/* Focused booking card using semantic tokens */}
+      <div className="bg-card rounded-2xl border border-border p-6 shadow-elevation-1">
         {/* Header */}
         <div className="text-center mb-5">
-          <h3 className="text-xl font-bold text-white mb-1">Book a Session</h3>
-          <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">
+          <h3 className="text-xl font-bold text-foreground mb-1">
+            Book a Session
+          </h3>
+          <p className="text-xs text-muted-foreground tracking-wide uppercase font-medium">
             Choose your preferred option
           </p>
           {/* #1703 D1 — metadata only: how this expert takes bookings.
               #1775 C-6 — consultations only; a plan is always paid at purchase. */}
           {hasConsultations &&
             (!hasSubscriptions || activeServiceTab === "consultations") && (
-              <span className="mt-3 inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
+              <span className="mt-3 inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                 {bookingModeBadge(
                   consultantDetails.bookingMode,
                   consultantDetails.acceptingRequests,
@@ -246,27 +263,31 @@ export function ExpertPricing({
           <Tabs
             value={activeServiceTab}
             onValueChange={(v) =>
-              setActiveServiceTab(v as "consultations" | "subscriptions")
+              handleServiceTabChange(v as "consultations" | "subscriptions")
             }
             className="w-full"
           >
             {/* Segmented pill toggle for service type */}
-            <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm mb-6 h-auto">
+            <TabsList className="relative flex p-1 bg-muted rounded-2xl border border-border mb-6 h-auto">
               {(["consultations", "subscriptions"] as const).map((tab) => (
                 <TabsTrigger
                   key={tab}
                   value={tab}
-                  className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl flex items-center justify-center gap-2 data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto"
+                  className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl flex items-center justify-center gap-2 data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-muted-foreground transition-colors duration-300 z-10 h-auto"
                 >
                   {activeServiceTab === tab && (
                     <motion.div
                       layoutId="service-type-pill"
-                      className="absolute inset-0 bg-white rounded-xl shadow-sm"
-                      transition={{
-                        type: "spring",
-                        bounce: 0.15,
-                        duration: 0.35,
-                      }}
+                      className="absolute inset-0 bg-card rounded-xl shadow-sm border border-border/60"
+                      transition={
+                        reduceMotion
+                          ? { duration: 0 }
+                          : {
+                              type: "spring",
+                              bounce: 0.15,
+                              duration: 0.35,
+                            }
+                      }
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2">
@@ -296,6 +317,12 @@ export function ExpertPricing({
                 setSelectedSlot={setSelectedSlot}
                 timezone={timezone}
                 onRefreshSlots={onRefreshSlots}
+                slotsLoading={slotsLoading}
+                slotsError={slotsError}
+                initialPlanId={initialPlanId}
+                selectedPlanId={selectedConsultationPlanId}
+                onSelectPlanId={onSelectConsultationPlanId}
+                bookingRequest={bookingRequest}
               />
             </TabsContent>
             <TabsContent value="subscriptions">
@@ -305,6 +332,10 @@ export function ExpertPricing({
                 handleSubscriptionBooking={handleSubscriptionBooking}
                 timezone={timezone}
                 autoOpenTrial={autoOpenTrial}
+                initialPlanId={initialPlanId}
+                selectedPlanId={selectedSubscriptionPlanId}
+                onSelectPlanId={onSelectSubscriptionPlanId}
+                bookingRequest={bookingRequest}
               />
             </TabsContent>
           </Tabs>
@@ -323,6 +354,12 @@ export function ExpertPricing({
             setSelectedSlot={setSelectedSlot}
             timezone={timezone}
             onRefreshSlots={onRefreshSlots}
+            slotsLoading={slotsLoading}
+            slotsError={slotsError}
+            initialPlanId={initialPlanId}
+            selectedPlanId={selectedConsultationPlanId}
+            onSelectPlanId={onSelectConsultationPlanId}
+            bookingRequest={bookingRequest}
           />
         ) : hasSubscriptions ? (
           <SubscriptionPricingToggle
@@ -330,25 +367,30 @@ export function ExpertPricing({
             consultantDetails={consultantDetails}
             handleSubscriptionBooking={handleSubscriptionBooking}
             timezone={timezone}
+            autoOpenTrial={autoOpenTrial}
+            initialPlanId={initialPlanId}
+            selectedPlanId={selectedSubscriptionPlanId}
+            onSelectPlanId={onSelectSubscriptionPlanId}
+            bookingRequest={bookingRequest}
           />
         ) : (
           <div className="text-center py-8">
-            <p className="text-zinc-400">No pricing plans available</p>
+            <p className="text-muted-foreground">No pricing plans available</p>
           </div>
         )}
 
         {/* Trust Badges — chip style */}
-        <div className="mt-6 pt-5 border-t border-white/[0.06]">
+        <div className="mt-6 pt-5 border-t border-border">
           <div className="flex items-center justify-center gap-2 flex-wrap">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted border border-border text-xs text-muted-foreground">
               <Shield className="w-3 h-3" />
               Secure
             </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted border border-border text-xs text-muted-foreground">
               <RotateCcw className="w-3 h-3" />
               Money-back
             </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-500">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted border border-border text-xs text-muted-foreground">
               <CheckCircle className="w-3 h-3" />
               Verified
             </span>

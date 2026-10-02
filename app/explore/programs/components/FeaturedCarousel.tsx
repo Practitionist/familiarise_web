@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
@@ -33,16 +34,18 @@ function SkeletonSlide() {
 
 function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
   const { formatPrice } = useCurrency();
+  const reduceMotion = useReducedMotion();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const startAutoScroll = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (programs.length <= 1) return;
+    if (programs.length <= 1 || isPaused || reduceMotion) return;
     intervalRef.current = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % programs.length);
     }, 5000);
-  }, [programs.length]);
+  }, [programs.length, isPaused, reduceMotion]);
 
   useEffect(() => {
     startAutoScroll();
@@ -75,7 +78,17 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
     : `/explore/programs/plans/webinars/${program.id}`;
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onFocusCapture={() => setIsPaused(true)}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setIsPaused(false);
+        }
+      }}
+    >
       <Link
         href={programHref}
         className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"

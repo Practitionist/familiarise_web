@@ -295,10 +295,10 @@ const NAV_GROUPS: NavDropdownGroup[] = [
 function DropdownLink({
   item,
   onClose,
-}: {
+}: Readonly<{
   item: NavDropdownItem;
   onClose: () => void;
-}) {
+}>) {
   const Icon = item.icon;
   return (
     <Link
@@ -336,11 +336,11 @@ function DesktopDropdownPanel({
   group,
   onClose,
   panelId,
-}: {
+}: Readonly<{
   group: NavDropdownGroup;
   onClose: () => void;
   panelId: string;
-}) {
+}>) {
   const isMega = group.variant === "mega";
   const isWide = group.columns.length > 2;
   const panelWidth = isMega ? (isWide ? "w-[860px]" : "w-[620px]") : "w-80";
@@ -349,17 +349,17 @@ function DesktopDropdownPanel({
   return (
     <div
       id={panelId}
-      // Mega panels centre on the VIEWPORT (fixed), list panels on their
-      // trigger (absolute) — an 860px panel hung off a narrow left-side trigger
-      // reads as badly misaligned.
-      //
-      // Centred with `inset-x-0 mx-auto`, never `left-1/2 -translate-x-1/2`:
-      // a transform-based centre fights other transforms. Margin centring
-      // can't be clobbered.
-      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 ${
+      // Mega panels centre on the VIEWPORT (fixed), list panels align to their
+      // trigger (absolute left-0) — an 860px panel hung off a narrow left-side
+      // trigger reads as badly misaligned, while inset-x-0 mx-auto on a list
+      // panel overflows narrow triggers.
+      // Solid `bg-popover` (no alpha / backdrop-blur): `<nav>` already applies
+      // `backdrop-blur-xl`, which creates a CSS Backdrop Root clipped to the
+      // 80px navbar bar and prevents child panels from blurring page content.
+      className={`rounded-2xl border border-border bg-popover text-popover-foreground shadow-elevation-3 z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 before:content-[''] before:absolute before:-top-3 before:inset-x-0 before:h-3 ${
         isMega
-          ? `fixed max-w-[calc(100vw-2rem)] ${panelWidth}`
-          : `absolute top-full mt-2 ${panelWidth}`
+          ? `fixed inset-x-0 mx-auto max-w-[calc(100vw-2rem)] ${panelWidth}`
+          : `absolute left-0 top-full mt-2 ${panelWidth}`
       }`}
       style={
         isMega
@@ -390,7 +390,7 @@ function DesktopDropdownPanel({
 
       {/* Category chips */}
       {group.categoryChips && group.categoryChips.length > 0 && (
-        <div className="border-t border-border px-4 py-3">
+        <div className="border-t border-border bg-muted/60 px-4 py-3 rounded-b-2xl">
           <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
             By Category
           </p>
@@ -417,10 +417,10 @@ function DesktopDropdownPanel({
 function DesktopNavItem({
   group,
   showDarkStyle,
-}: {
+}: Readonly<{
   group: NavDropdownGroup;
   showDarkStyle: boolean;
-}) {
+}>) {
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -526,6 +526,9 @@ const Navbar = () => {
   const isAuthedView = authView.mode === "authed";
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileDialogRef = useRef<HTMLDialogElement>(null);
+  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
   const { currency, symbol, setCurrency, isEstimate } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
 
@@ -538,9 +541,74 @@ const Navbar = () => {
 
   useEffect(() => {
     const checkScroll = () => setIsScrolled(window.scrollY > 50);
-    window.addEventListener("scroll", checkScroll);
+    checkScroll();
+    window.addEventListener("scroll", checkScroll, { passive: true });
     return () => window.removeEventListener("scroll", checkScroll);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const handleMediaChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        setIsOpen(false);
+      }
+    };
+    mql.addEventListener("change", handleMediaChange);
+
+    const rafId = window.requestAnimationFrame(() => {
+      mobileCloseButtonRef.current?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = mobileDialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(
+        (el) =>
+          !el.hasAttribute("disabled") &&
+          el.getAttribute("aria-hidden") !== "true" &&
+          el.offsetParent !== null,
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (!active || !dialog.contains(active) || active === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (!active || !dialog.contains(active) || active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    const toggleButton = mobileToggleRef.current;
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      document.body.style.overflow = prevOverflow;
+      mql.removeEventListener("change", handleMediaChange);
+      document.removeEventListener("keydown", handleKeyDown);
+      if (toggleButton && toggleButton.offsetParent !== null) {
+        toggleButton.focus();
+      }
+    };
+  }, [isOpen]);
 
   if (isChromeHidden(pathname)) return null;
 
@@ -564,7 +632,7 @@ const Navbar = () => {
       <nav
         className={`fixed w-full z-[1000] transition-all duration-300 ${
           showDarkStyle
-            ? "bg-transparent"
+            ? "bg-transparent border-b border-white/[0.08]"
             : "bg-background/90 backdrop-blur-xl border-b border-border shadow-sm"
         }`}
         style={{
@@ -711,21 +779,38 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                <Button
-                  asChild
-                  variant="ghost"
-                  className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
-                >
-                  <Link href="/auth/signin" onClick={closeMenu}>
-                    Sign in
-                  </Link>
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="sm"
+                    className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
+                  >
+                    <Link href="/auth/signin" onClick={closeMenu}>
+                      Sign in
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    size="sm"
+                    className={`rounded-lg font-medium ${
+                      showDarkStyle
+                        ? "bg-white text-zinc-900 hover:bg-zinc-100"
+                        : ""
+                    }`}
+                  >
+                    <Link href="/explore/experts">Find an expert</Link>
+                  </Button>
+                </div>
               )}
             </div>
 
             {/* Mobile Menu Toggle */}
             <button
+              ref={mobileToggleRef}
+              type="button"
               onClick={toggleMenu}
+              aria-expanded={isOpen}
               aria-label="Toggle Navigation"
               className={`lg:hidden p-2 rounded-lg transition-colors ${
                 showDarkStyle
@@ -759,9 +844,19 @@ const Navbar = () => {
           />
 
           {/* Drawer */}
-          <div className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300">
+          <dialog
+            ref={mobileDialogRef}
+            open
+            aria-modal="true"
+            aria-label="Mobile navigation"
+            className="lg:hidden fixed left-0 m-0 border-0 p-0 max-h-none w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl flex flex-col safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300"
+            style={{
+              top: "var(--maintenance-banner-height, 0px)",
+              height: "calc(100dvh - var(--maintenance-banner-height, 0px))",
+            }}
+          >
             {/* Drawer Header */}
-            <div className="flex justify-between items-center p-5 border-b border-zinc-800">
+            <div className="flex justify-between items-center p-5 border-b border-zinc-800 shrink-0">
               <div className="relative h-8 w-28">
                 <Image
                   src={familiariseLogoWhite}
@@ -772,6 +867,7 @@ const Navbar = () => {
                 />
               </div>
               <button
+                ref={mobileCloseButtonRef}
                 type="button"
                 aria-label="Close menu"
                 onClick={closeMenu}
@@ -782,10 +878,7 @@ const Navbar = () => {
             </div>
 
             {/* Navigation — Accordion Sections */}
-            <div
-              className="flex flex-col p-5 overflow-y-auto"
-              style={{ maxHeight: "calc(100% - 10rem)" }}
-            >
+            <div className="flex-1 flex flex-col p-5 overflow-y-auto">
               {isAuthedView && (
                 <Link
                   href="/dashboard"
@@ -915,7 +1008,7 @@ const Navbar = () => {
             </div>
 
             {/* User Section */}
-            <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
+            <div className="shrink-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
               {authView.mode === "unknown" ? (
                 <div className="flex items-center gap-3">
                   <Skeleton className="h-10 w-10 rounded-full" />
@@ -923,8 +1016,14 @@ const Navbar = () => {
                 </div>
               ) : isAuthedView ? (
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10 border border-zinc-700">
+                  <Link
+                    href={
+                      accountSettingsHref(session?.user ?? {}) ?? "/profile"
+                    }
+                    onClick={() => setIsOpen(false)}
+                    className="flex items-center gap-3 min-w-0 hover:opacity-80 transition-opacity"
+                  >
+                    <Avatar className="h-10 w-10 border border-zinc-700 shrink-0">
                       <AvatarImage src={getUserImage()} alt="Profile" />
                       <AvatarFallback className="bg-zinc-800 text-white">
                         {authView.name?.charAt(0) ?? "U"}
@@ -933,7 +1032,7 @@ const Navbar = () => {
                     <span className="text-white font-medium text-sm truncate max-w-[140px]">
                       {authView.name}
                     </span>
-                  </div>
+                  </Link>
                   <Button
                     variant="ghost"
                     onClick={handleSignOut}
@@ -943,18 +1042,28 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                /* Mirrors the desktop bar: no marketing CTAs, sign in only. */
-                <Button
-                  asChild
-                  className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
-                >
-                  <Link href="/auth/signin" onClick={closeMenu}>
-                    Sign in
-                  </Link>
-                </Button>
+                <div className="flex flex-col gap-2.5">
+                  <Button
+                    asChild
+                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-medium"
+                  >
+                    <Link href="/explore/experts" onClick={closeMenu}>
+                      Find an expert
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="w-full border-zinc-700 bg-transparent text-white hover:bg-zinc-800 hover:text-white"
+                  >
+                    <Link href="/auth/signin" onClick={closeMenu}>
+                      Sign in
+                    </Link>
+                  </Button>
+                </div>
               )}
             </div>
-          </div>
+          </dialog>
         </>
       )}
     </>

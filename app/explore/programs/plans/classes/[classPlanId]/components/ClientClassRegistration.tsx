@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
@@ -22,6 +21,7 @@ import { getClassCapacity } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import type { BatchCard } from "@/lib/booking/batch-cards";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
+import { RegistrationReview } from "@/components/booking/RegistrationReview";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
@@ -95,7 +95,7 @@ export function ClientClassRegistration({
 
   if (isClosed && !isAlreadyEnrolled) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
@@ -115,7 +115,7 @@ export function ClientClassRegistration({
     const signInButtonDisabled = isFull;
 
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
@@ -146,12 +146,29 @@ export function ClientClassRegistration({
               {signInButtonText}
             </Button>
           ) : (
-            <Button
-              onClick={handleRegistration}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+            <RegistrationReview
+              title={`${plan.title}${batch ? " · " + batch.label : ""}`}
+              price={formatPrice(payPaise)}
+              onContinue={handleRegistration}
+              label="Sign in to continue"
             >
-              {signInButtonText}
-            </Button>
+              <p>
+                {startDate
+                  ? formatInTimeZone(
+                      new Date(startDate),
+                      userTimeZone,
+                      "MMMM d, yyyy 'at' h:mm a zzz",
+                    )
+                  : "Start date to be announced"}
+              </p>
+              <p>Time zone: {userTimeZone}</p>
+              <GroupSessionDisclosure />
+              <FreeCancellationLine
+                startsAt={startDate}
+                windowHours={plan.refundWindowHours}
+                kind="class"
+              />
+            </RegistrationReview>
           )}
         </CardContent>
       </Card>
@@ -161,7 +178,7 @@ export function ClientClassRegistration({
   // Show "Already Enrolled" state for logged-in users who are already enrolled
   if (isAlreadyEnrolled) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
@@ -189,7 +206,7 @@ export function ClientClassRegistration({
   // Sold out — enrollment is closed until the host opens more seats.
   if (isFull && isLoggedIn && !isAlreadyEnrolled) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Class Registration</CardTitle>
         </CardHeader>
@@ -220,7 +237,7 @@ export function ClientClassRegistration({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-border shadow-sm">
       <CardHeader>
         <CardTitle>Class Registration</CardTitle>
       </CardHeader>
@@ -238,14 +255,28 @@ export function ClientClassRegistration({
         <GroupSessionDisclosure className="mt-2" />
       </CardContent>
       <CardFooter>
-        <Button
-          asChild
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+        <RegistrationReview
+          title={`${plan.title}${batch ? " · " + batch.label : ""}`}
+          price={formatPrice(payPaise)}
+          onContinue={handleRegistration}
         >
-          <Link href={checkoutUrl} prefetch>
-            Pay {formatPrice(payPaise)} & Register Now
-          </Link>
-        </Button>
+          <p>
+            {startDate
+              ? formatInTimeZone(
+                  new Date(startDate),
+                  userTimeZone,
+                  "MMMM d, yyyy 'at' h:mm a zzz",
+                )
+              : "Start date to be announced"}
+          </p>
+          <p>Time zone: {userTimeZone}</p>
+          <GroupSessionDisclosure />
+          <FreeCancellationLine
+            startsAt={startDate}
+            windowHours={plan.refundWindowHours}
+            kind="class"
+          />
+        </RegistrationReview>
       </CardFooter>
     </Card>
   );

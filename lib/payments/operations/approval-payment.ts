@@ -540,6 +540,19 @@ async function priceWithTax(
 }
 
 /**
+ * Mirrors `assertPlanPurchasable` in checkout.ts: a consultant who is not
+ * VERIFIED cannot take payment. The approval pay-link is a second payment
+ * entry point, so it must apply the same gate server-side.
+ */
+function assertConsultantVerified(
+  consultantProfile: { verificationStatus: string } | null | undefined,
+): void {
+  if (consultantProfile && consultantProfile.verificationStatus !== "VERIFIED") {
+    throw new Error("This expert isn't accepting paid bookings yet");
+  }
+}
+
+/**
  * Calculate payment amount from plan
  */
 async function calculateAmount(
@@ -556,12 +569,14 @@ async function calculateAmount(
         trialPriceInPaise: true,
         trialEnabled: true,
         priceCurrency: true,
+        consultantProfile: { select: { verificationStatus: true } },
       },
     });
 
     if (!plan) {
       throw new Error("Subscription plan not found");
     }
+    assertConsultantVerified(plan.consultantProfile);
     if (!plan.trialEnabled) {
       throw new Error("This plan does not offer trials");
     }
@@ -592,12 +607,14 @@ async function calculateAmount(
         title: true,
         price: true,
         priceCurrency: true,
+        consultantProfile: { select: { verificationStatus: true } },
       },
     });
 
     if (!plan) {
       throw new Error("Consultation plan not found");
     }
+    assertConsultantVerified(plan.consultantProfile);
 
     // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
     const currency = plan.priceCurrency;
@@ -629,12 +646,14 @@ async function calculateAmount(
         title: true,
         price: true,
         priceCurrency: true,
+        consultantProfile: { select: { verificationStatus: true } },
       },
     });
 
     if (!plan) {
       throw new Error("Subscription plan not found");
     }
+    assertConsultantVerified(plan.consultantProfile);
 
     // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
     const currency = plan.priceCurrency;

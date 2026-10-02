@@ -15,6 +15,7 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { authClient } from "@/lib/auth-client";
+import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
@@ -164,112 +165,105 @@ function ResetPasswordContent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-neutral-950 p-6 text-white">
       <div className="mx-auto flex w-full max-w-md flex-col">
-        <div className="text-center">
-          {/* Reusing GlobeIcon style from SignIn */}
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="mx-auto h-10 w-auto text-white"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <line x1="2" x2="22" y1="12" y2="12" />
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-          </svg>
-          <h2 className="mt-6 text-fluid-3xl font-semibold tracking-tight">
-            Reset your password
-          </h2>
-          <p className="mt-2 text-sm text-zinc-400 md:text-base">
-            Enter your new password below.
-          </p>
-        </div>
-
-        {error && !token && (
-          <div
-            className="relative mt-8 rounded border border-red-400 bg-red-100 px-4 py-3 text-red-700"
-            role="alert"
-          >
-            <strong className="font-bold">Error!</strong>
-            <span className="block sm:inline"> {error}</span>
-            <p className="mt-2 text-sm">
-              Redirecting to the{" "}
-              <Link
-                href="/auth/forgot-password"
-                className="font-medium text-red-800 hover:underline"
-              >
-                forgot password page
-              </Link>{" "}
-              in 3 seconds...
-            </p>
-            <AuthErrorAffordance
-              action={errorAction ?? undefined}
-              target={errorTarget}
-              className="mt-2 inline-block text-sm font-medium text-red-800 underline-offset-4 hover:underline"
-            />
-          </div>
-        )}
-
-        {token && (
-          <form className="mt-8 space-y-6" onSubmit={handleResetPassword}>
-            <div className="grid gap-2">
-              <Label htmlFor="password">New Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                required
-                placeholder="New password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="confirm-password">Confirm New Password</Label>
-              <Input
-                id="confirm-password"
-                name="confirm-password"
-                type="password"
-                required
-                placeholder="Confirm new password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
-
-            {error && <p className="text-sm text-red-400">{error}</p>}
-            {message && <p className="text-sm text-green-400">{message}</p>}
-
-            <AuthErrorAffordance
-              action={errorAction ?? undefined}
-              target={errorTarget}
-            />
-
-            <Button
-              type="submit"
-              className="w-full bg-white text-black hover:bg-white/90"
-              disabled={isLoading || !!message} // Disable button after success message
-            >
-              {isLoading ? "Resetting..." : "Reset Password"}
-            </Button>
-          </form>
-        )}
-
-        <div className="mt-6 text-center text-sm">
+        <div className="mb-6 flex justify-center">
           <Link
-            href="/auth/signin"
-            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            href="/"
+            className="inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-white uppercase"
           >
-            Back to Sign in
+            <GlobeIcon className="h-5 w-5" /> Familiarise
           </Link>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-6 sm:p-8">
+          <div className="text-center">
+            <h2 className="text-fluid-3xl font-semibold tracking-tight">
+              Reset your password
+            </h2>
+            <p className="mt-2 text-sm text-zinc-400 md:text-base">
+              Enter your new password below.
+            </p>
+          </div>
+
+          {error && !token && (
+            <div
+              className="relative mt-6 rounded-xl border border-red-500/40 bg-red-950/50 p-4 text-sm text-red-200"
+              role="alert"
+            >
+              <strong className="font-semibold text-red-100">Error!</strong>
+              <span className="block sm:inline"> {error}</span>
+              <p className="mt-2 text-sm text-red-300">
+                Redirecting to the{" "}
+                <Link
+                  href="/auth/forgot-password"
+                  className="font-medium text-white underline underline-offset-4 hover:text-red-100"
+                >
+                  forgot password page
+                </Link>{" "}
+                in 3 seconds...
+              </p>
+              <AuthErrorAffordance
+                action={errorAction ?? undefined}
+                target={errorTarget}
+                className="mt-2 inline-block text-sm font-medium text-white underline-offset-4 hover:underline"
+              />
+            </div>
+          )}
+
+          {token && (
+            <form className="mt-6 space-y-5" onSubmit={handleResetPassword}>
+              <div className="grid gap-2">
+                <Label htmlFor="password">New Password</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  required
+                  placeholder="New password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="confirm-password">Confirm New Password</Label>
+                <Input
+                  id="confirm-password"
+                  name="confirm-password"
+                  type="password"
+                  required
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              {message && <p className="text-sm text-green-400">{message}</p>}
+
+              <AuthErrorAffordance
+                action={errorAction ?? undefined}
+                target={errorTarget}
+              />
+
+              <Button
+                type="submit"
+                className="w-full bg-white text-black hover:bg-white/90"
+                disabled={isLoading || !!message} // Disable button after success message
+              >
+                {isLoading ? "Resetting..." : "Reset Password"}
+              </Button>
+            </form>
+          )}
+
+          <div className="mt-6 text-center text-sm">
+            <Link
+              href="/auth/signin"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Back to Sign in
+            </Link>
+          </div>
         </div>
       </div>
     </div>

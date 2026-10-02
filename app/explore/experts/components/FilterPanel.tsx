@@ -343,13 +343,14 @@ function FilterPanelImpl({
               <label className="block mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Minimum Years
               </label>
-              <input
-                type="range"
-                min="0"
-                max="30"
-                value={localExperience}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
+              <Slider
+                defaultValue={[0]}
+                value={[localExperience]}
+                min={0}
+                max={30}
+                step={1}
+                onValueChange={(value) => {
+                  const val = value[0] ?? 0;
                   setLocalExperience(val);
                   if (expDebounceRef.current)
                     clearTimeout(expDebounceRef.current);
@@ -357,7 +358,7 @@ function FilterPanelImpl({
                     updateFilters({ experience: val });
                   }, 300);
                 }}
-                className="w-full h-2 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
+                className="my-2"
               />
               <div className="flex justify-between mt-1 text-xs text-muted-foreground">
                 <span>0 yrs</span>

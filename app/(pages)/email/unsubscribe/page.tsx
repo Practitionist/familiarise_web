@@ -1,8 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MailX } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Bell,
+  CheckCircle2,
+  MailX,
+  ShieldAlert,
+  SlidersHorizontal,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
 
 export const metadata: Metadata = {
@@ -27,9 +35,9 @@ function first(value: string | string[] | undefined): string {
 
 export default async function EmailUnsubscribePage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: SearchParams;
-}) {
+}>) {
   const params = await searchParams;
   const userId = first(params.u);
   const token = first(params.t);
@@ -44,73 +52,154 @@ export default async function EmailUnsubscribePage({
     userId,
   )}&t=${encodeURIComponent(token)}`;
 
-  return (
-    <section className="w-full">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="text-center mb-12">
-          <div className="flex justify-center mb-4">
-            <MailX className="h-16 w-16 text-foreground" />
-          </div>
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
-            Email notifications
-          </h1>
-        </div>
+  let headingText = "This link is not valid";
+  let statusBadgeLabel = "Invalid or Expired Link";
+  let StatusIcon = AlertTriangle;
+  if (done) {
+    headingText = "Done";
+    statusBadgeLabel = "Preferences Updated";
+    StatusIcon = CheckCircle2;
+  } else if (valid) {
+    headingText = "Turn off optional email notifications";
+    statusBadgeLabel = "Confirm Unsubscribe";
+    StatusIcon = MailX;
+  }
 
-        <div className="max-w-xl mx-auto">
-          <Card className="shadow-elevation-1">
-            <CardHeader>
-              <CardTitle className="text-fluid-2xl">
-                {done
-                  ? "Done"
-                  : valid
-                    ? "Turn off optional email notifications"
-                    : "This link is not valid"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {done && (
-                <p className="text-muted-foreground">
-                  Done — you will not receive optional email notifications.
-                  Required account notices still arrive.
-                </p>
-              )}
-              {!done && valid && (
-                <>
-                  <p className="text-muted-foreground">
-                    This turns off all optional email notifications for your
-                    account, such as booking updates, receipts and reminders.
-                    Required account notices, like a security alert or an
-                    invitation you must answer, still arrive. Notifications in
-                    the app are not affected.
+  return (
+    <main className="min-h-screen w-full bg-background">
+      {/* Full-Bleed Dark Hero */}
+      <section className="relative overflow-hidden bg-zinc-950 text-white pt-32 pb-20 md:pb-24">
+        <div className="grid-pattern pointer-events-none absolute inset-0 opacity-20" />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1/2 top-0 h-[420px] w-[760px] -translate-x-1/2 bg-[radial-gradient(closest-side,rgba(255,255,255,0.08),transparent)]"
+        />
+
+        <div className="container relative z-10 mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-zinc-700/60 bg-zinc-900/80 px-4 py-1.5 text-sm text-zinc-300 backdrop-blur-sm">
+            <MailX className="h-4 w-4 text-zinc-300" aria-hidden="true" />
+            <span>Account Preferences</span>
+          </div>
+          <h1 className="text-fluid-4xl md:text-fluid-5xl mb-4 font-bold tracking-tight">
+            <span>Email </span>
+            <span className="silver-text">notifications</span>
+          </h1>
+          <p className="mx-auto max-w-xl text-base leading-relaxed text-zinc-400 md:text-lg">
+            Manage how Familiarise contacts you by email.
+          </p>
+        </div>
+      </section>
+
+      {/* Main Confirmation Card */}
+      <section className="py-16 md:py-24">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="max-w-3xl mx-auto rounded-2xl border border-border bg-card p-6 md:p-10 shadow-elevation-1 space-y-8">
+            <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-950 text-white dark:bg-white dark:text-zinc-950">
+                <StatusIcon className="h-6 w-6" aria-hidden="true" />
+              </div>
+              <div className="space-y-2">
+                <Badge variant="secondary" className="text-xs">
+                  {statusBadgeLabel}
+                </Badge>
+                <h2 className="text-fluid-2xl font-bold tracking-tight text-foreground">
+                  {headingText}
+                </h2>
+                {done && (
+                  <p className="text-muted-foreground leading-relaxed">
+                    Done — you will not receive optional email notifications.
+                    Required account notices still arrive.
                   </p>
-                  <form method="post" action={action}>
-                    <Button type="submit" variant="night">
-                      Turn off email notifications
-                    </Button>
-                  </form>
-                </>
-              )}
-              {!done && !valid && (
-                <p className="text-muted-foreground">
-                  This link is not valid. It may have been altered on the way
-                  here. You can still change what we send you from your
-                  Settings.
+                )}
+                {!done && valid && (
+                  <p className="text-muted-foreground leading-relaxed">
+                    This turns off general email notifications, reminders, and
+                    updates for your account — including booking updates,
+                    payment and receipt notifications, appointment reminders,
+                    support updates, and feedback requests. Critical security
+                    and account verification emails, invitations that require
+                    your response, and in-app dashboard notifications remain
+                    active.
+                  </p>
+                )}
+                {!done && !valid && (
+                  <p className="text-muted-foreground leading-relaxed">
+                    This link is not valid. It may have been altered on the way
+                    here. You can still change what we send you from your
+                    Settings.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 2-Column Comparison Box */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="rounded-xl border border-border bg-muted/40 p-5 space-y-2.5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Bell
+                    className="h-4 w-4 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span>What this turns off</span>
+                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  General email notifications, reminders, and updates —
+                  including booking updates, payment and receipt notifications,
+                  appointment reminders, support updates, and feedback requests.
                 </p>
+              </div>
+
+              <div className="rounded-xl border border-border bg-muted/40 p-5 space-y-2.5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <ShieldAlert
+                    className="h-4 w-4 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span>What still arrives</span>
+                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Critical security alerts, sign-in and account verification
+                  emails, and invitations that require your response. In-app
+                  dashboard notifications remain accessible.
+                </p>
+              </div>
+            </div>
+
+            {/* Primary & Secondary Actions */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-border">
+              {!done && valid ? (
+                <form method="post" action={action}>
+                  <Button type="submit" variant="night" size="lg">
+                    Turn off email notifications
+                  </Button>
+                </form>
+              ) : (
+                <Button asChild variant="outline" size="lg">
+                  <Link href="/">
+                    <span>Return to Home</span>
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                </Button>
               )}
+
               <p className="text-sm">
                 {/* #1527 — /profile routes each viewer to their own
                     Settings › Notifications (after sign-in if needed). */}
                 <Link
                   href="/profile?section=notifications"
-                  className="underline underline-offset-4"
+                  className="inline-flex items-center gap-1.5 font-medium text-foreground underline underline-offset-4 hover:no-underline"
                 >
-                  Manage notification preferences in Settings
+                  <SlidersHorizontal
+                    className="h-3.5 w-3.5"
+                    aria-hidden="true"
+                  />
+                  <span>Manage notification preferences in Settings</span>
                 </Link>
               </p>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </main>
   );
 }

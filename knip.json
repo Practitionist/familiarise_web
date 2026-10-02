@@ -13,7 +13,7 @@
     "scripts/smoke/org-payout-sandbox-smoke.ts",
     "jobs/observability/sentry-ingest-canary.ts"
   ],
-  "ignore": [".claude/**", "docs/**"],
+  "ignore": [".claude/**", "docs/**", "screens/landing/**"],
   "ignoreBinaries": ["tsx", "psql", "supabase"],
   "ignoreDependencies": []
 }

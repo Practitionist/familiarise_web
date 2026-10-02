@@ -29,7 +29,7 @@ export function SocialLoginButtons({
   if (ssoEnforced) return null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {AUTH_PROVIDERS.map((provider) => {
         const Icon = PROVIDER_ICONS[provider.id];
         return (
@@ -52,7 +52,7 @@ export function SocialLoginButtons({
               });
             }}
           >
-            {Icon && <Icon className="w-6 h-6 text-white mr-2" />}
+            {Icon && <Icon className="w-5 h-5 text-white mr-2.5" />}
             {provider.label}
           </Button>
         );
@@ -60,11 +60,11 @@ export function SocialLoginButtons({
       {onSSOClick && (
         <Button
           type="button"
-          className="w-full flex items-center justify-center bg-zinc-700 hover:bg-zinc-600"
+          className="w-full flex items-center justify-center bg-zinc-900/90 hover:bg-zinc-800 border border-white/10 text-white font-medium h-11 rounded-xl transition-colors"
           disabled={isLoading || ssoChecking}
           onClick={onSSOClick}
         >
-          <Building2 className="w-5 h-5 text-white mr-2" />
+          <Building2 className="w-5 h-5 text-white mr-2.5" />
           {ssoChecking ? "Checking…" : "Sign in with Corporate SSO"}
         </Button>
       )}

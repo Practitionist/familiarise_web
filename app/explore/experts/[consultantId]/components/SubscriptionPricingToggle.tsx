@@ -1,6 +1,9 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { BookingSteps } from "@/components/booking/BookingSteps";
+import { BookingSummary } from "@/components/booking/BookingSummary";
+import { PlanBrochureDownload } from "@/components/plans/PlanBrochureDownload";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,16 +13,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { motion } from "framer-motion";
 import { CalendarIcon, CheckCircle2, Gift, BookOpen } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import Link from "next/link";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
+import { format, isSameDay, startOfDay } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { cn } from "@/utils/tailwind";
 import { TrialBookingModal } from "./TrialBookingModal";
 
 interface SubscriptionContentItem {
@@ -40,9 +44,6 @@ interface SubscriptionPlanDetails {
   durationInMonths: number;
   trialEnabled?: boolean;
   trialDurationMinutes?: number | null;
-  // #780 result extension already made this a number in paise by the time it
-  // crosses the RSC boundary; the fetcher `include`s it, it was simply never
-  // declared here and so never rendered (#1167).
   trialPriceInPaise?: number | null;
   priceCurrency?: string | null;
   subscriptionContents?: SubscriptionContentItem[] | null;
@@ -68,6 +69,435 @@ interface SubscriptionPricingToggleProps {
   ) => void;
   timezone: string;
   autoOpenTrial?: boolean;
+  initialPlanId?: string | null;
+  selectedPlanId?: string;
+  onSelectPlanId?: (planId: string) => void;
+  bookingRequest?: number;
+}
+
+interface TrialEligibilityState {
+  isEligible: boolean;
+  reason?: string;
+  isLoading: boolean;
+}
+
+const WEEKDAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] as const;
+const EMPTY_CELL_OFFSETS = [0, 1, 2, 3, 4, 5] as const;
+
+function getStartCalendarCellClass(
+  isSelected: boolean,
+  isPast: boolean,
+): string {
+  if (isSelected) {
+    return "bg-primary font-semibold text-primary-foreground shadow-sm";
+  }
+  if (isPast) {
+    return "opacity-40 text-muted-foreground";
+  }
+  return "text-foreground hover:bg-muted font-medium";
+}
+
+function getTrialButtonLabel(
+  isLoading: boolean,
+  isEligible: boolean,
+  trialCtaPrice: string,
+  trialDurationMinutes: number,
+): string {
+  if (isLoading) {
+    return "Checking trial eligibility…";
+  }
+  if (isEligible) {
+    return `Request a trial (${trialCtaPrice}, ${trialDurationMinutes} min)`;
+  }
+  return "Trial already requested";
+}
+
+async function fetchTrialEligibility(
+  userId: string,
+  consultantProfileId: string | undefined,
+  subscriptionPlanId: string,
+): Promise<TrialEligibilityState> {
+  try {
+    const profileResponse = await fetch(
+      `/api/profiles/consultee?userId=${userId}`,
+    );
+    if (!profileResponse.ok) {
+      return {
+        isEligible: false,
+        reason: "Could not verify profile",
+        isLoading: false,
+      };
+    }
+    const { data: consulteeProfile } = await profileResponse.json();
+    if (!consulteeProfile?.id) {
+      return { isEligible: true, isLoading: false };
+    }
+
+    const eligibilityResponse = await fetch(
+      `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`,
+    );
+    if (!eligibilityResponse.ok) {
+      return { isEligible: true, isLoading: false };
+    }
+
+    const { data } = await eligibilityResponse.json();
+    return {
+      isEligible: data.isEligible,
+      reason: data.reason,
+      isLoading: false,
+    };
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "client" } },
+    );
+    console.error("Error checking trial eligibility:", error);
+    return { isEligible: true, isLoading: false };
+  }
+}
+
+function useTrialEligibility(
+  userId: string | undefined,
+  consultantProfileId: string | undefined,
+  selectedPlanDetails: SubscriptionPlanDetails | null | undefined,
+): TrialEligibilityState {
+  const [trialEligibility, setTrialEligibility] =
+    useState<TrialEligibilityState>({
+      isEligible: true,
+      isLoading: false,
+    });
+
+  useEffect(() => {
+    if (
+      !userId ||
+      !selectedPlanDetails?.id ||
+      !selectedPlanDetails?.trialEnabled
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setTrialEligibility((prev) => ({ ...prev, isLoading: true }));
+
+    void fetchTrialEligibility(
+      userId,
+      consultantProfileId,
+      selectedPlanDetails.id,
+    ).then((nextState) => {
+      if (!cancelled) {
+        setTrialEligibility(nextState);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    userId,
+    selectedPlanDetails?.id,
+    selectedPlanDetails?.trialEnabled,
+    consultantProfileId,
+  ]);
+
+  return trialEligibility;
+}
+
+interface StartCalendarGridProps {
+  calendarMonth: Date;
+  schedulingStartDate: Date | null;
+  onSelectDate: (date: Date) => void;
+}
+
+function StartCalendarGrid({
+  calendarMonth,
+  schedulingStartDate,
+  onSelectDate,
+}: Readonly<StartCalendarGridProps>) {
+  const year = calendarMonth.getFullYear();
+  const month = calendarMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+  const today = startOfDay(new Date());
+  const dayNumbers = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
+
+  return (
+    <div className="grid grid-cols-7 gap-1">
+      {EMPTY_CELL_OFFSETS.slice(0, adjustedFirstDay).map((offset) => (
+        <div
+          key={`empty-${year}-${month}-${offset}`}
+          className="aspect-square w-full max-w-10"
+        />
+      ))}
+      {dayNumbers.map((day) => {
+        const date = new Date(year, month, day);
+        const isPast = startOfDay(date) < today;
+        const isSelected =
+          schedulingStartDate !== null && isSameDay(date, schedulingStartDate);
+        const isToday = isSameDay(date, today);
+
+        return (
+          <button
+            key={day}
+            type="button"
+            disabled={isPast}
+            aria-pressed={isSelected}
+            aria-label={format(date, "MMMM d, yyyy")}
+            className={cn(
+              "relative flex aspect-square w-full max-w-10 items-center justify-center rounded-full text-sm transition-colors",
+              getStartCalendarCellClass(isSelected, isPast),
+            )}
+            onClick={() => onSelectDate(date)}
+          >
+            {day}
+            {isToday && (
+              <span
+                aria-hidden="true"
+                className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface SubscriptionStartDateStepProps {
+  consultantId: string;
+  calendarMonth: Date;
+  schedulingStartDate: Date | null;
+  timezone: string;
+  onChangeCalendarMonth: (month: Date) => void;
+  onChangeSchedulingStartDate: (date: Date | null) => void;
+}
+
+function SubscriptionStartDateStep({
+  consultantId,
+  calendarMonth,
+  schedulingStartDate,
+  timezone,
+  onChangeCalendarMonth,
+  onChangeSchedulingStartDate,
+}: Readonly<SubscriptionStartDateStepProps>) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-border bg-muted/40 p-4">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <span className="font-semibold text-foreground">
+            {calendarMonth.toLocaleString("default", {
+              month: "long",
+              year: "numeric",
+            })}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                onChangeSchedulingStartDate(now);
+                onChangeCalendarMonth(
+                  new Date(now.getFullYear(), now.getMonth(), 1),
+                );
+              }}
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous month"
+              onClick={() =>
+                onChangeCalendarMonth(
+                  new Date(
+                    calendarMonth.getFullYear(),
+                    calendarMonth.getMonth() - 1,
+                    1,
+                  ),
+                )
+              }
+            >
+              &lt;
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Next month"
+              onClick={() =>
+                onChangeCalendarMonth(
+                  new Date(
+                    calendarMonth.getFullYear(),
+                    calendarMonth.getMonth() + 1,
+                    1,
+                  ),
+                )
+              }
+            >
+              &gt;
+            </Button>
+          </div>
+        </div>
+        <div className="mb-2 grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground">
+          {WEEKDAY_LABELS.map((day) => (
+            <span key={day}>{day}</span>
+          ))}
+        </div>
+        <StartCalendarGrid
+          calendarMonth={calendarMonth}
+          schedulingStartDate={schedulingStartDate}
+          onSelectDate={onChangeSchedulingStartDate}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label
+          htmlFor={`subscription-start-${consultantId}`}
+          className="flex items-center gap-2 text-sm font-medium text-foreground"
+        >
+          <CalendarIcon className="h-4 w-4" />
+          Start date
+        </label>
+        <input
+          id={`subscription-start-${consultantId}`}
+          type="date"
+          value={
+            schedulingStartDate ? format(schedulingStartDate, "yyyy-MM-dd") : ""
+          }
+          min={format(new Date(), "yyyy-MM-dd")}
+          className="h-11 w-full rounded-xl border border-input bg-background px-4 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onChange={(event) => {
+            const [y, m, d] = event.target.value.split("-").map(Number);
+            if (event.target.value) {
+              const next = new Date(y, m - 1, d);
+              onChangeSchedulingStartDate(next);
+              onChangeCalendarMonth(new Date(y, m - 1, 1));
+            } else {
+              onChangeSchedulingStartDate(null);
+            }
+          }}
+        />
+        <p className="text-xs text-muted-foreground">Time zone: {timezone}</p>
+      </div>
+    </div>
+  );
+}
+
+interface SubscriptionOptionDetailsProps {
+  selectedOption: PricingOption;
+  selectedPlanDetails: SubscriptionPlanDetails | null | undefined;
+  monthsCount: number;
+  perMonthFormatted: string | null;
+  trialCtaPrice: string;
+  trialEligibility: TrialEligibilityState;
+  onChoosePlan: () => void;
+  onRequestTrial: () => void;
+}
+
+function SubscriptionOptionDetails({
+  selectedOption,
+  selectedPlanDetails,
+  monthsCount,
+  perMonthFormatted,
+  trialCtaPrice,
+  trialEligibility,
+  onChoosePlan,
+  onRequestTrial,
+}: Readonly<SubscriptionOptionDetailsProps>) {
+  return (
+    <>
+      <div>
+        <h3 className="text-lg font-semibold text-foreground">
+          {selectedOption.title}
+        </h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {selectedOption.description}
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-4xl font-semibold tracking-tight text-foreground break-all">
+            {formatCurrencyAmount(
+              selectedOption.price,
+              selectedOption.priceCurrency || "INR",
+            )}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            / {monthsCount > 1 ? `${monthsCount} months total` : "month"}
+          </span>
+        </div>
+        {monthsCount > 1 && perMonthFormatted && (
+          <p className="text-xs font-medium text-muted-foreground">
+            Equivalent to {perMonthFormatted} / month
+          </p>
+        )}
+      </div>
+
+      {!!selectedOption.features?.length && (
+        <ul className="space-y-2.5 text-sm text-foreground">
+          {selectedOption.features.map((feature) => (
+            <li key={feature} className="flex items-start gap-2">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              {feature}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-2.5">
+        <Button
+          className="h-12 w-full rounded-xl font-semibold"
+          onClick={onChoosePlan}
+        >
+          Choose a start date
+        </Button>
+
+        {selectedPlanDetails?.trialEnabled && (
+          <>
+            <Button
+              variant="outline"
+              className="h-auto min-h-11 w-full whitespace-normal rounded-xl"
+              disabled={
+                !trialEligibility.isEligible || trialEligibility.isLoading
+              }
+              onClick={onRequestTrial}
+            >
+              <Gift className="mr-2 h-4 w-4 shrink-0 text-emerald-600" />
+              {getTrialButtonLabel(
+                trialEligibility.isLoading,
+                trialEligibility.isEligible,
+                trialCtaPrice,
+                selectedPlanDetails.trialDurationMinutes ?? 0,
+              )}
+            </Button>
+            {!trialEligibility.isEligible && trialEligibility.reason && (
+              <p className="text-xs text-muted-foreground">
+                {trialEligibility.reason}
+              </p>
+            )}
+          </>
+        )}
+
+        <Button asChild variant="ghost" className="h-11 w-full rounded-xl">
+          <Link
+            href={`/explore/programs/plans/subscriptions/${selectedOption.id}`}
+          >
+            <BookOpen className="mr-2 h-4 w-4" />
+            Read plan details
+          </Link>
+        </Button>
+        <PlanBrochureDownload
+          planId={selectedOption.id}
+          planType="subscriptions"
+          className="w-full justify-center"
+        />
+      </div>
+    </>
+  );
 }
 
 export default function SubscriptionPricingToggle({
@@ -76,17 +506,41 @@ export default function SubscriptionPricingToggle({
   timezone,
   consultantDetails,
   autoOpenTrial,
+  initialPlanId,
+  selectedPlanId,
+  onSelectPlanId,
+  bookingRequest = 0,
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
-  // Track the active plan by id so plans that share a duration (e.g. two
-  // 3-month subscriptions) remain independently selectable and bookable.
-  const [activeSubscriptionOption, setActiveSubscriptionOption] =
-    useState<string>(subscriptionOptions[0]?.id ?? "");
+  const [internalSubscriptionOption, setInternalSubscriptionOption] =
+    useState<string>(() =>
+      initialPlanId && subscriptionOptions.some((o) => o.id === initialPlanId)
+        ? initialPlanId
+        : (subscriptionOptions[0]?.id ?? ""),
+    );
+  const activeSubscriptionOption =
+    selectedPlanId && subscriptionOptions.some((o) => o.id === selectedPlanId)
+      ? selectedPlanId
+      : internalSubscriptionOption;
+  const setActiveSubscriptionOption = useCallback(
+    (id: string) => {
+      setInternalSubscriptionOption(id);
+      onSelectPlanId?.(id);
+    },
+    [onSelectPlanId],
+  );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [step, setStep] = useState(0);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const previousBookingRequest = useRef(bookingRequest);
   const [schedulingStartDate, setSchedulingStartDate] = useState<Date | null>(
     null,
   );
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [isTrialModalOpen, setIsTrialModalOpen] = useState(false);
   const [selectedTrialPlan, setSelectedTrialPlan] = useState<{
     id: string;
@@ -95,11 +549,18 @@ export default function SubscriptionPricingToggle({
     trialPriceInPaise: number;
     priceCurrency: string;
   } | null>(null);
-  const [trialEligibility, setTrialEligibility] = useState<{
-    isEligible: boolean;
-    reason?: string;
-    isLoading: boolean;
-  }>({ isEligible: true, isLoading: false });
+
+  useEffect(() => {
+    if (bookingRequest > previousBookingRequest.current) {
+      returnFocus.current = document.activeElement as HTMLElement;
+      const now = new Date();
+      setSchedulingStartDate(now);
+      setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+      setStep(0);
+      setIsDialogOpen(true);
+    }
+    previousBookingRequest.current = bookingRequest;
+  }, [bookingRequest]);
 
   const selectedOption = useMemo(() => {
     return subscriptionOptions.find(
@@ -107,8 +568,6 @@ export default function SubscriptionPricingToggle({
     );
   }, [activeSubscriptionOption, subscriptionOptions]);
 
-  // Find the subscription plan for the current selection by id (not duration)
-  // so duplicate-duration plans resolve to the exact one the user selected.
   const selectedPlanDetails = useMemo(() => {
     if (!selectedOption?.id) return null;
     return consultantDetails?.subscriptionPlans?.find(
@@ -116,9 +575,6 @@ export default function SubscriptionPricingToggle({
     );
   }, [selectedOption, consultantDetails]);
 
-  // #1167 — the CTA names the price. `formatPrice` is not usable here: it takes
-  // INR paise and applies the viewer's FX rate, which would relabel a plan
-  // already denominated in another currency.
   const trialCtaPrice = useMemo(() => {
     const paise = selectedPlanDetails?.trialPriceInPaise ?? 0;
     return paise > 0
@@ -126,71 +582,11 @@ export default function SubscriptionPricingToggle({
       : "Free";
   }, [selectedPlanDetails]);
 
-  // Check trial eligibility when plan changes
-  useEffect(() => {
-    const checkEligibility = async () => {
-      if (
-        !session?.user?.id ||
-        !selectedPlanDetails?.id ||
-        !selectedPlanDetails?.trialEnabled
-      ) {
-        return;
-      }
-
-      setTrialEligibility((prev) => ({ ...prev, isLoading: true }));
-
-      try {
-        // First get consultee profile
-        const profileResponse = await fetch(
-          `/api/profiles/consultee?userId=${session.user.id}`,
-        );
-        if (!profileResponse.ok) {
-          setTrialEligibility({
-            isEligible: false,
-            reason: "Could not verify profile",
-            isLoading: false,
-          });
-          return;
-        }
-        const { data: consulteeProfile } = await profileResponse.json();
-
-        if (!consulteeProfile?.id) {
-          setTrialEligibility({ isEligible: true, isLoading: false }); // No profile yet, eligible
-          return;
-        }
-
-        // Check eligibility
-        const eligibilityResponse = await fetch(
-          `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantDetails?.id}&subscriptionPlanId=${selectedPlanDetails.id}`,
-        );
-
-        if (eligibilityResponse.ok) {
-          const { data } = await eligibilityResponse.json();
-          setTrialEligibility({
-            isEligible: data.isEligible,
-            reason: data.reason,
-            isLoading: false,
-          });
-        } else {
-          setTrialEligibility({ isEligible: true, isLoading: false });
-        }
-      } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "client" } },
-        );
-        console.error("Error checking trial eligibility:", error);
-        setTrialEligibility({ isEligible: true, isLoading: false });
-      }
-    };
-
-    checkEligibility();
-  }, [
+  const trialEligibility = useTrialEligibility(
     session?.user?.id,
-    selectedPlanDetails?.id,
-    selectedPlanDetails?.trialEnabled,
     consultantDetails?.id,
-  ]);
+    selectedPlanDetails,
+  );
 
   // Auto-open trial modal when navigated with ?action=trial
   useEffect(() => {
@@ -211,9 +607,6 @@ export default function SubscriptionPricingToggle({
     }
   }, [autoOpenTrial, selectedPlanDetails, trialEligibility]);
 
-  // #1766 — the buyer picks a START only; the window is the first cycle and
-  // the server derives it again in the consultant's zone. Shown here in the
-  // viewer's zone so the summary reads in their own calendar.
   const firstCycle = useMemo(() => {
     if (!schedulingStartDate || !selectedOption) return null;
     return firstCycleWindow(
@@ -247,8 +640,34 @@ export default function SubscriptionPricingToggle({
   );
 
   const handleChoosePlan = () => {
-    setSchedulingStartDate(new Date());
+    returnFocus.current = document.activeElement as HTMLElement;
+    const now = new Date();
+    setSchedulingStartDate(now);
+    setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    setStep(0);
     setIsDialogOpen(true);
+  };
+
+  const handleRequestTrial = () => {
+    if (!selectedPlanDetails) return;
+    if (!trialEligibility.isEligible) {
+      toast({
+        title: "Not Eligible",
+        description:
+          trialEligibility.reason ||
+          "You have already requested a trial with this consultant",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSelectedTrialPlan({
+      id: selectedPlanDetails.id,
+      title: selectedPlanDetails.title,
+      trialDurationMinutes: selectedPlanDetails.trialDurationMinutes ?? 0,
+      trialPriceInPaise: selectedPlanDetails.trialPriceInPaise ?? 0,
+      priceCurrency: selectedPlanDetails.priceCurrency ?? "INR",
+    });
+    setIsTrialModalOpen(true);
   };
 
   const handleContinueToCheckout = () => {
@@ -266,7 +685,6 @@ export default function SubscriptionPricingToggle({
       return;
     }
 
-    // The end travels for the checkout URL's shape only; the server ignores it.
     handleSubscriptionBooking(selectedOption, {
       startDate: schedulingStartDate,
       endDate: firstCycle.end,
@@ -277,7 +695,7 @@ export default function SubscriptionPricingToggle({
 
   if (subscriptionOptions.length === 0) {
     return (
-      <div className="w-full p-8 text-center text-zinc-400">
+      <div className="w-full p-8 text-center text-muted-foreground">
         <p>No subscription plans available at the moment.</p>
       </div>
     );
@@ -289,266 +707,159 @@ export default function SubscriptionPricingToggle({
   ) {
     return (
       <div className="w-full p-8 text-center space-y-3">
-        <h3 className="text-2xl font-medium tracking-tight text-zinc-300">
+        <h3 className="text-2xl font-medium tracking-tight text-foreground">
           Consultee Access Required
         </h3>
-        <p className="text-zinc-500">
+        <p className="text-muted-foreground">
           To subscribe to services, please sign in with a consultee account.
         </p>
       </div>
     );
   }
 
+  const monthsCount = Math.max(1, selectedOption?.durationInMonths ?? 1);
+  const perMonthFormatted = selectedOption
+    ? formatCurrencyAmount(
+        Math.round(selectedOption.price / monthsCount),
+        selectedOption.priceCurrency || "INR",
+      )
+    : null;
+
   return (
-    <Tabs
-      value={activeSubscriptionOption}
-      onValueChange={setActiveSubscriptionOption}
-      className="w-full space-y-5"
-    >
-      {/* Segmented pill duration toggle */}
-      <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
-        {subscriptionOptions.map((option) => {
-          const isActive = activeSubscriptionOption === option.id;
-          return (
+    <div className="space-y-5">
+      <Tabs
+        value={activeSubscriptionOption}
+        onValueChange={(id) => {
+          setActiveSubscriptionOption(id);
+          setStep(0);
+        }}
+      >
+        <TabsList
+          className="relative flex w-full p-1 bg-muted rounded-2xl border border-border h-auto"
+          aria-label="Subscription plan"
+        >
+          {subscriptionOptions.map((option) => (
             <TabsTrigger
               key={option.id}
               value={option.id}
-              className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
+              className="flex-1 py-2 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm text-muted-foreground transition-all h-auto whitespace-nowrap"
             >
-              {isActive && (
-                <motion.div
-                  layoutId="subscription-duration-pill"
-                  className="absolute inset-0 bg-white rounded-xl shadow-sm"
-                  transition={{ type: "spring", bounce: 0.15, duration: 0.35 }}
-                />
-              )}
-              <span className="relative z-10">{option.title}</span>
+              {option.title}
             </TabsTrigger>
-          );
-        })}
-      </TabsList>
+          ))}
+        </TabsList>
+      </Tabs>
 
-      <div className="grid grid-cols-1 gap-4">
-        {subscriptionOptions.map((option) => {
-          const isActive = activeSubscriptionOption === option.id;
-          return (
-            <motion.div
-              key={option.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{
-                opacity: isActive ? 1 : 0,
-                y: 0,
-              }}
-              transition={{ duration: 0.2 }}
-              className={isActive ? "block" : "hidden"}
-            >
-              {/* Pricing content — lives directly in glass parent */}
-              <div className="space-y-1">
-                <h3 className="text-lg font-bold text-white">{option.title}</h3>
-                <p className="text-xs text-zinc-500">{option.description}</p>
-              </div>
+      {selectedOption && (
+        <SubscriptionOptionDetails
+          selectedOption={selectedOption}
+          selectedPlanDetails={selectedPlanDetails}
+          monthsCount={monthsCount}
+          perMonthFormatted={perMonthFormatted}
+          trialCtaPrice={trialCtaPrice}
+          trialEligibility={trialEligibility}
+          onChoosePlan={handleChoosePlan}
+          onRequestTrial={handleRequestTrial}
+        />
+      )}
 
-              <div className="flex items-end gap-2 my-5">
-                {/* #1396 — this is the headline price of a plan the server will
-                  charge, so it renders in the plan's own currency, exactly as
-                  the trial price above it does for the reason given at #1167.
-                  `formatPrice` took INR paise and applied the viewer's FX rate,
-                  which relabelled the plan and disagreed with the trial line
-                  two elements away. */}
-                <span className="text-5xl font-bold tracking-tight text-white">
-                  {formatCurrencyAmount(
-                    option.price,
-                    option.priceCurrency || "INR",
-                  )}
-                </span>
-                <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
-              </div>
-
-              {option.features && option.features.length > 0 && (
-                <>
-                  <div className="border-t border-white/[0.06] mb-4" />
-                  <div className="space-y-2 mb-5">
-                    <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
-                      Includes
-                    </p>
-                    <ul className="space-y-2">
-                      {option.features?.map((feature, index) => (
-                        <li
-                          key={`feature-${index}`}
-                          className="text-zinc-200 flex items-center text-sm"
-                        >
-                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
-              )}
-
-              {/* Button stack with proper spacing */}
-              <div className="space-y-2.5">
-                {/* Trial Button */}
-                {selectedPlanDetails?.trialEnabled && (
-                  <Button
-                    className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
-                      trialEligibility.isEligible && !trialEligibility.isLoading
-                        ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
-                        : "bg-zinc-700/50 text-zinc-500 cursor-not-allowed"
-                    }`}
-                    disabled={
-                      !trialEligibility.isEligible || trialEligibility.isLoading
-                    }
-                    onClick={() => {
-                      if (!trialEligibility.isEligible) {
-                        toast({
-                          title: "Not Eligible",
-                          description:
-                            trialEligibility.reason ||
-                            "You have already requested a trial with this consultant",
-                          variant: "destructive",
-                        });
-                        return;
-                      }
-                      setSelectedTrialPlan({
-                        id: selectedPlanDetails.id,
-                        title: selectedPlanDetails.title,
-                        trialDurationMinutes:
-                          selectedPlanDetails.trialDurationMinutes ?? 0,
-                        trialPriceInPaise:
-                          selectedPlanDetails.trialPriceInPaise ?? 0,
-                        priceCurrency:
-                          selectedPlanDetails.priceCurrency ?? "INR",
-                      });
-                      setIsTrialModalOpen(true);
-                    }}
-                  >
-                    <Gift className="w-4 h-4 mr-2" />
-                    {trialEligibility.isLoading
-                      ? "Checking eligibility..."
-                      : trialEligibility.isEligible
-                        ? `Book Trial (${trialCtaPrice}, ${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
-                        : "Trial Already Requested"}
-                  </Button>
-                )}
-
-                {/* The toggle is a CHOOSER, not a brochure: pick a tier here,
-                  read the roadmap/FAQ on the plan page. It used to try to be
-                  both, which is what forced a 12-week roadmap into a 450px
-                  column and then into a modal. */}
-                {selectedPlanDetails?.id && (
-                  <Button
-                    asChild
-                    variant="outline"
-                    className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
-                  >
-                    <Link
-                      href={`/explore/programs/plans/subscriptions/${selectedPlanDetails.id}`}
-                    >
-                      <BookOpen className="w-4 h-4 mr-2" />
-                      Open details
-                    </Link>
-                  </Button>
-                )}
-
-                {/* Primary CTA */}
-                <Button
-                  className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
-                  onClick={handleChoosePlan}
-                >
-                  Subscribe
-                </Button>
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-
-      {/* Start-date dialog (#1766) */}
+      {/* Guided Start-Date & Review Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
-          <DialogHeader className="p-6 border-b border-zinc-800">
-            <DialogTitle className="text-xl font-semibold">
-              When do you want to start?
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            returnFocus.current?.focus();
+          }}
+          className="z-[1101] max-h-[88vh] overflow-y-auto rounded-2xl border border-border bg-background p-0 text-foreground shadow-2xl sm:max-w-xl"
+        >
+          <DialogHeader className="p-6 pr-12">
+            <DialogTitle className="text-2xl font-semibold text-foreground">
+              {step === 0
+                ? "When do you want to start?"
+                : "Review your mentorship"}
             </DialogTitle>
-            <DialogDescription className="text-zinc-400">
+            <DialogDescription className="text-muted-foreground">
               Your consultant schedules one cycle at a time; the first cycle
               starts on the date you pick.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="p-8 space-y-6">
-            {/* Start Date */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
-                <CalendarIcon className="h-4 w-4" />
-                Start Date
-              </label>
-              <input
-                type="date"
-                value={
-                  schedulingStartDate
-                    ? format(schedulingStartDate, "yyyy-MM-dd")
-                    : ""
-                }
-                onChange={(e) => {
-                  // Local midnight of the picked calendar day: `new Date("yyyy-MM-dd")`
-                  // is UTC midnight, a day early west of Greenwich.
-                  const [y, m, d] = e.target.value.split("-").map(Number);
-                  setSchedulingStartDate(
-                    e.target.value ? new Date(y, m - 1, d) : null,
-                  );
-                }}
-                min={format(new Date(), "yyyy-MM-dd")}
-                className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
-                style={{ colorScheme: "dark" }}
-              />
-            </div>
+          <BookingSteps steps={["Start date", "Review"]} current={step} />
 
-            {/* First-cycle summary */}
-            {schedulingStartDate && firstCycle && selectedOption && (
-              <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
-                <p className="text-white font-semibold text-lg">
-                  {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
-                  {format(firstCycle.end, "MMM dd, yyyy")}
+          <div className="space-y-5 p-6">
+            {step === 0 ? (
+              <SubscriptionStartDateStep
+                consultantId={consultantDetails.id}
+                calendarMonth={calendarMonth}
+                schedulingStartDate={schedulingStartDate}
+                timezone={timezone}
+                onChangeCalendarMonth={setCalendarMonth}
+                onChangeSchedulingStartDate={setSchedulingStartDate}
+              />
+            ) : (
+              selectedOption && (
+                <BookingSummary
+                  title={selectedOption.description || selectedOption.title}
+                  price={formatCurrencyAmount(
+                    selectedOption.price,
+                    selectedOption.priceCurrency || "INR",
+                  )}
+                  unit={
+                    monthsCount > 1
+                      ? `/ ${monthsCount} months (${perMonthFormatted}/mo)`
+                      : "/ month"
+                  }
+                >
+                  <p>
+                    {selectedOption.durationInMonths} month plan ·{" "}
+                    {selectedOption.totalSessions ?? "—"} sessions
+                  </p>
+                  <p>Time zone: {timezone}</p>
+                </BookingSummary>
+              )
+            )}
+
+            {firstCycle && selectedOption && (
+              <div className="rounded-xl border border-border bg-muted/50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                  First cycle
                 </p>
-                <p className="text-sm text-zinc-500 mt-1">
+                <p className="font-medium text-foreground">
+                  {formatInTimeZone(firstCycle.start, timezone, "MMM d, yyyy")}{" "}
+                  → {formatInTimeZone(firstCycle.end, timezone, "MMM d, yyyy")}
+                </p>
+                <p className="mt-1.5 text-sm text-muted-foreground">
                   {selectedOption.sessionsPerWeek ?? 1} session
                   {(selectedOption.sessionsPerWeek ?? 1) === 1 ? "" : "s"} per
-                  cycle · {selectedOption.totalSessions ?? "—"} in the plan
+                  cycle · {selectedOption.totalSessions ?? "—"} total sessions
                 </p>
               </div>
             )}
 
-            {/* Validation Message */}
             {!validation.valid && validation.message && (
-              <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                <p className="text-sm text-red-400">{validation.message}</p>
-              </div>
-            )}
-
-            {/* Timezone Info */}
-            <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
-              <p className="text-sm text-zinc-400">
-                💡 Timezone: {timezone} (Your local time)
+              <p role="alert" className="text-sm text-destructive">
+                {validation.message}
               </p>
-            </div>
+            )}
           </div>
 
-          <div className="bg-zinc-800/50 px-6 py-4 flex justify-center gap-3 rounded-b-2xl border-t border-zinc-800">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/40 px-6 py-4">
             <Button
-              onClick={handleContinueToCheckout}
-              disabled={!validation.valid}
-              className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6"
+              variant="outline"
+              onClick={() => (step === 0 ? setIsDialogOpen(false) : setStep(0))}
             >
-              Continue to Checkout
+              {step === 0 ? "Cancel" : "Back"}
+            </Button>
+            <Button
+              disabled={!validation.valid || !selectedOption}
+              onClick={step === 0 ? () => setStep(1) : handleContinueToCheckout}
+            >
+              {step === 0 ? "Review plan" : "Continue to checkout"}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Trial Booking Modal */}
       {selectedTrialPlan && (
         <TrialBookingModal
           isOpen={isTrialModalOpen}
@@ -565,6 +876,6 @@ export default function SubscriptionPricingToggle({
           trialCurrency={selectedTrialPlan.priceCurrency}
         />
       )}
-    </Tabs>
+    </div>
   );
 }

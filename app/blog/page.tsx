@@ -1,7 +1,9 @@
 "use client";
 
-import { FileText } from "lucide-react";
+import { ArrowRight, BookOpen, Clock, FileText, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface BlogPost {
   title: string;
@@ -112,100 +114,191 @@ const FEATURED_POST: BlogPost = {
   readTime: "15 min read",
 };
 
-function BlurredCard({ post }: { post: BlogPost }) {
+function EditorialPreviewCard({
+  category,
+  post,
+}: Readonly<{
+  category: string;
+  post: BlogPost;
+}>) {
   return (
-    <div className="relative bg-card rounded-2xl border border-border overflow-hidden select-none">
-      <div className="blur-[6px] pointer-events-none" aria-hidden>
-        <div className="h-44 bg-gradient-to-br from-muted to-muted" />
-        <div className="p-5">
-          <h3 className="text-base font-semibold text-foreground mb-2 line-clamp-2">
-            {post.title}
-          </h3>
-          <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
-            {post.teaser}
-          </p>
-          <span className="text-xs text-muted-foreground/70">{post.readTime}</span>
+    <article className="flex h-full flex-col justify-between rounded-2xl border border-border bg-card p-6 shadow-elevation-1 transition-all duration-200 hover:border-foreground/20 hover:shadow-elevation-2">
+      <div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <Badge variant="secondary" className="text-xs font-medium">
+            {category}
+          </Badge>
+          <Badge
+            variant="outline"
+            className="text-[11px] font-medium text-muted-foreground"
+          >
+            Coming Soon
+          </Badge>
         </div>
+        <h3 className="mb-2.5 text-lg font-semibold leading-snug tracking-tight text-foreground">
+          {post.title}
+        </h3>
+        <p className="mb-6 text-sm leading-relaxed text-muted-foreground">
+          {post.teaser}
+        </p>
       </div>
-    </div>
+      <div className="mt-auto flex items-center justify-between border-t border-border pt-4 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5" aria-hidden />
+          {post.readTime}
+        </span>
+        <span className="font-medium text-foreground/70">Editorial preview</span>
+      </div>
+    </article>
   );
 }
 
 export default function BlogPage() {
   return (
-    <div className="w-full">
-      {/* Hero */}
-      <section className="bg-zinc-950 text-white py-20 md:py-28">
-        <div className="container mx-auto px-4 md:px-6 text-center max-w-3xl">
-          <Badge
-            variant="outline"
-            className="border-zinc-700 text-zinc-400 mb-6 text-sm px-4 py-1.5"
-          >
-            Coming Soon
-          </Badge>
-          <h1 className="text-fluid-5xl font-bold tracking-tight mb-6">
-            The Familiarise Blog
+    <div className="w-full bg-background">
+      {/* Dark Hero */}
+      <section className="relative overflow-hidden bg-zinc-950 text-white pt-32 pb-20 md:pb-28">
+        <div className="grid-pattern pointer-events-none absolute inset-0 opacity-20" />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 h-[420px] w-[720px] -translate-x-1/2 bg-[radial-gradient(closest-side,rgba(255,255,255,0.08),transparent)]"
+        />
+
+        <div className="container relative z-10 mx-auto max-w-3xl px-4 text-center md:px-6">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-zinc-700/60 bg-zinc-900/80 px-4 py-1.5 text-sm text-zinc-300 backdrop-blur-sm">
+            <Sparkles className="h-4 w-4 text-zinc-300" aria-hidden />
+            <span>Editorial &amp; Playbooks · Coming Soon</span>
+          </div>
+          <h1 className="text-fluid-4xl md:text-fluid-5xl mb-6 font-bold tracking-tight">
+            The Familiarise <span className="silver-text">Blog</span>
           </h1>
-          <p className="text-lg md:text-xl text-zinc-400 leading-relaxed">
+          <p className="mx-auto max-w-2xl text-lg leading-relaxed text-zinc-400 md:text-xl">
             Career advice, interview strategies, and expert insights — written
-            by the professionals you&apos;ll meet on the platform.
+            by the practitioners you&apos;ll meet on the platform.
           </p>
         </div>
       </section>
 
-      <main className="container mx-auto px-4 md:px-6 py-12 md:py-16 space-y-16">
+      <main className="container mx-auto max-w-[1200px] space-y-16 px-4 py-16 md:px-6 md:py-24">
         {/* Featured / Top Story */}
         <section>
-          <h2 className="text-fluid-3xl font-bold tracking-tight mb-6">
-            Featured
-          </h2>
-          <div className="relative bg-card rounded-2xl border border-border overflow-hidden select-none">
-            <div className="blur-[6px] pointer-events-none" aria-hidden>
-              <div className="grid grid-cols-1 md:grid-cols-2">
-                <div className="h-64 md:h-auto bg-gradient-to-br from-muted to-muted" />
-                <div className="p-6 md:p-8 flex flex-col justify-center">
-                  <h3 className="text-xl font-bold text-foreground mb-3">
-                    {FEATURED_POST.title}
-                  </h3>
-                  <p className="text-muted-foreground mb-4">
-                    {FEATURED_POST.teaser}
-                  </p>
-                  <span className="text-sm text-muted-foreground/70">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-fluid-2xl md:text-fluid-3xl font-bold tracking-tight">
+              Featured Playbook
+            </h2>
+          </div>
+          <article className="rounded-2xl border border-border bg-card p-6 shadow-elevation-1 md:p-10">
+            <div className="grid items-center gap-8 md:grid-cols-12">
+              <div className="md:col-span-8">
+                <div className="mb-4 flex flex-wrap items-center gap-2.5">
+                  <Badge variant="secondary" className="gap-1.5">
+                    <BookOpen className="h-3.5 w-3.5" aria-hidden />
+                    Deep Dive Guide
+                  </Badge>
+                  <Badge variant="outline" className="text-muted-foreground">
+                    Coming Soon
+                  </Badge>
+                </div>
+                <h3 className="text-fluid-2xl md:text-fluid-3xl mb-3 font-bold tracking-tight text-foreground">
+                  {FEATURED_POST.title}
+                </h3>
+                <p className="mb-6 max-w-2xl text-base leading-relaxed text-muted-foreground">
+                  {FEATURED_POST.teaser}
+                </p>
+                <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock className="h-4 w-4" aria-hidden />
                     {FEATURED_POST.readTime}
                   </span>
+                  <span aria-hidden>•</span>
+                  <span>Written with verified engineering &amp; PM mentors</span>
+                </div>
+              </div>
+              <div className="flex flex-col justify-between rounded-xl border border-border bg-muted/60 p-6 md:col-span-4">
+                <FileText className="mb-4 h-8 w-8 text-foreground" aria-hidden />
+                <div>
+                  <p className="font-semibold text-foreground">
+                    In final editorial review
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                    Need tailored career transition guidance right away? Book a
+                    1-on-1 session with a verified mentor.
+                  </p>
+                </div>
+                <div className="mt-5">
+                  <Button asChild variant="outline" size="sm" className="w-full">
+                    <Link href="/use-cases/career-switchers">
+                      Explore Career Switcher Path
+                      <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
                 </div>
               </div>
             </div>
-          </div>
+          </article>
         </section>
 
         {/* Category sections */}
         {BLOG_SECTIONS.map((section) => (
           <section key={section.category}>
-            <h2 className="text-fluid-3xl font-bold tracking-tight mb-6">
-              {section.category}
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-              {section.posts.map((post, i) => (
-                <BlurredCard key={i} post={post} />
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-fluid-2xl md:text-fluid-3xl font-bold tracking-tight">
+                {section.category}
+              </h2>
+              <span className="text-sm text-muted-foreground">
+                {section.posts.length} articles in progress
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {section.posts.map((post) => (
+                <EditorialPreviewCard
+                  key={post.title}
+                  category={section.category}
+                  post={post}
+                />
               ))}
             </div>
           </section>
         ))}
       </main>
 
-      {/* Bottom CTA */}
-      <section className="py-16 md:py-20 bg-muted border-t border-border">
-        <div className="container mx-auto px-4 md:px-6 text-center max-w-xl">
-          <FileText className="w-10 h-10 text-muted-foreground/70 mx-auto mb-4" />
-          <h2 className="text-fluid-3xl font-bold tracking-tight mb-3">
+      {/* Dark Closing CTA Band */}
+      <section className="relative overflow-hidden bg-zinc-950 py-20 text-white md:py-28">
+        <div className="grid-pattern pointer-events-none absolute inset-0 opacity-20" />
+        <div className="container relative z-10 mx-auto max-w-2xl px-4 text-center md:px-6">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-900">
+            <FileText className="h-6 w-6 text-zinc-300" aria-hidden />
+          </div>
+          <h2 className="text-fluid-3xl md:text-fluid-4xl mb-4 font-bold tracking-tight">
             We&apos;re writing the first articles now
           </h2>
-          <p className="text-muted-foreground">
-            Real stories, real advice, from the experts on our platform. No
-            fluff, no filler — just the guidance you&apos;d pay for in a
-            session, for free.
+          <p className="mb-8 text-base leading-relaxed text-zinc-400 md:text-lg">
+            Real stories and tactical playbooks from the experts on our
+            platform. Don&apos;t want to wait? Get direct 1-on-1 guidance from a
+            verified practitioner today.
           </p>
+          <div className="flex flex-col justify-center gap-3 sm:flex-row">
+            <Button
+              asChild
+              size="lg"
+              className="h-12 rounded-xl bg-white px-8 text-zinc-900 hover:bg-zinc-100"
+            >
+              <Link href="/explore/experts">
+                Explore Experts
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+            <Button
+              asChild
+              size="lg"
+              variant="outline"
+              className="h-12 rounded-xl border-zinc-700 bg-transparent px-8 text-white hover:bg-zinc-900 hover:text-white"
+            >
+              <Link href="/use-cases/career-switchers">
+                Career Switcher Guide
+              </Link>
+            </Button>
+          </div>
         </div>
       </section>
     </div>

@@ -223,7 +223,11 @@ function SignUpContent() {
         title: "Verification email sent",
         description: `If ${email} belongs to an unverified account, the link is on its way.`,
       });
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "signup_resend_verification" } },
+      );
       toast({
         title: "Couldn't resend the email",
         description: "Please try again in a moment.",
@@ -288,7 +292,11 @@ function SignUpContent() {
             : null,
         );
       }
-    } catch {
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth", op: "signup_sso_domain_check" } },
+      );
       // ignore — fall through to normal signup
     } finally {
       setSsoChecking(false);
@@ -478,12 +486,30 @@ function SignUpContent() {
       </div>
       <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
         <div className="mx-auto flex w-full max-w-md flex-col">
+          <Link
+            href="/"
+            className="mb-8 inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-white uppercase md:hidden"
+          >
+            <GlobeIcon className="h-5 w-5" /> Familiarise
+          </Link>
           <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Create your account
           </h2>
           <p className="mb-6 text-sm text-zinc-400 md:text-base">
             Enter your details below to get started.
           </p>
+          {referralCode && !ssoCheck?.enforceSSO && (
+            <div className="mb-6 flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-3.5 py-2.5 text-sm text-emerald-300">
+              <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+              <p>
+                Referral code{" "}
+                <span className="font-semibold text-emerald-200">
+                  {referralCode}
+                </span>{" "}
+                applied! You&apos;ll receive a welcome bonus after signing up.
+              </p>
+            </div>
+          )}
           <form onSubmit={handleSignUp}>
             <div className="grid gap-2">
               <Label htmlFor="name">Name</Label>
@@ -553,15 +579,6 @@ function SignUpContent() {
                 onChange={setRefCode}
                 disabled={isLoading}
               />
-            )}
-            {referralCode && !ssoCheck?.enforceSSO && (
-              <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">
-                <p className="text-sm text-green-400">
-                  Referral code{" "}
-                  <span className="font-semibold">{referralCode}</span> applied!
-                  You&apos;ll receive a welcome bonus after signing up.
-                </p>
-              </div>
             )}
             {!ssoCheck?.enforceSSO && (
               <Button

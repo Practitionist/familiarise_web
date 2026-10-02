@@ -410,8 +410,11 @@ function CheckoutSuccessContent() {
         </Card>
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Button variant="outline" onClick={() => router.push("/dashboard")}>
-            Go to Dashboard
+          <Button
+            variant="outline"
+            onClick={() => router.push("/explore/experts")}
+          >
+            Explore More Experts
           </Button>
 
           <Button

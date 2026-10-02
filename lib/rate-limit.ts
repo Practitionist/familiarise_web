@@ -95,6 +95,12 @@ export const documentUploadLimiter = makeLimiter(
   "1 m",
   "rl:document-upload",
 );
+/** 6 per minute per IP — on-demand plan brochure rendering */
+export const brochureDownloadLimiter = makeLimiter(
+  6,
+  "1 m",
+  "rl:plan-brochure",
+);
 /** 30 per minute per user — bulk document review */
 export const documentReviewLimiter = makeLimiter(
   30,

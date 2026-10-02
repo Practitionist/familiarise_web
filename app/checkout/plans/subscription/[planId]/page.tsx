@@ -1,8 +1,6 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
@@ -23,27 +21,26 @@ import {
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutConsultantHeader,
+  CheckoutErrorState,
+  CheckoutPaymentMethodsCard,
+  CheckoutPricingBreakdown,
+} from "@/app/checkout/components/CheckoutSharedSections";
 import {
   BillingStateSelect,
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { ConsultantProfile, SubscriptionPlan } from "@prisma/client";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
-  paymentGateways,
 } from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
+import { calculatePricing } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import {
@@ -254,7 +251,8 @@ export default function SubscriptionCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -434,7 +432,7 @@ export default function SubscriptionCheckoutPage({
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
-    const basePrice = planData?.data?.price || 0;
+    const basePrice = planData?.data?.price ?? 0;
     let discountPercent = 0;
     let discountAmount = 0;
     if (appliedDiscount) {
@@ -487,87 +485,23 @@ export default function SubscriptionCheckoutPage({
   }
 
   if (error) {
-    return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
-        <div
-          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
-          role="alert"
-        >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
-            <svg
-              className="h-6 w-6 text-background/70"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
-              />
-            </svg>
-          </div>
-          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-background/70 text-sm">{error}</p>
-          <button
-            onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Go back
-          </button>
-        </div>
-      </div>
-    );
+    return <CheckoutErrorState error={error} />;
   }
 
   const consultantDetails = planData?.data.consultantProfile;
   const userDetails = planData?.data.consultantProfile.user;
 
   return (
-    <>
+    <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar className="w-12 h-12 border shrink-0">
-              <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
-              />
-              <AvatarFallback>
-                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">
-                {userDetails?.name || "Consultant Name"}
-              </div>
-              <div className="text-sm text-muted-foreground truncate">
-                {consultantDetails?.headline || "Consultant"}
-              </div>
-              {userDetails?.workExperiences &&
-                userDetails.workExperiences.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
-                        key={`checkout-sub-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={20}
-                        className="border-border"
-                      />
-                    ))}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="text-right min-w-0">
-            <div className="font-semibold">Subscription</div>
-            <div className="text-sm text-muted-foreground truncate">
-              {planData?.data?.title || "Monthly Plan"}
-            </div>
-          </div>
-        </div>
+        <CheckoutConsultantHeader
+          name={userDetails?.name}
+          image={userDetails?.image}
+          headline={consultantDetails?.headline}
+          workExperiences={userDetails?.workExperiences}
+          planTypeLabel="Subscription"
+          planTitle={planData?.data?.title || "Monthly Plan"}
+        />
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
@@ -693,7 +627,11 @@ export default function SubscriptionCheckoutPage({
             <Button
               variant="outline"
               onClick={() => handleApplyDiscount()}
-              disabled={isApplyingDiscount || !!appliedDiscount}
+              disabled={
+                isApplyingDiscount ||
+                !!appliedDiscount ||
+                !discountCodeInput.trim()
+              }
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
             </Button>
@@ -702,7 +640,7 @@ export default function SubscriptionCheckoutPage({
             <div className="text-sm text-red-500">{discountError}</div>
           )}
           {appliedDiscount && (
-            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-md">
+            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-lg border border-green-200">
               <div className="min-w-0">
                 <div className="font-medium text-green-700 truncate">
                   {appliedDiscount.code}
@@ -716,7 +654,7 @@ export default function SubscriptionCheckoutPage({
               <Button
                 variant="ghost"
                 size="sm"
-                className="shrink-0"
+                className="shrink-0 text-green-700 hover:text-green-800"
                 onClick={() => {
                   setAppliedDiscount(null);
                   setDiscountError(null);
@@ -726,27 +664,6 @@ export default function SubscriptionCheckoutPage({
               </Button>
             </div>
           )}
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium">SUB20</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 20% off your subscription
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-muted-foreground">20% off</div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleApplyDiscount("SUB20")}
-                  disabled={isApplyingDiscount || !!appliedDiscount}
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
         <Separator className="bg-border" />
         <ReferralCreditsBlock
@@ -758,205 +675,75 @@ export default function SubscriptionCheckoutPage({
           formatPrice={formatPrice}
         />
       </div>
-      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
-        <Card className="border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-foreground">
-              Subscription Pricing
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Monthly Fee</div>
-                <div>{formatPrice(planData?.data?.price || 100)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <span className="font-semibold">Includes</span>
-                </div>
-                <div className="font-semibold">
-                  <ul className="list-disc">
-                    <li>
-                      {planData?.data?.totalSessions ||
-                        (planData?.data?.sessionsPerWeek || 1) *
-                          (planData?.data?.durationInMonths || 1) *
-                          4}{" "}
-                      total sessions (
-                      {planData?.data?.totalHours ||
-                        (planData?.data?.sessionsPerWeek || 1) *
-                          (planData?.data?.durationInMonths || 1) *
-                          4 *
-                          (planData?.data?.sessionDurationInHours || 1)}{" "}
-                      hours)
-                    </li>
-                    <li>
-                      {planData?.data?.sessionsPerWeek || 1} sessions per week
-                    </li>
-                    <li>
-                      {planData?.data?.sessionDurationInHours || 1} hour
-                      sessions
-                    </li>
-                    <li>
-                      {planData?.data?.emailSupport || "General"} email support
-                    </li>
-                    <li>Learning materials</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <Separator className="bg-border" />
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Subtotal</div>
-                <div>{formatPrice(pricing.subtotal)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.discountAmount > 0 && (
-                <div className="flex items-center justify-between text-green-600">
-                  <div>
-                    Discount{" "}
-                    {pricing.discountPercent > 0 &&
-                      `(${formatPercentage(pricing.discountPercent)})`}
-                  </div>
-                  <div>-{formatPrice(pricing.discountAmount)}</div>
-                </div>
-              )}
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              {/* #1775 C-6 — plans are paid at purchase; the 48 h promise. */}
-              <p className="text-xs text-muted-foreground">
-                You pay {formatPrice(pricing.total)} now ·{" "}
-                {planData?.data?.consultantProfile?.user?.name ?? "Your expert"}{" "}
-                schedules your first week within 48 h or you&apos;re refunded in
-                full.
-              </p>
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-            </div>
-          </CardContent>
-        </Card>
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <div className="font-semibold">Payment</div>
-            <div className="text-muted-foreground">
-              Select your preferred payment method
-            </div>
-          </div>
-          {paymentGateways.map((gateway) => (
-            <Card key={gateway.gateway} className="border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">
-                  {gateway.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-foreground">
-                        Credit/Debit Card
-                      </div>
-                      <div className="text-sm text-muted-foreground/70">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {gateway.isActive ? (
-                    <div className="flex gap-2">
-                      {effectiveSearchParams?.schedulingPeriodStartsAt &&
-                      gateway.gateway === "RAZORPAY" ? (
-                        <RazorpayCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "RAZORPAY",
-                            schedulingPeriodStartsAt:
-                              effectiveSearchParams.schedulingPeriodStartsAt,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                          onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : effectiveSearchParams?.schedulingPeriodStartsAt &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "STRIPE",
-                            schedulingPeriodStartsAt:
-                              effectiveSearchParams.schedulingPeriodStartsAt,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : null}
-                      {process.env.NODE_ENV === "development" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
-                          }
-                        >
-                          {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                              Processing...
-                            </>
-                          ) : (
-                            `Mock Pay (${gateway.name})`
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <Button variant="outline" disabled>
-                      Coming Soon
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+      <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
+        <CheckoutPricingBreakdown
+          title="Subscription Pricing"
+          feeLabel="Monthly Fee"
+          feeAmountPaise={planData?.data?.price ?? 0}
+          includes={[
+            `${
+              planData?.data?.totalSessions ||
+              (planData?.data?.sessionsPerWeek || 1) *
+                (planData?.data?.durationInMonths || 1) *
+                4
+            } total sessions (${
+              planData?.data?.totalHours ||
+              (planData?.data?.sessionsPerWeek || 1) *
+                (planData?.data?.durationInMonths || 1) *
+                4 *
+                (planData?.data?.sessionDurationInHours || 1)
+            } hours)`,
+            `${planData?.data?.sessionsPerWeek || 1} sessions per week`,
+            `${planData?.data?.sessionDurationInHours || 1} hour sessions`,
+            `${planData?.data?.emailSupport || "General"} email support`,
+            "Learning materials",
+          ]}
+          pricing={pricing}
+          formatPrice={formatPrice}
+          selectedOrganizationId={selectedOrganizationId}
+          afterTotalNotice={
+            <p className="text-xs text-muted-foreground">
+              You pay {formatPrice(pricing.total)} now ·{" "}
+              {planData?.data?.consultantProfile?.user?.name ?? "Your expert"}{" "}
+              schedules your first week within 48 h or you&apos;re refunded in
+              full.
+            </p>
+          }
+        />
+        <CheckoutPaymentMethodsCard
+          buildCheckoutData={(gateway) => {
+            if (
+              !planData?.data?.id ||
+              !effectiveSearchParams?.schedulingPeriodStartsAt ||
+              (firstCycle && firstCycle.end.getTime() < Date.now())
+            ) {
+              return null;
+            }
+            return createCheckoutData({
+              appointmentType: "SUBSCRIPTION",
+              planId: planData.data.id,
+              paymentGateway: gateway,
+              schedulingPeriodStartsAt:
+                effectiveSearchParams.schedulingPeriodStartsAt,
+              discountCode: appliedDiscount?.code,
+              displayCurrency: currency,
+              useReferralCredits: selectedOrganizationId
+                ? false
+                : useReferralCredits,
+              organizationId: selectedOrganizationId ?? undefined,
+              ...billingState.bodyField,
+            });
+          }}
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={razorpayHandlers.onPaymentError}
+          onStripeSuccess={stripeHandlers.onPaymentSuccess}
+          onStripeError={stripeHandlers.onPaymentError}
+          onMockPay={(gateway) => handleCheckout(gateway, true)}
+          isCheckoutProcessing={isCheckoutProcessing}
+          processingGateway={processingGateway}
+          isMaintenanceBlocked={isMaintenanceBlocked}
+        />
       </div>
-    </>
+    </div>
   );
 }

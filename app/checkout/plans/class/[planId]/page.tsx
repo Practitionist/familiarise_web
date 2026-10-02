@@ -1,9 +1,7 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
@@ -19,28 +17,27 @@ import {
   createCheckoutData,
   type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
-  paymentGateways,
   reportPaymentsError,
 } from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
+import { calculatePricing } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import {
+  CheckoutConsultantHeader,
+  CheckoutErrorState,
+  CheckoutPaymentMethodsCard,
+  CheckoutPricingBreakdown,
+} from "@/app/checkout/components/CheckoutSharedSections";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -262,7 +259,8 @@ export default function ClassCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -380,7 +378,6 @@ export default function ClassCheckoutPage({
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
-      resolvedSearchParams,
       planData?.data?.id,
       handleApiError,
       handleCheckoutSuccess,
@@ -461,38 +458,7 @@ export default function ClassCheckoutPage({
   }
 
   if (error) {
-    return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
-        <div
-          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
-          role="alert"
-        >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
-            <svg
-              className="h-6 w-6 text-background/70"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
-              />
-            </svg>
-          </div>
-          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-background/70 text-sm">{error}</p>
-          <button
-            onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Go back
-          </button>
-        </div>
-      </div>
-    );
+    return <CheckoutErrorState error={error} />;
   }
 
   const planDetails = planData?.data;
@@ -512,58 +478,25 @@ export default function ClassCheckoutPage({
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)]">
         <p>Essential class data is missing. Please try again later.</p>
       </div>
     );
   }
 
   return (
-    <>
+    <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar className="w-12 h-12 border shrink-0">
-              <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
-              />
-              <AvatarFallback>
-                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">
-                {userDetails?.name || "Consultant Name"}
-              </div>
-              <div className="text-sm text-muted-foreground truncate">
-                {consultantDetails?.headline ||
-                  consultantDetails?.domain?.name ||
-                  "Consultant"}
-              </div>
-              {userDetails?.workExperiences &&
-                userDetails.workExperiences.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
-                        key={`checkout-class-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={20}
-                        className="border-border"
-                      />
-                    ))}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="text-right min-w-0">
-            <div className="font-semibold">Class</div>
-            <div className="text-sm text-muted-foreground truncate">
-              {planDetails?.title || "Online Class"}
-            </div>
-          </div>
-        </div>
+        <CheckoutConsultantHeader
+          name={userDetails?.name}
+          image={userDetails?.image}
+          headline={
+            consultantDetails?.headline || consultantDetails?.domain?.name
+          }
+          workExperiences={userDetails?.workExperiences}
+          planTypeLabel="Class"
+          planTitle={planDetails?.title || "Online Class"}
+        />
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Class Details</div>
@@ -682,7 +615,11 @@ export default function ClassCheckoutPage({
             <Button
               variant="outline"
               onClick={() => handleApplyDiscount()}
-              disabled={isApplyingDiscount || !!appliedDiscount}
+              disabled={
+                isApplyingDiscount ||
+                !!appliedDiscount ||
+                !discountCodeInput.trim()
+              }
             >
               {isApplyingDiscount ? "Applying..." : "Apply"}
             </Button>
@@ -691,7 +628,7 @@ export default function ClassCheckoutPage({
             <div className="text-sm text-red-500">{discountError}</div>
           )}
           {appliedDiscount && (
-            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-md">
+            <div className="flex items-center justify-between gap-3 bg-green-50 p-3 rounded-lg border border-green-200">
               <div className="min-w-0">
                 <div className="font-medium text-green-700 truncate">
                   {appliedDiscount.code}
@@ -705,7 +642,7 @@ export default function ClassCheckoutPage({
               <Button
                 variant="ghost"
                 size="sm"
-                className="shrink-0"
+                className="shrink-0 text-green-700 hover:text-green-800"
                 onClick={() => {
                   setAppliedDiscount(null);
                   setDiscountError(null);
@@ -715,27 +652,6 @@ export default function ClassCheckoutPage({
               </Button>
             </div>
           )}
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium">CLASS15</div>
-                <div className="text-sm text-muted-foreground">
-                  Get 15% off your class enrollment
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="text-muted-foreground">15% off</div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleApplyDiscount("CLASS15")}
-                  disabled={isApplyingDiscount || !!appliedDiscount}
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
         <Separator className="bg-border" />
         <ReferralCreditsBlock
@@ -747,192 +663,67 @@ export default function ClassCheckoutPage({
           formatPrice={formatPrice}
         />
       </div>
-      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
-        <Card className="border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-foreground">Class Pricing</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Enrollment Fee</div>
-                <div>{formatPrice(batchPricePaise)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <span className="font-semibold">Includes</span>
-                </div>
-                <div className="font-semibold">
-                  <ul className="list-disc">
-                    <li>
-                      {planDetails?.totalSessions ||
-                        (planDetails?.sessionsPerWeek || 2) *
-                          (planDetails?.durationInMonths || 1) *
-                          4}{" "}
-                      total sessions (
-                      {planDetails?.totalHours ||
-                        (planDetails?.sessionsPerWeek || 2) *
-                          (planDetails?.durationInMonths || 1) *
-                          4}{" "}
-                      hours)
-                    </li>
-                    <li>
-                      {planDetails?.sessionsPerWeek || 2} sessions per week
-                    </li>
-                    <li>Course materials</li>
-                    <li>Certificate of completion</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <Separator className="bg-border" />
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Subtotal</div>
-                <div>{formatPrice(pricing.subtotal)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.discountAmount > 0 && (
-                <div className="flex items-center justify-between text-green-600">
-                  <div>
-                    Discount{" "}
-                    {pricing.discountPercent > 0 &&
-                      `(${formatPercentage(pricing.discountPercent)})`}
-                  </div>
-                  <div>-{formatPrice(pricing.discountAmount)}</div>
-                </div>
-              )}
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              {/* #1780 D-6 — the host's free-cancellation window. */}
-              <FreeCancellationLine
-                startsAt={nextClassSession?.startsAt}
-                windowHours={planDetails?.refundWindowHours}
-                kind="class"
-                className="text-xs text-muted-foreground"
-              />
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-            </div>
-          </CardContent>
-        </Card>
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <div className="font-semibold">Payment</div>
-            <div className="text-muted-foreground">
-              Select your preferred payment method
-            </div>
-          </div>
-          {paymentGateways.map((gateway) => (
-            <Card key={gateway.name} className="border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">
-                  {gateway.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-foreground">
-                        Credit/Debit Card
-                      </div>
-                      <div className="text-sm text-muted-foreground/70">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {gateway.isActive ? (
-                    <div className="flex gap-2">
-                      {availableClassId && gateway.gateway === "RAZORPAY" ? (
-                        <RazorpayCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "CLASS",
-                            planId: planDetails.id,
-                            eventId: availableClassId,
-                            paymentGateway: "RAZORPAY",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
-                          onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : availableClassId && gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "CLASS",
-                            planId: planDetails.id,
-                            eventId: availableClassId,
-                            paymentGateway: "STRIPE",
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : null}
-                      {process.env.NODE_ENV === "development" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
-                          }
-                        >
-                          {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                              Processing...
-                            </>
-                          ) : (
-                            `Mock Pay (${gateway.name})`
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <Button variant="outline" disabled>
-                      Coming Soon
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+      <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
+        <CheckoutPricingBreakdown
+          title="Class Pricing"
+          feeLabel="Enrollment Fee"
+          feeAmountPaise={batchPricePaise}
+          includes={[
+            `${
+              planDetails?.totalSessions ||
+              (planDetails?.sessionsPerWeek || 2) *
+                (planDetails?.durationInMonths || 1) *
+                4
+            } total sessions (${
+              planDetails?.totalHours ||
+              (planDetails?.sessionsPerWeek || 2) *
+                (planDetails?.durationInMonths || 1) *
+                4
+            } hours)`,
+            `${planDetails?.sessionsPerWeek || 2} sessions per week`,
+            "Course materials",
+            "Certificate of completion",
+          ]}
+          pricing={pricing}
+          formatPrice={formatPrice}
+          selectedOrganizationId={selectedOrganizationId}
+          afterTotalNotice={
+            <FreeCancellationLine
+              startsAt={nextClassSession?.startsAt}
+              windowHours={planDetails?.refundWindowHours}
+              kind="class"
+              className="text-xs text-muted-foreground"
+            />
+          }
+        />
+        <CheckoutPaymentMethodsCard
+          buildCheckoutData={(gateway) =>
+            availableClassId
+              ? createCheckoutData({
+                  appointmentType: "CLASS",
+                  planId: planDetails.id,
+                  eventId: availableClassId,
+                  paymentGateway: gateway,
+                  discountCode: appliedDiscount?.code,
+                  displayCurrency: currency,
+                  useReferralCredits: selectedOrganizationId
+                    ? false
+                    : useReferralCredits,
+                  organizationId: selectedOrganizationId ?? undefined,
+                  ...billingState.bodyField,
+                })
+              : null
+          }
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={razorpayHandlers.onPaymentError}
+          onStripeSuccess={stripeHandlers.onPaymentSuccess}
+          onStripeError={stripeHandlers.onPaymentError}
+          onMockPay={(gateway) => handleCheckout(gateway, true)}
+          isCheckoutProcessing={isCheckoutProcessing}
+          processingGateway={processingGateway}
+          isMaintenanceBlocked={isMaintenanceBlocked}
+        />
       </div>
-    </>
+    </div>
   );
 }
