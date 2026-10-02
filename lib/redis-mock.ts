@@ -2,6 +2,22 @@
  * In-memory mock that mimics the Upstash Redis API for local development and tests.
  */
 
+export const RELEASE_LOCK_SCRIPT = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+  else
+    return 0
+  end
+`;
+
+export const RENEW_LOCK_SCRIPT = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("pexpire", KEYS[1], ARGV[2])
+  else
+    return 0
+  end
+`;
+
 interface StoreEntry {
   value: string;
   expiry?: number;

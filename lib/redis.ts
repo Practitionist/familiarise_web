@@ -290,21 +290,8 @@ export function resetCircuitBreaker(): void {
 // Distributed Lock Helpers & Shared Lua Scripts
 // ============================================================================
 
-export const RELEASE_LOCK_SCRIPT = `
-  if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("del", KEYS[1])
-  else
-    return 0
-  end
-`;
-
-export const RENEW_LOCK_SCRIPT = `
-  if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("pexpire", KEYS[1], ARGV[2])
-  else
-    return 0
-  end
-`;
+import { RELEASE_LOCK_SCRIPT, RENEW_LOCK_SCRIPT } from "./redis-mock";
+export { RELEASE_LOCK_SCRIPT, RENEW_LOCK_SCRIPT };
 
 export async function acquireLock(
   key: string,

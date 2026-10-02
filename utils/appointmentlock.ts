@@ -2,9 +2,8 @@ import { Redis } from "@upstash/redis";
 import redisClient, {
   withCircuitBreaker,
   checkRedisHealth,
-  RELEASE_LOCK_SCRIPT,
-  RENEW_LOCK_SCRIPT,
 } from "../lib/redis";
+import { RELEASE_LOCK_SCRIPT, RENEW_LOCK_SCRIPT } from "../lib/redis-mock";
 import crypto from "crypto";
 import { SlotLockError } from "./errors/SlotLockError";
 

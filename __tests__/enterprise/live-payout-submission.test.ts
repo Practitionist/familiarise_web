@@ -53,6 +53,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
+  ...jest.requireActual("../../lib/payments/payouts/razorpay-payouts"),
   __esModule: true,
   getRazorpayPayoutsService: jest.fn(),
 }));
@@ -219,10 +220,17 @@ describe("processOrgPayout — live submission gating", () => {
     process.env.ENABLE_LIVE_PAYOUTS = "true";
     setupHappyClaim();
     setupVerifiedAccount();
+    const { RazorpayXHttpError } = jest.requireActual(
+      "../../lib/payments/payouts/razorpay-payouts",
+    );
     const createPayout = jest
       .fn()
       .mockRejectedValue(
-        new Error("RazorpayX API error: Invalid fund_account_id"),
+        new RazorpayXHttpError(
+          "RazorpayX API error: Invalid fund_account_id",
+          "BAD_REQUEST_ERROR",
+          400,
+        ),
       );
     setupGatewayService({ createPayout });
 
