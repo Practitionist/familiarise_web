@@ -34,6 +34,8 @@ import {
   listRazorpayRefunds,
 } from "./core/razorpay";
 
+import { getRazorpayDispute } from "./core/razorpay-disputes";
+
 import { assertGatewayUsable } from "./validation/gateway-guards";
 
 import {
@@ -217,8 +219,9 @@ export async function listRefunds(
 
 /**
  * Get dispute details
- * Note: Only Stripe supports direct dispute API access
- * Razorpay disputes are handled via webhooks only
+ * Razorpay is polled via GET /v1/disputes/:id; the raw gateway status flows
+ * through for the caller to map, and the gateway payment id rides along for
+ * the join. Evidence submit + listing stay dashboard-only.
  */
 export async function getDispute(
   disputeId: string,
@@ -229,11 +232,7 @@ export async function getDispute(
       return getStripeDispute(disputeId);
 
     case "RAZORPAY":
-      throw new PaymentError(
-        "Razorpay disputes can only be accessed via webhooks",
-        "NOT_SUPPORTED",
-        "RAZORPAY",
-      );
+      return getRazorpayDispute(disputeId);
 
     default:
       throw new PaymentError(

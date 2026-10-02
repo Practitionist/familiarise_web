@@ -1483,6 +1483,262 @@ export async function handleDisputeCreated(
 }
 
 /**
+ * Settle a LOST/CHARGE_REFUNDED dispute: the money half of a lost chargeback,
+ * shared by the dispute webhook and the reconcile-disputes poll so a LOST
+ * adopted by either path moves the same money exactly once.
+ *
+ * Idempotent: earnings flip out of HELD/PAID only (a re-run finds none), the
+ * chargeback ledger posts are keyed `chargeback:<disputeId>`, and the credit
+ * notes dedupe on the dispute. Returns the consultant clawback page for the
+ * caller to dispatch post-commit — never paged from inside the tx.
+ */
+export interface LostDisputeSettlementInput {
+  id: string;
+  disputeId: string;
+  amountPaise: number;
+  paymentId: string;
+  payment: { amount: number; gstTcsCollectedPaise: number | null };
+}
+
+export interface LostDisputeSettlement {
+  consultantClawbackPage: {
+    disputeId: string;
+    paymentId: string;
+    amountPaise: number;
+    earnings: number;
+  } | null;
+}
+
+export async function settleLostDispute(
+  tx: Tx,
+  dispute: LostDisputeSettlementInput,
+): Promise<LostDisputeSettlement> {
+  let consultantClawbackPage: LostDisputeSettlement["consultantClawbackPage"] =
+    null;
+  // Dispute lost — mark held earnings as REFUNDED, accounting for partial refunds.
+  // #1020-3 — a PARTIAL dispute used to refund the FULL share on both
+  // sides; every reversal here is now prorated to the disputed fraction
+  // of the payment (floored, capped at the remaining refundable).
+  // #1020-2 — the loops also include PAID rows: a fast payout followed
+  // by a late chargeback used to leave paid-out earnings untouched.
+  const prorationFactor =
+    dispute.payment.amount > 0
+      ? Math.min(dispute.amountPaise / dispute.payment.amount, 1)
+      : 1;
+
+  const lostConsultantEarnings = await tx.consultantEarnings.findMany({
+    where: {
+      paymentId: dispute.paymentId,
+      status: { in: ["HELD", "PAID"] },
+    },
+    select: {
+      id: true,
+      consultantSharePaise: true,
+      refundedShareAmount: true,
+      consultantProfileId: true,
+      payoutId: true,
+      status: true,
+    },
+  });
+  let consultantManualRecoveryPaise = 0;
+  let consultantManualRecoveryCount = 0;
+  for (const earning of lostConsultantEarnings) {
+    const alreadyRefunded = earning.refundedShareAmount ?? 0;
+    const remainingRefundable = Math.max(
+      earning.consultantSharePaise - alreadyRefunded,
+      0,
+    );
+    const proratedReversal = Math.floor(
+      earning.consultantSharePaise * prorationFactor,
+    );
+    const reversalNow = Math.min(proratedReversal, remainingRefundable);
+
+    await tx.consultantEarnings.update({
+      where: { id: earning.id },
+      data: {
+        status: "REFUNDED",
+        preDisputeStatus: null,
+        ...(reversalNow > 0
+          ? { refundedShareAmount: { increment: reversalNow } }
+          : {}),
+      },
+    });
+
+    // #738-B — statutory parity with the refund path: withholding that
+    // was deposited against a now-charged-back sale must net out of the
+    // next quarter's return. The shared helper's dedup cap prevents a
+    // double reversal when an app refund preceded the chargeback.
+    if (earning.payoutId) {
+      await recordTdsReversal(tx, {
+        payoutId: earning.payoutId,
+        consultantProfileId: earning.consultantProfileId,
+        earningsId: earning.id,
+        refundAmountPaise: dispute.amountPaise,
+        paymentAmountPaise: dispute.payment.amount,
+      });
+    }
+
+    // #1020-2 — a PAID consultant share means the cash already left in
+    // a COMPLETED payout, and the consultant rail has no automatic
+    // clawback mechanism (the documented R-06/E-05 posture is manual
+    // recovery). The STATE is now truthful (REFUNDED + TDS reversed);
+    // page ops once per dispute with the total to recover by hand.
+    if (earning.status === "PAID" && reversalNow > 0) {
+      consultantManualRecoveryPaise += reversalNow;
+      consultantManualRecoveryCount++;
+    }
+
+    console.log(
+      `💸 Earnings ${earning.id} refunded (${reversalNow} paise) — dispute ${dispute.disputeId} lost`,
+    );
+  }
+  if (consultantManualRecoveryCount > 0) {
+    // Staged for POST-COMMIT dispatch (see consultantClawbackPage):
+    // paging from inside the tx meant an SSI abort reached ops with a
+    // reversal total that was never persisted, and the gateway
+    // redelivery would double-page.
+    consultantClawbackPage = {
+      disputeId: dispute.disputeId,
+      paymentId: dispute.paymentId,
+      amountPaise: consultantManualRecoveryPaise,
+      earnings: consultantManualRecoveryCount,
+    };
+  }
+
+  // #1008 — HOST org earnings side (mirrors the consultant loop above).
+  // Held AND paid org earnings flip to REFUNDED; a share already paid out
+  // to the host org is clawed back through the reversal engine. This is the
+  // host-EARNINGS recovery — distinct from applyOrgChargeback below, which
+  // recovers the sponsor-FUNDER's money (different party, no double-count).
+  const lostOrgEarnings = await tx.organizationEarnings.findMany({
+    where: {
+      paymentId: dispute.paymentId,
+      status: { in: ["HELD", "PAID"] },
+    },
+    select: {
+      id: true,
+      orgSharePaise: true,
+      refundedAmountPaise: true,
+      organizationId: true,
+      orgPayoutId: true,
+      status: true,
+      orgPayout: { select: { status: true } },
+    },
+  });
+  for (const oe of lostOrgEarnings) {
+    const alreadyRefunded = oe.refundedAmountPaise ?? 0;
+    const remaining = Math.max(oe.orgSharePaise - alreadyRefunded, 0);
+    const reversalNow = Math.min(
+      Math.floor(oe.orgSharePaise * prorationFactor),
+      remaining,
+    );
+    await tx.organizationEarnings.update({
+      where: { id: oe.id },
+      data: {
+        status: "REFUNDED",
+        preDisputeStatus: null,
+        ...(reversalNow > 0
+          ? { refundedAmountPaise: { increment: reversalNow } }
+          : {}),
+      },
+    });
+    if (
+      oe.orgPayoutId &&
+      oe.orgPayout?.status === "COMPLETED" &&
+      reversalNow > 0
+    ) {
+      await applyReversal(tx, {
+        source: {
+          kind: "PAYOUT_CLAWBACK",
+          orgPayoutId: oe.orgPayoutId,
+          organizationId: oe.organizationId,
+        },
+        amountPaise: reversalNow,
+        reason: `chargeback lost (dispute ${dispute.disputeId})`,
+        refundId: `dispute:${dispute.id}`,
+      });
+    }
+  }
+
+  // #776 §C — org-funded chargeback money-path. When the disputed booking
+  // was org-funded, the funder (the org) bears the chargeback, not the
+  // platform: debit the org wallet, falling back to an ORG_RECEIVABLE the
+  // dunning flow pursues if the wallet can't cover it.
+  const disputedPayment = await tx.payment.findUnique({
+    where: { id: dispute.paymentId },
+    select: {
+      id: true,
+      organizationId: true,
+      billingAccountId: true,
+      amount: true,
+    },
+  });
+  if (disputedPayment?.organizationId) {
+    await applyOrgChargeback(tx, {
+      paymentId: disputedPayment.id,
+      organizationId: disputedPayment.organizationId,
+      billingAccountId: disputedPayment.billingAccountId,
+      amountPaise: dispute.amountPaise,
+      disputeId: dispute.disputeId,
+    });
+  } else if (disputedPayment) {
+    // #677 — B2C (non-org) booking: the org path above posts the REFUND
+    // ledger leg via applyOrgChargeback; the B2C path historically posted
+    // nothing, so a lost chargeback left the booking journal's CASH-in +
+    // payable un-reversed (REVERSED_EARNING_WITHOUT_REFUND_TXN). Post the
+    // symmetric reversal so the journal clears when the bank pulls the cash.
+    await applyB2cChargebackReversal(tx, {
+      paymentId: disputedPayment.id,
+      disputeId: dispute.disputeId,
+      amountPaise: dispute.amountPaise,
+      paymentAmountPaise: disputedPayment.amount,
+    });
+  }
+
+  // #738-B — GST parity with the refund path: a lost chargeback reverses
+  // the sale, so the issued invoice needs a Sec 34 credit note exactly
+  // like a refund would. Idempotent on CreditNote.disputeId; no-op for
+  // non-invoiced (B2C card) payments.
+  await mintRefundCreditNote(tx, {
+    paymentId: dispute.paymentId,
+    disputeId: dispute.id,
+    amountPaise: dispute.amountPaise,
+    reason: `chargeback lost (dispute ${dispute.disputeId})`,
+  });
+
+  // #1365 — the B2C sibling. A personal buyer's tax invoice is reversed
+  // by its own s.34 credit note on the platform series; idempotent on
+  // ConsumerCreditNote.disputeId, and a no-op when no consumer invoice
+  // was ever issued for the payment.
+  await mintConsumerCreditNote(tx, {
+    paymentId: dispute.paymentId,
+    disputeId: dispute.id,
+    amountPaise: dispute.amountPaise,
+    reason: `chargeback lost (dispute ${dispute.disputeId})`,
+  });
+
+  // #738-B — TCS u/s 52 parity: if collection ever stamped this payment
+  // (flag-gated, schema-live), the chargeback must net it out of the
+  // next GSTR-8. Inert while gstTcsCollectedPaise stays null.
+  if ((dispute.payment.gstTcsCollectedPaise ?? 0) > 0) {
+    const tcsReverse = Math.floor(
+      (dispute.payment.gstTcsCollectedPaise! * dispute.amountPaise) /
+        dispute.payment.amount,
+    );
+    if (tcsReverse > 0) {
+      await tx.gstTcsAdjustment.create({
+        data: {
+          paymentId: dispute.paymentId,
+          amountPaise: -tcsReverse,
+          reason: `chargeback lost (dispute ${dispute.disputeId})`,
+        },
+      });
+    }
+  }
+  return { consultantClawbackPage };
+}
+
+/**
  * Handle dispute updated event (status change, evidence submitted, etc.)
  */
 export async function handleDisputeUpdated(
@@ -1628,226 +1884,10 @@ export async function handleDisputeUpdated(
           mappedStatus === "LOST" ||
           mappedStatus === "CHARGE_REFUNDED"
         ) {
-          // Dispute lost — mark held earnings as REFUNDED, accounting for partial refunds.
-          // #1020-3 — a PARTIAL dispute used to refund the FULL share on both
-          // sides; every reversal here is now prorated to the disputed fraction
-          // of the payment (floored, capped at the remaining refundable).
-          // #1020-2 — the loops also include PAID rows: a fast payout followed
-          // by a late chargeback used to leave paid-out earnings untouched.
-          const prorationFactor =
-            dispute.payment.amount > 0
-              ? Math.min(dispute.amountPaise / dispute.payment.amount, 1)
-              : 1;
-
-          const lostConsultantEarnings = await tx.consultantEarnings.findMany({
-            where: {
-              paymentId: dispute.paymentId,
-              status: { in: ["HELD", "PAID"] },
-            },
-            select: {
-              id: true,
-              consultantSharePaise: true,
-              refundedShareAmount: true,
-              consultantProfileId: true,
-              payoutId: true,
-              status: true,
-            },
-          });
-          let consultantManualRecoveryPaise = 0;
-          let consultantManualRecoveryCount = 0;
-          for (const earning of lostConsultantEarnings) {
-            const alreadyRefunded = earning.refundedShareAmount ?? 0;
-            const remainingRefundable = Math.max(
-              earning.consultantSharePaise - alreadyRefunded,
-              0,
-            );
-            const proratedReversal = Math.floor(
-              earning.consultantSharePaise * prorationFactor,
-            );
-            const reversalNow = Math.min(proratedReversal, remainingRefundable);
-
-            await tx.consultantEarnings.update({
-              where: { id: earning.id },
-              data: {
-                status: "REFUNDED",
-                preDisputeStatus: null,
-                ...(reversalNow > 0
-                  ? { refundedShareAmount: { increment: reversalNow } }
-                  : {}),
-              },
-            });
-
-            // #738-B — statutory parity with the refund path: withholding that
-            // was deposited against a now-charged-back sale must net out of the
-            // next quarter's return. The shared helper's dedup cap prevents a
-            // double reversal when an app refund preceded the chargeback.
-            if (earning.payoutId) {
-              await recordTdsReversal(tx, {
-                payoutId: earning.payoutId,
-                consultantProfileId: earning.consultantProfileId,
-                earningsId: earning.id,
-                refundAmountPaise: dispute.amountPaise,
-                paymentAmountPaise: dispute.payment.amount,
-              });
-            }
-
-            // #1020-2 — a PAID consultant share means the cash already left in
-            // a COMPLETED payout, and the consultant rail has no automatic
-            // clawback mechanism (the documented R-06/E-05 posture is manual
-            // recovery). The STATE is now truthful (REFUNDED + TDS reversed);
-            // page ops once per dispute with the total to recover by hand.
-            if (earning.status === "PAID" && reversalNow > 0) {
-              consultantManualRecoveryPaise += reversalNow;
-              consultantManualRecoveryCount++;
-            }
-
-            console.log(
-              `💸 Earnings ${earning.id} refunded (${reversalNow} paise) — dispute ${disputeId} lost`,
-            );
-          }
-          if (consultantManualRecoveryCount > 0) {
-            // Staged for POST-COMMIT dispatch (see consultantClawbackPage):
-            // paging from inside the tx meant an SSI abort reached ops with a
-            // reversal total that was never persisted, and the gateway
-            // redelivery would double-page.
-            consultantClawbackPage = {
-              disputeId,
-              paymentId: dispute.paymentId,
-              amountPaise: consultantManualRecoveryPaise,
-              earnings: consultantManualRecoveryCount,
-            };
-          }
-
-          // #1008 — HOST org earnings side (mirrors the consultant loop above).
-          // Held AND paid org earnings flip to REFUNDED; a share already paid out
-          // to the host org is clawed back through the reversal engine. This is the
-          // host-EARNINGS recovery — distinct from applyOrgChargeback below, which
-          // recovers the sponsor-FUNDER's money (different party, no double-count).
-          const lostOrgEarnings = await tx.organizationEarnings.findMany({
-            where: {
-              paymentId: dispute.paymentId,
-              status: { in: ["HELD", "PAID"] },
-            },
-            select: {
-              id: true,
-              orgSharePaise: true,
-              refundedAmountPaise: true,
-              organizationId: true,
-              orgPayoutId: true,
-              status: true,
-              orgPayout: { select: { status: true } },
-            },
-          });
-          for (const oe of lostOrgEarnings) {
-            const alreadyRefunded = oe.refundedAmountPaise ?? 0;
-            const remaining = Math.max(oe.orgSharePaise - alreadyRefunded, 0);
-            const reversalNow = Math.min(
-              Math.floor(oe.orgSharePaise * prorationFactor),
-              remaining,
-            );
-            await tx.organizationEarnings.update({
-              where: { id: oe.id },
-              data: {
-                status: "REFUNDED",
-                preDisputeStatus: null,
-                ...(reversalNow > 0
-                  ? { refundedAmountPaise: { increment: reversalNow } }
-                  : {}),
-              },
-            });
-            if (
-              oe.orgPayoutId &&
-              oe.orgPayout?.status === "COMPLETED" &&
-              reversalNow > 0
-            ) {
-              await applyReversal(tx, {
-                source: {
-                  kind: "PAYOUT_CLAWBACK",
-                  orgPayoutId: oe.orgPayoutId,
-                  organizationId: oe.organizationId,
-                },
-                amountPaise: reversalNow,
-                reason: `chargeback lost (dispute ${disputeId})`,
-                refundId: `dispute:${dispute.id}`,
-              });
-            }
-          }
-
-          // #776 §C — org-funded chargeback money-path. When the disputed booking
-          // was org-funded, the funder (the org) bears the chargeback, not the
-          // platform: debit the org wallet, falling back to an ORG_RECEIVABLE the
-          // dunning flow pursues if the wallet can't cover it.
-          const disputedPayment = await tx.payment.findUnique({
-            where: { id: dispute.paymentId },
-            select: {
-              id: true,
-              organizationId: true,
-              billingAccountId: true,
-              amount: true,
-            },
-          });
-          if (disputedPayment?.organizationId) {
-            await applyOrgChargeback(tx, {
-              paymentId: disputedPayment.id,
-              organizationId: disputedPayment.organizationId,
-              billingAccountId: disputedPayment.billingAccountId,
-              amountPaise: dispute.amountPaise,
-              disputeId,
-            });
-          } else if (disputedPayment) {
-            // #677 — B2C (non-org) booking: the org path above posts the REFUND
-            // ledger leg via applyOrgChargeback; the B2C path historically posted
-            // nothing, so a lost chargeback left the booking journal's CASH-in +
-            // payable un-reversed (REVERSED_EARNING_WITHOUT_REFUND_TXN). Post the
-            // symmetric reversal so the journal clears when the bank pulls the cash.
-            await applyB2cChargebackReversal(tx, {
-              paymentId: disputedPayment.id,
-              disputeId,
-              amountPaise: dispute.amountPaise,
-              paymentAmountPaise: disputedPayment.amount,
-            });
-          }
-
-          // #738-B — GST parity with the refund path: a lost chargeback reverses
-          // the sale, so the issued invoice needs a Sec 34 credit note exactly
-          // like a refund would. Idempotent on CreditNote.disputeId; no-op for
-          // non-invoiced (B2C card) payments.
-          await mintRefundCreditNote(tx, {
-            paymentId: dispute.paymentId,
-            disputeId: dispute.id,
-            amountPaise: dispute.amountPaise,
-            reason: `chargeback lost (dispute ${disputeId})`,
-          });
-
-          // #1365 — the B2C sibling. A personal buyer's tax invoice is reversed
-          // by its own s.34 credit note on the platform series; idempotent on
-          // ConsumerCreditNote.disputeId, and a no-op when no consumer invoice
-          // was ever issued for the payment.
-          await mintConsumerCreditNote(tx, {
-            paymentId: dispute.paymentId,
-            disputeId: dispute.id,
-            amountPaise: dispute.amountPaise,
-            reason: `chargeback lost (dispute ${disputeId})`,
-          });
-
-          // #738-B — TCS u/s 52 parity: if collection ever stamped this payment
-          // (flag-gated, schema-live), the chargeback must net it out of the
-          // next GSTR-8. Inert while gstTcsCollectedPaise stays null.
-          if ((dispute.payment.gstTcsCollectedPaise ?? 0) > 0) {
-            const tcsReverse = Math.floor(
-              (dispute.payment.gstTcsCollectedPaise! * dispute.amountPaise) /
-                dispute.payment.amount,
-            );
-            if (tcsReverse > 0) {
-              await tx.gstTcsAdjustment.create({
-                data: {
-                  paymentId: dispute.paymentId,
-                  amountPaise: -tcsReverse,
-                  reason: `chargeback lost (dispute ${disputeId})`,
-                },
-              });
-            }
-          }
+          // Money moves in settleLostDispute, shared with the
+          // reconcile-disputes poll so a polled LOST settles identically.
+          const settlement = await settleLostDispute(tx, dispute);
+          consultantClawbackPage = settlement.consultantClawbackPage;
         }
 
         // --- Novu notification for resolved disputes (fire-and-forget) ---

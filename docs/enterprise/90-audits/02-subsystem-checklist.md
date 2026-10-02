@@ -293,7 +293,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, org-route-ma
 - [ ] Multi-booking (CLASS) refund reversal `🟡` #776 — `CLASS_MULTI` source built + unit-tested in `reversal-engine.ts`, but NOT yet wired to a production caller (no flow resolves a consolidated class into child payment ids). Engine is foundational; production wiring is a follow-up.
 - [ ] Gateway refund reconcile cron `✅` — `reconcile-pending-refunds.ts`, `cascade-refund-earnings.ts`
 - [ ] `Refund.failureReason` + REFUND_FAILED notification `❌` #779 §D
-- [ ] Disputes: created/lost handlers + deadline alerts `✅` — `jobs/disputes/{reconcile-disputes,handle-lost-disputes,alert-dispute-deadlines}.ts`
+- [ ] Disputes: created/lost handlers + deadline alerts `✅` — `jobs/disputes/{reconcile-disputes,alert-dispute-deadlines}.ts`
 - [ ] Per-org dispute surface + chargeback money-path `🟡` #776 — read surface (`[orgId]/disputes`) + org-wallet-first chargeback (`applyOrgChargeback`) shipped; org Novu notification still pending #779 §D
 - [ ] Payout reversal / clawback (gateway-side) `🟡` #716/#812 — the COMPLETED-then-bank-bounced `payout.reversed` path now reverses cleanly on **both** sides: `markOrgPayoutReversed` and `markConsultantPayoutReversed` each claim COMPLETED→REVERSED, post the inverse PAYOUT journal (idempotencyKey `payout-reversal:<id>`), and re-open the linked earnings to READY; the broader refund-driven clawback against an already-paid payout is still the manual `PAYOUT_CLAWBACK` v1
 
