@@ -57,7 +57,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
 
       - name: Shell syntax + shellcheck
         # #1757 — scripts/ci/notify-ops-failure.sh is the alert path for every
@@ -121,7 +124,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Supply-chain security audit
         # #1885 — fail CI when any production dependency has a high or critical
@@ -142,11 +145,11 @@ jobs:
           sed -i -E 's#^DATABASE_URL=.*#DATABASE_URL="${{ secrets.REHEARSAL_DATABASE_URL }}"#; s#^DIRECT_URL=.*#DIRECT_URL="${{ secrets.REHEARSAL_DIRECT_URL }}"#' .env
           grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
 
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
       - name: TypeScript Check
         run: npx tsc --noEmit
-
-      - name: Generate Prisma Client
-        run: npx prisma generate
 
       - name: Money-column guard
         # #780 — no money column may be declared Int (int4 overflows at
@@ -200,7 +203,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
@@ -217,7 +220,7 @@ jobs:
           grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
 
       - name: Generate Prisma Client
-        run: npx prisma generate
+        run: npm run db:generate
 
       - name: Unit Tests
         run: npm run test
@@ -250,7 +253,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
@@ -326,10 +329,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma Client
-        run: npx prisma generate
+        run: npm run db:generate
 
       - name: Push schema + sidecars
         # `db push` alone drops the ledger trigger and every CHECK; sidecars restore them.
