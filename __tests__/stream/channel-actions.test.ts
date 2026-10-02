@@ -9,7 +9,7 @@ import {
   createMockChannel,
   createMockLogger,
   createMockChannelCache,
-} from "./__mocks__/stream-mocks";
+} from "../fixtures/stream-mocks";
 
 // Create mock instances
 const mockPrisma = createMockPrisma();
@@ -108,9 +108,8 @@ describe("Channel Actions", () => {
     // respects. A 150-seat webinar built a valid roster and then had the whole
     // create rejected, so the attendee who triggered it got no chat at all.
     it("caps the create() roster at 100 and adds the rest in chunks", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({ members: {} });
       const members = Array.from({ length: 249 }, (_, i) => `attendee-${i}`);
@@ -145,9 +144,8 @@ describe("Channel Actions", () => {
     });
 
     it("adds no follow-up request for an ordinary two-person channel", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({ members: {} });
 
@@ -164,9 +162,8 @@ describe("Channel Actions", () => {
     });
 
     it("still backfills the roster after losing a create race", async () => {
-      const { createChannel } = await import(
-        "../../actions/stream/chat/channel.action"
-      );
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
 
       mockChannel.query.mockResolvedValueOnce({ members: {} });
       mockChannel.create.mockRejectedValueOnce(
@@ -402,7 +399,9 @@ describe("Channel Actions", () => {
         await import("../../actions/stream/chat/channel.action");
 
       mockAssertCanDirectMessage.mockRejectedValue(
-        new Error("Direct messages are only available between people who share a booking."),
+        new Error(
+          "Direct messages are only available between people who share a booking.",
+        ),
       );
 
       await expect(
