@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -22,10 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useListParams } from "@/hooks/useListParams";
-import type {
-  OwnReviewRow,
-  OwnReviewsPage,
-} from "@/lib/reviews-inbox";
+import type { OwnReviewRow, OwnReviewsPage } from "@/lib/reviews-inbox";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { cn } from "@/utils/tailwind";
 
@@ -302,6 +300,7 @@ function ReviewList({
       return fetchReviews(params);
     },
     getNextPageParam: (last) => last.nextCursor,
+    placeholderData: keepPreviousData,
   });
 
   if (query.isLoading) {

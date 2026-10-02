@@ -885,6 +885,32 @@ export async function readRequestsInboxCounts(args: {
   );
 }
 
+/**
+ * #1928 — rows only this consultant can clear (the REQUESTED state): the nav
+ * badge and Home's "requests to answer". Awaiting-payment and next-cycle rows
+ * wait on the client, so they stay on the tabs but not on the badge.
+ */
+export async function readRequestsToAnswerCount(args: {
+  consultantProfileId: string;
+  orgScope?: Scope;
+}): Promise<number> {
+  const cp = args.consultantProfileId;
+  const scope = args.orgScope ?? PERSONAL;
+  const tasks: (() => Promise<number>)[] = [
+    () =>
+      prisma.consultation.count({
+        where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
+      }),
+    () =>
+      prisma.subscription.count({
+        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
+      }),
+    () => prisma.trial.count({ where: trialWhere(cp, scope, ["PENDING"]) }),
+  ];
+  const results = await mapLimit(tasks, poolLimit(), (run) => run());
+  return results.reduce((sum, n) => sum + n, 0);
+}
+
 export async function readRequestsInbox(
   args: ReadRequestsInboxArgs,
 ): Promise<RequestsInboxPayload> {

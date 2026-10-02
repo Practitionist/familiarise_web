@@ -205,6 +205,9 @@ export function RequestsInbox({
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
+    // #1928: a failing tab should show its error in seconds, not after the
+    // provider's two retries.
+    retry: 1,
   });
   const { data, dataUpdatedAt, isPlaceholderData } = query;
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -607,17 +610,7 @@ export function RequestsInbox({
     : 1;
 
   const renderBody = () => {
-    if (loading) {
-      return (
-        <div role="status" aria-live="polite" className="space-y-3">
-          <span className="sr-only">Loading requests</span>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-16 w-full rounded-lg" />
-          ))}
-        </div>
-      );
-    }
-    if (query.isError && !data) {
+    if (query.isError && (!data || isPlaceholderData)) {
       const message =
         query.error instanceof Error
           ? query.error.message
@@ -634,6 +627,18 @@ export function RequestsInbox({
         </div>
       );
     }
+    // #1928: placeholder rows belong to the previous tab, so an empty
+    // placeholder must not render this tab's empty state.
+    if (loading || (isPlaceholderData && rows.length === 0)) {
+      return (
+        <div role="status" aria-live="polite" className="space-y-3">
+          <span className="sr-only">Loading requests</span>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+      );
+    }
     if (rows.length === 0) {
       return (
         <EmptyState
@@ -644,7 +649,13 @@ export function RequestsInbox({
       );
     }
     return (
-      <>
+      <div
+        aria-busy={isPlaceholderData}
+        className={cn(
+          "space-y-4",
+          isPlaceholderData && "opacity-60 transition-opacity",
+        )}
+      >
         <InboxBuckets
           rows={rows}
           flat={chip === "declined"}
@@ -718,7 +729,7 @@ export function RequestsInbox({
             invalidate();
           }}
         />
-      </>
+      </div>
     );
   };
 
