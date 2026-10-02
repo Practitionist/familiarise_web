@@ -57,11 +57,10 @@ const STUCK_PAYOUT: Row = {
 
 let payoutRow: Row;
 
-// `var` (not let/const): the hoisted jest.mock factory runs before this
-// declaration line, and only `var` is initialized (to undefined) at hoist time
-// — a let/const would still be in its TDZ when the factory assigns to it.
-// eslint-disable-next-line no-var
-var prismaStub: {
+// The stub is built inside the hoisted jest.mock factory (which runs before any
+// `const` below is initialised) and read back through jest.requireMock after
+// the imports, so no `var` hoisting trick is needed.
+type PrismaStub = {
   consultantPayout: {
     findMany: jest.Mock;
     update: jest.Mock;
@@ -72,7 +71,7 @@ var prismaStub: {
 };
 
 jest.mock("../../lib/prisma", () => {
-  prismaStub = {
+  const prismaStub: PrismaStub = {
     consultantPayout: {
       findMany: jest.fn(async () => [payoutRow]),
       update: jest.fn(async ({ data }: { data: Row }) => {
@@ -92,6 +91,10 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { handleStuckPayouts } from "../../scripts/payouts/handle-stuck-payouts";
+
+const prismaStub = (
+  jest.requireMock("../../lib/prisma") as { default: PrismaStub }
+).default;
 
 beforeEach(() => {
   jest.clearAllMocks();

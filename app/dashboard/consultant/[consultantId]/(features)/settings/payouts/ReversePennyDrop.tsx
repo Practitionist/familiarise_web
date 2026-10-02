@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { QrCode } from "lucide-react";
@@ -56,8 +57,17 @@ export function ReversePennyDrop({
   const invalidate = usePayoutSetupInvalidation(consultantId);
   const refusalToast = useRefusalToast();
   const { toast } = useToast();
+  // Latest-value refs: the poll effect must not restart (and re-arm its timer)
+  // when these change identity. Synced in an effect declared before the poll,
+  // not during render (react.dev: refs are not read or written while rendering).
   const onVerifiedRef = useRef(onVerified);
-  onVerifiedRef.current = onVerified;
+  const invalidateRef = useRef(invalidate);
+  const toastRef = useRef(toast);
+  useEffect(() => {
+    onVerifiedRef.current = onVerified;
+    invalidateRef.current = invalidate;
+    toastRef.current = toast;
+  });
 
   const start = useMutation({
     mutationFn: startReversePennyDrop,
@@ -94,8 +104,8 @@ export function ReversePennyDrop({
           return;
         }
         setPhase({ kind: "verified" });
-        await invalidate();
-        toast({
+        await invalidateRef.current();
+        toastRef.current({
           title: "Account verified",
           description: `Payouts will go to •••• ${outcome.account.accountNumberLast4 ?? ""}.`,
         });
@@ -118,8 +128,6 @@ export function ReversePennyDrop({
       cancelled = true;
       clearInterval(timer);
     };
-    // `invalidate`/`toast` are stable enough for this effect's lifetime.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   if (phase.kind === "verified") {
@@ -149,12 +157,13 @@ export function ReversePennyDrop({
       {phase.kind === "waiting" ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
           {phase.start.upiIntent.encodedQrCode && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            // A base64 data URI cannot go through the optimizer.
+            <Image
               src={`data:image/png;base64,${phase.start.upiIntent.encodedQrCode}`}
               alt="Scan with any UPI app to pay ₹1"
               width={160}
               height={160}
+              unoptimized
               className="rounded-lg border border-border bg-white p-1"
             />
           )}

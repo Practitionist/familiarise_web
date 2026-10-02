@@ -77,8 +77,7 @@ function wireTxShim() {
       invitation: mockedPrisma.invitation,
       orgAuditLog: mockedPrisma.orgAuditLog,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 }
 

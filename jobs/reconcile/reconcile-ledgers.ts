@@ -110,7 +110,7 @@ async function main(): Promise<void> {
       const walletDrift = report.findings.filter(
         (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
       );
-      // #1933 — one fatal per run, not per wallet: the count and a sample of
+      // One fatal per run, not per wallet: the count and a sample of
       // ids are the fact. `finally` so a freeze that throws mid-loop still
       // pages for the wallets already frozen. Freeze behaviour is unchanged.
       const frozenWallets: Array<{

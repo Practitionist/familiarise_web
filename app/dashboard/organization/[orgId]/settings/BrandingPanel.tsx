@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -83,11 +84,15 @@ function AssetSection({
     <Section title={meta.title} description={meta.description} variant="card">
       <div className="flex flex-wrap items-center gap-4">
         {currentUrl && (
-          // eslint-disable-next-line @next/next/no-img-element -- user-uploaded asset on a dynamic host
-          <img
+          // `unoptimized`: a user-uploaded asset on a dynamic host the
+          // optimizer cannot be configured for ahead of time.
+          <Image
             src={currentUrl}
             alt={`Current ${meta.title.toLowerCase()}`}
-            className="h-16 max-w-[240px] rounded-md border border-border object-contain"
+            width={240}
+            height={64}
+            unoptimized
+            className="h-16 w-auto max-w-[240px] rounded-md border border-border object-contain"
           />
         )}
         <input

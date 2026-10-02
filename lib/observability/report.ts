@@ -38,7 +38,7 @@ export interface ReportOpts {
   /** Merged over the derived subsystem/op/expected tags — can override any of them. */
   tags?: Record<string, string>;
   contexts?: Record<string, Record<string, unknown>>;
-  /** #1933 — stable grouping key; a run-level aggregate must not split per id. */
+  /** Stable grouping key; a run-level aggregate must not split per id. */
   fingerprint?: string[];
 }
 

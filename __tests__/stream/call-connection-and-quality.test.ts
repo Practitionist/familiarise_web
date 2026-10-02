@@ -88,11 +88,13 @@ describe("incoming video quality maps to what the SFU is asked for", () => {
     setIncomingVideoEnabled: jest.fn(),
     setPreferredIncomingVideoResolution: jest.fn(),
   });
+  // Only the two setters are exercised, so the stub stands in for the SDK Call.
+  const asCall = (stub: ReturnType<typeof makeCall>) =>
+    stub as unknown as Parameters<typeof applyIncomingVideoSetting>[0];
 
   it("turns incoming video off for audio only", () => {
     const call = makeCall();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- only the two setters are exercised
-    applyIncomingVideoSetting(call as any, "off");
+    applyIncomingVideoSetting(asCall(call), "off");
 
     expect(call.setIncomingVideoEnabled).toHaveBeenCalledWith(false);
     expect(call.setPreferredIncomingVideoResolution).not.toHaveBeenCalled();
@@ -100,8 +102,7 @@ describe("incoming video quality maps to what the SFU is asked for", () => {
 
   it("goes back to auto by re-enabling, which drops the cap with it", () => {
     const call = makeCall();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- only the two setters are exercised
-    applyIncomingVideoSetting(call as any, "auto");
+    applyIncomingVideoSetting(asCall(call), "auto");
 
     // Re-enabling is what undoes both a previous "audio only" and a previous
     // manual cap — the SDK clears the subscription overrides on enable.
@@ -111,8 +112,7 @@ describe("incoming video quality maps to what the SFU is asked for", () => {
 
   it("enables BEFORE capping, so the cap is not wiped by the enable", () => {
     const call = makeCall();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- only the two setters are exercised
-    applyIncomingVideoSetting(call as any, "480p");
+    applyIncomingVideoSetting(asCall(call), "480p");
 
     expect(call.setIncomingVideoEnabled).toHaveBeenCalledWith(true);
     expect(call.setPreferredIncomingVideoResolution).toHaveBeenCalledWith({
