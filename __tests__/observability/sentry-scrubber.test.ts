@@ -181,7 +181,7 @@ describe("scrubSentrySpan (#1916, #1926)", () => {
     expect(scrubbed.description).toContain("token=%5Bredacted%5D");
     expect(scrubbed.description).not.toContain("bob@example.com");
     expect(scrubbed.data).toEqual({
-      "http.query": "token=sec123",
+      "http.query": "token=%5Bredacted%5D",
       apiKey: "[redacted]",
       safeAttr: "ok",
     });

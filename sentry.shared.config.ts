@@ -221,7 +221,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // Sample 10% of traces in production (with route-aware overrides via
     // tracesSampler); everything outside production.
     tracesSampleRate: isProductionEnvironment() ? 0.1 : 1,
-    ...(overrides?.tracesSampleRate === 0 ? {} : { tracesSampler }),
+    ...(overrides?.tracesSampleRate !== undefined ? {} : { tracesSampler }),
 
     // Send structured logs to Sentry.
     enableLogs: true,

@@ -293,6 +293,19 @@ export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
   return breadcrumb;
 }
 
+function scrubSpanMap(map: Record<string, unknown>): Record<string, unknown> {
+  const prefiltered: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (k === "culture.timezone") continue;
+    if ((k === "http.query" || k === "url.query") && typeof v === "string") {
+      prefiltered[k] = redactQueryString(v);
+    } else {
+      prefiltered[k] = v;
+    }
+  }
+  return redactByKey(prefiltered, 0) as Record<string, unknown>;
+}
+
 /**
  * Sentry-side span scrubber (`beforeSendSpan`, #1916 / #1926).
  *
@@ -312,16 +325,10 @@ export function scrubSentrySpan<
     );
   }
   if (span.data && typeof span.data === "object") {
-    const filteredData = Object.fromEntries(
-      Object.entries(span.data).filter(([k]) => k !== "culture.timezone"),
-    );
-    span.data = redactByKey(filteredData, 0) as typeof span.data;
+    span.data = scrubSpanMap(span.data) as typeof span.data;
   }
   if (span.attributes && typeof span.attributes === "object") {
-    const filteredAttrs = Object.fromEntries(
-      Object.entries(span.attributes).filter(([k]) => k !== "culture.timezone"),
-    );
-    span.attributes = redactByKey(filteredAttrs, 0) as Record<string, unknown>;
+    span.attributes = scrubSpanMap(span.attributes);
   }
   const culture = span.contexts?.culture as Record<string, unknown> | undefined;
   if (culture && "timezone" in culture) {

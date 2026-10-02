@@ -162,7 +162,10 @@ describe("runNotificationDrainTick", () => {
       AND: [
         {
           OR: [
-            { status: "PENDING" },
+            {
+              status: "PENDING",
+              OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+            },
             { status: "RETRY", nextRetryAt: { lte: now } },
           ],
         },

@@ -128,7 +128,7 @@ function extractPgErrorTags(error: unknown): Record<string, string> {
   } else if (
     prismaCode === "P2034" ||
     metaCode === "40001" ||
-    msg.includes("40001") ||
+    /(?:code[:\s`"]*40001\b|sqlstate[:\s`"(]*40001\b)/i.test(msg) ||
     /could not serialize access/i.test(msg)
   ) {
     out.pg_code = "40001";

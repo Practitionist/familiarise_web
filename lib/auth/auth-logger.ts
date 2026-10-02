@@ -32,7 +32,18 @@ const AUTH_SECRET_KEY_RX =
 function sanitizeAuthLogArg(arg: unknown, depth = 0): unknown {
   if (depth > 4) return arg;
   if (typeof arg === "string") return scrubStringValue(arg);
-  if (arg instanceof Error) return arg;
+  if (arg instanceof Error) {
+    const scrubbedMessage = scrubStringValue(arg.message);
+    const scrubbedStack =
+      typeof arg.stack === "string" ? scrubStringValue(arg.stack) : arg.stack;
+    if (scrubbedMessage === arg.message && scrubbedStack === arg.stack) {
+      return arg;
+    }
+    const copy = new Error(scrubbedMessage);
+    copy.name = arg.name;
+    copy.stack = scrubbedStack;
+    return copy;
+  }
   if (Array.isArray(arg)) {
     return arg.map((item) => sanitizeAuthLogArg(item, depth + 1));
   }

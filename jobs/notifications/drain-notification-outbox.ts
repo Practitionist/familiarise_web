@@ -70,7 +70,10 @@ export async function runNotificationDrainTick(params: {
         AND: [
           {
             OR: [
-              { status: "PENDING" },
+              {
+                status: "PENDING",
+                OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: nowDate } }],
+              },
               { status: "RETRY", nextRetryAt: { lte: nowDate } },
             ],
           },
