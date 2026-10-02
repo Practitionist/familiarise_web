@@ -37,7 +37,7 @@ import {
   makeConsultantData,
   makeWeeklyAvailabilitySlot,
   makeCustomAvailabilitySlot,
-} from "./__mocks__/booking.mockData";
+} from "../fixtures/booking.mockData";
 
 // ─── Mock Prisma ────────────────────────────────────────────────────────────
 

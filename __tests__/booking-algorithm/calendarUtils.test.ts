@@ -47,7 +47,7 @@ import {
   makeWeeklyAvailabilitySlot,
   makeCustomAvailabilitySlot,
   makeConsultantData,
-} from "./__mocks__/booking.mockData";
+} from "../fixtures/booking.mockData";
 
 // ─── mapWeeklySlots ─────────────────────────────────────────────────────────
 
