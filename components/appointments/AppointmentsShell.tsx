@@ -17,6 +17,7 @@ import type {
 } from "@/lib/appointments/view-model";
 import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
+import { replaceUrl } from "@/lib/navigation/history";
 import { AppointmentCalendar } from "./AppointmentCalendar";
 import { AppointmentList } from "./AppointmentList";
 import { AppointmentSheet } from "./AppointmentSheet";
@@ -127,7 +128,7 @@ function replaceQueryParam(name: string, value: string) {
   const current =
     window.location.pathname + window.location.search + window.location.hash;
   if (target !== current) {
-    window.history.replaceState(window.history.state, "", target);
+    replaceUrl(target);
   }
 }
 
