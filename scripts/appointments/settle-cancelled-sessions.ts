@@ -100,7 +100,7 @@ async function settleUnlocked(
   });
   result.scanned = due.length;
 
-  // #1933 — one Sentry event per run, never per row: a systemic fault fails
+  // One Sentry event per run, never per row: a systemic fault fails
   // every row and used to cost one event each.
   const failedIds: string[] = [];
   let firstError: unknown;
@@ -111,7 +111,7 @@ async function settleUnlocked(
       result.errors += 1;
       firstError ??= error;
       failedIds.push(session.id);
-      // #1932: console bypasses the Sentry scrubber, so log a scrubbed message only.
+      // Console bypasses the Sentry scrubber, so log a scrubbed message only.
       console.error(
         `settle-cancelled-sessions: occurrence ${session.id} failed:`,
         scrubStringValue(
