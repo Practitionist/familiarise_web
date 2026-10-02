@@ -8,6 +8,8 @@ last-reviewed: 2026-06-11
 
 # Enterprise Subsystem — Production Readiness Checklist
 
+> **Superseded in part (PR #1878):** SSO is OIDC-only. SAML, SSO break-glass, `allowedEmailDomains` and the BetterAuth organization plugin were removed before launch, so the items below that cite them are history. Current design: [SSO](../../authentication/sso.md) and [ADR 36](../70-design-decisions/36-auth-schema-freeze.md).
+
 **Branch:** `feature/enterprise` | **Updated:** 2026-05-02 (Round 2) | **Auditor:** Claude Code (Sonnet 4.6)
 **Verdict:** Design-partner ready (manual-ops). NOT self-serve multi-tenant ready.
 

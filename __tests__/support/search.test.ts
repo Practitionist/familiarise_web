@@ -37,7 +37,7 @@ describe("searchSupport", () => {
   it("expands SSO → identity content", () => {
     const found = slugs("sso");
     expect(found).toContain("getting-started/sso-sign-in");
-    expect(found).toContain("organizations/sso-scim-setup");
+    expect(found).toContain("organizations/sso-setup");
   });
 
   it("matches body text, not just titles", () => {

@@ -155,7 +155,6 @@ code at a non-existent surface.
 | _(new)_ | `GET /api/organizations/[orgId]/audit` | Wider audit read (active member). |
 | _(new)_ | `GET /api/organizations/[orgId]/audit/export` | CSV export, MAINTAINER; emits `AUDIT_LOG_EXPORTED`. |
 | _(new, #779)_ | `POST /api/organizations/[orgId]/verification/resubmit` | Self-serve resubmit after admin REJECT. MAINTAINER. |
-| _(new, #779)_ | `POST/DELETE /api/organizations/[orgId]/sso/break-glass` | Time-boxed IdP-outage escape hatch. OWNER. |
 | _(new, #777)_ | `GET /api/organizations/[orgId]/checkout/overage-preview` | Advisory pre-checkout overage estimate. Active member. |
 | _(new)_ | `GET/POST /api/organizations/[orgId]/data-exports` + `[exportId]/download` | DPDP §11 export bundles. OWNER ∨ BILLING_ADMIN. |
 
@@ -174,9 +173,6 @@ These shipped after the migration baseline, so they have no "old" route
 — listed here only so a porter knows they exist and aren't a rename of
 something they remember.
 
-- **SCIM config** — `GET/POST /scim/tokens`, `DELETE /scim/tokens/[tokenId]`,
-  `GET/POST /scim/group-mappings`, `DELETE /scim/group-mappings/[mappingId]`
-  (all OWNER).
 - **Outbound webhooks** — `/webhooks` CRUD + `[endpointId]/rotate-secret`,
   `[endpointId]/deliveries` + `.../[deliveryId]/redeliver` (mixed
   OWNER / OWNER ∨ BILLING_ADMIN / MANAGER — see `api-reference`).

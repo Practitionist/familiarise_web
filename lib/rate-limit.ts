@@ -2,14 +2,12 @@
  * Shared rate limiters for API routes.
  *
  * Rate limit profiles:
- * - authLimiter:            10/15min per IP  — POST /api/auth/sign-in, sign-up, forget-password (brute-force)
  * - checkoutLimiter:        5/min per user   — POST /api/checkout (fraud)
  * - discountLimiter:        10/min per user  — POST /api/payments/discounts/validate (brute-force)
  * - waitlistLimiter:        3/hr per IP      — POST /api/waitlist (newsletter signup spam)
  * - referralApplyLimiter:   3/24h per user   — POST /api/referrals/apply (farming)
  * - remindLimiter:          1/24h per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind (#1775)
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
- * - cspReportLimiter:       120/min per IP   — POST /api/csp-report (browser-generated)
  * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
  * - requestApprovalLimiter: 10/hr per user   — POST /api/scheduling/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
@@ -22,6 +20,13 @@
  * - onboardingSubmitLimiter: 10/min per user  — updateOnboardingInformationAction + PATCH /api/form/onboarding/[id] (heavy multi-table tx)
  * - onboardingDraftLimiter:  30/min per user  — saveOnboardingDraftAction (800ms-debounced autosave + pagehide flush)
  * - verificationSubmitLimiter: 10/hr per user — POST /api/verification/submit + /resubmit (review-queue writes + admin notify)
+ * - sessionMgmtLimiter:     120/15min per IP  — /api/user/sessions* except the liveness probe (see middleware)
+ * - sessionMgmtUserLimiter: 60/15min per user — same three routes, keyed past requireApiAuth (the precise gate)
+ *
+ * BetterAuth endpoints (`/api/auth/*`) are limited by BetterAuth itself; see
+ * `lib/auth/rate-limit.ts`. The app routes on the auth path (SSO domain check,
+ * invite accept, staff onboarding) take their budgets from
+ * `lib/rate-limit/policies.ts`.
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -40,7 +45,7 @@ const LIMITER_TIMEOUT_MS = (() => {
   return Number.isFinite(v) && v > 0 ? v : 500;
 })();
 
-function makeLimiter(
+export function makeLimiter(
   requests: number,
   window: `${number} ${"ms" | "s" | "m" | "h" | "d"}`,
   prefix: string,
@@ -52,9 +57,6 @@ function makeLimiter(
     timeout: LIMITER_TIMEOUT_MS,
   });
 }
-
-/** 10 per 15 minutes — auth endpoints (sign-in, sign-up, forget-password) */
-export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
 
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");
@@ -100,22 +102,6 @@ export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
 // Review writes: the composer POSTs for every edit, and a new review is already
 // bounded by the pair unique and a held session, so this only stops hammering.
 export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
-
-/**
- * 120 per minute per IP — POST /api/csp-report.
- *
- * Was on spamLimiter's 5/hr, which is sized for a HUMAN deciding to file a
- * support ticket. A CSP report is emitted by the browser, unprompted, once per
- * violated directive per page load — so one person opening a few dashboard
- * pages exhausted the hour's quota in seconds and every report after that was
- * dropped with a 429. The report-only rollout was therefore blind in exactly
- * the situation it exists to observe: a directive drifting on a real user.
- *
- * Sized for a page that violates a handful of directives on every navigation,
- * with headroom, while still capping a hostile poster. Reports are logged, not
- * stored, so the cost of a generous ceiling is log volume rather than writes.
- */
-export const cspReportLimiter = makeLimiter(120, "1 m", "rl:csp-report");
 
 /**
  * #1134 P1-11 — Stream had NO rate limiting on any route or server action.
@@ -272,27 +258,60 @@ export const verificationSubmitLimiter = makeLimiter(
 );
 
 // ============================================================================
-// Enterprise (arch-4) — per-org / per-IP buckets for org-specific surfaces.
-//
-// These are narrower than the global authLimiter because an org-scoped
-// attacker (e.g. credential-stuffing against a single tenant's SSO) can
-// keep the global IP counter fresh by rotating source IPs. Adding an
-// org-scoped bucket catches single-tenant floods that wouldn't trip the
-// global bucket.
+// Enterprise (arch-4) — per-org buckets for org-specific surfaces. Org-keyed so
+// one tenant's burst cannot crowd out another's, and rotating source IPs does
+// not reset the count.
 // ============================================================================
 
-/** 30 per hour — POST /api/organizations/invitations/accept (IP-based; org-level identity only available post-token-lookup, which middleware can't do) */
-export const orgInviteAcceptLimiter = makeLimiter(
-  30,
-  "1 h",
-  "rl:org-invite-accept",
+/**
+ * 120 per 15 minutes per IP — /api/user/sessions* except the signal
+ * poll (#1856, exempt there).
+ *
+ * Generous because a device list reloads after every revoke. IP-keyed
+ * because middleware is cookie-presence-only — so one office NAT
+ * shares this bucket, which is why it is paired with the per-user
+ * limiter below (a single NAT office revoking devices must not lock
+ * itself out; the per-user bucket is the precise gate).
+ */
+export const sessionMgmtLimiter = makeLimiter(120, "15 m", "rl:session-mgmt");
+
+/**
+ * 60 per 15 minutes per user — the same three session routes, keyed by
+ * user id inside the handlers (past `requireApiAuth`, where the caller
+ * is known). This is the precise gate; the IP rule above is coarse
+ * abuse friction only. Applied in the route, not the middleware,
+ * because only the route can resolve who is calling.
+ */
+export const sessionMgmtUserLimiter = makeLimiter(
+  60,
+  "15 m",
+  "rl:session-mgmt-user",
 );
 
-/** 60 per hour — GET /api/auth/sso/domain-check (IP-based, prevents org-existence enumeration) */
-export const ssoDomainCheckLimiter = makeLimiter(
-  60,
-  "1 h",
-  "rl:sso-domain-check",
+/**
+ * 120 per 15 minutes per STAFF USER — `/api/admin/users/[userId]/sessions*`
+ * (#1856, review follow-up).
+ *
+ * The back-office session surface had no limiter at ANY layer before this:
+ * no `RATE_LIMIT_RULES` entry matches `/api/admin/*` (they stop at the
+ * `/api/auth/` and `/api/organizations/` prefixes), and neither handler
+ * called `applyRateLimit`. That left an unauthenticated-rate-limit-free
+ * read of up to 25 rows of `ipAddress` + device label + last-seen for ANY
+ * user id, to any `users.read` operator.
+ *
+ * Keyed per STAFF USER, not per IP and not per TARGET: the threat is one
+ * operator (or one hijacked operator session) walking the user directory
+ * to harvest device/IP history, so the budget belongs to the operator.
+ * An IP key would let a shared office pool cover for the abuse, and a
+ * per-target key would be trivially reset by varying the user id.
+ *
+ * Budget is generous because the legitimate shape is a support agent
+ * resolving ONE ticket, which is a handful of calls.
+ */
+export const adminSessionAccessLimiter = makeLimiter(
+  120,
+  "15 m",
+  "rl:admin-session-access",
 );
 
 /** 20 per hour per org — POST /api/organizations/[orgId]/billing-account/wallet/top-ups (orgId-keyed; blocks a single org from minting hundreds of Razorpay orders) */
@@ -331,15 +350,6 @@ export const orgAutoEnrollLimiter = makeLimiter(
 export const orgWebhookLimiter = makeLimiter(5, "1 m", "rl:org-webhook");
 
 /**
- * 60 requests per minute per token — SCIM 2.0 bearer endpoint.
- * Matches Okta + Azure AD default polling cadence; integrator IdPs
- * tend to issue 10–30 RPM at most, so 60 is two-headroom while still
- * mitigating runaway loops in test scripts. Keyed on tokenHash so a
- * leaked token can't burn another org's quota.
- */
-export const scimLimiter = makeLimiter(60, "1 m", "rl:scim");
-
-/**
  * 1 per 24h per org — POST /api/organizations/[orgId]/data-exports.
  * The bundle build is expensive (cross-entity walk + zip + Supabase
  * Storage upload + Resend email). One export per day is well above
@@ -353,15 +363,6 @@ export const orgDataExportLimiter = makeLimiter(
 );
 
 /**
- * Apply rate limit to a request.
- * Returns a 429 NextResponse if exceeded, otherwise null.
- *
- * @param limiter    - Named Ratelimit instance from this module
- * @param identifier - Rate limit key: userId for auth'd routes, IP for public routes.
- *                     Prefix with a route slug when reusing the same limiter across
- *                     multiple endpoints (e.g. `tickets:${userId}`).
- */
-/**
  * Seconds until the sliding window admits the caller again, floored at one so
  * a client never reads "retry now" off a 429 (#1697).
  */
@@ -373,13 +374,30 @@ export function retryAfterSeconds(
   return Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000));
 }
 
+/**
+ * Apply rate limit to a request.
+ * Returns a 429 NextResponse if exceeded, otherwise null.
+ *
+ * @param limiter    - Named Ratelimit instance from this module
+ * @param identifier - Rate limit key: userId for auth'd routes, IP for public routes.
+ *                     Prefix with a route slug when reusing the same limiter across
+ *                     multiple endpoints (e.g. `tickets:${userId}`).
+ * @param scope      - Optional `RATE_SCOPE` value (lib/rate-limit/policies.ts).
+ *                     Echoed in the 429 body so a client can branch on which
+ *                     budget it spent without string-matching the error
+ *                     sentence. Omitted from the body when not supplied, so the
+ *                     ~50 existing bare-`applyRateLimit(limiter, id)` call sites
+ *                     keep their exact response shape.
+ */
 export async function applyRateLimit(
   limiter: Ratelimit,
   identifier: string,
+  scope?: string,
 ): Promise<NextResponse | null> {
   try {
     const { success, remaining, reset } = await limiter.limit(identifier);
     if (!success) {
+      const retryAfter = retryAfterSeconds(reset);
       return NextResponse.json(
         // Machine-readable code alongside the sentence: clients key the
         // shared "wait a moment, then retry" toast off it instead of
@@ -387,6 +405,15 @@ export async function applyRateLimit(
         {
           error: "Too many requests. Please try again later.",
           code: "RATE_LIMITED",
+          // `identifier` is deliberately NOT echoed. It is a Redis key input,
+          // and for the account and token dimensions it is a digest of a secret
+          // — a body that returns the caller's own digest teaches an attacker
+          // the shape of the keyspace for nothing.
+          ...(scope ? { scope } : {}),
+          // Repeated in the body so a client that cannot read headers (a JSON
+          // fetch wrapper, an SDK) still has the honest number. `Retry-After`
+          // remains the header of record (#1697).
+          retryAfterSeconds: retryAfter,
         },
         {
           status: 429,
@@ -394,7 +421,7 @@ export async function applyRateLimit(
             "X-RateLimit-Remaining": String(remaining),
             // #1697 — background pollers back off by this rather than retrying
             // on their own cadence; the window's reset is the honest figure.
-            "Retry-After": String(retryAfterSeconds(reset)),
+            "Retry-After": String(retryAfter),
           },
         },
       );

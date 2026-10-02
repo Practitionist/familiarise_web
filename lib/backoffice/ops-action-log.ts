@@ -17,6 +17,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
 import { reportSentryError } from "@/lib/observability/report";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { refusalCode, refusalResponse } from "./ops-refusal";
 
 /** A reason an auditor can read later; five characters rules out "ok"/"fix". */
@@ -83,6 +84,11 @@ export interface OpsDoorResult {
   after?: Prisma.InputJsonValue;
   correlationId?: string;
   status?: number;
+  /**
+   * Side effects that must not run if the transaction rolls back (e.g. a
+   * failed audit-row write). Scheduled only once the commit resolved.
+   */
+  afterCommit?: () => unknown;
 }
 
 type TxDoor<B> = {
@@ -158,6 +164,8 @@ export function withOpsAction<S extends z.ZodRawShape>(
               return r;
             })
           : await runGatewayDoor(door, ctx, row);
+      if (result.afterCommit)
+        scheduleAfter(result.afterCommit, `ops:${action}`);
       return NextResponse.json(
         { ...result.response, opsActionId: ctx.opsActionId },
         { status: result.status ?? 200 },

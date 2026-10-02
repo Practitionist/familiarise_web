@@ -6,8 +6,8 @@ permissions:
 on:
   schedule:
     # Run nightly at 03:45 UTC. The 03:00 UTC slot already hosts
-    # sso-cert-expiry-alert and mark-expired-recordings; pushing 45 min
-    # later puts us cleanly after their (~1-2 min) workloads and 15 min
+    # mark-expired-recordings; pushing 45 min later puts us cleanly
+    # after its (~1-2 min) workload and 15 min
     # before the monthly invoice-rollup window at 04:00 UTC on day 1.
     # The job is read-only so the cost of overlapping with writers is
     # bounded, but staying off the cluster keeps the Supabase connection

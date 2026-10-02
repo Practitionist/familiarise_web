@@ -102,7 +102,7 @@ calling user. Otherwise the API returns 400 `DEFAULT_LANDING_ORG_INVALID`.
 Where org-lifecycle events page the operator. The Novu dispatchers in
 `lib/novu/org-workflows.ts` read this column when fanning out the 9+
 multi-org workflows: `ORG_INVITE_ACCEPTED`, `ORG_INVOICE_ISSUED`,
-`ORG_PAYOUT_COMPLETED`, `ORG_SSO_CERT_EXPIRING`, etc.
+`ORG_PAYOUT_COMPLETED`, `ORG_SSO_PROVIDER_DELETED`, etc.
 
 | Mode | Bell | Daily email digest | Use case |
 |---|---|---|---|

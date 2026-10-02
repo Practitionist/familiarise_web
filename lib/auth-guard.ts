@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import {
   lookupSession,
   SessionLookupFailedError,
@@ -56,13 +57,18 @@ async function redirectWithCookieCleanup(): Promise<never> {
   );
 }
 
+/** Page guards default to refusing an operator without enrolled 2FA. */
+type GuardOptions = { allowUnenrolledOperator?: boolean };
+
 /**
  * #1716 — a lookup that did not complete must not clear the cookie: the
  * stale-session cleanup signs the user out, and a cold-instance stall on a
  * valid cookie was doing exactly that. A failed read throws to the nearest
  * error boundary, whose retry re-runs the guard; only "no session" redirects.
  */
-async function resolveGuardSession() {
+async function resolveGuardSession({
+  allowUnenrolledOperator = false,
+}: GuardOptions = {}) {
   const lookup = await lookupSession(true);
   if (lookup.kind === "failed")
     throw new SessionLookupFailedError(lookup.cause);
@@ -74,6 +80,17 @@ async function resolveGuardSession() {
     throw new SessionLookupFailedError(
       new Error("stale-session cleanup did not redirect"),
     );
+  }
+  // lookupSession opts in to unenrolled operators so this can redirect them
+  // instead of answering "no session". Every page guard enforces it, not
+  // just requireOperator: /settings or /dashboard would otherwise render for
+  // a password-only operator sign-in.
+  if (
+    !allowUnenrolledOperator &&
+    isOperatorRole(lookup.session.user.role) &&
+    lookup.session.user.twoFactorEnabled !== true
+  ) {
+    redirect(TWO_FACTOR_SETUP_PATH);
   }
   // Covers every page guard below (requireAuth, requireOnboarded,
   // requireUserRole, requireBackofficePage, requireNotOnboarded): a server
@@ -156,8 +173,8 @@ async function onboardingRedirectTarget(
  * cache skips one query out of ~4. The per-render dedupe that actually helps
  * is getSession's React.cache.
  */
-export async function requireOnboarded() {
-  const session = await resolveGuardSession();
+export async function requireOnboarded(options: GuardOptions = {}) {
+  const session = await resolveGuardSession(options);
   // Explicit ban check, mirroring requireAuth/requireApiAuth (#693): a
   // session minted inside the ban race window still resolves a `banned: true`
   // payload before row deletion lands, and this guard must not admit it to
@@ -193,12 +210,42 @@ export async function requireOnboarded() {
  * for ORG_WORKSPACE). Sends other roles to the generic dashboard — which in turn
  * routes them to their role-specific home.
  */
-export async function requireUserRole(allowed: UserRole | UserRole[]) {
-  const session = await requireOnboarded();
+export async function requireUserRole(
+  allowed: UserRole | UserRole[],
+  options: GuardOptions = {},
+) {
+  const session = await requireOnboarded(options);
   const roles = Array.isArray(allowed) ? allowed : [allowed];
   if (!session.user.role || !roles.includes(session.user.role as UserRole)) {
     redirect("/dashboard");
   }
+  return session;
+}
+
+/** The one page an operator without enrolled 2FA may open. */
+export const TWO_FACTOR_SETUP_PATH = "/auth/two-factor/setup";
+
+/**
+ * Require an onboarded STAFF/ADMIN with an enrolled second factor. An operator
+ * who has not enrolled yet is sent to {@link TWO_FACTOR_SETUP_PATH}; the API
+ * twin is the 428 in `requireApiAuth`.
+ */
+export async function requireOperator() {
+  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  if (session.user.twoFactorEnabled !== true) redirect(TWO_FACTOR_SETUP_PATH);
+  return session;
+}
+
+/**
+ * The enrolment page's guard: an operator who has NOT enrolled yet. This is
+ * the only page-level exemption from {@link requireOperator}, and it is keyed
+ * on the page that calls it, not on anything the request says about itself.
+ */
+export async function requireOperatorAwaitingTwoFactor() {
+  const session = await requireUserRole(["ADMIN", "STAFF"], {
+    allowUnenrolledOperator: true,
+  });
+  if (session.user.twoFactorEnabled === true) redirect("/dashboard");
   return session;
 }
 
@@ -218,7 +265,7 @@ export async function requireBackofficePage(
   surface: BackofficeSurface,
   tree: string,
 ) {
-  const session = await requireUserRole(["ADMIN", "STAFF"]);
+  const session = await requireOperator();
   const cap = isBackofficeTree(tree)
     ? resolveBackofficeCapability(session.user.role, tree)
     : null;

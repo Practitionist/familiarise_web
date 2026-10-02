@@ -465,9 +465,13 @@ export async function ensureWebhookSubscription(
     const missing = eligible.filter((t) => !receivesAll && !current.has(t));
     const product = (hook as { product?: string }).product ?? "unscoped";
 
-    console.log(`\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`);
+    console.log(
+      `\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`,
+    );
     console.log(`  url: ${hook.webhook_url}`);
-    console.log(`  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`);
+    console.log(
+      `  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`,
+    );
 
     if (missing.length === 0) {
       console.log(`  ✅ already covers every handled ${product} event`);
@@ -509,7 +513,9 @@ export async function ensureWebhookSubscription(
       `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
     );
     for (const [product, types] of byProduct) {
-      console.error(`\n  product '${product}' — no hook on this app is scoped to it:`);
+      console.error(
+        `\n  product '${product}' — no hook on this app is scoped to it:`,
+      );
       for (const t of [...types].sort(byCodeUnit)) {
         console.error(`    · ${t}`);
         if (mode === "check") {

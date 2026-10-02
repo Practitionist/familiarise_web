@@ -407,7 +407,8 @@ function constantTimeEqual(a: string | null | undefined, b: string): boolean {
   const maxLen = Math.max(aBytes.length, bBytes.length);
   let diff = aBytes.length === bBytes.length ? 0 : 1;
   for (let i = 0; i < maxLen; i++) {
-    diff |= (i < aBytes.length ? aBytes[i] : 0) ^ (i < bBytes.length ? bBytes[i] : 0);
+    diff |=
+      (i < aBytes.length ? aBytes[i] : 0) ^ (i < bBytes.length ? bBytes[i] : 0);
   }
   return diff === 0;
 }

@@ -11,6 +11,13 @@ import { requireApiAuth, requireAdminAuth } from "@/lib/auth-helpers";
  * since `emailVerified` is not reset) and `DELETE` removed the profile.
  * The middleware only checks cookie presence, so nothing upstream was
  * covering it either.
+ *
+ * #1927 — the auth gate is in. The `emailVerified` half is fixed differently:
+ * `PUT` now REFUSES an email change outright rather than resetting the flag
+ * (see the comment at that branch for why a silent, unaudited address move is
+ * the worse of the two fixes), and the file is no longer a `role: STAFF`
+ * write site at all — onboarding goes through
+ * `POST /api/admin/team/members`.
  */
 async function requireSelfOrAdmin(staffProfileId: string) {
   const auth = await requireApiAuth();
@@ -23,10 +30,7 @@ async function requireSelfOrAdmin(staffProfileId: string) {
   // Same 403 whether the profile is someone else's or absent — don't
   // confirm that an id exists to a caller who may not read it.
   return {
-    error: NextResponse.json(
-      { error: "Forbidden" },
-      { status: 403 },
-    ),
+    error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
   };
 }
 
@@ -66,7 +70,10 @@ export async function GET(
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error:
@@ -117,7 +124,10 @@ export async function POST(
     return NextResponse.json(createdStaffProfile, { status: 201 });
   } catch (error) {
     console.error("Error creating staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while creating the staff profile",
@@ -167,7 +177,10 @@ export async function PATCH(
     return NextResponse.json(updatedStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error updating staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while updating the staff profile",
@@ -204,6 +217,47 @@ export async function PUT(
       );
     }
 
+    // #1927 — the email is EXCLUDED from this write, deliberately and with no
+    // replacement path, because the alternative is worse than a refusal. The
+    // bug this fixes is the one named in this file's own header: `PUT` used to
+    // rewrite the linked User's email while leaving `emailVerified` true, so
+    // any caller who passed the gate (self, or any admin) could re-point a
+    // verified identity at an address they control, and BetterAuth would then
+    // treat every subsequent sign-in as proven. There were two ways to close
+    // it and they are not equivalent:
+    //
+    //   (a) write the new email AND clear `emailVerified`. Honest, and it
+    //       removes the takeover. But it leaves a silent, unlogged privilege
+    //       change: a staff account's address — the thing their whole
+    //       invitation, their 2FA enrolment and their recovery mail are
+    //       bound to — moves with no OpsActionLog row, no notification to the
+    //       old address, and no re-verification the operator can see. An
+    //       account-takeover primitive replaced by an account-redirect
+    //       primitive is not a fix.
+    //   (b) refuse the change. The operator's address is bound at onboarding
+    //       (`User.email` unique) and cannot move. A genuine correction — a
+    //       typo in an invitation, a name change on a personal address — is a
+    //       support conversation ending in a fresh invitation, which is
+    //       audited, mailed to BOTH addresses, and sets its own password.
+    //
+    // (b) is what this does. It is also the only one that keeps
+    // `emailVerified` true meaning "this address was proven", which is the
+    // invariant the rest of the auth system reads.
+    if (
+      body.email !== undefined &&
+      body.email !== existingStaffProfile.user.email
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "A staff account's email address cannot be changed here. To move an account to a new address, invite the new address and remove the old account.",
+          code: "EMAIL_CHANGE_NOT_ALLOWED",
+          currentEmail: existingStaffProfile.user.email,
+        },
+        { status: 409 },
+      );
+    }
+
     // Update staff profile
     await prisma.staffProfile.update({
       where: { id: id },
@@ -221,10 +275,9 @@ export async function PUT(
       },
     });
 
-    // Also update user fields if provided
+    // Also update user fields if provided (never the email, see above).
     if (
       body.name ||
-      body.email ||
       body.phone ||
       body.address ||
       body.image ||
@@ -234,7 +287,6 @@ export async function PUT(
         where: { id: existingStaffProfile.userId },
         data: {
           name: body.name,
-          email: body.email,
           phone: body.phone,
           address: body.address,
           image: body.image,
@@ -278,7 +330,10 @@ export async function PUT(
     return NextResponse.json(freshStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error updating staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while updating the staff profile",
@@ -322,7 +377,10 @@ export async function DELETE(
     return NextResponse.json(deletedStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error deleting staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while deleting the staff profile",

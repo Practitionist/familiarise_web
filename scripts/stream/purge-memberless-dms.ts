@@ -240,9 +240,12 @@ async function deleteCandidates(
   return deleted;
 }
 
-export async function purgeMemberlessDms(
-  opts: Options,
-): Promise<{ scanned: number; candidates: number; deleted: number; ok: boolean }> {
+export async function purgeMemberlessDms(opts: Options): Promise<{
+  scanned: number;
+  candidates: number;
+  deleted: number;
+  ok: boolean;
+}> {
   if (!isStreamConfigured()) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
@@ -272,7 +275,8 @@ export async function purgeMemberlessDms(
 
   reportCandidates(candidates, scanned, dmScanned);
 
-  if (candidates.length === 0) return { scanned, candidates: 0, deleted: 0, ok: true };
+  if (candidates.length === 0)
+    return { scanned, candidates: 0, deleted: 0, ok: true };
 
   if (!opts.apply) {
     console.log(

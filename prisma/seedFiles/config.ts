@@ -301,6 +301,103 @@ export function getTotalAppointments(): number {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* #1927 — the privileged-user gate                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whether the seed creates STAFF and ADMIN rows. DEFAULT: NO.
+ *
+ * ## What was wrong
+ *
+ * `1a-create-users.ts` created `config.volumes.users.staff` (4) and
+ * `config.volumes.users.admins` (3) faker people on EVERY run, and every one of
+ * them got the same `SEED_PASSWORD`, which defaults to the literal
+ * `"SeedPass123!"`. That value is in the repository, in this file's sibling,
+ * and in every README that documents local setup. So on a real deployment the
+ * people with `refunds.manage` and `payouts.manage` — the ability to move every
+ * rupee on the platform — were accounts whose password anyone could read on
+ * GitHub. Nobody had to be breached for that to be true.
+ *
+ * They were also *necessary* to have: STAFF and ADMIN are hard-rejected from
+ * self-service onboarding (`utils/onboarding-server.ts:824`), and
+ * `POST /api/user/staff` requires an admin to already exist. So deleting the
+ * rows without adding a front door would have locked every operator out of
+ * their own console — which is exactly the trap `scripts/bootstrap-admin.ts`
+ * now fills, and why the two changes ship together.
+ *
+ * ## Why the default is off rather than on
+ *
+ * A seed that mints privileged accounts unless told not to is a foot-gun with
+ * a plausible trigger: "let me just re-seed the preview database" and "let me
+ * point the seed at prod to fix the payouts table" are both one command, and
+ * the second one used to be silent. Now it needs `SEED_WITH_STAFF=true` AND an
+ * explicit `SEED_PASSWORD`, and on a production NODE_ENV it is refused outright
+ * — see {@link assertStaffSeedAllowed}.
+ *
+ * ## Turning it on
+ *
+ *   SEED_WITH_STAFF=true SEED_PASSWORD='…' npm run db:seed
+ *
+ * The dev-only "I need to click around the console" case is now served by the
+ * real flow instead: `npx tsx -r dotenv/config scripts/bootstrap-admin.ts
+ * --email you@localhost --name "You" --print-link`, which mints one real admin
+ * and prints the link where you choose its password.
+ */
+export function getSeedWithStaff(): boolean {
+  return process.env.SEED_WITH_STAFF?.trim().toLowerCase() === "true";
+}
+
+/**
+ * Refuse a seed run that would mint privileged accounts on a production
+ * database, or that would fall back to the public default password.
+ *
+ * Throws rather than warns, and it throws BEFORE any row is written, so a
+ * refused run leaves the database exactly as it found it. Two independent
+ * reasons, either sufficient:
+ *
+ *  - a faker person holding `refunds.manage` on a live database is a
+ *    credentialed attacker with a known password, and no later revoke undoes
+ *    the data it touched in the window;
+ *  - `"SeedPass123!"` is in version control. A production seed that uses it
+ *    creates a population of accounts anyone can sign in as, and the
+ *    consultant/consumer rows are not the problem — they are the same known
+ *    password, they are just less valuable.
+ *
+ * The second reason applies to the WHOLE seed, not only to the staff rows,
+ * which is why this runs even when `SEED_WITH_STAFF` is false. A production
+ * seed with an explicit password is allowed: some operators genuinely need to
+ * backfill reference data (TDS rates, cancellation policies) that is not
+ * derivable, and refusing that would just push them to ad-hoc SQL.
+ */
+export function assertSeedPasswordSafeForEnv(
+  seedPassword: string | undefined,
+  isDefaultPassword: boolean,
+): void {
+  if (process.env.NODE_ENV !== "production") return;
+  if (isDefaultPassword) {
+    throw new Error(
+      "Refusing to seed with the default SEED_PASSWORD while NODE_ENV=production — " +
+        '"SeedPass123!" is committed to this repository, so every seeded account on a ' +
+        "live database would be sign-in-able by anyone who has read it. Set an " +
+        "explicit SEED_PASSWORD, or unset NODE_ENV if you are seeding a local database.",
+    );
+  }
+}
+
+/** The privileged-user half of the same guard. */
+export function assertStaffSeedAllowed(withStaff: boolean): void {
+  if (!withStaff) return;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Refusing to seed STAFF/ADMIN rows while NODE_ENV=production. A faker " +
+        "person holding refunds.manage on a live database is an attacker with a " +
+        "known password. To create a real administrator, run: " +
+        'npx tsx -r dotenv/config scripts/bootstrap-admin.ts --email you@company.com --name "Your Name"',
+    );
+  }
+}
+
 /**
  * Main configuration object - use this in seed files
  */
@@ -309,6 +406,8 @@ export const config = {
   volumes: getVolumeConfig(),
   batchSize: parseInt(process.env.SEED_BATCH_SIZE || "50", 10),
   logInterval: parseInt(process.env.SEED_LOG_INTERVAL || "10", 10),
+  /** #1927 — false unless SEED_WITH_STAFF=true. See getSeedWithStaff(). */
+  withStaff: getSeedWithStaff(),
 };
 
 /**
@@ -327,8 +426,17 @@ export function printConfigSummary(): void {
   console.log(`  Users: ${totalUsers} total`);
   console.log(`    - Consultants: ${volumes.users.consultants}`);
   console.log(`    - Consultees: ${volumes.users.consultees}`);
-  console.log(`    - Staff: ${volumes.users.staff}`);
-  console.log(`    - Admins: ${volumes.users.admins}`);
+  // #1927 — the two counts are conditional, and saying so is the point. A
+  // seed that silently produced zero privileged accounts once made "why can't
+  // I get into the console" a ten-minute question, and a seed that produced
+  // them with a public password was worse.
+  const withStaff = getSeedWithStaff();
+  console.log(
+    `    - Staff: ${withStaff ? volumes.users.staff : 0}${withStaff ? "" : " (set SEED_WITH_STAFF=true to create them)"}`,
+  );
+  console.log(
+    `    - Admins: ${withStaff ? volumes.users.admins : 0}${withStaff ? "" : " (or run scripts/bootstrap-admin.ts for a real one)"}`,
+  );
   console.log(`  Appointments: ${totalAppointments} total`);
   console.log(`    - Consultation: ${volumes.appointments.consultation}`);
   console.log(`    - Subscription: ${volumes.appointments.subscription}`);

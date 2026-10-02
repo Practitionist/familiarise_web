@@ -11,14 +11,12 @@ import {
   type MaintenanceState,
 } from "@/lib/maintenance-edge";
 import {
-  authLimiter,
+  sessionMgmtLimiter,
   searchLimiter,
   eligibilityLimiter,
   waitlistLimiter,
   availabilityLimiter,
   availabilityGridLimiter,
-  orgInviteAcceptLimiter,
-  ssoDomainCheckLimiter,
   orgWalletTopUpLimiter,
   applyRateLimit,
   getClientIp,
@@ -26,11 +24,16 @@ import {
   streamJoinLimiter,
   streamApiLimiter,
 } from "@/lib/rate-limit";
+import {
+  RATE_SCOPE,
+  limiterFor,
+  type RateScope,
+} from "@/lib/rate-limit/policies";
 import { Ratelimit } from "@upstash/ratelimit";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What this middleware does, in order (see `middleware()` at the bottom):
-//   1. Skip static assets / Next internals / SCIM (no auth concerns).
+//   1. Skip static assets / Next internals (no auth concerns).
 //   2. Maintenance gate     → `handleMaintenance()`  (OFFLINE/DEGRADED windows).
 //   3. Edge rate limiting   → `applyEdgeRateLimits()` (table-driven; DDoS/abuse).
 //   4. Auth routing         → cookie-presence check (NO DB hit at the edge).
@@ -239,27 +242,60 @@ function handleMaintenance(
 //                       per-rule value — it is intentionally inconsistent (the
 //                       public read endpoints rate-limit even on localhost; the
 //                       auth + enterprise write endpoints do not).
+//
+// BetterAuth endpoints under /api/auth/* are NOT limited here: BetterAuth's own
+// limiter (lib/auth/rate-limit.ts) counts them, path-accurately and including
+// plugin paths. Only app routes that BetterAuth never sees belong here.
 // ─────────────────────────────────────────────────────────────────────────────
 type RateRule = {
   label: string;
   match: (pathname: string, method: string) => boolean;
   limiter: Ratelimit;
+  /**
+   * The policy this rule spends, when it spends one. Carried as a field rather
+   * than parsed back out of `label` so the scope reported in the 429 body
+   * cannot drift from the limiter that produced it.
+   */
+  scope?: RateScope;
   key?: (pathname: string, clientIp: string) => string | null;
   skipLocalhost: boolean;
 };
 
 const RATE_LIMIT_RULES: RateRule[] = [
   {
-    // Auth brute-force protection (POST only). `isBypassableIp` returns false in
-    // production for every value (incl. the `unknown_ip` sentinel), so a
-    // misconfigured proxy / missing header in prod still incurs the penalty.
-    label: "auth: sign-in / sign-up / forget-password",
+    // An app route, so BetterAuth's limiter never sees it. Pre-login and
+    // returns `enforceSSO` + org name for any recognised domain, so hit in a
+    // loop it enumerates the enterprise customer base.
+    label: `policy: ${RATE_SCOPE.SSO_DOMAIN_CHECK}`,
+    match: (p, m) => m === "GET" && p.startsWith("/api/auth/sso/domain-check"),
+    limiter: limiterFor(RATE_SCOPE.SSO_DOMAIN_CHECK),
+    scope: RATE_SCOPE.SSO_DOMAIN_CHECK,
+    skipLocalhost: true,
+  },
+  {
+    // Credential stuffing against stolen invite links. `invitationId` is in the
+    // POST body, which the edge cannot read, so this spends the IP budget only.
+    label: `policy: ${RATE_SCOPE.INVITE_ACCEPT}`,
     match: (p, m) =>
-      m === "POST" &&
-      (p.startsWith("/api/auth/sign-in") ||
-        p.startsWith("/api/auth/sign-up") ||
-        p.startsWith("/api/auth/forget-password")),
-    limiter: authLimiter,
+      m === "POST" && p === "/api/organizations/invitations/accept",
+    limiter: limiterFor(RATE_SCOPE.INVITE_ACCEPT),
+    scope: RATE_SCOPE.INVITE_ACCEPT,
+    skipLocalhost: true,
+  },
+  {
+    // #1856 — session/device management, an app route rather than a
+    // BetterAuth one. Generous because the device list reloads after every
+    // revoke. IP-keyed (middleware is cookie-presence only and cannot
+    // resolve a user id — see the meeting-join rule).
+    //
+    // The liveness probe (`/current`) is EXEMPT: every open tab calls it
+    // on focus, and it must not spend the device list's budget. It needs
+    // a valid session cookie and returns only the caller's own status.
+    label: "auth: session/device management",
+    match: (p) =>
+      p.startsWith("/api/user/sessions") &&
+      !p.startsWith("/api/user/sessions/current"),
+    limiter: sessionMgmtLimiter,
     skipLocalhost: true,
   },
   {
@@ -345,25 +381,6 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: false,
   },
   {
-    // Invite-accept floods. orgId isn't in the URL (it's inside the invite token
-    // body), so this is IP-keyed; org-level observability is the per-accept audit
-    // log. Covers credential-stuffing against stolen invite tokens.
-    label: "enterprise: org invite-accept",
-    match: (p, m) =>
-      m === "POST" && p === "/api/organizations/invitations/accept",
-    limiter: orgInviteAcceptLimiter,
-    skipLocalhost: true,
-  },
-  {
-    // SSO domain-check enumeration. This pre-login endpoint returns
-    // "enforceSSO: true" + org name for any recognised domain — hit in a loop it
-    // leaks the tenant list. IP-keyed 60/hr is wide enough for a shared-office NAT.
-    label: "enterprise: SSO domain-check",
-    match: (p, m) => m === "GET" && p.startsWith("/api/auth/sso/domain-check"),
-    limiter: ssoDomainCheckLimiter,
-    skipLocalhost: true,
-  },
-  {
     // Wallet top-up create. orgId IS in the path
     // (/api/organizations/<orgId>/billing-account/wallet/top-ups), so key the
     // bucket per-org — one tenant can't DoS their own endpoint or mint hundreds
@@ -385,8 +402,8 @@ const RATE_LIMIT_RULES: RateRule[] = [
 
 /**
  * Apply the first matching edge rate-limit rule. Returns a 429 response when a
- * limit is exceeded, else null. (Rules match disjoint paths, so at most one
- * applies per request; the loop still honours array order if that ever changes.)
+ * limit is exceeded, else null. Rules match disjoint paths, so at most one
+ * applies per request.
  */
 async function applyEdgeRateLimits(
   req: NextRequest,
@@ -399,9 +416,8 @@ async function applyEdgeRateLimits(
     if (rule.skipLocalhost && isLocalhost) continue;
     if (!rule.match(pathname, req.method)) continue;
     const id = rule.key ? rule.key(pathname, clientIp) : clientIp;
-    if (id === null) continue;
-    const limited = await applyRateLimit(rule.limiter, id);
-    if (limited) return limited;
+    if (id === null) return null;
+    return applyRateLimit(rule.limiter, id, rule.scope);
   }
   return null;
 }
@@ -423,15 +439,6 @@ export async function middleware(
     pathname.startsWith("/favicon") ||
     HAS_FILE_EXTENSION.test(pathname)
   ) {
-    return NextResponse.next();
-  }
-
-  // 1b. SCIM 2.0 self-authenticates via bearer tokens — it's the surface IdPs
-  // (Okta, Azure AD) hit when provisioning. A session-cookie check here would
-  // mis-classify it as an unauth user and bounce it to /auth/signin. The route
-  // handler enforces token auth + rate limit + per-org scoping. See
-  // lib/scim/auth.ts and docs/enterprise/20-iam-and-security/03-scim-provisioning.md.
-  if (pathname.startsWith("/scim/v2/")) {
     return NextResponse.next();
   }
 
@@ -469,12 +476,26 @@ async function routeRequest(
   const rateLimited = await applyEdgeRateLimits(req, pathname);
   if (rateLimited) return rateLimited;
 
+  /** Pass-through, adding request headers for the handler when given. */
+  const next = (extra?: Record<string, string>): NextResponse => {
+    // `x-pathname` is set only by the protected-page branch below; a copy the
+    // client sent must never reach a server guard that reads it.
+    const spoofedPath = req.headers.has("x-pathname");
+    if (!extra && !spoofedPath) return NextResponse.next();
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.delete("x-pathname");
+    for (const [key, value] of Object.entries(extra ?? {})) {
+      requestHeaders.set(key, value);
+    }
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  };
+
   // 4. Auth routing (cookie presence only).
 
   // Public API routes first (most common; no auth) — must precede the
   // authenticated-prefix check so public sub-routes shadow their private parent.
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_API_PREFIXES)) {
-    return NextResponse.next();
+    return next();
   }
 
   const isAuthenticated = !!getSessionCookie(req);
@@ -482,7 +503,7 @@ async function routeRequest(
   // Authenticated API routes — 401 JSON without a session cookie.
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.AUTHENTICATED_API_PREFIXES)) {
     return isAuthenticated
-      ? NextResponse.next()
+      ? next()
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -493,14 +514,13 @@ async function routeRequest(
   // /auth/signin). The signin/signup pages redirect authenticated users via
   // useSession()/useEffect instead.
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
-    return NextResponse.next();
+    return next();
   }
 
   // Protected app routes — redirect to signin (preserving callbackUrl) when no
-  // session cookie. SSO enforcement is NOT done here: customSession() in
-  // lib/auth.ts marks `ssoEnforcementFailed` on the session and layouts/server
-  // components redirect on it. We can't call getSession() at the edge (see the
-  // header block).
+  // session cookie. SSO enforcement is NOT done here: it vetoes session
+  // creation in lib/auth.ts (`databaseHooks.session.create.before`). We can't
+  // call getSession() at the edge (see the header block).
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_PREFIXES)) {
     if (!isAuthenticated) {
       const signInUrl = new URL(URLS.SIGNIN, req.url);
@@ -510,13 +530,11 @@ async function routeRequest(
     // Expose the resolved path so server guards (requireOnboarded) can send an
     // authenticated-but-not-onboarded user back to their intended destination
     // after onboarding, instead of dropping them on the dashboard.
-    const requestHeaders = new Headers(req.headers);
-    requestHeaders.set("x-pathname", pathname + req.nextUrl.search);
-    return NextResponse.next({ request: { headers: requestHeaders } });
+    return next({ "x-pathname": pathname + req.nextUrl.search });
   }
 
   // Everything else (public pages) — allow.
-  return NextResponse.next();
+  return next();
 }
 
 // Matcher: run middleware on all routes except static files / Next internals,

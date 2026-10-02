@@ -269,7 +269,7 @@ PAYOUT events trace the full disbursement lifecycle — from batch creation and 
 | `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
 
 ### `SETTINGS`
-Configuration changes that affect org identity, access control, or compliance posture all land in SETTINGS — from SSO toggling and domain verification to audit-log exports and the SSO-cert expiry warning fired by cron.
+Configuration changes that affect org identity, access control, or compliance posture all land in SETTINGS — from SSO toggling and domain verification to audit-log exports.
 
 | action | Emission point |
 |---|---|
@@ -277,14 +277,6 @@ Configuration changes that affect org identity, access control, or compliance po
 | `SSO_ENABLED` / `SSO_DISABLED` | SSO config |
 | `DOMAIN_CLAIMED` / `DOMAIN_VERIFIED` / `DOMAIN_RELEASED` | domain-claim routes (DNS TXT verify) |
 | `AUDIT_LOG_EXPORTED` | `GET …/audit/export` (the CSV exporter is itself auditable) |
-| `SSO_CERT_EXPIRING` | `sso-cert-expiry-alert` cron (30d WARN / 7d CRITICAL; `details.daysRemaining`) |
-
-> There is **no** dedicated break-glass audit action. SSO break-glass is
-> a `breakGlassUntil` window on `OrganizationSSOSettings` enforced in
-> [`lib/sso/enforce-session.ts`](../../../lib/sso/enforce-session.ts); the
-> open/close mutation rides the generic `SETTINGS_CHANGED` row. If you
-> are looking for "who opened break-glass", filter `SETTINGS_CHANGED`
-> with the break-glass `details` payload, not a distinct action.
 
 ### `CONSENT`
 CONSENT events track the DPDP data-principal lifecycle — a grant when an org records consent on behalf of a user, a withdrawal when that user exercises their §12 erasure right, and a breach report when the platform raises a data-breach incident.
@@ -304,8 +296,8 @@ Sponsored-plan visibility is managed through CATALOG events, which fire when an 
 | `PLAN_MATERIAL_ADDED` / `PLAN_MATERIAL_UPDATED` / `PLAN_MATERIAL_REMOVED` **(#1860)** | an org role changes a file on an org-owned plan through `materials.manage.orgPlan`; the row targets the delivering expert's membership, and the plan owner's materials GET returns it as `orgChanges` |
 
 ### `SYSTEM`
-The catch-all for platform-actor events (the actor is the platform/an
-IdP token/a regulatory surface, not a human member).
+The catch-all for platform-actor events (the actor is the platform or a
+regulatory surface, not a human member).
 
 | action | Emission point |
 |---|---|
@@ -316,7 +308,6 @@ IdP token/a regulatory surface, not a human member).
 | `STREAM_RECORDING_DELETED` / `STREAM_CALLS_EXPORTED` / `STREAM_RETENTION_CHANGED` | Stream retention cron + export + settings |
 | `USER_ERASURE_REQUESTED` / `_PROCESSED` / `_REJECTED` / `_SLA_WARNING` | DPDP §12 erasure lifecycle |
 | `DATA_EXPORT_REQUESTED` / `_GENERATED` / `_FAILED` / `_DOWNLOADED` | DPDP §11 access-bundle lifecycle (`process-data-exports` worker writes GENERATED/FAILED) |
-| `SCIM_USER_*` / `SCIM_GROUP_*` / `SCIM_TOKEN_*` (9 actions) | SCIM 2.0 provisioning (actor is an IdP token) |
 
 ### `WEBHOOK`
 Outbound webhook subsystem (one category for endpoint config + delivery

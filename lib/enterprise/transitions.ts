@@ -209,7 +209,7 @@ export const MEMBER_ALLOWED_FROM: Record<MemberStatus, MemberStatus[]> = {
   // resurrected, even by a stale read-then-write.
   ACTIVE: ["PENDING", "SUSPENDED", "REMOVED"],
   // PENDING → SUSPENDED: an invited-but-not-joined member can be suspended
-  // (dashboard PATCH) or SCIM-deprovisioned before first login.
+  // (dashboard PATCH) before first login.
   SUSPENDED: ["PENDING", "ACTIVE"],
   REMOVED: ["PENDING", "ACTIVE", "SUSPENDED"],
   ERASED: ["PENDING", "ACTIVE", "SUSPENDED", "REMOVED"],

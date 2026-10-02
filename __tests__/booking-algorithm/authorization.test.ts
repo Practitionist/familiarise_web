@@ -135,6 +135,7 @@ function adminSession() {
   return makeSession({
     id: "admin-user",
     role: "ADMIN",
+    twoFactorEnabled: true,
     consultantProfileId: null,
     consulteeProfileId: null,
     adminProfileId: "admin-001",
@@ -145,6 +146,7 @@ function staffSession() {
   return makeSession({
     id: "staff-user",
     role: "STAFF",
+    twoFactorEnabled: true,
     consultantProfileId: null,
     consulteeProfileId: null,
     staffProfileId: "staff-001",

@@ -124,7 +124,7 @@ DROP INDEX IF EXISTS "invitations_org_email_pending_key";
 -- SPLIT
 CREATE UNIQUE INDEX "invitations_org_email_pending_key"
   ON "invitations" ("organizationId", lower("email"))
-  WHERE "status" = 'pending';
+  WHERE "status" = 'PENDING';
 
 -- SPLIT
 -- #676 PM-17 — extend the payment_amounts_nonnegative pattern to every other
@@ -335,17 +335,9 @@ ALTER TABLE "DiscountCode" ADD CONSTRAINT "discount_code_uses_within_cap"
   );
 
 -- SPLIT
--- #1093 §4 — two partial uniques the schema doc-comments always claimed.
--- Verified duplicate-free on the live database before adding (2026-08-13), so
--- these apply cleanly outside a reset. Two orgs may map the same IdP user;
--- one org must not map them twice — without this, deprovisionScimUser's
--- findFirst picks arbitrarily and an IdP DELETE can leave a twin ACTIVE.
-DROP INDEX IF EXISTS "membership_org_scim_key";
--- SPLIT
-CREATE UNIQUE INDEX "membership_org_scim_key"
-  ON "Membership" ("organizationId", "externalScimId")
-  WHERE "externalScimId" IS NOT NULL;
--- SPLIT
+-- #1093 §4 — a partial unique the schema doc-comment always claimed. Verified
+-- duplicate-free on the live database before adding (2026-08-13), so it
+-- applies cleanly outside a reset.
 DROP INDEX IF EXISTS "erasure_request_active_user_key";
 -- SPLIT
 CREATE UNIQUE INDEX "erasure_request_active_user_key"
@@ -742,3 +734,36 @@ ALTER TABLE "Appointment" ADD CONSTRAINT "appointment_parent_matches_type"
     WHEN 'CLASS'        THEN "classId" IS NOT NULL        AND num_nonnulls("consultationId","subscriptionId","webinarId") = 0
     WHEN 'TRIAL'        THEN num_nonnulls("consultationId","subscriptionId","webinarId","classId") = 0
     ELSE FALSE END);
+-- SPLIT
+-- An SSO providerId is the slug in /api/auth/sso/callback/{providerId} and
+-- shares a namespace with Account.providerId. A provider named after a
+-- social or credential id would shadow that sign-in method and make
+-- enforceSSO's "has an account with this provider" check trivially true.
+-- The create route now generates ids itself (`oidc-<hex>`) and still
+-- refuses these, so this is the backstop for any other writer. Keep the list
+-- equal to RESERVED_PROVIDER_IDS in lib/sso/provider-schemas.ts;
+-- __tests__/sso/provider-schemas.test.ts pins the two together.
+ALTER TABLE "ssoProvider" DROP CONSTRAINT IF EXISTS "sso_provider_id_not_reserved";
+-- SPLIT
+ALTER TABLE "ssoProvider" ADD CONSTRAINT "sso_provider_id_not_reserved"
+  CHECK (lower(btrim("providerId")) NOT IN ('credential', 'facebook', 'github', 'google', 'sso'));
+-- SPLIT
+-- D18 — the app reaches Postgres only as the owner role, through Prisma.
+-- Supabase grants its PostgREST roles (anon, authenticated) full access to
+-- public by default, and the anon key ships in the browser bundle, so without
+-- this every table (sessions, accounts, verifications) is readable over the
+-- Data API. Revoke, and stop future tables created by this role from being
+-- granted. Skipped where the roles do not exist (local and CI Postgres).
+-- Re-apply after every `prisma db push` (npm run db:sidecars).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
+  END IF;
+END $$;

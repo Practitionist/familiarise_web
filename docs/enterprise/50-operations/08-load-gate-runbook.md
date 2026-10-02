@@ -149,10 +149,10 @@ sends `AUTH_ORIGIN` — the trusted production URL — while the requests
 themselves go to `BASE_URL`. Set `LOAD_GATE_AUTH_ORIGIN` to the production URL
 whenever the target is a preview.
 
-**The sign-in limiter.** It is ten requests per fifteen minutes per IP,
-enforced in the edge middleware because Better Auth's own limiter is
-per-process and useless on serverless. A k6 run comes from one runner address,
-so the whole run may sign in at most ten times — and a failed run cannot be
+**The sign-in limiter.** `/sign-in/email` allows thirty requests per fifteen
+minutes per IP, enforced by Better Auth's own limiter on an Upstash store
+(`lib/auth/rate-limit.ts`). A k6 run comes from one runner address, so the
+whole run may sign in at most thirty times — and a failed run cannot be
 retried inside the same window. The harness therefore signs in only inside
 `setup()`, caps itself at four buyers and four org admins to leave headroom,
 and prefers **pre-minted session cookies** supplied through
@@ -197,16 +197,16 @@ refused, with a 400 rather than the 409 a lost race earns.
 
 These must exist as repository secrets before the workflow can run.
 
-| Secret                       | Required                         | What it holds                                                                                                                                                   |
-| ---------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOAD_GATE_AUTH_TOKEN`       | Yes (or the e-mail pair)         | Pre-minted buyer session cookies, `\|`-separated. Each entry is a full cookie header value, e.g. `better-auth.session_token=...; better-auth.session_data=...`. |
-| `LOAD_GATE_VERIFY_TOKEN`     | Yes                              | One pre-minted cookie for the consultant who owns the fixtures, or an `ADMIN`/`STAFF` account. Both integrity oracles are self-scoped.                          |
-| `LOAD_GATE_ORG_ADMIN_TOKEN`  | For scenario 14c                 | Pre-minted org-admin cookies, same format.                                                                                                                      |
-| `LOAD_GATE_CONSULTANT_TOKEN` | For the reschedule respond leg   | Pre-minted cookies for the consultants that own the reschedule fixtures, same format. The respond route answers the counterparty only.                          |
-| `LOAD_GATE_AUTH_ORIGIN`      | Yes when the target is a preview | The production URL, which is what `BETTER_AUTH_TRUSTED_ORIGINS` contains.                                                                                       |
-| `LOAD_GATE_BUYER_EMAILS`     | Fallback                         | Comma-separated seed e-mails, used only when no cookies are supplied.                                                                                           |
-| `LOAD_GATE_ORG_ADMIN_EMAILS` | Fallback                         | The same for org admins.                                                                                                                                        |
-| `LOAD_GATE_BUYER_PASSWORD`   | Fallback                         | Defaults to `SeedPass123!` when unset.                                                                                                                          |
+| Secret                       | Required                         | What it holds                                                                                                                                                                                              |
+| ---------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOAD_GATE_AUTH_TOKEN`       | Yes (or the e-mail pair)         | Pre-minted buyer session cookies, `\|`-separated. Each entry is a full cookie header value, e.g. `__Secure-better-auth.session_token=...` (the cookie cache is off, so there is no `session_data` cookie). |
+| `LOAD_GATE_VERIFY_TOKEN`     | Yes                              | One pre-minted cookie for the consultant who owns the fixtures, or an `ADMIN`/`STAFF` account. Both integrity oracles are self-scoped.                                                                     |
+| `LOAD_GATE_ORG_ADMIN_TOKEN`  | For scenario 14c                 | Pre-minted org-admin cookies, same format.                                                                                                                                                                 |
+| `LOAD_GATE_CONSULTANT_TOKEN` | For the reschedule respond leg   | Pre-minted cookies for the consultants that own the reschedule fixtures, same format. The respond route answers the counterparty only.                                                                     |
+| `LOAD_GATE_AUTH_ORIGIN`      | Yes when the target is a preview | The production URL, which is what `BETTER_AUTH_TRUSTED_ORIGINS` contains.                                                                                                                                  |
+| `LOAD_GATE_BUYER_EMAILS`     | Fallback                         | Comma-separated seed e-mails, used only when no cookies are supplied.                                                                                                                                      |
+| `LOAD_GATE_ORG_ADMIN_EMAILS` | Fallback                         | The same for org admins.                                                                                                                                                                                   |
+| `LOAD_GATE_BUYER_PASSWORD`   | Fallback                         | Defaults to `SeedPass123!` when unset.                                                                                                                                                                     |
 
 ## How to dispatch
 
@@ -391,7 +391,7 @@ decide how a run must be shaped.
 
 | Limiter           | Budget      | Keyed on | Effect on the run                                                                                                                                                                                    |
 | ----------------- | ----------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| sign-in           | 10 / 15 min | IP       | The whole run may sign in ten times. Pre-mint cookies.                                                                                                                                               |
+| sign-in           | 30 / 15 min | IP       | The whole run may sign in thirty times. Pre-mint cookies.                                                                                                                                            |
 | availability read | 30 / min    | IP       | About 0.5 requests per second of browse from one runner. The browse mix runs on its own arrival-rate executor below this ceiling; raising `BROWSE_RPM` without raising the limiter measures Upstash. |
 | consultant search | 60 / min    | IP       | Same shape, twice the room.                                                                                                                                                                          |
 | checkout          | 5 / min     | user     | N distinct buyers is a ceiling of 5N checkouts per minute _sustained_. An instantaneous burst of two hundred is fine; two hundred sustained needs forty accounts.                                    |

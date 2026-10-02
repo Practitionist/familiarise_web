@@ -5,7 +5,7 @@
 /**
  * Pin the stale-invitation cleanup contract:
  *
- *   - Only rows with `status = 'pending'` AND `expiresAt < now` get
+ *   - Only rows with `status = PENDING` AND `expiresAt < now` get
  *     flipped to 'expired'. Already-expired, accepted, or revoked rows
  *     are left alone.
  *   - Each flip emits one `OrgAuditLog(MEMBER / INVITE_EXPIRED)` row
@@ -92,14 +92,14 @@ describe("cleanupStaleInvitations", () => {
       expiresAt: new Date("2026-05-01T00:00:00Z"),
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "pending" });
+    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
     mockedPrisma.invitation.update.mockResolvedValue({ id: candidate.id });
 
     const result = await cleanupStaleInvitations();
     expect(result.expired).toBe(1);
     expect(mockedPrisma.invitation.update).toHaveBeenCalledWith({
       where: { id: candidate.id },
-      data: { status: "expired" },
+      data: { status: "EXPIRED" },
     });
     expect(mockedPrisma.orgAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -124,7 +124,9 @@ describe("cleanupStaleInvitations", () => {
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
     // Re-read inside the TX sees the racing accept — refuse to flip.
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "accepted" });
+    mockedPrisma.invitation.findUnique.mockResolvedValue({
+      status: "ACCEPTED",
+    });
 
     const result = await cleanupStaleInvitations();
     expect(result.expired).toBe(0);
@@ -149,7 +151,7 @@ describe("cleanupStaleInvitations", () => {
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([a, b]);
 
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "pending" });
+    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
     // First update throws, second succeeds — the sweep should still
     // report the second row as expired.
     mockedPrisma.invitation.update

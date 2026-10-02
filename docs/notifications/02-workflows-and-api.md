@@ -89,7 +89,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application no
 | `collaborator`   | collaborator-invited, collaborator-accepted, collaborator-removed, collaborator-declined, collaborator-withdrawn                                                                                                           |
 | `platform`       | general-announcement, maintenance-scheduled, maintenance-started, maintenance-ended                                                                                                                                        |
 | `org-billing`    | org-invoice-issued, org-invoice-paid, org-invoice-overdue, org-wallet-topup-confirmed, org-wallet-low, org-payout-completed, org-payout-failed, org-payout-reversed, org-member-overage-timed-out, org-program-overage-due |
-| `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted, org-sso-cert-expiring                                                                                                                  |
+| `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted                                                                                                                                         |
 | `org-program`    | org-program-exhausted, org-program-cap-near, org-license-renewal-upcoming, org-data-export-ready                                                                                                                           |
 
 ---

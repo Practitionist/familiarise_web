@@ -90,7 +90,7 @@ The list below is the actual `page.tsx` set under
                                                   from the header avatar menu
                                                   (PR #1842, part of #1527);
                                                   /settings/sso | webhooks |
-                                                  scim | data-exports are now
+                                                  data-exports are now
                                                   section URLs, and the old
                                                   ?tab= links to them redirect
 ```
@@ -112,7 +112,7 @@ adds a level.
 | Page | Tabs | Why they merged |
 |---|---|---|
 | `/members` | `all`, `learners`, `experts`, `invitations` | `learners` and `experts` were `?role=` queries against the same `/api/organizations/[orgId]/members` endpoint the roster already read. `learners` was additionally capped at `perPage=100` with no pagination. |
-| `/settings` | `general`, `sso`, `webhooks`, `scim`, `data-exports` | SSO had no sidebar entry at all and was reachable only from a link inside the settings page. |
+| `/settings` | `general`, `sso`, `webhooks`, `data-exports` | SSO had no sidebar entry at all and was reachable only from a link inside the settings page. |
 | `/billing` | `invoices`, `wallet` | Unchanged — this one predates the consolidation. |
 
 Tabs are gated individually on the same `OrgSurface` keys the sidebar uses, so
@@ -280,7 +280,7 @@ readable projection of it.
 | `/payouts`     | —       | ✅   | ✅     | `payouts.read`; mutations `payouts.manage` (OWNER, BILLING_ADMIN) | yes (if `canHost`) | Host-side only. |
 | `/analytics`   | ✅      | ✅   | ✅     | `operations.read` (OWNER, MAINTAINER, MANAGER, SUPPORT) | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. SUPPORT reads for L1/L2 investigation. |
 | `/settings`    | ✅      | ✅   | ✅     | `settings.manage` (OWNER, MAINTAINER) | no — avatar menu ("<Org> settings") | Branding + policy. As of PR #1842 (part of #1527), org settings is no longer a sidebar row: it opens from the header avatar menu, shown only to a role holding at least one section, and renders through `SettingsLayout` with one URL per section rather than `?tab=` state; see `docs/decisions/2026-09-27-dashboard-shell-and-context-switcher.md`. |
-| `/settings/sso` | ✅ | ✅ | ✅ | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes and break-glass need `identity.manage`, which only the **OWNER** holds | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
+| `/settings/sso` | ✅ | ✅ | ✅ | `identity.read` (OWNER, MAINTAINER) for the `GET`; writes need `identity.manage`, which only the **OWNER** holds | section, not tab | The former `/settings?tab=sso` now redirects here; reachable from the avatar menu's "<Org> settings" entry, not the sidebar. |
 | `/contracts`   | ✅      | —    | ✅     | `contracts.read` (OWNER, MAINTAINER); mutations `contracts.manage` (OWNER) | yes under `canSponsor` + `contracts.read` | The old `≥MAINTAINER ‖ finance` sidebar expression showed a dead tab to MANAGER and BILLING_ADMIN; the matrix entry ended that drift. |
 | `/purchase-orders` | ✅  | —    | ✅     | `purchaseOrders.read` (OWNER, MAINTAINER, BILLING_ADMIN, MANAGER); mutations `purchaseOrders.manage` (OWNER, BILLING_ADMIN) | yes under `canSponsor && requiresPO` | Receipt icon. |
 | `/consent`     | ✅      | ✅   | ✅     | `consent.read` / `consent.requestWithdrawal` (OWNER, MAINTAINER, MANAGER) | yes | ShieldCheck icon; DPDP artifact roster. BILLING_ADMIN's former page-guard reach was closed to match the sidebar. |
@@ -303,7 +303,7 @@ readable projection of it.
 > union of `audit.read.ops` and `audit.read.money`) with the CSV export gated on
 > `dataExports.people` (OWNER, MAINTAINER) because bulk export is a
 > governance action; and the
-> the `/settings` integration tabs (`webhooks`, `scim`, `data-exports`)
+> the `/settings` integration tabs (`webhooks`, `data-exports`)
 > use `integrations.manage` (OWNER and BILLING_ADMIN; PR #1842, part of #1527, matched this key to the existing server guards — webhook create was the OWNER-or-BILLING_ADMIN gate (today the `integrations.manage` key itself), and rotate, branding and domains stayed OWNER — replacing the earlier `integrations.read` grant).
 
 ### Billing surface

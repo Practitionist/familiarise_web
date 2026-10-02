@@ -385,7 +385,6 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "retry-moderation-enforcement.yml": "scheduled",
   "send-appointment-reminders.yml": "scheduled",
   "settle-invoice-accruals.yml": "scheduled",
-  "sso-cert-expiry-alert.yml": "scheduled",
   "stream-sync.yml": "scheduled",
   "stream-calltype-drift.yml": "scheduled",
   // #1829 — nightly usage meter: counts Stream MAU / participant-minutes /

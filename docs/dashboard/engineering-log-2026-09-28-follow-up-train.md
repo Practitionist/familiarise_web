@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-28 · **PRs:** #1853, #1854, #1858 and #1860, all merged into `dev` · **Docs PR:** #1847 · **Related ADRs:** `2026-09-27-org-role-matrix.md` (addendum), ADR 04, ADR 11, ADR 20 and ADR 27 (amendments).
 
+> **Superseded in part (PR #1878):** SCIM was removed before launch, so the SCIM paths and "SCIM docs" mentioned below no longer exist; `lib/enterprise/membership-guards.ts` now serves the dashboard PATCH and bulk import.
+
 This log records the four code PRs that followed the dashboard overhaul (PR #1842), and why each one changed what it changed. Three of them build the buckets of the #1846 state-machine audit, and the fourth builds the #1851 role and permission decisions. The detailed mechanics now live in the subsystem docs listed under each PR, so this log keeps to the reasoning and to the decisions the owner took while the PRs were open.
 
 ## Bucket B, money and concurrency (#1853)

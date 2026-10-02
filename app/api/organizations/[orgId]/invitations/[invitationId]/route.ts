@@ -32,7 +32,10 @@ export async function GET(
     where: { id: invitationId, organizationId: orgId },
   });
   if (!invitation) {
-    return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Invitation not found" },
+      { status: 404 },
+    );
   }
   return NextResponse.json({ invitation });
 }
@@ -59,9 +62,9 @@ export async function DELETE(
       where: {
         id: invitationId,
         organizationId: orgId,
-        status: "pending",
+        status: "PENDING",
       },
-      data: { status: "canceled" },
+      data: { status: "CANCELED" },
     });
     if (updated.count === 0) return { revoked: false };
 

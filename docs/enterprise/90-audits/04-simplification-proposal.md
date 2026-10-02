@@ -31,6 +31,11 @@ toc-depth: 2
 > recommendation no longer applies to live code. This note closes #1373,
 > which tracked the doc drift.
 
+> **Note (PR #1878):** SCIM was then removed entirely before launch (SSO is
+> OIDC-only with JIT membership), so `lib/scim/` and its routes no longer
+> exist. The A2 recipe and the "SCIM shipped" remarks below are history. See
+> [SSO](../../authentication/sso.md).
+
 # Executive Summary
 
 The enterprise subsystem (~614 changed files, ~13,500 LoC of code + 11,141 lines of docs) is **complex but not over-complex** — most of the apparent weight is load-bearing. However, two parallel surveys (one over the 47 enterprise docs, one over the code surface) identified **~2,800 lines of preventable bloat** that can be removed with zero schema changes and zero customer-visible behavior changes.

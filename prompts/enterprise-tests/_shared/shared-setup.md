@@ -299,8 +299,8 @@ For the platform-wide diagrams: `docs/prisma/schema-map.md`.
 | `OrganizationEarnings` | `"OrganizationEarnings"` | `{platform,org,consultant}BpsApplied` snapshot |
 | `OrganizationPayout` | `"OrganizationPayout"` | TDS/MSME/FEMA fields; `idempotencyKey @unique` |
 | `OrganizationPlan` | `"OrganizationPlan"` | Curated catalog |
-| `OrganizationSSOSettings` | `"OrganizationSSOSettings"` | `enforceSSO`, `allowedEmailDomains` |
-| `SsoProvider` | `"ssoProvider"` | BetterAuth-managed |
+| `OrganizationSSOSettings` | `"OrganizationSSOSettings"` | `enforceSSO`, `defaultRoleForAutoJoin`, `version` |
+| `SsoProvider` | `"ssoProvider"` | OIDC only; `domainVerified` = staff approval; `oidcConfig` encrypted |
 | `OrgDomainClaim` | `org_domain_claims` | `@@map`; verified via DNS TXT |
 | `OrgAuditLog` | `"OrgAuditLog"` | `action: String` free-form |
 | `UsageLedgerEntry` | `"UsageLedgerEntry"` | Engagement entitlement ledger |
@@ -400,7 +400,7 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 - **Compliance libs (Round-3 live):** `lib/compliance/{tds,msme,gst,irp,dpdp}.ts`
 - **Compliance crons:** `jobs/compliance/{contract-expiry,databreach-deadline-alerts,irp-uploader,msme-payment-alerts}.ts` (all scheduled in `.github/workflows/`)
 - **Razorpay webhook:** `app/api/webhooks/razorpay/route.ts`; payload routing in `app/api/webhooks/utils.ts` (`handleOrgPaymentSuccess`)
-- **SSO URL derivation:** `lib/sso/derive-urls.ts` (`deriveAcsUrl`, `deriveMetadataUrl`)
+- **SSO URL derivation:** `lib/sso/derive-urls.ts` (`deriveCallbackUrl`)
 - **Branding upload:** `app/api/organizations/[orgId]/branding/[asset]/route.ts`; helpers in `lib/supabase.ts`
 - **Recording handlers (Round-3 orgId):** `lib/stream/recording-handlers.ts`
 - **BetterAuth signup hook (Round-3 consent stamp):** `lib/auth.ts` databaseHooks
@@ -408,19 +408,20 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 
 ### Auth + SSO hardening (this audit batch)
 
-- **JIT default role floor:** `lib/labels/org-labels.ts:JitDefaultRoleSchema` (locked to `LEARNER`); UI lock at `app/dashboard/organization/[orgId]/settings/sso/page.tsx`
-- **SAML cert validation:** `lib/sso/provider-schemas.ts:validateSamlCert` (Node `crypto.X509Certificate`)
-- **customSession narrow catch:** `lib/auth.ts` bareMembers loop (P2002-only)
+- **JIT default role floor:** `lib/labels/org-labels.ts:JitDefaultRoleSchema` (locked to `LEARNER`); UI lock in `app/dashboard/organization/[orgId]/settings/SsoPanel.tsx`
+- **OIDC-only body + server-generated id:** `lib/sso/provider-schemas.ts` (`createProviderSchema`, `generateProviderId`); discovery fetched at registration by `lib/sso/oidc-discovery.ts`
+- **Platform approval:** `app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval/route.ts` sets `domainVerified`
+- **SSO JIT membership:** `lib/sso/jit-membership.ts:provisionSsoMembership` (sso `provisionUser`; P2002-only catch)
 - **SSO error-toast wrapper:** `lib/sso/signin-with-toast.ts:ssoSigninWithGuard` (2s redirect watchdog + BetterAuth error inspection)
 - **Domain-verification gate:** `app/api/organizations/[orgId]/sso/providers/route.ts` POST — DOMAIN_NOT_OWNED / DOMAIN_NOT_VERIFIED 422s
 - **SsoProvider composite unique:** `prisma/schema.prisma model SsoProvider @@unique([organizationId, domain])`
 - **sessionGeneration marker:** `lib/api/organizations/membership-transitions.ts:bumpUserSessionGeneration` + `prisma/schema.prisma User.sessionGeneration` + `lib/auth.ts customSession`
-- **lookupEnforcedOrg helper:** `lib/sso/enforce-session.ts:lookupEnforcedOrg` (shared across `session.create.before`, `customSession`, `/api/auth/sso/domain-check`)
-- **N+1 fix in customSession:** `applyMembershipRoleEffects(..., preloadedProfiles)` in `lib/api/organizations/membership-transitions.ts`
-- **Rate-limit policy:** `lib/auth.ts` block comment + Upstash `authLimiter` at `middleware.ts:192-197`
-- **SSO error codes reference:** `docs/enterprise/reference/sso-error-codes.md`
-- **JIT + session-refresh doc:** `docs/enterprise/28-jit-and-session-refresh.md`
-- **Rate-limiting doc:** `docs/enterprise/30-rate-limiting.md`
+- **lookupEnforcedOrg helper:** `lib/sso/enforce-session.ts:lookupEnforcedOrg` (shared by `session.create.before` and `/api/auth/sso/domain-check`)
+- **Rate limits:** BetterAuth limiter for `/api/auth/*` in `lib/auth/rate-limit.ts`; edge policies (e.g. `enterprise.sso-domain-check`) in `lib/rate-limit/policies.ts`
+- **SSO doc:** `docs/authentication/sso.md`
+- **Error codes:** `docs/authentication/errors.md`
+- **JIT + session-refresh doc:** `docs/enterprise/20-iam-and-security/02-jit-and-session-refresh.md`
+- **Rate-limiting doc:** `docs/authentication/rate-limiting-and-abuse.md`
 
 When a step yields unexpected behaviour, read the route file from
 `app/api/organizations/**` before escalating — most answers live in the

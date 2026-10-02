@@ -141,7 +141,9 @@ export async function ensureRecordingExternalStorage(
         : "no external storage configured on this app",
     );
     for (const [name, cfg] of Object.entries(res.external_storages ?? {})) {
-      console.log(`  ${name}  type=${cfg.type}  bucket=${cfg.bucket}  path=${cfg.path}`);
+      console.log(
+        `  ${name}  type=${cfg.type}  bucket=${cfg.bucket}  path=${cfg.path}`,
+      );
     }
     return 0;
   }
@@ -196,7 +198,9 @@ export async function ensureRecordingExternalStorage(
   }
 
   if (!opts.apply) {
-    console.log("\n(dry run — re-run with --apply to register this with Stream)");
+    console.log(
+      "\n(dry run — re-run with --apply to register this with Stream)",
+    );
     return 0;
   }
 
@@ -226,7 +230,9 @@ async function runCheck(
   client: ReturnType<typeof getStreamVideoClient>,
   provider: Provider,
 ): Promise<number> {
-  console.log(`\nChecking "${provider.storageName}" — Stream uploads a test file…`);
+  console.log(
+    `\nChecking "${provider.storageName}" — Stream uploads a test file…`,
+  );
   try {
     await client.checkExternalStorage({ name: provider.storageName });
     console.log(
