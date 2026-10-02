@@ -244,17 +244,17 @@ function setMembershipMap(
 
 /** Standard rate card: 10% platform / 5% org / 85% consultant. */
 function setStandardRateCard() {
-  mockedResolveRateCard.mockImplementation(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (async (_tx: unknown, params: { orgId: string | null }) => ({
-      rateCardId: `rc-${params.orgId}`,
-      platformBps: 1000,
-      orgBps: 500,
-      consultantBps: 8500,
-      ownerOrgId: params.orgId,
-      ownerContractId: null,
-    })) as any,
-  );
+  mockedResolveRateCard.mockImplementation((async (
+    _tx: unknown,
+    params: { orgId: string | null },
+  ) => ({
+    rateCardId: `rc-${params.orgId}`,
+    platformBps: 1000,
+    orgBps: 500,
+    consultantBps: 8500,
+    ownerOrgId: params.orgId,
+    ownerContractId: null,
+  })) as unknown as typeof resolveEffectiveRateCard);
 }
 
 beforeEach(() => {

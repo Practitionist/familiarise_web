@@ -139,17 +139,17 @@ function payment() {
 
 beforeEach(() => {
   capturedOrgEarnings.length = 0;
-  mockedRateCard.mockImplementation(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (async (_t: unknown, params: { orgId: string | null }) => ({
-      rateCardId: `rc-${params.orgId}`,
-      platformBps: 1000,
-      orgBps: 500,
-      consultantBps: 8500,
-      ownerOrgId: params.orgId,
-      ownerContractId: null,
-    })) as any,
-  );
+  mockedRateCard.mockImplementation((async (
+    _t: unknown,
+    params: { orgId: string | null },
+  ) => ({
+    rateCardId: `rc-${params.orgId}`,
+    platformBps: 1000,
+    orgBps: 500,
+    consultantBps: 8500,
+    ownerOrgId: params.orgId,
+    ownerContractId: null,
+  })) as unknown as typeof resolveEffectiveRateCard);
 });
 
 describe("org-owned plans settle to the selling org", () => {
