@@ -43,6 +43,7 @@ import {
   type StagedOnboardingEmail,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { getAppUrl } from "@/lib/url";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable but un-PATCH-able
@@ -470,7 +471,7 @@ export async function PATCH(
                   "An operator",
                 // The affected member's org home — not a bare dashboard
                 // bounce that drops them on the wrong tree.
-                dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard/organization/${orgId}/home`,
+                dashboardUrl: `${getAppUrl()}/dashboard/organization/${orgId}/home`,
               },
               tx,
             );
