@@ -32,4 +32,4 @@ An organisation cannot fund bookings, or be billed for its members' overage, unt
 
 ## Sources
 
-`docs/payments/05-b2c-b2b-funding-seam.md`, `docs/enterprise/10-money-and-ledger/04-wallet-and-topups.md`, `docs/enterprise/10-money-and-ledger/05-booking-to-earnings.md`, `lib/enterprise/reachable-paths.ts`.
+`docs/payments/04-b2c-b2b-funding-seam.md`, `docs/enterprise/10-money-and-ledger/04-wallet-and-topups.md`, `docs/enterprise/10-money-and-ledger/05-booking-to-earnings.md`, `lib/enterprise/reachable-paths.ts`.

@@ -40,7 +40,7 @@ redundant, though harmless.
 Every seeded user shares one password: `SEED_PASSWORD` env, default
 **`SeedPass123!`** (`prisma/seedFiles/1a-create-users.ts`).
 
-Seeded org shapes (`prisma/seedFiles/15a-create-organizations.ts`):
+Seeded org shapes (`prisma/seedFiles/14a-create-organizations.ts`):
 
 | Org | Shape | Funding | Use for |
 |---|---|---|---|

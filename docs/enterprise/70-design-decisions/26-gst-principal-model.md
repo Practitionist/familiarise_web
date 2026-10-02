@@ -47,5 +47,5 @@ The pairing of principal-for-GST with operator-for-income-tax is defensible but 
 
 - ADR 21 (single writer for payment confirmation) — the invoice is minted inside the same pipeline, never by a second writer.
 - ADR 08 (gapless invoice counters) — the platform series reuses the same atomic counter shape.
-- docs/compliance/02-gst-overview.md, docs/compliance/15-india-compliance-shipping-checklist.md, docs/compliance/10-rbi-pa-and-payment-architecture.md (Path C).
+- docs/compliance/03-gst-overview.md, docs/compliance/17-india-compliance-shipping-checklist.md, docs/compliance/11-rbi-pa-and-payment-architecture.md (Path C).
 - #1360 (relabelled CA-gated), #1361 (re-scoped to the register export), #1365, #1370.

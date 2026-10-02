@@ -17,7 +17,7 @@ without forcing the user to log out. It is written for engineers touching
 the `/api/organizations/[orgId]/members` route family, or the
 `OrganizationSSOSettings` model. The companion docs are
 [`sso-and-authentication`](01-sso-and-authentication.md), which covers the
-SSO enforcement chain, and [`rate-limiting`](04-rate-limiting.md), which
+SSO enforcement chain, and [`rate-limiting`](03-rate-limiting.md), which
 covers the limiter posture.
 
 ---

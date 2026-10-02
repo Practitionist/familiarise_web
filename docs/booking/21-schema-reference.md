@@ -215,6 +215,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
 
 ## Related
 
-- [`docs/enterprise/00-foundations/07-scheduling-glossary.md`](../enterprise/00-foundations/07-scheduling-glossary.md) — the canonical vocabulary these tables use.
+- [`docs/enterprise/00-foundations/06-scheduling-glossary.md`](../enterprise/00-foundations/06-scheduling-glossary.md) — the canonical vocabulary these tables use.
 - [12-concurrency-and-locking.md](./12-concurrency-and-locking.md) — the application-level guards ahead of `occurrence_no_confirmed_overlap`.
 - [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md) — the sibling review tables, in the same shape.

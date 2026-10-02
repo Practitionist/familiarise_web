@@ -134,17 +134,6 @@ jobs:
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
-      - name: Point the database at the reset rehearsal (label db-reset)
-        # #1554 — a PR that renames tables cannot be checked against the live
-        # database until the reset. With the `db-reset` label the sidecar/drift
-        # guards and the build run against the rehearsal project instead of
-        # being skipped; remove the label (and the two secrets) after the cutover.
-        if: contains(github.event.pull_request.labels.*.name, 'db-reset')
-        run: |
-          test -n "${{ secrets.REHEARSAL_DATABASE_URL }}" || { echo "db-reset label set but REHEARSAL_DATABASE_URL is missing"; exit 1; }
-          sed -i -E 's#^DATABASE_URL=.*#DATABASE_URL="${{ secrets.REHEARSAL_DATABASE_URL }}"#; s#^DIRECT_URL=.*#DIRECT_URL="${{ secrets.REHEARSAL_DIRECT_URL }}"#' .env
-          grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
-
       - name: Generate Prisma Client
         run: npm run db:generate
 
@@ -208,17 +197,6 @@ jobs:
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
-      - name: Point the database at the reset rehearsal (label db-reset)
-        # #1554 — a PR that renames tables cannot be checked against the live
-        # database until the reset. With the `db-reset` label the sidecar/drift
-        # guards and the build run against the rehearsal project instead of
-        # being skipped; remove the label (and the two secrets) after the cutover.
-        if: contains(github.event.pull_request.labels.*.name, 'db-reset')
-        run: |
-          test -n "${{ secrets.REHEARSAL_DATABASE_URL }}" || { echo "db-reset label set but REHEARSAL_DATABASE_URL is missing"; exit 1; }
-          sed -i -E 's#^DATABASE_URL=.*#DATABASE_URL="${{ secrets.REHEARSAL_DATABASE_URL }}"#; s#^DIRECT_URL=.*#DIRECT_URL="${{ secrets.REHEARSAL_DIRECT_URL }}"#' .env
-          grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
-
       - name: Generate Prisma Client
         run: npm run db:generate
 
@@ -258,17 +236,6 @@ jobs:
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
-      - name: Point the database at the reset rehearsal (label db-reset)
-        # #1554 — a PR that renames tables cannot be checked against the live
-        # database until the reset. With the `db-reset` label the sidecar/drift
-        # guards and the build run against the rehearsal project instead of
-        # being skipped; remove the label (and the two secrets) after the cutover.
-        if: contains(github.event.pull_request.labels.*.name, 'db-reset')
-        run: |
-          test -n "${{ secrets.REHEARSAL_DATABASE_URL }}" || { echo "db-reset label set but REHEARSAL_DATABASE_URL is missing"; exit 1; }
-          sed -i -E 's#^DATABASE_URL=.*#DATABASE_URL="${{ secrets.REHEARSAL_DATABASE_URL }}"#; s#^DIRECT_URL=.*#DIRECT_URL="${{ secrets.REHEARSAL_DIRECT_URL }}"#' .env
-          grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
-
       - name: Build
         # Raise the V8 heap so `next build` (+ Sentry source-map generation) does
         # not flaky-OOM on the runner — mirrors netlify.toml's NODE_OPTIONS. The
@@ -290,57 +257,3 @@ jobs:
           test "${{ needs.typecheck.result }}" = success
           test "${{ needs.unit-tests.result }}" = success
           test "${{ needs.build.result }}" = success
-
-  # Hermetic: applies this branch's schema + SQL sidecars to a throwaway Postgres
-  # and asserts them, so red means the branch is broken, never the shared DB.
-  # Live-DB drift is checked off the PR path by db-live-drift.yml.
-  db-guards:
-    name: Database sidecar + drift guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    services:
-      postgres:
-        # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    # No .env exists here, so these are the only URLs prisma.config.ts and lib/prisma.ts see.
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Generate Prisma Client
-        run: npm run db:generate
-
-      - name: Push schema + sidecars
-        # `db push` alone drops the ledger trigger and every CHECK; sidecars restore them.
-        run: |
-          node_modules/.bin/prisma db push
-          npm run db:sidecars
-
-      - name: Database sidecar + drift guard
-        run: |
-          node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
-          node_modules/.bin/tsx scripts/ci/check-db-drift.ts

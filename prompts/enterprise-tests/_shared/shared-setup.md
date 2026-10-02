@@ -42,7 +42,7 @@ For the case skeleton + fix-and-retest gate, see [`case-template.md`](./case-tem
 
 ## §2 — Seed cohort
 
-The deterministic cohort lives in `prisma/seedFiles/15a-create-organizations.ts`,
+The deterministic cohort lives in `prisma/seedFiles/14a-create-organizations.ts`,
 with the users it draws from created in `1a-create-users.ts`. Use these for
 read-only and happy-path cases. **Do not mutate them destructively** —
 that's what the fresh-org spawn pattern below is for.

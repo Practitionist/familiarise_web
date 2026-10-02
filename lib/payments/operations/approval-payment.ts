@@ -425,6 +425,7 @@ export async function createApprovalPaymentIntent(
           // flow (confirm the existing row, never create a twin). Null only
           // when the caller genuinely had no appointment to offer.
           appointmentId: params.appointmentId ?? null,
+          clientIdempotencyKey: `approval:${globalThis.crypto.randomUUID()}`,
           // Every Payment must carry at least one PaymentLeg
           // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
           // writes it at creation so the invariant holds before capture, and

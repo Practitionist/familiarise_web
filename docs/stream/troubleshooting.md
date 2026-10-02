@@ -427,7 +427,7 @@ At the time, violation reports went to an app route rate-limited at 5/hour, so t
 
 #### Fix
 
-The allow-list is corrected in `next.config.mjs`. The full domain breakdown is in `docs/enterprise/20-iam-and-security/05-security-headers.md`.
+The allow-list is corrected in `next.config.mjs`. The full domain breakdown is in `docs/enterprise/20-iam-and-security/04-security-headers.md`.
 
 **Verify with the browser, not the docs.** This class of drift is only visible in a real network log; Stream's documentation does not enumerate the SFU and hint domains in one place.
 

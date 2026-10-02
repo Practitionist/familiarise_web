@@ -402,7 +402,7 @@ erDiagram
 ```
 
 The shape is frozen by
-[ADR 36](../enterprise/70-design-decisions/36-auth-schema-freeze.md): later
+[ADR 36](../enterprise/70-design-decisions/35-auth-schema-freeze.md): later
 changes are additive only, and CI checks Prisma against what BetterAuth writes.
 
 ## 7. Where the code lives

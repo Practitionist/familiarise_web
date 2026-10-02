@@ -1772,6 +1772,7 @@ async function remainingOrgInvoiceCreditPaise(
   tx: Tx,
   invoice: { id: string; totalPaise: number },
 ): Promise<number> {
+  await tx.$executeRaw`SELECT id FROM "OrganizationInvoice" WHERE id = ${invoice.id} FOR UPDATE`;
   const issued = await tx.creditNote.aggregate({
     where: { invoiceId: invoice.id },
     _sum: { totalPaise: true },

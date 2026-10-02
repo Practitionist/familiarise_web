@@ -41,6 +41,7 @@ function mockTx(opts: {
     .mockImplementation(async () => ({ id: "cn-new" }));
   return {
     _creditNoteCreate: creditNoteCreate,
+    $executeRaw: jest.fn().mockResolvedValue(1),
     payment: { findUnique: jest.fn().mockResolvedValue(opts.payment) },
     creditNote: {
       findUnique: jest.fn().mockResolvedValue(opts.existingCreditNote ?? null),

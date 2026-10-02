@@ -53,10 +53,10 @@ flowchart LR
         DPDPI["ConsentArtifact · ErasureRequest<br/>OrgDataExportJob · DataBreach"]
     end
     subgraph OWNS["docs/compliance/* doc that owns the rule"]
-        GSTD["02-gst-overview.md"]
-        TDSD["01-tds-overview.md<br/>05-refund-tax-adjustments.md"]
-        MSMED["03-msme-43b-h.md"]
-        DPDPD["08-dpdp-and-privacy.md"]
+        GSTD["03-gst-overview.md"]
+        TDSD["02-tds-overview.md<br/>05-refund-tax-adjustments.md"]
+        MSMED["04-msme-43b-h.md"]
+        DPDPD["09-dpdp-and-privacy.md"]
     end
     GST --> GSTI --> GSTD
     TDS --> TDSI --> TDSD
@@ -98,7 +98,7 @@ It is worth stating precisely what the law does and does not demand. Rule 46(b) 
 
 > 🟡 **Gap:** The `lib/compliance/irp.ts` header says e-invoicing is mandatory "AATO > ₹5 Cr (since 2017-18)" and uses `>` rather than `≥`. The ₹5 crore mandate is since 1 August 2023 (2017-18 is only the AATO look-back base year), and the thresholds are inclusive. Cosmetic comment fix. (No issue filed yet.)
 
-**Authoritative:** [docs/compliance/02-gst-overview.md](../../compliance/02-gst-overview.md).
+**Authoritative:** [docs/compliance/03-gst-overview.md](../../compliance/03-gst-overview.md).
 
 ## 2. TDS (tax withheld at payout)
 
@@ -124,7 +124,7 @@ When a payout is refunded after TDS has been withheld and deposited, the excess 
 
 > 🟡 **Gap (narrowed):** `TdsAdjustment` is now written on every reversal alongside the negative `TDSRecord` (#778 §D), so the filing artifact exists at event time; its `reportedInForm26Q` flag is a legacy label (the concept maps to Form 140 for FY 2026-27+). What stays deferred is the FVU/quarterly-return export — where the §393-code translation and Form 140/144/131 naming belong (#778 §F). The `194J` rate is a flat 10% and does not model the technical-2% versus professional-10% split that §393 now exposes as distinct payment codes; this is a pre-existing withholding nuance, not a 2025-Act regression. (Tracked under #778; FVU export has no separate issue.)
 
-**Authoritative:** [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md), [docs/compliance/04-tds-quarterly-filings.md](../../compliance/04-tds-quarterly-filings.md), [docs/compliance/05-refund-and-chargeback-tax-adjustments.md](../../compliance/05-refund-and-chargeback-tax-adjustments.md).
+**Authoritative:** [docs/compliance/02-tds-overview.md](../../compliance/02-tds-overview.md), [docs/compliance/05-tds-quarterly-filings.md](../../compliance/05-tds-quarterly-filings.md), [docs/compliance/06-refund-and-chargeback-tax-adjustments.md](../../compliance/06-refund-and-chargeback-tax-adjustments.md).
 
 ## 3. MSME (15/45-day payment clearance)
 
@@ -140,11 +140,11 @@ The revised Udyam thresholds (S.O. 1364(E), effective 1 April 2025) are Micro �
 
 - **Source (primary):** MSMED Act 2006 §§15/16 https://samadhaan.msme.gov.in/WriteReadData/DocumentFile/MSMED2006act.pdf; §43B(h) → §37(2)(g) mapping https://taxguru.in/income-tax/section-37-income-tax-act-2025-earlier-section-43b-income-tax-act-1961.html; Udyam thresholds S.O. 1364(E), 21 March 2025.
 
-> 🟥 **Divergence:** `docs/compliance/03-msme-43b-h.md` states that §43B(h) "carries forward unchanged into the Income-tax Act, 2025 under equivalent clause numbering." The _mechanics_ are unaffected, but the **clause number changed**: §43B(h) → **§37(2)(g)** (§43B as a whole → §37), confirmed across three sources. The "equivalent clause numbering" phrasing should be replaced with the explicit §37(2)(g) mapping. Doc 03 also references consultant fields `ConsultantProfile.isMsme` / `msmeRegistrationNumber` / `msmeType` that do not exist in the schema — the real fields are `msmeStatus`, `udyamNumber`, and `writtenAgreementWithFamiliarise`.
+> 🟥 **Divergence:** `docs/compliance/04-msme-43b-h.md` states that §43B(h) "carries forward unchanged into the Income-tax Act, 2025 under equivalent clause numbering." The _mechanics_ are unaffected, but the **clause number changed**: §43B(h) → **§37(2)(g)** (§43B as a whole → §37), confirmed across three sources. The "equivalent clause numbering" phrasing should be replaced with the explicit §37(2)(g) mapping. Doc 03 also references consultant fields `ConsultantProfile.isMsme` / `msmeRegistrationNumber` / `msmeType` that do not exist in the schema — the real fields are `msmeStatus`, `udyamNumber`, and `writtenAgreementWithFamiliarise`.
 
 > 🟡 **Gap:** `computeMsmePaymentDeadline` keys the deadline off `invoiceDate`, but §15 keys off acceptance / deemed acceptance. For rendered consulting services these effectively coincide (service rendered ≈ accepted), so invoice date is a defensible conservative proxy, but it is a proxy. The §16 interest is documented nowhere and not computed; the cron only alerts. Every "43B(h)" label in code and alert copy should be updated to read "43B(h) / §37(2)(g) (Income-tax Act 2025)" before the first filing covering a payment on or after 1 April 2026. (No issue filed yet.)
 
-**Authoritative:** [docs/compliance/03-msme-43b-h.md](../../compliance/03-msme-43b-h.md).
+**Authoritative:** [docs/compliance/04-msme-43b-h.md](../../compliance/04-msme-43b-h.md).
 
 ## 4. DPDP 2023 (consent, erasure, retention, breach)
 
@@ -162,13 +162,13 @@ The Digital Personal Data Protection Act 2023, with the **DPDP Rules 2025** noti
 
 **Breach (Rule 7).** `databreach-deadline-alerts` tracks a 72-hour clock off `DataBreach` rows.
 
-> 🟡 **Gap (breach is two-stage; the schema now models both, the cron one).** Rule 7 requires intimation _without delay_ to both the Board and the affected principals (with five content elements) on becoming aware, _plus_ a detailed report to the Board within 72 hours. The 72-hour clock attaches only to the Board's _detailed_ report. Since #781 §D the `DataBreach` model carries the principal leg too — `principalsNotifiedAt`, `principalNotificationChannel`, and `principalNotificationNote` alongside the Board-leg `reportedAt` — so both duties are now provable from the row. What remains open is operational: the `databreach-deadline-alerts` cron still tracks only the Board clock, and its email cites only "Section 8(6), DPDP Act" where the source is Act §8(6) + Rules 2025 Rule 7. (Tracked in `docs/compliance/08-dpdp-and-privacy.md`; live-impl PR to fix the cron.)
+> 🟡 **Gap (breach is two-stage; the schema now models both, the cron one).** Rule 7 requires intimation _without delay_ to both the Board and the affected principals (with five content elements) on becoming aware, _plus_ a detailed report to the Board within 72 hours. The 72-hour clock attaches only to the Board's _detailed_ report. Since #781 §D the `DataBreach` model carries the principal leg too — `principalsNotifiedAt`, `principalNotificationChannel`, and `principalNotificationNote` alongside the Board-leg `reportedAt` — so both duties are now provable from the row. What remains open is operational: the `databreach-deadline-alerts` cron still tracks only the Board clock, and its email cites only "Section 8(6), DPDP Act" where the source is Act §8(6) + Rules 2025 Rule 7. (Tracked in `docs/compliance/09-dpdp-and-privacy.md`; live-impl PR to fix the cron.)
 
 > 🟡 **Gap (SDF is not a numeric threshold).** The `lib/compliance/dpdp.ts` comment treats "≥ 5M active users" as the Significant-Data-Fiduciary trigger. SDF has **no** numeric trigger in law — it is a Government designation under Act §10 weighing volume, sensitivity, and risk, and Familiarise is an implausible designee at any near-term scale. Keep the `isSignificantDataFiduciary` flag as cheap optionality but label the "5M" as a heuristic. (No issue filed yet.)
 
 > 🟡 **Gap (self-serve consumer rights).** Per-data-principal self-serve access (`/api/me/*`) and correction endpoints are missing, and there is no published grievance officer or intake for the 90-day Rule 14(3) ceiling — the one hard statutory clock. The org-scoped export and admin-driven erasure cover the operator and tenant paths today. (Tracked under #701.)
 
-**Authoritative:** [docs/compliance/08-dpdp-and-privacy.md](../../compliance/08-dpdp-and-privacy.md).
+**Authoritative:** [docs/compliance/09-dpdp-and-privacy.md](../../compliance/09-dpdp-and-privacy.md).
 
 ### Compliance-domain entity map
 
@@ -253,10 +253,10 @@ The remaining statutory surfaces touch enterprise more lightly; each has its own
 
 | Topic                                     | Enterprise hook                                                                      | Authoritative                                                                                                                                                                                      |
 | ----------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RBI PA / payment architecture             | wallet is a closed-system prepaid liability, not custody; payouts via provider float | [docs/compliance/10-rbi-pa-and-payment-architecture.md](../../compliance/10-rbi-pa-and-payment-architecture.md)                                                                                    |
-| Cross-border (Sec 195 → §393(2), 15CA/CB) | `OrganizationPayout.form15caPartCRef` / `form15cbRef` (schema-final, stubbed)        | [docs/compliance/07-cross-border-flows.md](../../compliance/07-cross-border-flows.md)                                                                                                              |
-| Consumer protection / grievance           | refund SLA, grievance officer (48h ack / one-month redress)                          | [docs/compliance/09-consumer-protection-and-grievance.md](../../compliance/09-consumer-protection-and-grievance.md)                                                                                |
-| Compliance calendar and roadmap           | recurring filing cadence                                                             | [docs/compliance/12-india-compliance-calendar.md](../../compliance/12-india-compliance-calendar.md), [docs/compliance/13-implementation-roadmap.md](../../compliance/13-implementation-roadmap.md) |
+| RBI PA / payment architecture             | wallet is a closed-system prepaid liability, not custody; payouts via provider float | [docs/compliance/11-rbi-pa-and-payment-architecture.md](../../compliance/11-rbi-pa-and-payment-architecture.md)                                                                                    |
+| Cross-border (Sec 195 → §393(2), 15CA/CB) | `OrganizationPayout.form15caPartCRef` / `form15cbRef` (schema-final, stubbed)        | [docs/compliance/08-cross-border-flows.md](../../compliance/08-cross-border-flows.md)                                                                                                              |
+| Consumer protection / grievance           | refund SLA, grievance officer (48h ack / one-month redress)                          | [docs/compliance/10-consumer-protection-and-grievance.md](../../compliance/10-consumer-protection-and-grievance.md)                                                                                |
+| Compliance calendar and roadmap           | recurring filing cadence                                                             | [docs/compliance/14-india-compliance-calendar.md](../../compliance/14-india-compliance-calendar.md), [docs/compliance/15-implementation-roadmap.md](../../compliance/15-implementation-roadmap.md) |
 
 ---
 

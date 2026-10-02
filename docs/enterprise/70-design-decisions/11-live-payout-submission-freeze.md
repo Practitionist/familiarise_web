@@ -52,7 +52,7 @@ makes flipping that flag a de-risked, one-variable operation gated behind
 a checklist and a sandbox smoke
 (`scripts/smoke/org-payout-sandbox-smoke.ts` asserts that with the flag
 off, `processOrgPayout` makes no gateway submission); see [live-payout
-go-live runbook](../50-operations/06-live-payout-go-live-runbook.md).
+go-live runbook](../50-operations/05-live-payout-go-live-runbook.md).
 
 A precise note on the frozen state, because the code and the runbook
 describe it slightly differently. The runbook says a gated payout "freezes

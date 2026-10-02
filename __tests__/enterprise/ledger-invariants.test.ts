@@ -158,6 +158,7 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
       orgCreditNoteCounter: {
         upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
   }
 

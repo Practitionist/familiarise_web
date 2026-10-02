@@ -36,7 +36,7 @@ graph TD
 - **Sunday-to-Saturday weeks** -- `ScheduleCalculationService.countWeeks()` is the single source of truth
 - **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from 7 days by #833); users can self-release via `DELETE /api/checkout/pending/[paymentId]` (#849)
 - **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
-- The canonical scheduling glossary — availability window, bookable interval, appointment occurrence, appointment, engagement, meeting, trial, auth session — lives in [`docs/enterprise/00-foundations/07-scheduling-glossary.md`](../enterprise/00-foundations/07-scheduling-glossary.md), which this document assumes rather than restates.
+- The canonical scheduling glossary — availability window, bookable interval, appointment occurrence, appointment, engagement, meeting, trial, auth session — lives in [`docs/enterprise/00-foundations/06-scheduling-glossary.md`](../enterprise/00-foundations/06-scheduling-glossary.md), which this document assumes rather than restates.
 
 ## Reading the audit trail
 
@@ -135,7 +135,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | Read the requests/heat-map train's Sentry evidence, PRs and follow-ups         | [engineering-log-2026-09-18-requests-heatmap-train.md](./engineering-log-2026-09-18-requests-heatmap-train.md)                                                                 |
 | Read the Muse Spark booking sweep's verdict split, money P0s and follow-ups    | [engineering-log-2026-09-19-muse-spark-sweep.md](./engineering-log-2026-09-19-muse-spark-sweep.md)                                                                             |
 | Understand why an approval pay-link now charges GST                            | [../decisions/2026-09-19-pay-link-gst-parity.md](../decisions/2026-09-19-pay-link-gst-parity.md)                                                                               |
-| Understand booking mode, the pay-link window, request caps and the grid states | [../enterprise/70-design-decisions/34-booking-mode-pay-link-window-and-request-caps.md](../enterprise/70-design-decisions/34-booking-mode-pay-link-window-and-request-caps.md) |
+| Understand booking mode, the pay-link window, request caps and the grid states | [../enterprise/70-design-decisions/33-booking-mode-pay-link-window-and-request-caps.md](../enterprise/70-design-decisions/33-booking-mode-pay-link-window-and-request-caps.md) |
 | Understand the payment system                                                  | [../payments/01-architecture.md](../payments/01-architecture.md)                                                                                                               |
 | Check the database schema                                                      | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                                                                                       |
 

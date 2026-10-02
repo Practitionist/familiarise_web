@@ -41,8 +41,10 @@ const LOCK_EXEMPT: Record<string, string> = {
   // Two bespoke Redis locks predate withCronLock and additionally guard the
   // HTTP approval path, which withCronLock's key shape does not reach. See
   // lib/payments/payouts/payout-service.ts.
-  "process-payouts.yml": "lock:payout_processing in payout-service.ts",
-  "create-payout-batch.yml": "lock:payout_batch_creation in payout-service.ts",
+  "cron-weekly.yml#process-payouts":
+    "lock:payout_processing in payout-service.ts",
+  "cron-weekly.yml#create-payout-batch":
+    "lock:payout_batch_creation in payout-service.ts",
   // The dead-man switch itself. Locking it through Redis would make the
   // watchdog depend on the infrastructure it exists to report on, and the
   // check is read-only, so a double-run costs nothing.
@@ -56,8 +58,6 @@ const LOCK_EXEMPT: Record<string, string> = {
   // extra API call, so a lock would buy nothing and would give a read-only
   // guard a hard dependency on Redis.
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
-  // Catalog reads only (pg_constraint/pg_enum); a double-run costs nothing.
-  "db-live-drift.yml": "deliberately unlocked — read-only catalog check",
   // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
   // read-only lockfile audit with no database or external state mutation.
   "security-audit.yml": "deliberately unlocked — read-only npm audit check",
@@ -179,6 +179,17 @@ function tickerTargets(): string[] {
   );
 }
 
+function entrypointsOf(workflowSrc: string): (string | null)[] {
+  const jobMatches = Array.from(
+    workflowSrc.matchAll(
+      /(?:\.\/)?node_modules\/\.bin\/tsx\s+(jobs\/[^\s"']+\.ts)/g,
+    ),
+    (m) => m[1],
+  );
+  if (jobMatches.length > 0) return Array.from(new Set(jobMatches));
+  return [entrypointOf(workflowSrc)];
+}
+
 function buildRegistry(): Row[] {
   const rows: Row[] = [];
 
@@ -187,31 +198,36 @@ function buildRegistry(): Row[] {
     const src = read(path.join(WORKFLOW_DIR, workflow));
     if (!src || !/^\s*schedule:/m.test(src)) continue;
 
-    const entrypoint = entrypointOf(src);
-    const entryFile = entrypoint ? path.join(ROOT, entrypoint) : null;
-    const entrySrc = entryFile ? read(entryFile) : null;
+    const entrypoints = entrypointsOf(src);
+    for (const entrypoint of entrypoints) {
+      const entryFile = entrypoint ? path.join(ROOT, entrypoint) : null;
+      const entrySrc = entryFile ? read(entryFile) : null;
 
-    // Wrapper → core: jobs/** wrappers hold the GitHub Actions plumbing and
-    // delegate to a scripts/** or lib/** core, which is where the lock usually
-    // lives so every entry point (Actions, HTTP, local) inherits it.
-    const { lock, lockedIn } = lockFor(
-      entrypoint,
-      entryFile,
-      entrySrc,
-      /^(scripts|lib)\//,
-    );
+      // Wrapper → core: jobs/** wrappers hold the GitHub Actions plumbing and
+      // delegate to a scripts/** or lib/** core, which is where the lock usually
+      // lives so every entry point (Actions, HTTP, local) inherits it.
+      const { lock, lockedIn } = lockFor(
+        entrypoint,
+        entryFile,
+        entrySrc,
+        /^(scripts|lib)\//,
+      );
 
-    const guard = entrySrc?.match(/abortIfMaintenance\(\s*["'`]([^"'`]+)["'`]/);
-    rows.push({
-      workflow,
-      entrypoint,
-      jobName:
-        guard?.[1] ??
-        lock?.jobName ??
-        path.basename(entrypoint ?? workflow, ".ts"),
-      lockedIn,
-      failMode: lock?.failMode ?? null,
-    });
+      const guard = entrySrc?.match(
+        /abortIfMaintenance\(\s*["'`]([^"'`]+)["'`]/,
+      );
+      const slug = entrypoint ? path.basename(entrypoint, ".ts") : workflow;
+      rows.push({
+        workflow:
+          entrypoints.length > 1 && entrypoint
+            ? `${workflow}#${slug}`
+            : workflow,
+        entrypoint,
+        jobName: guard?.[1] ?? lock?.jobName ?? slug,
+        lockedIn,
+        failMode: lock?.failMode ?? null,
+      });
+    }
   }
 
   // Ticker-only jobs (no YAML twin): resolved from lib/cron/cleanup-registry.ts.
@@ -377,7 +393,8 @@ describe("cron lock registry (#1169)", () => {
       .map((r) => r.workflow)
       .filter((workflow) => !workflow.startsWith("cron-tick:"))
       .filter((workflow) => {
-        const src = read(path.join(WORKFLOW_DIR, workflow));
+        const wfFile = workflow.split("#")[0];
+        const src = read(path.join(WORKFLOW_DIR, wfFile));
         if (!src) return true;
         const hasGroup = /^concurrency:\s*\n\s*group:\s*\S+/m.test(src);
         const hasNoCancel = /cancel-in-progress:\s*false/.test(src);

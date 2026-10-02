@@ -578,10 +578,9 @@ export async function mintConsumerCreditNote(
     return { consumerCreditNoteId: null };
   }
 
-  // Read the notes already issued inside this same transaction, so the cap is
-  // cumulative rather than per-note. Two concurrent triggers can still read
-  // the same sum under READ COMMITTED; the @unique trigger keys bound that to
-  // one note per refund and one per dispute.
+  // Lock the parent ConsumerInvoice row so two concurrent triggers (e.g., a
+  // partial refund racing a lost dispute) serialize on the cumulative cap.
+  await tx.$executeRaw`SELECT id FROM "ConsumerInvoice" WHERE id = ${invoice.id} FOR UPDATE`;
   const issued = await tx.consumerCreditNote.aggregate({
     where: { consumerInvoiceId: invoice.id },
     _sum: { totalPaise: true },
