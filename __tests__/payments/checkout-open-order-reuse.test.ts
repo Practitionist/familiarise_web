@@ -29,9 +29,15 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(async ({ where }: any) =>
         reuseState.rows.filter((row) => matchesReuseWhere(row, where)),
       ),
+      // The post-commit CAS attach and its patch-loss fallback re-read the
+      // committed row here; a minted-but-unattached order is tombstoned here.
+      findUnique: jest.fn(async () => null),
       updateMany: jest.fn(async () => ({ count: 1 })),
-      // #1695 — the post-mint abort tombstone is written on the global client.
       create: jest.fn(async () => ({})),
+    },
+    paymentLeg: {
+      // The winning CAS attach repoints the CARD leg to the minted order.
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     webinar: {
       findUnique: jest.fn(async () => webinarRow()),
@@ -197,6 +203,16 @@ function matchesReuseWhere(row: Record<string, any>, where: any): boolean {
   if (row.organizationId !== where.organizationId) return false;
   if (row.paymentGateway !== where.paymentGateway) return false;
   if (row.deletedAt !== where.deletedAt) return false;
+  // The reuse lookup scopes live vs placeholder rows in WHERE: a placeholder
+  // is claimed by the mint path, never resumed as a payable order.
+  if (where.paymentIntent?.startsWith) {
+    if (!row.paymentIntent?.startsWith(where.paymentIntent.startsWith))
+      return false;
+  }
+  if (where.NOT?.paymentIntent?.startsWith) {
+    if (row.paymentIntent?.startsWith(where.NOT.paymentIntent.startsWith))
+      return false;
+  }
   if (where.expiresAt?.gt) {
     if (!row.expiresAt || !(row.expiresAt > where.expiresAt.gt)) return false;
   }
@@ -510,7 +526,13 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
 // above cannot discriminate them: eventId already pins scope and its fixtures
 // share one price).
 // ---------------------------------------------------------------------------
-import { findReusablePendingOrderPayment } from "../../lib/payments/operations/checkout";
+import {
+  attachMintedOrder,
+  findReusablePendingOrderPayment,
+  healUnmintedPlaceholderPayments,
+  isPlaceholderPaymentIntent,
+  placeholderIntentFor,
+} from "../../lib/payments/operations/checkout";
 
 const SLOT = {
   startsAt: new Date("2026-09-01T10:00:00Z"),
@@ -636,20 +658,94 @@ describe("#1220-triage — reuse gates", () => {
   });
 });
 
-describe("#1695 — a post-mint abort leaves an EXPIRED tombstone for the orphaned order", () => {
-  it("writes the minted order as EXPIRED so a late capture has a row to be refunded against", async () => {
-    // The gateway order is minted before the booking transaction; an abort
-    // inside it (the CREDIT_SHORTFALL retry shape) used to leave a live
-    // Razorpay order with no Payment row, which cannot be voided.
+// Mint-after-win — the gateway order is minted only after the booking
+// transaction commits, so an abort inside it can never strand a live hold.
+// The committed row carries a pending_ placeholder until the post-commit mint
+// CAS-attaches the live order; a tombstone exists only for the patch-loss
+// window where the order was minted but another writer won the row.
+describe("mint-after-win — an abort inside the booking transaction strands no gateway hold", () => {
+  it("mints no gateway order and writes no tombstone when the transaction aborts", async () => {
+    // Same abort shape the old pre-mint test used: the credit check inside
+    // the transaction refuses, so nothing ever commits.
     txClient.payment.create = jest.fn(async () => {
       throw new Error(
         "CREDIT_SHORTFALL: expected 500 paise credits but only 0 available. Aborting for retry.",
       );
     });
 
-    await expect(handleCheckout(checkoutInput(), "user-1")).rejects.toThrow();
+    await expect(handleCheckout(checkoutInput(), "user-1")).rejects.toThrow(
+      "Failed to record payment information. Please try again.",
+    );
 
+    // No gateway order existed to strand: minting follows the commit, and a
+    // placeholder the gateway never saw needs no tombstone.
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("commits a placeholder row, then mints post-commit and CAS-attaches the live order", async () => {
+    const res = await handleCheckout(checkoutInput(), "user-1");
+
+    expect(res.success).toBe(true);
+
+    // The transaction committed a placeholder first: the gateway never saw it.
+    const committed = (txClient.payment.create as jest.Mock).mock.calls[0][0]
+      .data;
+    expect(committed.paymentIntent).toBe("pending_remount-tab-key-0002");
+    expect(committed.paymentStatus).toBe("PENDING");
+    expect(committed.expiresAt).toBeInstanceOf(Date);
+
+    // Exactly one gateway order follows the commit ...
     expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+    expect(createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100000,
+        currency: "INR",
+        paymentGateway: "RAZORPAY",
+      }),
+    );
+
+    // ... and the CAS attach flips the placeholder to it, leg included.
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        paymentIntent: "pending_remount-tab-key-0002",
+        paymentStatus: "PENDING",
+      }),
+      data: { paymentIntent: "order_NEW" },
+    });
+    expect(prisma.paymentLeg.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        source: "CARD",
+        sourceRef: "pending_remount-tab-key-0002",
+      }),
+      data: { sourceRef: "order_NEW" },
+    });
+
+    expect(res.paymentIntent?.id).toBe("order_NEW");
+  });
+
+  it("tombstones the minted order when the post-commit CAS attach loses its race to a terminal row", async () => {
+    (prisma.payment.updateMany as jest.Mock).mockResolvedValueOnce({
+      count: 0,
+    });
+    (prisma.payment.findUnique as jest.Mock).mockResolvedValueOnce({
+      paymentStatus: "FAILED",
+      paymentIntent: "order_NEW",
+      appointmentId: null,
+    });
+
+    // The CAS-loss throw raised inside STEP-5 is reworded by checkout's
+    // long-standing inner catch to the generic recording failure (the inner
+    // "Another attempt ..." copy has no classifier entry and never surfaces).
+    // What matters for stranded money is the tombstone below, which
+    // attachMintedOrder writes before returning false.
+    await expect(handleCheckout(checkoutInput(), "user-1")).rejects.toThrow(
+      "Failed to record payment information. Please try again.",
+    );
+
+    // The patch-loss window is the only mint-after-win path that writes one:
+    // order_NEW is live and owned by nobody, so a late capture has a row to
+    // be refunded against.
     expect(prisma.payment.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         paymentIntent: "order_NEW",
@@ -661,5 +757,227 @@ describe("#1695 — a post-mint abort leaves an EXPIRED tombstone for the orphan
     const written = (prisma.payment.create as jest.Mock).mock.calls[0][0].data;
     expect(written.appointmentId).toBeUndefined();
     expect(written.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it("resumes the winner when the CAS attach loses to a sibling mint", async () => {
+    (prisma.payment.updateMany as jest.Mock).mockResolvedValueOnce({
+      count: 0,
+    });
+    (prisma.payment.findUnique as jest.Mock).mockResolvedValueOnce({
+      paymentStatus: "PENDING",
+      paymentIntent: "order_WIN",
+      amount: 100000,
+      currency: "INR",
+      isMockPayment: false,
+      expiresAt: new Date(Date.now() + 20 * 60 * 1000),
+      appointmentId: "appt-w",
+    });
+
+    const res = await handleCheckout(checkoutInput(), "user-1");
+
+    expect(res.success).toBe(true);
+    // Post-commit CAS loss adopts the winner's order into this attempt's
+    // fresh-booking envelope (this path never sets the pre-commit reuse
+    // envelope): the page opens order_WIN, exactly one gateway order was
+    // minted, and the loser's order is tombstoned below.
+    expect(res.paymentIntent?.id).toBe("order_WIN");
+    expect((res as Record<string, unknown>).reused).toBeUndefined();
+    expect(res.message).toBe(
+      "Payment intent created. Complete payment to book appointment.",
+    );
+    expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+    // The loser's order is still tombstoned: it is payable and owned by nobody.
+    expect(prisma.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentIntent: "order_NEW",
+        paymentStatus: "EXPIRED",
+      }),
+    });
+  });
+});
+
+describe("mint-after-win — a committed-but-unminted placeholder is resume-minted, never re-booked", () => {
+  // The crash window: the booking transaction committed a placeholder row but
+  // the process died before minting. The next attempt mints INTO that row.
+  function placeholderSibling(overrides: Record<string, any> = {}) {
+    return openSibling({ paymentIntent: "pending_abc", ...overrides });
+  }
+
+  function placeholderRow() {
+    return {
+      id: "pay-open",
+      paymentIntent: "pending_abc",
+      paymentStatus: "PENDING",
+      paymentGateway: "RAZORPAY",
+      amount: 100000,
+      originalAmount: 100000,
+      taxAmount: 0,
+      currency: "INR",
+      expiresAt: new Date(Date.now() + 20 * 60 * 1000),
+      userId: "user-1",
+      organizationId: null,
+      appointment: {
+        id: "appt-w",
+        deletedAt: null,
+        webinarId: "evt-1",
+        classId: null,
+        occurrences: [
+          {
+            startsAt: new Date("2026-09-01T10:00:00Z"),
+            endsAt: new Date("2026-09-01T11:00:00Z"),
+          },
+        ],
+        consultation: null,
+        subscription: null,
+      },
+    };
+  }
+
+  it("mints into the sibling placeholder row instead of stacking a second booking", async () => {
+    reuseState.rows.push(placeholderSibling());
+    (prisma.payment.findUnique as jest.Mock).mockResolvedValue(
+      placeholderRow(),
+    );
+
+    const res = await handleCheckout(checkoutInput(), "user-1");
+
+    expect(res.success).toBe(true);
+    expect(res).toMatchObject({
+      reused: true,
+      orderId: "order_NEW",
+      message: "Resuming your in-progress checkout.",
+    });
+    expect(res.paymentIntent?.id).toBe("order_NEW");
+    expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+    // No second booking was stacked: the mint went into the existing row.
+    expect(txClient.payment.create).not.toHaveBeenCalled();
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        paymentIntent: "pending_abc",
+        paymentStatus: "PENDING",
+      }),
+      data: { paymentIntent: "order_NEW" },
+    });
+  });
+
+  it("asks for a retry — not a second booking — when the resume mint cannot reach the gateway", async () => {
+    reuseState.rows.push(placeholderSibling());
+    (prisma.payment.findUnique as jest.Mock).mockResolvedValue(
+      placeholderRow(),
+    );
+    (createPaymentIntent as jest.Mock).mockRejectedValueOnce(
+      new Error("gateway down"),
+    );
+
+    await expect(handleCheckout(checkoutInput(), "user-1")).rejects.toThrow(
+      "your card was not charged",
+    );
+
+    expect(txClient.payment.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    (prisma.payment.findUnique as jest.Mock).mockResolvedValue(null);
+  });
+});
+
+describe("mint-after-win — placeholder helpers and the claim-before-mint healer", () => {
+  test("placeholderIntentFor namespaces the client key; isPlaceholderPaymentIntent never matches a live order", () => {
+    expect(placeholderIntentFor("remount-tab-key-0002")).toBe(
+      "pending_remount-tab-key-0002",
+    );
+    const minted = placeholderIntentFor();
+    expect(minted.startsWith("pending_")).toBe(true);
+    expect(minted).not.toBe(placeholderIntentFor());
+    expect(isPlaceholderPaymentIntent("pending_abc")).toBe(true);
+    expect(isPlaceholderPaymentIntent("order_OPEN")).toBe(false);
+    expect(isPlaceholderPaymentIntent("")).toBe(false);
+    expect(isPlaceholderPaymentIntent(null)).toBe(false);
+    expect(isPlaceholderPaymentIntent(undefined)).toBe(false);
+  });
+
+  test("attachMintedOrder flips the placeholder on a CAS win and repoints the CARD leg", async () => {
+    const attached = await attachMintedOrder({
+      paymentId: "pay-new",
+      placeholder: "pending_k",
+      mintedOrderId: "order_NEW",
+      userId: "user-1",
+      amount: 100000,
+      originalAmount: 100000,
+      taxAmount: 0,
+      currency: "INR",
+      paymentGateway: "RAZORPAY" as never,
+    });
+
+    expect(attached).toBe(true);
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "pay-new",
+        paymentIntent: "pending_k",
+        paymentStatus: "PENDING",
+      },
+      data: { paymentIntent: "order_NEW" },
+    });
+    expect(prisma.paymentLeg.updateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "pay-new",
+        source: "CARD",
+        sourceRef: "pending_k",
+      },
+      data: { sourceRef: "order_NEW" },
+    });
+  });
+
+  test("attachMintedOrder tombstones the orphan on a CAS loss", async () => {
+    (prisma.payment.updateMany as jest.Mock).mockResolvedValueOnce({
+      count: 0,
+    });
+
+    const attached = await attachMintedOrder({
+      paymentId: "pay-new",
+      placeholder: "pending_k",
+      mintedOrderId: "order_LOST",
+      userId: "user-1",
+      amount: 100000,
+      originalAmount: 100000,
+      taxAmount: 0,
+      currency: "INR",
+      paymentGateway: "RAZORPAY" as never,
+    });
+
+    expect(attached).toBe(false);
+    expect(prisma.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentIntent: "order_LOST",
+        paymentStatus: "EXPIRED",
+        paymentGateway: "RAZORPAY",
+        userId: "user-1",
+      }),
+    });
+  });
+
+  test("findReusablePendingOrderPayment with the placeholder intent returns the unminted row", async () => {
+    const row = openSibling({ paymentIntent: "pending_unminted" });
+    const { reusable, supersede } = await findReusablePendingOrderPayment(
+      gateDb([row]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "WEBINAR",
+        planId: "plan-1",
+        eventId: "evt-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+        intent: "placeholder",
+      },
+    );
+    expect(reusable?.id).toBe("pay-open");
+    expect(supersede).toEqual([]);
+  });
+
+  test("healUnmintedPlaceholderPayments is a no-op with no aged placeholders", async () => {
+    await expect(healUnmintedPlaceholderPayments(10)).resolves.toEqual({
+      healed: [],
+      retired: [],
+      errors: [],
+    });
   });
 });

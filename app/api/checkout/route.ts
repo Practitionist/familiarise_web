@@ -284,10 +284,18 @@ export async function POST(req: NextRequest) {
     // #1319 — an exhausted serialization retry (P2034 ×4) means the tx never
     // committed: nothing was charged and a retry will see the sibling's state.
     // classifyError is message-only and would label it 500.
+    // Mint-after-win: the gateway order is minted only after the commit, so a
+    // P2034 strictly precedes any live hold — but a sibling may have committed
+    // a placeholder since the pre-check replay ran, so replay first and only
+    // claim "not charged" when no row (hence no order) exists at all.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2034"
     ) {
+      if (replayUserId && replayKey) {
+        const replay = await replayByIdempotencyKey(replayUserId, replayKey);
+        if (replay) return replay;
+      }
       return NextResponse.json(
         {
           error:
@@ -295,6 +303,7 @@ export async function POST(req: NextRequest) {
           errorType: "SERIALIZATION_CONFLICT",
           retryAfter: 2,
           yourCardWasNotCharged: true,
+          mintedOrderId: null,
           timestamp: new Date().toISOString(),
         },
         { status: 409 },

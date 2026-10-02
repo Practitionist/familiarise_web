@@ -388,6 +388,9 @@ function findAbandonedAppointments(limit?: number) {
         some: {
           AND: [
             { paymentStatus: PaymentStatus.PENDING },
+            // Placeholders are healer-owned: the gateway never saw them, so a
+            // gateway cancel proves nothing and expiring them races the mint.
+            { NOT: { paymentIntent: { startsWith: "pending_" } } },
             {
               OR: [
                 { expiresAt: { lt: new Date() } }, // Explicitly expired
@@ -482,7 +485,12 @@ async function expirePendingPayments(
   payments: AbandonedPayment[],
 ): Promise<void> {
   // One-at-a-time and in cohort order: a deterministic write sequence.
-  for (const payment of payments) {
+  // Placeholders are healer-owned — except when the whole unit IS the healer's
+  // retire of a dead-hold placeholder, which carries nothing else to expire.
+  const minted = payments.filter(
+    (p) => !p.paymentIntent.startsWith("pending_"),
+  );
+  for (const payment of minted.length > 0 ? minted : payments) {
     // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
     await tx.payment.updateMany({
       where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
@@ -586,6 +594,8 @@ function gatewayClearsExpiry(
 ): boolean {
   let clear = true;
   for (const payment of appointment.payment) {
+    // Placeholders never reached a gateway: proven empty without a call.
+    if (payment.paymentIntent.startsWith("pending_")) continue;
     const check: GatewayIntentCheck = checks.get(payment.id) ?? {
       outcome: "unknown",
     };
@@ -807,8 +817,11 @@ async function cleanupAbandonedAppointment(
 }> {
   // #1861 L2 — the gateway round trips run BEFORE the transaction: under
   // PG_POOL_MAX=1 they held the only connection, and a paid order must keep
-  // its row PENDING rather than be expired into a refund.
-  const checks = await cancelGatewayIntents(appointment.payment);
+  // its row PENDING rather than be expired into a refund. Placeholders never
+  // reached a gateway, so they need no round trip at all.
+  const checks = await cancelGatewayIntents(
+    appointment.payment.filter((p) => !p.paymentIntent.startsWith("pending_")),
+  );
   if (!gatewayClearsExpiry(appointment, checks, failures)) {
     return { outcome: "skipped", notice: null };
   }
@@ -1056,6 +1069,8 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
             AND: [
               { paymentStatus: PaymentStatus.PENDING },
               { expiresAt: { lt: new Date() } },
+              // Placeholders are healer-owned, not lapsed links.
+              { NOT: { paymentIntent: { startsWith: "pending_" } } },
             ],
           },
         },
@@ -1214,6 +1229,8 @@ export async function remindApprovalPaymentsDue(
 function reminderPaymentWindow(now: Date) {
   return {
     paymentStatus: PaymentStatus.PENDING,
+    // Placeholders carry no pay-link to remind about; the healer mints them.
+    NOT: { paymentIntent: { startsWith: "pending_" } },
     expiresAt: {
       gt: now,
       lte: new Date(now.getTime() + APPROVAL_PAYMENT_REMINDER_MS),

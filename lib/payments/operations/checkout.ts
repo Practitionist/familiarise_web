@@ -222,6 +222,33 @@ const SUPERSEDED_HOLD_NOTE =
   "Superseded by a newer checkout attempt for the same booking";
 
 /**
+ * A gateway order is minted only after the booking transaction commits. Until
+ * then the Payment row carries this placeholder, so a serialization abort can
+ * never strand a live hold. The gateway never sees it; sweeps skip it.
+ */
+const PLACEHOLDER_INTENT_PREFIX = "pending_";
+
+/** A placeholder older than this whose mint never landed is healer-owned. */
+const PLACEHOLDER_HEAL_AFTER_MS = 5 * 60 * 1000;
+
+/** True for a commit-before-mint placeholder; never a payable gateway id. */
+export function isPlaceholderPaymentIntent(
+  paymentIntent: string | null | undefined,
+): boolean {
+  return (
+    typeof paymentIntent === "string" &&
+    paymentIntent.startsWith(PLACEHOLDER_INTENT_PREFIX)
+  );
+}
+
+/** Placeholder for the gateway path; org/free/mock keep their synthetic ids. */
+export function placeholderIntentFor(
+  clientIdempotencyKey?: string | null,
+): string {
+  return `${PLACEHOLDER_INTENT_PREFIX}${clientIdempotencyKey ?? globalThis.crypto.randomUUID()}`;
+}
+
+/**
  * #1582 B-P1-01b — coded refusals raised INSIDE the checkout transaction that
  * are modelled outcomes (tagged expected at Sentry). The overage-funding codes
  * stay out on purpose: they mean a programme is configured in a shape we
@@ -441,6 +468,9 @@ export async function findReusablePendingOrderPayment(
     /** Subscription billing-period window; both-null rows only match a
      *  both-null request. */
     schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
+    /** Live orders resume; placeholders are claimed by the mint path, never
+     *  handed to a client as a payable id. */
+    intent?: "live" | "placeholder";
   },
 ): Promise<{
   reusable: ReusableOrder | null;
@@ -483,6 +513,9 @@ export async function findReusablePendingOrderPayment(
       paymentGateway: params.paymentGateway,
       deletedAt: null,
       appointment: planScope,
+      ...(params.intent === "placeholder"
+        ? { paymentIntent: { startsWith: PLACEHOLDER_INTENT_PREFIX } }
+        : { NOT: { paymentIntent: { startsWith: PLACEHOLDER_INTENT_PREFIX } } }),
     },
     orderBy: { createdAt: "desc" },
     take: 5, // bounded: newest attempts first; older ones get superseded below
@@ -707,6 +740,8 @@ export async function tombstoneAbortedGatewayOrder(input: {
   taxAmount: number;
   currency: Currency;
   reason: string;
+  /** The gateway the orphaned order belongs to; stays out of schema. */
+  paymentGateway?: PaymentGateway;
 }): Promise<boolean> {
   try {
     await prisma.payment.create({
@@ -717,7 +752,7 @@ export async function tombstoneAbortedGatewayOrder(input: {
         currency: input.currency,
         paymentMethod: "CARD",
         paymentIntent: input.paymentIntent,
-        paymentGateway: PaymentGateway.RAZORPAY,
+        paymentGateway: input.paymentGateway ?? PaymentGateway.RAZORPAY,
         paymentStatus: PaymentStatus.EXPIRED,
         expiresAt: new Date(),
         userId: input.userId,
@@ -732,6 +767,268 @@ export async function tombstoneAbortedGatewayOrder(input: {
     });
     return false;
   }
+}
+
+/**
+ * CAS-attach a just-minted gateway order to its placeholder row: the payment
+ * flips only while it still carries the placeholder in PENDING, and the CARD
+ * leg follows only on that win. On a loss the minted order is payable and
+ * owned by nobody, so it gets a tombstone for the late-capture healer.
+ */
+export async function attachMintedOrder(input: {
+  paymentId: string;
+  placeholder: string;
+  mintedOrderId: string;
+  userId: string;
+  amount: number;
+  originalAmount: number;
+  taxAmount: number;
+  currency: Currency;
+  paymentGateway: PaymentGateway;
+}): Promise<boolean> {
+  const patched = await prisma.payment.updateMany({
+    where: {
+      id: input.paymentId,
+      paymentIntent: input.placeholder,
+      paymentStatus: PaymentStatus.PENDING,
+    },
+    data: { paymentIntent: input.mintedOrderId },
+  });
+  if (patched.count !== 1) {
+    await tombstoneAbortedGatewayOrder({
+      paymentIntent: input.mintedOrderId,
+      userId: input.userId,
+      amount: input.amount,
+      originalAmount: input.originalAmount,
+      taxAmount: input.taxAmount,
+      currency: input.currency,
+      paymentGateway: input.paymentGateway,
+      reason: "placeholder mint lost its CAS to a concurrent writer",
+    });
+    return false;
+  }
+  await prisma.paymentLeg.updateMany({
+    where: {
+      paymentId: input.paymentId,
+      source: "CARD",
+      sourceRef: input.placeholder,
+    },
+    data: { sourceRef: input.mintedOrderId },
+  });
+  return true;
+}
+
+export interface PlaceholderMintResult {
+  orderId: string;
+  clientSecret: string | null;
+  amount: number;
+  currency: string;
+  holdExpiresAt: string | null;
+}
+
+/**
+ * Rebuild the gateway order notes for a placeholder row from its committed
+ * appointment, so a mint that happens after the request scope (replay, healer,
+ * cross-tab adopt) carries metadata the capture validator accepts.
+ */
+async function buildResumeMintMetadata(paymentId: string): Promise<{
+  notes: Record<string, string>;
+  holdExpiresAt: Date;
+}> {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      userId: true,
+      organizationId: true,
+      expiresAt: true,
+      appointment: {
+        select: {
+          id: true,
+          deletedAt: true,
+          webinarId: true,
+          classId: true,
+          occurrences: {
+            where: { deletedAt: null },
+            select: { startsAt: true, endsAt: true },
+            orderBy: { startsAt: "asc" },
+            take: 48,
+          },
+          consultation: {
+            select: { id: true, consultationPlanId: true },
+          },
+          subscription: {
+            select: { id: true, subscriptionPlanId: true },
+          },
+        },
+      },
+    },
+  });
+  const appointment = row?.appointment;
+  if (!row || !appointment || appointment.deletedAt) {
+    throw new Error("Placeholder payment has no live appointment to mint for");
+  }
+  const slots = appointment.occurrences ?? [];
+  const runStart = slots.length
+    ? new Date(Math.min(...slots.map((s) => s.startsAt.getTime())))
+    : null;
+  const runEnd = slots.length
+    ? new Date(Math.max(...slots.map((s) => s.endsAt.getTime())))
+    : null;
+  const notes: Record<string, string> = {
+    appointmentId: appointment.id,
+    userId: row.userId,
+  };
+  if (appointment.consultation && runStart && runEnd) {
+    notes.appointmentType = "CONSULTATION";
+    notes.planId = appointment.consultation.consultationPlanId;
+    notes.consultationId = appointment.consultation.id;
+    notes.startsAt = runStart.toISOString();
+    notes.endsAt = runEnd.toISOString();
+  } else if (appointment.subscription) {
+    notes.appointmentType = "SUBSCRIPTION";
+    notes.planId = appointment.subscription.subscriptionPlanId;
+    notes.subscriptionId = appointment.subscription.id;
+    if (runStart && runEnd) {
+      notes.startsAt = runStart.toISOString();
+      notes.endsAt = runEnd.toISOString();
+    }
+  } else if (appointment.webinarId) {
+    notes.appointmentType = "WEBINAR";
+    notes.eventId = appointment.webinarId;
+  } else if (appointment.classId) {
+    notes.appointmentType = "CLASS";
+    notes.eventId = appointment.classId;
+  } else {
+    const trial = await prisma.trial.findFirst({
+      where: { appointmentId: appointment.id },
+      select: { id: true, subscriptionPlanId: true },
+    });
+    if (!trial || !runStart || !runEnd) {
+      throw new Error("Placeholder payment has no resumable booking shape");
+    }
+    notes.appointmentType = "TRIAL";
+    notes.planId = trial.subscriptionPlanId;
+    notes.trialId = trial.id;
+    notes.startsAt = runStart.toISOString();
+    notes.endsAt = runEnd.toISOString();
+  }
+  if (row.organizationId) notes.organizationId = row.organizationId;
+  const holdExpiresAt =
+    row.expiresAt && row.expiresAt.getTime() > Date.now()
+      ? row.expiresAt
+      : new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS);
+  return { notes, holdExpiresAt };
+}
+
+/**
+ * Mint the gateway order for a PENDING placeholder row and CAS-attach it.
+ * Returns null when the row moved on (winner observed elsewhere) or its hold
+ * lapsed; throws when the gateway call itself fails so the caller retries.
+ * Never resolves a placeholder id: callers only ever hand the minted order out.
+ */
+export async function mintGatewayOrderForPlaceholder(
+  paymentId: string,
+): Promise<PlaceholderMintResult | null> {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      id: true,
+      paymentIntent: true,
+      paymentStatus: true,
+      paymentGateway: true,
+      amount: true,
+      originalAmount: true,
+      taxAmount: true,
+      currency: true,
+      expiresAt: true,
+      userId: true,
+    },
+  });
+  if (
+    !row ||
+    row.paymentStatus !== PaymentStatus.PENDING ||
+    !isPlaceholderPaymentIntent(row.paymentIntent)
+  ) {
+    return null;
+  }
+  if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return null;
+  const placeholder = row.paymentIntent;
+  const { notes, holdExpiresAt } = await buildResumeMintMetadata(row.id);
+  const { createPaymentIntent } = await import("../index");
+  const minted = await createPaymentIntent({
+    amount: row.amount,
+    currency: row.currency,
+    metadata: notes,
+    paymentGateway: row.paymentGateway,
+    isMockPayment: false,
+    holdExpiresAt,
+  });
+  const attached = await attachMintedOrder({
+    paymentId: row.id,
+    placeholder,
+    mintedOrderId: minted.id,
+    userId: row.userId,
+    amount: row.amount,
+    originalAmount: row.originalAmount,
+    taxAmount: row.taxAmount,
+    currency: row.currency,
+    paymentGateway: row.paymentGateway,
+  });
+  if (!attached) return null;
+  return {
+    orderId: minted.id,
+    clientSecret: minted.client_secret ?? null,
+    amount: row.amount,
+    currency: row.currency,
+    holdExpiresAt: holdExpiresAt.toISOString(),
+  };
+}
+
+/**
+ * Claim-before-mint healer for the commit-then-mint crash window: the booking
+ * transaction committed a placeholder row but the process died before minting.
+ * Razorpay orders carry no idempotency key, so the post-mint CAS is the dedupe:
+ * exactly one mint survives per row and any loser is tombstoned, never paid
+ * twice. Placeholders past their hold are retired through the abandoned-payments
+ * unit (no gateway call: nothing was ever minted). Runs under the
+ * reconcile-payment-status cron lock; bounded per tick.
+ */
+export async function healUnmintedPlaceholderPayments(
+  limit = 10,
+): Promise<{ healed: string[]; retired: string[]; errors: string[] }> {
+  const healed: string[] = [];
+  const retired: string[] = [];
+  const errors: string[] = [];
+  const rows = (await prisma.payment.findMany({
+    where: {
+      paymentStatus: PaymentStatus.PENDING,
+      paymentIntent: { startsWith: PLACEHOLDER_INTENT_PREFIX },
+      createdAt: { lt: new Date(Date.now() - PLACEHOLDER_HEAL_AFTER_MS) },
+    },
+    select: { id: true, expiresAt: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: limit,
+  })) ?? [];
+  for (const row of rows) {
+    try {
+      if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) {
+        const { retireOrphanPendingPayment } = await import(
+          "@/scripts/payments/cleanup-abandoned-payments"
+        );
+        const outcome = await retireOrphanPendingPayment(row.id);
+        if (outcome.outcome === "retired") retired.push(row.id);
+        errors.push(...outcome.errors);
+        continue;
+      }
+      const resumed = await mintGatewayOrderForPlaceholder(row.id);
+      if (resumed) healed.push(row.id);
+    } catch (error) {
+      errors.push(
+        `Placeholder ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return { healed, retired, errors };
 }
 
 // ============================================================================
@@ -3498,40 +3795,41 @@ export async function handleCheckout(
     // parity (amount must equal THIS request's computation). Rejections are
     // superseded to EXPIRED so they can neither be resumed later nor re-minted
     // into a parallel charge by a third tab.
+    const reuseScope = {
+      userId,
+      appointmentType,
+      planId: validatedData.planId,
+      eventId: validatedData.eventId,
+      organizationId,
+      paymentGateway: validatedData.paymentGateway,
+      expectedAmountPaise: amount,
+      ...(appointmentType === "CONSULTATION" &&
+      validatedData.startsAt &&
+      validatedData.endsAt
+        ? {
+            slotWindow: {
+              startsAt: new Date(validatedData.startsAt),
+              endsAt: new Date(validatedData.endsAt),
+            },
+          }
+        : {}),
+      ...(appointmentType === "SUBSCRIPTION"
+        ? {
+            schedulingPeriod:
+              validatedData.schedulingPeriodStartsAt &&
+              validatedData.schedulingPeriodEndsAt
+                ? {
+                    startsAt: new Date(
+                      validatedData.schedulingPeriodStartsAt,
+                    ),
+                    endsAt: new Date(validatedData.schedulingPeriodEndsAt),
+                  }
+                : null,
+          }
+        : {}),
+    };
     const { reusable: reusableOrder, supersede: supersededOrders } =
-      await findReusablePendingOrderPayment(prisma, {
-        userId,
-        appointmentType,
-        planId: validatedData.planId,
-        eventId: validatedData.eventId,
-        organizationId,
-        paymentGateway: validatedData.paymentGateway,
-        expectedAmountPaise: amount,
-        ...(appointmentType === "CONSULTATION" &&
-        validatedData.startsAt &&
-        validatedData.endsAt
-          ? {
-              slotWindow: {
-                startsAt: new Date(validatedData.startsAt),
-                endsAt: new Date(validatedData.endsAt),
-              },
-            }
-          : {}),
-        ...(appointmentType === "SUBSCRIPTION"
-          ? {
-              schedulingPeriod:
-                validatedData.schedulingPeriodStartsAt &&
-                validatedData.schedulingPeriodEndsAt
-                  ? {
-                      startsAt: new Date(
-                        validatedData.schedulingPeriodStartsAt,
-                      ),
-                      endsAt: new Date(validatedData.schedulingPeriodEndsAt),
-                    }
-                  : null,
-            }
-          : {}),
-      });
+      await findReusablePendingOrderPayment(prisma, reuseScope);
     if (supersededOrders.length > 0) {
       // #1463 — expiring the payment is only half of it; the hold it minted has
       // to come off the calendar in the same transaction or this buyer's next
@@ -3581,6 +3879,88 @@ export async function handleCheckout(
         holdExpiresAt: reusableOrder.expiresAt?.toISOString() ?? null,
         message: "Resuming your in-progress checkout.",
       };
+    }
+
+    // A sibling attempt committed its placeholder row but has not minted yet.
+    // Mint into THAT row and resume it instead of stacking a second booking,
+    // or two live orders would exist for one window. Never handed out as-is.
+    if (!isMockPayment && !isZeroAmountPayment && !isOrgSponsoredPayment) {
+      const { reusable: placeholderOrder } =
+        await findReusablePendingOrderPayment(prisma, {
+          ...reuseScope,
+          intent: "placeholder",
+        });
+      if (placeholderOrder) {
+        let resumed = null;
+        try {
+          resumed = await mintGatewayOrderForPlaceholder(placeholderOrder.id);
+        } catch (mintError) {
+          // The gateway itself failed: stacking a second booking would leave
+          // two payable orders once it recovers. Retry this attempt instead.
+          reportSentryError(mintError, {
+            subsystem: "payments",
+            expected: true,
+          });
+          throw new Error(
+            "The payment gateway did not respond and your card was not charged. Please try again in a moment.",
+          );
+        }
+        if (resumed) {
+          return {
+            success: true,
+            reused: true,
+            orderId: resumed.orderId,
+            paymentIntent: {
+              id: resumed.orderId,
+              client_secret: resumed.clientSecret,
+            },
+            amount: resumed.amount,
+            currency: resumed.currency,
+            isMockPayment: false,
+            skipPayment: false,
+            holdExpiresAt: resumed.holdExpiresAt,
+            message: "Resuming your in-progress checkout.",
+          };
+        }
+        const fresh = await prisma.payment.findUnique({
+          where: { id: placeholderOrder.id },
+          select: {
+            paymentStatus: true,
+            paymentIntent: true,
+            amount: true,
+            currency: true,
+            isMockPayment: true,
+            expiresAt: true,
+            appointmentId: true,
+          },
+        });
+        if (
+          fresh?.paymentStatus === PaymentStatus.PENDING &&
+          !isPlaceholderPaymentIntent(fresh.paymentIntent)
+        ) {
+          return {
+            success: true,
+            reused: true,
+            orderId: fresh.paymentIntent,
+            paymentIntent: { id: fresh.paymentIntent, client_secret: null },
+            amount: Number(fresh.amount),
+            currency: fresh.currency,
+            isMockPayment: fresh.isMockPayment,
+            skipPayment: fresh.isMockPayment,
+            holdExpiresAt: fresh.expiresAt?.toISOString() ?? null,
+            message: "Resuming your in-progress checkout.",
+          };
+        }
+        if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
+          return {
+            success: true,
+            reused: true,
+            skipPayment: true,
+            appointmentId: fresh.appointmentId ?? undefined,
+            message: "This checkout was already completed.",
+          };
+        }
+      }
     }
 
     // #832 — one checked renewal at the long-latency boundary (gateway call
@@ -3639,7 +4019,7 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
-    } else {
+    } else if (isMockPayment) {
       try {
         const { createPaymentIntent } = await import("../index");
         paymentResponse = await createPaymentIntent({
@@ -3663,6 +4043,13 @@ export async function handleCheckout(
           "Failed to create payment intent. Please try again later.",
         );
       }
+    } else {
+      // Mint-after-win: the booking transaction below commits first and the
+      // gateway order follows. A serialization abort now strands nothing.
+      paymentResponse = {
+        id: placeholderIntentFor(validatedData.clientIdempotencyKey),
+        client_secret: null,
+      };
     }
 
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
@@ -4271,6 +4658,7 @@ export async function handleCheckout(
 
             return {
               appointmentId: createdAppointment?.id,
+              paymentId: payment.id,
               holdExpiresAt: payment.expiresAt,
               creditsApplied: actualCreditsApplied,
               creditsRemainingAfter,
@@ -4311,6 +4699,85 @@ export async function handleCheckout(
       }
       if (result.overageBell) {
         notifyOverageDueAfterCommit(result.overageBell);
+      }
+
+      // Mint-after-win: the gateway order is created only now that the booking
+      // committed, with the COMMITTED row amount, then CAS-attached. Never
+      // inside the transaction above (single-connection pool) and never inside
+      // the retry helper (a retry must not mint twice). A mint failure leaves
+      // a PENDING placeholder the idempotency replay and the healer resume.
+      if (
+        paymentResponse &&
+        isPlaceholderPaymentIntent(paymentResponse.id)
+      ) {
+        const placeholder = paymentResponse.id;
+        const { createPaymentIntent } = await import("../index");
+        let minted: { id: string; client_secret: string | null };
+        try {
+          minted = await createPaymentIntent({
+            amount,
+            currency,
+            metadata: buildPaymentMetadata(validatedData, userId, {
+              organizationId,
+              fundingSource,
+            }),
+            paymentGateway: validatedData.paymentGateway,
+            isMockPayment: false,
+            customerId: savedCardCustomer,
+            holdExpiresAt,
+          });
+        } catch (mintError) {
+          console.error("Post-commit payment intent creation failed:", mintError);
+          reportSentryError(mintError, {
+            subsystem: "payments",
+            expected: true,
+          });
+          if (mintError instanceof PaymentError) throw mintError;
+          throw new Error(
+            "The payment gateway did not respond and your card was not charged. Please retry this checkout — it will resume automatically.",
+          );
+        }
+        const attached = await attachMintedOrder({
+          paymentId: result.paymentId,
+          placeholder,
+          mintedOrderId: minted.id,
+          userId,
+          amount,
+          originalAmount,
+          taxAmount,
+          currency,
+          paymentGateway: validatedData.paymentGateway,
+        });
+        if (attached) {
+          paymentResponse = { id: minted.id, client_secret: minted.client_secret };
+        } else {
+          const fresh = await prisma.payment.findUnique({
+            where: { id: result.paymentId },
+            select: {
+              paymentStatus: true,
+              paymentIntent: true,
+              appointmentId: true,
+            },
+          });
+          if (
+            fresh?.paymentStatus === PaymentStatus.PENDING &&
+            !isPlaceholderPaymentIntent(fresh.paymentIntent)
+          ) {
+            paymentResponse = { id: fresh.paymentIntent, client_secret: null };
+          } else if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
+            return {
+              success: true,
+              reused: true,
+              skipPayment: true,
+              appointmentId: fresh.appointmentId ?? undefined,
+              message: "This checkout was already completed.",
+            };
+          } else {
+            throw new Error(
+              "Another attempt just updated this payment. Please retry — it will resume automatically.",
+            );
+          }
+        }
       }
 
       const logMessage = isZeroAmountPayment
@@ -4538,7 +5005,13 @@ export async function handleCheckout(
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
-      if (paymentResponse && !isZeroAmountPayment) {
+      // Placeholders are skipped too: the gateway never saw them, so there is
+      // nothing to void and no orphan to tombstone below.
+      if (
+        paymentResponse &&
+        !isZeroAmountPayment &&
+        !isPlaceholderPaymentIntent(paymentResponse.id)
+      ) {
         try {
           const { cancelPaymentIntent } = await import("../index");
           await cancelPaymentIntent(
@@ -4569,6 +5042,7 @@ export async function handleCheckout(
         !isZeroAmountPayment &&
         !isOrgSponsoredPayment &&
         !isMockPayment &&
+        !isPlaceholderPaymentIntent(paymentResponse.id) &&
         validatedData.paymentGateway === PaymentGateway.RAZORPAY
       ) {
         await tombstoneAbortedGatewayOrder({
@@ -4634,6 +5108,16 @@ export async function handleCheckout(
         ) {
           throw dbError;
         }
+      }
+
+      // An exhausted serialization retry committed nothing and minted nothing
+      // (the gateway order follows the commit now), so the route answers its
+      // retryable 409 instead of the generic failure below.
+      if (
+        dbError instanceof Prisma.PrismaClientKnownRequestError &&
+        dbError.code === "P2034"
+      ) {
+        throw dbError;
       }
 
       throw new Error(

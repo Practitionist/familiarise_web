@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  isPlaceholderPaymentIntent,
+  mintGatewayOrderForPlaceholder,
+} from "@/lib/payments/operations/checkout";
 
 // #828 — replay the original checkout response for a duplicate attempt. The
 // stored Payment carries enough for the client to reopen the gateway with the
@@ -10,6 +14,7 @@ export async function replayByIdempotencyKey(userId: string, key: string) {
   const existing = await prisma.payment.findFirst({
     where: { clientIdempotencyKey: key, userId },
     select: {
+      id: true,
       paymentIntent: true,
       paymentStatus: true,
       paymentGateway: true,
@@ -29,6 +34,90 @@ export async function replayByIdempotencyKey(userId: string, key: string) {
       appointmentId: existing.appointmentId ?? undefined,
       message: "This checkout was already completed.",
     });
+  }
+  // Mint-after-win: the row committed before its gateway order was minted, so
+  // a placeholder carries no payable id. Mint and attach inline — the CAS
+  // inside collapses a double-fire to one order — and never hand pending_ out.
+  if (
+    existing.paymentStatus === "PENDING" &&
+    isPlaceholderPaymentIntent(existing.paymentIntent)
+  ) {
+    let resumed = null;
+    try {
+      resumed = await mintGatewayOrderForPlaceholder(existing.id);
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "The payment gateway did not respond and your card was not charged. Please try again in a moment.",
+          errorType: "GATEWAY_UNAVAILABLE",
+          retryAfter: 2,
+          timestamp: new Date().toISOString(),
+        },
+        { status: 503 },
+      );
+    }
+    if (resumed) {
+      return NextResponse.json({
+        success: true,
+        reused: true,
+        orderId: resumed.orderId,
+        paymentIntent: { id: resumed.orderId, client_secret: resumed.clientSecret },
+        amount: resumed.amount,
+        currency: resumed.currency,
+        isMockPayment: false,
+        skipPayment: false,
+        holdExpiresAt: resumed.holdExpiresAt,
+        message: "Resuming your in-progress checkout.",
+      });
+    }
+    const fresh = await prisma.payment.findFirst({
+      where: { clientIdempotencyKey: key, userId },
+      select: {
+        paymentIntent: true,
+        paymentStatus: true,
+        amount: true,
+        currency: true,
+        appointmentId: true,
+        isMockPayment: true,
+        expiresAt: true,
+      },
+    });
+    if (
+      fresh?.paymentStatus === "PENDING" &&
+      !isPlaceholderPaymentIntent(fresh.paymentIntent)
+    ) {
+      return NextResponse.json({
+        success: true,
+        reused: true,
+        orderId: fresh.paymentIntent,
+        paymentIntent: { id: fresh.paymentIntent, client_secret: null },
+        amount: Number(fresh.amount),
+        currency: fresh.currency,
+        isMockPayment: fresh.isMockPayment,
+        skipPayment: fresh.isMockPayment,
+        holdExpiresAt: fresh.expiresAt?.toISOString() ?? null,
+        message: "Resuming your in-progress checkout.",
+      });
+    }
+    if (fresh?.paymentStatus === "SUCCEEDED") {
+      return NextResponse.json({
+        success: true,
+        reused: true,
+        skipPayment: true,
+        appointmentId: fresh.appointmentId ?? undefined,
+        message: "This checkout was already completed.",
+      });
+    }
+    return NextResponse.json(
+      {
+        error:
+          "A previous attempt for this checkout already failed. Refresh and try again.",
+        errorType: "IDEMPOTENT_REPLAY_TERMINAL",
+        timestamp: new Date().toISOString(),
+      },
+      { status: 409 },
+    );
   }
   // Stripe stores the hosted checkout URL in client_secret (see
   // StripeCheckout.tsx); we don't persist it, so a Stripe PENDING replay

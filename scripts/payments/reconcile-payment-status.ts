@@ -24,6 +24,7 @@ import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
+import { healUnmintedPlaceholderPayments } from "@/lib/payments/operations/checkout";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 
@@ -73,6 +74,11 @@ export interface PaymentReconciliationResult {
   /** #1757 — unknown-id rows past the orphan age, retired PENDING → EXPIRED. */
   retiredCount: number;
   retired: string[];
+  /** Commit-then-mint crash rows the healer minted this run. */
+  healedCount: number;
+  healed: string[];
+  /** Tombstoned gateway orders whose late capture the pipeline confirmed. */
+  tombstoneReconciledCount: number;
   errors: string[];
   timestamp: string;
 }
@@ -348,6 +354,9 @@ async function reconcilePaymentStatusUnlocked(
   const unresolvable: string[] = [];
   let retiredCount = 0;
   const retired: string[] = [];
+  let healedCount = 0;
+  const healed: string[] = [];
+  let tombstoneReconciledCount = 0;
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
@@ -361,10 +370,13 @@ async function reconcilePaymentStatusUnlocked(
         lt: minAge,
         gte: maxAge,
       },
-      // Only payments with gateway reference - not an empty string
-      NOT: {
-        paymentIntent: "",
-      },
+      // Only payments with gateway reference - not an empty string. Placeholders
+      // are healer-owned: the gateway never saw them, so polling would retire
+      // rows the healer is about to mint.
+      NOT: [
+        { paymentIntent: "" },
+        { paymentIntent: { startsWith: "pending_" } },
+      ],
     },
     include: {
       user: { select: { email: true, name: true } },
@@ -381,7 +393,10 @@ async function reconcilePaymentStatusUnlocked(
       paymentStatus: PaymentStatus.PENDING,
       createdAt: { lt: orphanCutoff },
       paymentGateway: { in: [PaymentGateway.STRIPE, PaymentGateway.RAZORPAY] },
-      NOT: { paymentIntent: "" },
+      NOT: [
+        { paymentIntent: "" },
+        { paymentIntent: { startsWith: "pending_" } },
+      ],
     },
     include: {
       user: { select: { email: true, name: true } },
@@ -411,6 +426,26 @@ async function reconcilePaymentStatusUnlocked(
   console.log(
     `Found ${stalePendingPayments.length} stale PENDING payments to reconcile, ${orphanCandidates.length} orphan candidate(s) past the orphan age`,
   );
+
+  // Commit-then-mint crash window: placeholder rows old enough that the
+  // minter is gone get their order now, under this run's cron lock. Bounded.
+  try {
+    const heal = await healUnmintedPlaceholderPayments(opts.limit ?? 10);
+    healedCount = heal.healed.length;
+    healed.push(...heal.healed);
+    retiredCount += heal.retired.length;
+    retired.push(...heal.retired);
+    errors.push(...heal.errors);
+    if (heal.healed.length > 0 || heal.retired.length > 0) {
+      console.log(
+        `Healed ${heal.healed.length} unminted placeholder(s), retired ${heal.retired.length}`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`Placeholder heal pass failed: ${msg}`);
+    errors.push(`Placeholder heal pass: ${msg}`);
+  }
 
   for (const payment of cohort) {
     // #1861 P4b — every key is written each row ("none" when unknown), so a
@@ -617,6 +652,49 @@ async function reconcilePaymentStatusUnlocked(
     }
   }
 
+  // Late-capture coverage for tombstoned gateway orders: an aborted mint or a
+  // lost mint-patch race leaves a live order with an EXPIRED tombstone row. A
+  // buyer who still pays it captures with no booking; polling the bounded
+  // recent cohort into the capture pipeline turns that into the existing
+  // captured-after-terminal auto-refund. Read-only polls, oldest first.
+  if (razorpayConfigured) {
+    const tombstones =
+      (await prisma.payment.findMany({
+        where: {
+          paymentStatus: PaymentStatus.EXPIRED,
+          paymentGateway: PaymentGateway.RAZORPAY,
+          paymentIntent: { startsWith: "order_" },
+          NOT: { paymentIntent: { contains: "_mock_" } },
+          isMockPayment: false,
+          createdAt: { gte: maxAge },
+        },
+        select: { id: true, paymentIntent: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+        take: opts.limit ?? 10,
+      })) ?? [];
+    console.log(`Found ${tombstones.length} tombstoned order(s) to poll`);
+    for (const tomb of tombstones) {
+      const lookup = await getRazorpayPaymentStatus(tomb.paymentIntent);
+      if (lookup.kind !== "status") continue;
+      if (lookup.status !== "paid" && lookup.status !== "captured") continue;
+      try {
+        await routeCapturedPayment({
+          orderId: tomb.paymentIntent,
+          notes: lookup.notes ?? {},
+          amountPaise: lookup.amountPaise,
+          gatewayPaymentId: lookup.paymentId,
+        });
+        console.log(`   Tombstone capture routed: ${tomb.id}`);
+        reconciledCount++;
+        tombstoneReconciledCount++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`   Tombstone route failed for ${tomb.id}: ${msg}`);
+        errors.push(`Tombstone ${tomb.id}: ${msg}`);
+      }
+    }
+  }
+
   // Summary
   console.log("\n📊 Payment Reconciliation Summary:");
   console.log(`   Total processed: ${cohort.length}`);
@@ -629,6 +707,10 @@ async function reconcilePaymentStatusUnlocked(
     `   Unresolvable (gateway does not know the id): ${unresolvableCount}`,
   );
   console.log(`   Retired (orphan past the age cutoff): ${retiredCount}`);
+  console.log(`   Healed (unminted placeholder minted): ${healedCount}`);
+  console.log(
+    `   Tombstone captures routed: ${tombstoneReconciledCount}`,
+  );
 
   // One expected warning per run listing the ids, never one per row (#1757).
   if (retiredCount > 0) {
@@ -711,6 +793,9 @@ async function reconcilePaymentStatusUnlocked(
     unresolvable,
     retiredCount,
     retired,
+    healedCount,
+    healed,
+    tombstoneReconciledCount,
     errors,
     timestamp: new Date().toISOString(),
   };
