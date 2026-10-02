@@ -42,6 +42,9 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       # Notices: the day-7 reminder and the day-14 close send through the outbox.
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      # Pre-launch delivery guard: unset means allowlist; set the repo variable to "live" at launch.
+      EMAIL_DELIVERY_MODE: ${{ vars.EMAIL_DELIVERY_MODE }}
+      EMAIL_ALLOWLIST: ${{ vars.EMAIL_ALLOWLIST }}
       NOVU_PRODUCTION_KEY: ${{ secrets.NOVU_PRODUCTION_KEY }}
       NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 
