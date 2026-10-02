@@ -2,6 +2,7 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
+import { replaceUrl } from "@/lib/navigation/history";
 
 export interface ListSort {
   key: string;
@@ -134,14 +135,7 @@ export function useListParams<F extends string = never>(
       // before one lands both closed over the same stale value and the
       // second overwrote the first instead of composing on top of it.
       const qs = nextListSearch(window.location.search, patch, defaultSort);
-      // null, not `history.state`: Next skips its router sync for state that
-      // already carries `__NA`, so `useSearchParams` never saw the write and
-      // a toggle's pressed state lagged until reload (#1527 QA G6).
-      window.history.replaceState(
-        null,
-        "",
-        qs ? `${pathname}?${qs}` : pathname,
-      );
+      replaceUrl(qs ? `${pathname}?${qs}` : pathname);
     },
     [pathname, defaultSort],
   );

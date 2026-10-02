@@ -20,6 +20,7 @@ import { buildRazorpayPrefill } from "@/lib/payments/razorpay-prefill";
 import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { replaceUrl } from "@/lib/navigation/history";
 
 import {
   INVOICE_STATUS,
@@ -181,14 +182,12 @@ export function InvoicesPanel({
 
   const openInvoice = (id: string | null) => {
     setOpenInvoiceId(id);
-    // replaceState, like UrlTabs: shareable without a soft navigation.
+    // replaceUrl, like UrlTabs: shareable without a soft navigation.
     const params = new URLSearchParams(window.location.search);
     if (id) params.set("invoice", id);
     else params.delete("invoice");
     const qs = params.toString();
-    window.history.replaceState(
-      window.history.state,
-      "",
+    replaceUrl(
       qs ? `${window.location.pathname}?${qs}` : window.location.pathname,
     );
   };

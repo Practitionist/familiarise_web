@@ -8,7 +8,7 @@ import {
   UNSETTLED_MISS,
   missedAt,
 } from "@/lib/booking/misses";
-import { readRequestsInboxCounts } from "@/lib/data/requests-inbox";
+import { readRequestsToAnswerCount } from "@/lib/data/requests-inbox";
 
 /**
  * #1527 §7.2 — the consultant Home's "Needs you" strip: only what is blocked
@@ -18,7 +18,7 @@ import { readRequestsInboxCounts } from "@/lib/data/requests-inbox";
  */
 
 export interface ConsultantNeedsYou {
-  /** The Requests badge's own number (#1345): the inbox tab counts, summed. */
+  /** The Requests badge's own number: rows waiting on this consultant's answer (#1928). */
   requestsToAnswer: number;
   /** A learner proposed new times and waits on this consultant (#1163). */
   rescheduleReplies: { appointmentId: string; counterpartName: string }[];
@@ -132,7 +132,9 @@ export async function readConsultantNeedsYou(
   consultantProfileId: string,
   now: Date = new Date(),
 ): Promise<ConsultantNeedsYou> {
-  const counts = await readRequestsInboxCounts({ consultantProfileId, now });
+  const requestsToAnswer = await readRequestsToAnswerCount({
+    consultantProfileId,
+  });
   const rescheduleReplies = await readRescheduleReplies(consultantProfileId);
   const owedMakeUps = await readOwedMakeUps(consultantProfileId, now);
   const documentsAwaitingReview = await prisma.appointmentDocument.count({
@@ -144,7 +146,7 @@ export async function readConsultantNeedsYou(
     },
   });
   return {
-    requestsToAnswer: Object.values(counts).reduce((sum, n) => sum + n, 0),
+    requestsToAnswer,
     rescheduleReplies,
     owedMakeUps,
     documentsAwaitingReview,
