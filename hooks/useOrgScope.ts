@@ -21,7 +21,12 @@
  */
 
 import { useCallback, useMemo } from "react";
-import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
+import {
+  useParams,
+  useRouter,
+  useSearchParams,
+  usePathname,
+} from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
 
@@ -81,9 +86,7 @@ export interface UseOrgScopeOptions {
   defaultForOrgMember?: "first-org" | "all" | "personal";
 }
 
-export function useOrgScope(
-  options?: UseOrgScopeOptions,
-): UseOrgScopeResult {
+export function useOrgScope(options?: UseOrgScopeOptions): UseOrgScopeResult {
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
@@ -91,8 +94,7 @@ export function useOrgScope(
   const { data: session } = useSession();
   const defaultForOrgMember = options?.defaultForOrgMember ?? "first-org";
 
-  const orgIdFromPath =
-    typeof params?.orgId === "string" ? params.orgId : null;
+  const orgIdFromPath = typeof params?.orgId === "string" ? params.orgId : null;
   const pinned = Boolean(
     orgIdFromPath && pathname?.startsWith("/dashboard/organization/"),
   );
@@ -111,13 +113,15 @@ export function useOrgScope(
     session?.user?.organizationMemberships?.[0]?.organizationId ??
     serverFacts.firstOrgId;
 
+  // #1928: URL writes now reach useSearchParams, so keying on the object re-ran
+  // every scope consumer on every tab click.
+  const rawScope = searchParams?.get("orgScope") ?? null;
   const scope: Scope = useMemo(() => {
     if (pinned && orgIdFromPath) {
       return { kind: "org", orgId: orgIdFromPath };
     }
-    const raw = searchParams?.get("orgScope") ?? null;
     // URL is the source of truth. Honor whatever it says.
-    if (raw) return parseRaw(raw);
+    if (rawScope) return parseRaw(rawScope);
 
     // An explicit "personal" wins even for privileged users: the caller is
     // saying this surface is the B2C half of a split, and an admin landing on
@@ -131,14 +135,7 @@ export function useOrgScope(
         : { kind: "org", orgId: firstOrgId };
     }
     return { kind: "personal" };
-  }, [
-    pinned,
-    orgIdFromPath,
-    searchParams,
-    role,
-    firstOrgId,
-    defaultForOrgMember,
-  ]);
+  }, [pinned, orgIdFromPath, rawScope, role, firstOrgId, defaultForOrgMember]);
 
   const setScope = useCallback(
     (next: Scope) => {

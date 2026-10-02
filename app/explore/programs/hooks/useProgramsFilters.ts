@@ -1,6 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
+import { replaceUrl } from "@/lib/navigation/history";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 
@@ -46,10 +47,7 @@ function filtersFromParams(params: URLSearchParams): ProgramFilters {
   };
 }
 
-function paramsFromFilters(
-  filters: ProgramFilters,
-  tab: ProgramType,
-): string {
+function paramsFromFilters(filters: ProgramFilters, tab: ProgramType): string {
   const params = new URLSearchParams();
   if (tab !== "all") params.set("tab", tab);
   if (filters.topicIds && filters.topicIds.length > 0) {
@@ -144,7 +142,7 @@ export function useProgramsFilters(): UseProgramsFiltersResult {
       const target = `/explore/programs${qs ? `?${qs}` : ""}${hash}`;
       const current = window.location.pathname + window.location.search;
       if (target !== current) {
-        window.history.replaceState(window.history.state, "", target);
+        replaceUrl(target);
       }
     }, URL_SYNC_DEBOUNCE_MS);
 
