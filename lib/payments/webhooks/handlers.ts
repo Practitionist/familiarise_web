@@ -10,6 +10,7 @@ import {
 import {
   liveParticipant,
   transitionParticipant,
+  RELEASED_PARTICIPANT_STATUSES,
 } from "@/lib/booking/participants";
 import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -125,6 +126,8 @@ type PaymentSuccessTxResult =
       currency: string;
       capturedAfterTerminal: boolean;
       doubleBookingBlocked: boolean;
+      // The capture's webinar/class seat was released before the money landed.
+      seatReleased: boolean;
       appointmentForEmails: AppointmentForEmails | null;
       successEmail: StagedOutboxEmail | null;
       bookedEmails: StagedRecipientEmail[];
@@ -482,6 +485,27 @@ export async function handlePaymentSuccess(
               payment,
             );
 
+            // A full event refuses the seat (null) rather than oversell. That
+            // is a release Phase 2 refunds, not a throw: a throw would roll the
+            // SUCCEEDED stamp back and the gateway would re-drive forever.
+            if (!appointment) {
+              // The pending-refund marker rides this transaction, so a Phase 2
+              // refund that dies at the gateway is still re-driven.
+              await tx.payment.update({
+                where: { id: payment.id },
+                data: {
+                  description: autoRefundPendingDescription(
+                    `capture could not be seated — ${metadata.appointmentType.toLowerCase()} ${metadata.eventId} is full`,
+                  ),
+                },
+              });
+              return {
+                outcome: "captured_after_release",
+                paymentId: payment.id,
+                releasedBy: `event full (${metadata.appointmentType.toLowerCase()} ${metadata.eventId})`,
+              };
+            }
+
             console.log(
               JSON.stringify({
                 event: "webhook_creating_new_appointment",
@@ -598,7 +622,9 @@ export async function handlePaymentSuccess(
                 description: autoRefundPendingDescription(
                   confirmResult.doubleBookingBlocked
                     ? DOUBLE_BOOKING_BLOCKED_NOTE
-                    : "capture landed after the booking was cancelled",
+                    : confirmResult.seatReleased
+                      ? "capture landed after the seat was released"
+                      : "capture landed after the booking was cancelled",
                 ),
               },
             });
@@ -634,6 +660,7 @@ export async function handlePaymentSuccess(
             currency: payment.currency,
             capturedAfterTerminal: confirmResult.capturedAfterTerminal,
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
+            seatReleased: confirmResult.seatReleased ?? false,
             appointmentForEmails,
             successEmail,
             bookedEmails,
@@ -771,11 +798,22 @@ export async function handlePaymentSuccess(
 
   if (txResult.capturedAfterTerminal) {
     try {
-      await refundPayment({
-        paymentId: txResult.paymentId,
-        reason: "capture after cancellation",
-        initiatedByUserId: null,
-      });
+      if (txResult.seatReleased) {
+        // Refund THIS capture by intent (a seat may be org- or credit-funded).
+        // It throws on failure, so the marker below survives for the retry sweep.
+        await refundBookingPayment({
+          paymentId: txResult.paymentId,
+          reason: "capture after seat release",
+          initiatedByUserId: null,
+          dedupeKey: `capture-unseated:${txResult.paymentId}`,
+        });
+      } else {
+        await refundPayment({
+          paymentId: txResult.paymentId,
+          reason: "capture after cancellation",
+          initiatedByUserId: null,
+        });
+      }
       await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
@@ -1229,6 +1267,156 @@ const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.COMPLETED,
 ]);
 
+/**
+ * What a capture found when it went to confirm the buyer's seat.
+ *
+ * `confirmed` — a HELD seat was promoted. `duplicate` — the CAS matched
+ * nothing because the row is already live (CONFIRMED/ATTENDED): a redelivered
+ * capture, which must stay the no-op it has always been. `released` /
+ * `missing` — there is no seat left to confirm, so the money bought nothing and
+ * has to go back.
+ */
+type SeatCaptureOutcome =
+  | { kind: "confirmed" }
+  | { kind: "duplicate" }
+  | { kind: "released" }
+  | { kind: "missing" };
+
+/**
+ * Confirm the buyer's seat, or say why there was nothing to confirm. A zero
+ * CAS count re-reads the row in-tx to tell a redelivery from a released seat.
+ */
+async function confirmSeatAfterCapture(
+  tx: Tx,
+  args: {
+    /** The CAS predicate; narrows the move to the seat's live-from state. */
+    casWhere: Prisma.AppointmentParticipantWhereInput;
+    /** The same rows without the status narrowing, for the re-read. */
+    readWhere: Prisma.AppointmentParticipantWhereInput;
+    kind: "class" | "webinar";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+  },
+): Promise<SeatCaptureOutcome> {
+  if ((await transitionParticipant(tx, args.casWhere, "CONFIRMED")) > 0) {
+    return { kind: "confirmed" };
+  }
+  const fresh = await tx.appointmentParticipant.findFirst({
+    where: args.readWhere,
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, paymentId: true },
+  });
+  // No row at all is a different problem from a released one — a seat that
+  // should exist and does not — but the buyer's answer is the same either way,
+  // so it takes the refund path and says so distinctly.
+  if (!fresh) {
+    await reportUnseatedCapture(tx, {
+      kind: args.kind,
+      eventId: args.eventId,
+      appointmentId: args.appointmentId,
+      userId: args.userId,
+      reason: `no participant row exists for ${args.userId} on ${args.kind} ${args.eventId}`,
+      participantId: null,
+      seatStatus: null,
+      seatPaymentId: null,
+    });
+    return { kind: "missing" };
+  }
+  if (!RELEASED_PARTICIPANT_STATUSES.includes(fresh.status)) {
+    // Already CONFIRMED/ATTENDED: the same capture delivered twice. Nothing to
+    // move, nothing to return, nothing to say.
+    return { kind: "duplicate" };
+  }
+  await reportUnseatedCapture(tx, {
+    kind: args.kind,
+    eventId: args.eventId,
+    appointmentId: args.appointmentId,
+    userId: args.userId,
+    reason: `the seat is ${fresh.status} — the buyer left before the payment captured`,
+    participantId: fresh.id,
+    seatStatus: fresh.status,
+    seatPaymentId: fresh.paymentId,
+  });
+  return { kind: "released" };
+}
+
+/**
+ * The durable + paged record of a capture that has no seat to confirm. Once
+ * per seat: the orphan re-drive sweep re-enters this branch on a seat already
+ * refunded, and a marker that multiplied on every tick would bury the one row
+ * an operator needs.
+ */
+async function reportUnseatedCapture(
+  tx: Tx,
+  args: {
+    kind: "class" | "webinar";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+    reason: string;
+    participantId: string | null;
+    seatStatus: string | null;
+    seatPaymentId: string | null;
+  },
+): Promise<void> {
+  const correlationId = `capture-unseated-seat:${args.participantId ?? args.appointmentId}`;
+  const alreadyRecorded = await tx.systemEvent.findFirst({
+    where: { correlationId, category: "PAYMENT" },
+    select: { id: true },
+  });
+  if (alreadyRecorded) return;
+  // Through the tx (PG_POOL_MAX=1); the probe above rides the same snapshot.
+  await recordSystemErrorSafe({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `Payment captured for ${args.kind} ${args.eventId} with no seat to confirm (${args.reason}) — refunding`,
+    err: new Error("CAPTURE_AFTER_SEAT_RELEASE"),
+    context: {
+      entityType: args.kind,
+      entityId: args.eventId,
+      appointmentId: args.appointmentId,
+      userId: args.userId,
+      participantId: args.participantId,
+      seatStatus: args.seatStatus,
+      seatPaymentId: args.seatPaymentId,
+      // Kept in the row, not only in the summary, so ops can tell the two
+      // shapes apart without parsing prose.
+      reason: args.reason,
+    },
+    correlationId,
+    db: tx,
+  });
+  reportSentryError(new Error("CAPTURE_AFTER_SEAT_RELEASE"), {
+    subsystem: "payments",
+    expected: true,
+    level: "warning",
+    contexts: {
+      booking: {
+        appointmentId: args.appointmentId,
+        eventId: args.eventId,
+        eventType: args.kind,
+        userId: args.userId,
+        participantId: args.participantId,
+        seatStatus: args.seatStatus,
+      },
+    },
+  });
+  console.error(
+    JSON.stringify({
+      event: "capture_after_seat_release",
+      appointmentId: args.appointmentId,
+      eventId: args.eventId,
+      eventType: args.kind,
+      userId: args.userId,
+      participantId: args.participantId,
+      seatStatus: args.seatStatus,
+      action_required: "auto-refund attempted; reconcile only if it failed",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
 async function confirmApprovalStatus(
   tx: Tx,
   entityType: "consultation" | "subscription",
@@ -1349,7 +1537,12 @@ export async function confirmExistingAppointment(
   appointmentId: string,
   userId?: string,
   opts?: { holdExpired?: boolean; now?: Date },
-): Promise<{ capturedAfterTerminal: boolean; doubleBookingBlocked?: boolean }> {
+): Promise<{
+  capturedAfterTerminal: boolean;
+  doubleBookingBlocked?: boolean;
+  /** A webinar/class seat was released before the capture landed. */
+  seatReleased?: boolean;
+}> {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -1486,15 +1679,23 @@ export async function confirmExistingAppointment(
       }
     }
 
-    await transitionParticipant(
-      tx,
-      {
+    // A zero-row CAS is read back: a released or missing seat means the
+    // capture bought nothing, so it is refunded rather than reported confirmed.
+    const seat = await confirmSeatAfterCapture(tx, {
+      casWhere: {
         appointment: { classId: appointment.class.id },
         userId,
         status: "HELD",
       },
-      "CONFIRMED",
-    );
+      readWhere: { appointment: { classId: appointment.class.id }, userId },
+      kind: "class",
+      eventId: classId,
+      appointmentId,
+      userId,
+    });
+    if (seat.kind === "released" || seat.kind === "missing") {
+      return { capturedAfterTerminal: true, seatReleased: true };
+    }
 
     console.log(
       JSON.stringify({
@@ -1524,11 +1725,17 @@ export async function confirmExistingAppointment(
       }
     }
 
-    await transitionParticipant(
-      tx,
-      { appointmentId, userId, status: "HELD" },
-      "CONFIRMED",
-    );
+    const seat = await confirmSeatAfterCapture(tx, {
+      casWhere: { appointmentId, userId, status: "HELD" },
+      readWhere: { appointmentId, userId },
+      kind: "webinar",
+      eventId: webinarId,
+      appointmentId,
+      userId,
+    });
+    if (seat.kind === "released" || seat.kind === "missing") {
+      return { capturedAfterTerminal: true, seatReleased: true };
+    }
 
     console.log(
       JSON.stringify({

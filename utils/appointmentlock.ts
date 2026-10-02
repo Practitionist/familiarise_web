@@ -5,10 +5,30 @@ import redisClient, {
 } from "../lib/redis";
 import { RELEASE_LOCK_SCRIPT, RENEW_LOCK_SCRIPT } from "../lib/redis-mock";
 import crypto from "crypto";
+import * as Sentry from "@sentry/nextjs";
 import { SlotLockError } from "./errors/SlotLockError";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * One warning-level Sentry log per contended acquisition (slow path only; a
+ * modelled outcome, not a fault). Tagged by atom family, a closed set — the key
+ * itself embeds ids and would be an unbounded-cardinality tag. Never throws.
+ */
+function reportLockContention(
+  family: string,
+  detail: Record<string, unknown>,
+): void {
+  try {
+    Sentry.logger.warn("booking lock contended", {
+      tags: { subsystem: "booking", op: "lock-contention", family },
+      ...detail,
+    });
+  } catch {
+    // Telemetry must never be the reason a booking fails.
+  }
 }
 
 export class LockContentionError extends Error {
@@ -230,6 +250,8 @@ async function acquireGuarded(
   }
 
   if (lock instanceof LockContentionError) {
+    // Every booking atom, event checkout included, contends through here.
+    reportLockContention(context, { key, attempts: lock.attempts });
     throw lock;
   }
   return lock;
@@ -575,7 +597,8 @@ export async function lockEventCheckout(
 ): Promise<ApprovalLock> {
   const key = `event-checkout:${appointmentType}:${eventOrPlanId}`;
   try {
-    return await acquireGuarded(key, ttl, appointmentType, retryConfig);
+    // The context is the atom family that tags contention telemetry.
+    return await acquireGuarded(key, ttl, "event-checkout", retryConfig);
   } catch (error) {
     if (error instanceof BookingLockUnavailableError) {
       throw new EventCheckoutLockUnavailableError(appointmentType);
@@ -618,14 +641,28 @@ export async function unlockAppointment(lock: ApprovalLock): Promise<void> {
 
 export async function withAppointmentLock<T>(
   appointmentId: string,
-  fn: () => Promise<T>,
+  /** Receives the grant so a retry-loop body can re-grant it per attempt. */
+  fn: (lock: ApprovalLock) => Promise<T>,
 ): Promise<T> {
   const lock = await lockAppointment(appointmentId);
   try {
-    return await fn();
+    return await fn(lock);
   } finally {
     await unlockAppointment(lock);
   }
+}
+
+/**
+ * Re-grant the appointment lock for one more Serializable attempt; retry loops
+ * wrapped in this lock outlive its TTL. Never throws: the CAS decides whether
+ * an attempt may write. Returns whether the grant is still ours.
+ */
+export async function renewAppointmentLock(
+  lock: ApprovalLock | null | undefined,
+  ttl: number = APPOINTMENT_LOCK_TTL_MS,
+): Promise<boolean> {
+  if (!lock) return false;
+  return await extendLock(lock, ttl);
 }
 
 export async function lockAutoAllocate(

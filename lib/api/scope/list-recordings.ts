@@ -9,7 +9,7 @@
 import prisma from "@/lib/prisma";
 import type { Prisma, RecordingStatus } from "@prisma/client";
 import type { Scope } from "./parse";
-import { assertNeverScope } from "./parse";
+import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
 export interface ListRecordingsParams {
   scope: Scope;
@@ -123,7 +123,23 @@ function buildWhere(
     };
   }
   if (params.scope.kind === "org") {
-    return { ...base, organizationId: params.scope.orgId };
+    return {
+      ...base,
+      organizationId: params.scope.orgId,
+      // Read-level twin of the DEACTIVATED refusal in `resolveOrgScope`, for
+      // the reason that one is opt-in: this query has no org row in scope to
+      // test, and the synchronous resolver cannot learn the org's status from
+      // the membership rows the caller pre-fetched. An ACTIVE membership
+      // outlives the org the teardown stamps DEACTIVATED, so without this a
+      // torn-down org's recordings — other people's sessions — keep serving
+      // through the personal `?orgScope=` door. SUSPENDED stays readable: its
+      // OWNER has to be able to find whatever got it suspended.
+      //
+      // Rides the denormalized `organizationId` the org arm already filters on,
+      // so the relation can never be NULL here and `is` cannot drop a matching
+      // row — same trade as `list-appointments.ts`.
+      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+    };
   }
   // `orgMember` = ONE member's own rows within an org. It must never fall
   // through to the unfiltered `base` below: that arm is the `all` scope
@@ -134,6 +150,7 @@ function buildWhere(
     return {
       ...base,
       organizationId: params.scope.orgId,
+      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
       meeting: {
         occurrence: {
           appointment: {

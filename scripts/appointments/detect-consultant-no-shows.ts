@@ -94,7 +94,32 @@ export interface NoShowResult {
   timestamp: string;
 }
 
-export async function detectConsultantNoShows(): Promise<NoShowResult> {
+/**
+ * #1775 — candidates per run.
+ *
+ * The cohort read below had no `take` and no `orderBy` at all, so the only
+ * bound on a run was "however many rows matched". That is survivable on a
+ * 10-minute Actions workflow and is a guaranteed mid-run abort on the Netlify
+ * ticker, which drives this route inside a 20 s window — and an abort here is
+ * worse than an abort elsewhere, because this job is one refund per candidate
+ * and the candidates are worked in stream order.
+ *
+ * Oldest-first on `updatedAt`: the candidate that has been waiting longest for
+ * its verdict is the one whose consultee has waited longest for the refund
+ * decision, so that is the right end of the queue. Resumable because the CAS
+ * claim in `claimConsultantNoShow` moves the consultation out of the cohort
+ * (APPROVED/SCHEDULED only), so a capped run continues on the next tick with
+ * the rows it did not reach.
+ */
+const MAX_CANDIDATES_PER_RUN = 10;
+
+export async function detectConsultantNoShows(opts?: {
+  maxCandidates?: number;
+}): Promise<NoShowResult> {
+  const maxCandidates =
+    opts?.maxCandidates && opts.maxCandidates > 0
+      ? Math.floor(opts.maxCandidates)
+      : MAX_CANDIDATES_PER_RUN;
   // #476 — locked at the core so every entry shares one mutual exclusion.
   // Fail-closed: this is a money job (auto-refund), so per with-cron-lock.ts it
   // refuses to run without a real Redis lock rather than risk a silent unlocked
@@ -103,7 +128,7 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
   return withCronLock(
     "detect-consultant-no-shows",
     { failMode: "closed" },
-    () => detectConsultantNoShowsUnlocked(),
+    () => detectConsultantNoShowsUnlocked(maxCandidates),
   );
 }
 
@@ -121,8 +146,10 @@ const DECIDED_OR_PARKED = {
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-function findNoShowCandidates(graceCutoff: Date) {
+function findNoShowCandidates(graceCutoff: Date, maxCandidates: number) {
   return prisma.consultation.findMany({
+    orderBy: { updatedAt: "asc" },
+    take: maxCandidates,
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointment: {
@@ -519,11 +546,19 @@ async function claimConsultantNoShow(
   return true;
 }
 
-// Full refund, reusing B1's refundPayment path (#990). Idempotent:
-// refundPayment's refundable-balance guard throws if already refunded, so even a
-// stale re-entry cannot double-refund. On failure we surface for ops (the
-// cancellation stands) rather than silently swallowing. Returns the refunded
-// amount, whether refundPayment succeeded, and the payment (for notifications).
+/**
+ * Full refund, reusing B1's refundPayment path (#990). Idempotent on a key the
+ * unique index enforces: without one, the only guard was refundPayment's
+ * re-derivation of the refundable balance inside its own Serializable
+ * transaction, which is a read-then-write — two concurrent unkeyed runs (an
+ * expired `cron:lock:` grant lets exactly that) both read `refundable = amount`,
+ * both pass, and both create a Refund row, because Refund is unique on nothing
+ * but `dedupeKey`. with-cron-lock calls the CAS guards the correctness backstop;
+ * the claim that held the balance re-derivation could not is why the key is
+ * here (#P0-4). On failure we surface for ops (the cancellation stands) rather
+ * than silently swallowing. Returns the refunded amount, whether refundPayment
+ * succeeded, and the payment (for notifications).
+ */
 async function refundNoShowConsultation(
   consultation: NoShowCandidate,
   errors: string[],
@@ -552,6 +587,12 @@ async function refundNoShowConsultation(
       paymentId: paidPayment.id,
       reason: "consultant no-show (#471)",
       initiatedByUserId: null,
+      // #P0-4 — the arm's own name and the payment, so a lost lock's second
+      // run answers with the first run's refund instead of moving money twice.
+      // Distinct from every expiry arm's key, so a later refund of the same
+      // payment for a different reason is a real ALREADY_FULLY_REFUNDED and
+      // not this sweep's own key coming back.
+      dedupeKey: `consultant-no-show:${paidPayment.id}`,
     });
     console.log(`   💸 Refunded ${r.amountRefundedPaise}p via ${r.rail}`);
     return {
@@ -656,7 +697,9 @@ async function notifyNoShowParties(
   }
 }
 
-async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
+async function detectConsultantNoShowsUnlocked(
+  maxCandidates: number,
+): Promise<NoShowResult> {
   const errors: string[] = [];
   let detected = 0;
   let refunded = 0;
@@ -671,8 +714,9 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
   console.log(
     `   Grace window: ${NO_SHOW_GRACE_MINUTES} min after session end`,
   );
+  console.log(`   Per-run cap: ${maxCandidates} candidate(s)`);
 
-  const candidates = await findNoShowCandidates(graceCutoff);
+  const candidates = await findNoShowCandidates(graceCutoff, maxCandidates);
   // #1569 — the classifier's maintenance hold turns a host-absent verdict inconclusive.
   const outages = await readOutageWindows(
     prisma,

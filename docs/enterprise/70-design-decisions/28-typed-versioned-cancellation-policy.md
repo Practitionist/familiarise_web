@@ -36,7 +36,9 @@ Refund terms become typed, versioned, immutable rows, and the Json column is fro
 
 5. The platform default lives at a fixed id, is created by the seed, and is created idempotently by `ensurePlatformCancellationPolicy()` on first use, so a database nobody seeded cannot fail a checkout.
 
-6. `Appointment.cancellationPolicySnapshot` stays in the schema, frozen: never written, never read, annotated as such, and dropped at the pre-MVP reset rather than now. A column that a currently-running deploy still reads must not be dropped under it, and the repo does not write backfill migrations.
+6. `Appointment.cancellationPolicySnapshot` **has since been dropped** — it is no longer a column on `Appointment`. This decision note originally deferred the drop to the pre-MVP reset, on the reasoning that a column a currently-running deploy still reads must not be removed under it. That deferral has since been overtaken: the vocabulary reset (`85f6814a3`, PR #1638) removed `cancellationPolicySnapshot Json?` from `prisma/schema.prisma`, so the column is gone. "Never read" was always true and remains true; "stays in the schema" is no longer true of anything.
+
+   The only surviving trace of the name is a cross-reference comment in the `SupportTicket` SLA block (`prisma/schema.prisma:327`), which cites it as the precedent for storing a deadline at intake rather than re-deriving it on read. That comment is a note **about a column that no longer exists** — read it as history, not as a description of a live field.
 
 7. Reading and publishing are one module (`cancellation-policy-store.ts`) with one select shape; the tier maths stays in a Prisma-free module (`cancellation-policy.ts`) that is unit-tested with no mocks. One ladder-validation function is shared by the Zod body schema, the publish helper and the seed, so the editor cannot accept a ladder the quote cannot read.
 

@@ -52,6 +52,11 @@ import {
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -116,6 +121,15 @@ export default function SubscriptionCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+
+  // #1863 — the refund rail, derived from the buyer's own funding choice so the
+  // promise under the price moves with it.
+  const viewer = useViewerZone();
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
 
   const { toast } = useToast();
   const {
@@ -850,6 +864,16 @@ export default function SubscriptionCheckoutPage({
               <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
+              />
+              {/* #1863 — the notice ladder, at purchase. The 48 h promise above
+                  is about the expert not scheduling; this is about the buyer
+                  changing their mind, which is a different rule and was
+                  invisible until the cancel dialog. */}
+              <CancellationPolicyNote
+                eventKind="individual"
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
             </div>
           </CardContent>

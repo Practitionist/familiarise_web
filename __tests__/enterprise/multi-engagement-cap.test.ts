@@ -30,6 +30,7 @@ import {
   recordBookingUtilization,
   reverseBookingUtilization,
   ProgramAssignmentLimitError,
+  ProgramAssignmentUnderflowError,
 } from "@/lib/api/organizations/program-helpers";
 
 type MockTx = {
@@ -347,7 +348,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       engagementsReversed: 8,
       fullyReversed: true,
     });
-    expect(tx.programAssignment.update).toHaveBeenCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           engagementsUsed: { decrement: 8 },
@@ -389,7 +390,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       engagementsReversed: 4,
       fullyReversed: false,
     });
-    expect(tx.programAssignment.update).toHaveBeenCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           engagementsUsed: { decrement: 4 },
@@ -482,7 +483,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       engagementsReversed: 0,
       fullyReversed: true,
     });
-    expect(tx.programAssignment.update).not.toHaveBeenCalled();
+    expect(tx.programAssignment.updateMany).not.toHaveBeenCalled();
   });
 
   it("missing utilization row: returns reversed=false (PERSONAL booking that never wrote a util)", async () => {
@@ -510,7 +511,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       engagementsToReverse: 0,
     });
     expect(result.reversed).toBe(false);
-    expect(tx.programAssignment.update).not.toHaveBeenCalled();
+    expect(tx.programAssignment.updateMany).not.toHaveBeenCalled();
     expect(tx.usageLedgerEntry.create).not.toHaveBeenCalled();
   });
 
@@ -539,7 +540,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       reason: "Refund",
     });
 
-    expect(tx.programAssignment.update).toHaveBeenCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           engagementsUsed: { decrement: 2 },
@@ -570,7 +571,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
 
     // A seat program meters seats, so writing paise back would be inventing a
     // number. `undefined` is the deliberate absence, not a forgotten branch.
-    expect(tx.programAssignment.update).toHaveBeenCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.not.objectContaining({
           consumedPaise: expect.anything(),
@@ -603,7 +604,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
     });
 
     expect(result.engagementsReversed).toBe(1);
-    expect(tx.programAssignment.update).toHaveBeenCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           engagementsUsed: { decrement: 1 },
@@ -638,7 +639,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       engagementsToReverse: 4,
     });
     expect(partial.fullyReversed).toBe(false);
-    expect(tx.programAssignment.update).toHaveBeenLastCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.not.objectContaining({
           overageCount: expect.anything(),
@@ -654,12 +655,114 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
       engagementsToReverse: 4,
     });
     expect(final.fullyReversed).toBe(true);
-    expect(tx.programAssignment.update).toHaveBeenLastCalledWith(
+    expect(tx.programAssignment.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           overageCount: { decrement: 1 },
         }),
       }),
     );
+  });
+
+  // The decrement used to be a bare `update`, and there is no
+  // `CHECK (engagementsUsed >= 0)` in prisma/sql/ — so a counter that had
+  // already drifted went further negative on every refund and nothing objected.
+  // The predicate rides the WHERE now, same shape as the forward BLOCK branch.
+  describe("the counter decrement is a guarded CAS", () => {
+    function reverseTx() {
+      const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+      tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+        programAssignmentId: "asg-1",
+        engagementsConsumed: 8,
+        priceAtBookingPaise: 200_000,
+        wasOverage: true,
+        reversedAt: null,
+        programAssignment: {
+          membershipId: "mem-1",
+          program: { type: "CREDIT_POOL" },
+        },
+      });
+      return tx;
+    }
+
+    it("requires the counter to hold at least the delta being released", async () => {
+      const tx = reverseTx();
+
+      await reverseBookingUtilization(tx as never, { paymentId: "pay-guard" });
+
+      expect(tx.programAssignment.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "asg-1",
+            engagementsUsed: { gte: 8 },
+            consumedPaise: { gte: 200_000 },
+            overageCount: { gte: 1 },
+          }),
+        }),
+      );
+    });
+
+    it("raises and writes no ledger row when the guard matches zero rows", async () => {
+      const tx = reverseTx();
+      tx.programAssignment.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        reverseBookingUtilization(tx as never, { paymentId: "pay-drift" }),
+      ).rejects.toBeInstanceOf(ProgramAssignmentUnderflowError);
+
+      // The reversing ledger row is what the reconciler sums; writing it
+      // against a counter that would have gone negative is the drift itself.
+      expect(tx.usageLedgerEntry.create).not.toHaveBeenCalled();
+      expect(tx.bookingUtilization.update).not.toHaveBeenCalled();
+    });
+
+    it("names the assignment and the delta, so an operator can find the trail", async () => {
+      const tx = reverseTx();
+      tx.programAssignment.updateMany.mockResolvedValue({ count: 0 });
+
+      // `then` with a throwing fulfilment handler rather than `.catch(...)`:
+      // `.catch` returns `T | E`, so every property read below would be a union
+      // access and the compiler would (correctly) refuse.
+      const err = await reverseBookingUtilization(tx as never, {
+        paymentId: "pay-drift",
+      }).then(
+        () => {
+          throw new Error(
+            "expected the reversal to be refused, but it resolved",
+          );
+        },
+        (e: unknown) =>
+          e as InstanceType<typeof ProgramAssignmentUnderflowError>,
+      );
+
+      expect(err.programAssignmentId).toBe("asg-1");
+      expect(err.engagementsToReverse).toBe(8);
+      expect(err.paiseToReverse).toBe(200_000);
+      expect(err.message).toContain("asg-1");
+    });
+
+    it("does not guard a counter this call leaves alone", async () => {
+      // A LICENSED_SEAT reversal writes no paise, so `consumedPaise` must not
+      // appear in the WHERE: a stale low balance would otherwise fail a
+      // reversal that never intended to touch it.
+      const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+      tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+        programAssignmentId: "asg-1",
+        engagementsConsumed: 2,
+        priceAtBookingPaise: 200_000,
+        wasOverage: false,
+        reversedAt: null,
+        programAssignment: {
+          membershipId: "mem-1",
+          program: { type: "LICENSED_SEAT" },
+        },
+      });
+
+      await reverseBookingUtilization(tx as never, { paymentId: "pay-seat" });
+
+      const where = tx.programAssignment.updateMany.mock.calls[0][0].where;
+      expect(where.consumedPaise).toBeUndefined();
+      expect(where.overageCount).toBeUndefined();
+    });
   });
 });

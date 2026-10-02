@@ -13,6 +13,7 @@
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { AppointmentFeedbackRole, RefundStatus } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 
@@ -186,7 +187,7 @@ export async function readAppointmentDetail(appointmentId: string) {
       // #1163 — the live proposal, so the detail page can render it and offer
       // accept / decline / withdraw instead of "Awaiting schedule confirmation".
       rescheduleRequests: {
-        where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+        where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
         orderBy: { createdAt: "desc" },
         take: 1,
         select: {
@@ -199,18 +200,23 @@ export async function readAppointmentDetail(appointmentId: string) {
           initiatedById: true,
           proposedTimes: {
             orderBy: { startsAt: "asc" },
-            // round: a COUNTERED request carries both rounds; the card must
-            // show only the current offer.
+            // `round` is selected so the card can filter to the current
+            // offer rather than rendering every round on the request.
             select: { startsAt: true, endsAt: true, round: true },
           },
         },
       },
       occurrences: slotsInclude,
-      // #1675 / #1760 — the EXPIRED edge tells a lapsed pay link apart from
-      // a request nobody answered (lib/dashboard/money-state.ts).
+      // EXPIRED edge: lapsed pay link vs unanswered request. CANCELLED +
+      // WITHDRAWN_BY_CONSULTANT: the withdraw copy (lib/dashboard/money-state.ts).
       statusHistory: {
-        where: { toStatus: "EXPIRED" },
-        select: { fromStatus: true, toStatus: true },
+        where: {
+          OR: [
+            { toStatus: "EXPIRED" },
+            { toStatus: "CANCELLED", reason: "WITHDRAWN_BY_CONSULTANT" },
+          ],
+        },
+        select: { fromStatus: true, toStatus: true, reason: true },
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {

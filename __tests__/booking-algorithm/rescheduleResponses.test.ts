@@ -31,6 +31,7 @@ jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   applyRateLimit: jest.fn(async () => null),
   eventMutationLimiter: {},
+  rescheduleAppointmentLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,

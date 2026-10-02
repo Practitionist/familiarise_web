@@ -29,6 +29,8 @@ import { createAppointments } from "./seedFiles/6a-create-appointments";
 import { createDraftSessions } from "./seedFiles/6b-create-draft-sessions";
 import { createRescheduleProposals } from "./seedFiles/6c-create-reschedule-proposals";
 
+import { recomputeAllMenteesHelped } from "./seedFiles/6d-recompute-mentees-helped";
+
 // Phase 7: Engagement
 import { createWaitlistSubscribers } from "./seedFiles/7a-create-waitlist-subscribers";
 import { createConsultantReviews } from "./seedFiles/7b-create-consultant-reviews";
@@ -141,6 +143,14 @@ async function seed() {
     // exist once the bookings do.
     console.log("Creating reschedule proposals...");
     await createRescheduleProposals();
+
+    // `totalMenteesHelped` is a stored column with no seed value (see
+    // 1a-create-users.ts), so the derived figure is written here — the first
+    // moment a delivered session exists. Without it a dev database shows every
+    // consultant as 0 until the hourly auto-complete pass first runs, which on
+    // a freshly seeded database may be never.
+    console.log("Deriving totalMenteesHelped from delivered sessions...");
+    await recomputeAllMenteesHelped();
 
     // Phase 7: Engagement data
     console.log("\n[Phase 7] Creating engagement data...");

@@ -22,26 +22,47 @@ import {
   currentRoundProposedSlots,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
+import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 
 /**
  * The open reschedule proposal on an appointment, with its answers (#1163).
  *
  * Counterparty (session user ≠ initiator) gets Accept + Decline; the
- * initiator gets Withdraw. Decline confirms first, because its one surprise
- * is worth spelling out: the released times STAY with the consultant to
- * re-place — declining a proposal is not cancelling the booking.
+ * initiator gets Withdraw. Decline confirms first, because its one surprise is
+ * worth spelling out — and it is not "the times stay with the consultant": since
+ * #1846 a decline RESTORES the released sessions to their original times in the
+ * common case, and only parks the ones whose original time has since been
+ * booked. The dialog therefore describes both outcomes, because which one
+ * happens is not knowable before the server has read the rows back; the toast
+ * afterwards is driven by the `outcome` the route reports.
  *
  * Toasts relay the SERVER's message: accept runs the full allocator and
  * decline/withdraw are CAS transitions, so what actually happened is decided
- * there, not here.
+ * there, not here. That message is the outcome-specific sentence, which is why
+ * the title only has to carry the one case worth distinguishing.
  */
 
 type ProposalAnswer = "accept" | "decline" | "withdraw";
 
+/**
+ * Codes the propose route can answer, and what each one means for the person
+ * who clicked. Only codes that change what the user does get an entry; the
+ * rest fall back to the generic title with the server's sentence as the
+ * description, which is still an answer.
+ */
+const PROPOSAL_REFUSAL_TITLE: Record<string, string> = {
+  RESCHEDULE_ALREADY_OPEN: "You already have a reschedule open",
+  PROPOSAL_COUNT_MISMATCH: "The proposed times changed",
+  PROPOSAL_WINDOW_CLOSED: "The answer window has closed",
+  RESCHEDULE_WINDOW: "Too close to the meeting to reschedule",
+  BOOKING_LOCK_UNAVAILABLE: "The booking system is briefly busy",
+  SESSION_NOT_CANCELLABLE: "This session can no longer be rescheduled",
+};
+
 async function postAnswer(
   appointmentId: string,
   kind: ProposalAnswer,
-): Promise<{ message?: string }> {
+): Promise<{ message?: string; outcome?: RescheduleRespondCode }> {
   const url =
     kind === "withdraw"
       ? `/api/appointments/${appointmentId}/reschedule/withdraw`
@@ -53,10 +74,26 @@ async function postAnswer(
   });
   const data = (await res.json().catch(() => ({}))) as {
     message?: string;
+    outcome?: RescheduleRespondCode;
     error?: string;
+    // #1863 — the refusal's stable half. Every branch of the propose route
+    // sends it alongside the sentence: the `Refusal` serialisation
+    // (RESCHEDULE_WINDOW), the unique-violation branch
+    // (RESCHEDULE_ALREADY_OPEN), the in-transaction pair
+    // (PROPOSAL_COUNT_MISMATCH / PROPOSAL_WINDOW_CLOSED) and the typed lock
+    // error (BOOKING_LOCK_UNAVAILABLE).
+    code?: string;
   };
   if (!res.ok) {
-    throw new Error(data.error || "The request could not be completed.");
+    // #1863 — the sentence was always on the wire; what was thrown away was
+    // `code`, which is what distinguishes "you already have one open" from "the
+    // window closed" from a lock outage. Carried on the Error rather than
+    // flattened into its message, so the toast can title it by code and still
+    // relay the server's own sentence as the description.
+    throw Object.assign(
+      new Error(data.error || "The request could not be completed."),
+      { code: data.code },
+    );
   }
   return data;
 }
@@ -96,7 +133,16 @@ export function RescheduleProposalCard({
     mutationFn: (kind: ProposalAnswer) => postAnswer(appointmentId, kind),
     onSuccess: (data, kind) => {
       setConfirmDecline(false);
-      toast({ title: ANSWER_TOAST_TITLE[kind], description: data.message });
+      toast({
+        title:
+          // The one outcome the fixed title would misdescribe: a decline that
+          // could not put every released session back leaves real work for the
+          // consultant, and "Proposal declined" reads as a clean settle.
+          kind === "decline" && data.outcome === "RELEASED"
+            ? "Sessions need new times"
+            : ANSWER_TOAST_TITLE[kind],
+        description: data.message,
+      });
       void queryClient.invalidateQueries({
         queryKey: ["appointment-detail", appointmentId],
       });
@@ -105,8 +151,9 @@ export function RescheduleProposalCard({
     },
     onError: (error: Error) => {
       setConfirmDecline(false);
+      const code = (error as Error & { code?: string }).code;
       toast({
-        title: "Error",
+        title: (code && PROPOSAL_REFUSAL_TITLE[code]) || "Error",
         description: error.message,
         variant: "destructive",
       });
@@ -187,7 +234,14 @@ export function RescheduleProposalCard({
 
       <p className="mt-2 text-xs text-muted-foreground">
         {isInitiator ? "Expires" : "Needs an answer by"}{" "}
-        {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a")}
+        {/* #1863 — `zzz` was missing and the requests inbox has always labelled
+            the same deadline for the same booking (InboxRow.formatDateTime).
+            Unlabelled, a deadline read on a laptop in a different zone from the
+            one the page resolved is indistinguishable from a deadline in the
+            viewer's own, and this is the line they act on: miss it and the
+            proposal closes. Rendered in the SAME provider zone as the times
+            above it, so the card never shows two zones. */}
+        {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a zzz")}
       </p>
 
       {readOnly && (
@@ -252,8 +306,8 @@ export function RescheduleProposalCard({
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {role === "consultee"
-                    ? "The sessions being moved stay with your consultant, who will place them at new times."
-                    : "The released sessions stay in your allocate queue to place at new times."}
+                    ? "Your original session times go back on your calendar. If one has been booked by somebody else in the meantime, your consultant places that session at a new time instead."
+                    : "The released sessions go back where they were. Any whose original time can no longer be restored stay in your allocate queue to place at new times."}
                 </p>
               </div>
             </AlertDialogDescription>

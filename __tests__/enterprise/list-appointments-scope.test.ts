@@ -48,28 +48,43 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     }) as Record<string, unknown>;
 
     // List/detail parity: the detail page 404s any row whose organizationId
-    // isn't this org, so the list must not offer funded-elsewhere rows it
-    // cannot open. Cross-org funding visibility moved to the money views.
+    // isn't this org, so the list pins organizationId at the top level.
     expect(w.organizationId).toBe("org1");
-    expect(w.OR).toBeUndefined();
+    expect(Array.isArray(w.OR)).toBe(true);
 
-    // The property the previous version of this test was really protecting:
-    // the org arm carries NO user filter, which is why it requires
+    // The org arm carries NO user filter, which is why it requires
     // `operations.read` and why a non-operator is downgraded to `orgMember`.
     expect(JSON.stringify(w)).not.toContain('"u1"');
     expect(JSON.stringify(w)).not.toContain("userId");
   });
 
-  it("org scope no longer matches funded-elsewhere rows (#1166 ORG-8)", () => {
+  it("org scope admits unpaid, org-funded, or org-hosted rows while keeping funded-elsewhere out", () => {
     const w = buildWhere({
       scope: { kind: "org", orgId: "org1" },
       userId: "u1",
-    });
+    }) as {
+      organizationId: string;
+      OR: Array<Record<string, unknown>>;
+    };
 
-    // A row hosted by another org but funded by org1 matched the old
-    // `payment.some.organizationId` arm; the detail page then 404'd it.
-    // The predicate must not mention Payment at all any more.
-    expect(JSON.stringify(w)).not.toContain("payment");
+    expect(w.organizationId).toBe("org1");
+    expect(w.OR).toEqual(
+      expect.arrayContaining([
+        { payment: { none: {} } },
+        {
+          payment: {
+            some: {
+              organizationId: "org1",
+              paymentMethod: { in: ["WALLET", "INVOICE", "LICENSE"] },
+            },
+          },
+        },
+        { consultation: { consultationPlan: { organizationId: "org1" } } },
+        { subscription: { subscriptionPlan: { organizationId: "org1" } } },
+        { webinar: { webinarPlan: { organizationId: "org1" } } },
+        { class: { classPlan: { organizationId: "org1" } } },
+      ]),
+    );
   });
 
   it("orgMember scope pins organizationId AND filters to the user's participation (#org-appts)", () => {

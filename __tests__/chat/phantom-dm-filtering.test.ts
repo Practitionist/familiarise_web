@@ -13,6 +13,7 @@
  * host between creation and the first registration, and filtering those would
  * hide working event chats.
  */
+
 import type { Channel } from "stream-chat";
 
 import {

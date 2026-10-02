@@ -47,7 +47,11 @@ interface CheckoutApiError {
   error?: string;
   errorType?: string;
   message?: string;
-  /** Machine-readable limiter code (RATE_LIMITED on 429s). */
+  /**
+   * The limiter code (RATE_LIMITED on a 429) OR the specific refusal the route
+   * typed alongside its coarse `errorType` (SLOT_TOO_SOON, SLOT_NOT_ON_GRID —
+   * #1583 E-P1-03). Both are resolved ahead of `errorType`.
+   */
   code?: string;
 }
 
@@ -92,7 +96,17 @@ export function createHandleApiError(
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
-    const { title, description } = getErrorToast(errorType, errorMessage);
+    // #1583 E-P1-03 — `code` is the specific half of a refusal the route typed
+    // (SLOT_TOO_SOON / SLOT_NOT_ON_GRID), and `errorType` beside it is the
+    // coarse bucket. Resolving on the bucket alone titled a lead-time refusal
+    // "No Longer Available" — a claim about the listing, not about the buyer
+    // who sat on the pay page until the minute had passed. `getErrorToast`
+    // prefers the code only when the body actually typed one.
+    const { title, description } = getErrorToast(
+      errorType,
+      errorMessage,
+      errorData.code,
+    );
 
     toast({
       title,
@@ -427,7 +441,11 @@ export function createStripeCheckoutHandlers(
       // Booking-conflict errors from /api/checkout (slot taken/relinquished,
       // event expired) carry our own errorType — route them through the precise
       // toast map instead of the gateway card-decline heuristics.
-      const conflictCode = error.errorType ?? error.code;
+      // #1583 E-P1-03 — `code` first: a route that typed its refusal means the
+      // code is the specific half and `errorType` beside it is the coarse
+      // bucket, and the bucket alone titles a lead-time refusal "No Longer
+      // Available".
+      const conflictCode = error.code ?? error.errorType;
       if (
         conflictCode &&
         (Object.values(ErrorTypes) as string[]).includes(conflictCode)

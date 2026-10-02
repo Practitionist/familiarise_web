@@ -82,10 +82,15 @@ describe("scope and shape guards", () => {
     expect(supportsProposals("TRIAL")).toBe(false);
   });
 
-  it("requires a one-for-one replacement", () => {
+  // ATOMS on both sides, and the unit is the whole point (#1846). This helper
+  // used to take two ROW counts, which made a 1-hour session — one released
+  // occurrence covering two atoms, proposed as the two rows a calendar click
+  // expands into — compare 1 against 2 and fail: released and proposed, but
+  // never acceptable. A row count is not commensurable with a row count here.
+  it("requires the same COVERAGE, counted in atoms", () => {
     expect(proposalCountMatches(2, 2)).toBe(true);
-    // Fewer or more slots is a different booking, not a reschedule — it would
-    // silently change what was paid for.
+    // Fewer or more coverage is a different booking, not a reschedule — it
+    // would silently change what was paid for.
     expect(proposalCountMatches(2, 1)).toBe(false);
     expect(proposalCountMatches(2, 3)).toBe(false);
   });

@@ -71,15 +71,27 @@ export async function GET(
     // For consultations, participants include the consultant and consultee
     const participants = [];
 
-    // Add the consultee who requested the consultation
+    // Add the consultee who requested the consultation. A request that never
+    // reached a seat has no participant row, so `null` says "holds no seat"
+    // rather than implying a live one.
     if (consultation.requestedBy.user) {
-      participants.push(consultation.requestedBy.user);
+      participants.push({
+        ...consultation.requestedBy.user,
+        participantStatus: null,
+        participantRole: null,
+      });
     }
 
     // Add every seat holder on the appointment (typically the consultant)
     if (consultation.appointment) {
       const slotUsers = consultation.appointment.participants.map(
-        (participant) => participant.user,
+        (participant) => ({
+          ...participant.user,
+          // Picked explicitly: the row also carries paymentId and
+          // organizationId, which this roster must not disclose.
+          participantStatus: participant.status,
+          participantRole: participant.role,
+        }),
       );
 
       // Get unique participants by user ID (avoid duplicates)

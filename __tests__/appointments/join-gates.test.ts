@@ -310,7 +310,7 @@ describe("#1270 — the consultee adapter joins through the shared hook", () => 
     "components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx",
   );
   const eventActions = read(
-    "components/appointments/consultee/useEventActions.ts",
+    "components/appointments/consultee/useEventActions.tsx",
   );
 
   it("awaits the video client instead of reading it synchronously", () => {

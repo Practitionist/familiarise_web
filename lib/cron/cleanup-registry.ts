@@ -2,6 +2,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import {
   cleanupRoute,
   parseLimitParam,
+  parseLimitParamOrDefault,
   statusFor,
 } from "@/lib/cron/cleanup-route";
 import { goHref } from "@/lib/dashboard/go";
@@ -47,6 +48,25 @@ async function notifyConsultantsOfExpiringRecordings(
     }),
   );
 }
+
+// Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
+// overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
+/** Sessions per reminder window; each costs a claim, a bell and an email. */
+const MAX_REMINDER_SESSIONS_PER_WINDOW = 25;
+/** Parents per pass and slot outcomes per pass; one Stream report each. */
+const MAX_AUTO_COMPLETE_PER_PASS = 25;
+/** Candidates per run; each is checked against a Stream call report. */
+const MAX_NO_SHOW_CANDIDATES = 10;
+/** Rows per stale-request arm; the refund arm calls the gateway per row. */
+const MAX_STALE_REQUESTS_PER_ARM = 20;
+/** Slot rows the stale-RESCHEDULED arm may release; a pure row-lock pass. */
+const MAX_STALE_SLOT_RELEASES = 200;
+/** Unpaid trials per run; the unanswered arm refunds per payment. */
+const MAX_UNPAID_TRIALS = 25;
+/** Lapsed proposals per run; each takes the appointment lock and a restore. */
+const MAX_RESCHEDULE_PROPOSALS = 25;
+/** Tentative slots per run; a cheap soft cancel behind an expensive read. */
+const MAX_TENTATIVE_SLOTS = 200;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -188,11 +208,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "appointment-reminders": () =>
       cleanupRoute({
         job: "appointment-reminders",
-        run: async () => {
+        run: async (req) => {
           const { sendAppointmentReminders } = await import(
             "@/scripts/appointments/send-appointment-reminders"
           );
-          return sendAppointmentReminders();
+          return sendAppointmentReminders({
+            maxPerWindow: parseLimitParamOrDefault(
+              req,
+              MAX_REMINDER_SESSIONS_PER_WINDOW,
+            ),
+          });
         },
         summarize: (r) => ({
           reminders24h: r.reminders24h,
@@ -242,11 +267,18 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auto-complete-appointments": () =>
       cleanupRoute({
         job: "auto-complete-appointments",
-        run: async () => {
+        run: async (req) => {
           const { autoCompleteAppointments } = await import(
             "@/scripts/appointments/auto-complete-appointments"
           );
-          return autoCompleteAppointments();
+          const limit = parseLimitParamOrDefault(
+            req,
+            MAX_AUTO_COMPLETE_PER_PASS,
+          );
+          return autoCompleteAppointments({
+            maxParents: limit,
+            maxSlotOutcomes: limit,
+          });
         },
         summarize: (r) => ({
           webinarsCompleted: r.webinarsCompleted,
@@ -273,11 +305,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "detect-consultant-no-shows": () =>
       cleanupRoute({
         job: "detect-consultant-no-shows",
-        run: async () => {
+        run: async (req) => {
           const { detectConsultantNoShows } = await import(
             "@/scripts/appointments/detect-consultant-no-shows"
           );
-          return detectConsultantNoShows();
+          return detectConsultantNoShows({
+            maxCandidates: parseLimitParamOrDefault(
+              req,
+              MAX_NO_SHOW_CANDIDATES,
+            ),
+          });
         },
         summarize: (r) => ({
           detected: r.detected,
@@ -334,11 +371,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-stale-requests": () =>
       cleanupRoute({
         job: "expire-stale-requests",
-        run: async () => {
+        run: async (req) => {
           const { expireStaleRequests } = await import(
             "@/scripts/appointments/expire-stale-requests"
           );
-          return expireStaleRequests();
+          return expireStaleRequests({
+            limits: {
+              maxRequests: parseLimitParamOrDefault(
+                req,
+                MAX_STALE_REQUESTS_PER_ARM,
+              ),
+              maxSlotReleases: MAX_STALE_SLOT_RELEASES,
+            },
+          });
         },
         summarize: (r) => ({
           consultationsExpired: r.consultationsExpired,
@@ -353,11 +398,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-unpaid-trials": () =>
       cleanupRoute({
         job: "expire-unpaid-trials",
-        run: async () => {
+        run: async (req) => {
           const { expireUnpaidTrials } = await import(
             "@/scripts/trials/expire-unpaid-trials"
           );
-          return expireUnpaidTrials();
+          return expireUnpaidTrials({
+            maxTrials: parseLimitParamOrDefault(req, MAX_UNPAID_TRIALS),
+          });
         },
         summarize: (r) => ({ trialsExpired: r.trialsExpired }),
         failureMessage: "Failed to expire unpaid trial sessions",
@@ -769,11 +816,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reschedule-proposals": () =>
       cleanupRoute({
         job: "expire-reschedule-proposals",
-        run: async () => {
+        run: async (req) => {
           const { expireRescheduleProposals } = await import(
             "@/scripts/appointments/expire-reschedule-proposals"
           );
-          return expireRescheduleProposals();
+          return expireRescheduleProposals({
+            maxPerRun: parseLimitParamOrDefault(req, MAX_RESCHEDULE_PROPOSALS),
+          });
         },
         summarize: (r) => ({
           proposalsExpired: r.proposalsExpired,
@@ -1090,11 +1139,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "tentative-occurrences": () =>
       cleanupRoute({
         job: "cleanup-tentative-occurrences",
-        run: async () => {
+        run: async (req) => {
           const { cleanupTentativeOccurrences } = await import(
             "@/scripts/appointments/cleanup-tentative-occurrences"
           );
-          return cleanupTentativeOccurrences();
+          return cleanupTentativeOccurrences({
+            maxPerRun: parseLimitParamOrDefault(req, MAX_TENTATIVE_SLOTS),
+          });
         },
         summarize: (r) => ({
           slotsReleased: r.slotsReleased,

@@ -31,7 +31,10 @@ import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  renewAppointmentLock,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 
 import { stageNoticesForAppointmentHolds } from "./backup-interest";
 import { releaseParticipant } from "./participants";
@@ -387,28 +390,39 @@ export async function abandonBooking(args: {
 
   // Lock order: the appointment atom first, then the transaction (#1319), the
   // same serialisation the cancel route and every lifecycle writer take.
-  const outcome = await withAppointmentLock(target.appointmentId, () =>
-    withSerializableRetry(() =>
-      prisma.$transaction(
-        (tx): Promise<TxOutcome> => {
-          const { requestId } = target;
-          if (target.kind === "webinar" || target.kind === "class") {
-            return abandonSeat(tx, target);
-          }
-          if (!requestId) {
-            return Promise.resolve({ ok: false, code: "NOT_ABANDONABLE" });
-          }
-          return target.kind === "trial"
-            ? abandonTrial(tx, { ...target, requestId })
-            : abandonRequest(tx, { ...target, requestId });
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          maxWait: 10_000,
-          timeout: 15_000,
-        },
-      ),
-    ),
+  //
+  // The retry loop OUTLIVES the fixed 75 s grant (4 × (10 s maxWait + 15 s
+  // timeout) ≈ 100 s), so each attempt re-grants it — the same per-attempt
+  // renewal the approval path takes via `renewApprovalLock` (#1319). A lapsed
+  // grant is not corruption: every CAS below carries its state and money
+  // predicates in the WHERE, so a second abandon running concurrently matches
+  // zero rows and answers NOT_ABANDONABLE / ALREADY_PAID. What it would cost is
+  // the serialisation, which is the whole point of this key.
+  const outcome = await withAppointmentLock(
+    target.appointmentId,
+    async (lock) =>
+      withSerializableRetry(async () => {
+        await renewAppointmentLock(lock);
+        return prisma.$transaction(
+          (tx): Promise<TxOutcome> => {
+            const { requestId } = target;
+            if (target.kind === "webinar" || target.kind === "class") {
+              return abandonSeat(tx, target);
+            }
+            if (!requestId) {
+              return Promise.resolve({ ok: false, code: "NOT_ABANDONABLE" });
+            }
+            return target.kind === "trial"
+              ? abandonTrial(tx, { ...target, requestId })
+              : abandonRequest(tx, { ...target, requestId });
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
+        );
+      }),
   );
   if (!outcome.ok) return outcome;
 

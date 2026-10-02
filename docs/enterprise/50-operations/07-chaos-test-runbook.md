@@ -158,7 +158,7 @@ Serializable checkout transaction.
 Invariants: exactly one winner, losers receive a clean 4xx ("Webinar is
 full"), zero 5xx, and the confirmed participant count never exceeds
 `maxParticipants`. This is a capacity regression test for the #440
-`slot_no_confirmed_overlap` exclusion constraint and the last-seat path.
+`occurrence_no_confirmed_overlap` exclusion constraint and the last-seat path.
 
 **14c. Enterprise allocation races (staged).** Seat/program-assignment
 over-allocation (N+1 concurrent assignments against N seats), invoice

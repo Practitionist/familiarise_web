@@ -201,6 +201,23 @@ export const sendAppointmentRescheduledEmail =
 
 export type ReminderWindowLabel = "24h" | "1h";
 
+/**
+ * #1583 P1 — the `FailedEmail.emailType` the reminder twin stages under, and
+ * the `entityRef` builder beside it. The reminder sweep reads BOTH back to
+ * decide which slots still owe a notice, so a literal duplicated at the reader
+ * would drift from the writer and silently turn the reader's guard into a
+ * no-op. Same shape as SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE below.
+ */
+export const APPOINTMENT_REMINDER_EMAIL_TYPE = "APPOINTMENT_REMINDER";
+
+/** The `FailedEmail.entityRef` for one appointment+window's reminder email. */
+export function appointmentReminderEntityRef(
+  appointmentId: string,
+  windowLabel: ReminderWindowLabel,
+): string {
+  return `appointment:${appointmentId}:${windowLabel}`;
+}
+
 const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
   "24h": "tomorrow",
   "1h": "in about an hour",
@@ -226,9 +243,12 @@ export const sendAppointmentReminderEmail =
     return {
       userIds: args.userIds,
       spec: {
-        emailType: "APPOINTMENT_REMINDER",
+        emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
         category: "appointments",
-        entityRef: `appointment:${args.appointmentId}:${args.windowLabel}`,
+        entityRef: appointmentReminderEntityRef(
+          args.appointmentId,
+          args.windowLabel,
+        ),
         subject: () => `Reminder: your ${type} is coming up`,
         render: (r) =>
           React.createElement(AppointmentReminderEmail, {

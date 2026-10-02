@@ -70,7 +70,7 @@ npx prisma migrate diff \
 **This step is specific to this repository and it is the one that is easy to
 miss.** The Prisma schema cannot express constraint triggers, `CHECK`
 constraints or partial indexes, so `migrate diff` does not emit them. A database
-rebuilt from a baseline without them comes up with no `slot_no_confirmed_overlap`
+rebuilt from a baseline without them comes up with no `occurrence_no_confirmed_overlap`
 and none of the money invariants — structurally identical, and missing every
 guarantee that stops a double booking or an unbalanced payment.
 

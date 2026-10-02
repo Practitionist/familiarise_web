@@ -130,7 +130,12 @@ export async function GET(request: NextRequest) {
       // Explicit org / all (privileged + absent falls through → no filter).
       const memberships = await prisma.membership.findMany({
         where: { userId: session.user.id, status: "ACTIVE" },
-        select: { organizationId: true, status: true, role: true },
+        select: {
+          organizationId: true,
+          status: true,
+          role: true,
+          organization: { select: { status: true } },
+        },
       });
       const scopeResolution = resolveOrgScope({
         raw: rawOrgScope,

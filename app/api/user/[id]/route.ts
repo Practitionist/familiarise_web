@@ -226,27 +226,31 @@ export async function DELETE(
     // Restrict-delete through it), not on Payment — a consultant with payout
     // history but no payer-side rows must also take the scrub path, or the
     // hard delete 500s on the first Restrict (#1205-triage).
-    const [paymentCount, referralCreditCount, profile] = await Promise.all([
-      prisma.payment.count({ where: { userId: id } }),
-      prisma.referralCredit.count({ where: { userId: id } }),
-      prisma.consultantProfile.findFirst({
-        where: { userId: id },
-        select: {
-          _count: {
-            select: { earnings: true, payouts: true, tdsRecords: true },
+    // A held seat counts too: AppointmentParticipant.user is Restrict, and the
+    // delivery record is retained like the payment record, so it scrubs.
+    const [paymentCount, referralCreditCount, seatCount, profile] =
+      await Promise.all([
+        prisma.payment.count({ where: { userId: id } }),
+        prisma.referralCredit.count({ where: { userId: id } }),
+        prisma.appointmentParticipant.count({ where: { userId: id } }),
+        prisma.consultantProfile.findFirst({
+          where: { userId: id },
+          select: {
+            _count: {
+              select: { earnings: true, payouts: true, tdsRecords: true },
+            },
           },
-        },
-      }),
-    ]);
+        }),
+      ]);
     const consultantMoneyCount = profile
       ? profile._count.earnings +
         profile._count.payouts +
         profile._count.tdsRecords
       : 0;
-    const hasMoneyHistory =
-      paymentCount + referralCreditCount + consultantMoneyCount > 0;
+    const hasRetainedHistory =
+      paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0;
 
-    if (hasMoneyHistory) {
+    if (hasRetainedHistory) {
       await scrubUser(prisma, id);
       // Erasure propagates to Novu (never throws; Sentry-reported). The local
       // scrub is committed either way; an unacknowledged vendor delete is

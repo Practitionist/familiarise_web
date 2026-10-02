@@ -44,7 +44,7 @@ column at reset time.
    `--accept-data-loss` rather than through `npm run db:push`. The sidecars
    and the assertion then run as their own commands; Prisma 7 has no
    `--skip-generate` flag, so a schema push can no longer silently leave
-   `slot_no_confirmed_overlap` and the money CHECK constraints behind.
+   `occurrence_no_confirmed_overlap` and the money CHECK constraints behind.
 
    ```sh
    npx prisma db push --accept-data-loss

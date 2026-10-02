@@ -30,8 +30,26 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
  * tombstoned by status — Razorpay orders cannot be voided, and a capture that
  * lands on an EXPIRED Payment takes the handler's `captured_after_release`
  * refund arm — and the tentative holds are released by status, never deleted.
+ *
+ * The two reasons SHARE this body but not their terminal word. A window that
+ * ran out is EXPIRED. A consultant deliberately taking back a live, still-payable
+ * approval is a party with standing ending a booking, which is CANCELLED —
+ * reporting it as EXPIRED told the buyer "Expired" on a badge whose own reason
+ * string said "The expert withdrew the approval". REJECTED is the consultant
+ * *declining*, which this is not, so CANCELLED is the only honest third option.
  */
 export type LapseReason = "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT";
+
+/**
+ * The terminal status each reason earns. EXPIRED is reserved for a lapsed
+ * window (doctrine rule 6); WITHDRAWN_BY_CONSULTANT is a deliberate act and is
+ * CANCELLED. Both are legal from APPROVED_PENDING_PAYMENT — the map's
+ * CANCELLABLE_FROM includes it — so this chooses a word, never a new edge.
+ */
+const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
+  PAYMENT_LAPSED: AppointmentStatus.EXPIRED,
+  WITHDRAWN_BY_CONSULTANT: AppointmentStatus.CANCELLED,
+};
 
 export interface LapseApprovedRequestArgs {
   kind: "consultation" | "subscription";
@@ -59,7 +77,9 @@ export async function lapseApprovedRequest(
   const meta = {
     actorUserId: args.actorUserId,
     reason: args.reason,
-    to: AppointmentStatus.EXPIRED,
+    to: LAPSED_TO[args.reason],
+    // Narrower than either target's map: only the live, still-payable shape
+    // moves, so a withdrawal can never reach a paid or already-terminal row.
     fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
     data: { pendingPaymentUrl: null },
   };
@@ -158,12 +178,23 @@ export interface WithdrawActor {
   privileged: boolean;
 }
 
-/** `withAppointmentLock`'s shape, injected: the Redis client behind it does
- *  not load under jsdom, and the sweeps import this module. */
+/**
+ * `withAppointmentLock`'s shape, injected: the Redis client behind it does not
+ * load under jsdom, and the sweeps import this module. The callback is handed
+ * the grant so a RETRY LOOP can re-grant it per attempt — see `renewLock`.
+ */
 export type AppointmentLock = <T>(
   appointmentId: string,
-  fn: () => Promise<T>,
+  fn: (lock: unknown) => Promise<T>,
 ) => Promise<T>;
+
+/**
+ * How a withdrawn approval's CAS is re-serialised between retries. Injected
+ * beside the lock for the same reason the lock is: the Redis module must stay
+ * out of this file so the sweeps that share `lapseApprovedRequest` load without
+ * it. Production passes `renewAppointmentLock`; a test passes a spy.
+ */
+export type RenewInjectedLock = (lock: unknown) => Promise<void>;
 
 /** The repo's typed-error convention (lock 423 / 503, IllegalTransition 409). */
 function isTypedHttpError(
@@ -184,6 +215,10 @@ function isTypedHttpError(
  * request first through the single writer) — nothing was written then. Lock
  * outcomes keep their 423 / 503 codes. `next/server` and the Redis lock stay
  * out of this module so the sweeps that share the core still load under jsdom.
+ *
+ * Answers `{ status: "CANCELLED" }`: a consultant with standing ended a live
+ * booking, which is what the row now says too. It used to answer — and write —
+ * `EXPIRED`, which is reserved for a window that ran out.
  */
 /** #1775 — the ownership read: the row and its plan, or a 404 / 403 refusal. */
 async function readOwnedRequest(
@@ -233,12 +268,25 @@ export async function withdrawApproval(args: {
   id: string;
   actor: WithdrawActor;
   lock: AppointmentLock;
-}): Promise<{ status: "EXPIRED" }> {
+  /**
+   * Re-grants `lock` at the top of every retry attempt. Required beside the lock
+   * rather than defaulted, so the Redis renewal cannot be forgotten here: the
+   * retry loop outlives the grant (see `run`).
+   */
+  renewLock: RenewInjectedLock;
+}): Promise<{ status: "CANCELLED" }> {
   const { row, plan } = await readOwnedRequest(args.kind, args.id, args.actor);
 
-  const run = () =>
-    withSerializableRetry(() =>
-      prisma.$transaction(
+  const run = (lock: unknown) =>
+    withSerializableRetry(async () => {
+      // 4 attempts × (10 s maxWait + 30 s timeout) ≈ 160 s outlive the fixed
+      // 75 s grant, so each attempt re-grants it — the same shape the approval
+      // route uses through `renewApprovalLock` (#1319). Not renewing here only
+      // ever cost serialisation: the request CAS below carries the money
+      // predicate in its WHERE, so a second withdraw running concurrently
+      // matches zero rows and answers REQUEST_CHANGED_ELSEWHERE.
+      await args.renewLock(lock);
+      return prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
             kind: args.kind,
@@ -250,15 +298,16 @@ export async function withdrawApproval(args: {
           ...SLOT_TRANSITION_TX_OPTIONS,
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         },
-      ),
-    );
+      );
+    });
   // A subscription may have no wrapper yet (#1554); then there is no atom to
-  // contend for and nothing held.
+  // contend for. The attempt still runs — one CAS, and it needs no renewal,
+  // which the production helper answers as "no grant" for a null lock.
   let moved: 0 | 1;
   try {
     ({ moved } = row.appointment
       ? await args.lock(row.appointment.id, run)
-      : await run());
+      : await run(null));
   } catch (error) {
     if (isTypedHttpError(error)) {
       throw new Refusal({
@@ -295,5 +344,5 @@ export async function withdrawApproval(args: {
       reason: WITHDRAWN_BY_CONSULTANT_REASON,
     });
   }
-  return { status: "EXPIRED" };
+  return { status: "CANCELLED" };
 }

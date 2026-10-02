@@ -78,12 +78,61 @@ describe("cron-tick targetRequest", () => {
     });
   });
 
-  // #1583 E-P0-04 — the two booking sweeps with per-row outbox staging or
-  // gateway refunds get the 20 s tier; the other three keep the default.
-  it("gives the reminders and stale-request sweeps 20 s, the rest 15 s", () => {
+  // Booking sweeps with per-row outbox staging or gateway refunds get the 20 s
+  // tier; the other two keep the 15 s default.
+  it("gives the outbox-staging and refund sweeps 20 s, the rest 15 s", () => {
     expect(targetRequest(base, "appointment-reminders").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-stale-requests").timeoutMs).toBe(20_000);
+    expect(targetRequest(base, "reschedule-proposals").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-unpaid-trials").timeoutMs).toBe(15_000);
+    expect(targetRequest(base, "tentative-occurrences").timeoutMs).toBe(15_000);
+  });
+
+  // #1583 P1 — the five booking sweeps used to be handed `?limit=50` and
+  // discard it, because their `run` callbacks took no request. Every one of
+  // them is now bounded, and the numbers are asserted rather than trusted:
+  // each is far below DEFAULT_LIMIT precisely because the per-row cost is a
+  // transaction (and for two of them a gateway round trip), and
+  // `expire-stale-requests` is a per-ARM figure across seven arms.
+  it("bounds every one of the five booking sweeps with an explicit bite", () => {
+    expect(targetRequest(base, "appointment-reminders")).toEqual({
+      url: "https://site.test/api/cleanup/appointment-reminders?limit=25",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "expire-stale-requests")).toEqual({
+      url: "https://site.test/api/cleanup/expire-stale-requests?limit=20",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "reschedule-proposals")).toEqual({
+      url: "https://site.test/api/cleanup/reschedule-proposals?limit=25",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "tentative-occurrences")).toEqual({
+      url: "https://site.test/api/cleanup/tentative-occurrences?limit=200",
+      timeoutMs: 15_000,
+    });
+    expect(targetRequest(base, "expire-unpaid-trials")).toEqual({
+      url: "https://site.test/api/cleanup/expire-unpaid-trials?limit=25",
+      timeoutMs: 15_000,
+    });
+  });
+
+  // #1775 — the two money-gating session-outcome jobs are ON the ticker. They
+  // were not, and the docs recorded that as deliberate ("not
+  // latency-sensitive"). The code does not support that: one releases an
+  // earnings hold and opens the feedback window an hour after a session ends,
+  // the other issues a 100% refund, and their only other driver is a `cron:`
+  // schedule ADR 22 measured at ~100 minutes. Twenty-five and ten because each
+  // candidate costs a Stream call-report round trip.
+  it("drives the earnings release and the no-show refund from the ticker", () => {
+    expect(targetRequest(base, "auto-complete-appointments")).toEqual({
+      url: "https://site.test/api/cleanup/auto-complete-appointments?limit=25",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "detect-consultant-no-shows")).toEqual({
+      url: "https://site.test/api/cleanup/detect-consultant-no-shows?limit=10",
+      timeoutMs: 20_000,
+    });
   });
 
   // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
@@ -173,11 +222,11 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("caps every 5-minute tick across the hour to 5–7 targets (#1926)", () => {
+  it("caps every 5-minute tick across the hour to 5–8 targets (#1926)", () => {
     for (const minute of [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]) {
       const due = dueTargets(at(minute));
       expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(7);
+      expect(due.length).toBeLessThanOrEqual(8);
     }
   });
 
@@ -195,6 +244,22 @@ describe("cron-tick dueTargets cadence", () => {
     expect(dueTargets(at(5))).toContain("drain-notification-outbox");
     expect(dueTargets(at(10))).not.toContain("drain-notification-outbox");
     expect(dueTargets(at(15))).toContain("drain-notification-outbox");
+  });
+
+  // #1775 — the two session-outcome jobs are 30-minute, not 15. Both are
+  // latency-relevant but not minute-relevant: auto-complete's own buffer is one
+  // hour after a session ends, and the no-show detector's grace window is
+  // measured in tens of minutes, so a 15-minute slot would buy detection
+  // latency neither deadline is sensitive to while doubling the Stream
+  // call-report volume. The #1792 Upstash budget is the line item.
+  // Their phases keep them off the canary's :00/:30 ticks and off each other.
+  it("fires the earnings release and the no-show refund on staggered 30-minute slots", () => {
+    const firing = (name: string) =>
+      [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((minute) =>
+        dueTargets(at(minute)).includes(name),
+      );
+    expect(firing("auto-complete-appointments")).toEqual([15, 45]);
+    expect(firing("detect-consultant-no-shows")).toEqual([20, 50]);
   });
 
   it("fires the Sentry ingest canary every 30 minutes, not every tick", () => {

@@ -650,6 +650,57 @@ CREATE TRIGGER review_revision_immutable
   EXECUTE FUNCTION assert_review_revision_immutable();
 
 -- SPLIT
+-- #1854 — UsageLedgerEntry is the append-only ledger the entitlement meters are
+-- DERIVED from: `reverseBookingUtilization` computes "how much of this booking
+-- has already been reversed" by summing its negative rows, and
+-- reconcile-ledgers.ts asserts Σ engagementsConsumed against
+-- ProgramAssignment.engagementsUsed nightly. Both are only true while the rows
+-- cannot be edited. A DELETE (or an UPDATE) passed silently, and the next
+-- reversal re-released a seat the org had already paid back.
+--
+-- Nothing in the codebase writes anything but `create` / `aggregate` on this
+-- table (the forward and reverse paths both APPEND, which is what makes the
+-- partial-reversal clamp work), so a raise trigger costs nothing — the same
+-- argument, and the same shape, as ledger_entry_immutable in
+-- ledger-triggers.sql.
+--
+-- NOT staged behind the banner below, unlike the CHECKs there: a trigger fires
+-- on FUTURE writes and never scans existing rows, so it cannot fail to apply
+-- against pre-reset data. Only a constraint that validates what is already in
+-- the table needs the reset window.
+DROP TRIGGER IF EXISTS usage_ledger_entry_immutable ON "UsageLedgerEntry";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_usage_ledger_entry_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'UsageLedgerEntry % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER usage_ledger_entry_immutable
+  BEFORE UPDATE OR DELETE ON "UsageLedgerEntry"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_usage_ledger_entry_immutable();
+
+-- SPLIT
+-- BookingStatusHistory is append-only (reschedule-restore and response-rate read
+-- it as truth). A trigger never scans existing rows, so it ships live, not staged.
+DROP TRIGGER IF EXISTS booking_status_history_immutable ON "BookingStatusHistory";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_booking_status_history_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'BookingStatusHistory % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+-- UPDATE OF lists only the audit columns: the three FKs are ON DELETE SET NULL,
+-- which Postgres runs as an UPDATE of the FK column and must not be refused.
+CREATE TRIGGER booking_status_history_immutable
+  BEFORE UPDATE OF "id", "entity", "entityId", "fromStatus", "toStatus", "reason", "createdAt"
+  OR DELETE ON "BookingStatusHistory"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_booking_status_history_immutable();
+
+-- SPLIT
 -- ============================================================================
 -- APPLIED AT THE PRE-MVP RESET (#1169 decision 8; #1554 uncommented them).
 -- Each of these could fail against pre-reset data, so they shipped commented

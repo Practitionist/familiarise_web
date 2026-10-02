@@ -102,6 +102,13 @@ import {
   TWENTY_FOUR_HOURS_IN_MS,
 } from "./slotTimeUtils";
 import {
+  buildAvailabilityIndex,
+  createSearchBudget,
+  indexCoversAtom,
+  type AvailabilityInterval,
+  type SearchBudget,
+} from "./availability-search";
+import {
   utcStartDayIndex,
   weeklyRowDurationMinutes,
 } from "@/utils/schedule/weekly-projection";
@@ -146,6 +153,22 @@ type AppointmentWithSlots = Appointment & {
 const MAX_CANDIDATE_STARTS_PER_ROW = 48;
 
 /**
+ * Wall-clock ceiling on ONE availability search.
+ *
+ * The search is O(window × rows) and runs outside the write transaction, so an
+ * unbounded walk is the only thing in this path that can cross the ~25 s edge
+ * ceiling (a long scheduling period over a consultant with many published rows)
+ * — and because the `auto-allocate` grant behind it is a fixed 150 s TTL that is
+ * never renewed, an overrun also runs the search unprotected. Ten seconds leaves
+ * the rest of the request (the validator read, the write transaction, the
+ * notices) its budget; past it the walk stops and answers with the same
+ * SLOT_SHORTAGE a full calendar produces, which `allowPartial` already knows how
+ * to turn into "place what fits". Mirrors `TOP_UP_TIME_BUDGET_MS`
+ * (scripts/appointments/reconcile-occurrence-availability.ts).
+ */
+const ALLOCATOR_SEARCH_TIME_BUDGET_MS = 10_000;
+
+/**
  * #1194 — who is being scheduled, carried down the row walk so a truncated
  * availability row names a consultant and an event instead of appearing as an
  * anonymous "no slots available".
@@ -161,6 +184,13 @@ interface AllocationWalkContext {
    * breadcrumb on the Sentry scope — losing the context the report exists for.
    */
   reportedTruncations?: Set<string>;
+  /**
+   * The merged custom-availability index, built on first use. Keyed by object
+   * identity because `fetchEventData` mints a fresh consultant per allocation:
+   * the index can never outlive the rows it was built from, and the scan it
+   * replaces ran once per candidate.
+   */
+  customIndex?: AvailabilityInterval[];
 }
 
 /**
@@ -853,6 +883,44 @@ export class SchedulingService {
     return null;
   }
 
+  /**
+   * Two definitions this file used to answer three ways, each now said once.
+   *
+   * `liveOccurrenceWhere` / `isDeadOccurrence` are canonical; these are their
+   * narrow companions for the two concepts the allocator counts.
+   */
+
+  /**
+   * A tentative row the event STILL CARRIES — the unit #1012's stale-tab guard
+   * counts, and the unit every client counts with (the request inbox and the
+   * appointment detail both read occurrences filtered `deletedAt: null`).
+   *
+   * Deliberately NOT `isDeadOccurrence`: a reschedule releases a row IN PLACE as
+   * `isTentative: true` + `completionStatus: RESCHEDULED`, which is exactly the
+   * row the reschedule is replacing. Excluding completionStatus would drop the
+   * very rows the guard exists to protect and 409 every reschedule as stale.
+   * A tombstoned row is the one both sides must agree to ignore: the client never
+   * sees it, so counting it only ever produced a false conflict.
+   * `isReleasedForReschedule` stays the stricter predicate for the narrower
+   * "released" concept (isReschedule, top-up gating, requiredSlots).
+   */
+  private static isCarriedTentativeOccurrence(
+    // Structural, and only the two fields the body reads. Typed against the
+    // whole `AppointmentOccurrence` this predicate could not be passed to a
+    // caller that selects a narrower occurrence shape — the in-transaction
+    // re-read picks four columns, not forty.
+    occurrence: { isTentative: boolean | null; deletedAt: Date | null },
+  ): boolean {
+    return !!occurrence.isTentative && !occurrence.deletedAt;
+  }
+
+  /** A CONFIRMED row the calendar still shows: not tentative, not dead. */
+  private static isLiveConfirmedOccurrence(
+    occurrence: AppointmentWithSlots["occurrences"][number],
+  ): boolean {
+    return !occurrence.isTentative && !isDeadOccurrence(occurrence);
+  }
+
   private static async assertNoConfirmedSlots(
     db: PrismaLike,
     eventType: EventType,
@@ -861,8 +929,13 @@ export class SchedulingService {
     const relationField = this.getEventRelationField(eventType);
     const confirmed = await db.appointmentOccurrence.count({
       where: {
+        // The same predicate assertHeldSessionCountInTx below already used:
+        // `isTentative: false` alone counted a CONFIRMED-but-voided row (a
+        // cancelled or rescheduled-away session that was not tombstoned) as a
+        // live booking, so an event whose sessions had all been released could
+        // not be freshly allocated from a dialog.
+        ...liveOccurrenceWhere,
         isTentative: false,
-        deletedAt: null,
         appointment: {
           [`${relationField}Id`]: eventId,
           deletedAt: null,
@@ -977,6 +1050,10 @@ export class SchedulingService {
    * write txn (e.g. a second tab that raced the lock, or useRequestedSlots).
    * Re-read with `tx`, behind the per-event advisory lock, before
    * delete/recreate.
+   *
+   * The count itself is `tentativeSlotCountOf`, the same function the pre-txn
+   * read uses. This used to be a third copy of the same reduce, which is how the
+   * three came to disagree about what a tentative row is.
    */
   private static async assertExpectedTentativeSlotCountInTx(
     tx: Tx,
@@ -993,13 +1070,10 @@ export class SchedulingService {
         } as Prisma.AppointmentWhereInput,
         include: { occurrences: true },
       });
-    const tentativeSlotCount = existingAppointments.reduce(
-      (count, appointment) =>
-        count +
-        appointment.occurrences.filter((slot) => slot.isTentative).length,
-      0,
+    this.assertExpectedTentativeSlotCount(
+      this.tentativeSlotCountOf(existingAppointments),
+      expected,
     );
-    this.assertExpectedTentativeSlotCount(tentativeSlotCount, expected);
   }
 
   /**
@@ -1264,14 +1338,21 @@ export class SchedulingService {
     }
   }
 
-  /** Tentative ROWS, the unit #1012's stale-tab precondition compares. */
+  /**
+   * Tentative ROWS the event still carries, the unit #1012's stale-tab
+   * precondition compares and the unit the client counts with. One definition
+   * (`isCarriedTentativeOccurrence`) for the pre-txn read, the in-txn re-read and
+   * both mode entry points that used to inline the same filter.
+   */
   private static tentativeSlotCountOf(
     appointments: AppointmentWithSlots[],
   ): number {
     return appointments.reduce(
       (count, appointment) =>
         count +
-        appointment.occurrences.filter((slot) => slot.isTentative).length,
+        appointment.occurrences.filter((row) =>
+          this.isCarriedTentativeOccurrence(row),
+        ).length,
       0,
     );
   }
@@ -1555,16 +1636,11 @@ export class SchedulingService {
       // is what the page's expectedTentativeSlotCount is measured in.
       const existingNonTentativeSlotCount =
         this.confirmedIntervalsOf(existingAppointments);
-      const tentativeSlotCount = existingAppointments.reduce(
-        (count, appointment) =>
-          count +
-          appointment.occurrences.filter((slot) => slot.isTentative).length,
-        0,
-      );
       // #1012 — before any delete+recreate, confirm the page's view of the
-      // tentative set still matches the database.
+      // tentative set still matches the database. Same predicate as the in-txn
+      // re-read (see tentativeSlotCountOf).
       this.assertExpectedTentativeSlotCount(
-        tentativeSlotCount,
+        this.tentativeSlotCountOf(existingAppointments),
         expectedTentativeSlotCount,
       );
       // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
@@ -1632,7 +1708,7 @@ export class SchedulingService {
       // cannot turn the shortfall into a fraction.
       const existingConfirmedSessionCount = existingAppointments
         .flatMap((a) => a.occurrences)
-        .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
+        .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
       // #1766 — a subscription with held sessions is ALWAYS additive: the
       // next cycle appends; the delete-and-replan path is for classes only.
       const isTopUp =
@@ -2278,12 +2354,8 @@ export class SchedulingService {
           include: { occurrences: true },
         });
 
-      const tentativeSlotCount = existingAppointments.reduce(
-        (count, appointment) =>
-          count +
-          appointment.occurrences.filter((slot) => slot.isTentative).length,
-        0,
-      );
+      const tentativeSlotCount =
+        this.tentativeSlotCountOf(existingAppointments);
       // #1012 — before any delete+recreate, confirm the page's view of the
       // tentative set still matches the database.
       this.assertExpectedTentativeSlotCount(
@@ -2303,7 +2375,7 @@ export class SchedulingService {
       // next cycle is being appended, so nothing is deleted or excluded.
       const existingConfirmedSessionCount = existingAppointments
         .flatMap((a) => a.occurrences)
-        .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
+        .filter((row) => this.isLiveConfirmedOccurrence(row)).length;
       const isTopUp = this.isSubscriptionTopUp(
         eventType,
         existingConfirmedSessionCount,
@@ -2855,7 +2927,9 @@ export class SchedulingService {
           const liveTentativeCount = liveRows.reduce(
             (count, appointment) =>
               count +
-              appointment.occurrences.filter((o) => o.isTentative).length,
+              appointment.occurrences.filter(
+                SchedulingService.isCarriedTentativeOccurrence,
+              ).length,
             0,
           );
           if (
@@ -3033,6 +3107,7 @@ export class SchedulingService {
   private static isWithinAvailability(
     candidate: Date,
     consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
   ): boolean {
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
       const candidateDay = candidate.getUTCDay();
@@ -3050,19 +3125,39 @@ export class SchedulingService {
           slot.utcOffsetMinutes,
         ),
       );
-    } else {
-      // CUSTOM schedule: candidate must fall within a specific date range
-      const thirtyMinMs = 30 * 60 * 1000;
-      return consultant.availabilityWindowsCustom.some((slot) => {
-        const slotStart = new Date(slot.startsAt);
-        const slotEnd = new Date(slot.endsAt);
-
-        return (
-          candidate >= slotStart &&
-          candidate.getTime() + thirtyMinMs <= slotEnd.getTime()
-        );
-      });
     }
+    // CUSTOM schedule: the candidate's own atom must fit inside ONE published
+    // range. That used to be a linear `.some()` with two `new Date()` per row per
+    // call, run once per candidate start × row × day of the window — the reason a
+    // consultant with a few hundred published rows could push this past the edge
+    // ceiling. The merged index is built once per allocation (below) and then
+    // binary-searched, which is exactly equivalent: a contiguous atom lies inside
+    // a union of ranges if and only if it lies inside one connected component.
+    return indexCoversAtom(
+      this.customAvailabilityIndex(consultant, walk),
+      candidate.getTime(),
+    );
+  }
+
+  /**
+   * The consultant's custom rows as one merged interval list, built on first use
+   * and then carried on the walk. A walk without a context (a direct unit call)
+   * builds it per call, which is what the test that calls the predicate directly
+   * asserts about.
+   */
+  private static customAvailabilityIndex(
+    consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
+  ): AvailabilityInterval[] {
+    if (!walk) {
+      return buildAvailabilityIndex(consultant.availabilityWindowsCustom);
+    }
+    if (!walk.customIndex) {
+      walk.customIndex = buildAvailabilityIndex(
+        consultant.availabilityWindowsCustom,
+      );
+    }
+    return walk.customIndex;
   }
 
   /**
@@ -3078,6 +3173,10 @@ export class SchedulingService {
    * nor by the old hard MAX_CANDIDATE_STARTS_PER_ROW=48 ceiling (which
    * silently truncated legitimate long rows). Callers that cannot supply a
    * row end still get the 48-step safety net.
+   *
+   * The anchor is snapped UP to the booking grid (buyer paths refuse off-grid
+   * starts), so an off-grid legacy row 10:15-12:00 yields 10:30, 11:00, 11:30:
+   * on-grid and inside the published hours.
    */
   private static candidateStartsInRow(
     rowStart: Date,
@@ -3093,18 +3192,19 @@ export class SchedulingService {
     const starts: Date[] = [];
     /** Did the ROW (its end, or the edge of availability) stop the walk? */
     let boundedByRow = false;
+    const anchorMs =
+      Math.ceil(rowStart.getTime() / SCHEDULING_INTERVAL_MS) *
+      SCHEDULING_INTERVAL_MS;
 
     for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
-      const candidate = new Date(
-        rowStart.getTime() + step * SCHEDULING_INTERVAL_MS,
-      );
+      const candidate = new Date(anchorMs + step * SCHEDULING_INTERVAL_MS);
       // Stop at the row's own end before checking availability — adjacent
       // rows would otherwise let the walk escape past its owner.
       if (candidate.getTime() + SCHEDULING_INTERVAL_MS > rowEndMs) {
         boundedByRow = true;
         break;
       }
-      if (!this.isWithinAvailability(candidate, consultant)) {
+      if (!this.isWithinAvailability(candidate, consultant, walk)) {
         boundedByRow = true;
         break;
       }
@@ -3118,12 +3218,11 @@ export class SchedulingService {
     // simply ends at the 48th start from reporting a truncation it never had.
     if (!boundedByRow) {
       const next = new Date(
-        rowStart.getTime() +
-          MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
+        anchorMs + MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
       );
       if (
         next.getTime() + SCHEDULING_INTERVAL_MS <= rowEndMs &&
-        this.isWithinAvailability(next, consultant)
+        this.isWithinAvailability(next, consultant, walk)
       ) {
         this.reportRowWalkTruncated(rowStart, rowEndMs, consultant, walk);
       }
@@ -3177,6 +3276,42 @@ export class SchedulingService {
   }
 
   /**
+   * One breadcrumb per allocation for a search that ran out of its time budget.
+   * Without it a budget-truncated walk is indistinguishable from a genuinely full
+   * calendar — the SLOT_SHORTAGE it raises is the same one, by design — and the
+   * next thing anyone would do is widen the search again.
+   */
+  private static reportSearchBudgetSpent(
+    budget: SearchBudget,
+    consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
+  ): void {
+    const detail = {
+      budgetMs: budget.limitMs,
+      spentMs: budget.spentMs(),
+      consultantUserId: consultant.userId,
+      consultantProfileId: walk?.consultantProfileId ?? null,
+      customRows: consultant.availabilityWindowsCustom.length,
+      eventType: walk?.eventType ?? null,
+      eventId: walk?.eventId ?? null,
+    };
+    try {
+      Sentry.addBreadcrumb({
+        category: "scheduling",
+        message: "allocation: availability search hit its time budget",
+        level: "warning",
+        data: detail,
+      });
+    } catch {
+      // Telemetry must never fail an allocation.
+    }
+    console.warn(
+      "[allocation] availability search hit its time budget",
+      detail,
+    );
+  }
+
+  /**
    * Build one call's worth of back-to-back slots from `start`, or null if the
    * run is interrupted by a booking, the edge of availability, or the past.
    */
@@ -3186,6 +3321,7 @@ export class SchedulingService {
     consultant: ConsultantAllocationData,
     bookedSlots: Set<string>,
     now: Date,
+    walk?: AllocationWalkContext,
   ): Date[] | null {
     const block: Date[] = [];
     let currentTime = new Date(start);
@@ -3193,7 +3329,7 @@ export class SchedulingService {
     for (let i = 0; i < slotsPerCall; i++) {
       if (
         bookedSlots.has(currentTime.toISOString()) ||
-        !this.isWithinAvailability(currentTime, consultant) ||
+        !this.isWithinAvailability(currentTime, consultant, walk) ||
         currentTime < now
       ) {
         return null;
@@ -3276,6 +3412,7 @@ export class SchedulingService {
         consultant,
         bookedSlots,
         now,
+        walk,
       );
       if (!block) continue;
 
@@ -3308,6 +3445,11 @@ export class SchedulingService {
    * The remembered best is the entire safety property: whatever the preference
    * says, if any block was placeable at all this returns one, so a preference
    * that cannot be met costs a less-liked time and never the allocation.
+   *
+   * `budget` bounds the row walk only. The remembered best survives a truncated
+   * walk, so a search that ran out of time still returns the best block it had
+   * found rather than nothing — which is what lets the caller answer with a
+   * shortage instead of a timeout.
    */
   private static bestBlockForSingleSession(
     eventType: EventType,
@@ -3320,6 +3462,7 @@ export class SchedulingService {
     schedulingTimezone?: string,
     preference?: AllocationPreference,
     walk?: AllocationWalkContext,
+    budget?: SearchBudget,
   ): Date[] | null {
     const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
     const maxScore = maxPreferenceScore(preference);
@@ -3356,6 +3499,13 @@ export class SchedulingService {
     }
 
     for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {
+      // One row's worth of walk is the unit of work here, so this is the finest
+      // place the budget can be tested without putting a clock read inside the
+      // candidate loop.
+      if (budget?.exhausted()) {
+        this.reportSearchBudgetSpent(budget, consultant, walk);
+        break;
+      }
       for (const candidateStart of this.candidateStartsInRow(
         rowStart,
         consultant,
@@ -3370,6 +3520,7 @@ export class SchedulingService {
           consultant,
           bookedSlots,
           now,
+          walk,
         );
         if (!consecutiveBlock) continue;
 
@@ -3399,6 +3550,11 @@ export class SchedulingService {
    * caps, the scheduling period) is evaluated exactly as before and no
    * preference can relax or tighten one. An unsatisfiable preference therefore
    * changes nothing except which of the equally-legal placements is chosen.
+   *
+   * The search runs under `ALLOCATOR_SEARCH_TIME_BUDGET_MS`. Spending it ends
+   * the walk and falls through to the ordinary "not enough" tail, so the caller
+   * sees SLOT_SHORTAGE with a real placeable count — or, with `allowPartial`,
+   * the sessions that did fit.
    */
   private static async findAvailableSlots(
     // #908 — accepts the base client so slot discovery can run OUTSIDE the write
@@ -3580,6 +3736,11 @@ export class SchedulingService {
 
     const now = occupancyClock;
     const selectedSlots: Date[] = [];
+    // Opened once the reads are done, so the ceiling bounds the SEARCH (the only
+    // O(window) work in this request) and not the queries that feed it. A
+    // truncated search answers through the same shortage tail below, so
+    // `allowPartial` keeps working exactly as it does for a full calendar.
+    const searchBudget = createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
 
     // Sort weekly slots by next calendar occurrence (not raw clock time)
     // so auto-allocation picks the chronologically earliest slot first.
@@ -3626,11 +3787,14 @@ export class SchedulingService {
         config.schedulingTimezone,
         preference,
         walk,
+        searchBudget,
       );
       if (singleSession) return singleSession;
 
       // One session, so nothing is placeable short of the whole thing —
       // placeableSessions 0 tells the client not to offer a partial schedule.
+      // A budget-truncated walk lands here too: it found nothing, and the
+      // shortage is the same answer a full calendar gets.
       throw new SlotShortageError(
         `No ${slotsPerCall} consecutive slots available for ${eventType}`,
         0,
@@ -3862,6 +4026,13 @@ export class SchedulingService {
      * made impossible. The while loop terminates because every successful
      * placement strictly advances a bounded counter (per-day cap, weekly cap,
      * totalSlotsNeeded).
+     *
+     * The budget stops the DAY walk, which is the coarsest unit that still
+     * bounds the overrun: one day is one pass over that day's rows. It leaves
+     * the search through the ordinary shortage tail below rather than a new
+     * error, so a truncated walk is answered as "no more room" and still
+     * honours `allowPartial` — the partial answer is what the consultant
+     * actually gets, and a 504 would have given them nothing.
      */
     const sweepPeriod = (perfectOnly: boolean): void => {
       const cursor = new Date(
@@ -3877,6 +4048,10 @@ export class SchedulingService {
         cursor <= endDate && selectedSlots.length < totalSlotsNeeded;
         cursor.setUTCDate(cursor.getUTCDate() + 1)
       ) {
+        if (searchBudget.exhausted()) {
+          this.reportSearchBudgetSpent(searchBudget, consultant, walk);
+          return;
+        }
         while (
           selectedSlots.length < totalSlotsNeeded &&
           tryPlaceOnDay(new Date(cursor), perfectOnly)

@@ -39,6 +39,10 @@ import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
@@ -47,6 +51,8 @@ import {
 } from "@/app/checkout/components/BillingStateSelect";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { deriveBatchCards } from "@/lib/booking/batch-cards";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatForViewer } from "@/lib/time/viewer-zone";
 import { sessionsBoughtLabel } from "@/lib/booking/class-enrolment";
 
 import type {
@@ -204,12 +210,23 @@ export default function ClassCheckoutPage({
     }
   }, [checkoutPlanQuery.error]);
 
+  // #1863 — the batch derivation used to run with no `timeZone` at all, and
+  // `deriveBatchCards` coerces a missing one to "UTC". So which batch is being
+  // bought, whether it is late-join, and the refund-window deadline printed in
+  // the pricing card were all resolved in UTC while the session times two
+  // hundred lines below were the browser's — a batch starting 00:30 in the
+  // viewer's zone could be shown as the previous day's session, or as already
+  // running. One zone for the whole page now, the same one every other
+  // viewer-facing surface uses.
+  const viewer = useViewerZone();
+
   // #1819 — the batch named by ?eventId= (never silently another one), else
   // the first joinable batch; its card carries the late-join price.
   const batch = useMemo(() => {
     const plan = planData?.data;
     if (!plan) return null;
     const cards = deriveBatchCards(plan, plan.classes, new Date(), {
+      timeZone: viewer.zone,
       hostUserId: plan.consultantProfile?.userId,
     });
     const wanted = validatedSearchParams?.eventId;
@@ -217,12 +234,25 @@ export default function ClassCheckoutPage({
       ? cards.find((c) => c.classId === wanted)
       : cards.find((c) => c.canEnrol);
     return pick?.canEnrol ? pick : null;
-  }, [planData, validatedSearchParams?.eventId]);
+  }, [planData, validatedSearchParams?.eventId, viewer.zone]);
   const availableClassId = batch?.classId ?? null;
   const batchPricePaise =
     batch?.enrolment.state === "open"
       ? batch.enrolment.basePaise
       : planData?.data?.price || 0;
+
+  // #1863 — the rail the money comes back on is decided by the buyer's OWN
+  // choices on this page, and those choices can change: an org payer forces
+  // referral credits off, ticking credits clears the org. Deriving it here
+  // rather than inside the note means the promise moves the moment the buyer
+  // changes how they are paying, instead of describing a rail they abandoned.
+  // The org's own name is not on this client, so the note names the rail and
+  // the fact that the sponsor's own policy binds — never an amount.
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -438,7 +468,10 @@ export default function ClassCheckoutPage({
         planData.data,
         planData.data.classes,
         new Date(),
-        { hostUserId: planData.data.consultantProfile?.userId },
+        {
+          timeZone: viewer.zone,
+          hostUserId: planData.data.consultantProfile?.userId,
+        },
       ).some((c) => c.canEnrol);
       if (!hasAvailable) {
         setStaleError(
@@ -454,7 +487,7 @@ export default function ClassCheckoutPage({
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [planData, batch]);
+  }, [planData, batch, viewer.zone]);
 
   if (isLoading) {
     return <CheckoutPlanSkeleton />;
@@ -593,23 +626,33 @@ export default function ClassCheckoutPage({
                     Your first session
                   </div>
                   <div>
-                    {new Date(nextClassSession.startsAt).toLocaleDateString(
-                      undefined,
-                      {
-                        weekday: "long",
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      },
+                    {/* #1863 — was `toLocaleDateString()` with no zone, i.e. the
+                        RUNTIME's locale AND zone: a New York laptop saw an
+                        Asia/Kolkata buy in New York time, next to a batch card
+                        derived in UTC. `formatForViewer` renders the viewer's own
+                        saved zone and appends the label when it had to fall
+                        back, so a time in a zone that is not theirs says so. */}
+                    {formatForViewer(
+                      nextClassSession.startsAt,
+                      viewer,
+                      "EEEE, d MMMM yyyy",
                     )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
-                    {new Date(nextClassSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextClassSession.endsAt).toLocaleTimeString()} (
-                    {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    {formatForViewer(
+                      nextClassSession.startsAt,
+                      viewer,
+                      "h:mm a",
+                    )}
+                    {" - "}
+                    {formatForViewer(
+                      nextClassSession.endsAt,
+                      viewer,
+                      "h:mm a zzz",
+                    )}
                   </div>
                 </div>
               </>
@@ -822,6 +865,18 @@ export default function ClassCheckoutPage({
                 windowHours={planDetails?.refundWindowHours}
                 kind="class"
                 className="text-xs text-muted-foreground"
+              />
+              {/* #1863 — the DEADLINE is the line above; this is the rule behind
+                  it, and the rail the money comes back on. Both are read at
+                  purchase because that is the only moment a buyer can still act
+                  on them; the cancel dialog repeats the rail word for word. */}
+              <CancellationPolicyNote
+                eventKind="class"
+                eventWindowHours={planDetails?.refundWindowHours}
+                eventStartsAt={nextClassSession?.startsAt}
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
               <FxEstimateNote
                 totalPaise={pricing.total}

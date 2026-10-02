@@ -76,6 +76,28 @@ export function parseLimitParam(req: NextRequest): number | undefined {
 }
 
 /**
+ * {@link parseLimitParam} with a floor, for the routes the Netlify ticker
+ * drives whose core work is per-row.
+ *
+ * The distinction from the bare parser is the DEFAULT. A route whose `run`
+ * ignores the request entirely (its core takes no arguments) silently runs its
+ * unbounded cohort inside the ticker's abort — the failure this exists to
+ * close. Giving such a route a fallback means every caller is bounded, and
+ * `?limit=` can only tighten that bound, never remove it.
+ *
+ * The fallback belongs HERE rather than at the ticker, because the ticker is
+ * not the only caller: a hand-rolled `curl` with `CRON_SECRET`, an operator
+ * probe, and a future scheduler all reach the same route, and a limit enforced
+ * only by one caller is a limit that silently disappears with it.
+ */
+export function parseLimitParamOrDefault(
+  req: NextRequest,
+  fallback: number,
+): number {
+  return parseLimitParam(req) ?? fallback;
+}
+
+/**
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
  * observable through response timing.

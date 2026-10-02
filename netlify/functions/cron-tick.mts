@@ -4,11 +4,12 @@
  * ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
- * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
+ * the latency-sensitive `/api/cleanup/*` routes every five minutes (the money
  * sweeps, since #1633 the ledger reconcile backstop, since #1654 the Novu
  * outbox relay every tick and the email outbox relay on every third tick,
- * and since #1583/#1589 five booking sweeps on every third tick, two of them
- * on the 20 s tier) instead of waiting on Actions. It never writes money state itself: every
+ * since #1583/#1589 five booking sweeps, and since #1775 the two
+ * session-outcome jobs that gate an earnings release and a full refund)
+ * instead of waiting on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -45,13 +46,26 @@ const TARGETS = [
   // #1583 E-P0-04 / #1589 P-P0-01, N-P1-03 / #1591 J1-P1-05 / #1599 C-P1-06 —
   // the booking sweeps whose hourly Actions twin let a lapsed pay-link, a
   // stale proposal, a missed reminder or a dead hold sit for ~100 minutes.
-  // Every 15 minutes, see TARGET_EVERY_MINUTES; none of the five reads
-  // `limit`, so they get no entry in TARGET_LIMITS.
+  // Every 15 minutes, see TARGET_EVERY_MINUTES; all five now READ `limit`
+  // (#1583 P1) and carry an entry below.
   "expire-unpaid-trials",
   "reschedule-proposals",
   "appointment-reminders",
   "tentative-occurrences",
   "expire-stale-requests",
+  // #1775 auto-complete / no-show detection. Both gate money: auto-complete
+  // releases the earnings hold and opens feedback one hour after a session
+  // ends, and the no-show detector issues a 100% refund. The docs previously
+  // recorded their absence from this list as deliberate ("not
+  // latency-sensitive"), on the reasoning that Actions was a sufficient
+  // driver. That reasoning does not survive the code: ADR 22 measured Actions
+  // delivering a sub-hourly schedule at roughly one delivery per hundred
+  // minutes, so "an hourly Actions twin" is an unbounded upper bound and the
+  // earnings release could sit ~100 minutes behind a session that ended. The
+  // two are added here for the same reason as every other money sweep above —
+  // not because the Actions run is insufficient, but because it is not a bound.
+  "auto-complete-appointments",
+  "detect-consultant-no-shows",
   // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
   "settle-cancelled-sessions",
   // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
@@ -102,6 +116,28 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "settle-cancelled-sessions": 10,
   // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
   "retry-auto-refunds": 10,
+  // #1583 P1 — the five booking sweeps used to be appended `?limit=50` here and
+  // ignored it, because their `run` callbacks took no request: every tick ran
+  // the full Actions-sized cohort inside a 6 s or 20 s abort. They now read it,
+  // and the bite is stated here so the ticker's own budget is a number in this
+  // file rather than an accident of what a route happens to parse.
+  //
+  // Every one of the five is oldest-first (soonest-first for reminders) with a
+  // per-run cap, no persisted cursor, and a write that removes the row from its
+  // cohort — so a bite this size drains a backlog over successive ticks instead
+  // of dropping the tail. `expire-stale-requests` is per-ARM, across seven arms.
+  "appointment-reminders": 25,
+  "expire-stale-requests": 20,
+  "reschedule-proposals": 25,
+  "tentative-occurrences": 200,
+  "expire-unpaid-trials": 25,
+  // #1775 — auto-complete judges each past session against a Stream call
+  // report, and the no-show detector corroborates every candidate against a
+  // Stream call report too, so both are network-bound per row rather than
+  // database-bound. A small bite is what fits the 20 s tier; the Actions
+  // hourly run drains the rest.
+  "auto-complete-appointments": 25,
+  "detect-consultant-no-shows": 10,
   // #1859 M-P0-14 — read-only scan, but one Sentry page per orphan row group;
   // same bite as the money sweeps so it fits the 20 s budget.
   "alert-orphaned-payments": 10,
@@ -134,6 +170,15 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "expire-stale-requests": 15,
   "settle-cancelled-sessions": 15,
   "retry-auto-refunds": 15,
+  // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
+  // minute-relevant: auto-complete's own buffer is one hour after a session
+  // ends, so a 30-minute detection latency is well inside the window it has to
+  // beat, and the no-show detector's grace window is measured in tens of
+  // minutes. A 15-minute slot would double the Stream call-report volume for
+  // both to buy detection latency neither deadline is sensitive to, and
+  // #1792's Upstash budget is the direct line item.
+  "auto-complete-appointments": 30,
+  "detect-consultant-no-shows": 30,
   "alert-orphaned-payments": 15,
   "reconcile-orphaned-payments": 30,
 };
@@ -141,9 +186,9 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
 /**
  * #1926 Action 6 — deterministic phase offsets (in minutes, modulo the
  * target's interval) so the 18 fifteen-minute targets, 1 ten-minute target,
- * and 2 thirty-minute targets spread evenly across the 5-minute slots instead
- * of firing all 21 targets simultaneously at `:00`/`:30` and 0 targets at
- * `:05`/`:25`/`:35`/`:55`. Every 5-minute tick now fires 6–7 targets.
+ * and 4 thirty-minute targets spread evenly across the 5-minute slots instead
+ * of firing all 23 targets simultaneously at `:00`/`:30` and 0 targets at
+ * `:05`/`:25`/`:35`/`:55`. Every 5-minute tick now fires 7–8 targets.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (:00, :30)
@@ -153,7 +198,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "retry-failed-emails": 0,
   "sync-payment-earnings": 0,
   "sentry-ingest-canary": 0,
-  // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 7.
+  // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 8.
   "alert-orphaned-payments": 0,
   // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
   "release-earnings": 5,
@@ -170,7 +215,9 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "expire-stale-requests": 10,
   "settle-cancelled-sessions": 10,
   "retry-auto-refunds": 10,
-  // 30-minute healer on the lightest ticks (:10/:40 go 6→7, others unchanged).
+  // Thirty-minute session-outcome jobs and orphan healer on staggered slots
+  "auto-complete-appointments": 15,
+  "detect-consultant-no-shows": 20,
   "reconcile-orphaned-payments": 10,
 };
 
@@ -199,8 +246,13 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-orphaned-confirmations": 20_000,
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
+  // Per row: an appointment lock, a transaction, a slot restore and a notice.
+  "reschedule-proposals": 20_000,
   "settle-cancelled-sessions": 20_000,
   "retry-auto-refunds": 20_000,
+  // One Stream call-report round trip per judged session or candidate.
+  "auto-complete-appointments": 20_000,
+  "detect-consultant-no-shows": 20_000,
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
 };

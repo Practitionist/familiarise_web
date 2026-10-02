@@ -2976,6 +2976,14 @@ model ConsultantProfile {
   profileCompletionPercentage Int                          @default(0)
   isVerified                  Boolean                      @default(false)
   verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
+  /// DISTINCT PEOPLE this consultant has delivered a session to — not sessions,
+  /// not bookings, not requests; see lib/profiles/mentees-helped.ts for the
+  /// definition and the arms. Stored rather than counted at read time because
+  /// three public surfaces project it and a browse card must not run five
+  /// aggregate queries. Written by `recomputeMenteesHelped`, which the hourly
+  /// auto-complete pass calls when a session stops being a booking, and the
+  /// seed calls once after the bookings exist. It used to be written ONLY by the
+  /// seed, as a random integer, so every public figure was fiction.
   totalMenteesHelped          Int                          @default(0)
 
   domain     Domain      @relation(fields: [domainId], references: [id])
@@ -3535,6 +3543,16 @@ model Achievement {
 
 // #1554 — the hours a consultant offers; never booked directly. Weekly rows keep
 // weekday + minutes-since-midnight with a frozen offset (#503); custom rows are concrete.
+//
+// Neither model carries a `deletedAt` tombstone. Every removal path HARD-deletes
+// (the per-row DELETE routes, the profile soft-delete sweep in
+// app/api/user/consultants/[id], the onboarding re-save, and the availability
+// coalescers in utils/scheduling-engine/mergeAdjacentWeeklyRows.ts), so a
+// tombstone could only ever be set on rows nothing reads. `lib/profiles/profile-completion.ts`
+// used to filter `deletedAt: null` on these two `_count`s, which made it look
+// maintained; the filter was the only reader and it is gone. A consultant
+// tombstone belongs on `ConsultantProfile.deletedAt`, which IS written, and one
+// row there already covers "this profile is gone" for every window it owned.
 model AvailabilityWindowWeekly {
   id                String     @id @default(uuid())
   startDay          DayOfWeek
@@ -3559,9 +3577,6 @@ model AvailabilityWindowWeekly {
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
-
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -3575,9 +3590,6 @@ model AvailabilityWindowCustom {
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
-
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3691,8 +3703,13 @@ model Consultation {
 
   appointment Appointment?
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. A request is retired by `status` plus
+  // `cancelledAt`, and both are written by the same transition that closed it
+  // (lib/booking/transitions.ts) — so a tombstone would be a second copy of a
+  // fact the row already states, on a row nothing ever hard-deletes. #1319 added
+  // it as a mirror of Appointment.deletedAt and no path ever wrote it; the only
+  // readers were `deletedAt: null` filters in lib/data/requests-inbox.ts, which
+  // were tautologies.
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3914,8 +3931,13 @@ model Trial {
   /// The expiry job cancels a PENDING or AWAITING_PAYMENT trial still unpaid past it.
   paymentDueAt DateTime? @db.Timestamptz
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. TrialStatus already has a value for every terminal
+  // outcome — COMPLETED / CONVERTED / CANCELLED / REJECTED — and each is written
+  // through `transitionTrial`, so the status IS the retirement record and a
+  // second marker on the same row could only ever disagree with it. #1319 added
+  // the column as a mirror of Appointment.deletedAt and nothing wrote it; the
+  // only readers were `deletedAt: null` entries in the requests-inbox cohort
+  // builders, which were tautologies against the status filter beside them.
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -4504,7 +4526,28 @@ model AppointmentParticipant {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  /// Restrict, not Cascade. A seat row is the record that a person held a place
+  /// on someone's event and that the consultant delivered it — the same class of
+  /// record as the Payment beside it, which has been SetNull since #781 §B with
+  /// the comment "a soft-deleted Payment must not take the participation record
+  /// with it". Cascade on `user` contradicted that on the same model, so deleting
+  /// a user erased both the funding fact AND the fact of participation at once,
+  /// and left the appointment, its occurrences and the consultant's earnings
+  /// pointing at a delivery nobody can account for. This is the same reasoning
+  /// #1877 already applied to `Payment.user` and `Payment.appointment`.
+  ///
+  /// SetNull was the alternative and is worse: `@@unique([appointmentId,
+  /// userId])` stops constraining anything once `userId` is NULL (Postgres
+  /// treats NULLs as distinct), and every capacity read filters on `userId`, so
+  /// a released seat would silently vanish from the roster instead of being
+  /// refused. Restrict keeps the row and makes the caller decide.
+  ///
+  /// What a Restrict does NOT break: the DPDP §12 erasure flow
+  /// (`lib/compliance/erasure/scrub-user.ts`) never deletes a `User` row at all —
+  /// it pseudonymises PII in place and sets `erasedAt`, which is why money rows
+  /// survive it. It DOES mean the hard-delete branch of `DELETE /api/user/[id]`
+  /// must treat a held seat as money history, which that route now does.
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   userId String
 
   role   ParticipantRole
@@ -4554,6 +4597,17 @@ enum ParticipantStatus {
 /// polymorphic and deliberately unconstrained: seven lifecycles share one log
 /// and a real FK per entity would mean seven nullable columns. `fromStatus` and
 /// `toStatus` are strings because three different status enums share the log.
+///
+/// `fromStatus` carries two values that belong to NO status enum, and both are
+/// named constants rather than literals — `HISTORY_FROM_CREATED` ("this row
+/// never moved; it is the creation record") and `HISTORY_FROM_UNKNOWN` ("the
+/// pre-read missed this row, so its from-status is not captured", which reports
+/// itself per occurrence so an audit gap is countable). `lib/booking/response-rate.ts`
+/// and `lib/booking/reschedule-restore.ts` both branch on the second, so they
+/// import the constant instead of spelling the string.
+///
+/// Append-only: `booking_status_history_immutable` (check-constraints.sql) refuses
+/// DELETE and UPDATE of audit columns; the SetNull FK columns stay writable.
 model BookingStatusHistory {
   id String @id @default(uuid())
 
@@ -4576,6 +4630,12 @@ model BookingStatusHistory {
 
   @@index([entityId, createdAt])
   @@index([appointmentId, createdAt])
+  // Postgres does not auto-index FKs, and `organization` is `SetNull`, so an org
+  // teardown (and any future org-scoped timeline read) scanned the whole table.
+  // Same reasoning as Grievance.userId and AppointmentParticipant.paymentId.
+  // Nothing reads the column TODAY — org dashboards reach their history through
+  // `appointment.organizationId` — which is exactly why the gap stayed invisible.
+  @@index([organizationId, createdAt])
 }
 
 enum BookingHistoryEntity {
@@ -4726,8 +4786,12 @@ model RescheduleRequest {
 
   proposedTimes RescheduleProposedTime[]
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. `openForAppointmentId @unique` above IS the
+  // liveness marker — it is claimed while the request is open and NULLed the
+  // moment it resolves, and every reader of "is there a live proposal for this
+  // appointment" is that column. A tombstone would duplicate it. #1319 added the
+  // column and no path wrote it; `lib/data/consultant-needs-you.ts` filtered
+  // `deletedAt: null` on it, which was a tautology.
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -4754,8 +4818,11 @@ model RescheduleProposedTime {
   proposedBy   User   @relation("ProposedTimeAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
   proposedById String
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. An offer is live exactly while its parent request
+  // is open, and every read scopes through `rescheduleRequest` (and, since the
+  // counter-round was retired, through `round`) rather than through a filter on
+  // this row. A row that loses its proposal is CASCADEd with the request, which
+  // is the right destruction: an offer is not a record of anything.
 
   createdAt DateTime @default(now()) @db.Timestamptz
 
@@ -4793,7 +4860,6 @@ enum RescheduleRequestStatus {
   /// parties, so it confirmed with no approval step.
   AUTO_ACCEPTED
   PENDING_REVIEW
-  COUNTERED
   ACCEPTED
   DECLINED
   /// The INITIATOR took their own request back. Distinct from DECLINED, which
@@ -4804,6 +4870,20 @@ enum RescheduleRequestStatus {
   WITHDRAWN
   /// Lapsed unanswered; the request falls back to consultant allocation.
   EXPIRED
+  // `COUNTERED` was removed. It was the round-2 counter-offer: specified in the
+  // enum, present in RESCHEDULE_ALLOWED_FROM, the `round` column and a
+  // "Counter-offer" badge, and written by NOTHING but the seed. The feature was
+  // deliberately retired (see the "no counter-round" note in
+  // lib/booking/reschedule-proposals.ts), so keeping the member meant a live UI
+  // affordance for a state the route could never produce.
+  //
+  // Note for whoever next touches an enum: `prisma db push` cannot DROP an enum
+  // value. It renames the type, creates a replacement, casts every column with a
+  // USING clause, drops the old type and renames — and the cast FAILS on any row
+  // still holding the value. That is why the seed's COUNTERED rows had to go in
+  // the same change: see prisma/seedFiles/6c-create-reschedule-proposals.ts.
+  // scripts/ci/check-db-drift.ts fails the build if the live type and the schema
+  // disagree in either direction.
 }
 
 // Document Review Models

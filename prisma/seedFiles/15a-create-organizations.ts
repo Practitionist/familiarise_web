@@ -173,6 +173,12 @@ export async function createOrganizations(
     .filter((u) => u.consultantProfile)
     .slice(0, Math.min(users.length, 12)); // 12 = 5 LearnPro + 5 IIT + 1 solo + 1 IIT owner
 
+  // -------------------------------------------------------- CONSENT ARTIFACTS
+  // ALL seeded users, not just the first 10 — every user the runtime touches
+  // (Stream upsert on dashboard load) needs the gate to pass (#1394: run before
+  // the enterprise org count guard so partial seeds still get consent rows).
+  await seedConsentArtifacts(users);
+
   if (consultees.length < 8 || consultants.length < 5) {
     console.warn(
       "[15a] Skipping enterprise seed — need ≥8 consultees + ≥5 consultants; got",
@@ -205,11 +211,6 @@ export async function createOrganizations(
   if (consultants.length >= 8) {
     await seedSoloConsultant(consultants[7]);
   }
-
-  // -------------------------------------------------------- CONSENT ARTIFACTS
-  // ALL seeded users, not just the first 10 — every user the runtime touches
-  // (Stream upsert on dashboard load) needs the gate to pass.
-  await seedConsentArtifacts(users);
 
   // ---------------------------------------------------- TOUR OWNER (#723)
   // Dedicated ORG_WORKSPACE account with deterministic credentials so tour

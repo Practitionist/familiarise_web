@@ -51,10 +51,9 @@ const personalOneToOne = (
 async function readRescheduleReplies(consultantProfileId: string) {
   const rows = await prisma.rescheduleRequest.findMany({
     where: {
-      // Propose → accept or decline is the whole flow; COUNTERED is never written.
+      // Propose → accept or decline is the whole flow; the only open status.
       status: "PENDING_REVIEW",
       initiatorRole: "CONSULTEE",
-      deletedAt: null,
       appointment: personalOneToOne(consultantProfileId),
     },
     orderBy: { createdAt: "asc" },

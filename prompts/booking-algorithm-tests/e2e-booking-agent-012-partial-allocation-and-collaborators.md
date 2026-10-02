@@ -245,7 +245,7 @@ sessions overlap a time Consultant A already holds a confirmed slot for.
 **Expected:** **409** with
 `{ "error": "That time conflicts with another confirmed session on your calendar." }`.
 Note the body carries **no** `errorCode` field on this route — assert on the
-status and the message. A 500 here means the `slot_no_confirmed_overlap`
+status and the message. A 500 here means the `occurrence_no_confirmed_overlap`
 exclusion violation (SQLSTATE `23P01`) is escaping `isExclusionViolation`
 instead of being classified.
 

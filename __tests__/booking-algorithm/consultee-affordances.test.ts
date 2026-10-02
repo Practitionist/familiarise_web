@@ -53,7 +53,10 @@ describe("#1163 open proposal detection", () => {
     expect(openProposalTarget([{ id: "a" }, null, undefined])).toBeNull();
   });
 
-  it("shows only the current round of a countered request", () => {
+  // The round filter outlived the counter-round: it is now the only thing
+  // standing between a two-round row and a card that offers the other
+  // side's own rejected times back to them.
+  it("shows only the current round, whatever round that is", () => {
     const slots = currentRoundProposedSlots(proposal(2));
     expect(slots).toHaveLength(1);
     expect(slots[0].round).toBe(2);

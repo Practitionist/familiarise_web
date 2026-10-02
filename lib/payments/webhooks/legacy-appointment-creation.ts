@@ -14,12 +14,18 @@ import {
 import type { Tx } from "@/lib/prisma";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { firstCycleWindow } from "@/lib/booking/entitlement";
-import { recordParticipants } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import {
   isOrgFundedPaymentMethod,
   seatPayerOrganizationId,
 } from "@/lib/data/org-sponsored-seats";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
+import { reportSentryError } from "@/lib/observability/report";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import type { PaymentWithUser } from "./staged-emails";
 
@@ -141,6 +147,10 @@ export async function createAppointmentFromWebhook(
     default:
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }
+
+  // A group-event creator refused to seat the buyer (the event is full). No
+  // appointment, so there is nothing to link: the caller refunds the capture.
+  if (!appointment) return null;
 
   const linked = await tx.payment.updateMany({
     where: {
@@ -276,16 +286,126 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   return wrapper;
 }
 
+/**
+ * A legacy-shape capture for an event that is already full. Checkout gated
+ * capacity inside its own transaction, but this path runs minutes-to-hours
+ * later (an order predating the pre-created appointment, or an admin recovery),
+ * so the room it quoted is not the room that is left.
+ *
+ * Returning null is the refusal: the caller routes the capture to the
+ * `captured_after_release` arm, which refunds it in full. Throwing would roll
+ * the SUCCEEDED stamp back and the gateway would re-drive the webhook into the
+ * same wall forever; overselling would put a seat on the roster the host never
+ * agreed to sell.
+ */
+async function refuseFullEventCapture(
+  tx: Tx,
+  args: {
+    kind: "webinar" | "class";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+    registered: number;
+    max: number;
+  },
+): Promise<null> {
+  // Through the tx (PG_POOL_MAX=1); a global-client insert would deadlock.
+  await recordSystemErrorSafe({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `Capture for ${args.kind} ${args.eventId} cannot be seated — it is full (${args.registered}/${args.max}) and the money is being returned`,
+    err: new Error("CAPTURE_CANNOT_SEAT_FULL_EVENT"),
+    context: {
+      entityType: args.kind,
+      entityId: args.eventId,
+      appointmentId: args.appointmentId,
+      userId: args.userId,
+      registered: args.registered,
+      max: args.max,
+    },
+    correlationId: `capture-cannot-seat:${args.appointmentId}`,
+    db: tx,
+  });
+  reportSentryError(new Error("CAPTURE_CANNOT_SEAT_FULL_EVENT"), {
+    subsystem: "payments",
+    expected: true,
+    level: "warning",
+    contexts: {
+      booking: {
+        appointmentId: args.appointmentId,
+        entityType: args.kind,
+        entityId: args.eventId,
+        userId: args.userId,
+      },
+    },
+  });
+  console.error(
+    JSON.stringify({
+      event: "capture_cannot_seat_full_event",
+      appointmentId: args.appointmentId,
+      eventId: args.eventId,
+      eventType: args.kind,
+      userId: args.userId,
+      registered: args.registered,
+      max: args.max,
+      action_required: "auto-refund attempted; reconcile only if it failed",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  return null;
+}
+
+/**
+ * Seat the buyer on the webinar's own wrapper. The capacity read excludes the
+ * host (a host does not consume a seat) and the buyer, so a redelivered capture
+ * is not refused by a room their own live seat helped fill.
+ */
 async function createWebinar(tx: Tx, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
-    include: { appointment: { include: { occurrences: true } } },
+    include: {
+      // `participants` is load-bearing: `getWebinarCapacity` throws without it
+      // rather than counting a sold-out event as open.
+      webinarPlan: {
+        select: {
+          maxParticipants: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
+      appointment: {
+        include: {
+          occurrences: true,
+          participants: { where: liveParticipant(), select: { userId: true } },
+        },
+      },
+    },
   });
   if (!webinar) throw new Error("Webinar not found");
 
   const masterSlot = webinar.appointment?.occurrences?.[0];
   if (!webinar.appointment || !masterSlot) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
+  }
+
+  // The checkout capacity gate, replayed against the roster as it stands now.
+  // The reading is required: an unreadable capacity aborts the transaction.
+  const capacity = getWebinarCapacity({
+    webinar,
+    plan: webinar.webinarPlan,
+    excludeUserIds: [
+      webinar.webinarPlan.consultantProfile?.userId,
+      data.userId,
+    ].filter((id): id is string => !!id),
+  });
+  if (capacity.isFull) {
+    return await refuseFullEventCapture(tx, {
+      kind: "webinar",
+      eventId: data.eventId,
+      appointmentId: webinar.appointment.id,
+      userId: data.userId,
+      registered: capacity.registered,
+      max: capacity.max,
+    });
   }
 
   // Birth seat HELD so confirmExistingAppointment's liveness CAS governs promotion to CONFIRMED.
@@ -310,8 +430,19 @@ async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: {
+      // As in the webinar arm: without `participants` the capacity call throws
+      // instead of counting zero.
+      classPlan: {
+        select: {
+          maxParticipants: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
       appointment: {
-        include: { occurrences: { select: { id: true } } },
+        include: {
+          occurrences: { select: { id: true } },
+          participants: { where: liveParticipant(), select: { userId: true } },
+        },
       },
     },
   });
@@ -320,6 +451,28 @@ async function createClass(tx: Tx, data: EventData) {
   const wrapper = classInstance.appointment;
   if (!wrapper || wrapper.occurrences.length === 0) {
     throw new Error("Class has not been scheduled. Cannot create booking.");
+  }
+
+  // The checkout capacity gate, replayed now: the first-confirmed-wins recheck
+  // in confirmExistingAppointment skips group events, so nothing else stops a
+  // recovery capture from seating a buyer past the room.
+  const capacity = getClassCapacity({
+    classInstance,
+    plan: classInstance.classPlan,
+    excludeUserIds: [
+      classInstance.classPlan.consultantProfile?.userId,
+      data.userId,
+    ].filter((id): id is string => !!id),
+  });
+  if (capacity.isFull) {
+    return await refuseFullEventCapture(tx, {
+      kind: "class",
+      eventId: data.eventId,
+      appointmentId: wrapper.id,
+      userId: data.userId,
+      registered: capacity.registered,
+      max: capacity.max,
+    });
   }
 
   // Birth seat HELD so confirmExistingAppointment's liveness CAS governs promotion to CONFIRMED.

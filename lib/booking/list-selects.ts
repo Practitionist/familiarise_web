@@ -1,4 +1,4 @@
-import type { RescheduleRequestStatus } from "@prisma/client";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 
 /**
  * Shared Prisma SELECT fragments for the booking list endpoints (#997
@@ -64,12 +64,11 @@ export const APPOINTMENT_LIST_SELECT = {
     // idea what was actually asked for, which is the state every reschedule
     // used to arrive in.
     rescheduleRequests: {
-      // Typed rather than inferred: the file's `as const` would otherwise make
-      // this a readonly tuple, which Prisma's Exact<> rejects.
+      // `RESCHEDULE_OPEN_STATUSES`, not a literal: this filter is duplicated
+      // across six read surfaces and the literal copy is how `COUNTERED`
+      // outlived the counter-round that would have produced it.
       where: {
-        status: {
-          in: ["PENDING_REVIEW", "COUNTERED"] as RescheduleRequestStatus[],
-        },
+        status: { in: RESCHEDULE_OPEN_STATUSES },
       },
       select: {
         id: true,

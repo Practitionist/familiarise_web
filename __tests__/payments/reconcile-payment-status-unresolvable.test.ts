@@ -90,7 +90,9 @@ import type { NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
-import { POST } from "../../app/api/cleanup/reconcile-payment-status/route";
+import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
+
+const { POST } = getCleanupJobHandlers("reconcile-payment-status")!;
 
 const mockRetrieve = (Stripe as unknown as { retrieve: jest.Mock }).retrieve;
 const mockCaptureMessage = Sentry.captureMessage as jest.Mock;
