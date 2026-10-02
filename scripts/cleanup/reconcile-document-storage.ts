@@ -155,6 +155,7 @@ interface MissingFile {
 /**
  * Find missing files (in DB but not in storage), plus rows previously flagged
  * as missing whose file is present again (recovered) so the flag can be cleared.
+ * Uses the already-listed bucket file paths instead of downloading every file.
  */
 async function findMissingFiles(
   supabase: SupabaseClient,
@@ -164,25 +165,18 @@ async function findMissingFiles(
 
   console.log("\n🔍 Checking for missing files...");
 
-  // Get all document records with storage paths
-  const dbDocuments = await prisma.appointmentDocument.findMany({
-    select: { id: true, storagePath: true, isStorageMissing: true },
-  });
+  const [storageFiles, dbDocuments] = await Promise.all([
+    listAllFilesInBucket(supabase, "documents"),
+    prisma.appointmentDocument.findMany({
+      select: { id: true, storagePath: true, isStorageMissing: true },
+    }),
+  ]);
+  const storagePaths = new Set(storageFiles.map((f) => f.path));
 
   console.log(`   Checking ${dbDocuments.length} document records...`);
 
-  // Check each file exists in storage
   for (const doc of dbDocuments) {
-    let present = false;
-    try {
-      const { data, error } = await supabase.storage
-        .from("documents")
-        .download(doc.storagePath);
-      present = !error && !!data;
-    } catch {
-      present = false;
-    }
-
+    const present = storagePaths.has(doc.storagePath);
     if (present) {
       // #694 — file is back; clear a stale missing flag if one was set.
       if (doc.isStorageMissing) recoveredIds.push(doc.id);

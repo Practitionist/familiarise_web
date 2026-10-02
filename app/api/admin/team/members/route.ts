@@ -5,8 +5,7 @@ import prisma from "@/lib/prisma";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
-import { applyRateLimit } from "@/lib/rate-limit";
-import { accountKey, staffCreateLimiter } from "@/lib/rate-limit/policies";
+import { applyRateLimit, staffCreateLimiter } from "@/lib/rate-limit";
 import {
   OPERATOR_ROLES,
   createOperator,
@@ -38,9 +37,7 @@ export const POST = withOpsAction(
     target: ({ body }) => ({ kind: "User", id: body.email }),
     run: async ({ body, actor }) => {
       // The per-admin budget the invitation door had, kept for this door.
-      if (
-        await applyRateLimit(staffCreateLimiter, await accountKey(actor.userId))
-      ) {
+      if (await applyRateLimit(staffCreateLimiter, actor.userId)) {
         throw new OpsRefusal(
           "RATE_LIMITED",
           "Too many accounts created in the last hour. Wait and try again.",

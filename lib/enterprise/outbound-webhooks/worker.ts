@@ -44,17 +44,12 @@ import type { PrismaLike } from "@/lib/prisma";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
-  generateEndpointSecret as _unused_re_export,
   SIGNATURE_HEADER,
   signPayload,
   WEBHOOK_ROTATION_GRACE_MS,
 } from "./signing";
 import { assertPublicUrl } from "./ssrf-guard";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-
-// Re-export silenced — the worker doesn't generate secrets; this keeps
-// the module's surface area clean while preventing an unused-import lint.
-void _unused_re_export;
 
 const MAX_BATCH = 50;
 const REQUEST_TIMEOUT_MS = 10_000;

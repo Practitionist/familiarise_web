@@ -9,17 +9,16 @@ import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
+  normalizeAuthErrorCode,
   type AuthErrorAction,
   type AuthErrorField,
 } from "@/lib/labels/auth-errors";
-import { normalizeAuthErrorCode } from "@/lib/labels/auth-error-codes";
 import {
   signIn,
   useSession,
   sendVerificationEmail,
   getSession,
 } from "@/lib/auth-client";
-import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -246,54 +245,36 @@ function SignInContent() {
     }
   };
 
-  /**
-   * The guard's result is a *code*, not a sentence to print.
-   *
-   * `lib/sso/signin-with-toast.ts` resolves failures to
-   * `{ ok, errorMessage, errorCode, action }` where `errorMessage` is
-   * `"<title>. <description>"` assembled from `AUTH_ERROR_COPY` — catalog
-   * text, not a library string, but still a pre-baked string. When an
-   * `errorCode` is present we re-enter the catalog through
-   * `humanizeAuthError` instead, so the copy on screen comes from the same
-   * resolver every other failure on this page uses and the guard's
-   * formatting convention cannot drift away from it. `errorCode` is null
-   * for the guard's own generic sentences (which have no catalog code), and
-   * then `errorMessage` is the only copy there is — still ours, so it is
-   * safe to show.
-   */
-  const reportSsoFailure = (result: {
-    ok: boolean;
-    errorMessage: string | null;
-    errorCode: string | null;
-    action: AuthErrorAction | null;
+  const startSsoSignIn = async (ssoBody: {
+    providerId: string;
+    domain: string;
+    callbackURL: string;
   }) => {
-    if (result.ok || !result.errorMessage) return;
-    const copy = result.errorCode
-      ? humanizeAuthError("signin", { code: result.errorCode })
-      : null;
-    toast({
-      title: copy?.title ?? "SSO sign-in failed",
-      description: copy?.description ?? result.errorMessage,
-      variant: "destructive",
-    });
-    setErrorAction(result.action);
+    try {
+      const res = await signIn.sso(ssoBody);
+      if (res?.error) {
+        const copy = humanizeAuthError("signin", res.error);
+        setErrorAction(copy.action ?? null);
+        toast({
+          title: copy.title,
+          description: copy.description,
+          variant: "destructive",
+        });
+      }
+    } catch {
+      const copy = humanizeAuthError("signin", { status: 0 });
+      setErrorAction(copy.action ?? null);
+      toast({
+        title: copy.title,
+        description: copy.description,
+        variant: "destructive",
+      });
+    }
   };
 
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
-    // Use the guarded wrapper around signIn.sso() so the call goes
-    // through the ssoClient plugin (OIDC PKCE verifier persists before
-    // the IdP redirect) AND so failure modes surface as toasts instead
-    // of silent dead-ends. See `lib/sso/signin-with-toast.ts` for the
-    // three failure modes this guards: BetterAuth's resolve-with-error
-    // shape, 500-with-empty-body crashes, and no-redirect-after-2s.
-    // Audit Phase B.1.
-    const result = await ssoSigninWithGuard({
-      providerId: ssoCheck.ssoBody.providerId,
-      domain: ssoCheck.ssoBody.domain,
-      callbackURL: ssoCheck.ssoBody.callbackURL,
-    });
-    reportSsoFailure(result);
+    await startSsoSignIn(ssoCheck.ssoBody);
   };
 
   // Manual SSO trigger for IT admins testing their setup before enforcement
@@ -320,13 +301,7 @@ function SignInContent() {
           organizationName: data.organizationName,
           ssoBody: data.ssoBody,
         });
-        reportSsoFailure(
-          await ssoSigninWithGuard({
-            providerId: data.ssoBody.providerId,
-            domain: data.ssoBody.domain,
-            callbackURL: data.ssoBody.callbackURL,
-          }),
-        );
+        await startSsoSignIn(data.ssoBody);
       } else {
         toast({
           title: "No SSO provider found",

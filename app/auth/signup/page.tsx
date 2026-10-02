@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pendingToast, useToast } from "@/hooks/use-toast";
 import {
+  signIn,
   signUp,
   useSession,
   sendVerificationEmail,
@@ -21,7 +22,6 @@ import {
   type AuthErrorAction,
   type AuthErrorField,
 } from "@/lib/labels/auth-errors";
-import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import {
@@ -295,50 +295,28 @@ function SignUpContent() {
     }
   };
 
-  /**
-   * Translate BetterAuth's developer-facing validation errors into
-   * user-friendly messages. Raw errors look like:
-   *   "[body.email] Invalid email address; [body.password] Too small: ..."
-   */
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
-    // Use the guarded wrapper around signIn.sso() so SSO failures
-    // (resolve-with-error, 500-with-empty-body, no-redirect-after-2s)
-    // surface as a destructive toast instead of a silent dead-end on
-    // the signup form. See `lib/sso/signin-with-toast.ts` + audit B.1.
-    reportSsoFailure(
-      await ssoSigninWithGuard({
-        providerId: ssoCheck.ssoBody.providerId,
-        domain: ssoCheck.ssoBody.domain,
-        callbackURL: ssoCheck.ssoBody.callbackURL,
-      }),
-    );
-  };
-
-  /**
-   * The guard answers with a *code*, not a sentence to print — see the twin
-   * function in `app/auth/signin/page.tsx` for the full reasoning. Short
-   * version: when an `errorCode` is present we re-enter the catalog through
-   * `humanizeAuthError` so this page has exactly one error vocabulary, and
-   * the guard's pre-baked `errorMessage` is only used for its own generic
-   * sentences (which have no catalog code and are still our own copy).
-   */
-  const reportSsoFailure = (result: {
-    ok: boolean;
-    errorMessage: string | null;
-    errorCode: string | null;
-    action: AuthErrorAction | null;
-  }) => {
-    if (result.ok || !result.errorMessage) return;
-    const copy = result.errorCode
-      ? humanizeAuthError("signup", { code: result.errorCode })
-      : null;
-    toast({
-      title: copy?.title ?? "SSO sign-in failed",
-      description: copy?.description ?? result.errorMessage,
-      variant: "destructive",
-    });
-    setErrorAction(result.action);
+    try {
+      const res = await signIn.sso(ssoCheck.ssoBody);
+      if (res?.error) {
+        const copy = humanizeAuthError("signup", res.error);
+        setErrorAction(copy.action ?? null);
+        toast({
+          title: copy.title,
+          description: copy.description,
+          variant: "destructive",
+        });
+      }
+    } catch {
+      const copy = humanizeAuthError("signup", { status: 0 });
+      setErrorAction(copy.action ?? null);
+      toast({
+        title: copy.title,
+        description: copy.description,
+        variant: "destructive",
+      });
+    }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {

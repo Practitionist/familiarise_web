@@ -23,13 +23,11 @@
 import {
   humanizeAuthError,
   formatRetryAfter,
-} from "../../lib/labels/auth-errors";
-import { AUTH_ERROR_COPY } from "../../lib/labels/auth-errors.catalog";
-import {
+  AUTH_ERROR_COPY,
   AUTH_ERROR_CODES,
   isAuthErrorCode,
   normalizeAuthErrorCode,
-} from "../../lib/labels/auth-error-codes";
+} from "../../lib/labels/auth-errors";
 
 const ALL_FLOWS = ["signin", "signup", "forgot", "reset", "verify"] as const;
 

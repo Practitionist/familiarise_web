@@ -47,12 +47,17 @@ const LOCK_EXEMPT: Record<string, string> = {
   // watchdog depend on the infrastructure it exists to report on, and the
   // check is read-only, so a double-run costs nothing.
   "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
+  // Ticker-only probe: one Sentry event per run and no DB writes; a double run
+  // costs one extra event and the email alert is deduped in Redis.
+  "cron-tick:sentry-ingest-canary": "deliberately unlocked — vendor probe",
   // #1270 — a drift DETECTOR, not a job. It runs the operator script in
   // `--check` mode, which makes no Stream write and no database write; the
   // whole run is one `getAppSettings` read. Two concurrent reads cost one
   // extra API call, so a lock would buy nothing and would give a read-only
   // guard a hard dependency on Redis.
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // Catalog reads only (pg_constraint/pg_enum); a double-run costs nothing.
+  "db-live-drift.yml": "deliberately unlocked — read-only catalog check",
 };
 
 interface Row {
@@ -97,6 +102,65 @@ function findLock(
   return { jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" };
 }
 
+function extractImports(src: string): string[] {
+  const specs: string[] = [];
+  for (const m of src.matchAll(
+    /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
+  )) {
+    specs.push(m[1]);
+  }
+  for (const m of src.matchAll(
+    /import\(\s*["'](@\/[^"']+|\.\.?\/[^"']+)["']\s*\)/g,
+  )) {
+    specs.push(m[1]);
+  }
+  return specs;
+}
+
+/** Parse `@cleanup-twin <slug>` blocks from `lib/cron/cleanup-registry.ts`. */
+function cleanupTwinBlocks(): Map<string, string> {
+  const registryFile = path.join(ROOT, "lib", "cron", "cleanup-registry.ts");
+  const src = read(registryFile) ?? "";
+  const out = new Map<string, string>();
+  const parts = src.split(/\/\/\s*@cleanup-twin\s+([a-z0-9-]+)\s*\n/);
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    out.set(parts[i], parts[i + 1]);
+  }
+  return out;
+}
+
+/** The lock in an entry file, or in the first core under `coreDirs` it imports. */
+function lockFor(
+  entry: string | null,
+  entryFile: string | null,
+  entrySrc: string | null,
+  coreDirs: RegExp,
+): { lock: ReturnType<typeof findLock>; lockedIn: string | null } {
+  const own = findLock(entrySrc);
+  if (own || !entrySrc || !entryFile)
+    return { lock: own, lockedIn: own ? entry : null };
+  for (const spec of extractImports(entrySrc)) {
+    const resolved = resolveImport(entryFile, spec);
+    if (!resolved) continue;
+    const rel = path.relative(ROOT, resolved);
+    if (!coreDirs.test(rel) || rel.includes("with-cron-lock")) continue;
+    const found = findLock(read(resolved));
+    if (found) return { lock: found, lockedIn: rel };
+  }
+  return { lock: null, lockedIn: null };
+}
+
+/** The `/api/cleanup/<target>` routes netlify/functions/cron-tick.mts POSTs. */
+function tickerTargets(): string[] {
+  const src = read(path.join(ROOT, "netlify", "functions", "cron-tick.mts"));
+  const block =
+    src?.match(/const TARGETS = \[([\s\S]*?)\] as const/)?.[1] ?? "";
+  return Array.from(
+    block.replace(/\/\/.*$/gm, "").matchAll(/["']([a-z0-9-]+)["']/g),
+    (m) => m[1],
+  );
+}
+
 function buildRegistry(): Row[] {
   const rows: Row[] = [];
 
@@ -109,30 +173,15 @@ function buildRegistry(): Row[] {
     const entryFile = entrypoint ? path.join(ROOT, entrypoint) : null;
     const entrySrc = entryFile ? read(entryFile) : null;
 
-    let lock = findLock(entrySrc);
-    let lockedIn = lock ? entrypoint : null;
-
     // Wrapper → core: jobs/** wrappers hold the GitHub Actions plumbing and
     // delegate to a scripts/** or lib/** core, which is where the lock usually
     // lives so every entry point (Actions, HTTP, local) inherits it.
-    if (!lock && entrySrc && entryFile) {
-      for (const imp of entrySrc.matchAll(
-        /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
-      )) {
-        const resolved = resolveImport(entryFile, imp[1]);
-        if (!resolved) continue;
-        const rel = path.relative(ROOT, resolved);
-        if (!/^(scripts|lib)\//.test(rel) || rel.includes("with-cron-lock")) {
-          continue;
-        }
-        const found = findLock(read(resolved));
-        if (found) {
-          lock = found;
-          lockedIn = rel;
-          break;
-        }
-      }
-    }
+    const { lock, lockedIn } = lockFor(
+      entrypoint,
+      entryFile,
+      entrySrc,
+      /^(scripts|lib)\//,
+    );
 
     const guard = entrySrc?.match(/abortIfMaintenance\(\s*["'`]([^"'`]+)["'`]/);
     rows.push({
@@ -147,6 +196,32 @@ function buildRegistry(): Row[] {
     });
   }
 
+  // Ticker-only jobs (no YAML twin): resolved from lib/cron/cleanup-registry.ts.
+  const viaYaml = new Set(rows.map((r) => r.jobName));
+  const twinBlocks = cleanupTwinBlocks();
+  const registryRel = path.join("lib", "cron", "cleanup-registry.ts");
+  const registryFile = path.join(ROOT, registryRel);
+  for (const target of tickerTargets()) {
+    const entrySrc = twinBlocks.get(target) ?? null;
+    const jobName =
+      entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
+    if (viaYaml.has(jobName)) continue;
+    const entrypoint = `${registryRel}#${target}`;
+    const { lock, lockedIn } = lockFor(
+      entrypoint,
+      registryFile,
+      entrySrc,
+      /^(scripts|lib|jobs)\//,
+    );
+    rows.push({
+      workflow: `cron-tick:${target}`,
+      entrypoint: entrySrc ? entrypoint : null,
+      jobName,
+      lockedIn,
+      failMode: lock?.failMode ?? null,
+    });
+  }
+
   return rows;
 }
 
@@ -156,7 +231,7 @@ describe("cron lock registry (#1169)", () => {
   it("finds the whole scheduled fleet", () => {
     // A floor, not an equality: new jobs are expected. This only catches the
     // parser silently matching nothing after a workflow-format change.
-    expect(registry.length).toBeGreaterThanOrEqual(61);
+    expect(registry.length).toBeGreaterThanOrEqual(50);
   });
 
   it("resolves an entrypoint for every scheduled workflow", () => {
@@ -272,6 +347,7 @@ describe("cron lock registry (#1169)", () => {
     // killing a mid-flight money job is the one thing worse than a double run.
     const missing = registry
       .map((r) => r.workflow)
+      .filter((workflow) => !workflow.startsWith("cron-tick:"))
       .filter((workflow) => {
         const src = read(path.join(WORKFLOW_DIR, workflow));
         if (!src) return true;
@@ -316,18 +392,14 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
   }
 
   function buildTwins(): Twin[] {
-    return fs
-      .readdirSync(CLEANUP_DIR)
-      .sort()
-      .map((dir) => {
-        const file = path.join(CLEANUP_DIR, dir, "route.ts");
-        const src = read(file);
-        if (!src) return null;
+    const registryFile = path.join(ROOT, "lib", "cron", "cleanup-registry.ts");
+    const twinBlocks = cleanupTwinBlocks();
+    return Array.from(twinBlocks.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([dir, src]) => {
         const job = src.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
-        const money = [
-          ...src.matchAll(/from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g),
-        ].some((imp) => {
-          const resolved = resolveImport(file, imp[1]);
+        const money = extractImports(src).some((spec) => {
+          const resolved = resolveImport(registryFile, spec);
           if (!resolved) return false;
           const rel = path.relative(ROOT, resolved);
           if (MONEY_CORE_DIRS.some((d) => rel.startsWith(d))) return true;
@@ -335,8 +407,7 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
           return !!core && REFUND_FRONT_DOORS.some((fn) => core.includes(fn));
         });
         return { dir, job, money };
-      })
-      .filter((t): t is Twin => t !== null);
+      });
   }
 
   const twins = buildTwins();

@@ -43,13 +43,14 @@ export type { PayoutResult } from "./payout-service";
 export {
   getOrgPayoutEligibility,
   createOrgPayoutBatch,
+  createOrgPayoutBatches,
   processOrgPayout,
   processPendingOrgPayouts,
   markOrgPayoutCompleted,
   markOrgPayoutFailed,
   markOrgPayoutReversed,
 } from "./org-payout-service";
-export type { OrgProcessingResult } from "./org-payout-service";
+export type { OrgProcessingResult, OrgBatchResult } from "./org-payout-service";
 
 // Earnings Service
 export {

@@ -1,8 +1,7 @@
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import prisma from "@/lib/prisma";
-import { applyRateLimit } from "@/lib/rate-limit";
-import { accountKey, staffCreateLimiter } from "@/lib/rate-limit/policies";
+import { applyRateLimit, staffCreateLimiter } from "@/lib/rate-limit";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { sendOperatorSetupLink } from "@/lib/auth/operators";
 
@@ -23,9 +22,7 @@ export const POST = withOpsAction(
     mode: "gateway",
     target: ({ params }) => ({ kind: "User", id: params.userId ?? "" }),
     run: async ({ actor, params }) => {
-      if (
-        await applyRateLimit(staffCreateLimiter, await accountKey(actor.userId))
-      ) {
+      if (await applyRateLimit(staffCreateLimiter, actor.userId)) {
         throw new OpsRefusal(
           "RATE_LIMITED",
           "Too many setup emails sent in the last hour. Wait and try again.",
