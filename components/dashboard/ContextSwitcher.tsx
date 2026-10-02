@@ -250,7 +250,7 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
   ].find((f) => f.key === activeKey);
 
   const userName = user?.name ?? seeded?.name ?? "";
-  const identityKnown = !!user || !!seeded;
+  const identityKnown = !!current || !!user || !!seeded;
   let trigger = {
     name: userName,
     image: user?.image ?? seeded?.image ?? null,
@@ -319,9 +319,14 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
                     !user && <Skeleton className="mt-1 h-3 w-14" />
                   )}
                 </div>
-                {user && (
-                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-zinc-400" />
-                )}
+                {/* Invisible, not absent, until the session hydrates: the
+                    name column keeps its width, so nothing shifts. */}
+                <ChevronsUpDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 text-zinc-400",
+                    !user && "invisible",
+                  )}
+                />
               </>
             ) : (
               <div className="min-w-0 flex-1 space-y-1.5">
