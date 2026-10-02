@@ -17,7 +17,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { useEffect, useState, startTransition } from "react";
+import { useEffect, startTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -63,25 +63,29 @@ export function DashboardRouteError({
       reset();
     });
 
-  // Decided once per mount: only server-thrown errors (digest) with no
-  // attempt in the last 30 s are retried; the attempt is recorded first.
-  const [autoRetrying] = useState(() => {
-    if (!error.digest || typeof window === "undefined") return false;
-    const key = `${window.location.pathname}|${error.digest}`;
-    const last = autoRetried.get(key);
-    if (last !== undefined && Date.now() - last < AUTO_RETRY_WINDOW_MS) {
-      return false;
-    }
-    autoRetried.set(key, Date.now());
-    return true;
-  });
+  // Read on every render, not decided once per mount: a failed retry can come
+  // back as an update of this same instance, and it must then show the card.
+  // Only server-thrown errors (digest) with no attempt in the last 30 s.
+  const retryKey =
+    error.digest && typeof window !== "undefined"
+      ? `${window.location.pathname}|${error.digest}`
+      : null;
+  const lastAttempt = retryKey ? autoRetried.get(retryKey) : undefined;
+  const autoRetrying =
+    retryKey !== null &&
+    (lastAttempt === undefined ||
+      Date.now() - lastAttempt >= AUTO_RETRY_WINDOW_MS);
 
   useEffect(() => {
-    if (!autoRetrying) return;
-    const t = setTimeout(retry, 1000);
+    if (!autoRetrying || !retryKey) return;
+    const t = setTimeout(() => {
+      // Recorded when the retry fires, so StrictMode's remount can't spend it.
+      autoRetried.set(retryKey, Date.now());
+      retry();
+    }, 1000);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per mount
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `retry` is a fresh closure each render; keyed on the error instead
+  }, [autoRetrying, retryKey, error]);
 
   // #1933: a self-healed blip must not spend Sentry quota.
   useEffect(() => {
