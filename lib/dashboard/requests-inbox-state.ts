@@ -286,7 +286,7 @@ export function nextInboxSearch(
   patch: InboxParamsPatch,
 ): string {
   const next = new URLSearchParams(current);
-  // #1928: a deep-linked row is highlighted once; any tab/chip/sort/page change ends it.
+  // A deep-linked row is highlighted once; any tab/chip/sort/page change ends it.
   next.delete("focus");
   const apply = (key: string, value: string | null) => {
     if (value === null) next.delete(key);

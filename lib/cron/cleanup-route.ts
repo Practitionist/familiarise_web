@@ -215,7 +215,7 @@ export function cleanupRoute<T extends object>(opts: {
       // forbids, and one the cron caller has no use for anyway.
       // #1441 — a script that rethrows a plain object reached Sentry as
       // "Error: [object Object]"; the report helper keeps its message/code.
-      // #1933 — keyed by target like the lock branch above: a systemic fault
+      // Keyed by target like the lock branch above: a systemic fault
       // fails every tick and used to cost one event per tick per job.
       captureThrottled(
         `cron:${job}`,

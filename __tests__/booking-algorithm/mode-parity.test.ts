@@ -23,8 +23,7 @@ import {
   getSlotLimits,
 } from "@/lib/scheduling/intervalSelectionValidation";
 import { type CalendarInterval } from "@/lib/scheduling/calendarUtils";
-// eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
-import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
+import { makeConsecutiveTimeSlots } from "../fixtures/booking.mockData";
 
 let mockAllocateSlots: jest.SpyInstance;
 

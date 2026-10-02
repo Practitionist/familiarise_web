@@ -183,9 +183,10 @@ export async function drainNotificationOutbox(opts?: {
 }
 
 if (require.main === module) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require("dotenv/config");
   runJob("drain-notification-outbox", async () => {
+    // Loaded here (not at module top) so importing this file from Next/tests never
+    // reads .env; dynamic import is the ESM form of the old lazy require.
+    await import("dotenv/config");
     await abortIfMaintenance("drain-notification-outbox");
     Sentry.logger.info("job:drain-notification-outbox started");
     try {

@@ -18,7 +18,7 @@ import { readRequestsToAnswerCount } from "@/lib/data/requests-inbox";
  */
 
 export interface ConsultantNeedsYou {
-  /** The Requests badge's own number: rows waiting on this consultant's answer (#1928). */
+  /** The Requests badge's own number: rows waiting on this consultant's answer. */
   requestsToAnswer: number;
   /** A learner proposed new times and waits on this consultant (#1163). */
   rescheduleReplies: { appointmentId: string; counterpartName: string }[];

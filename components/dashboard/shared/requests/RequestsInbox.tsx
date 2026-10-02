@@ -143,7 +143,7 @@ const requestPath = (row: InboxRowInput) =>
  * Tabs, chips, sort and page live in the URL. Writes go through `replaceUrl`,
  * which the App Router syncs into `useSearchParams`: the URL changes
  * synchronously and no server round trip re-renders the page for a filter
- * click (QA #1783 case 3 — `router.replace` left the URL behind).
+ * click.
  */
 function useInboxUrlState() {
   const pathname = usePathname();
@@ -205,7 +205,7 @@ export function RequestsInbox({
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
-    // #1928: a failing tab should show its error in seconds, not after the
+    // A failing tab should show its error in seconds, not after the
     // provider's two retries.
     retry: 1,
   });
@@ -604,7 +604,7 @@ export function RequestsInbox({
 
   const loading = query.isPending && !data;
   const refreshing = query.isFetching;
-  // #1928: the error card must not also blank the tab counts.
+  // The error card must not also blank the tab counts.
   const lastCountsRef = useRef<
     NonNullable<typeof data>["meta"]["counts"] | undefined
   >(undefined);
@@ -632,7 +632,7 @@ export function RequestsInbox({
         </div>
       );
     }
-    // #1928: placeholder rows belong to the previous tab, so an empty
+    // Placeholder rows belong to the previous tab, so an empty
     // placeholder must not render this tab's empty state.
     if (loading || (isPlaceholderData && rows.length === 0)) {
       return (

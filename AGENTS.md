@@ -30,6 +30,7 @@
    - `Payment.paymentStatus = SUCCEEDED` is written only by the payment confirmation pipeline (`lib/payments/webhooks/handlers.ts`).
 3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
    - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
+   - Check live-DB drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`; a plain `db push` would drop the `prisma/sql` sidecar uniques.
    - Run `npx prisma generate` after editing `prisma/schema.prisma`. Any new `CHECK`, partial unique index, or trigger belongs in `prisma/sql/*.sql`.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
@@ -38,11 +39,17 @@
 ## 3. Cloudtop Worktree & Dependency Hygiene
 
 1. **Single Canonical `node_modules`**:
-   - In secondary git worktrees, always symlink `node_modules` (`ln -s /usr/local/google/home/kaustavg/github/familiarise_web/node_modules node_modules`) and remove the worktree cleanly when finished. Never run standalone `npm ci` copies across worktrees.
+   - In secondary git worktrees, always symlink the main checkout's `node_modules` (`ln -s <main-checkout>/node_modules node_modules`) and remove the worktree cleanly when finished. Never run standalone `npm ci` copies across worktrees.
 2. **Minimum Patched Versions**:
    - Never downgrade `next` (`>= 15.5.27`) or `sharp` (`>= 0.35.5`).
 3. **Verification Commands**:
    - Typecheck: `npx tsc --noEmit`
-   - Lint (0 warnings allowed): `npm run lint`
+   - Lint: `npm run lint` (errors fail CI; warnings are advisory)
    - Format check: `npm run format:check`
    - Targeted Jest test: `npx jest path/to/test.ts` (never run `next dev`, `next build`, or `db:push` unless instructed).
+
+## 4. Engineering Practices
+
+1. Never add `eslint-disable*`, `@ts-ignore`, `@ts-expect-error` or `@ts-nocheck`; fix the code. If a rule is wrong for a path, turn it off for that path in `eslint.config.mjs` with a one-line reason.
+2. List every effect dependency; never suppress `react-hooks/exhaustive-deps`. Never write `ref.current` during render — React is 18.3 (no `useEffectEvent`), so sync latest-value refs in an effect declared before the one that reads them.
+3. Never capture to Sentry per row inside a loop or sweep; collect failures and report once per run. All errors share the free plan's 5,000/month quota.

@@ -117,8 +117,7 @@ function wireTxShim(extraTxModels: string[] = []) {
     ]) {
       tx[model] = m[model];
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 }
 

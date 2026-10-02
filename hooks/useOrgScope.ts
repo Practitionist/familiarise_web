@@ -113,7 +113,7 @@ export function useOrgScope(options?: UseOrgScopeOptions): UseOrgScopeResult {
     session?.user?.organizationMemberships?.[0]?.organizationId ??
     serverFacts.firstOrgId;
 
-  // #1928: URL writes now reach useSearchParams, so keying on the object re-ran
+  // URL writes now reach useSearchParams, so keying on the object re-ran
   // every scope consumer on every tab click.
   const rawScope = searchParams?.get("orgScope") ?? null;
   const scope: Scope = useMemo(() => {

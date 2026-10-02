@@ -1,5 +1,5 @@
 /**
- * #1933 — the per-key throttle and the per-process breaker in beforeSend's
+ * The per-key throttle and the per-process breaker in beforeSend's
  * budget stage. One pin for the policy; the pattern classes keep their own
  * suites.
  */

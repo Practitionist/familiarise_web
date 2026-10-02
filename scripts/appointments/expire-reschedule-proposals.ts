@@ -151,7 +151,7 @@ async function expireOneProposal(
         // released and the booking waits in the allocate queue, which is the
         // pre-#1846 behaviour. Without this the row would be skipped on every
         // tick and never expire.
-        // #1933 — recorded first so the miss survives a failing fallback, and
+        // Recorded first so the miss survives a failing fallback, and
         // reported once per run by the caller rather than once per row.
         misses.firstError ??= error;
         misses.ids.push(row.id);

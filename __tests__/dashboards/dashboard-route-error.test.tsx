@@ -1,5 +1,5 @@
 /**
- * #1928 — the dashboard boundary retries a server-thrown error once, and a
+ * The dashboard boundary retries a server-thrown error once, and a
  * failed retry must land on the error card even when it arrives as an UPDATE of
  * the same instance (a mount-once decision left the page on "Reconnecting…").
  */

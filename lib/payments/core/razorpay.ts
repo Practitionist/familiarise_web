@@ -168,16 +168,17 @@ type RazorpayCircuitBreakerLike = {
 
 let razorpayCircuitBreakerInstance: RazorpayCircuitBreakerLike | null = null;
 
-function getRazorpayCircuitBreaker(): RazorpayCircuitBreakerLike {
+async function getRazorpayCircuitBreaker(): Promise<RazorpayCircuitBreakerLike> {
   if (razorpayCircuitBreakerInstance) return razorpayCircuitBreakerInstance;
   try {
-    // Lazy require so `lib/payments/core/razorpay.ts` does not evaluate
+    // Lazy dynamic import so `lib/payments/core/razorpay.ts` does not evaluate
     // `lib/redis.ts` at module load (preserving the PM-10 boot guard order in
-    // `razorpay-test-key-guard.test.ts`).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const redisMod = require("@/lib/redis") as {
+    // `razorpay-test-key-guard.test.ts`). Dynamic `import()` is the ESM form
+    // of the lazy load; the no-inline-disable policy forbids `require`.
+    const redisMod = (await import("@/lib/redis")) as {
       createCircuitBreaker?: (name: string) => RazorpayCircuitBreakerLike;
     };
+    if (razorpayCircuitBreakerInstance) return razorpayCircuitBreakerInstance;
     if (typeof redisMod.createCircuitBreaker === "function") {
       razorpayCircuitBreakerInstance =
         redisMod.createCircuitBreaker("razorpay");
@@ -200,8 +201,8 @@ function getRazorpayCircuitBreaker(): RazorpayCircuitBreakerLike {
   return razorpayCircuitBreakerInstance;
 }
 
-export function getRazorpayCircuitStatus() {
-  return getRazorpayCircuitBreaker().status();
+export async function getRazorpayCircuitStatus() {
+  return (await getRazorpayCircuitBreaker()).status();
 }
 
 export function resetRazorpayCircuitBreakerForTesting(): void {
@@ -239,12 +240,12 @@ function runWithTimeout<T>(
   });
 }
 
-export function withRazorpaySdkTimeout<T>(
+export async function withRazorpaySdkTimeout<T>(
   op: string,
   call: () => Promise<T>,
   timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<T> {
-  return getRazorpayCircuitBreaker().run(
+  return (await getRazorpayCircuitBreaker()).run(
     () => runWithTimeout(op, call, timeoutMs),
     undefined,
     shouldTripRazorpayCircuitBreaker,

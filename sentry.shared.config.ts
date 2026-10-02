@@ -112,7 +112,7 @@ export function infraThrottleKey(event: {
   return hit ? hit.source : null;
 }
 
-// #1933 — the free plan allows 5,000 errors a month and 2026-09-22 spent all
+// The free plan allows 5,000 errors a month and 2026-09-22 spent all
 // of it, leaving ten days dark. These three guards bound what one process can
 // send; they are in-memory on purpose, because Redis is often what is down.
 const BUDGET_MAX_KEYS = 500;
@@ -184,7 +184,7 @@ function budgetKey(event: Sentry.Event, family: string | null): string {
  * INFRA_THROTTLE_MS per key; and at most BUDGET_BREAKER_MAX events an hour per
  * process get through whatever their key. Throttled events do not feed the
  * breaker, so a flood of one class cannot starve a different real fault.
- * `fatal` events skip the breaker (owner decision on #1938): a money page like
+ * `fatal` events skip the breaker (owner decision): a money page like
  * WALLET_BALANCE_DRIFT must not lose to an hour of unrelated noise; the per-key
  * throttle still bounds a fatal flood.
  */
@@ -225,7 +225,7 @@ function exceedsErrorBudget(
 
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
 export function applyErrorBudget(event: Sentry.Event): Sentry.Event | null {
-  // #1933 — an expected outcome at info level is an ANSWER, not a fault.
+  // An expected outcome at info level is an ANSWER, not a fault.
   if (event.tags?.expected === "true" && event.level === "info") return null;
   const family = fingerprintFamily(event);
   if (family) event.fingerprint = [family];
@@ -325,7 +325,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 
-    // #1933 — previews keep visibility at a tenth of the volume; everything
+    // Previews keep visibility at a tenth of the volume; everything
     // else reports every error (the throttle above bounds floods). Keyed on
     // "preview" rather than "not production" so an unset environment (a bare
     // job runner, a test) fails open instead of silently dropping 90%.
@@ -410,7 +410,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       /func .* not found/,
       /inpage\.js/,
       /Object Not Found Matching Id/i,
-      // #1933 — control-flow and browser noise that is never a defect.
+      // Control-flow and browser noise that is never a defect.
       "NEXT_REDIRECT",
       "NEXT_NOT_FOUND",
       /AbortError/,
@@ -442,7 +442,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
       }
-      // #1933 quota guard: drop expected-info, fingerprint the flood families,
+      // Drop expected-info, fingerprint the flood families,
       // throttle per key, cap per process. Returning null drops before
       // transport, so dropped events never consume quota.
       if (applyErrorBudget(event) === null) return null;

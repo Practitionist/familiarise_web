@@ -9,7 +9,7 @@ import {
   createMockLogger,
   createMockUserCache,
   createMockRoleMapper,
-} from "./__mocks__/stream-mocks";
+} from "../fixtures/stream-mocks";
 
 // Create mock instances
 const mockPrisma = createMockPrisma();

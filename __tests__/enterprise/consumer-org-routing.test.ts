@@ -43,8 +43,7 @@ const mockedGetSession = getSession as jest.Mock;
 const mockedResolveHref = resolvePersonalDashboardHref as jest.Mock;
 
 function makeParams(orgId = "org-1") {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { params: Promise.resolve({ orgId }) } as any;
+  return { params: Promise.resolve({ orgId }) };
 }
 
 /**

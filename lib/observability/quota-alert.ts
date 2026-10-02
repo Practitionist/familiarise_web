@@ -1,5 +1,5 @@
 /**
- * Early warning at 70% of the Sentry error quota (#1933).
+ * Early warning at 70% of the Sentry error quota.
  *
  * The 2026-09-22 outage was found after the quota was spent; the ingest canary
  * only says so once events are already being refused. This reads accepted
