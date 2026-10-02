@@ -152,16 +152,12 @@ describe("assertPaymentLegsSumToAmount", () => {
   });
 
   it("error message includes the delta for ops visibility", () => {
-    try {
+    expect(() =>
       assertPaymentLegsSumToAmount({
         paymentAmountPaise: 100,
         legs: [{ source: "WALLET", amountPaise: 60 }],
-      });
-      throw new Error("expected assertion to throw");
-    } catch (err) {
-      if (!(err instanceof Error)) throw err;
-      expect(err.message).toContain("delta -40");
-    }
+      }),
+    ).toThrow("delta -40");
   });
 });
 

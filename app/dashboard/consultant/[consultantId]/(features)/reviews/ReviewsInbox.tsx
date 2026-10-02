@@ -306,7 +306,7 @@ function ReviewList({
   const emptyPlaceholder =
     query.isPlaceholderData &&
     !query.data?.pages.some((p) => p.rows.length > 0);
-  // #1928: an empty placeholder is the previous filter's, not this one's empty state.
+  // An empty placeholder is the previous filter's, not this one's empty state.
   if (query.isLoading || emptyPlaceholder) {
     return (
       <div className="space-y-3">
@@ -326,7 +326,7 @@ function ReviewList({
   }
   const rows = query.data?.pages.flatMap((p) => p.rows) ?? [];
   if (rows.length === 0) {
-    // #1928: a filtered-empty list is not the never-reviewed state.
+    // A filtered-empty list is not the never-reviewed state.
     if (rating && !needsReply) {
       return (
         <EmptyState

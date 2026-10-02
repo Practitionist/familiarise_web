@@ -113,7 +113,7 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
   });
   result.scanned = due.length;
 
-  // #1933 — one Sentry event per run, never per row.
+  // One Sentry event per run, never per row.
   const failedIds: string[] = [];
   let firstError: unknown;
   for (const payment of due) {
@@ -123,7 +123,7 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       result.errors += 1;
       firstError ??= error;
       failedIds.push(payment.id);
-      // #1932: console bypasses the Sentry scrubber, so log a scrubbed message only.
+      // Console bypasses the Sentry scrubber, so log a scrubbed message only.
       console.error(
         `retry-auto-refunds: payment ${payment.id} failed:`,
         scrubStringValue(

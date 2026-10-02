@@ -44,10 +44,7 @@ jest.mock("../../lib/observability/identity", () => ({
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const AuthSyncProvider = require("../../providers/AuthSyncProvider")
-  .default as () => JSX.Element | null;
+import AuthSyncProvider from "../../providers/AuthSyncProvider";
 
 function setVisible(visible: boolean): void {
   Object.defineProperty(document, "visibilityState", {

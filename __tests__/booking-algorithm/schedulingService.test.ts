@@ -79,7 +79,7 @@ import {
 import {
   makeWeeklyAvailabilitySlot,
   makeCustomAvailabilitySlot,
-} from "./__mocks__/booking.mockData";
+} from "../fixtures/booking.mockData";
 // Mocked above; imported (not require()d) so the lock-scope pin below stays
 // free of a require-style import.
 import { lockAutoAllocate as mockLockAutoAllocate } from "../../utils/appointmentlock";
