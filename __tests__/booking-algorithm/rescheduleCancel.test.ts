@@ -395,9 +395,9 @@ describe("CancelAppointmentSchema", () => {
       reason: "SCHEDULE_CONFLICT",
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.reason).toBe("SCHEDULE_CONFLICT");
-    }
+    expect(result.success ? result.data.reason : undefined).toBe(
+      "SCHEDULE_CONFLICT",
+    );
   });
 
   it("should accept all valid CancellationReason enum values", () => {
@@ -424,11 +424,9 @@ describe("CancelAppointmentSchema", () => {
       notes: "Need to cancel due to scheduling conflict",
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.notes).toBe(
-        "Need to cancel due to scheduling conflict",
-      );
-    }
+    expect(result.success ? result.data.notes : undefined).toBe(
+      "Need to cancel due to scheduling conflict",
+    );
   });
 
   it("should accept reason and notes together", () => {

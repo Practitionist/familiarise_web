@@ -1119,9 +1119,8 @@ describe("validate: subscription slot count modulo", () => {
       { sessionDurationInHours: 1 },
     );
     // Modulo check passes; downstream may fail on other rules but not modulo
-    if (!result.isValid) {
-      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(true);
-    }
+    const errors = result.isValid ? [] : result.errors;
+    expect(errors.every((e) => !e.includes("multiple of"))).toBe(true);
   });
 
   it("should skip modulo check for 30-min sessions (slotsPerSession=1)", async () => {
@@ -1145,9 +1144,8 @@ describe("validate: subscription slot count modulo", () => {
       { sessionDurationInHours: 0.5 },
     );
     // Should not fail with modulo error
-    if (!result.isValid) {
-      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(true);
-    }
+    const errors = result.isValid ? [] : result.errors;
+    expect(errors.every((e) => !e.includes("multiple of"))).toBe(true);
   });
 });
 
