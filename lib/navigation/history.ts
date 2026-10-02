@@ -10,3 +10,8 @@
 export function replaceUrl(target: string): void {
   window.history.replaceState(null, "", target);
 }
+
+// Adds a history entry (Back returns here); same `null`-state rule as above (#1928).
+export function pushUrl(target: string): void {
+  window.history.pushState(null, "", target);
+}
