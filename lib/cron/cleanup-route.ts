@@ -5,7 +5,6 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/with-cron-lock";
-import { reportSentryError } from "@/lib/observability/report";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
@@ -199,7 +198,14 @@ export function cleanupRoute<T extends object>(opts: {
       // forbids, and one the cron caller has no use for anyway.
       // #1441 — a script that rethrows a plain object reached Sentry as
       // "Error: [object Object]"; the report helper keeps its message/code.
-      reportSentryError(error, { subsystem: "cron", tags: { job } });
+      // #1933 — keyed by target like the lock branch above: a systemic fault
+      // fails every tick and used to cost one event per tick per job.
+      captureThrottled(
+        `cron:${job}`,
+        error,
+        { subsystem: "cron", tags: { job } },
+        LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
+      );
       console.error(`Error in ${job}:`, error);
       return NextResponse.json(
         { error: failureMessage ?? `Failed to run ${job}` },

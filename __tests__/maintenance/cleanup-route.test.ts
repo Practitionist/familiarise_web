@@ -142,6 +142,8 @@ describe("cleanupRoute", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // #1933 — the catch-all is throttled per job, so windows must not leak.
+    resetThrottledCaptureForTesting();
     guard.mockResolvedValue(undefined);
     process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
   });

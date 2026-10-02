@@ -34,6 +34,8 @@ export interface ReportOpts {
   /** Merged over the derived subsystem/op/expected tags — can override any of them. */
   tags?: Record<string, string>;
   contexts?: Record<string, Record<string, unknown>>;
+  /** #1933 — stable grouping key; a run-level aggregate must not split per id. */
+  fingerprint?: string[];
 }
 
 function buildSentryCaptureContext(opts: ReportOpts) {
@@ -51,6 +53,7 @@ function buildSentryCaptureContext(opts: ReportOpts) {
     ...(level ? { level } : {}),
     ...(opts.extra ? { extra: opts.extra } : {}),
     ...(opts.contexts ? { contexts: opts.contexts } : {}),
+    ...(opts.fingerprint ? { fingerprint: opts.fingerprint } : {}),
   };
 }
 

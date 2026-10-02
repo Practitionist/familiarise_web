@@ -48,8 +48,6 @@ export const INFRA_TRANSIENT_PATTERNS = [
   /\[system-events\] write failed/,
 ];
 
-const infraLastSent = new Map<string, number>();
-
 export function infraThrottleKey(event: {
   message?: string;
   exception?: { values?: Array<{ type?: string; value?: string }> };
@@ -62,6 +60,119 @@ export function infraThrottleKey(event: {
   ].join(" | ");
   const hit = INFRA_TRANSIENT_PATTERNS.find((re) => re.test(text));
   return hit ? hit.source : null;
+}
+
+// #1933 — the free plan allows 5,000 errors a month and 2026-09-22 spent all
+// of it, leaving ten days dark. These three guards bound what one process can
+// send; they are in-memory on purpose, because Redis is often what is down.
+const BUDGET_MAX_KEYS = 500;
+const BUDGET_BREAKER_MAX = 30;
+const BUDGET_BREAKER_WINDOW_MS = 60 * 60 * 1000;
+
+// Named fingerprint families: one issue and one throttle key per class, however
+// many routes hit it. The first three reuse INFRA_TRANSIENT_PATTERNS.
+const FAMILY_FOR_PATTERN: Record<string, string> = {
+  [INFRA_TRANSIENT_PATTERNS[0].source]: "upstash-quota",
+  [INFRA_TRANSIENT_PATTERNS[1].source]: "cron-lock-unavailable",
+  [INFRA_TRANSIENT_PATTERNS[2].source]: "system-events-write-failed",
+};
+const POOL_EXHAUSTION_TEXT =
+  /Unable to start a transaction in the given time|Timed out fetching a new connection from the connection pool|\bP2024\b/;
+
+const budgetLastSent = new Map<string, number>();
+let breakerSent: number[] = [];
+let breakerDropped = 0;
+
+/** Test seam: clears the process-local budget state. */
+export function resetSentryBudgetState(): void {
+  budgetLastSent.clear();
+  breakerSent = [];
+  breakerDropped = 0;
+}
+
+function eventText(event: Sentry.Event): string {
+  return [
+    event.message ?? "",
+    ...(event.exception?.values ?? []).map(
+      (v) => `${v.type ?? ""}: ${v.value ?? ""}`,
+    ),
+  ].join(" | ");
+}
+
+function fingerprintFamily(event: Sentry.Event): string | null {
+  const infra = infraThrottleKey(event);
+  if (infra !== null) return FAMILY_FOR_PATTERN[infra] ?? null;
+  if (event.tags?.pool_exhaustion === "true") return "prisma-pool-exhaustion";
+  return POOL_EXHAUSTION_TEXT.test(eventText(event))
+    ? "prisma-pool-exhaustion"
+    : null;
+}
+
+function normaliseForKey(text: string): string {
+  return text
+    .replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      "#",
+    )
+    .replace(/\bc[a-z0-9]{24}\b/g, "#")
+    .replace(/\b[0-9a-f]{8,}\b/gi, "#")
+    .replace(/\d+/g, "#");
+}
+
+function budgetKey(event: Sentry.Event, family: string | null): string {
+  if (family) return `family:${family}`;
+  const ex = event.exception?.values?.at(-1);
+  if (!ex) return `msg:${normaliseForKey(event.message ?? "")}`;
+  const frames = ex.stacktrace?.frames ?? [];
+  const top = [...frames].reverse().find((f) => f.in_app) ?? frames.at(-1);
+  const where = top ? `${top.filename ?? ""}:${top.function ?? ""}` : "";
+  return `${ex.type ?? ""}|${normaliseForKey(ex.value ?? "")}|${where}`;
+}
+
+/**
+ * True when the event should be dropped: first per key passes, then one per
+ * INFRA_THROTTLE_MS per key; and at most BUDGET_BREAKER_MAX events an hour per
+ * process get through whatever their key. Throttled events do not feed the
+ * breaker, so a flood of one class cannot starve a different real fault.
+ */
+function exceedsErrorBudget(key: string, now = Date.now()): boolean {
+  const last = budgetLastSent.get(key);
+  if (last !== undefined && now - last < INFRA_THROTTLE_MS) return true;
+
+  breakerSent = breakerSent.filter((t) => now - t < BUDGET_BREAKER_WINDOW_MS);
+  if (breakerSent.length >= BUDGET_BREAKER_MAX) {
+    if (breakerDropped === 0) {
+      console.warn(
+        `[sentry] per-process breaker open: >${BUDGET_BREAKER_MAX} events/hour, dropping the rest (#1933)`,
+      );
+    }
+    breakerDropped += 1;
+    return true;
+  }
+  if (breakerDropped > 0) {
+    console.warn(
+      `[sentry] breaker closed: dropped ${breakerDropped} events in the last window (#1933)`,
+    );
+    breakerDropped = 0;
+  }
+
+  breakerSent.push(now);
+  budgetLastSent.delete(key); // re-insert so Map order stays oldest-first
+  budgetLastSent.set(key, now);
+  if (budgetLastSent.size > BUDGET_MAX_KEYS) {
+    const oldest = budgetLastSent.keys().next().value;
+    if (oldest !== undefined) budgetLastSent.delete(oldest);
+  }
+  return false;
+}
+
+/** The `beforeSend` budget stage, exported so a test can drive it directly. */
+export function applyErrorBudget(event: Sentry.Event): Sentry.Event | null {
+  // #1933 — an expected outcome at info level is an ANSWER, not a fault.
+  if (event.tags?.expected === "true" && event.level === "info") return null;
+  const family = fingerprintFamily(event);
+  if (family) event.fingerprint = [family];
+  return exceedsErrorBudget(budgetKey(event, family)) ? null : event;
 }
 
 /**
@@ -154,6 +265,11 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 
+    // #1933 — previews keep visibility at a tenth of the volume; production
+    // reports every error (the throttle above bounds floods).
+    sampleRate:
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "production" ? 1 : 0.1,
+
     // #1086 — deploy previews used to report to a SEPARATE Sentry project, so
     // an error found on a preview was invisible in the one anybody watches and
     // had to be dug out of Netlify function logs. They now share the production
@@ -230,6 +346,14 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       /func .* not found/,
       /inpage\.js/,
       /Object Not Found Matching Id/i,
+      // #1933 — control-flow and browser noise that is never a defect.
+      "NEXT_REDIRECT",
+      "NEXT_NOT_FOUND",
+      /AbortError/,
+      /The (user|operation) aborted/,
+      "ResizeObserver loop limit exceeded",
+      "ResizeObserver loop completed with undelivered notifications",
+      /Non-Error promise rejection captured/,
     ],
 
     // Events whose top stack frame originates in an injected extension script
@@ -254,17 +378,10 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
       }
-      // Quota guard (see INFRA_TRANSIENT_PATTERNS): drop the repeats, keep
-      // one per class per window. Returning null drops before transport, so
-      // throttled events never consume quota.
-      const throttleKey = infraThrottleKey(event);
-      if (throttleKey !== null) {
-        const now = Date.now();
-        if (now - (infraLastSent.get(throttleKey) ?? 0) < INFRA_THROTTLE_MS) {
-          return null;
-        }
-        infraLastSent.set(throttleKey, now);
-      }
+      // #1933 quota guard: drop expected-info, fingerprint the flood families,
+      // throttle per key, cap per process. Returning null drops before
+      // transport, so dropped events never consume quota.
+      if (applyErrorBudget(event) === null) return null;
       // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
       // removes data, it never changes a drop/keep or level decision.
       return scrubSentryEvent(event);

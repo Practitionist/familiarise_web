@@ -45,9 +45,7 @@ async function main(): Promise<void> {
     console.log(`   Orgs:        ${report.summary.orgsChecked}`);
     console.log(`   Accounts:    ${report.summary.accountsChecked}`);
     console.log(`   Assignments: ${report.summary.assignmentsChecked}`);
-    console.log(
-      `   Findings:    ${report.summary.discrepanciesCount}`,
-    );
+    console.log(`   Findings:    ${report.summary.discrepanciesCount}`);
 
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(
@@ -112,33 +110,51 @@ async function main(): Promise<void> {
       const walletDrift = report.findings.filter(
         (f) => f.kind === "WALLET_BALANCE_DRIFT" && f.billingAccountId,
       );
-      for (const f of walletDrift) {
-        const froze = await freezeWalletSpend({
-          billingAccountId: f.billingAccountId!,
-          organizationId: f.organizationId ?? null,
-          reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
-        });
-        Sentry.captureException(
-          new Error(
-            `WALLET_BALANCE_DRIFT — wallet spend frozen for billing account ${f.billingAccountId}`,
-          ),
-          {
-            level: "fatal",
-            tags: { subsystem: "jobs", job: "reconcile-ledgers" },
-            contexts: {
-              wallet: {
-                billingAccountId: f.billingAccountId,
-                organizationId: f.organizationId ?? null,
-                // JSON can't serialize BigInt; walletBalance is BigInt at runtime.
-                expectedPaise: Number(f.expectedPaise),
-                actualPaise: Number(f.actualPaise),
-                deltaPaise: Number(f.deltaPaise),
-                reportId: report.id,
-                newlyFrozen: froze,
+      // #1933 — one fatal per run, not per wallet: the count and a sample of
+      // ids are the fact. `finally` so a freeze that throws mid-loop still
+      // pages for the wallets already frozen. Freeze behaviour is unchanged.
+      const frozenWallets: Array<{
+        billingAccountId: string | null;
+        organizationId: string | null;
+        deltaPaise: number;
+        newlyFrozen: boolean;
+      }> = [];
+      try {
+        for (const f of walletDrift) {
+          const froze = await freezeWalletSpend({
+            billingAccountId: f.billingAccountId!,
+            organizationId: f.organizationId ?? null,
+            reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+          });
+          frozenWallets.push({
+            billingAccountId: f.billingAccountId ?? null,
+            organizationId: f.organizationId ?? null,
+            // JSON can't serialize BigInt; deltaPaise is BigInt at runtime.
+            deltaPaise: Number(f.deltaPaise),
+            newlyFrozen: froze,
+          });
+        }
+      } finally {
+        if (frozenWallets.length > 0) {
+          Sentry.captureException(
+            new Error(
+              `WALLET_BALANCE_DRIFT — wallet spend frozen for ${frozenWallets.length} billing account(s)`,
+            ),
+            {
+              level: "fatal",
+              tags: { subsystem: "jobs", job: "reconcile-ledgers" },
+              fingerprint: ["reconcile-ledgers-wallet-drift"],
+              contexts: {
+                wallet: {
+                  reportId: report.id,
+                  driftingWallets: walletDrift.length,
+                  frozenWallets: frozenWallets.length,
+                  sample: frozenWallets.slice(0, 10),
+                },
               },
             },
-          },
-        );
+          );
+        }
       }
       // #837/#1066 — the discrepancy alert + wallet-freeze P0 pages are queued,
       // not sent. Setting the code instead of exiting lets runJob's flush drain
