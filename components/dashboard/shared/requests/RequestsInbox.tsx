@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   keepPreviousData,
@@ -43,6 +50,7 @@ import {
 import { requestsFreshnessBadge } from "@/lib/scheduling/requestsFreshness";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { cn } from "@/utils/tailwind";
+import { replaceUrl } from "@/lib/navigation/history";
 
 import { BatchApproveBar } from "./BatchApproveBar";
 import { InboxBuckets } from "./InboxBuckets";
@@ -132,10 +140,10 @@ const requestPath = (row: InboxRowInput) =>
   }/${encodeURIComponent(row.id)}`;
 
 /**
- * Tabs, chips, sort and page live in the URL. Writes go through the native
- * history API, which the App Router syncs into `useSearchParams` (Next 14.1+):
- * the URL changes synchronously and no server round trip re-renders the page
- * for a filter click (QA #1783 case 3 — `router.replace` left the URL behind).
+ * Tabs, chips, sort and page live in the URL. Writes go through `replaceUrl`,
+ * which the App Router syncs into `useSearchParams`: the URL changes
+ * synchronously and no server round trip re-renders the page for a filter
+ * click (QA #1783 case 3 — `router.replace` left the URL behind).
  */
 function useInboxUrlState() {
   const pathname = usePathname();
@@ -146,14 +154,12 @@ function useInboxUrlState() {
   );
   const setParams = useCallback(
     (patch: InboxParamsPatch) => {
-      const qs = nextInboxSearch(searchParams.toString(), patch);
-      window.history.replaceState(
-        window.history.state,
-        "",
-        qs ? `${pathname}?${qs}` : pathname,
-      );
+      // The live URL, not the `searchParams` closure: two writes before the
+      // router sync lands would otherwise both start from the same value.
+      const qs = nextInboxSearch(window.location.search, patch);
+      replaceUrl(qs ? `${pathname}?${qs}` : pathname);
     },
-    [pathname, searchParams],
+    [pathname],
   );
   return { params, setParams };
 }
