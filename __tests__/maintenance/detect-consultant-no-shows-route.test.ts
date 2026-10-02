@@ -31,7 +31,7 @@ jest.mock("../../scripts/appointments/detect-consultant-no-shows", () => ({
   detectConsultantNoShows: jest.fn(),
 }));
 
-import { POST } from "../../app/api/cleanup/detect-consultant-no-shows/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
 
 const mockDetect = detectConsultantNoShows as jest.Mock;

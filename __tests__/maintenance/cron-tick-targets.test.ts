@@ -67,21 +67,14 @@ describe("cron-tick targetRequest", () => {
   const { targetRequest } = loadTicker();
   const base = "https://site.test";
 
-  it("resumes the ledger reconcile with no limit and a 20 s timeout", () => {
-    expect(targetRequest(base, "reconcile-ledgers")).toEqual({
-      url: "https://site.test/api/cleanup/reconcile-ledgers?resume=1",
-      timeoutMs: 20_000,
-    });
-  });
-
-  it("leaves the money sweeps on their limit and the six-second default", () => {
+  it("leaves release-earnings on the six-second default and gives abandoned-payments 20 s", () => {
     expect(targetRequest(base, "release-earnings")).toEqual({
       url: "https://site.test/api/cleanup/release-earnings?limit=50",
       timeoutMs: 6_000,
     });
     expect(targetRequest(base, "abandoned-payments")).toEqual({
       url: "https://site.test/api/cleanup/abandoned-payments?limit=10",
-      timeoutMs: 6_000,
+      timeoutMs: 20_000,
     });
   });
 
@@ -119,10 +112,8 @@ describe("cron-tick dueTargets cadence", () => {
     const off = dueTargets(at(5));
     const on = dueTargets(at(15));
     for (const name of [
-      "reconcile-ledgers",
       "sync-payment-earnings",
       "release-earnings",
-      "cascade-refund-earnings",
       "reconcile-refunds",
       "abandoned-payments",
       "sweep-stuck-webhook-events",

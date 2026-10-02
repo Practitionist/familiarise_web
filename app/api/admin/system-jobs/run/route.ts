@@ -21,7 +21,6 @@ import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-sta
 
 // Refunds
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
-import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
 
 // Disputes
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
@@ -32,7 +31,6 @@ import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 // Appointments
-import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/appointments/cleanup-invalid-appointments";
 import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
 import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
 import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
@@ -127,15 +125,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
-  "cascade-refund-earnings": async () => {
-    const result = await cascadeRefundToEarnings();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      updatedCount: result.updatedCount,
-      errorCount: result.errorCount,
-    };
-  },
   "sync-payment-earnings": async () => {
     const result = await syncPaymentEarnings();
     return {
@@ -153,21 +142,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       // #1471 — the same run now also releases host-org earnings.
       organizationEarningsReleased: result.organizationEarningsReleased,
       errorCount: result.errorCount,
-    };
-  },
-  "cleanup-invalid-appointments": async () => {
-    const result = await cleanupInvalidAppointments();
-    return {
-      success: result.success,
-      totalProcessed: result.totalCancelled,
-      cleanedCount: result.totalCancelled,
-      duplicateConsultations: result.duplicateConsultationsCancelled,
-      duplicateSubscriptions: result.duplicateSubscriptionsCancelled,
-      invalidDurationConsultations:
-        result.invalidDurationConsultationsCancelled,
-      invalidDurationSubscriptions:
-        result.invalidDurationSubscriptionsCancelled,
-      errorCount: result.errors.length,
     };
   },
   "create-payout-batch": async () => {

@@ -27,6 +27,9 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   processRazorpayWebhookEvent: jest.fn(),
 }));
+jest.mock("../../lib/stream/webhook-dispatch", () => ({
+  processStreamEvent: jest.fn(),
+}));
 
 // #476 — the sweep cores are now wrapped in withCronLock; pass through so
 // these unit tests exercise the sweep logic, not the lock (covered in

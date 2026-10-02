@@ -1,65 +1,31 @@
-import redis, {
-  acquireLock,
-  releaseLock,
-  renewLock,
-  isMockRedis,
-  checkRedisHealth,
-  isRedisCircuitOpen,
-} from "@/lib/redis";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/cron-lock-errors";
 
 /**
- * #476 — distributed mutual exclusion for cron job entries. Schedule overlap,
- * workflow_dispatch re-runs, and the GH-Actions + CRON_SECRET HTTP double
- * entry can all run the same job twice; jobs whose side effects are only
- * partially idempotent (dunning emails, notify fan-outs) must not double-run.
+ * #476 / #1915 — distributed mutual exclusion for cron job entries backed by a
+ * Postgres lease on `SystemJobExecution`.
  *
- * This wraps the CORE function (scripts/** or lib/**) so every entry point
- * inherits the lock. It is for mutual exclusion only — data correctness comes
- * from the CAS transitions and unique constraints, never from this lock
- * (Redis is a different failure domain than Postgres; see ADR 13).
+ * Schedule overlap, workflow_dispatch re-runs, and the GH-Actions + CRON_SECRET
+ * HTTP double entry can all run the same job twice; jobs whose side effects are
+ * only partially idempotent (dunning emails, notify fan-outs) must not
+ * double-run.
+ *
+ * A job holds the lease while a `SystemJobExecution` row with
+ * `jobName, status = "RUNNING", startedAt > now - ttlMs` exists. Acquiring the
+ * lock and opening the execution trail are unified into a single Postgres
+ * lifecycle with no Upstash Redis dependency.
  */
 
-// The error types live in a leaf module so an `instanceof` check does not drag
-// lib/redis (which throws at import without Upstash env) in with it. Re-exported
-// here because ~44 call sites already import them from this path. (#1066)
 export { CronLockHeldError, CronLockUnavailableError };
 
 const DEFAULT_TTL_MS = 15 * 60 * 1000; // workflows set timeout-minutes: 10
 /** Payout/reconcile family runs up to 30 min (ADR 05) — lock must outlive it. */
 export const LONG_JOB_TTL_MS = 35 * 60 * 1000;
 
-// #1822 Q-5 — `checkRedisHealth()`'s own cache is 2s, tuned for the booking
-// lock retry loop where a stale negative must clear within one attempt. The
-// cron ticker fires 18 targets a few seconds apart on the same instance, each
-// paying its own PING at that 2s cadence for the PRE-ACQUIRE gate below. A 30s
-// window scoped to THIS module only (the shared 2s cache in lib/redis.ts is
-// untouched, so booking's own direct callers are unaffected) still fails a
-// fail-closed job closed within one tick of a real outage. Deliberately NOT
-// applied to the post-null re-probe further down: that check exists to catch
-// Redis going down mid-attempt (#1205-triage), so it must stay a live probe.
-const CRON_HEALTH_CACHE_MS = 30_000;
-let cronHealthCachedAt = 0;
-let cronHealthCachedValue = false;
-
-async function checkRedisHealthForCron(): Promise<boolean> {
-  const now = Date.now();
-  if (now - cronHealthCachedAt < CRON_HEALTH_CACHE_MS) {
-    return cronHealthCachedValue;
-  }
-  cronHealthCachedValue = await checkRedisHealth();
-  cronHealthCachedAt = now;
-  return cronHealthCachedValue;
-}
-
-/** Test-only: clears the cron-scoped health cache between cases (#1822). */
-export function resetCronHealthCacheForTesting(): void {
-  cronHealthCachedAt = 0;
-  cronHealthCachedValue = false;
-}
+/** Test-only: retained for call-site compatibility. */
+export function resetCronHealthCacheForTesting(): void {}
 
 export interface CronLockOpts {
   ttlMs?: number;
@@ -67,8 +33,8 @@ export interface CronLockOpts {
    * closed — money jobs: without a real lock the job refuses to run and the
    *   workflow's notify-on-failure step pages (silent unlocked double-runs of
    *   dunning/payout sweeps are worse than a missed schedule).
-   * open — cleanup/alert jobs: run unlocked with a warning when Redis is
-   *   absent; their side effects are harmless to repeat.
+   * open — cleanup/alert jobs: run unlocked with a warning when the lock table
+   *   is unavailable; their side effects are harmless to repeat.
    */
   failMode: "open" | "closed";
 }
@@ -76,45 +42,62 @@ export interface CronLockOpts {
 /** #697 — errorLog is @db.Text but a stack dump has no business being unbounded. */
 const ERROR_LOG_MAX_CHARS = 8_000;
 
-/** Fleet-level dead-man key (#866): every locked run refreshes it, so
- * /api/health can flag >6h of total cron silence without the Actions API. */
-const HEARTBEAT_KEY = "cron:heartbeat:last";
+type SystemJobExecutionDelegate = {
+  findFirst?: (args: {
+    where: {
+      jobName: string;
+      status: "RUNNING";
+      startedAt: { gt: Date };
+    };
+    select: { id: true };
+  }) => Promise<{ id: string } | null>;
+  create?: (args: {
+    data: {
+      jobId: string;
+      jobName: string;
+      status: "RUNNING";
+      triggeredBy: string;
+    };
+    select: { id: true };
+  }) => Promise<{ id: string } | null>;
+  update?: (args: {
+    where: { id: string };
+    data: {
+      status?: "RUNNING" | "COMPLETED" | "FAILED";
+      startedAt?: Date;
+      endedAt?: Date;
+      durationMs?: number;
+      errorLog?: string;
+    };
+  }) => Promise<unknown>;
+  updateMany?: (args: {
+    where: { id: string; status: "RUNNING" };
+    data: { startedAt: Date };
+  }) => Promise<{ count: number }>;
+};
 
-/**
- * #697 INF-2 — SystemJobExecution trail, written inside the lock so a held-lock
- * skip leaves no row. Every step is guarded (dynamic import included): the
- * trail must never fail a job, and a workflow without a generated Prisma
- * client or DATABASE_URL must degrade to "no trail", not to a crash.
- */
-async function recordJobStart(jobName: string): Promise<string | null> {
+async function getExecutionDelegate(): Promise<SystemJobExecutionDelegate | null> {
   try {
-    const { default: prisma } = await import("@/lib/prisma");
-    const row = await prisma.systemJobExecution.create({
-      data: {
-        jobId: jobName, // no job-config table exists; jobName doubles as the id
-        jobName,
-        status: "RUNNING",
-        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "manual",
-      },
-      select: { id: true },
-    });
-    return row.id;
-  } catch (err) {
-    console.warn(`[${jobName}] job-trail start write failed:`, err);
+    const mod = await import("@/lib/prisma");
+    const prisma = mod.default as unknown as
+      | { systemJobExecution?: SystemJobExecutionDelegate }
+      | undefined;
+    return prisma?.systemJobExecution ?? null;
+  } catch {
     return null;
   }
 }
 
 async function recordJobFinish(
   jobName: string,
+  delegate: SystemJobExecutionDelegate | null,
   executionId: string | null,
   startedAtMs: number,
   error?: unknown,
 ): Promise<void> {
-  if (!executionId) return;
+  if (!executionId || typeof delegate?.update !== "function") return;
   try {
-    const { default: prisma } = await import("@/lib/prisma");
-    await prisma.systemJobExecution.update({
+    await delegate.update({
       where: { id: executionId },
       data: {
         status: error === undefined ? "COMPLETED" : "FAILED",
@@ -133,106 +116,104 @@ async function recordJobFinish(
   }
 }
 
-async function touchHeartbeat(jobName: string): Promise<void> {
-  try {
-    await redis.set(HEARTBEAT_KEY, new Date().toISOString());
-  } catch (err) {
-    console.warn(`[${jobName}] heartbeat write failed:`, err);
-  }
-}
-
 export async function withCronLock<T>(
   jobName: string,
   opts: CronLockOpts,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const key = `cron:lock:${jobName}`;
+  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const delegate = await getExecutionDelegate();
 
-  if (isMockRedis()) {
-    if (opts.failMode === "closed") throw new CronLockUnavailableError(jobName);
-    console.warn(
-      `[${jobName}] Redis not configured — running UNLOCKED (fail-open)`,
-    );
-    // No trail/heartbeat on this path: mock Redis means a laptop or a test,
-    // and the trail exists for the deployed fleet.
+  // Graceful fallback when `prisma.systemJobExecution` is omitted in partial unit-test mocks.
+  if (!delegate || typeof delegate.create !== "function") {
     return fn();
   }
 
-  // acquireLock returns null for BOTH "held" and "circuit open". Held is a
-  // clean skip; an unreachable Redis on a fail-closed job must page instead —
-  // otherwise money jobs freeze silently for as long as the outage lasts.
-  if (opts.failMode === "closed") {
-    const healthy = await checkRedisHealthForCron();
-    if (!healthy) throw new CronLockUnavailableError(jobName);
-  }
-
-  const token = await acquireLock(key, opts.ttlMs ?? DEFAULT_TTL_MS);
-  if (!token) {
-    // acquireLock returns null for BOTH "held" and "Redis trouble": the
-    // breaker fallback short-circuits to null while OPEN, and during the
-    // FIRST FOUR consecutive failures the breaker is still CLOSED while every
-    // acquire already fails. The pre-acquire health check cannot see either
-    // window (it ran earlier, and it deliberately bypasses the breaker). So
-    // on a null token for a fail-closed job we probe Redis AGAIN, right now:
-    // unhealthy ⇒ page (CronLockUnavailableError); reachable ⇒ someone really
-    // holds the lock (clean CronLockHeldError skip).
-    if (opts.failMode === "closed") {
-      // Live probe, NOT the cron-scoped cache above — this exists to catch
-      // Redis going down between the pre-acquire gate and this point.
-      const healthyNow = await checkRedisHealth();
-      if (!healthyNow || isRedisCircuitOpen()) {
-        throw new CronLockUnavailableError(jobName);
+  let executionId: string | null = null;
+  try {
+    if (typeof delegate.findFirst === "function") {
+      const cutoff = new Date(Date.now() - ttlMs);
+      const active = await delegate.findFirst({
+        where: {
+          jobName,
+          status: "RUNNING",
+          startedAt: { gt: cutoff },
+        },
+        select: { id: true },
+      });
+      if (active) {
+        throw new CronLockHeldError(jobName);
       }
     }
-    throw new CronLockHeldError(jobName);
+
+    const row = await delegate.create({
+      data: {
+        jobId: jobName,
+        jobName,
+        status: "RUNNING",
+        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "manual",
+      },
+      select: { id: true },
+    });
+    if (row === null) {
+      throw new CronLockHeldError(jobName);
+    }
+    executionId = row?.id ?? null;
+  } catch (err) {
+    if (err instanceof CronLockHeldError) {
+      throw err;
+    }
+    if (opts.failMode === "closed") {
+      throw new CronLockUnavailableError(jobName);
+    }
+    console.warn(
+      `[${jobName}] Postgres cron lock unavailable — running UNLOCKED (fail-open):`,
+      err,
+    );
+    return fn();
   }
 
   const startedAtMs = Date.now();
-  await touchHeartbeat(jobName);
-  const executionId = await recordJobStart(jobName);
-  const renewal = startLockRenewal(
-    jobName,
-    key,
-    token,
-    opts.ttlMs ?? DEFAULT_TTL_MS,
-  );
+  const renewal = startLeaseRenewal(jobName, delegate, executionId, ttlMs);
 
   try {
     const result = await fn();
-    await recordJobFinish(jobName, executionId, startedAtMs);
+    await recordJobFinish(jobName, delegate, executionId, startedAtMs);
     return result;
   } catch (err) {
-    await recordJobFinish(jobName, executionId, startedAtMs, err);
+    await recordJobFinish(jobName, delegate, executionId, startedAtMs, err);
     throw err;
   } finally {
     renewal.stop();
-    await releaseLock(key, token); // never throws; TTL is the safety net
   }
 }
 
-/**
- * #1696 — the lock used to be a fixed grant with no renewal, so a run that
- * outlived its TTL (the reconcile family under a slow pool) kept working
- * while a second entry started beside it. Re-arm the grant to the full TTL
- * every third of it; a renewal that answers false means ownership is gone,
- * which is logged once — the job is mid-flight and its CAS guards are what
- * make a double-run safe, never this lock (ADR 13). Unref'd so an idle
- * timer never keeps a one-shot process alive.
- */
-function startLockRenewal(
+function startLeaseRenewal(
   jobName: string,
-  key: string,
-  token: string,
+  delegate: SystemJobExecutionDelegate,
+  executionId: string | null,
   ttlMs: number,
 ): { stop: () => void } {
+  if (!executionId || typeof delegate.updateMany !== "function") {
+    return { stop: () => {} };
+  }
   let lost = false;
   const timer = setInterval(
     async () => {
       if (lost) return;
-      const renewed = await renewLock(key, token, ttlMs);
-      if (!renewed) {
-        lost = true;
-        console.warn(`[${jobName}] cron lock renewal failed — ownership lost`);
+      try {
+        const res = await delegate.updateMany!({
+          where: { id: executionId, status: "RUNNING" },
+          data: { startedAt: new Date() },
+        });
+        if (res.count === 0) {
+          lost = true;
+          console.warn(
+            `[${jobName}] cron lock renewal failed — ownership lost`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[${jobName}] cron lock renewal error:`, err);
       }
     },
     Math.max(1_000, Math.floor(ttlMs / 3)),

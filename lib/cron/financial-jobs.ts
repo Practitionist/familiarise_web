@@ -18,7 +18,6 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "create-payout-batch",
   "handle-stuck-payouts",
   "reconcile-payout-status",
-  "cascade-refund-earnings",
   "reconcile-pending-refunds",
   "reconcile-disputes",
   "cleanup-abandoned-payments",
@@ -44,7 +43,6 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // Added by the wave-5 sweep: each of these either moves money directly or
   // mutates the org contract/program state the checkout sponsorship resolver
   // reads, so a partial deployment can bill against a half-written entitlement.
-  "release-pending-trust-earnings",
   "auto-renew-contracts",
   "dunning",
   "timeout-member-overages",

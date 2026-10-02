@@ -30,7 +30,6 @@ export const config = { schedule: "*/5 * * * *" };
 /** Relative to `/api/cleanup/`. Order is cosmetic — every request fires in parallel. */
 const TARGETS = [
   "sweep-stuck-webhook-events",
-  "cascade-refund-earnings",
   "reconcile-refunds",
   "abandoned-payments",
   "reconcile-payment-status",
@@ -39,9 +38,6 @@ const TARGETS = [
   "dispatch-outbound-webhooks",
   "sync-payment-earnings",
   "release-earnings",
-  // #1633 — the backstop for the ledger reconcile driver: one chunk per tick
-  // of whatever full-scope run is in flight, IDLE otherwise.
-  "reconcile-ledgers",
   // #1648 / #1654 — the email outbox relay; every 15 minutes, see TARGET_EVERY_MINUTES.
   "retry-failed-emails",
   // #1654 — the Novu outbox relay, every tick.
@@ -85,15 +81,12 @@ const DEFAULT_LIMIT = 50;
  * #1459 — per-target overrides for the batch size. Fifty rows is only the right
  * bite for a sweep whose per-row cost is a database write; `abandoned-payments`
  * also makes a gateway round trip per payment, and at fifty it could not finish
- * inside {@link PER_TARGET_TIMEOUT_MS} on any tick. The unbounded GitHub Actions
- * run is the backstop for whatever a small bite leaves behind.
+ * inside {@link PER_TARGET_TIMEOUT_MS} on any tick.
  */
 const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
-  // null — send no `limit`; a chunk is bounded by the route's own soft deadline.
-  "reconcile-ledgers": null,
   // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
-  // fits its timeout; the Actions run drains the rest unbounded.
+  // fits its timeout.
   "retry-failed-emails": 20,
   // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
   // rows stays inside the target timeout even when Novu is slow.
@@ -111,40 +104,19 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
  * entry means every tick. The check is on the wall-clock minute, so a late
  * tick (Netlify fires within the minute) still counts as its slot.
  */
-// #1792 — Upstash REST hit its 500k request cap (2026-09-21: every fail-closed
-// money cron red with CronLockUnavailableError). Per-invocation Redis cost
-// (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
-// batch size — is the burn lever. Targets with an Actions twin at equal or
-// better cadence ride the 15-minute slots; the ticker-only Novu relay rides
-// every 10. #1822 Q-3 — the two reconcile confirms left every-tick too
-// (≈83k commands/month); their 30-min Actions twins stay the backstop.
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
   "sweep-orphaned-topup-captures": 15,
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  // #1868 — the Sentry ingest canary. Deliberately NOT on the 5-minute tick:
-  // it posts a real stored event every run, so 5 min is 8,640 events/month,
-  // which is 173% of the Developer plan's 5,000 allowance — the health check
-  // alone would exhaust the plan it is meant to protect. 30 min is
-  // 1,440/month (2.9% of Team, 29% of Developer). The detection latency this
-  // trades away is close to free, because the alert email fires on the
-  // FAILING run, not on the healthy ones it cannot do anything about.
   "sentry-ingest-canary": 30,
-  // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
-  // tick on twelve targets was a cold burst billed as duration (ticket #1112198).
-  "reconcile-ledgers": 15,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
-  "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
-  // #1822 Q-3 — see the block comment above; moved off every-tick.
   "reconcile-payment-status": 15,
   "reconcile-orphaned-confirmations": 15,
-  // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
-  // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
   "expire-unpaid-trials": 15,
   "reschedule-proposals": 15,
   "appointment-reminders": 15,
@@ -164,24 +136,17 @@ export function dueTargets(now: Date): Target[] {
 }
 
 /** Extra query a target needs beyond `limit`. */
-const TARGET_QUERIES: Partial<Record<Target, string>> = {
-  "reconcile-ledgers": "resume=1",
-};
+const TARGET_QUERIES: Partial<Record<Target, string>> = {};
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
 const PER_TARGET_TIMEOUT_MS = 6_000;
 
-/** A reconcile chunk takes ~13 s deployed; 20 s still sits under the 30 s scheduled cap. */
+/** 20 s still sits under the 30 s scheduled cap for gateway/outbox round-trip sweeps. */
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
-  "reconcile-ledgers": 20_000,
-  // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
+  "abandoned-payments": 20_000,
   "retry-failed-emails": 20_000,
   "drain-notification-outbox": 20_000,
-  // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
   "reconcile-orphaned-confirmations": 20_000,
-  // #1583 E-P0-04 — per-row outbox staging (reminders) and gateway refunds
-  // (stale requests) do not fit 6 s on a cold instance; the cron lock makes
-  // an overlap with the Actions run a 409, not a double run.
   "appointment-reminders": 20_000,
   "expire-stale-requests": 20_000,
   "settle-cancelled-sessions": 20_000,

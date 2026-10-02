@@ -26,23 +26,12 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
   CONSULTANT: "consultantProfileId",
   CONSULTEE: "consulteeProfileId",
   STAFF: "staffProfileId",
-  // ORG_WORKSPACE is required since the handoff creates + links the profile
-  // (setOnboardingRoleAction), closing the half-onboarded window where the
-  // role was committed but no profile existed. ADMIN remains flag-only.
   ORG_WORKSPACE: "orgWorkspaceProfileId",
 };
 
 /**
- * Redirect to the stale-session cleanup route, which clears cookies
- * (only possible in Route Handlers) and then redirects to /auth/signin.
- * This prevents the redirect loop where middleware sees a stale cookie
- * and keeps bouncing between /dashboard and /auth/signin.
- *
- * Preserves the intended destination (middleware's `x-pathname`) as
- * `?callbackUrl=` so a stale-cookie bounce on a deep link returns there
- * after re-signin instead of dropping on the dashboard. Never threads an
- * auth URL back into itself — that would land an authenticated user on
- * /auth/signin with a self callback and re-trigger the redirect effect.
+ * Redirect to the stale-session cleanup route, which clears cookies and then
+ * redirects to /auth/signin while preserving the intended destination.
  */
 async function redirectWithCookieCleanup(): Promise<never> {
   const current = (await headers()).get("x-pathname");
@@ -57,15 +46,8 @@ async function redirectWithCookieCleanup(): Promise<never> {
   );
 }
 
-/** Page guards default to refusing an operator without enrolled 2FA. */
 type GuardOptions = { allowUnenrolledOperator?: boolean };
 
-/**
- * #1716 — a lookup that did not complete must not clear the cookie: the
- * stale-session cleanup signs the user out, and a cold-instance stall on a
- * valid cookie was doing exactly that. A failed read throws to the nearest
- * error boundary, whose retry re-runs the guard; only "no session" redirects.
- */
 async function resolveGuardSession({
   allowUnenrolledOperator = false,
 }: GuardOptions = {}) {
@@ -74,17 +56,10 @@ async function resolveGuardSession({
     throw new SessionLookupFailedError(lookup.cause);
   if (lookup.kind === "none") {
     await redirectWithCookieCleanup();
-    // Unreachable: the cleanup route redirects (Next's redirect() throws).
-    // Stated explicitly because `await` on a `Promise<never>` does not narrow
-    // the `lookup` union the way a sync never-returning call did (TS2339).
     throw new SessionLookupFailedError(
       new Error("stale-session cleanup did not redirect"),
     );
   }
-  // lookupSession opts in to unenrolled operators so this can redirect them
-  // instead of answering "no session". Every page guard enforces it, not
-  // just requireOperator: /settings or /dashboard would otherwise render for
-  // a password-only operator sign-in.
   if (
     !allowUnenrolledOperator &&
     isOperatorRole(lookup.session.user.role) &&
@@ -92,66 +67,34 @@ async function resolveGuardSession({
   ) {
     redirect(TWO_FACTOR_SETUP_PATH);
   }
-  // Covers every page guard below (requireAuth, requireOnboarded,
-  // requireUserRole, requireBackofficePage, requireNotOnboarded): a server
-  // component that throws reached Sentry with no actor at all before this.
   setSentryIdentityFromSession(lookup.session);
   return lookup.session;
 }
 
-/**
- * Check whether the user has the role-specific profile they need.
- * ADMIN has no profile requirement and always returns true.
- */
 function hasRequiredProfile(user: SessionUser): boolean {
   const profileKey = PROFILE_KEY_BY_ROLE[user.role];
   return !profileKey || !!user[profileKey];
 }
 
-/**
- * A user is fully onboarded when onboardingCompleted is true AND
- * their role-specific profile exists.
- */
 function isFullyOnboarded(user: SessionUser): boolean {
   return !!user.onboardingCompleted && hasRequiredProfile(user);
 }
 
 /**
  * Require an authenticated session. Redirects to sign-in if no session.
- * Returns the validated session (never null).
- *
- * Force-fresh for the same reason as requireOnboarded below: this guard covers
- * /settings, /profile and all of /dashboard/org-workspace (including billing),
- * and a cookie-cached read cannot see a session that was revoked, erased under
- * DPDP, or signed out from another device — those delete the session row, which
- * only a fresh lookup consults. It costs those routes one session read; that is
- * the intended trade.
  */
 export async function requireAuth() {
   const session = await resolveGuardSession();
-  // Mirrors requireApiAuth's #693 check. `banned` is rebuilt by customSession on
-  // every call, so it stays accurate even in the window where ban-time session
-  // deletion has not landed yet — worth checking explicitly rather than relying
-  // on row deletion alone.
   if (session.user.banned === true) {
     await redirectWithCookieCleanup();
   }
   return session;
 }
 
-/**
- * Build the onboarding redirect target, preserving the intended destination
- * (the path middleware stashed in `x-pathname`) as `?callbackUrl=` so that
- * finishing onboarding returns the user to where they were headed rather than
- * the dashboard. Never loops back to onboarding itself.
- */
 async function onboardingRedirectTarget(
   extraParams?: Record<string, string>,
 ): Promise<string> {
   const params = new URLSearchParams(extraParams);
-  // Canonicalize through the sentinel-origin check first: it rejects
-  // backslash/control-char smuggling the prefix checks below cannot see.
-  // The onboarding root itself is rejected after canonicalization.
   const safe = safeSameOriginPath((await headers()).get("x-pathname"));
   if (safe && !safe.startsWith("/form/onboarding")) {
     params.set("callbackUrl", safe);
@@ -162,23 +105,9 @@ async function onboardingRedirectTarget(
 
 /**
  * Require an authenticated AND fully onboarded user.
- * Redirects to sign-in if no session, to onboarding if not completed or
- * profile is missing. Uses disableCookieCache to avoid stale values.
- *
- * Do NOT switch this to the cookie cache. The forced read is what catches
- * revoked sessions and DPDP erasure (no session row to find). A 5-minute
- * cookie cache would keep those users inside /dashboard/admin, /checkout
- * and /settings. The cache would also buy almost nothing: customSession
- * re-runs its Prisma enrichment on every getSession call regardless, so the
- * cache skips one query out of ~4. The per-render dedupe that actually helps
- * is getSession's React.cache.
  */
 export async function requireOnboarded(options: GuardOptions = {}) {
   const session = await resolveGuardSession(options);
-  // Explicit ban check, mirroring requireAuth/requireApiAuth (#693): a
-  // session minted inside the ban race window still resolves a `banned: true`
-  // payload before row deletion lands, and this guard must not admit it to
-  // the dashboard on payload alone.
   if (session.user.banned === true) {
     await redirectWithCookieCleanup();
   }
@@ -186,9 +115,6 @@ export async function requireOnboarded(options: GuardOptions = {}) {
     redirect(await onboardingRedirectTarget());
   }
   if (!hasRequiredProfile(session.user)) {
-    // A completed ORG_WORKSPACE row written before the handoff created the
-    // profile has no link to require; the wizard's handoff refuses an
-    // onboarded user, so heal here instead of bouncing (review on #1699).
     if (
       session.user.role === "ORG_WORKSPACE" &&
       !session.user.orgWorkspaceProfileId
@@ -206,9 +132,6 @@ export async function requireOnboarded(options: GuardOptions = {}) {
 
 /**
  * Require an onboarded user whose `UserRole` is in the allowed set.
- * Use for pages restricted to a specific user type (e.g. `/dashboard/organization/create`
- * for ORG_WORKSPACE). Sends other roles to the generic dashboard — which in turn
- * routes them to their role-specific home.
  */
 export async function requireUserRole(
   allowed: UserRole | UserRole[],
@@ -226,9 +149,7 @@ export async function requireUserRole(
 export const TWO_FACTOR_SETUP_PATH = "/auth/two-factor/setup";
 
 /**
- * Require an onboarded STAFF/ADMIN with an enrolled second factor. An operator
- * who has not enrolled yet is sent to {@link TWO_FACTOR_SETUP_PATH}; the API
- * twin is the 428 in `requireApiAuth`.
+ * Require an onboarded STAFF/ADMIN with an enrolled second factor.
  */
 export async function requireOperator() {
   const session = await requireUserRole(["ADMIN", "STAFF"]);
@@ -237,9 +158,7 @@ export async function requireOperator() {
 }
 
 /**
- * The enrolment page's guard: an operator who has NOT enrolled yet. This is
- * the only page-level exemption from {@link requireOperator}, and it is keyed
- * on the page that calls it, not on anything the request says about itself.
+ * The enrolment page's guard: an operator who has NOT enrolled yet.
  */
 export async function requireOperatorAwaitingTwoFactor() {
   const session = await requireUserRole(["ADMIN", "STAFF"], {
@@ -250,16 +169,7 @@ export async function requireOperatorAwaitingTwoFactor() {
 }
 
 /**
- * Require back-office access to a specific surface in one tree (#1527 Q3).
- * The page-level twin of `requireBackofficeSurface` (which returns a 403 for
- * API routes) — this redirects instead: a tree the viewer can't open goes to
- * `/dashboard` (role routing), a surface the tree's audience or the viewer
- * lacks goes to that tree's own landing, never across trees.
- *
- * Every `[tree]` page must call this: the layout doesn't re-run on client
- * navigation, and the sidebar hiding a link is not access control.
- *
- * @see lib/backoffice/capability.ts
+ * Require back-office access to a specific surface in one tree.
  */
 export async function requireBackofficePage(
   surface: BackofficeSurface,
@@ -276,20 +186,10 @@ export async function requireBackofficePage(
 
 /**
  * Require that onboarding is NOT fully completed (for the onboarding page).
- * Redirects fully-onboarded users to their dashboard.
- * Uses disableCookieCache to avoid stale values.
- *
- * Resolves via lookupSession like requireAuth/requireOnboarded: a lookup that
- * did not complete must throw to the boundary (retry) rather than clear a
- * valid cookie — otherwise a cold-instance stall on /form/onboarding would
- * sign a signed-in user out and bounce them signin→onboarding→signin.
  */
 export async function requireNotOnboarded() {
   const session = await resolveGuardSession();
   if (isFullyOnboarded(session.user)) {
-    // Add mode (PR-6): an onboarded learner or org operator may re-enter the
-    // wizard to add a consultant identity. Layouts cannot read search params,
-    // but the middleware forwards path + query as `x-pathname`.
     const current = (await headers()).get("x-pathname") ?? "";
     const query = current.includes("?")
       ? current.slice(current.indexOf("?"))

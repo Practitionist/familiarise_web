@@ -53,7 +53,7 @@ jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
 });
 
 import { NextRequest } from "next/server";
-import { POST } from "../../app/api/cleanup/reconcile-ledgers/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 
 const SECRET = "test-cron-secret";
 

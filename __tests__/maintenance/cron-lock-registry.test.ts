@@ -102,6 +102,33 @@ function findLock(
   return { jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" };
 }
 
+function extractImports(src: string): string[] {
+  const specs: string[] = [];
+  for (const m of src.matchAll(
+    /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
+  )) {
+    specs.push(m[1]);
+  }
+  for (const m of src.matchAll(
+    /import\(\s*["'](@\/[^"']+|\.\.?\/[^"']+)["']\s*\)/g,
+  )) {
+    specs.push(m[1]);
+  }
+  return specs;
+}
+
+/** Parse `@cleanup-twin <slug>` blocks from `lib/cron/cleanup-registry.ts`. */
+function cleanupTwinBlocks(): Map<string, string> {
+  const registryFile = path.join(ROOT, "lib", "cron", "cleanup-registry.ts");
+  const src = read(registryFile) ?? "";
+  const out = new Map<string, string>();
+  const parts = src.split(/\/\/\s*@cleanup-twin\s+([a-z0-9-]+)\s*\n/);
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    out.set(parts[i], parts[i + 1]);
+  }
+  return out;
+}
+
 /** The lock in an entry file, or in the first core under `coreDirs` it imports. */
 function lockFor(
   entry: string | null,
@@ -112,10 +139,8 @@ function lockFor(
   const own = findLock(entrySrc);
   if (own || !entrySrc || !entryFile)
     return { lock: own, lockedIn: own ? entry : null };
-  for (const imp of entrySrc.matchAll(
-    /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
-  )) {
-    const resolved = resolveImport(entryFile, imp[1]);
+  for (const spec of extractImports(entrySrc)) {
+    const resolved = resolveImport(entryFile, spec);
     if (!resolved) continue;
     const rel = path.relative(ROOT, resolved);
     if (!coreDirs.test(rel) || rel.includes("with-cron-lock")) continue;
@@ -171,18 +196,20 @@ function buildRegistry(): Row[] {
     });
   }
 
-  // Ticker-only jobs (no YAML twin): the route is the entrypoint.
+  // Ticker-only jobs (no YAML twin): resolved from lib/cron/cleanup-registry.ts.
   const viaYaml = new Set(rows.map((r) => r.jobName));
+  const twinBlocks = cleanupTwinBlocks();
+  const registryRel = path.join("lib", "cron", "cleanup-registry.ts");
+  const registryFile = path.join(ROOT, registryRel);
   for (const target of tickerTargets()) {
-    const entrypoint = path.join("app", "api", "cleanup", target, "route.ts");
-    const entryFile = path.join(ROOT, entrypoint);
-    const entrySrc = read(entryFile);
+    const entrySrc = twinBlocks.get(target) ?? null;
     const jobName =
       entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
     if (viaYaml.has(jobName)) continue;
+    const entrypoint = `${registryRel}#${target}`;
     const { lock, lockedIn } = lockFor(
       entrypoint,
-      entryFile,
+      registryFile,
       entrySrc,
       /^(scripts|lib|jobs)\//,
     );
@@ -204,7 +231,7 @@ describe("cron lock registry (#1169)", () => {
   it("finds the whole scheduled fleet", () => {
     // A floor, not an equality: new jobs are expected. This only catches the
     // parser silently matching nothing after a workflow-format change.
-    expect(registry.length).toBeGreaterThanOrEqual(60);
+    expect(registry.length).toBeGreaterThanOrEqual(50);
   });
 
   it("resolves an entrypoint for every scheduled workflow", () => {
@@ -365,18 +392,14 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
   }
 
   function buildTwins(): Twin[] {
-    return fs
-      .readdirSync(CLEANUP_DIR)
-      .sort()
-      .map((dir) => {
-        const file = path.join(CLEANUP_DIR, dir, "route.ts");
-        const src = read(file);
-        if (!src) return null;
+    const registryFile = path.join(ROOT, "lib", "cron", "cleanup-registry.ts");
+    const twinBlocks = cleanupTwinBlocks();
+    return Array.from(twinBlocks.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([dir, src]) => {
         const job = src.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
-        const money = [
-          ...src.matchAll(/from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g),
-        ].some((imp) => {
-          const resolved = resolveImport(file, imp[1]);
+        const money = extractImports(src).some((spec) => {
+          const resolved = resolveImport(registryFile, spec);
           if (!resolved) return false;
           const rel = path.relative(ROOT, resolved);
           if (MONEY_CORE_DIRS.some((d) => rel.startsWith(d))) return true;
@@ -384,8 +407,7 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
           return !!core && REFUND_FRONT_DOORS.some((fn) => core.includes(fn));
         });
         return { dir, job, money };
-      })
-      .filter((t): t is Twin => t !== null);
+      });
   }
 
   const twins = buildTwins();

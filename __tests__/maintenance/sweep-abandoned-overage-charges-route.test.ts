@@ -22,7 +22,7 @@ jest.mock("../../scripts/cleanup/sweep-abandoned-overage-charges", () => ({
   sweepAbandonedOverageCharges: jest.fn(),
 }));
 
-import { POST } from "../../app/api/cleanup/sweep-abandoned-overage-charges/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 import { sweepAbandonedOverageCharges } from "../../scripts/cleanup/sweep-abandoned-overage-charges";
 
 const mockSweep = sweepAbandonedOverageCharges as jest.Mock;

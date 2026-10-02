@@ -361,7 +361,7 @@ ALTER TABLE "OrganizationInvoice" ADD CONSTRAINT "org_invoice_amounts_nonnegativ
     "subtotalPaise" >= 0
     AND "igstPaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0
     AND "totalPaise" >= 0
-    AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
+    AND "subtotalPaise" + "igstPaise" + "cgstPaise" + "sgstPaise" = "totalPaise"
   );
 -- SPLIT
 ALTER TABLE "InvoiceLineItem" DROP CONSTRAINT IF EXISTS "invoice_line_item_amounts_nonnegative";
