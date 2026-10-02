@@ -46,12 +46,11 @@ jest.mock("../../lib/enterprise/system-events", () => {
   };
 });
 
-// eslint-disable-next-line no-var
-var auditWriteDepth = 0;
-// eslint-disable-next-line no-var
-var auditWritePeak = 0;
-// eslint-disable-next-line no-var
-var auditReleases: Array<() => void> = [];
+// `let` is enough: the mock above only reads these when a mocked call runs
+// during a test, long after this declaration has initialised them.
+let auditWriteDepth = 0;
+let auditWritePeak = 0;
+let auditReleases: Array<() => void> = [];
 
 // #476 — the sweep cores are now wrapped in withCronLock; pass through so
 // these unit tests exercise the sweep logic, not the lock (covered in
