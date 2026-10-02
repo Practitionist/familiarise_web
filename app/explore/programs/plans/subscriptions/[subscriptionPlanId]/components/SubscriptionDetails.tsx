@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { motion } from "framer-motion";
 import {
   ArrowLeft,
   CalendarDays,
@@ -20,6 +19,7 @@ import { PlanDetailBody } from "../../../components/PlanDetailBody";
 import { FeatureItem } from "../../../components/FeatureItem";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { useCurrency } from "@/hooks/useCurrency";
+import { MobileBookingBar } from "@/app/explore/components/MobileBookingBar";
 import type { getSubscriptionPlanDetail } from "@/lib/data/plan-details";
 
 type SubscriptionPlanDetail = NonNullable<
@@ -34,8 +34,8 @@ export function SubscriptionDetails({
   const mentorName = consultant?.user?.name ?? "This expert";
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main className="explore-detail min-h-screen">
+      <div className="explore-detail-shell py-8 md:py-12">
         <Link
           href="/explore/experts"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
@@ -44,27 +44,22 @@ export function SubscriptionDetails({
           Back to experts
         </Link>
 
-        <div className="mb-8">
-          <Badge className="bg-muted text-muted-foreground mb-3">
+        <div className="explore-hero mb-10 rounded-3xl px-7 py-10 text-white md:px-12 md:py-14">
+          <Badge className="mb-4 border border-white/20 bg-white/10 text-white hover:bg-white/10">
             Mentorship programme
           </Badge>
-          <h1 className="text-3xl md:text-4xl font-bold text-foreground tracking-tight">
+          <h1 className="max-w-4xl text-fluid-4xl font-semibold tracking-tight text-white">
             {plan.title}
           </h1>
           {plan.subtitle && (
-            <p className="text-lg text-muted-foreground mt-2 max-w-3xl">
+            <p className="mt-4 max-w-3xl text-base leading-relaxed text-zinc-300 md:text-lg">
               {plan.subtitle}
             </p>
           )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-16">
-          <motion.div
-            className="lg:col-span-2 space-y-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <div className="space-y-8 lg:col-span-2">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <FeatureItem
                 icon={<CalendarDays className="h-5 w-5" />}
@@ -101,16 +96,14 @@ export function SubscriptionDetails({
               faqs={plan.faqs}
               topics={plan.topics}
             />
-          </motion.div>
+          </div>
 
           {/* Sidebar: price + booking */}
-          <motion.div
-            className="lg:col-span-1"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-          >
-            <Card className="border-border shadow-sm lg:sticky lg:top-24">
+          <div className="lg:col-span-1">
+            <Card
+              id="subscription-booking"
+              className="explore-booking-target rounded-2xl border-border shadow-sm lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1rem)]"
+            >
               <CardContent className="p-6 space-y-5">
                 <div>
                   <p className="text-3xl font-bold text-foreground">
@@ -118,8 +111,8 @@ export function SubscriptionDetails({
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
                     for {plan.durationInMonths} month
-                    {plan.durationInMonths !== 1 ? "s" : ""} ·{" "}
-                    {plan.totalHours}h total
+                    {plan.durationInMonths !== 1 ? "s" : ""} · {plan.totalHours}
+                    h total
                   </p>
                 </div>
 
@@ -140,9 +133,7 @@ export function SubscriptionDetails({
                 </div>
 
                 <Button asChild className="w-full h-11">
-                  <Link
-                    href={`/checkout/plans/subscription/${plan.id}`}
-                  >
+                  <Link href={`/checkout/plans/subscription/${plan.id}`}>
                     Subscribe
                   </Link>
                 </Button>
@@ -158,7 +149,9 @@ export function SubscriptionDetails({
                     >
                       <div className="relative w-11 h-11 flex-shrink-0">
                         <Image
-                          src={consultant.user?.image ?? "/placeholder-user.jpg"}
+                          src={
+                            consultant.user?.image ?? "/placeholder-user.jpg"
+                          }
                           alt={mentorName}
                           fill
                           className="rounded-xl object-cover"
@@ -179,9 +172,14 @@ export function SubscriptionDetails({
                 )}
               </CardContent>
             </Card>
-          </motion.div>
+          </div>
         </div>
       </div>
-    </div>
+      <MobileBookingBar
+        targetId="subscription-booking"
+        context="Mentorship programme"
+        label={formatPrice(plan.price)}
+      />
+    </main>
   );
 }

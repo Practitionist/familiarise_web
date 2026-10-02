@@ -147,7 +147,7 @@ function GridCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+      className="explore-card group flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -253,16 +253,16 @@ function ListCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
+      className="explore-card group flex cursor-pointer flex-col overflow-hidden rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:flex-row"
       aria-label={`View details for ${program.title}`}
     >
-      <div className="relative w-48 md:w-64 flex-shrink-0">
+      <div className="relative aspect-[16/9] w-full flex-shrink-0 sm:aspect-auto sm:w-48 md:w-64">
         <Image
           src={program.imageUrl}
           alt={program.title}
           fill
           className="object-cover"
-          sizes="256px"
+          sizes="(max-width: 640px) 100vw, 256px"
         />
         <div className="absolute top-3 left-3 flex gap-2">
           <TypeBadge type={program.type} />
@@ -270,7 +270,7 @@ function ListCard({
         </div>
       </div>
 
-      <div className="p-6 flex-1 flex flex-col justify-between min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col justify-between p-5 sm:p-6">
         <div>
           <div className="flex items-start justify-between gap-4 mb-2">
             <h3 className="text-lg font-semibold text-foreground group-hover:text-muted-foreground transition-colors">
@@ -359,7 +359,7 @@ function CarouselCard({
   return (
     <Link
       href={planHref(program)}
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
+      className="explore-card group w-[320px] flex-shrink-0 cursor-pointer overflow-hidden rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:w-[360px]"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">

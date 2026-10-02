@@ -40,57 +40,65 @@ function StaticTopRowsImpl({
   return (
     <>
       {/* Featured Carousel */}
-      <div className="mb-14">
-        <SectionHeader
-          title="Familiarise Featured"
-          icon={<Sparkles className="w-5 h-5 text-white" />}
-        />
-        <FeaturedCarousel
-          programs={featuredPrograms}
-          isLoading={trendingLoading}
-        />
-      </div>
+      {(trendingLoading || featuredPrograms.length > 0) && (
+        <div className="explore-section mb-14">
+          <SectionHeader
+            title="In focus"
+            icon={<Sparkles className="w-5 h-5 text-white" />}
+          />
+          <FeaturedCarousel
+            programs={featuredPrograms}
+            isLoading={trendingLoading}
+          />
+        </div>
+      )}
 
       {/* Trending Now */}
-      <div className="mb-14">
-        <SectionHeader
-          title="Trending Now"
-          icon={<Flame className="w-5 h-5 text-white" />}
-          seeAllHref="/explore/programs?sort=trending"
-        />
-        <ProgramRow
-          programs={trendingPrograms}
-          badge="trending"
-          isLoading={trendingLoading}
-        />
-      </div>
+      {(trendingLoading || trendingPrograms.length > 0) && (
+        <div className="explore-section mb-14">
+          <SectionHeader
+            title="Trending Now"
+            icon={<Flame className="w-5 h-5 text-white" />}
+            seeAllHref="/explore/programs?sort=trending"
+          />
+          <ProgramRow
+            programs={trendingPrograms}
+            badge="trending"
+            isLoading={trendingLoading}
+          />
+        </div>
+      )}
 
       {/* Newly Added */}
-      <div className="mb-14">
-        <SectionHeader
-          title="Newly Added"
-          icon={<Clock className="w-5 h-5 text-white" />}
-          seeAllHref="/explore/programs?sort=newest"
-        />
-        <ProgramRow
-          programs={newPrograms}
-          badge="new"
-          isLoading={newLoading}
-        />
-      </div>
+      {(newLoading || newPrograms.length > 0) && (
+        <div className="explore-section mb-14">
+          <SectionHeader
+            title="Newly Added"
+            icon={<Clock className="w-5 h-5 text-white" />}
+            seeAllHref="/explore/programs?sort=newest"
+          />
+          <ProgramRow
+            programs={newPrograms}
+            badge="new"
+            isLoading={newLoading}
+          />
+        </div>
+      )}
 
       {/* Browse by Category */}
-      <div className="mb-14">
-        <SectionHeader
-          title="Browse by Category"
-          icon={<Hash className="w-5 h-5 text-white" />}
-        />
-        <CategoryGrid
-          topics={topics}
-          isLoading={topicsLoading}
-          onTopicSelect={onTopicSelect}
-        />
-      </div>
+      {(topicsLoading || topics.length > 0) && (
+        <div className="explore-section mb-14">
+          <SectionHeader
+            title="Browse by Category"
+            icon={<Hash className="w-5 h-5 text-white" />}
+          />
+          <CategoryGrid
+            topics={topics}
+            isLoading={topicsLoading}
+            onTopicSelect={onTopicSelect}
+          />
+        </div>
+      )}
     </>
   );
 }

@@ -19,20 +19,22 @@ export default function SectionHeader({
   const showSeeAll = seeAllHref || onSeeAllClick;
 
   return (
-    <div className="flex items-center justify-between mb-6">
-      <div className="flex items-center gap-2.5">
+    <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+      <div className="flex items-center gap-3">
         {icon && (
-          <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-muted text-foreground [&_svg]:text-foreground">
             {icon}
           </div>
         )}
-        <h2 className="text-xl md:text-2xl font-bold text-foreground tracking-tight">{title}</h2>
+        <h2 className="text-fluid-2xl font-semibold tracking-tight text-foreground">
+          {title}
+        </h2>
       </div>
       {showSeeAll &&
         (onSeeAllClick ? (
           <button
             onClick={onSeeAllClick}
-            className="group inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            className="group inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             See All
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -40,7 +42,7 @@ export default function SectionHeader({
         ) : (
           <Link
             href={seeAllHref!}
-            className="group inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            className="group inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             See All
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />

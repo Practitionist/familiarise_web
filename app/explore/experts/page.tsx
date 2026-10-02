@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
+import { ArrowDownRight, Users, Star, TrendingUp } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { FeaturedExperts } from "./components/FeaturedExperts";
 import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
@@ -43,57 +43,57 @@ const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
 
 function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
   return (
-    <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-      </div>
-      <div className="absolute inset-0 grid-pattern opacity-20" />
-
-      <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-            <Sparkles className="w-4 h-4 text-white" />
-            <span className="text-sm font-medium text-zinc-300">
-              World-Class Mentorship
-            </span>
-          </div>
-
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight text-white mb-6">
-            Meet Your Perfect <span className="silver-text">Mentor</span>
-          </h1>
-
-          <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-            Ready to level up? Our amazing mentors are here to guide you!
-            Connect with industry experts who understand your journey.
+    <section className="explore-hero relative overflow-hidden pb-14 pt-28 text-white md:pb-20 md:pt-36">
+      <div
+        className="absolute inset-0 grid-pattern opacity-10"
+        aria-hidden="true"
+      />
+      <div className="relative mx-auto grid max-w-[1600px] items-end gap-10 px-4 md:px-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-16 lg:px-12">
+        <div className="max-w-3xl">
+          <p className="mb-5 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-zinc-300">
+            <span className="h-px w-8 bg-zinc-400" /> Familiarise experts
           </p>
+          <h1 className="text-fluid-5xl font-semibold tracking-tight text-white">
+            Find expertise that moves you forward.
+          </h1>
+          <p className="mt-6 max-w-2xl text-base leading-relaxed text-zinc-300 md:text-lg">
+            Explore specialists across disciplines, compare their experience,
+            and choose the right person for your next step.
+          </p>
+          <a
+            href="#all-experts"
+            className="mt-8 inline-flex items-center gap-2 rounded-full border border-white/25 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-white hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            Browse all experts{" "}
+            <ArrowDownRight className="h-4 w-4" aria-hidden="true" />
+          </a>
+        </div>
 
-          {/* #1485 — real figures or nothing. Before launch every one of these
+        {/* #1485 — real figures or nothing. Before launch every one of these
               is zero, and the honest line below is what a visitor sees instead
               of the "10K+ / 4.9 / 50K+" that used to be rendered from nowhere. */}
-          {stats.length > 0 ? (
-            <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-              {stats.map((stat) => {
-                const Icon = STAT_ICONS[stat.key];
-                return (
-                  <div key={stat.key} className="text-center">
-                    <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="text-2xl md:text-3xl font-bold text-white">
-                      {stat.display}
-                    </div>
-                    <div className="text-sm text-zinc-500">{stat.label}</div>
+        {stats.length > 0 ? (
+          <div className="flex flex-wrap gap-6 border-t border-white/15 pt-6 lg:max-w-[360px] lg:justify-end lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+            {stats.map((stat) => {
+              const Icon = STAT_ICONS[stat.key];
+              return (
+                <div key={stat.key} className="min-w-[88px]">
+                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-white/5">
+                    <Icon className="h-4 w-4 text-zinc-200" />
                   </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-zinc-500">
-              Check back for newly verified experts.
-            </p>
-          )}
-        </div>
+                  <div className="text-xl font-semibold text-white md:text-2xl">
+                    {stat.display}
+                  </div>
+                  <div className="text-xs text-zinc-400">{stat.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="border-t border-white/15 pt-6 text-sm text-zinc-400 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+            Check back for newly verified experts.
+          </p>
+        )}
       </div>
     </section>
   );

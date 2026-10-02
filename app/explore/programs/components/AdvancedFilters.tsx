@@ -119,7 +119,7 @@ function AdvancedFiltersImpl({
     .filter(Boolean);
 
   return (
-    <div className="bg-muted rounded-2xl p-6 border border-border">
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
       <div className="flex items-center gap-2 mb-6">
         <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
           <SlidersHorizontal className="w-5 h-5 text-primary-foreground" />
@@ -127,7 +127,7 @@ function AdvancedFiltersImpl({
         <div>
           <h3 className="font-semibold text-foreground">Filter Programs</h3>
           <p className="text-sm text-muted-foreground">
-            Find the perfect program for you
+            Refine by topic, price, level, and format
           </p>
         </div>
       </div>

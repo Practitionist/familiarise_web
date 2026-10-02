@@ -39,7 +39,9 @@ function ExpertRowImpl({ experts, badge, isLoading }: ExpertRowProps) {
     const amount = 280;
     scrollRef.current.scrollBy({
       left: direction === "left" ? -amount : amount,
-      behavior: "smooth",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
     });
   };
 
@@ -60,14 +62,14 @@ function ExpertRowImpl({ experts, badge, isLoading }: ExpertRowProps) {
       {/* Scroll buttons */}
       <button
         onClick={() => scroll("left")}
-        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-card border border-border shadow-lg flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-muted"
+        className="absolute left-0 top-1/2 z-10 flex h-10 w-10 -translate-x-2 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card shadow-lg transition-opacity hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:-translate-x-4 md:opacity-0 md:group-hover/row:opacity-100 md:focus-visible:opacity-100"
         aria-label="Scroll left"
       >
         <ChevronLeft className="w-5 h-5 text-muted-foreground" />
       </button>
       <button
         onClick={() => scroll("right")}
-        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-card border border-border shadow-lg flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-muted"
+        className="absolute right-0 top-1/2 z-10 flex h-10 w-10 translate-x-2 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card shadow-lg transition-opacity hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:translate-x-4 md:opacity-0 md:group-hover/row:opacity-100 md:focus-visible:opacity-100"
         aria-label="Scroll right"
       >
         <ChevronRight className="w-5 h-5 text-muted-foreground" />

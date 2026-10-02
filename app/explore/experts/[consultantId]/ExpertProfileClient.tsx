@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { MobileBookingBar } from "@/app/explore/components/MobileBookingBar";
 import { ArrowLeft } from "lucide-react";
 import {
   addDays,
@@ -34,7 +34,7 @@ import {
   useAvailabilityMonth,
   useAvailabilityWindow,
 } from "./hooks/useAvailabilityWindow";
-import { dayState, isSelectableDay } from "./day-state";
+import { durationDayMark, isSelectableDay } from "./day-state";
 import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
@@ -276,125 +276,145 @@ export function ExpertProfileClient({
     [consultantDetails, session?.user?.id, router, toast],
   );
 
-  // Day cells carry their state without colour (#1785 L-4): a ring and a bold
-  // number on a day with a bookable time, plain grey and disabled on a day
-  // without, dimmed and disabled in the past, a dot under today. The marks
-  // come from the month read; while it loads the cells pulse, and if it
-  // fails the cells stay plain and clickable under a one-line notice.
-  const renderCalendar = useCallback(() => {
-    const daysInMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth() + 1,
-      0,
-    ).getDate();
-    const firstDayOfMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      1,
-    ).getDay();
-
-    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-    const days = [];
-    const now = new Date();
-    const marks = monthQuery.data ?? null;
-    const marksLoading = monthQuery.isPending && !!timezone;
-
-    for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
-      );
-    }
-
-    for (let i = 1; i <= daysInMonth; i++) {
-      const date = new Date(
+  // The date mark must use the active plan's duration, just like the slot list:
+  // a raw 30-minute opening cannot promise a two-hour consultation.
+  const renderCalendar = useCallback(
+    (durationInHours: number) => {
+      const daysInMonth = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() + 1,
+        0,
+      ).getDate();
+      const firstDayOfMonth = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i,
-      );
-      const isSelected =
-        selectedDate?.getDate() === i &&
-        selectedDate?.getMonth() === currentDate.getMonth() &&
-        selectedDate?.getFullYear() === currentDate.getFullYear();
-      const key = timezone
-        ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
-        : null;
-      const state = dayState(
-        date,
-        now,
-        marks && key ? (marks[key] ?? []) : null,
-      );
-      const isToday = state.startsWith("today");
-      const selectable = isSelectableDay(state);
-      const bookable = state === "bookable" || state === "today+bookable";
+        1,
+      ).getDay();
 
-      days.push(
-        <button
-          key={i}
-          type="button"
-          disabled={!selectable}
-          aria-pressed={isSelected}
-          aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
-          className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
-            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
-            !isSelected &&
-              bookable &&
-              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
-            !isSelected &&
-              (state === "unknown" || state === "today+unknown") &&
-              "font-medium text-zinc-300 hover:bg-zinc-700/60",
-            !isSelected &&
-              (state === "none" || state === "today+none") &&
-              "text-zinc-500",
-            state === "past" && "opacity-40 text-zinc-500",
-            marksLoading &&
-              state !== "past" &&
+      const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+      const days = [];
+      const now = new Date();
+      const marks = monthQuery.data ?? null;
+      const marksLoading = monthQuery.isPending && !!timezone;
+
+      for (let i = 0; i < adjustedFirstDay; i++) {
+        days.push(
+          <div
+            key={`empty-${i}`}
+            className="aspect-square w-full max-w-11"
+          ></div>,
+        );
+      }
+
+      for (let i = 1; i <= daysInMonth; i++) {
+        const date = new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          i,
+        );
+        const isSelected =
+          selectedDate?.getDate() === i &&
+          selectedDate?.getMonth() === currentDate.getMonth() &&
+          selectedDate?.getFullYear() === currentDate.getFullYear();
+        const key = timezone
+          ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
+          : null;
+        const { state, kind } = durationDayMark(
+          date,
+          now,
+          marks && key ? (marks[key] ?? []) : null,
+          durationInHours,
+          timezone || "UTC",
+          consultantDetails.bookingMode ?? "INSTANT",
+          consultantDetails.acceptingRequests !== false,
+        );
+        const isToday = state.startsWith("today");
+        const selectable = isSelectableDay(state);
+        const availabilityLabel =
+          kind === "instant"
+            ? ", book-now times available"
+            : kind === "request"
+              ? ", times available by request"
+              : "";
+
+        days.push(
+          <button
+            key={i}
+            type="button"
+            disabled={!selectable}
+            aria-pressed={isSelected}
+            aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${availabilityLabel}`}
+            className={cn(
+              "relative flex aspect-square w-full max-w-11 items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
+              isSelected && "bg-white font-medium text-zinc-900 shadow-md",
+              isSelected && kind && "ring-2 ring-offset-2 ring-offset-zinc-800",
+              isSelected && kind === "instant" && "ring-emerald-400",
+              isSelected && kind === "request" && "ring-amber-400",
               !isSelected &&
-              "animate-pulse ring-1 ring-white/10",
-          )}
-          onClick={() => {
-            setSelectedDate(date);
-            setSelectedSlot(null);
-          }}
-        >
-          {i}
-          {isToday && (
-            <span
-              aria-hidden="true"
-              className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
-            />
-          )}
-        </button>,
-      );
-    }
+                kind === "instant" &&
+                "bg-emerald-400/10 font-semibold text-emerald-200 ring-1 ring-emerald-400/70 hover:bg-emerald-400/20",
+              !isSelected &&
+                kind === "request" &&
+                "bg-amber-400/10 font-semibold text-amber-200 ring-1 ring-amber-400/70 hover:bg-amber-400/20",
+              !isSelected &&
+                (state === "unknown" || state === "today+unknown") &&
+                "font-medium text-zinc-300 hover:bg-zinc-700/60",
+              !isSelected &&
+                (state === "none" || state === "today+none") &&
+                "text-zinc-500",
+              state === "past" && "opacity-40 text-zinc-500",
+              marksLoading &&
+                state !== "past" &&
+                !isSelected &&
+                "motion-safe:animate-pulse",
+            )}
+            onClick={() => {
+              setSelectedDate(date);
+              setSelectedSlot(null);
+            }}
+          >
+            {i}
+            {isToday && (
+              <span
+                aria-hidden="true"
+                className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+              />
+            )}
+          </button>,
+        );
+      }
 
-    if (monthQuery.isError) {
-      days.push(
-        <p
-          key="marks-error"
-          role="status"
-          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
-        >
-          Couldn&apos;t load availability marks — pick a day to see its times.
-        </p>,
-      );
-    }
+      if (monthQuery.isError) {
+        days.push(
+          <p
+            key="marks-error"
+            role="status"
+            className="col-span-7 pt-2 text-center text-xs text-zinc-500"
+          >
+            Couldn&apos;t load availability marks — pick a day to see its times.
+          </p>,
+        );
+      }
 
-    return days;
-  }, [
-    currentDate,
-    selectedDate,
-    timezone,
-    monthQuery.data,
-    monthQuery.isPending,
-    monthQuery.isError,
-  ]);
+      return days;
+    },
+    [
+      currentDate,
+      selectedDate,
+      timezone,
+      consultantDetails.bookingMode,
+      consultantDetails.acceptingRequests,
+      monthQuery.data,
+      monthQuery.isPending,
+      monthQuery.isError,
+    ],
+  );
 
   return (
-    <main className="bg-muted">
+    <main className="explore-detail min-h-screen">
       {/* Back Navigation */}
       <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
+        <div className="explore-detail-shell py-4">
           <Link
             href="/explore/experts"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -406,15 +426,10 @@ export function ExpertProfileClient({
       </div>
 
       {/* Main Content Area - Profile, About, Availability + Pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
-        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+      <div className="explore-detail-shell py-8 md:py-12">
+        <div className="flex flex-col gap-8 xl:flex-row xl:gap-10">
           {/* Main Content */}
-          <motion.div
-            className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <div className="min-w-0 flex-1">
             <div className="space-y-8">
               <ProfileHeader
                 userDetails={userDetails}
@@ -445,18 +460,15 @@ export function ExpertProfileClient({
                 />
               ) : null}
             </div>
-          </motion.div>
+          </div>
 
           {/* Sidebar - Pricing */}
-          <motion.div
+          <div
             ref={pricingRef}
-            className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
+            id="expert-booking"
+            className="explore-booking-target w-full flex-shrink-0 xl:w-[400px] 2xl:w-[430px]"
           >
             <ExpertPricing
-              userDetails={userDetails}
               consultantDetails={consultantDetails}
               handleConsultationBooking={handleConsultationBooking}
               handleSubscriptionBooking={handleSubscriptionBooking}
@@ -472,38 +484,28 @@ export function ExpertProfileClient({
               autoOpenTrial={autoOpenTrial}
               onRefreshSlots={refreshSlots}
             />
-          </motion.div>
+          </div>
         </div>
       </div>
 
       {/* Classes & Webinars - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-8">
+      <div className="explore-detail-shell pb-8">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
-          <motion.div
-            className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-          >
+          <div className="min-w-0 flex-1">
             <ClassesAndWebinars
               classPlans={consultantDetails.classPlans}
               webinarPlans={consultantDetails.webinarPlans}
             />
-          </motion.div>
+          </div>
           {/* Spacer to match pricing sidebar width */}
-          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+          <div className="hidden xl:block w-[400px] 2xl:w-[430px] flex-shrink-0" />
         </div>
       </div>
 
       {/* Reviews - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-12">
+      <div className="explore-detail-shell pb-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
-          <motion.div
-            className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-          >
+          <div className="min-w-0 flex-1">
             <ReviewsSection
               reviews={reviews}
               reviewTracks={reviewTracks}
@@ -528,11 +530,16 @@ export function ExpertProfileClient({
                 />
               }
             />
-          </motion.div>
+          </div>
           {/* Spacer to match pricing sidebar width */}
-          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+          <div className="hidden xl:block w-[400px] 2xl:w-[430px] flex-shrink-0" />
         </div>
       </div>
+      <MobileBookingBar
+        targetId="expert-booking"
+        context="Expert sessions and mentorship"
+        label="Explore booking options"
+      />
     </main>
   );
 }

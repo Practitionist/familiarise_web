@@ -3,9 +3,8 @@
  */
 
 /**
- * #1785 L-3 — the booking dialog's slot list is monochrome: taken and past
- * times are not rendered (one muted line counts them), a time the expert must
- * confirm carries a "Request" tag, and no traffic-light class reaches the DOM.
+ * The booking dialog uses the same semantic colors as its date marks. Taken
+ * and past times are omitted, while book-now and request paths remain labeled.
  */
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -45,19 +44,38 @@ const THREE = [
 ];
 
 describe("SlotList (#1785 L-3)", () => {
-  it("renders two rows, one Request tag, one already-taken line and no colour class", () => {
+  it("renders labeled instant and request rows in their semantic colors", () => {
     const html = renderToStaticMarkup(
       <SlotList
         slots={THREE}
         selectedSlot={null}
         onSelect={() => undefined}
         bookingMode="INSTANT"
+        acceptingRequests={true}
       />,
     );
     expect(html.match(/<button/g)).toHaveLength(2);
     expect(html.match(/>Request</g)).toHaveLength(1);
+    expect(html.match(/>Book now</g)).toHaveLength(1);
     expect(html).toContain("1 time on this day is already taken");
-    expect(html).not.toMatch(/emerald|amber|rose/);
+    expect(html).toMatch(/emerald/);
+    expect(html).toMatch(/amber/);
+    expect(html).not.toMatch(/rose/);
+  });
+
+  it("disables request times when the expert has paused requests", () => {
+    const html = renderToStaticMarkup(
+      <SlotList
+        slots={THREE}
+        selectedSlot={null}
+        onSelect={() => undefined}
+        bookingMode="REQUEST"
+        acceptingRequests={false}
+      />,
+    );
+    expect(html.match(/disabled=""/g)).toHaveLength(2);
+    expect(html.match(/Requests paused/g)).toHaveLength(2);
+    expect(html).not.toMatch(/bg-amber/);
   });
 
   it("drops past and fully-booked slots and counts them", () => {

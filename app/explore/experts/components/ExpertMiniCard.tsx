@@ -25,9 +25,9 @@ function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className="group flex-shrink-0 w-[260px] block"
+      className="group block w-[270px] flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
-      <div className="bg-card rounded-2xl p-5 border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+      <div className="explore-card flex h-full flex-col rounded-2xl p-5">
         {/* Badge */}
         {badge && (
           <div className="mb-3">

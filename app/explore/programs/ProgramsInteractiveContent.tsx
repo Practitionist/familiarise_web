@@ -2,12 +2,11 @@
 
 import { PlanLevel } from "@prisma/client";
 import { useCallback, useMemo } from "react";
-import { motion } from "framer-motion";
 import {
   GraduationCap,
   Video,
   Users,
-  Sparkles,
+  ArrowDownRight,
   type LucideIcon,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
@@ -182,66 +181,55 @@ export default function ProgramsInteractiveContent({
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Hero Section */}
-      <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-          <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-        </div>
-        <div className="absolute inset-0 grid-pattern opacity-20" />
-
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-          <motion.div
-            className="max-w-4xl mx-auto text-center"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
-
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
+      {/* The two directories use the same visual rhythm while keeping their own data. */}
+      <section className="explore-hero relative overflow-hidden pb-14 pt-28 text-white md:pb-20 md:pt-36">
+        <div
+          className="absolute inset-0 grid-pattern opacity-10"
+          aria-hidden="true"
+        />
+        <div className="relative mx-auto grid max-w-[1600px] items-end gap-10 px-4 md:px-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-16 lg:px-12">
+          <div className="max-w-3xl">
+            <p className="mb-5 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-zinc-300">
+              <span className="h-px w-8 bg-zinc-400" /> Familiarise programs
             </p>
+            <h1 className="text-fluid-5xl font-semibold tracking-tight text-white">
+              Learn with people who know the work.
+            </h1>
+            <p className="mt-6 max-w-2xl text-base leading-relaxed text-zinc-300 md:text-lg">
+              Discover expert-led classes and live webinars designed to turn
+              curiosity into useful skills.
+            </p>
+            <a
+              href="#all-programs"
+              className="mt-8 inline-flex items-center gap-2 rounded-full border border-white/25 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-white hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Browse all programs{" "}
+              <ArrowDownRight className="h-4 w-4" aria-hidden="true" />
+            </a>
+          </div>
 
-            {stats.length > 0 ? (
-              <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-                {stats.map((stat, index) => {
-                  const Icon = PROGRAM_STAT_ICONS[stat.key];
-                  return (
-                    <motion.div
-                      key={stat.key}
-                      className="text-center"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: 0.2 + index * 0.1 }}
-                    >
-                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                        <Icon className="w-6 h-6 text-white" />
-                      </div>
-                      <div className="text-2xl md:text-3xl font-bold text-white">
-                        {stat.display}
-                      </div>
-                      <div className="text-sm text-zinc-500">{stat.label}</div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500">
-                Check back for new classes and webinars.
-              </p>
-            )}
-          </motion.div>
+          {stats.length > 0 ? (
+            <div className="flex flex-wrap gap-6 border-t border-white/15 pt-6 lg:max-w-[360px] lg:justify-end lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+              {stats.map((stat) => {
+                const Icon = PROGRAM_STAT_ICONS[stat.key];
+                return (
+                  <div key={stat.key} className="min-w-[88px]">
+                    <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-white/5">
+                      <Icon className="h-4 w-4 text-zinc-200" />
+                    </div>
+                    <div className="text-xl font-semibold text-white md:text-2xl">
+                      {stat.display}
+                    </div>
+                    <div className="text-xs text-zinc-400">{stat.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="border-t border-white/15 pt-6 text-sm text-zinc-400 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+              Check back for new classes and webinars.
+            </p>
+          )}
         </div>
       </section>
 
@@ -268,17 +256,18 @@ export default function ProgramsInteractiveContent({
           />
 
           {/* All Programs Section */}
-          <div id="all-programs">
+          <div
+            id="all-programs"
+            className="explore-section scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
+          >
             <SectionHeader title="All Programs" />
+            <p className="mb-7 text-sm text-muted-foreground md:text-base">
+              Find a class or webinar that fits your goals, schedule, and
+              experience.
+            </p>
 
             {/* Advanced Filters */}
-            <motion.div
-              className="mb-8"
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5 }}
-            >
+            <div className="mb-8">
               <AdvancedFilters
                 filters={filters}
                 onFiltersChange={updateFilters}
@@ -291,7 +280,7 @@ export default function ProgramsInteractiveContent({
                 onViewModeChange={setViewMode}
                 topics={topicsWithCount}
               />
-            </motion.div>
+            </div>
 
             {/* Active Filter Chips */}
             {chips.length > 0 && (

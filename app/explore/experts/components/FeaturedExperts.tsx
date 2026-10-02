@@ -4,8 +4,14 @@ import { memo } from "react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck, Globe } from "lucide-react";
+import {
+  User,
+  Star,
+  StarHalf,
+  ArrowRight,
+  BadgeCheck,
+  Globe,
+} from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
@@ -15,6 +21,8 @@ interface FeaturedExpertsProps {
 }
 
 function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
+  if (!isLoading && experts.length === 0) return null;
+
   const renderRating = (rating: number) => {
     const fullStars = Math.floor(rating);
     const hasHalfStar = rating % 1 >= 0.5;
@@ -35,33 +43,20 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
   };
 
   return (
-    <section className="py-20 bg-gradient-to-b from-zinc-100 to-white relative overflow-hidden">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 dot-pattern opacity-30" />
-
-      <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
+    <section className="border-b border-border bg-muted/35 py-14 md:py-20">
+      <div className="relative mx-auto max-w-[1600px] px-4 md:px-8 lg:px-12">
         {/* Section Header */}
-        <motion.div
-          className="text-center mb-16"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-        >
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary rounded-full mb-6">
-            <Award className="w-4 h-4 text-primary-foreground" />
-            <span className="text-sm font-medium text-primary-foreground">
-              Familiarise Pick
-            </span>
-          </div>
-          <h2 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight text-foreground mb-4">
-            Top Familiarise <span className="silver-text">Experts</span>
-          </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Discover the best of the best. Our top consultants are ready to help
-            you achieve your goals.
+        <div className="mb-10 max-w-2xl">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Start with experience
           </p>
-        </motion.div>
+          <h2 className="text-fluid-3xl font-semibold tracking-tight text-foreground">
+            Experts to explore
+          </h2>
+          <p className="mt-3 text-base text-muted-foreground">
+            Get to know specialists across fields and find a fit for your goals.
+          </p>
+        </div>
 
         {/* Experts Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
@@ -82,23 +77,13 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                     </div>
                   </div>
                 ))
-            : experts.map((expert, index) => (
-                <motion.div
-                  key={expert.id}
-                  className="h-full"
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{
-                    duration: 0.4,
-                    delay: Math.min(index * 0.1, 0.6),
-                  }}
-                >
+            : experts.map((expert) => (
+                <div key={expert.id} className="h-full">
                   <Link
                     href={`/explore/experts/${expert.id}`}
                     className="group block h-full"
                   >
-                    <div className="bg-card rounded-2xl p-6 shadow-sm border border-border hover:border-border hover:shadow-lg transition-all duration-300 h-full flex flex-col">
+                    <div className="explore-card flex h-full flex-col rounded-2xl p-6">
                       {/* Avatar */}
                       <div className="relative mb-4">
                         <Avatar className="mx-auto h-20 w-20 ring-4 ring-muted group-hover:ring-border transition-all">
@@ -111,12 +96,6 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                             <User className="h-10 w-10" />
                           </AvatarFallback>
                         </Avatar>
-                        {/* Top Expert Badge */}
-                        {index === 0 && (
-                          <div className="absolute -top-2 -right-2 w-8 h-8 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center shadow-lg">
-                            <Award className="w-4 h-4 text-white" />
-                          </div>
-                        )}
                       </div>
 
                       {/* Name */}
@@ -158,7 +137,9 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                                   <CompanyLogo
                                     key={`${expert.id}-company-${i}`}
                                     companyName={exp.company}
-                                    companyDomain={exp.companyDomain ?? undefined}
+                                    companyDomain={
+                                      exp.companyDomain ?? undefined
+                                    }
                                     size={22}
                                     className="border-border"
                                   />
@@ -198,7 +179,7 @@ function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
                       </div>
                     </div>
                   </Link>
-                </motion.div>
+                </div>
               ))}
         </div>
       </div>

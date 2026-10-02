@@ -2,6 +2,95 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Public Explore pages share a quieter editorial rhythm without changing the
+   dashboard or the global monochrome tokens. */
+.explore-hero {
+  background:
+    radial-gradient(
+      circle at 83% 18%,
+      rgb(161 161 170 / 0.12),
+      transparent 32%
+    ),
+    linear-gradient(135deg, #09090b 0%, #18181b 58%, #27272a 100%);
+}
+
+.explore-section {
+  border-top: 1px solid hsl(var(--border) / 0.65);
+  padding-top: clamp(2rem, 4vw, 3.5rem);
+}
+
+.explore-card {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  box-shadow: 0 2px 12px hsl(var(--shadow-color) / 0.035);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.explore-card:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--foreground) / 0.22);
+  box-shadow: 0 12px 28px hsl(var(--shadow-color) / 0.09);
+}
+
+.explore-detail {
+  background: hsl(var(--background));
+}
+
+.explore-detail-shell {
+  width: min(100% - 2rem, 90rem);
+  margin-inline: auto;
+}
+
+.explore-booking-target {
+  scroll-margin-top: calc(
+    var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 1rem
+  );
+}
+
+.explore-mobile-booking {
+  position: fixed;
+  z-index: 40;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem max(1rem, env(safe-area-inset-right))
+    calc(0.75rem + env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.96);
+  box-shadow: 0 -8px 24px hsl(var(--shadow-color) / 0.08);
+  backdrop-filter: blur(12px);
+}
+
+@media (max-width: 767px) {
+  .explore-detail {
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 768px) {
+  .explore-mobile-booking {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explore-card,
+  .explore-card * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+  .explore-card:hover {
+    transform: none;
+  }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

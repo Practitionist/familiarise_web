@@ -126,7 +126,7 @@ export function ReviewsSection({
           because only it knows whether it rendered anything at all. */}
       {composer}
 
-      <div className="space-y-3">
+      <div className="divide-y divide-border/70">
         {reviews && reviews.length > 0 ? (
           reviews.map((review) => <Review key={review.id} {...review} />)
         ) : (

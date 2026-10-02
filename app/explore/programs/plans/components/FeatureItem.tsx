@@ -5,13 +5,15 @@ type FeatureItemProps = {
 };
 
 export const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
-  <div className="flex items-center gap-3 p-4 bg-muted rounded-xl">
-    <div className="w-10 h-10 rounded-lg bg-card border border-border flex items-center justify-center text-muted-foreground flex-shrink-0">
+  <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
       {icon}
     </div>
     <div className="min-w-0">
-      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-      <p className="text-sm font-semibold text-foreground">{value}</p>
+      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
     </div>
   </div>
 );
