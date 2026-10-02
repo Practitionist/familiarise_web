@@ -189,6 +189,229 @@ export function cancellationReasonLabel(
   return CANCELLATION_REASON_LABEL[key as CancellationReason] ?? raw;
 }
 
+/** A bare row id inside prose — never readable, never the lookup path (the
+ *  refunds queue links the row). Scrubbed to a noun the sentence survives. */
+const UUID_PATTERN =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Why a refund was raised, as the clause that follows "Reason: " on the
+ * `refund-requested` bell.
+ *
+ * The `Refund.reason` column keeps the machine string the builders wrote
+ * (dedupe keys, audits and the refunds queue read it); the bell gets the
+ * human one. Whole-event cancellations reuse {@link cancellationReasonLabel}
+ * so `(OTHER)` never reaches the inbox, and internal prefixes (`ops refund:`)
+ * are restated as what they are — a manual refund — instead of leaking the
+ * console's label. Anything already human (tiers, moderation, maintenance,
+ * webhook cascades) passes through verbatim, and an unknown future builder
+ * gets its UUIDs scrubbed rather than printed.
+ */
+export function refundReasonLabel(
+  reason: string | null | undefined,
+): string | undefined {
+  const raw = reason?.trim();
+  if (!raw) return undefined;
+  // Every branch below can carry an id (a console note quoting a booking,
+  // an unrecognized cancellation reason): the bell never prints one, so
+  // the scrub runs once here instead of in each branch.
+  const label = rawRefundReasonLabel(raw);
+  if (!label) return undefined;
+  return label.replace(UUID_PATTERN, "that booking").trim() || undefined;
+}
+
+function rawRefundReasonLabel(raw: string): string | undefined {
+  // Whole-event cancellation: the parenthetical is a CancellationReason
+  // member or the cancel route's "cancelled" default (which would read
+  // "cancelled (cancelled)" if kept).
+  const whole = raw.match(/^whole-event (class|webinar) cancellation \((.*)\)$/i);
+  if (whole) {
+    const kind = whole[1].toLowerCase();
+    const inner = whole[2].trim();
+    if (/^cancelled$/i.test(inner)) return `the whole ${kind} was cancelled`;
+    return `the whole ${kind} was cancelled (${cancellationReasonLabel(inner)})`;
+  }
+
+  // A skipped class session whose make-up never happened.
+  if (/^class session \S+ skipped — make-up not attended$/i.test(raw)) {
+    return "a class session was skipped and its make-up was not attended";
+  }
+
+  // Seat removals: the event id is not the story; the side and the tier are.
+  const removed = raw.match(
+    /^removed from (class|webinar) \S+ by the (organiser|attendee) \((\d+(?:\.\d+)?)%\)$/i,
+  );
+  if (removed) {
+    return `removed from the ${removed[1].toLowerCase()} by the ${removed[2].toLowerCase()} (${removed[3]}% refund)`;
+  }
+
+  // Credit-funded seat leaving mid-series: credits come back, not cash.
+  const credits = raw.match(/^left (class|webinar) \S+ — credits restored in full$/i);
+  if (credits) {
+    return `left the ${credits[1].toLowerCase()} early; credits restored in full`;
+  }
+
+  // Console-issued refunds: restate the machine prefix, keep the human text.
+  const manual = raw.match(/^(ops|admin)( whole-event)? refund: ?(.*)$/i);
+  if (manual) {
+    const text = manual[3].trim();
+    const scope = manual[2] ? " whole-event" : "";
+    return text
+      ? `manual${scope} refund issued by ops — ${text}`
+      : `manual${scope} refund issued by ops`;
+  }
+  // Settle-sweep machine codes (scripts/appointments/settle-cancelled-sessions.ts).
+  const sweep: Record<string, string> = {
+    SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
+    HOST_SESSION_NOT_MADE_UP: "a cancelled session was never made up",
+    SESSION_VOIDED_UNUSED_AT_PLAN_END:
+      "an unused voided session at the end of the plan",
+  };
+  // Own-key: `sweep["toString"]` would otherwise resolve the inherited
+  // function and hand a non-string to the template.
+  if (Object.hasOwn(sweep, raw)) return sweep[raw];
+
+  // Overage credit-backs name ledger rows; the direction is the story.
+  if (/^overage credit-back — parent booking \S+ refunded$/i.test(raw)) {
+    return "overage credit-back after the parent booking was refunded";
+  }
+  const overageEvent = raw.match(
+    /^overage credit-back — (class|webinar) \S+ cancelled$/i,
+  );
+  if (overageEvent) {
+    return `overage credit-back after the ${overageEvent[1].toLowerCase()} was cancelled`;
+  }
+
+  // Builders not yet mapped pass through; the wrapper scrubs their ids.
+  return raw;
+}
+
+/**
+ * Why a payment failed, as the sentence after "did not go through".
+ *
+ * `payment.description` is merchant-set prose in most flows but carries a
+ * gateway code (`card_declined`, …) often enough that the bell must not
+ * print it raw. Code-shaped input is mapped or spaced out; prose a human
+ * wrote passes through verbatim.
+ */
+const PAYMENT_FAILURE_REASON_LABEL: Record<string, string> = {
+  card_declined: "your card was declined",
+  expired_card: "your card has expired",
+  incorrect_cvc: "the card security code was incorrect",
+  incorrect_number: "the card number was incorrect",
+  insufficient_funds: "your account had insufficient funds",
+  authentication_required: "your card needs additional authentication",
+  processing_error: "an error while processing your payment",
+  gateway_error: "an error at the payment gateway",
+  network_error: "a network error while processing your payment",
+  bad_request_error: "invalid payment details",
+};
+
+export function failureReasonLabel(reason: string | null | undefined): string {
+  const raw = reason?.trim();
+  if (!raw) return "the payment could not be processed";
+  if (/^[a-z][a-z0-9_]*$/i.test(raw)) {
+    const key = raw.toLowerCase();
+    // Own-key: Record literals inherit Object.prototype (`constructor`,
+    // `toString`), which would otherwise return a function, not a label.
+    return Object.hasOwn(PAYMENT_FAILURE_REASON_LABEL, key)
+      ? PAYMENT_FAILURE_REASON_LABEL[key]
+      : key.replace(/_/g, " ");
+  }
+  return raw;
+}
+
+/**
+ * Why a dispute was opened, as the clause after "was opened". Stripe and
+ * Razorpay reason codes (`fraudulent`, `product_not_received`, …) reach the
+ * bell verbatim otherwise. Same code-shaped rule as
+ * {@link failureReasonLabel}; prose passes through.
+ */
+const DISPUTE_REASON_LABEL: Record<string, string> = {
+  fraudulent: "a fraudulent-payment claim",
+  product_not_received: "goods that never arrived",
+  product_unacceptable: "goods not as described",
+  subscription_canceled: "a cancelled subscription",
+  credit_not_processed: "a credit that was never processed",
+  unrecognized: "a charge the cardholder does not recognize",
+  duplicate: "a duplicate charge",
+  general: "a general dispute",
+};
+
+export function disputeReasonLabel(
+  reason: string | null | undefined,
+): string | undefined {
+  const raw = reason?.trim();
+  if (!raw) return undefined;
+  if (/^[a-z][a-z0-9_]*$/i.test(raw)) {
+    const key = raw.toLowerCase();
+    return Object.hasOwn(DISPUTE_REASON_LABEL, key)
+      ? DISPUTE_REASON_LABEL[key]
+      : key.replace(/_/g, " ");
+  }
+  return raw;
+}
+
+/**
+ * Where a dispute stands, as the clause after "has been resolved". The
+ * template used to downcase the enum inline (`WON` → "won" works, but
+ * `WARNING_CLOSED` → "warning closed" is gateway jargon), so the mapping
+ * lives here with the other status labels.
+ */
+const DISPUTE_STATUS_LABEL: Record<string, string> = {
+  needs_response: "needs a response",
+  under_review: "under review",
+  warning_needs_response: "needs a response to an early warning",
+  warning_under_review: "under review after an early warning",
+  warning_closed: "closed after an early warning",
+  won: "won",
+  lost: "lost",
+};
+
+export function disputeStatusLabel(
+  status: string | null | undefined,
+): string | undefined {
+  const raw = status?.trim();
+  if (!raw) return undefined;
+  const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  return Object.hasOwn(DISPUTE_STATUS_LABEL, key)
+    ? DISPUTE_STATUS_LABEL[key]
+    : key.replace(/_/g, " ");
+}
+
+/**
+ * A collaborator's role as prose ("Co-host", not "CO_HOST").
+ *
+ * The template downcases whatever it gets, so the payload carries Title
+ * Case with real hyphens — `co host` (underscore replaced after the fact)
+ * is what the raw enum produced.
+ */
+const COLLABORATOR_ROLE_LABEL: Record<string, string> = {
+  CO_HOST: "Co-host",
+  MODERATOR: "Moderator",
+  GUEST_SPEAKER: "Guest speaker",
+  TECHNICAL_SUPPORT: "Technical support",
+  CO_INSTRUCTOR: "Co-instructor",
+  TEACHING_ASSISTANT: "Teaching assistant",
+};
+
+export function collaboratorRoleLabel(
+  role: string | null | undefined,
+): string {
+  const raw = role?.trim();
+  if (!raw) return "Collaborator";
+  const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  return (
+    Object.hasOwn(COLLABORATOR_ROLE_LABEL, key)
+      ? COLLABORATOR_ROLE_LABEL[key]
+      : key
+          .toLowerCase()
+          .split("_")
+          .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+          .join(" ")
+  );
+}
+
 /**
  * A ticket status as the clause that follows "is now": `IN_PROGRESS` reaches
  * the inbox as "in progress". Exhaustive over the enum so a new status fails
@@ -205,9 +428,12 @@ const SUPPORT_TICKET_STATUS_LABEL: Record<SupportTicketStatus, string> = {
 export function supportTicketStatusLabel(
   status: SupportTicketStatus | string,
 ): string {
+  // Own-key: a hostile status like "toString" would otherwise resolve the
+  // inherited function instead of falling through to the spaced fallback.
   return (
-    SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus] ??
-    status.toLowerCase().replace(/_/g, " ")
+    Object.hasOwn(SUPPORT_TICKET_STATUS_LABEL, status)
+      ? SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus]
+      : status.toLowerCase().replace(/_/g, " ")
   );
 }
 

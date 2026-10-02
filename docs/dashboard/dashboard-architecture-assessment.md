@@ -677,7 +677,7 @@ This is the pattern used by Slack (workspace switcher), Notion (workspace switch
 ### 9.1 User Roles in the Org Dashboard
 
 ```
-Org Dashboard Users (from BetterAuth Organization plugin):
+Org Dashboard Users (from the typed Membership model, ADR 06):
 
 OWNER       → Full access: billing, settings, team, analytics, SSO config
 ADMIN       → Team management, analytics, content curation. No billing.
@@ -712,7 +712,7 @@ MEMBER      → View-only: own progress, assigned content. No admin features.
 └── settings/           ← Org profile, branding, SSO, integrations
     ├── profile/        ← Name, logo, description, domain
     ├── branding/       ← Colors, custom domain (enterprise plan)
-    ├── sso/            ← SAML/OIDC config (enterprise plan)
+    ├── sso/            ← OIDC config (enterprise plan)
     └── api/            ← API keys (enterprise plan)
 ```
 

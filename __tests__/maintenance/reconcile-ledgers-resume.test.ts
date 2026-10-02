@@ -53,7 +53,7 @@ jest.mock("../../scripts/reconcile/reconcile-ledgers", () => {
 });
 
 import { NextRequest } from "next/server";
-import { POST } from "../../app/api/cleanup/reconcile-ledgers/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 
 const SECRET = "test-cron-secret";
 
@@ -76,7 +76,9 @@ describe("POST /api/cleanup/reconcile-ledgers?resume=1", () => {
       { id: "run_live", summary: { status: "RUNNING" } },
     ]);
 
-    const res = await POST(resume());
+    const res = await POST(resume(), {
+      params: Promise.resolve({ job: "reconcile-ledgers" }),
+    });
 
     expect(res.status).toBe(200);
     expect(advanceReconcileRun).toHaveBeenCalledWith({ runId: "run_live" });
@@ -99,7 +101,9 @@ describe("POST /api/cleanup/reconcile-ledgers?resume=1", () => {
       { id: "run_failed", summary: { status: "FAILED" } },
     ]);
 
-    const res = await POST(resume());
+    const res = await POST(resume(), {
+      params: Promise.resolve({ job: "reconcile-ledgers" }),
+    });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ status: "IDLE", runId: null });

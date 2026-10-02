@@ -1,5 +1,4 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { NextResponse } from "next/server";
 
 import { resolveMeetingAccess } from "@/lib/meetings/access";
@@ -40,16 +39,11 @@ export async function guardMeetingRoute(
     response: NextResponse.json(body, { status }),
   });
 
-  const session = await auth.api.getSession({ headers: await headers() });
-
-  if (!session?.user?.id) {
-    return refuse({ error: "Authentication required" }, 401);
+  const authResult = await requireApiAuth();
+  if (authResult.error) {
+    return { ok: false, response: authResult.error };
   }
-
-  // A suspended user must not be re-admitted to a call, nor end anyone's (#693).
-  if (session.user.banned) {
-    return refuse({ error: "Account suspended" }, 403);
-  }
+  const { session } = authResult;
 
   const { meetingId } = await params;
   if (!meetingId) {

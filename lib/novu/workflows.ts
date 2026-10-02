@@ -151,7 +151,6 @@ export const NOVU_WORKFLOWS = {
   // now owes. In-app to the member only (their personal payment obligation).
   ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",
   ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
-  ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
   // A7: notify the consultant that their EXPERT membership at an org was
   // soft-deleted. Triggered from the member DELETE handler.
   ORG_EXPERT_REMOVED: "org-expert-removed",
@@ -785,7 +784,17 @@ export type MaintenanceInput = Omit<MaintenancePayload, "estimatedEndIso">;
  * now carries the sentence and the ISO copy moves to `*Iso`.
  */
 
-export type OrgInviteSentPayload = {
+/**
+ * #1055 — org-scoped workflow payloads carry `scope: "org"` and
+ * `organizationId` so `<NotificationInbox />` can filter them under the
+ * Organization tab (`filter: { data: { organizationId } }`) and exclude
+ * them from the Personal tab (`filter: { data: { scope: "personal" } }`).
+ * Optional on caller inputs because `lib/novu/org-workflows.ts` stamps
+ * `notificationScope(orgId, payload.orgName)` from the `orgId` parameter.
+ */
+export type OrgNotificationScope = Partial<NotificationScope>;
+
+export type OrgInviteSentPayload = OrgNotificationScope & {
   inviterName: string;
   orgName: string;
   role: string;
@@ -798,7 +807,7 @@ export type OrgInviteSentPayload = {
 
 export type OrgInviteSentInput = Omit<OrgInviteSentPayload, "expiresAtIso">;
 
-export type OrgInviteAcceptedPayload = {
+export type OrgInviteAcceptedPayload = OrgNotificationScope & {
   accepteeName: string;
   accepteeEmail: string;
   orgName: string;
@@ -806,7 +815,7 @@ export type OrgInviteAcceptedPayload = {
   dashboardUrl: string;
 };
 
-export type OrgInvoiceIssuedPayload = {
+export type OrgInvoiceIssuedPayload = OrgNotificationScope & {
   invoiceNumber: string;
   orgName: string;
   /** Money as the payer reads it, e.g. "₹12,400.00". */
@@ -826,7 +835,7 @@ export type OrgInvoiceIssuedInput = Omit<
   "total" | "dueDateIso"
 >;
 
-export type OrgInvoicePaidPayload = {
+export type OrgInvoicePaidPayload = OrgNotificationScope & {
   invoiceNumber: string;
   orgName: string;
   total: string;
@@ -847,7 +856,7 @@ export type OrgInvoicePaidInput = Omit<
 // notice and 1..3 for the escalating 7-day reminders so the template can
 // ramp the urgency copy. `daysLate` is days since dueDate; `payUrl` deep-
 // links to the invoice pay surface.
-export type OrgInvoiceOverduePayload = {
+export type OrgInvoiceOverduePayload = OrgNotificationScope & {
   invoiceNumber: string;
   orgName: string;
   total: string;
@@ -863,7 +872,7 @@ export type OrgInvoiceOverdueInput = Omit<OrgInvoiceOverduePayload, "total">;
 // #779 §A — a member-owed overage side-charge timed out (PENDING→FAILED)
 // after 14 days unpaid. `payUrl` still points at the settle surface (the
 // member can retry via FAILED→PENDING resume-checkout).
-export type OrgMemberOverageTimedOutPayload = {
+export type OrgMemberOverageTimedOutPayload = OrgNotificationScope & {
   orgName: string;
   programName: string;
   amount: string;
@@ -877,7 +886,7 @@ export type OrgMemberOverageTimedOutInput = Omit<
   "amount"
 >;
 
-export type OrgLicenseRenewalUpcomingPayload = {
+export type OrgLicenseRenewalUpcomingPayload = OrgNotificationScope & {
   orgName: string;
   /** Sentence-ready label, e.g. "monthly". */
   cycle: string;
@@ -897,7 +906,7 @@ export type OrgLicenseRenewalUpcomingInput = Omit<
   "cycle" | "cycleCode" | "renewalDateIso" | "expectedTotal"
 > & { cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL" };
 
-export type OrgDataExportReadyPayload = {
+export type OrgDataExportReadyPayload = OrgNotificationScope & {
   orgName: string;
   exportId: string;
   fileSizeBytes: number;
@@ -913,7 +922,7 @@ export type OrgDataExportReadyInput = Omit<
   "expiresAtIso"
 >;
 
-export type OrgWalletTopupConfirmedPayload = {
+export type OrgWalletTopupConfirmedPayload = OrgNotificationScope & {
   orgName: string;
   amount: string;
   amountPaise: number;
@@ -931,7 +940,7 @@ export type OrgWalletTopupConfirmedInput = Omit<
 // #777 §C — wallet low-balance alert. `balancePaise` is the live balance that
 // tripped the floor; `minimumPaise` is the configured threshold. NOTIFY-ONLY —
 // no money moves until mandates land. `topUpUrl` deep-links to the wallet tab.
-export type OrgWalletLowPayload = {
+export type OrgWalletLowPayload = OrgNotificationScope & {
   orgName: string;
   balance: string;
   balancePaise: number;
@@ -946,7 +955,7 @@ export type OrgWalletLowInput = Omit<
   "balance" | "minimum"
 >;
 
-export type OrgPayoutCompletedPayload = {
+export type OrgPayoutCompletedPayload = OrgNotificationScope & {
   orgName: string;
   payoutId: string;
   amount: string;
@@ -968,7 +977,7 @@ export type OrgPayoutCompletedPayload = {
 
 export type OrgPayoutCompletedInput = Omit<OrgPayoutCompletedPayload, "amount">;
 
-export type OrgProgramExhaustedPayload = {
+export type OrgProgramExhaustedPayload = OrgNotificationScope & {
   orgName: string;
   programName: string;
   assigneeName: string;
@@ -978,7 +987,7 @@ export type OrgProgramExhaustedPayload = {
 // #768 lockdown #22 — early-warning payload. `usedPct` is the post-booking
 // utilization ratio (0-100) that crossed the 80% line; `engagementsUsed` /
 // `cap` let the template render "41 of 50 sessions used".
-export type OrgProgramCapNearPayload = {
+export type OrgProgramCapNearPayload = OrgNotificationScope & {
   orgName: string;
   programName: string;
   assigneeName: string;
@@ -990,7 +999,7 @@ export type OrgProgramCapNearPayload = {
 
 // #775 — CHARGE_MEMBER overage side-charge owed by the member. `amountPaise`
 // is the marginal (incl. surcharge); `payUrl` deep-links to the pay surface.
-export type OrgProgramOverageDuePayload = {
+export type OrgProgramOverageDuePayload = OrgNotificationScope & {
   orgName: string;
   programName: string;
   /** Money as the member reads it. Settlement is INR-only, so no currency
@@ -1005,33 +1014,17 @@ export type OrgProgramOverageDueInput = Omit<
   "amount"
 >;
 
-export type OrgSsoProviderDeletedPayload = {
+export type OrgSsoProviderDeletedPayload = OrgNotificationScope & {
   orgName: string;
   providerId: string;
   deletedByName: string;
   dashboardUrl: string;
 };
 
-export type OrgSsoCertExpiringPayload = {
-  orgName: string;
-  providerId: string;
-  daysRemaining: number;
-  severity: "WARN" | "CRITICAL" | "EXPIRED";
-  /** Friendly, in the recipient's timezone. */
-  notAfter: string;
-  notAfterIso?: string;
-  dashboardUrl: string;
-};
-
-export type OrgSsoCertExpiringInput = Omit<
-  OrgSsoCertExpiringPayload,
-  "notAfterIso"
->;
-
 // A1+A8: discriminated payload for the failed/reversed payout webhook
 // fan-out. `kind` distinguishes a gateway rejection (FAILED) from a bank
 // reversal (REVERSED) so the Novu template can render the right copy.
-export type OrgPayoutFailedPayload = {
+export type OrgPayoutFailedPayload = OrgNotificationScope & {
   orgName: string;
   payoutId: string;
   amount: string;
@@ -1058,7 +1051,7 @@ export type OrgPayoutFailedInput = Omit<OrgPayoutFailedPayload, "amount">;
 // A7: payload for the EXPERT-removed-from-org notification. `removedByName`
 // is the operator who triggered the soft-delete (or "system" for cron-
 // driven removals such as contract expiry). `reason` is optional free-text.
-export type OrgExpertRemovedPayload = {
+export type OrgExpertRemovedPayload = OrgNotificationScope & {
   orgName: string;
   orgSlug: string;
   removedByName: string;

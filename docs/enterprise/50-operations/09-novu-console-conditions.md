@@ -64,9 +64,8 @@ The two overage workflows sit here rather than under programs because both are a
 | `org-invite-accepted`      |
 | `org-expert-removed`       |
 | `org-sso-provider-deleted` |
-| `org-sso-cert-expiring`    |
 
-The two SSO workflows are membership rather than a category of their own: they concern how people get into the organization, and an operator who mutes roster noise is unlikely to want certificate warnings routed elsewhere. Revisit this if an organization asks for security alerts to be separately non-mutable.
+The SSO workflow is membership rather than a category of its own: it concerns how people get into the organization. Revisit this if an organization asks for security alerts to be separately non-mutable.
 
 ### `categoryOrgProgram` — entitlement and capacity
 

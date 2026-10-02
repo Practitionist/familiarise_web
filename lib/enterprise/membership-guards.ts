@@ -5,10 +5,9 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { isBlockedRoleTransition } from "./role-transitions";
 
 /**
- * #1846 bucket C — the one membership guard. The dashboard PATCH/DELETE, SCIM
- * provisioning and bulk import all ask these functions whether a role or
- * status move is allowed, so the three channels can no longer disagree about
- * who may become what.
+ * #1846 bucket C — the one membership guard. The dashboard PATCH/DELETE and
+ * bulk import both ask these functions whether a role or status move is
+ * allowed, so the channels can no longer disagree about who may become what.
  *
  * Every function runs inside the caller's transaction. The last-OWNER count is
  * only race-safe when that transaction is Serializable (N4): two OWNERs
@@ -42,14 +41,12 @@ export class MembershipGuardError extends Error {
   }
 }
 
-/**
- * Who is acting. A dashboard member acts under their own role. SCIM acts on
- * the group mappings an OWNER configured, so it carries OWNER authority, but it
- * is never "self" and never accepts an invitation on anyone's behalf.
- */
-export type MembershipActor =
-  | { kind: "member"; membershipId: string; role: MemberRole }
-  | { kind: "idp" };
+/** Who is acting. A dashboard member acts under their own role. */
+export type MembershipActor = {
+  kind: "member";
+  membershipId: string;
+  role: MemberRole;
+};
 
 export interface GuardedMembership {
   id: string;
@@ -79,11 +76,11 @@ function actorHolds(
   actor: MembershipActor,
   key: "members.role.grant.governance" | "members.remove.force",
 ): boolean {
-  return actor.kind === "idp" || hasOrgPermission(actor.role, key);
+  return hasOrgPermission(actor.role, key);
 }
 
 function isSelf(actor: MembershipActor, membershipId: string): boolean {
-  return actor.kind === "member" && actor.membershipId === membershipId;
+  return actor.membershipId === membershipId;
 }
 
 /**
@@ -282,7 +279,6 @@ export interface StatusChangeInput {
  * `assertRemovable`). Nobody changes their own status, suspending the last
  * OWNER is refused (N4), a PENDING row only becomes ACTIVE by accepting its
  * invitation, and a REMOVED row only comes back through a new invitation.
- * SCIM is the exception for PENDING: the IdP vouches for the person.
  */
 export async function assertStatusChangeAllowed(
   tx: Pick<Tx, "membership">,
@@ -300,7 +296,7 @@ export async function assertStatusChangeAllowed(
   }
   assertActorMayManage(actor, m.role);
   assertNotTombstone(m);
-  if (m.status === "PENDING" && to === "ACTIVE" && actor.kind === "member") {
+  if (m.status === "PENDING" && to === "ACTIVE") {
     throw new MembershipGuardError(
       "PENDING_REQUIRES_ACCEPT",
       "This person has not accepted their invitation yet. They become active when they accept it.",

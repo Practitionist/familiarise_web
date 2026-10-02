@@ -1,11 +1,17 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "entry": [
-    "jobs/**/*.ts",
-    "scripts/**/*.ts",
     "emails/**/*.tsx",
     "prisma/seed.ts",
-    "prisma/seedFiles/*.ts"
+    "prisma/seedFiles/*.ts",
+    "netlify/functions/*.mts",
+    "netlify/functions/*/index.mts",
+    "load-tests/smoke.js",
+    "load-tests/booking/{scenarios,verify-integrity,cleanup}.js",
+    "tests/typescript/race-conditions/scenarios/**/*.ts",
+    "scripts/stream/ensure-*.ts",
+    "scripts/smoke/org-payout-sandbox-smoke.ts",
+    "jobs/observability/sentry-ingest-canary.ts"
   ],
   "ignore": [".claude/**", "docs/**", "screens/landing/**"],
   "ignoreBinaries": ["tsx", "psql", "supabase"],

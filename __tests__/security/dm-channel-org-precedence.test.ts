@@ -106,7 +106,6 @@ describe("no site re-types the precedence chain", () => {
       "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
     ],
     ["search", "app/api/stream/channels/search-appointments/route.ts"],
-    ["backfill", "scripts/stream/backfill-channel-org.ts"],
   ];
 
   it.each(CONSUMERS)("%s calls the helper", (_label, rel) => {

@@ -62,6 +62,50 @@ export interface StageTriggerArgs {
 
 const MAX_ATTEMPTS = 5;
 
+/**
+ * #1876 §4 — 60s lease window when staging a row due immediately so the
+ * background cron drain does not race the caller's 5s inline attempt or
+ * post-commit `attemptTrigger`.
+ */
+export const INLINE_ATTEMPT_LEASE_MS = 60_000;
+
+/**
+ * #1876 §3 — ordered map of payload keys to entityRef prefixes so callers that
+ * omit `entityRef` still populate `NotificationOutbox.entityRef` for triage.
+ */
+export const ENTITY_ID_KEYS: ReadonlyArray<
+  readonly [key: string, prefix: string]
+> = [
+  ["appointmentId", "appointment"],
+  ["paymentId", "payment"],
+  ["refundId", "refund"],
+  ["payoutId", "payout"],
+  ["disputeId", "dispute"],
+  ["ticketId", "ticket"],
+  ["invoiceId", "invoice"],
+  ["invoiceNumber", "invoice"],
+  ["subscriptionId", "subscription"],
+  ["trialId", "trial"],
+  ["documentId", "document"],
+  ["recordingId", "recording"],
+  ["exportId", "export"],
+  ["feedbackId", "feedback"],
+  ["streamCallId", "call"],
+  ["planId", "plan"],
+  ["providerId", "provider"],
+  ["organizationId", "org"],
+] as const;
+
+export function deriveEntityRef(payload: NovuPayload): string | null {
+  for (const [key, prefix] of ENTITY_ID_KEYS) {
+    const val = payload[key];
+    if (typeof val === "string" && val.trim().length > 0) {
+      return `${prefix}:${val.trim()}`;
+    }
+  }
+  return null;
+}
+
 // Code-point order, never localeCompare: collation-dependent sorting re-keyed
 // mixed-case ids across runtimes and the id must be identical everywhere.
 const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -125,10 +169,11 @@ export async function stageTrigger(
     recipients: args.recipients,
     payload: args.payload as Prisma.InputJsonObject,
     transactionId,
-    entityRef: args.entityRef ?? null,
+    entityRef: args.entityRef ?? deriveEntityRef(args.payload) ?? null,
     notBefore: args.notBefore ?? null,
     status: "PENDING" as const,
-    nextRetryAt: new Date(),
+    nextRetryAt:
+      args.notBefore ?? new Date(Date.now() + INLINE_ATTEMPT_LEASE_MS),
   };
   const query = {
     where: { transactionId },
@@ -223,6 +268,36 @@ export function terminalTriggerReason(
 }
 
 /**
+ * #1876 §2 — Construct a clean Error for Sentry without `NovuError.body` or
+ * `ResponseValidationError.rawValue`, which carry echoed subscriber/payload PII.
+ */
+function sanitizeNovuErrorForSentry(
+  error: unknown,
+  statusCode?: number,
+  novuMessage?: string,
+): Error {
+  if (
+    error instanceof Error &&
+    !("body" in error) &&
+    !("rawValue" in error)
+  ) {
+    return error;
+  }
+  const baseMessage =
+    novuMessage ?? (error instanceof Error ? error.message : String(error));
+  const clean = new Error(
+    statusCode !== undefined && !baseMessage.includes(String(statusCode))
+      ? `Novu HTTP ${statusCode}: ${baseMessage}`
+      : baseMessage,
+  );
+  if (error instanceof Error) {
+    clean.name = error.name;
+    clean.stack = error.stack;
+  }
+  return clean;
+}
+
+/**
  * One report shape for every `novu.trigger` failure. `accepted` means the
  * notification is already queued at Novu and only the SDK's response parsing
  * failed, so it is an expected outcome rather than a lost notification.
@@ -231,13 +306,17 @@ export function reportTriggerFailure(
   error: unknown,
   workflowId: string,
   recipientCount: number,
+  opts?: { exhaustedRetries?: boolean },
 ): { accepted: boolean; reason: string | null } {
   const { statusCode, novuMessage, accepted } = describeNovuFailure(error);
   const reason = accepted
     ? null
     : terminalTriggerReason(statusCode, novuMessage);
-  // Never pass the raw SDK error: `NovuError.body` is the submitted payload
-  // echoed back on validation failures, so it can carry notification PII.
+  const isDeadLetter = Boolean(
+    !accepted && (reason !== null || opts?.exhaustedRetries),
+  );
+  // Never pass the raw SDK error: `NovuError.body` and `rawValue` carry the
+  // submitted payload echoed back on validation failures (notification PII).
   console.error(`[Novu] Failed to trigger ${workflowId}:`, {
     workflowId,
     statusCode,
@@ -246,18 +325,29 @@ export function reportTriggerFailure(
     accepted,
   });
   Sentry.captureException(
-    error instanceof Error ? error : new Error(String(error)),
+    sanitizeNovuErrorForSentry(error, statusCode, novuMessage),
     {
       tags: {
         subsystem: "novu",
         op: "trigger",
         expected: String(accepted),
+        ...(isDeadLetter ? { outbox_dead_letter: "true" } : {}),
       },
-      // #1654 — a terminal reason pages once per reason; a transient one is
-      // a warning the relay will retry.
-      level: reason ? "error" : "warning",
-      ...(reason && { fingerprint: ["novu-trigger-terminal", reason] }),
-      extra: { workflowId, statusCode, novuMessage, recipientCount },
+      // #1654 / #1926 — a terminal reason or exhausted retry ladder pages at
+      // error level; a transient attempt is a warning the relay will retry.
+      level: isDeadLetter ? "error" : "warning",
+      ...(reason
+        ? { fingerprint: ["novu-trigger-terminal", reason] }
+        : opts?.exhaustedRetries
+          ? { fingerprint: ["novu-trigger-exhausted", workflowId] }
+          : {}),
+      extra: {
+        workflowId,
+        statusCode,
+        novuMessage,
+        recipientCount,
+        ...(opts?.exhaustedRetries ? { exhaustedRetries: true } : {}),
+      },
     },
   );
   return { accepted, reason };
@@ -292,11 +382,12 @@ async function sendRow(row: StagedTrigger): Promise<void> {
     row.workflowId as NovuWorkflowId,
     row.payload as NovuPayload,
   );
+  const transactionId = row.transactionId || row.id;
   if (row.kind === "BROADCAST") {
     await novu.triggerBroadcast({
       name: wire.workflowId,
       payload: wire.payload,
-      transactionId: row.transactionId,
+      transactionId,
     });
     return;
   }
@@ -304,7 +395,7 @@ async function sendRow(row: StagedTrigger): Promise<void> {
     workflowId: wire.workflowId,
     to: row.kind === "SINGLE" ? row.recipients[0] : row.recipients,
     payload: wire.payload,
-    transactionId: row.transactionId,
+    transactionId,
   });
 }
 
@@ -354,12 +445,14 @@ export async function attemptTrigger(
     });
     return { success: true, outcome: "SENT" };
   } catch (error) {
+    const exhaustedRetries = Boolean(opts.relay && attempts >= MAX_ATTEMPTS);
     // A 2xx the SDK could not parse still queued the notification; reporting it
     // as a failed send made callers retry a send Novu had already accepted.
     const { accepted, reason } = reportTriggerFailure(
       error,
       row.workflowId,
       recipientCount,
+      { exhaustedRetries },
     );
     if (accepted) {
       await settleRow(row, {
@@ -375,8 +468,11 @@ export async function attemptTrigger(
       success: false as const,
       error: error instanceof Error ? error : String(error),
     };
-    if (reason || (opts.relay && attempts >= MAX_ATTEMPTS)) {
+    if (reason || exhaustedRetries) {
       await settleRow(row, { status: "DEAD_LETTER", attempts, lastError });
+      Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
+        attributes: { status: "DEAD_LETTER", workflowId: row.workflowId },
+      });
       return { ...failure, outcome: "DEAD_LETTER" };
     }
     if (opts.relay) {
@@ -385,6 +481,9 @@ export async function attemptTrigger(
         attempts,
         nextRetryAt: nextRetryAt(attempts + 1, now),
         lastError,
+      });
+      Sentry.metrics?.count?.("notifications.outbox.transition", 1, {
+        attributes: { status: "RETRY", workflowId: row.workflowId },
       });
       return { ...failure, outcome: "RETRY" };
     }

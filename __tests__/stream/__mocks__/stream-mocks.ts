@@ -13,10 +13,12 @@ export const createMockPrisma = () => ({
   webinar: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
+    findFirst: jest.fn(),
   },
   class: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
+    findFirst: jest.fn(),
   },
   consultation: {
     findUnique: jest.fn(),

@@ -8,6 +8,8 @@ last-reviewed: 2026-06-05
 
 # Enterprise subsystem — deep phased verification checklist
 
+> **Superseded in part (PR #1878):** SSO is OIDC-only. SAML, SCIM (Phase 5 below, `lib/scim/`, the `scim/*` routes) and SSO break-glass were removed before launch; skip those items. Current design: [SSO](../../authentication/sso.md) and [ADR 36](../70-design-decisions/36-auth-schema-freeze.md).
+
 A file-tree-grounded map of **every sub-subsystem** of the enterprise layer, grouped into phases you can verify in order. Each item is annotated with the real code path and a status hint from the audit series.
 
 **Status legend:** `✅` wired end-to-end · `🟡` partial / known limitation · `❌` not built / gated off · `🔒` intentionally blocked (verify the block fires) · `(verify)` claim to confirm against code.
@@ -131,7 +133,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, org-route-ma
 - [ ] Role ladder OWNER(100)/MAINTAINER(80)/BILLING_ADMIN(70)/MANAGER(60)/EXPERT(40)/SUPPORT(30)/LEARNER(20) `✅`
 - [ ] BILLING_ADMIN rank-independent finance gate (MAINTAINER denied) `✅` — the `billing.manage` key in `lib/auth/org-permissions.ts`
 - [ ] LEARNER↔EXPERT disjoint transition blocked `🔒` — `lib/enterprise/role-transitions.ts`
-- [ ] `sessionGeneration` bump on role/status change (no forced logout) `✅` — `membership-transitions.ts`
+- [ ] Role/status change reaches live sessions on the next request (no forced logout) `✅` — cookie cache off; `sessionGeneration` removed in #1878 (ADR 10 superseded)
 - [ ] Anti-lockout: can't remove/demote last OWNER `✅` — `governance.ts`
 - [ ] Member-removal pre-check for in-flight money (overage/earnings/refund/dispute) `❌` #779 §C
 - [ ] RBAC over-centralization (name/billingEmail OWNER-only) `🟡` #779 §A

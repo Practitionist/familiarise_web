@@ -17,8 +17,9 @@ import {
   type StageTriggerArgs,
   type TriggerResult,
 } from "./outbox";
-import { toWire } from "./templates";
-import type { NovuWorkflowId } from "./templates/types";
+import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
+import { templateFor, toWire } from "./templates";
+import type { NovuWorkflowId, PreferenceCategory } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
   type AccountBannedPayload,
@@ -81,10 +82,14 @@ import {
   cancellationReasonLabel,
   cancelledByLabel,
   DEFAULT_NOTIFICATION_TIMEZONE,
+  disputeReasonLabel,
+  disputeStatusLabel,
+  failureReasonLabel,
   formatNotificationAmountBare,
   formatNotificationDateTime,
   formatNotificationMoney,
   groupRecipientsByTimezone,
+  refundReasonLabel,
   resolveRecipientTimezones,
 } from "./humanize";
 
@@ -105,7 +110,7 @@ export interface TriggerOptions {
   // #1697 item 5 — "user" too: the recipient-timezone read must ride the
   // caller's transaction for the same single-connection reason.
   // Quiet-hours reads ride it too (via the `user` → `notificationPreferences`
-  // include in resolveQuietHoursNotBefore, so no extra delegate is needed).
+  // include in resolveRecipientBellPolicy, so no extra delegate is needed).
   tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
   /**
@@ -124,54 +129,142 @@ export interface TriggerOptions {
   deferAttempt?: boolean;
 }
 
+const BELL_PREFERENCE_SELECT = {
+  allNotifications: true,
+  inAppEnabled: true,
+  appointmentReminders: true,
+  paymentNotifications: true,
+  subscriptionAlerts: true,
+  trialNotifications: true,
+  supportUpdates: true,
+  feedbackAlerts: true,
+  orgBillingAlerts: true,
+  orgMembershipAlerts: true,
+  orgProgramAlerts: true,
+  quietHoursEnabled: true,
+  quietHoursStart: true,
+  quietHoursEnd: true,
+  quietHoursTimezone: true,
+} as const;
+
+type BellUserRow = {
+  id?: string;
+  timezone?: string | null;
+  orgWorkspaceProfile?: {
+    notificationRoutingMode?:
+      | "BELL_AND_EMAIL"
+      | "BELL_ONLY"
+      | "EMAIL_ONLY"
+      | "NEITHER"
+      | null;
+  } | null;
+  notificationPreferences?: Partial<
+    Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | string | null>
+  > | null;
+};
+
 /**
- * Q3 fix — quiet-hours deferral. Loads each recipient's quiet-hours config
- * (riding the caller's tx when one is open, per the PG_POOL_MAX=1 note above)
- * and returns the latest window-end, so a batch waits until every recipient
- * is out of quiet hours. BROADCAST has no recipients and is never deferred.
- * Never throws: on any failure returns undefined (send ASAP).
+ * Evaluates the same four bell gates as `inAppSkipRule` (`lib/novu/templates/conditions.ts`)
+ * directly against the database row (`OrgWorkspaceProfile.notificationRoutingMode`,
+ * `NotificationPreference.allNotifications`, `inAppEnabled`, and the workflow's
+ * category switch) before an outbox row is ever staged.
  */
-async function resolveQuietHoursNotBefore(
+function isBellAllowedForRecipient(
+  row: BellUserRow | undefined,
+  category: PreferenceCategory | null,
+): boolean {
+  if (!row) return true;
+  const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
+  if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
+    return false;
+  }
+  const pref = row.notificationPreferences;
+  if (!pref) return true;
+  if (pref.allNotifications === false) return false;
+  if (pref.inAppEnabled === false) return false;
+  if (
+    category !== null &&
+    pref[EMAIL_CATEGORY_COLUMN[category]] === false
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Loads each recipient's bell preferences, workspace routing mode, and
+ * quiet-hours config in a single query (riding the caller's tx when one is
+ * open, per the PG_POOL_MAX=1 note above). Filters out opted-out recipients
+ * and computes the latest quiet-hours window-end across the remaining
+ * recipients. BROADCAST has no recipients and is never filtered or deferred.
+ * Never throws: on any failure returns all recipients and `notBefore: undefined`.
+ */
+async function resolveRecipientBellPolicy(
+  workflowId: NovuWorkflowId,
   recipients: string[],
   opts: TriggerOptions | undefined,
-): Promise<Date | undefined> {
-  if (recipients.length === 0) return undefined;
+): Promise<{ allowedRecipients: string[]; notBefore: Date | undefined }> {
+  if (recipients.length === 0) {
+    return { allowedRecipients: recipients, notBefore: undefined };
+  }
   try {
     const db = opts?.tx ?? prisma;
-    const rows = await db.user.findMany({
+    const rows = (await db.user.findMany({
       where: { id: { in: recipients } },
       select: {
+        id: true,
         timezone: true,
+        orgWorkspaceProfile: {
+          select: { notificationRoutingMode: true },
+        },
         notificationPreferences: {
-          select: {
-            quietHoursEnabled: true,
-            quietHoursStart: true,
-            quietHoursEnd: true,
-            quietHoursTimezone: true,
-          },
+          select: BELL_PREFERENCE_SELECT,
         },
       },
-    });
+    })) as BellUserRow[];
+
+    const category = templateFor(workflowId)?.category ?? null;
+    const byId = new Map<string, BellUserRow>();
+    for (const row of rows) {
+      if (typeof row.id === "string") byId.set(row.id, row);
+    }
+
+    const allowedRecipients = recipients.filter((id) =>
+      isBellAllowedForRecipient(byId.get(id), category),
+    );
+    if (allowedRecipients.length === 0 || opts?.deferrable === false) {
+      return { allowedRecipients, notBefore: undefined };
+    }
+
+    const allowedSet = new Set(allowedRecipients);
     const now = new Date();
     let latest: Date | undefined;
     for (const row of rows) {
+      if (typeof row.id === "string" && !allowedSet.has(row.id)) continue;
       const pref = row.notificationPreferences;
       if (!pref?.quietHoursEnabled) continue;
       const notBefore = computeQuietHoursNotBefore(
         {
           quietHoursEnabled: true,
-          quietHoursStart: pref.quietHoursStart,
-          quietHoursEnd: pref.quietHoursEnd,
-          quietHoursTimezone: pref.quietHoursTimezone,
-          fallbackTimezone: row.timezone,
+          quietHoursStart:
+            typeof pref.quietHoursStart === "string"
+              ? pref.quietHoursStart
+              : null,
+          quietHoursEnd:
+            typeof pref.quietHoursEnd === "string" ? pref.quietHoursEnd : null,
+          quietHoursTimezone:
+            typeof pref.quietHoursTimezone === "string"
+              ? pref.quietHoursTimezone
+              : null,
+          fallbackTimezone: row.timezone ?? null,
         },
         now,
       );
       if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
     }
-    return latest;
+    return { allowedRecipients, notBefore: latest };
   } catch {
-    return undefined;
+    return { allowedRecipients: recipients, notBefore: undefined };
   }
 }
 
@@ -193,23 +286,31 @@ async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
-  // Q3: stamp quiet-hours deferral before staging. An explicit notBefore from
-  // the caller wins; otherwise defer to the latest recipient window-end
-  // (one row carries one floor, so a group notice waits until every
-  // recipient is out of quiet hours rather than waking some of them).
-  // Non-deferrable (urgent) workflows skip the computation entirely.
-  const notBefore =
-    args.notBefore ??
-    (opts?.deferrable === false || args.kind === "BROADCAST"
-      ? undefined
-      : await resolveQuietHoursNotBefore(args.recipients, opts));
-  const staged = await stageTrigger({
+  // Evaluate user/org bell preferences, workspace routing mode, and quiet-hours
+  // deferral in Postgres/TypeScript before staging NotificationOutbox.
+  const policy =
+    args.kind === "BROADCAST"
+      ? { allowedRecipients: args.recipients, notBefore: undefined }
+      : await resolveRecipientBellPolicy(
+          args.workflowId,
+          args.recipients,
+          opts,
+        );
+  if (args.kind !== "BROADCAST" && policy.allowedRecipients.length === 0) {
+    return { success: true };
+  }
+  const effectiveArgs = {
     ...args,
+    recipients: policy.allowedRecipients,
+  };
+  const notBefore = effectiveArgs.notBefore ?? policy.notBefore;
+  const staged = await stageTrigger({
+    ...effectiveArgs,
     ...(notBefore && { notBefore }),
     ...opts,
   });
   if (!isNovuConfigured()) {
-    reportNotConfigured(args.workflowId);
+    reportNotConfigured(effectiveArgs.workflowId);
     return { success: false, error: "Novu not configured" };
   }
   if (!staged) {
@@ -224,7 +325,7 @@ async function stageAndAttempt(
     }
     // Otherwise send-first, as before #1654, so a database hiccup does not
     // also drop the bell.
-    return sendUnstaged(args);
+    return sendUnstaged(effectiveArgs);
   }
   // #1861 P2r — deferAttempt is the no-tx sibling of tx: the row is staged
   // (so it exists even if the process dies before the caller's after()
@@ -396,7 +497,7 @@ export async function triggerWorkflowZoned(
   dedupeKey?: string,
   opts?: TriggerOptions,
 ): Promise<TriggerResult> {
-  const zones = await resolveRecipientTimezones([subscriberId]);
+  const zones = await resolveRecipientTimezones([subscriberId], opts?.tx);
   const timezone = zones.get(subscriberId) ?? DEFAULT_NOTIFICATION_TIMEZONE;
   return triggerWorkflow(
     workflowId,
@@ -613,6 +714,7 @@ export async function notifyAppointmentReminder(
 export async function notifyPaymentSuccess(
   userId: string,
   payload: PaymentSuccessInput,
+  opts?: TriggerOptions,
 ) {
   const wire: PaymentSuccessPayload = {
     ...payload,
@@ -622,7 +724,13 @@ export async function notifyPaymentSuccess(
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
   };
-  return triggerWorkflow(NOVU_WORKFLOWS.PAYMENT_SUCCESS, userId, wire);
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.PAYMENT_SUCCESS,
+    userId,
+    wire,
+    undefined,
+    opts,
+  );
 }
 
 export async function notifyPaymentFailed(
@@ -637,6 +745,7 @@ export async function notifyPaymentFailed(
     amountPaise: payload.amount,
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
+    failureReason: failureReasonLabel(payload.failureReason),
   };
   return triggerWorkflow(
     NOVU_WORKFLOWS.PAYMENT_FAILED,
@@ -655,11 +764,17 @@ export async function notifyPaymentFailed(
  * workflow happens to carry it.
  */
 function refundWire(payload: RefundInput): RefundPayload {
+  // The bell gets the human reason; the Refund row keeps the machine one.
+  // Destructured out first so an unmappable reason is omitted (the template
+  // gates on `{% if payload.reason %}`) rather than riding through raw.
+  const { reason: rawReason, ...rest } = payload;
+  const reason = refundReasonLabel(rawReason);
   return {
-    ...payload,
+    ...rest,
     amount: formatNotificationAmountBare(payload.amount, payload.currency),
     amountFormatted: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
+    ...(reason ? { reason } : {}),
     ...(payload.appointmentType
       ? {
           appointmentType: appointmentTypeLabel(payload.appointmentType),
@@ -990,8 +1105,12 @@ export async function notifyPayoutFailed(
   consultantUserId: string,
   payload: PayoutInput,
 ) {
+  // The row id stays out of the prose: the template printed it in
+  // parentheses after the amount, and a UUID is not something a person
+  // can act on — the payouts queue is the lookup path.
+  const { payoutId: _payoutId, ...rest } = payload;
   const wire: PayoutPayload = {
-    ...payload,
+    ...rest,
     amount: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
   };
@@ -1016,7 +1135,11 @@ export async function notifyOrgExpertRemoved(
   return triggerWorkflow(
     NOVU_WORKFLOWS.ORG_EXPERT_REMOVED,
     consultantUserId,
-    payload,
+    {
+      organizationId: payload.organizationId ?? null,
+      scope: "org",
+      ...payload,
+    },
   );
 }
 
@@ -1047,10 +1170,15 @@ export async function notifyNewConsultantApplication(
 // ============================================================================
 
 function disputeWire(payload: DisputeInput): DisputePayload {
+  const { reason: rawReason, status: rawStatus, ...rest } = payload;
+  const reason = disputeReasonLabel(rawReason);
+  const status = disputeStatusLabel(rawStatus);
   return {
-    ...payload,
+    ...rest,
     amount: formatNotificationMoney(payload.amount, payload.currency),
     amountPaise: payload.amount,
+    ...(reason ? { reason } : {}),
+    ...(status ? { status } : {}),
   };
 }
 
@@ -1110,10 +1238,14 @@ export async function notifyRecordingFailed(
   payload: RecordingFailedPayload,
   opts?: TriggerOptions,
 ) {
+  // The vendor's raw error (an ffmpeg exit, an SDK message) is not prose
+  // anyone can act on — it stays in the logs and Sentry, and the template
+  // renders its clean sentence without it.
+  const { errorMessage: _vendorDetail, ...rest } = payload;
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
     subscriberId,
-    payload,
+    rest,
     undefined,
     opts,
   );

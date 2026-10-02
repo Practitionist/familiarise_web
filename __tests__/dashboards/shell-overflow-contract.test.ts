@@ -34,12 +34,9 @@ const PORTED_SHELLS = [
  * dead over-scroll the shells otherwise make impossible.
  */
 const GATE_STATE_SOURCES = [
-  // Batch C3: the consultant/consultee layouts delegate most gate/loading
+  // Batch C3: the consultant/consultee layouts delegate all gate/loading/error
   // states to the shared core, which is where the viewport classes live.
-  // The consultant layout keeps its own ErrorDisplay (wired via renderError),
-  // so it stays pinned directly.
   "components/dashboard/PersonalDashboardLayoutCore.tsx",
-  "app/dashboard/consultant/[consultantId]/layout.tsx",
   "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
 ] as const;
 

@@ -3,9 +3,10 @@
  */
 
 /**
- * Pin the stale-invitation cleanup contract:
+ * Pin the stale-invitation cleanup contract (folded into cleanup-auth-tokens
+ * per #1487):
  *
- *   - Only rows with `status = 'pending'` AND `expiresAt < now` get
+ *   - Only rows with `status = PENDING` AND `expiresAt < now` get
  *     flipped to 'expired'. Already-expired, accepted, or revoked rows
  *     are left alone.
  *   - Each flip emits one `OrgAuditLog(MEMBER / INVITE_EXPIRED)` row
@@ -17,10 +18,8 @@
  *     the update.
  *   - Idempotent: a second invocation with no stale rows returns
  *     `{ expired: 0 }` and writes no new audit rows.
- *
- * Covers the gap called out in the May 2026 audit (B6.4): the cron
- * existed but had no regression test, so a future "make the audit
- * row conditional" refactor could silently break the visibility.
+ *   - `cleanupAuthTokens()` invokes stale-invitation expiry as part of the
+ *     daily auth-token housekeeping sweep (#1487).
  */
 
 jest.mock("../../lib/prisma", () => {
@@ -34,10 +33,20 @@ jest.mock("../../lib/prisma", () => {
   return {
     __esModule: true,
     default: {
+      verification: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+      session: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 3 }),
+      },
+      idempotencyRecord: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       invitation: {
         findMany: jest.fn().mockResolvedValue(candidates),
         findUnique: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       $transaction: jest.fn(),
@@ -46,13 +55,17 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import prisma from "@/lib/prisma";
-import { cleanupStaleInvitations } from "@/scripts/cleanup/cleanup-stale-invitations";
+import {
+  cleanupAuthTokens,
+  cleanupStaleInvitations,
+} from "@/scripts/cleanup/cleanup-auth-tokens";
 
 const mockedPrisma = prisma as unknown as {
   invitation: {
     findMany: jest.Mock;
     findUnique: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   orgAuditLog: { create: jest.Mock };
   $transaction: jest.Mock;
@@ -69,7 +82,7 @@ function wireTxShim() {
   });
 }
 
-describe("cleanupStaleInvitations", () => {
+describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     wireTxShim();
@@ -92,14 +105,14 @@ describe("cleanupStaleInvitations", () => {
       expiresAt: new Date("2026-05-01T00:00:00Z"),
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "pending" });
+    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
     mockedPrisma.invitation.update.mockResolvedValue({ id: candidate.id });
 
     const result = await cleanupStaleInvitations();
     expect(result.expired).toBe(1);
     expect(mockedPrisma.invitation.update).toHaveBeenCalledWith({
       where: { id: candidate.id },
-      data: { status: "expired" },
+      data: { status: "EXPIRED" },
     });
     expect(mockedPrisma.orgAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -124,7 +137,9 @@ describe("cleanupStaleInvitations", () => {
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
     // Re-read inside the TX sees the racing accept — refuse to flip.
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "accepted" });
+    mockedPrisma.invitation.findUnique.mockResolvedValue({
+      status: "ACCEPTED",
+    });
 
     const result = await cleanupStaleInvitations();
     expect(result.expired).toBe(0);
@@ -149,7 +164,7 @@ describe("cleanupStaleInvitations", () => {
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([a, b]);
 
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "pending" });
+    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
     // First update throws, second succeeds — the sweep should still
     // report the second row as expired.
     mockedPrisma.invitation.update
@@ -160,5 +175,23 @@ describe("cleanupStaleInvitations", () => {
     expect(result.expired).toBe(1);
     expect(result.errors.length).toBe(1);
     expect(result.success).toBe(false);
+  });
+
+  it("runs stale invitation expiry as part of cleanupAuthTokens (#1487)", async () => {
+    const candidate = {
+      id: "inv-folded",
+      organizationId: "org-1",
+      email: "folded@acme.com",
+      role: "LEARNER",
+      expiresAt: new Date("2026-05-01T00:00:00Z"),
+    };
+    mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
+    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
+    mockedPrisma.invitation.update.mockResolvedValue({ id: candidate.id });
+
+    const result = await cleanupAuthTokens();
+    expect(result.success).toBe(true);
+    expect(result.staleInvitationsExpired).toBe(1);
+    expect(result.totalCleaned).toBe(2 + 3 + 1 + 1);
   });
 });

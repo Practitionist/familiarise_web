@@ -8,8 +8,8 @@
  *
  * `BillingSubscription.activeSeatCount` is what the subscription-invoice cron
  * multiplies by `ratePerSeatPaise` on a PER_SEAT contract. The per-assignment
- * cancel routes already decremented it, but the four MEMBER-level cascades —
- * DELETE removal, PATCH → REMOVED, SCIM deprovision, DPDP erasure — stamped
+ * cancel routes already decremented it, but the MEMBER-level cascades —
+ * DELETE removal, PATCH → REMOVED, DPDP erasure — stamped
  * the member's ProgramAssignments CANCELLED without touching the count. A
  * deprovisioned member therefore stayed billable forever.
  *

@@ -42,6 +42,9 @@ export function SocialLoginButtons({
                 provider: provider.id,
                 callbackURL,
                 newUserCallbackURL: newUserCallbackURL || "/form/onboarding",
+                // A refusal (e.g. SSO_REQUIRED) comes back to the sign-in
+                // page as `?error=`, not to BetterAuth's bare error page.
+                errorCallbackURL: "/auth/signin",
               });
               toast({
                 title: `Signing in with ${provider.label}...`,

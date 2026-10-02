@@ -114,3 +114,6 @@ prompts/
 # rosters) and rollback material for an operator's machine — not source.
 .stream-backups/
 opencode.json
+
+# Agent worktree jest helper (local only)
+jt.sh

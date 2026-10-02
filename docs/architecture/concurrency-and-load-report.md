@@ -91,18 +91,19 @@ The lock implementation includes a circuit breaker: after 5 consecutive Redis fa
 
 ### 4.2 Rate Limiting (Upstash + Arcjet)
 
-Eight rate-limit rules run at the Netlify edge before the request reaches the Next.js handler. These rules use Upstash's sliding-window algorithm, which survives Redis restarts because the window is stored in Redis sorted sets:
+These rate-limit rules run at the Netlify edge before the request reaches the Next.js handler. These rules use Upstash's sliding-window algorithm, which survives Redis restarts because the window is stored in Redis sorted sets:
 
 | Endpoint | Limit | Window | Key |
 |---|---|---|---|
-| `POST /api/auth/sign-in,sign-up,forget-password` | 10 requests | 15 minutes | IP |
 | `GET /api/user/consultants` | 60 requests | 1 minute | IP |
 | `GET /api/trials/check-eligibility` | 100 requests | 1 hour | IP |
 | `POST /api/newsletter/subscribe` | 30 requests | 1 hour | IP |
 | `GET /api/scheduling/availability/*` | 60 requests | 1 minute | IP |
-| `POST /api/organizations/.../invitations/accept` | 30 requests | 1 minute | IP |
-| `GET /api/auth/sso/domain-check` | 60 requests | 1 hour | IP |
+| `POST /api/organizations/invitations/accept` | 60 requests | 1 hour | IP |
+| `GET /api/auth/sso/domain-check` | 120 requests | 1 hour | IP |
 | `POST /api/checkout` | 5 requests | 1 minute | User ID |
+
+Sign-in, sign-up and password reset are not limited at the edge. BetterAuth's own limiter (`lib/auth/rate-limit.ts`, Upstash-backed, keyed on IP + path) covers every `/api/auth/*` path; `/sign-in/email` allows 30 requests per 15 minutes.
 
 All rules are configured to fail open: if Upstash is unreachable, the request passes rather than being blocked. This is the correct choice for availability, but it means the rate limit does not protect against a Redis outage coinciding with a brute-force attempt.
 
@@ -338,8 +339,8 @@ const CONSULTANT_ID = __ENV.CONSULTANT_ID || "replace-with-real-id";
 // Login happens once in setup(), but as a POOL of sessions distributed
 // across VUs, not a single shared cookie: one cookie for 100 VUs makes the
 // run effectively single-user (skews per-user rate limits and hides
-// concurrency bugs), while a naive login-per-VU trips the auth limiter
-// (10/15min per IP — see §3) from a single load generator. A pool of up to
+// concurrency bugs), while a naive login-per-VU trips the sign-in limiter
+// (30/15min per IP — see §4.2) from a single load generator. A pool of up to
 // 8 sessions stays under the limiter and still exercises distinct sessions.
 const SESSION_POOL_SIZE = 8;
 

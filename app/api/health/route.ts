@@ -109,6 +109,48 @@ function redisOk(): RedisStatus {
     : { status: "ok" };
 }
 
+function pickFresherTimestamp(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): string | null {
+  if (!a && !b) return null;
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
+
+async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
+  try {
+    const delegate = (
+      prisma as unknown as {
+        systemJobExecution?: {
+          findFirst?: (args: {
+            where: { status: "COMPLETED" };
+            orderBy: { startedAt: "desc" };
+            select: { startedAt: true };
+          }) => Promise<{ startedAt: Date | string } | null>;
+        };
+      }
+    ).systemJobExecution;
+    if (typeof delegate?.findFirst !== "function") return null;
+    const latest = await delegate.findFirst({
+      where: { status: "COMPLETED" },
+      orderBy: { startedAt: "desc" },
+      select: { startedAt: true },
+    });
+    if (!latest?.startedAt) return null;
+    return latest.startedAt instanceof Date
+      ? latest.startedAt.toISOString()
+      : String(latest.startedAt);
+  } catch {
+    return null;
+  }
+}
+
 // #1822 Q-7 — the heartbeat GET doubles as the Redis probe, so a quota
 // failure (`UpstashError: ERR max requests limit exceeded`) costs no extra command.
 async function checkCronHeartbeat(): Promise<{
@@ -126,7 +168,11 @@ async function checkCronHeartbeat(): Promise<{
     };
   }
   try {
-    const lastRunAt = await redis.get<string>("cron:heartbeat:last");
+    const [redisLastRunAt, dbLastRunAt] = await Promise.all([
+      redis.get<string>("cron:heartbeat:last"),
+      readLatestCompletedCronExecutionAt(),
+    ]);
+    const lastRunAt = pickFresherTimestamp(redisLastRunAt, dbLastRunAt);
     if (!lastRunAt) {
       return {
         cron: { configured: true, lastRunAt: null, stale: null },

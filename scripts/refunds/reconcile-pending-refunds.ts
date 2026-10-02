@@ -35,7 +35,9 @@ import {
 } from "@/lib/email/send-to-recipients";
 import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
+import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { applyRefundCascade } from "../../lib/payments/operations/refund";
 
 // Threshold: Only reconcile refunds older than 1 hour
 const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
@@ -261,6 +263,20 @@ async function reconcilePendingRefundsUnlocked(
           prismaMetadataObject(refund.metadata),
         );
         if (bound === "bound") {
+          if (
+            mapGatewayRefundStatus(matchingRefund.status) ===
+            RefundStatus.SUCCEEDED
+          ) {
+            await prisma.$transaction(async (tx) => {
+              await applyRefundCascade(tx, {
+                paymentId: refund.paymentId ?? refund.payment.id,
+                refundId: refund.id,
+                amountPaise: refund.amountPaise,
+                reason: refund.reason ?? "Gateway refund reconciled",
+                initiatedByUserId: null,
+              });
+            });
+          }
           console.log(
             `✅ Reconciled refund ${refund.id} -> ${matchingRefund.refundId} (${exactMatch ? "reservation-id" : "unambiguous-amount"} match, status: ${matchingRefund.status})`,
           );
@@ -406,13 +422,21 @@ async function reconcilePendingRefundsUnlocked(
             data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
           });
           if (claim.count !== 1) return false;
+          await applyRefundCascade(tx, {
+            paymentId: refund.payment.id,
+            refundId: refund.id,
+            amountPaise: refund.amountPaise,
+            reason: refund.reason ?? "Gateway refund reconciled",
+            initiatedByUserId: null,
+          });
           const notice = await notifyRefundProcessed(
             refund.payment.userId,
             {
               ...notificationScope(refund.payment.organizationId),
               amount: refund.amountPaise,
               currency: refund.currency,
-              dashboardUrl: `${getAppUrl()}/dashboard`,
+              // The payer's money view, matching the other money bells.
+              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
             },
             { tx, entityRef: `payment:${refund.payment.id}` },
           );
@@ -511,6 +535,8 @@ async function reconcilePendingRefundsUnlocked(
       },
     );
   }
+
+  await notifyFailedRefundsUnlocked();
 
   return {
     success: errors.length === 0,
@@ -634,14 +660,15 @@ export async function notifyFailedRefunds(): Promise<FailedRefundNotifyResult> {
 
 async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> {
   const now = new Date();
-  const failed = await prisma.refund.findMany({
-    where: {
-      status: RefundStatus.FAILED,
-      failedNotifiedAt: null,
-    },
-    include: { payment: { select: { userId: true, organizationId: true } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const failed =
+    (await prisma.refund.findMany({
+      where: {
+        status: RefundStatus.FAILED,
+        failedNotifiedAt: null,
+      },
+      include: { payment: { select: { userId: true, organizationId: true } } },
+      orderBy: { createdAt: "asc" },
+    })) ?? [];
 
   let notified = 0;
   for (const refund of failed) {
@@ -677,7 +704,7 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
       amount: refund.amountPaise,
       currency: refund.currency,
       reason: failureReason,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
+      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     });
     // #1653 — the email twin; the sender never throws.
     await sendRefundFailedEmail({

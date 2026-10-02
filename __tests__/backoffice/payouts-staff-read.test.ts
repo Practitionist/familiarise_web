@@ -11,7 +11,11 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-session-lookup", () => ({
   lookupSession: async () => ({
     kind: "found",
-    session: { user: { id: "staff_1", role: "STAFF" } },
+    // A fully-enrolled staff member: the mandatory-2FA gate in
+    // lib/auth-helpers.ts answers 428 for an operator session without it.
+    session: {
+      user: { id: "staff_1", role: "STAFF", twoFactorEnabled: true },
+    },
   }),
 }));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));

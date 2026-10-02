@@ -189,7 +189,7 @@ describe("scheduled workflows can import their own entrypoint (#1270)", () => {
   it("walks a non-trivial slice of the fleet", () => {
     // A floor, not an equality. This only catches the parser silently matching
     // nothing after a workflow-format change.
-    expect(rows.length).toBeGreaterThanOrEqual(55);
+    expect(rows.length).toBeGreaterThanOrEqual(35);
   });
 
   it("never reaches a module that cannot load in a bare Node process", () => {

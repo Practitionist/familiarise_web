@@ -254,9 +254,9 @@ itself.
 
 `event-channel.action.ts` *is* `"use server"`, so its exports are RPCs, and
 they gate themselves. The pattern to copy is `assertCanMintToken` in
-`actions/stream/chat/stream.action.ts`: read the session with the cookie cache
-disabled (`getSession(true)`), so a just-demoted staff member or a just-banned
-user cannot ride a stale cached session; reject banned accounts outright; allow
+`actions/stream/chat/stream.action.ts`: read the session fresh from the database
+(`getSession(true)`), so a just-demoted staff member or a just-banned user
+cannot ride a stale session; reject banned accounts outright; allow
 only self or privileged (`isPrivileged`) callers; throw otherwise.
 `syncUserEventChannels` mirrors it exactly, and the gate fires **before** the
 `force` path clears the sync dedup guard — an unauthenticated call must not be

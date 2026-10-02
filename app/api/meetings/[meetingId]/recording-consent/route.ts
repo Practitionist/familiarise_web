@@ -1,9 +1,8 @@
 import { RecordingConsentDecision } from "@prisma/client";
-import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { auth } from "@/lib/auth";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { resolveMeetingAccess } from "@/lib/meetings/access";
 import {
   getRecordingNotice,
@@ -32,13 +31,9 @@ export async function GET(
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 },
-      );
-    }
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const { meetingId } = await params;
     const access = await resolveMeetingAccess(meetingId, session.user.id);
@@ -74,13 +69,9 @@ export async function POST(
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 },
-      );
-    }
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const { meetingId } = await params;
     const access = await resolveMeetingAccess(meetingId, session.user.id);
