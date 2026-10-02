@@ -468,7 +468,9 @@ export async function PATCH(
                   access.session.user.name ??
                   access.session.user.email ??
                   "An operator",
-                dashboardUrl: "/dashboard",
+                // The affected member's org home — not a bare dashboard
+                // bounce that drops them on the wrong tree.
+                dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard/organization/${orgId}/home`,
               },
               tx,
             );
