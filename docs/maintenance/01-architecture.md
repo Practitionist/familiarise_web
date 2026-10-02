@@ -56,8 +56,10 @@ Admin ends maintenance
 | File                                                            | Runtime | Purpose                                                                                                                                  |
 | --------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `middleware.ts`                                                 | Edge    | Request interception, maintenance checks, route protection                                                                               |
-| `lib/maintenance-edge.ts`                                       | Edge    | Edge-safe Redis reads via `fetch()`. No SDK imports.                                                                                     |
-| `lib/maintenance.ts`                                            | Node.js | Server-side state management. Redis SDK + Prisma writes.                                                                                 |
+| `lib/maintenance-edge.ts`                                       | Edge    | Edge-safe Redis reads via `fetch()` (180s cache) + Web Crypto HMAC-SHA256 bypass token verification.                                     |
+| `lib/maintenance-cron.ts`                                       | Node.js | Shared cached `readMaintenancePhase()` reader (60s success / 5s failure cache) + `abortIfMaintenance` / `assertNotInMaintenance` guards. |
+| `lib/maintenance.ts`                                            | Node.js | Server-side state management (reuses `readMaintenancePhase()` and invalidates cache on `setMaintenanceState()`).                         |
+| `actions/maintenance/drain-sessions.ts`                         | Node.js | Active Stream video call drain + deterministic DB-derived chat channel freeze/unfreeze (`deriveChannelsToUnfreeze()`).                   |
 | `lib/betterstack.ts`                                            | Node.js | BetterStack incident creation/resolution                                                                                                 |
 | `app/api/admin/maintenance/route.ts`                            | Node.js | Admin CRUD API (GET/POST/PATCH/DELETE)                                                                                                   |
 | `app/api/health/route.ts`                                       | Node.js | Public health check — returns maintenance state + calls BetterStack `/api/v2/monitors` to report `{ configured, reachable, monitors[] }` |
@@ -94,41 +96,57 @@ model MaintenanceWindow {
 }
 ```
 
-## Redis Keys
+## Redis Keys (`lib/maintenance-keys.ts`)
 
 | Key                  | Type        | Value                                                           |
 | -------------------- | ----------- | --------------------------------------------------------------- |
-| `maintenance:phase`  | String      | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"`                           |
+| `maintenance:phase`  | String      | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"` (24h safety TTL)          |
 | `maintenance:config` | JSON String | `{ reason, estimatedEnd, bypassSecret, betterstackIncidentId }` |
 
 `betterstackIncidentId` is set when entering OFFLINE mode (incident creation succeeds) and read when ending maintenance (to auto-resolve the incident). It is `null` if DEGRADED was used or if incident creation failed.
 
-## Edge Read Strategy
+## Edge & Node Read Strategy (Unified in `#1937`)
 
-The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (edge isolates share module scope within an instance lifetime; raised from 30 seconds under #1822 Q-6, since the read fails open and the only cost of a longer window is slower enforcement of a newly-set phase; a failed or non-OK read is cached for only 30 seconds, so one Upstash blip cannot lift a DEGRADED write-block for three minutes) and exposes two readers:
+```text
++---------------------------------------------------------------------------------------------------+
+|                        MAINTENANCE STATE & SESSION DRAIN ARCHITECTURE                             |
++---------------------------------------------------------------------------------------------------+
+  [Edge Middleware (`middleware.ts` -> `lib/maintenance-edge.ts`)]
+    - `getMaintenanceState()` (180s cache, 30s failure cache, 200ms Upstash REST fetch timeout)
+    - `getMaintenanceStateCachedOnly()` (0ms non-blocking RSC/prefetch path with `event.waitUntil`)
+    - `verifyMaintenanceBypassToken()` (Web Crypto HMAC-SHA256 `<expiresAtMs>.<hmacHex>` cookie check)
 
-| Reader                            | Used by                        | Behaviour                                                                                                |
-| --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `getMaintenanceState()`           | Full document loads + `/api/*` | Returns the cached value if fresh, otherwise does the live Upstash read (200 ms budget; fails open OFF). |
-| `getMaintenanceStateCachedOnly()` | RSC / prefetch sub-navigations | Never blocks on Upstash. Returns the last-known state and triggers a background refresh when stale.      |
+  [Node Runtime (`lib/maintenance.ts` <-> `lib/maintenance-cron.ts`)]
+    - Unified `readMaintenancePhase()` (60s success cache, 5s failure cache; 1 `redis.get` when OFF)
+    - `getMaintenanceState()` fetches `REDIS_KEYS.CONFIG` only when `phase !== "OFF"`
+    - `setMaintenanceState()` immediately invalidates the local phase cache on transition
 
-A soft (RSC) navigation must not block on a Redis round-trip, or it sits blank before its `loading.tsx` can stream. So sub-navigations take the cached-only path. Two edge-runtime details make that path correct rather than a maintenance-bypass hole (#927, #929):
+  [Session Drain & Unfreeze (`actions/maintenance/drain-sessions.ts`)]
+    - Enter OFFLINE: `drainActiveSessions()` ends active Stream video calls (`endedReason: "maintenance"`)
+      and freezes associated Stream chat channels in batches of 10 (`setChannelsFrozenState(..., true)`)
+    - Exit OFFLINE: `unfreezeChannelsAfterMaintenance()` queries Postgres `deriveChannelsToUnfreeze()`
+      (`MeetingSession.endedReason = "maintenance"` within `LIVE_SESSION_WINDOW_MS`) and unfreezes channels
+      directly — no dual-source Redis set ledger required!
+```
 
-- **`event.waitUntil`** — an unawaited promise is not guaranteed to run after the middleware response is sent, so `middleware()` passes `event.waitUntil` into `getMaintenanceStateCachedOnly()` to keep the background refresh alive. Without it the cache would never repopulate and a session that only soft-navigates would serve stale state indefinitely.
-- **`isRefreshing` guard** — a single module-level flag collapses concurrent stale sub-navigations into one Upstash read instead of a thundering herd.
+The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (a failed or non-OK read is cached for 30 seconds) and exposes two readers:
 
-When the cache is stale the cached-only reader returns the **last-known** state, so an active window that was already cached stays enforced while the refresh is in flight. If the last-known state is OFF and a window has just been switched on, a soft navigation can still proceed until the background refresh updates the cache. A full document load calls `getMaintenanceState()`, which may return the cached state and reads Redis only after the 180-second edge cache expires, so any window is enforced within one document navigation once that cache window has passed (#1822).
+| Reader                            | Used by                                            | Behaviour                                                                                                |
+| --------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `getMaintenanceState()` (Edge)    | Full document loads + `/api/*` in `middleware.ts`  | Returns the cached value if fresh, otherwise does the live Upstash read (200 ms budget; fails open OFF). |
+| `getMaintenanceStateCachedOnly()` | RSC / prefetch sub-navigations in `middleware.ts`  | Never blocks on Upstash. Returns the last-known state and triggers a background refresh when stale.      |
+| `readMaintenancePhase()` (Node)   | `lib/maintenance.ts` + `lib/maintenance-cron.ts`   | Shared 60s Node-runtime phase cache (5s failure cache), invalidated on `setMaintenanceState()`.          |
 
-## Bypass Mechanism
+## Bypass Mechanism (`#1487`, `#1930`)
 
 Each maintenance window generates a UUID bypass secret (`crypto.randomUUID()`).
 
 **Usage**:
 
-- HTTP Header: `x-maintenance-bypass: <secret>`
-- Cookie: `maintenance_bypass=<secret>`
+- HTTP Header: `x-maintenance-bypass: <secret>` (constant-time compared against the active secret)
+- Query / Cookie: Passing `?bypass=<secret>` mints an `HttpOnly`, `Secure`, `SameSite=Lax` cookie `maintenance_bypass=<expiresAtMs>.<hmacHex>` signed with Web Crypto HMAC-SHA256 (`createMaintenanceBypassCookieValue` / `verifyMaintenanceBypassToken` in `lib/maintenance-edge.ts`, 4-hour TTL) so the raw secret is never stored in browser cookies.
 
-**Fallback**: If the database-stored secret is unavailable, falls back to `MAINTENANCE_BYPASS_SECRET` env var.
+**Fallback**: If the Redis-stored secret is unavailable, falls back to `MAINTENANCE_BYPASS_SECRET` env var.
 
 **Scope**: Bypass allows full access during both DEGRADED and OFFLINE modes. Intended for admin/staff testing during maintenance.
 

@@ -1,11 +1,5 @@
 /**
- * Maintenance Mode Library
- *
- * Two-tier state management:
- * - Redis: fast edge reads for middleware (fail-open: defaults to OFF if unreachable)
- * - Prisma: audit trail and scheduling for admin dashboard
- *
- * Three phases: OFF → DEGRADED (read-only, warning banner) → OFFLINE (full maintenance page)
+ * Maintenance Mode Library (Node.js reader & writer)
  */
 
 import { MaintenancePhase } from "@prisma/client";
@@ -13,6 +7,12 @@ import { MaintenancePhase } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import redis, { withCircuitBreaker } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
+import {
+  readMaintenancePhase,
+  resetMaintenancePhaseCacheForTesting,
+} from "@/lib/maintenance-cron";
+
+export { readMaintenancePhase, resetMaintenancePhaseCacheForTesting };
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -31,19 +31,16 @@ const OFF_STATE: MaintenanceState = {
 };
 
 /**
- * Read current maintenance state from Redis.
+ * Read current maintenance state from Redis using the shared cached phase reader.
  * Fail-open: returns OFF if Redis is unreachable.
  */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   return withCircuitBreaker(
     async () => {
-      const [phase, configRaw] = await Promise.all([
-        redis.get<string>(REDIS_KEYS.PHASE),
-        redis.get<string>(REDIS_KEYS.CONFIG),
-      ]);
-
+      const phase = await readMaintenancePhase("maintenance");
       if (!phase || phase === "OFF") return OFF_STATE;
 
+      const configRaw = await redis.get<string>(REDIS_KEYS.CONFIG);
       let config: Partial<MaintenanceState> = {};
       if (configRaw) {
         try {
@@ -62,7 +59,6 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
         betterstackIncidentId: config.betterstackIncidentId ?? null,
       };
     },
-    // Fail-open: site stays up if Redis is down
     () => OFF_STATE,
   );
 }
@@ -81,11 +77,6 @@ export async function setMaintenanceState(
     betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
-  // Write both Redis keys concurrently to minimize inconsistency window.
-  // #697 INF-1 — 24h TTL: an OFFLINE phase whose owner loses access must not
-  // keep the platform down forever. Every setMaintenanceState call refreshes
-  // the clock, so a tended window outlives the TTL; an abandoned one expires
-  // to OFF. Long windows need a refresh at least daily (runbook rule).
   const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
   await Promise.all([
     redis.set(REDIS_KEYS.PHASE, phase, { ex: MAINTENANCE_KEY_TTL_SECONDS }),
@@ -100,17 +91,20 @@ export async function setMaintenanceState(
       { ex: MAINTENANCE_KEY_TTL_SECONDS },
     ),
   ]);
+  resetMaintenancePhaseCacheForTesting();
 
-  // Persist to Prisma for audit trail (transactional to prevent find+update races)
+  const estimatedEndDate =
+    config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+      ? new Date(config.estimatedEnd)
+      : undefined;
+
   await prisma.$transaction(async (tx) => {
-    if (phase === MaintenancePhase.OFF) {
-      // #1598 P1-W01 — platform rows only (organizationId null); the per-org
-      // write API is #730/#746, so OFF must never close a tenant's window.
-      const activeWindow = await tx.maintenanceWindow.findFirst({
-        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-        orderBy: { createdAt: "desc" },
-      });
+    const activeWindow = await tx.maintenanceWindow.findFirst({
+      where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+      orderBy: { createdAt: "desc" },
+    });
 
+    if (phase === MaintenancePhase.OFF) {
       if (activeWindow) {
         await tx.maintenanceWindow.update({
           where: { id: activeWindow.id },
@@ -121,64 +115,32 @@ export async function setMaintenanceState(
           },
         });
       }
-    } else {
-      // #1598 P1-W01 — same platform-only scope as the OFF branch above.
-      const activeWindow = await tx.maintenanceWindow.findFirst({
-        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-        orderBy: { createdAt: "desc" },
+    } else if (activeWindow) {
+      await tx.maintenanceWindow.update({
+        where: { id: activeWindow.id },
+        data: {
+          phase,
+          reason: config.reason,
+          estimatedEnd: estimatedEndDate,
+        },
       });
-
-      if (activeWindow) {
-        await tx.maintenanceWindow.update({
-          where: { id: activeWindow.id },
-          data: {
-            phase,
-            reason: config.reason,
-            estimatedEnd:
-              config.estimatedEnd &&
-              !isNaN(new Date(config.estimatedEnd).getTime())
-                ? new Date(config.estimatedEnd)
-                : undefined,
-          },
-        });
-      } else {
-        await tx.maintenanceWindow.create({
-          data: {
-            phase,
-            reason: config.reason,
-            startedAt: new Date(),
-            startedBy: config.startedBy,
-            estimatedEnd:
-              config.estimatedEnd &&
-              !isNaN(new Date(config.estimatedEnd).getTime())
-                ? new Date(config.estimatedEnd)
-                : undefined,
-            bypassSecret: config.bypassSecret,
-          },
-        });
-      }
+    } else {
+      await tx.maintenanceWindow.create({
+        data: {
+          phase,
+          reason: config.reason,
+          startedAt: new Date(),
+          startedBy: config.startedBy,
+          estimatedEnd: estimatedEndDate,
+          bypassSecret: config.bypassSecret,
+        },
+      });
     }
   });
 }
 
-// ---------------------------------------------------------------------------
-// Per-org maintenance (read side only — admin write API ships separately)
-// ---------------------------------------------------------------------------
-
 /**
- * Read the currently-active MaintenanceWindow row scoped to a single org.
- *
- * Per the schema comment on `MaintenanceWindow.organizationId`, NULL rows
- * are platform-wide and non-null rows scope to a single tenant. This helper
- * only returns the *org-specific* active window — callers should still
- * consult `getMaintenanceState()` for the platform-wide Redis check.
- *
- * Returns `null` if there is no active org-specific window. "Active" means
- * `phase !== OFF` and the most recent row by `createdAt`.
- *
- * Used by per-org financial jobs (payout batch, subscription invoicing)
- * to skip an individual tenant during a planned downtime window without
- * affecting other tenants.
+ * Read the currently-active MaintenanceWindow row scoped to a single organization.
  */
 export async function getActiveOrgMaintenanceWindow(
   organizationId: string,

@@ -1,24 +1,14 @@
 /**
- * Maintenance Mode — Edge-compatible reader
+ * Maintenance Mode — Edge-compatible reader and bypass validator
  *
- * This module is safe for Next.js middleware (Edge Runtime).
- * Uses direct fetch to Upstash Redis REST API (no SDK import needed).
- * No Prisma, no Node.js-only APIs.
- *
- * For write operations (setMaintenanceState), use lib/maintenance.ts instead.
+ * Safe for Next.js middleware (Edge Runtime). Uses direct fetch to Upstash
+ * Redis REST API and Web Crypto / pure JS HMAC-SHA256 without Node.js APIs.
  */
 
 import { NextRequest } from "next/server";
 
 import { REDIS_KEYS } from "./maintenance-keys";
 
-// REDIS_KEYS is platform-scoped (single phase/config read per request, 30s-cached
-// below). Per-org windows ("maintenance:phase:org:<orgId>") are NOT implemented —
-// prior orgMaintenanceKeys()/platformMaintenanceKeys() scaffolding was removed
-// (#776) as dead code. If they ship, add the org-scoped read here (org key first,
-// fall back to platform) and a matching writer in the admin maintenance route.
-
-// Routes exempt from maintenance mode
 const EXEMPT_PREFIXES = [
   "/api/webhooks/",
   "/api/health",
@@ -43,28 +33,16 @@ const OFF_STATE: MaintenanceState = {
   bypassSecret: null,
 };
 
-// In-memory cache to avoid Redis round-trips on every request.
-// Edge isolates share module scope within an instance lifetime.
 let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
-// #1822 Q-6 — was 30s; the read fails open, so the only cost of a longer
-// window is slower enforcement of a newly-set maintenance phase.
-const CACHE_TTL_MS = 180_000; // 3 minutes
-// A failed read keeps the old 30s window, so one blip can't unblock DEGRADED writes for 3 min.
+const CACHE_TTL_MS = 180_000;
 const FAILURE_CACHE_MS = 30_000;
 
-// Per-request fail-open budget for the edge Upstash read. Document loads + /api/*
-// pay this (RSC/prefetch sub-navigations use getMaintenanceStateCachedOnly and
-// never read live), and it falls back to OFF on timeout — so a slow Upstash gives
-// up fast rather than adding latency to live traffic. 200ms: well under a frame.
 const REDIS_FETCH_TIMEOUT_MS = (() => {
   const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 200;
 })();
 
-/**
- * Direct Upstash REST call — edge-safe, no SDK needed.
- */
 async function redisGet(key: string): Promise<string | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -76,16 +54,11 @@ async function redisGet(key: string): Promise<string | null> {
     signal: AbortSignal.timeout(REDIS_FETCH_TIMEOUT_MS),
   });
 
-  // Non-OK (e.g. quota exceeded) is a failed read, not an unset phase.
   if (!res.ok) throw new Error(`Upstash GET ${res.status}`);
   const data = await res.json();
   return data.result ?? null;
 }
 
-/**
- * Read current maintenance state from Redis (edge-safe).
- * Fail-open: returns OFF if Redis is unreachable or not configured.
- */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   const now = Date.now();
   if (cachedState && now - cacheTimestamp < CACHE_TTL_MS) {
@@ -123,31 +96,12 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
     cacheTimestamp = now;
     return state;
   } catch {
-    // Fail-open: cache OFF to avoid repeated failing calls
     cachedState = OFF_STATE;
     cacheTimestamp = now - CACHE_TTL_MS + FAILURE_CACHE_MS;
     return OFF_STATE;
   }
 }
 
-/**
- * Non-blocking maintenance read for the hot sub-navigation path (Next RSC +
- * prefetch fetches). Returns the in-memory cached state if fresh, else OFF —
- * NEVER a live Upstash round-trip. Without this, the blocking read in
- * getMaintenanceState() runs before the RSC response can stream, so a soft
- * navigation sits blank until it resolves (the gap before loading.tsx appears).
- * A full document load still does the live read, so a maintenance window is
- * always enforced within one document navigation / the 3-min cache window.
- *
- * When the cache is stale we kick off a refresh (so the NEXT sub-navigation sees
- * fresh state) and return the last-known state rather than OFF — otherwise a
- * session that only soft-navigates would bypass an active window indefinitely
- * once the TTL lapses (#927). Two edge-runtime caveats (#929 review):
- *  - an unawaited promise is not guaranteed to run after the response is sent, so
- *    the caller passes `event.waitUntil` to keep the refresh alive;
- *  - a single `isRefreshing` guard collapses concurrent stale sub-navigations into
- *    one Upstash read instead of a thundering herd.
- */
 let isRefreshing = false;
 
 export function getMaintenanceStateCachedOnly(
@@ -168,29 +122,16 @@ export function getMaintenanceStateCachedOnly(
   return cachedState ?? OFF_STATE;
 }
 
-// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2).
-// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo.
-// Exported so middleware.ts reuses the exact same rule for its static-asset skip
-// (single source of truth — #776).
 export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
-/**
- * Check if a route is exempt from maintenance mode.
- */
 export function isMaintenanceExempt(pathname: string): boolean {
   if (HAS_FILE_EXTENSION.test(pathname)) return true;
   return EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-// Transactional write routes to block during DEGRADED maintenance.
-// Read-only methods (GET, HEAD, OPTIONS) are always allowed.
-// Every pattern matches by PREFIX: naming a route also blocks everything
-// nested under it. A single '*' stands for exactly one path segment.
 const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/checkout",
   "/api/appointments/*/cancel",
-  // Prefix semantics cover /respond and /withdraw, which the old endsWith
-  // matcher left writable for the whole life of the write-block.
   "/api/appointments/*/reschedule",
   "/api/appointments/*/documents",
   "/api/appointments/*/feedback",
@@ -202,49 +143,29 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/bookings/*/allocate",
   "/api/trials",
   "/api/plans/*/materials",
-  "/api/stream/meetings", // Block new video call creation
-  "/api/form/onboarding/*", // Block new user registration/onboarding
-  // Onboarding wizard server actions (draft autosave, terminal submit,
-  // ORG_WORKSPACE role handoff) POST to this page route, not to /api/* —
-  // without this entry they wrote straight through DEGRADED while the
-  // equivalent PATCH route above was blocked. GET reads still pass with
-  // banner headers; the global MaintenanceBanner explains the pause.
+  "/api/stream/meetings",
+  "/api/form/onboarding/*",
   "/form/onboarding",
-  "/api/verification/documents", // Block verification document uploads
-  "/api/verification/submit", // Block verification submission
-  "/api/verification/resubmit", // Block verification resubmission
-  "/api/scheduling/request-for-approval", // Block new approval-rail bookings
-  // Weekly, custom and per-id availability writes; the sibling
-  // /api/scheduling/availability-with-allocation is a different prefix and is GET.
+  "/api/verification/documents",
+  "/api/verification/submit",
+  "/api/verification/resubmit",
+  "/api/scheduling/request-for-approval",
   "/api/scheduling/availability",
-  "/api/waitlist", // Block newsletter signups
-  "/api/referrals", // Block referral code creation
-  // #1599 F-P0-02 — the routes live under /api/collaborations; the old
-  // "/api/collaborators" entry matched nothing.
+  "/api/waitlist",
+  "/api/referrals",
   "/api/collaborations",
-  "/api/payments/disputes", // Block dispute handling mutations
-  "/api/admin/payouts", // Block admin payout mutations
-  "/api/consultant/payouts/instant", // #1771 row 6 — expert-initiated payout
-  // #1598 P1-W02a — the admin refund front door, TDS filing marks and the
-  // wallet unfreeze are money writes too; GETs still pass via READ_ONLY_METHODS.
+  "/api/payments/disputes",
+  "/api/admin/payouts",
+  "/api/consultant/payouts/instant",
   "/api/admin/refunds",
   "/api/admin/tds",
   "/api/admin/billing-accounts",
-  // #1599 F-P0-03..05, F-P1-02/05/06 — money-writing doors the list missed:
-  // an admin re-drive of a payment, a recording purchase, an overage order,
-  // a seat removal (its DELETE refunds through refundRemovedAttendeeSeat),
-  // and a call join/end (the provision side already refuses in maintenance).
   "/api/payments/*/recover",
   "/api/recordings/*/purchase",
   "/api/overage/*/order",
   "/api/participants",
   "/api/meetings/*/join",
   "/api/meetings/*/end",
-  // Org money rails. Nothing under /api/organizations was blocked before, so
-  // an org could top up a wallet, issue an invoice or move a payout while the
-  // deployment was half-applied. Prefix semantics mean `programs` also covers
-  // programs/*/assignments and programs/*/auto-enroll, and `contracts` covers
-  // contracts/*/supersede.
   "/api/organizations/*/billing-account/wallet/top-ups",
   "/api/organizations/*/billing-account/invoices",
   "/api/organizations/*/billing-account/purchase-orders",
@@ -253,26 +174,12 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/organizations/*/rate-cards",
   "/api/organizations/*/payouts",
   "/api/organizations/*/payout-account",
-  // Seat changes meter the licences the checkout entitlement resolver reads.
   "/api/organizations/*/members",
   "/api/organizations/*/invitations",
 ];
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/**
- * Match one pattern against a path, PREFIX-wise.
- *
- * The wildcard used to be matched as `startsWith(prefix) && endsWith(suffix)`,
- * which pinned the match to the END of the path: the appointments reschedule pattern
- * blocked `/reschedule` and nothing under it, so `/reschedule/respond` and
- * `/reschedule/withdraw` — the two routes that actually move a booking — wrote
- * straight through DEGRADED. Naming a route now blocks its whole subtree, which
- * is what every entry in the list above was always read as meaning.
- *
- * The wildcard still stands for exactly one non-empty segment, so
- * the bookings allocate pattern cannot be satisfied by `/api/bookings/allocate`.
- */
 function matchesBlockedPattern(pathname: string, pattern: string): boolean {
   const star = pattern.indexOf("*");
   if (star === -1) {
@@ -292,18 +199,11 @@ function matchesBlockedPattern(pathname: string, pattern: string): boolean {
   return tail === suffix || tail.startsWith(suffix + "/");
 }
 
-/**
- * Returns true if the route+method combination should be blocked in DEGRADED mode.
- * Prevents transactional writes (bookings, payments, cancellations) during
- * partial maintenance while still allowing users to browse and read data.
- */
 export function isWriteBlockedInDegraded(
   pathname: string,
   method: string,
   searchParams?: URLSearchParams,
 ): boolean {
-  // #1599 R-P0-02 — GET /api/checkout/verify?sync=true drives the capture
-  // pipeline, so it is a money write wearing a read-only method.
   if (
     method.toUpperCase() === "GET" &&
     pathname === "/api/checkout/verify" &&
@@ -318,11 +218,6 @@ export function isWriteBlockedInDegraded(
   );
 }
 
-// #1861 S3a — this module runs on the edge runtime, where node:crypto's
-// timingSafeEqual is unavailable, so the bypass secret compare needs its own
-// constant-time routine. Length inequality is folded into the accumulator
-// rather than returned early, and every byte up to max(len) is visited, so
-// neither a length mismatch nor an early differing byte shortens the loop.
 function constantTimeEqual(a: string | null | undefined, b: string): boolean {
   if (a === null || a === undefined) return false;
   const aBytes = new TextEncoder().encode(a);
@@ -344,10 +239,6 @@ function bytesToHex(bytes: Uint8Array): string {
   return out;
 }
 
-// Pure Edge-compatible SHA-256 / HMAC-SHA256 implementation used by synchronous
-// `validateBypass` when the Web Crypto `crypto.subtle` verified-token cache is
-// cold on a request in `middleware.ts`. Produces the exact same RFC 2104 / FIPS
-// 180-4 digest as `crypto.subtle.sign("HMAC", ...)`.
 const SHA256_K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
   0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
@@ -493,7 +384,6 @@ async function hmacSha256HexWebCrypto(
 
 export const DEFAULT_BYPASS_COOKIE_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Bounded Edge-local cache of tokens verified via Web Crypto `crypto.subtle`.
 const verifiedCookieCache = new Map<string, number>();
 const MAX_VERIFIED_COOKIE_CACHE = 128;
 
@@ -531,11 +421,6 @@ function recordVerifiedToken(
   verifiedCookieCache.set(`${secret}:${token}`, expiryMs);
 }
 
-/**
- * #1487 — Mint a short-lived HMAC-SHA256 signed bypass cookie token
- * (`<expiryTimestamp>.<hmac>`) using Web Crypto `crypto.subtle` so the raw
- * `MAINTENANCE_BYPASS_SECRET` is never stored in the browser cookie.
- */
 export async function signMaintenanceBypassCookie(
   secret: string,
   expiresAtMs: number = Date.now() + DEFAULT_BYPASS_COOKIE_TTL_MS,
@@ -553,11 +438,6 @@ export async function signMaintenanceBypassCookie(
   return token;
 }
 
-/**
- * #1487 — Verify an HMAC-SHA256 signed maintenance bypass cookie token
- * (`<expiryTimestamp>.<hmac>`) using Web Crypto `crypto.subtle`.
- * Rejects raw secrets, expired timestamps, and tampered signatures.
- */
 export async function verifyMaintenanceBypassCookie(
   token: string | null | undefined,
   secret: string,
@@ -575,10 +455,6 @@ export async function verifyMaintenanceBypassCookie(
   return ok;
 }
 
-/**
- * Async variant of `validateBypass` that verifies the cookie directly through
- * Web Crypto `crypto.subtle`.
- */
 export async function validateBypassAsync(
   request: NextRequest,
   storedSecret: string | null,
@@ -594,15 +470,6 @@ export async function validateBypassAsync(
   return verifyMaintenanceBypassCookie(cookieVal, activeSecret, nowMs);
 }
 
-/**
- * Validate maintenance bypass via header or signed cookie (#1487).
- *
- * - `x-maintenance-bypass` header: matches `storedSecret` (or fallback
- *   `MAINTENANCE_BYPASS_SECRET`) via constant-time comparison.
- * - `maintenance_bypass` cookie: MUST be an unexpired HMAC-SHA256 signed token
- *   of the form `<expiryTimestamp>.<hmac>` (never the raw secret). Verified in
- *   constant time and cached via Web Crypto `crypto.subtle`.
- */
 export function validateBypass(
   request: NextRequest,
   storedSecret: string | null,
@@ -631,7 +498,6 @@ export function validateBypass(
     return false;
   }
 
-  // Warm the cache via Web Crypto `crypto.subtle` verification as well.
   void verifyMaintenanceBypassCookie(cookieVal, activeSecret, nowMs).catch(
     () => {},
   );
