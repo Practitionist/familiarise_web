@@ -40,7 +40,7 @@ export interface DashboardRouteErrorProps {
   escape: { href: string; label: string };
 }
 
-// #1928/#1716: a cold instance's connect timeout surfaces as a server-thrown
+// A cold instance's connect timeout surfaces as a server-thrown
 // 503; one silent refresh usually heals it, a second failure shows the card.
 const autoRetried = new Map<string, number>();
 const AUTO_RETRY_WINDOW_MS = 30_000;
@@ -92,7 +92,7 @@ export function DashboardRouteError({
     return () => clearTimeout(t);
   }, [autoRetrying, retryKey, router, reset]);
 
-  // #1933: a self-healed blip must not spend Sentry quota.
+  // A self-healed blip must not spend Sentry quota.
   useEffect(() => {
     if (autoRetrying) return;
     Sentry.captureException(

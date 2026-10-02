@@ -22,7 +22,7 @@ async function fetchRequestsCount(
 /**
  * Nav badge counts for the personal shells (#1527), keyed by `NavItem.badgeKey`.
  * Messages: the personal-inbox unread count (both shells). Requests: rows
- * waiting on this consultant's answer, not the tab totals (#1928), under the
+ * waiting on this consultant's answer, not the tab totals, under the
  * inbox's query-key prefix so the inbox's invalidations refresh the badge too.
  */
 export function usePersonalNavBadges(options: {
@@ -35,7 +35,7 @@ export function usePersonalNavBadges(options: {
     queryFn: () => fetchRequestsCount(consultantId!),
     enabled: !!consultantId,
     staleTime: 60_000,
-    // #1928: refresh on return to the tab; staleTime still caps it at once a minute.
+    // Refresh on return to the tab; staleTime still caps it at once a minute.
     refetchOnWindowFocus: true,
   });
   return useMemo(() => ({ messages, requests }), [messages, requests]);

@@ -868,10 +868,10 @@ async function readCounts(
 }
 
 /**
- * #1928 — rows only this consultant can clear (the REQUESTED state): the nav
+ * Rows only this consultant can clear (the REQUESTED state): the nav
  * badge and Home's "requests to answer". Awaiting-payment and next-cycle rows
  * wait on the client, so they stay on the tabs but not on the badge. Personal
- * scope by default (#1345: org-funded requests belong to that org's dashboard).
+ * scope by default (org-funded requests belong to that org's dashboard).
  */
 export async function readRequestsToAnswerCount(args: {
   consultantProfileId: string;

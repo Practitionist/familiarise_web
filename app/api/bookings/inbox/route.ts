@@ -30,7 +30,7 @@ import {
  * org-scope resolution mirror `/api/bookings/consultations`: a consultant
  * reads only their own profile, ADMIN/STAFF may read any.
  *
- * `?countsOnly=1` (#1527) answers the nav badge with the to-answer count
+ * `?countsOnly=1` answers the nav badge with the to-answer count
  * alone — same predicates as the REQUESTED rows, no row scan.
  */
 

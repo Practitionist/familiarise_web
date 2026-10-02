@@ -197,7 +197,7 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
   const hydrated = useHydrated();
   const user = hydrated ? session?.user : undefined;
 
-  // #1928: the dashboard layout seeds ["user-details", id] on the server, so
+  // The dashboard layout seeds ["user-details", id] on the server, so
   // the name and avatar paint on the first frame instead of a fake initial.
   // Read-only (skipToken): the shell's own query owns fetching this key.
   const serverUserId = useServerUserId();

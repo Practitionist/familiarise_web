@@ -263,7 +263,7 @@ export default [
   // URL writes go through replaceUrl()/pushUrl() in lib/navigation/history:
   // Next 15 skips its router sync for history state carrying `__NA`, so
   // passing `window.history.state` moves the address bar but never
-  // `useSearchParams` (#1928). Scoped to client code, which never overlaps the
+  // `useSearchParams`. Scoped to client code, which never overlaps the
   // getSession block above (flat config replaces a rule's options per file).
   {
     files: ["**/*.tsx", "**/hooks/**/*.ts"],
