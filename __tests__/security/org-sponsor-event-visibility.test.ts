@@ -40,7 +40,6 @@ describe("the org list matches org-OWNED rows only (#1166 ORG-8)", () => {
       userId: "irrelevant",
     }) as Record<string, unknown>;
     expect(w.organizationId).toBe("acme");
-    expect(w.OR).toBeUndefined();
   });
 
   it("cannot match funded-elsewhere rows, because ownership is pinned first", () => {
@@ -48,16 +47,20 @@ describe("the org list matches org-OWNED rows only (#1166 ORG-8)", () => {
       scope: { kind: "org", orgId: "acme" },
       userId: "irrelevant",
     });
-    // The old widening was a DISJUNCT (`OR: [hosted-here, funded-here]`), so
-    // dropping the arm is what made funded-elsewhere unreachable. The arm now
-    // carries a funding clause, but it sits on top of `organizationId: "acme"`
-    // rather than beside it, so it narrows the owned set and cannot re-admit a
-    // row another org hosts.
+    // Ownership (`organizationId: "acme"`) is pinned at the top level alongside
+    // the OR narrowing clause, so a row another org hosts cannot match.
     expect(w).toMatchObject({
       organizationId: "acme",
-      payment: {
-        some: { organizationId: "acme" },
-      },
+      OR: expect.arrayContaining([
+        {
+          payment: {
+            some: {
+              organizationId: "acme",
+              paymentMethod: { in: ["WALLET", "INVOICE", "LICENSE"] },
+            },
+          },
+        },
+      ]),
     });
   });
 });

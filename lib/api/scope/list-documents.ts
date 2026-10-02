@@ -144,6 +144,7 @@ function buildWhere(
       ...base,
       appointment: {
         organizationId: params.scope.orgId,
+        organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
         OR: [
           { consultation: { requestedBy: { userId: params.scope.userId } } },
           { subscription: { requestedBy: { userId: params.scope.userId } } },

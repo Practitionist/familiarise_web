@@ -157,7 +157,6 @@ export default function ConsultationCheckoutPage({
         ?.fundingSource ?? null
     );
   }, [selectedOrganizationId, session?.user?.organizationMemberships]);
-  const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
 
   const { toast } = useToast();
   const {
@@ -857,28 +856,20 @@ export default function ConsultationCheckoutPage({
               <Separator className="bg-border" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>
-                  {isLicenseCovered
-                    ? formatPrice(0)
-                    : formatPrice(pricing.total)}
-                </div>
+                <div>{formatPrice(pricing.total)}</div>
               </div>
-              {!isLicenseCovered && (
-                <FxEstimateNote
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {!isLicenseCovered && (
-                <EmiHint
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {isLicenseCovered && (
+              <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              {selectedOrgFundingSource === "LICENSE" && (
                 <p className="text-xs text-emerald-600">
-                  Session value {formatPrice(pricing.total)} — covered by
-                  enterprise license
+                  Programme license coverage (if entitled) is verified and
+                  applied at checkout
                 </p>
               )}
               {/* #1863 — the notice ladder, in the buyer's own terms, at the

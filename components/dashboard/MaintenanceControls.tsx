@@ -30,6 +30,7 @@ interface MaintenanceState {
   reason: string | null;
   estimatedEnd: string | null;
   bypassSecret: string | null;
+  bypassCookieToken?: string | null;
 }
 
 interface MaintenanceWindow {
@@ -72,6 +73,9 @@ export default function MaintenanceControls() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [bypassSecret, setBypassSecret] = useState<string | null>(null);
+  const [bypassCookieToken, setBypassCookieToken] = useState<string | null>(
+    null,
+  );
   const [copied, setCopied] = useState(false);
 
   // Form fields
@@ -109,6 +113,11 @@ export default function MaintenanceControls() {
         setEstimatedEnd(toLocalDatetime(data.state.estimatedEnd));
         if (data.state.bypassSecret) {
           setBypassSecret(data.state.bypassSecret);
+        }
+        const cookieTok =
+          data.state.bypassCookieToken ?? data.bypassCookieToken ?? null;
+        if (cookieTok) {
+          setBypassCookieToken(cookieTok);
         }
       }
     } catch (error) {
@@ -163,6 +172,7 @@ export default function MaintenanceControls() {
       }
 
       setBypassSecret(data?.bypassSecret ?? null);
+      setBypassCookieToken(data?.bypassCookieToken ?? null);
       setHasEdits(false);
       await fetchState();
       await refreshBanner();
@@ -248,6 +258,7 @@ export default function MaintenanceControls() {
       }
 
       setBypassSecret(null);
+      setBypassCookieToken(null);
       setReason("");
       setEstimatedEnd("");
       setHasEdits(false);
@@ -581,8 +592,8 @@ export default function MaintenanceControls() {
               </p>
               <p>
                 Cookie:{" "}
-                <code className="bg-muted px-1 rounded">
-                  maintenance_bypass={bypassSecret}
+                <code className="bg-muted px-1 rounded break-all">
+                  maintenance_bypass={bypassCookieToken || bypassSecret}
                 </code>
               </p>
             </div>

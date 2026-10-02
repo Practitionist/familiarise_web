@@ -77,7 +77,7 @@ the customer → the expert → companies → the back office → the money engi
   **Rate cards**.
 - **Billing account & wallet** (the company's prepaid balance / top-ups), **Payouts**,
   and **Invoices** (GST-compliant, gapless numbering).
-- **Settings:** **SSO / SCIM**, **webhooks**, audit log, and the **analytics** dashboard.
+- **Settings:** **SSO** (OIDC), **webhooks**, audit log, and the **analytics** dashboard.
 - **Then switch** to a **sponsored employee** (`sarah.brown@yahoo.com`) and book a session
   **on the company's budget** — to show the funding flow end-to-end.
 > Say: *"Companies sponsor their teams — they fund a wallet, set who can book what, and
@@ -127,7 +127,7 @@ Mostly visible through Admin → Payments/Invoices, Consultant → Earnings, and
 | Ledger / reconciliation | Phase 6 | Admin |
 | Enterprise (orgs, programs, contracts, rate cards, sponsorship) | Phase 4 | Org admin |
 | Wallet top-ups / billing account | Phase 4 | Org admin |
-| SSO / SCIM / webhooks / audit / analytics | Phase 4 | Org admin |
+| SSO / webhooks / audit / analytics | Phase 4 | Org admin |
 | Onboarding | start of Phases 2–4 | all |
 | Settings (availability, profile, payout account) | Phase 3 | Consultant |
 | Documents upload / review | Phases 2, 3 | Consultee, Consultant |

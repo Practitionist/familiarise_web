@@ -40,9 +40,11 @@ import {
 import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
+import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatNotificationMoney } from "@/lib/novu/humanize";
 
 export interface SettleCancelledSessionsResult {
   success: boolean;
@@ -98,17 +100,33 @@ async function settleUnlocked(
   });
   result.scanned = due.length;
 
+  // One Sentry event per run, never per row: a systemic fault fails
+  // every row and used to cost one event each.
+  const failedIds: string[] = [];
+  let firstError: unknown;
   for (const session of due) {
     try {
       await settleAndStamp(session, result);
     } catch (error) {
       result.errors += 1;
-      reportSentryError(error, {
-        subsystem: "bookings",
-        op: "settle-cancelled-sessions",
-        extra: { occurrenceId: session.id },
-      });
+      firstError ??= error;
+      failedIds.push(session.id);
+      // Console bypasses the Sentry scrubber, so log a scrubbed message only.
+      console.error(
+        `settle-cancelled-sessions: occurrence ${session.id} failed:`,
+        scrubStringValue(
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     }
+  }
+  if (failedIds.length > 0) {
+    reportSentryError(firstError, {
+      subsystem: "bookings",
+      op: "settle-cancelled-sessions",
+      fingerprint: ["settle-cancelled-sessions"],
+      extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
+    });
   }
   result.success = result.errors === 0;
   return result;
@@ -548,11 +566,12 @@ async function refundAndTell(
       recipients: [payment.userId],
       payload: {
         planTitle: planTitleOf(session),
-        amount: formatCurrencyAmount(
+        amount: formatNotificationMoney(
           refund.amountRefundedPaise,
           payment.currency,
         ),
-        dashboardUrl: "/dashboard",
+        // The seat holder is always a consultee.
+        dashboardUrl: goHref("client", "appointments"),
       },
       dedupeKey: args.dedupeKey,
     });

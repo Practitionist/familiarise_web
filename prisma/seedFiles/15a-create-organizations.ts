@@ -57,10 +57,13 @@ import { buildConsentArtifact } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
+import { assertSeedPasswordSafeForEnv } from "./config";
 
 // Same source-of-truth as 1a-create-users.ts so the tour-owner credential
 // matches every other seed user; tour scripts and docs reference this.
-const SEED_PASSWORD = process.env.SEED_PASSWORD || "SeedPass123!";
+const DEFAULT_SEED_PASSWORD = "SeedPass123!";
+const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
+const SEED_PASSWORD = RAW_SEED_PASSWORD || DEFAULT_SEED_PASSWORD;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -170,6 +173,12 @@ export async function createOrganizations(
     .filter((u) => u.consultantProfile)
     .slice(0, Math.min(users.length, 12)); // 12 = 5 LearnPro + 5 IIT + 1 solo + 1 IIT owner
 
+  // -------------------------------------------------------- CONSENT ARTIFACTS
+  // ALL seeded users, not just the first 10 — every user the runtime touches
+  // (Stream upsert on dashboard load) needs the gate to pass (#1394: run before
+  // the enterprise org count guard so partial seeds still get consent rows).
+  await seedConsentArtifacts(users);
+
   if (consultees.length < 8 || consultants.length < 5) {
     console.warn(
       "[15a] Skipping enterprise seed — need ≥8 consultees + ≥5 consultants; got",
@@ -185,7 +194,10 @@ export async function createOrganizations(
 
   // ------------------------------------------------------------------ LEARNPRO
   // consultants[11] is the dedicated LearnPro owner; fallback to consultants[5]
-  await seedLearnPro(consultants[11] ?? consultants[5], consultants.slice(0, 5));
+  await seedLearnPro(
+    consultants[11] ?? consultants[5],
+    consultants.slice(0, 5),
+  );
 
   // --------------------------------------------------------------------- IIT
   await seedIit({
@@ -199,11 +211,6 @@ export async function createOrganizations(
   if (consultants.length >= 8) {
     await seedSoloConsultant(consultants[7]);
   }
-
-  // -------------------------------------------------------- CONSENT ARTIFACTS
-  // ALL seeded users, not just the first 10 — every user the runtime touches
-  // (Stream upsert on dashboard load) needs the gate to pass.
-  await seedConsentArtifacts(users);
 
   // ---------------------------------------------------- TOUR OWNER (#723)
   // Dedicated ORG_WORKSPACE account with deterministic credentials so tour
@@ -228,7 +235,10 @@ export async function createOrganizations(
 // Shape 1: Wipro — pure SPONSOR with INVOICE funding + LICENSED_SEAT program
 // ---------------------------------------------------------------------------
 
-async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) {
+async function seedWipro(
+  learners: UserWithProfiles[],
+  owner: UserWithProfiles,
+) {
   const org = await createRootOrg({
     name: "Wipro Limited",
     slug: "wipro",
@@ -431,7 +441,10 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
 // Shape 2: LearnPro Agency — pure HOST with RateCard + payout account
 // ---------------------------------------------------------------------------
 
-async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWithProfiles[]) {
+async function seedLearnPro(
+  owner: UserWithProfiles,
+  agencyConsultants: UserWithProfiles[],
+) {
   const org = await createRootOrg({
     name: "LearnPro Academy",
     slug: "learnpro-academy",
@@ -493,8 +506,7 @@ async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWith
         tdsSection: "194J",
         tdsRateBps: 1000, // 10% (#781 §C — bps)
         msmeStatus: idx < 2 ? MsmeStatus.MICRO : MsmeStatus.NONE,
-        udyamNumber:
-          idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,
+        udyamNumber: idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,
         writtenAgreementWithFamiliarise: true,
         providerCountry: "IN",
       },
@@ -828,6 +840,11 @@ async function seedConsentArtifacts(users: UserWithProfiles[]) {
 const TOUR_OWNER_EMAIL = "tour-owner@familiarise.dev";
 
 async function seedTourOwner(): Promise<void> {
+  assertSeedPasswordSafeForEnv(
+    RAW_SEED_PASSWORD,
+    SEED_PASSWORD === DEFAULT_SEED_PASSWORD,
+  );
+
   // Adopt the canonical Wipro org as this owner's primary org. Skip the
   // seed if Wipro didn't materialize (smaller seed mode) — the tour
   // matrix only needs an ORG_WORKSPACE attached to *some* seed org.

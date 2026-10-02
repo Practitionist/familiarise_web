@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import type { MemberRole, MemberStatus, OrgStatus } from "@prisma/client";
 import {
   Briefcase,
@@ -16,6 +16,7 @@ import {
   Plus,
   Shield,
   Sparkles,
+  UserRound,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +31,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useServerUserId } from "@/components/dashboard/ServerUserId";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSidebarCollapsed } from "@/components/dashboard/CollapsibleSidebar";
 import { useSession } from "@/lib/auth-client";
 import { useHydrated } from "@/hooks/use-hydrated";
@@ -194,6 +197,18 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
   const hydrated = useHydrated();
   const user = hydrated ? session?.user : undefined;
 
+  // The dashboard layout seeds ["user-details", id] on the server, so
+  // the name and avatar paint on the first frame instead of a fake initial.
+  // Read-only (skipToken): the shell's own query owns fetching this key.
+  const serverUserId = useServerUserId();
+  const { data: seeded } = useQuery<{
+    name?: string | null;
+    image?: string | null;
+  } | null>({
+    queryKey: ["user-details", serverUserId],
+    queryFn: skipToken,
+  });
+
   const { data: allMemberships } = useQuery({
     queryKey: ["user-org-memberships", "all"],
     queryFn: fetchAllMemberships,
@@ -234,8 +249,13 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
     ...facets.platform,
   ].find((f) => f.key === activeKey);
 
-  const userName = user?.name ?? "";
-  let trigger = { name: userName, image: user?.image ?? null, label: "" };
+  const userName = user?.name ?? seeded?.name ?? "";
+  const identityKnown = !!current || !!user || !!seeded;
+  let trigger = {
+    name: userName,
+    image: user?.image ?? seeded?.image ?? null,
+    label: "",
+  };
   if (current) {
     trigger = {
       name: current.name,
@@ -251,7 +271,7 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
   } else if (activeFacet) {
     trigger = {
       name: userName,
-      image: user?.image ?? null,
+      image: user?.image ?? seeded?.image ?? null,
       label: activeFacet.label,
     };
   }
@@ -263,32 +283,57 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
         <button
           type="button"
           aria-label="Switch dashboard"
+          disabled={!user}
+          aria-busy={!user}
           className={cn(
-            "flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent",
             collapsed && "justify-center px-0",
           )}
         >
-          <Avatar className="h-8 w-8 shrink-0 rounded-md">
-            {trigger.image && <AvatarImage src={trigger.image} alt="" />}
-            <AvatarFallback className="rounded-md bg-zinc-900 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
-              {(trigger.name || "F").charAt(0).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          {!collapsed && (
-            <>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium leading-tight text-zinc-900 dark:text-zinc-100">
-                  {trigger.name}
-                </p>
-                {trigger.label && (
-                  <p className="mt-0.5 truncate text-xs leading-tight text-zinc-500 dark:text-zinc-400">
-                    {trigger.label}
-                  </p>
+          {identityKnown ? (
+            <Avatar className="h-8 w-8 shrink-0 rounded-md">
+              {trigger.image && <AvatarImage src={trigger.image} alt="" />}
+              <AvatarFallback className="rounded-md bg-zinc-900 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
+                {trigger.name ? (
+                  trigger.name.charAt(0).toUpperCase()
+                ) : (
+                  <UserRound className="h-4 w-4" aria-hidden="true" />
                 )}
-              </div>
-              <ChevronsUpDown className="h-4 w-4 shrink-0 text-zinc-400" />
-            </>
+              </AvatarFallback>
+            </Avatar>
+          ) : (
+            <Skeleton className="h-8 w-8 shrink-0 rounded-md" />
           )}
+          {!collapsed &&
+            (identityKnown ? (
+              <>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium leading-tight text-zinc-900 dark:text-zinc-100">
+                    {trigger.name}
+                  </p>
+                  {trigger.label ? (
+                    <p className="mt-0.5 truncate text-xs leading-tight text-zinc-500 dark:text-zinc-400">
+                      {trigger.label}
+                    </p>
+                  ) : (
+                    !user && <Skeleton className="mt-1 h-3 w-14" />
+                  )}
+                </div>
+                {/* Invisible, not absent, until the session hydrates: the
+                    name column keeps its width, so nothing shifts. */}
+                <ChevronsUpDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 text-zinc-400",
+                    !user && "invisible",
+                  )}
+                />
+              </>
+            ) : (
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Skeleton className="h-3.5 w-28" />
+                <Skeleton className="h-3 w-14" />
+              </div>
+            ))}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="start" className="w-72">

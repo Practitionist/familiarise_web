@@ -16,27 +16,9 @@
  * filters at call sites — the rules for "is this org billable" or
  * "should this cron skip this org" should change in one place, not 17.
  */
-// TYPE-ONLY, and the status names below are string literals rather than enum
-// member accesses. This module is reachable from `"use client"` components (via
-// `lib/api/scope/parse` → ChatSidebar), and a VALUE import of `@prisma/client`
-// drags the Prisma engine runtime into the browser bundle — which is also what
-// made three jsdom suites die on a missing `TextEncoder`.
-//
-// The literals stay compile-checked: every tuple below is annotated
-// `OrgStatus[]`, so a renamed or misspelled status is still a type error here.
-// That is the anti-drift property this module exists to provide, and nothing is
-// lost by not reading the generated enum object at runtime.
+// Type-only: lib/api/scope/parse reaches this module from client components,
+// and a value import of @prisma/client would ship the engine to the browser.
 import type { OrgStatus } from "@prisma/client";
-
-/**
- * Statuses that count as "the org exists and may transact".
- * INVOICE-funded checkout still applies a credit-limit gate when the org
- * is in PENDING_VERIFICATION (see lib/enterprise/governance.ts).
- */
-export const OPERATIONAL_ORG_STATUSES: OrgStatus[] = [
-  "PENDING_VERIFICATION",
-  "ACTIVE",
-];
 
 /**
  * Statuses that may be charged on the next billing cycle. Excludes

@@ -38,14 +38,27 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+import { serializeSignedCookie } from "better-call";
 import { requireApiAuth } from "../../lib/auth-helpers";
 
-const LIVE_COOKIE = { value: "tok_live.c2ln" };
+const SECRET = "test-secret-that-is-at-least-32-characters";
+let liveCookie: { value: string };
+
+/** The cookie value exactly as BetterAuth sets it (signed, URL-encoded). */
+async function signedCookieValue(token: string) {
+  const header = await serializeSignedCookie("c", token, SECRET);
+  return header.split(";")[0].slice("c=".length);
+}
+
+beforeAll(async () => {
+  process.env.BETTER_AUTH_SECRET = SECRET;
+  liveCookie = { value: await signedCookieValue("tok_live") };
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
   cookieGet.mockImplementation((name: string) =>
-    name === "__Secure-better-auth.session_token" ? LIVE_COOKIE : undefined,
+    name === "__Secure-better-auth.session_token" ? liveCookie : undefined,
   );
 });
 
@@ -96,5 +109,27 @@ describe("requireApiAuth — session lookup failure is 503, not 401 (#1716)", ()
     cookieGet.mockReturnValue(undefined);
     expect((await requireApiAuth()).error?.status).toBe(401);
     expect(sessionFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an unsigned token", async () => "tok_live"],
+    ["a forged signature", async () => "tok_live.c2ln"],
+    [
+      "another token's signature",
+      async () =>
+        `tok_live.${decodeURIComponent(await signedCookieValue("tok_other")).split(".")[1]}`,
+    ],
+  ])("treats %s as no cookie: 401, no row read", async (_label, value) => {
+    getSession.mockResolvedValue(null);
+    sessionFindUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    liveCookie = { value: await value() };
+    try {
+      expect((await requireApiAuth()).error?.status).toBe(401);
+      expect(sessionFindUnique).not.toHaveBeenCalled();
+    } finally {
+      liveCookie = { value: await signedCookieValue("tok_live") };
+    }
   });
 });

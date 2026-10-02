@@ -161,41 +161,50 @@ export function buildWhere(
   }
 
   if (params.scope.kind === "org") {
-    // #1166 ORG-8 — org-OWNED rows only. The funded-elsewhere OR arm
-    // (`payment.some.organizationId`) is gone: the detail page 404s any row
-    // whose `organizationId` isn't this org, so the list was offering rows the
-    // click could not open. Cross-org funding visibility (seats this org paid
-    // for in another org's event) is the money views' responsibility now, not
-    // this list's — the invoice/payments surfaces already carry those rows.
-    //
-    // …and org-FUNDED rows only, which the `organizationId` tag alone never
-    // established. Checkout stamps `Appointment.organizationId` (and
-    // `Payment.organizationId`) for ANY `organizationId` in the request body,
-    // including `fundingSource === "PERSONAL"` — where the member's own card
-    // paid and the org only gets reporting credit. Filtering on the tag alone
-    // therefore published the AMOUNT of a member's personal purchase to every
-    // MANAGER+ in the org's "Everyone" feed. The funding half of the predicate
-    // is `sponsoredSeatsWhere`'s, applied here so the two surfaces answer
-    // "whose session is this" the same way.
+    // #1166 ORG-8 — org-OWNED rows only (`organizationId = orgId`), narrowed to
+    // rows that legitimately belong to the org's operations feed:
+    //   1. Unpaid bookings (`payment: { none: {} }`) — e.g. PENDING/APPROVED
+    //      requests awaiting payment or free TRIAL appointments.
+    //   2. Org-funded bookings (`payment.some` with `paymentMethod` in
+    //      WALLET/INVOICE/LICENSE for this org).
+    //   3. Provider-side org-hosted bookings (`plan.organizationId = orgId`),
+    //      where the org owns the catalog plan regardless of how the buyer paid.
+    // Self-funded B2C bookings on a non-org plan that merely carried an
+    // `organizationId` tag are excluded.
     return {
       ...base,
       organizationId: params.scope.orgId,
-      payment: {
-        some: {
-          organizationId: params.scope.orgId,
-          paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
+      OR: [
+        { payment: { none: {} } },
+        {
+          payment: {
+            some: {
+              organizationId: params.scope.orgId,
+              paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
+            },
+          },
         },
-      },
-      // Read-level twin of the DEACTIVATED refusal in resolveOrgScope, for the
-      // same reason that one is opt-in: this query has no org row in scope to
-      // test. A DEACTIVATED org is "treated as non-existent"
-      // (lib/enterprise/org-status.ts) and `requireOrgAccess` 403s it, so its
-      // rows must not be served here either — and unlike the resolver this costs
-      // the caller nothing, because it rides the WHERE rather than a new field.
-      // SUSPENDED stays: its bookings keep running and its OWNER must be able
-      // to read them while they fix whatever suspended it. The `all` arm is
-      // deliberately NOT filtered — an ADMIN/STAFF reading a DEACTIVATED org is
-      // how the teardown gets verified.
+        {
+          consultation: {
+            consultationPlan: { organizationId: params.scope.orgId },
+          },
+        },
+        {
+          subscription: {
+            subscriptionPlan: { organizationId: params.scope.orgId },
+          },
+        },
+        {
+          webinar: {
+            webinarPlan: { organizationId: params.scope.orgId },
+          },
+        },
+        {
+          class: {
+            classPlan: { organizationId: params.scope.orgId },
+          },
+        },
+      ],
       organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
     };
   }

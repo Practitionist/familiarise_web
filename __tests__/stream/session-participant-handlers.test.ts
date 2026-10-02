@@ -125,14 +125,15 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
   });
 
   it("skips when participant user id is missing", async () => {
+    // Cast on purpose: this exercises the defensive guard for a malformed
+    // payload that the event type would otherwise forbid.
     await handleSessionParticipantJoined({
       call_cid: "default:call_abc",
       type: "call.session_participant_joined",
       created_at: "2026-06-16T10:00:00.000Z",
       session_id: "sess_1",
-      // @ts-expect-error — exercising the defensive guard for a malformed payload
       participant: { user: {} },
-    });
+    } as unknown as Parameters<typeof handleSessionParticipantJoined>[0]);
 
     expect(mockFindUnique).not.toHaveBeenCalled();
     expect(mockUpsert).not.toHaveBeenCalled();

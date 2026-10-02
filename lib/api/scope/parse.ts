@@ -85,39 +85,16 @@ export interface ResolveScopeContext {
    * `org` scope carries NO user filter, so granting it is equivalent to
    * granting `operations.read` and must be gated on the member's role.
    */
-  memberships: Pick<Membership, "organizationId" | "status" | "role">[];
+  memberships: (Pick<Membership, "organizationId" | "status" | "role"> & {
+    orgStatus?: OrgStatus | null;
+    organization?: { status: OrgStatus } | null;
+  })[];
   /**
-   * `Organization.status` for the org named by `raw`, when the caller already
-   * has it in hand.
+   * `Organization.status` for the org named by `raw`.
    *
-   * OPTIONAL, and omitting it is not the same as passing ACTIVE — this resolver
-   * is synchronous, so a caller that has not already awaited the org row cannot
-   * supply the status at all. The `undefined` case therefore means "the caller
-   * never looked", NOT "the org is readable", and the gate below is skipped.
-   *
-   * As of this wave NO caller passes it. Every one of the sixteen
-   * `resolveOrgScope` call sites pre-fetches memberships with
-   * `select: { organizationId, status, role }` — no `organization.status`
-   * reaches it — so the `ORG_DEACTIVATED` refusal here is inert in production
-   * and every route still admits a DEACTIVATED org on the strength of a
-   * membership row that outlived it. That is why the decision lives in this one
-   * file rather than in sixteen routes: a caller that starts passing the field
-   * inherits the refusal with no other change.
-   *
-   * The leak is closed a second way, where a caller CAN close it for free. The
-   * three `buildWhere` helpers — `list-appointments.ts`, `list-documents.ts`,
-   * `list-recordings.ts` — filter a relation the org arm already pins, so
-   * `organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } }`
-   * rides the WHERE instead of needing a new field. `all` stays unfiltered on
-   * purpose: an ADMIN reading a DEACTIVATED org is how the teardown is verified.
-   *
-   * Still OPEN, and the remaining work: every other consumer is either a
-   * hand-rolled filter with no relation predicate to add one to
-   * (`/api/collaborations`) or a route that would need to select the org status
-   * it does not currently read. Wiring those is a per-caller select, not a
-   * change to this resolver — making the resolver `async` would buy it at the
-   * price of turning a pure, trivially-testable function into sixteen await
-   * sites, and the field below is the better trade.
+   * Callers typically supply this via `membership.organization.status` by
+   * selecting `organization: { select: { status: true } }` when pre-fetching
+   * memberships, or directly via `ctx.orgStatus` / `membership.orgStatus`.
    *
    * `null` means the org row is gone, and is refused like DEACTIVATED.
    */
@@ -187,23 +164,23 @@ export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
 
   // An ACTIVE membership is not evidence that the ORG still exists. The
   // deactivate flow (`PATCH /api/organizations/[orgId]`) stamps
-  // `DEACTIVATED` + `deletedAt` and leaves Membership rows untouched, so the
-  // membership check above used to be the whole authorisation for a tenant that
-  // had been torn down: a member kept reading that org's appointments,
-  // documents, recordings and collaborations through the personal `?orgScope=`
-  // door indefinitely — while `requireOrgAccess` 403'd the same org on the
-  // sibling door.
-  //
+  // `DEACTIVATED` + `deletedAt` and leaves Membership rows untouched.
   // Refuse rather than downgrade to the caller's own rows: DEACTIVATED is
   // terminal, so the org is not coming back, and a downgrade would leave a
   // dead tenant addressable. SUSPENDED is not this branch — see
   // ORG_SCOPE_READABLE_STATUSES for why it stays readable.
-  //
-  // GATED ON `orgStatus !== undefined`, and no caller passes it yet — read the
-  // field's docblock before assuming this branch is doing anything in
-  // production. It is the door every caller should come through; the three
-  // `buildWhere` helpers are the stopgap that actually fires today.
-  if (ctx.orgStatus !== undefined && !isOrgReadableForScope(ctx.orgStatus)) {
+  const effectiveOrgStatus =
+    ctx.orgStatus !== undefined
+      ? ctx.orgStatus
+      : membership.orgStatus !== undefined
+        ? membership.orgStatus
+        : membership.organization !== undefined
+          ? (membership.organization?.status ?? null)
+          : undefined;
+  if (
+    effectiveOrgStatus !== undefined &&
+    !isOrgReadableForScope(effectiveOrgStatus)
+  ) {
     return {
       ok: false,
       status: 403,

@@ -69,7 +69,16 @@ describe("the org-funded rail tuple", () => {
       isOrgFundedPaymentMethod,
     );
     expect(listWhereClause()).toMatchObject({
-      payment: { some: { paymentMethod: { in: fromPredicate } } },
+      OR: expect.arrayContaining([
+        {
+          payment: {
+            some: {
+              organizationId: "org-1",
+              paymentMethod: { in: fromPredicate },
+            },
+          },
+        },
+      ]),
     });
   });
 });

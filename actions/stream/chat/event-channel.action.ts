@@ -21,6 +21,7 @@ import {
   clearSyncCacheForUser,
 } from "@/lib/stream-cache";
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
+import { getEventChannelData } from "./channel.action";
 import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
 import {
   bookingOrgId,
@@ -228,7 +229,7 @@ export async function addUserToEventChannel(
 
     // Channel doesn't exist, create it based on event type
     let created = false;
-    const eventData = await getEventData(eventType, eventId);
+    const eventData = await getEventChannelData(eventType, eventId);
 
     if (!eventData) {
       throw new Error(`${eventType} not found: ${eventId}`);
@@ -414,205 +415,6 @@ export async function removeUserFromEventChannel(
       error: error instanceof Error ? error.message : String(error),
     });
     return { success: false };
-  }
-}
-
-/**
- * Get event data for channel creation
- */
-async function getEventData(eventType: EventType, eventId: string) {
-  switch (eventType) {
-    case "webinar": {
-      const webinar = await prisma.webinar.findUnique({
-        where: { id: eventId },
-        include: {
-          webinarPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-              // #1580 C-P2-5 — accepted collaborators are members from the
-              // channel's first mint, not only once they happen to join.
-              collaborators: {
-                // A soft-deleted profile keeps its ACCEPTED row (#1593).
-                where: {
-                  status: "ACCEPTED" as const,
-                  consultantProfile: { deletedAt: null },
-                },
-                select: { consultantProfile: { select: { userId: true } } },
-              },
-            },
-          },
-          appointment: {
-            include: {
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-            },
-          },
-        },
-      });
-      if (!webinar) return null;
-
-      const consultantId = webinar.webinarPlan.consultantProfile?.user?.id;
-      if (!consultantId) return null;
-
-      const members = [
-        ...(webinar.webinarPlan.collaborators ?? []).map(
-          (c) => c.consultantProfile.userId,
-        ),
-        ...(webinar.appointment?.participants.map((p) => p.userId) || []),
-      ];
-
-      // #1280 PR 7 — the funding org, resolved by the SAME `bookingOrgId`
-      // precedence the DM path and the eligibility gate use: plan first, then
-      // appointment. Carried out of here so the create() below can tag it.
-      const organizationId = bookingOrgId({
-        webinarPlan: webinar.webinarPlan,
-        appointment: webinar.appointment,
-      });
-
-      return {
-        consultantId,
-        members,
-        name: webinar.webinarPlan.title,
-        organizationId,
-      };
-    }
-
-    case "class": {
-      const classData = await prisma.class.findUnique({
-        where: { id: eventId },
-        include: {
-          classPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-              collaborators: {
-                // A soft-deleted profile keeps its ACCEPTED row (#1593).
-                where: {
-                  status: "ACCEPTED" as const,
-                  consultantProfile: { deletedAt: null },
-                },
-                select: { consultantProfile: { select: { userId: true } } },
-              },
-            },
-          },
-          appointment: {
-            include: {
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-            },
-          },
-        },
-      });
-      if (!classData) return null;
-
-      const consultantId = classData.classPlan.consultantProfile?.user?.id;
-      if (!consultantId) return null;
-
-      const members = [
-        ...(classData.classPlan.collaborators ?? []).map(
-          (c) => c.consultantProfile.userId,
-        ),
-        ...(classData.appointment?.participants.map((p) => p.userId) || []),
-      ];
-
-      const organizationId = bookingOrgId({
-        // #1554 — a class is one wrapper, so the org tag is its own.
-        classPlan: classData.classPlan,
-        appointment: classData.appointment,
-      });
-
-      return {
-        consultantId,
-        members,
-        name: classData.classPlan.title,
-        organizationId,
-      };
-    }
-
-    case "consultation": {
-      const consultation = await prisma.consultation.findUnique({
-        where: { id: eventId },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-            },
-          },
-          requestedBy: { include: { user: { select: { id: true } } } },
-          // #1280 PR 7 — the appointment is the second arm of `bookingOrgId`'s
-          // precedence. Without it this branch could only ever see the plan's
-          // org, so a personal plan booked under an organization would produce
-          // an untagged channel while the DM-eligibility path, which does read
-          // it, considered the pair org-scoped. These two arms are reachable
-          // only from tests today (the open route restricts `eventType` to
-          // webinar/class), but a resolver that disagrees with itself depending
-          // on the caller is exactly what this change exists to remove.
-          appointment: { select: { organizationId: true } },
-        },
-      });
-      if (!consultation) return null;
-
-      const consultantId =
-        consultation.consultationPlan.consultantProfile?.user?.id;
-      const consulteeId = consultation.requestedBy?.user?.id;
-      if (!consultantId || !consulteeId) return null;
-
-      return {
-        consultantId,
-        members: [consulteeId],
-        name: consultation.consultationPlan.title,
-        organizationId: bookingOrgId({
-          consultationPlan: consultation.consultationPlan,
-          appointment: consultation.appointment,
-        }),
-      };
-    }
-
-    case "subscription": {
-      const subscription = await prisma.subscription.findUnique({
-        where: { id: eventId },
-        include: {
-          subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-            },
-          },
-          requestedBy: { include: { user: { select: { id: true } } } },
-          // #1554 — one wrapper per subscription carries the org tag.
-          appointment: { select: { organizationId: true } },
-        },
-      });
-      if (!subscription) return null;
-
-      const consultantId =
-        subscription.subscriptionPlan.consultantProfile?.user?.id;
-      const consulteeId = subscription.requestedBy?.user?.id;
-      if (!consultantId || !consulteeId) return null;
-
-      return {
-        consultantId,
-        members: [consulteeId],
-        name: subscription.subscriptionPlan.title,
-        organizationId: bookingOrgId({
-          subscriptionPlan: subscription.subscriptionPlan,
-          appointment: subscription.appointment,
-        }),
-      };
-    }
-
-    default:
-      return null;
   }
 }
 

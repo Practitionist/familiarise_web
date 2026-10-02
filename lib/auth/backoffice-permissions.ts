@@ -47,6 +47,16 @@ export type BackofficeSurface =
   | "users.read"
   | "users.verify"
   | "users.moderate"
+  // #1927 — the operator roster. Split from `users.read` deliberately: a
+  // support agent's "who else is on staff" question is a normal ticket, but
+  // a roster that lists every operator's 2FA state, last login and live
+  // session count is reconnaissance for the very door that suspends them, and
+  // the file's own stated policy puts irreversible account actions behind the
+  // admin grant. The MUTATIONS (invite, revoke, suspend, reactivate, force
+  // sign-out) deliberately reuse `users.moderate` rather than a `team.manage`
+  // key: they are exactly "role change / delete someone's access", and a
+  // second key for the same act is a second place to get the policy wrong.
+  | "team.read"
   // Session recordings — #1270. Split because "look at the metadata" and
   // "watch the session" are different acts with different blast radii.
   | "recordings.read"
@@ -114,6 +124,9 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "users.read": OPERATORS,
   "users.verify": OPERATORS,
   "users.moderate": ADMIN_ONLY,
+  // #1927 — the roster is readable by operators, mutated by admin only
+  // (through `users.moderate`).
+  "team.read": OPERATORS,
 
   // #1270 — a recording is the single most sensitive artefact the platform
   // holds: the full audio and video of a private 1:1 between a consultee and

@@ -287,7 +287,7 @@ function OrgDashboardShellInner({
       }
       pathname={pathname}
     >
-      {/* #1846 — the first-sign-in consent step for SSO JIT and SCIM joiners. */}
+      {/* #1846 — the first-sign-in consent step for SSO JIT joiners. */}
       {org.membership.status === "ACTIVE" && (
         <JoinConsentGate orgId={orgId} orgName={org.organization.name} />
       )}

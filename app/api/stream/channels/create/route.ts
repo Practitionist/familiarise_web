@@ -11,6 +11,7 @@ import { getSession } from "@/lib/auth-server";
 import { parseJsonRequest } from "@/lib/api/parse";
 import { channelCreateSchema } from "@/schemas/stream-channels";
 import { streamLogger } from "@/lib/stream-logger";
+import { verifyEventAccess } from "@/lib/stream/chat/access";
 
 export async function POST(req: NextRequest) {
   try {
@@ -59,6 +60,32 @@ export async function POST(req: NextRequest) {
     let result;
 
     if (eventType && eventId) {
+      if (
+        eventType !== "webinar" &&
+        eventType !== "class" &&
+        eventType !== "consultation" &&
+        eventType !== "subscription"
+      ) {
+        return NextResponse.json(
+          { success: false, error: `Unknown event type: ${eventType}` },
+          { status: 400 },
+        );
+      }
+
+      if (!isPrivileged) {
+        const hasAccess = await verifyEventAccess(
+          session.user.id,
+          eventType,
+          eventId,
+        );
+        if (!hasAccess) {
+          return NextResponse.json(
+            { success: false, error: "Forbidden" },
+            { status: 403 },
+          );
+        }
+      }
+
       // Event-linked channel creation - use our improved functions with full participant lists
       streamLogger.info("Creating event channel", {
         eventType,
@@ -80,11 +107,6 @@ export async function POST(req: NextRequest) {
           case "subscription":
             result = await createSubscriptionChannel(eventId);
             break;
-          default:
-            return NextResponse.json(
-              { success: false, error: `Unknown event type: ${eventType}` },
-              { status: 400 },
-            );
         }
 
         streamLogger.info("Event channel created", { eventType, eventId });

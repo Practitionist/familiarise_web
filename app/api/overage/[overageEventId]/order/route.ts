@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
-import { auth } from "@/lib/auth";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
-import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createRazorpayOrder,
@@ -27,14 +26,9 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ overageEventId: string }> },
 ) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      { error: "Authentication required" },
-      { status: 401 },
-    );
-  }
-  const userId = session.user.id;
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const userId = authResult.session.user.id;
   const { overageEventId } = await params;
 
   const event = await prisma.overageEvent.findUnique({

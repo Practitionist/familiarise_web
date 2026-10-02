@@ -974,10 +974,21 @@ export function useCalendarData(
 
   // Effect 2 — Date-dependent: runs on dialog open + week/month navigation
   const weeklySlotCount = rawAvailabilitySlots.weekly.length;
+  // Latest-value ref: consultantDetails/weeklySlotCount are SET BY this
+  // effect's own fetch, so they must be read without being effect triggers —
+  // listing them would re-fire it every time the fetch it just ran completes,
+  // a self-triggering refetch loop on every week navigation.
+  // Synced in an effect declared before the fetch effect (effects run in
+  // order), not during render (react.dev: refs are not written while rendering).
+  const hasLoadedDataRef = useRef(false);
+  useEffect(() => {
+    hasLoadedDataRef.current =
+      Boolean(consultantDetails) || weeklySlotCount > 0;
+  }, [consultantDetails, weeklySlotCount]);
   useEffect(() => {
     if (autoLoad && consultantId) {
       // Only show loading spinner on initial load, not on background refetches
-      const isInitialLoad = !consultantDetails && weeklySlotCount === 0;
+      const isInitialLoad = !hasLoadedDataRef.current;
       if (isInitialLoad) {
         setLoading(true);
       }
@@ -1009,11 +1020,6 @@ export function useCalendarData(
           setLoading(false);
         });
     }
-    // consultantDetails/weeklySlotCount deliberately excluded: both are SET
-    // BY this effect's own fetch, so listing them re-fires it every time the
-    // fetch it just ran completes — a self-triggering refetch loop on every
-    // week navigation (read via closure for isInitialLoad, not as triggers).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLoad, consultantId, fetchAvailabilitySlots]);
 
   // Effect 3 — #1164 background freshness. The grid never refreshed after

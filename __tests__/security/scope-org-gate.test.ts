@@ -13,6 +13,8 @@
  * — that is what a learner passing their own org id actually means.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 const ORG = "org-1";
@@ -85,11 +87,7 @@ describe("every scoped list helper handles orgMember explicitly", () => {
   ];
 
   it.each(HELPERS)("%s branches on orgMember before the default", (rel) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { readFileSync } = require("fs");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { join } = require("path");
-    const src = readFileSync(join(process.cwd(), rel), "utf8") as string;
+    const src = readFileSync(join(process.cwd(), rel), "utf8");
 
     expect(src).toContain('kind === "orgMember"');
 
@@ -102,11 +100,7 @@ describe("every scoped list helper handles orgMember explicitly", () => {
   });
 
   it.each(HELPERS)("%s constrains orgMember by BOTH org and user", (rel) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { readFileSync } = require("fs");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { join } = require("path");
-    const src = readFileSync(join(process.cwd(), rel), "utf8") as string;
+    const src = readFileSync(join(process.cwd(), rel), "utf8");
 
     const start = src.indexOf('kind === "orgMember"');
     const branch = src.slice(start, src.lastIndexOf("return base;"));

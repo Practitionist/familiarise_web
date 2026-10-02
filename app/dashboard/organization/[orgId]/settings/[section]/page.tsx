@@ -13,7 +13,6 @@ import { BrandingPanel } from "../BrandingPanel";
 import { DataExportsPanel } from "../DataExportsPanel";
 import { DomainsPanel } from "../DomainsPanel";
 import { GeneralPanel } from "../GeneralPanel";
-import { ScimPanel } from "../ScimPanel";
 import { SsoPanel } from "../SsoPanel";
 import { WebhooksPanel } from "../WebhooksPanel";
 
@@ -26,7 +25,6 @@ const PANELS: Record<OrgSettingsKey, (orgId: string) => ReactNode> = {
       <SsoPanel orgId={orgId} />
     </div>
   ),
-  scim: (orgId) => <ScimPanel orgId={orgId} />,
   billing: (orgId) => <BillingSettingsPanel orgId={orgId} />,
   webhooks: (orgId) => <WebhooksPanel orgId={orgId} />,
   "data-exports": (orgId) => <DataExportsPanel orgId={orgId} />,

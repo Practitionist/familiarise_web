@@ -46,6 +46,7 @@ jest.mock("../../lib/auth-helpers", () => {
   };
 });
 
+import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { POST as programsPOST } from "@/app/api/organizations/[orgId]/programs/route";
@@ -72,7 +73,7 @@ function makeRequest(body: unknown) {
     method: "POST",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
-  }) as unknown as Request;
+  }) as unknown as NextRequest;
 }
 
 beforeEach(() => {
@@ -83,8 +84,7 @@ beforeEach(() => {
       program: mockedPrisma.program,
       orgAuditLog: mockedPrisma.orgAuditLog,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 });
 
@@ -97,7 +97,6 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
     });
 
     const res = (await programsPOST(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest({
         type: "CREDIT_POOL",
         contractId: "c-1",
@@ -108,9 +107,8 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
           cycle: "MONTHLY",
           creditBudgetPerCycle: 1000,
         },
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1" }) } as any,
+      }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
     expect(res.status).toBe(400);
@@ -135,7 +133,6 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
     });
 
     const res = (await programsPOST(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest({
         type: "CREDIT_POOL",
         contractId: "c-1",
@@ -146,9 +143,8 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
           cycle: "MONTHLY",
           creditBudgetPerCycle: 1000,
         },
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1" }) } as any,
+      }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
     expect(res.status).toBe(201);
@@ -168,7 +164,6 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
     });
 
     const res = (await programsPOST(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest({
         type: "LICENSED_SEAT",
         contractId: "c-1",
@@ -181,9 +176,8 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
           coveredEngagementsPerCycle: null,
           overageBehavior: "BLOCK",
         },
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1" }) } as any,
+      }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
     expect(res.status).toBe(201);

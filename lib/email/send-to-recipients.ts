@@ -56,9 +56,6 @@ async function prepare(
   args: PrepareArgs,
 ): Promise<Outcome> {
   if (!recipient.allowed) {
-    console.info(
-      `[email] skipped ${args.emailType} for user ${recipient.userId}: preference`,
-    );
     return { kind: "skipped" };
   }
   try {
@@ -108,6 +105,11 @@ export async function sendToRecipients(
     if (delivered.success || delivered.staged) result.sent += 1;
     else result.failed += 1;
   }
+  if (result.skipped > 0) {
+    console.info(
+      `[email] skipped ${args.emailType} for ${result.skipped} recipient(s): preference`,
+    );
+  }
   return result;
 }
 
@@ -121,14 +123,24 @@ export async function stageToRecipients(
   args: PrepareArgs & { tx: Pick<Tx, "failedEmail" | "emailSuppression"> },
 ): Promise<StagedRecipientEmail[]> {
   const list: StagedRecipientEmail[] = [];
+  let skippedByPreference = 0;
   for (const recipient of args.recipients) {
     const outcome = await prepare(recipient, args);
+    if (outcome.kind === "skipped") {
+      skippedByPreference += 1;
+      continue;
+    }
     if (outcome.kind !== "message") continue;
     const staged = await stage(outcome.message, args.emailType, {
       tx: args.tx,
       entityRef: args.entityRef,
     });
     list.push({ staged, message: outcome.message });
+  }
+  if (skippedByPreference > 0) {
+    console.info(
+      `[email] skipped ${args.emailType} for ${skippedByPreference} recipient(s): preference`,
+    );
   }
   return list;
 }

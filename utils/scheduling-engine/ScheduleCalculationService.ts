@@ -388,22 +388,13 @@ export class ScheduleCalculationService {
 
     switch (eventType) {
       case "consultation": {
-        const duration = config.durationInHours;
-        if (!duration || duration <= 0) {
-          console.warn(
-            "Consultation duration missing or invalid. Using default: 1 hour",
-          );
-          return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
-        }
-        return Math.ceil(duration / 0.5); // 30-minute intervals
+        this.validateDuration(config.durationInHours, "Consultation duration");
+        return Math.ceil(config.durationInHours! / 0.5); // 30-minute intervals
       }
 
       case "webinar": {
-        const duration = config.durationInHours;
-        if (!duration || duration <= 0) {
-          return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
-        }
-        return Math.ceil(duration / 0.5); // 30-minute intervals
+        this.validateDuration(config.durationInHours, "Webinar duration");
+        return Math.ceil(config.durationInHours! / 0.5); // 30-minute intervals
       }
 
       case "subscription": {
@@ -416,15 +407,12 @@ export class ScheduleCalculationService {
           );
         }
 
-        let sessionDuration = config.sessionDurationInHours;
-        if (!sessionDuration || sessionDuration <= 0) {
-          console.warn(
-            "Subscription session duration missing or invalid. Using default: 1 hour",
-          );
-          sessionDuration = 1; // Default 1 hour
-        }
+        this.validateDuration(
+          config.sessionDurationInHours,
+          "Subscription session duration",
+        );
 
-        const slotsPerCall = Math.ceil(sessionDuration / 0.5);
+        const slotsPerCall = Math.ceil(config.sessionDurationInHours! / 0.5);
 
         // #1766 — one cycle at a time: the entitlement helper already said how
         // many sessions this run may place.

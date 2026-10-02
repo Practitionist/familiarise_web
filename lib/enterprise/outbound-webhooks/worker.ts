@@ -44,7 +44,6 @@ import type { PrismaLike } from "@/lib/prisma";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
-  generateEndpointSecret as _unused_re_export,
   SIGNATURE_HEADER,
   signPayload,
   WEBHOOK_ROTATION_GRACE_MS,
@@ -52,12 +51,9 @@ import {
 import { assertPublicUrl } from "./ssrf-guard";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
-// Re-export silenced — the worker doesn't generate secrets; this keeps
-// the module's surface area clean while preventing an unused-import lint.
-void _unused_re_export;
-
 const MAX_BATCH = 50;
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 4_500;
+const CONCURRENCY_CHUNK_SIZE = 5;
 const MAX_ATTEMPTS = 5;
 
 /**
@@ -95,7 +91,7 @@ async function maybeAutoDisableEndpoint(
 // #812: A row flipped to IN_FLIGHT (the soft lock below) but never resolved is a
 // worker that crashed mid-delivery. Nothing re-selects IN_FLIGHT, so without a
 // reaper window the row is orphaned forever. Anything older than this (> the
-// 10s request timeout by a wide margin) is treated as crashed and re-queued.
+// 4.5s request timeout by a wide margin) is treated as crashed and re-queued.
 const IN_FLIGHT_STALE_MS = 10 * 60 * 1000; // 10 min
 
 /**
@@ -191,7 +187,9 @@ export async function runDispatchTick(params: {
     },
   });
 
-  for (const row of dueRows) {
+  type DueRow = (typeof dueRows)[number];
+
+  async function processOneDelivery(row: DueRow): Promise<void> {
     result.scanned += 1;
     // Skip rows whose endpoint was paused / disabled after the delivery
     // was queued — the operator's explicit pause should win over our
@@ -205,7 +203,7 @@ export async function runDispatchTick(params: {
         },
       });
       result.failed += 1;
-      continue;
+      return;
     }
 
     // #812 — guarded atomic claim: only flip to IN_FLIGHT if the row is STILL
@@ -216,7 +214,7 @@ export async function runDispatchTick(params: {
       where: { id: row.id, status: row.status },
       data: { status: "IN_FLIGHT" },
     });
-    if (claim.count === 0) continue;
+    if (claim.count === 0) return;
 
     const body = JSON.stringify({
       id: row.id,
@@ -313,7 +311,7 @@ export async function runDispatchTick(params: {
         data: { lastSuccessAt: nowDate, failureCount: 0 },
       });
       result.succeeded += 1;
-      continue;
+      return;
     }
 
     if (isPermanentClientError) {
@@ -336,7 +334,7 @@ export async function runDispatchTick(params: {
       });
       await maybeAutoDisableEndpoint(prisma, row.endpoint);
       result.failed += 1;
-      continue;
+      return;
     }
 
     // Retry path — 5xx / 408 / 429 / network error.
@@ -397,6 +395,22 @@ export async function runDispatchTick(params: {
         },
       });
       result.retried += 1;
+    }
+  }
+
+  for (let i = 0; i < dueRows.length; i += CONCURRENCY_CHUNK_SIZE) {
+    const chunk = dueRows.slice(i, i + CONCURRENCY_CHUNK_SIZE);
+    const settled = await Promise.allSettled(
+      chunk.map((row) => processOneDelivery(row)),
+    );
+    for (const outcome of settled) {
+      if (outcome.status === "rejected") {
+        result.errors.push(
+          outcome.reason instanceof Error
+            ? outcome.reason.message
+            : String(outcome.reason),
+        );
+      }
     }
   }
 

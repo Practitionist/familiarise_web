@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import {
+  applyRateLimit,
+  eventMutationLimiter,
+  rescheduleAppointmentLimiter,
+} from "@/lib/rate-limit";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import {
@@ -63,6 +67,11 @@ export async function POST(
     // Same budget as the sibling reschedule route: both move slots and money.
     const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (limited) return limited;
+    const apptLimited = await applyRateLimit(
+      rescheduleAppointmentLimiter,
+      `${session.user.id}:${appointmentId}`,
+    );
+    if (apptLimited) return apptLimited;
     const parsed = RespondSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(

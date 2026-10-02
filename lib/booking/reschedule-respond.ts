@@ -387,6 +387,23 @@ export async function declineProposal(args: {
               to: "DECLINED",
               data: { resolvedById },
             });
+            try {
+              parkedStatus = await parkParentForUnrestoredEnding(tx, request, {
+                actorUserId: resolvedById,
+                reason:
+                  "reschedule declined; original time no longer available",
+                op: "reschedule-decline-park",
+              });
+            } catch (parkErr) {
+              reportSentryError(parkErr, {
+                subsystem: "bookings",
+                op: "reschedule-decline-park",
+                extra: {
+                  rescheduleRequestId,
+                  restoreMiss: String(restoreMiss),
+                },
+              });
+            }
           });
         } catch (declineErr) {
           if (declineErr instanceof IllegalTransitionError) {
@@ -396,30 +413,6 @@ export async function declineProposal(args: {
           throw declineErr;
         }
         restored = 0;
-
-        // The parent leaves the refunded-sweeps cohort in a SEPARATE
-        // transaction, after the decision is committed — still under the same
-        // grant, but still its own transaction. Folding it into the decision's
-        // would let a missed parent CAS veto a decline a consultant had already
-        // made: the decision is the load-bearing write and the parking is
-        // bookkeeping, and bookkeeping must never roll back a human's answer.
-        // The park's own CAS is the authority on whether it landed, and a park
-        // that loses reports loudly.
-        try {
-          parkedStatus = await prisma.$transaction((tx) =>
-            parkParentForUnrestoredEnding(tx, request, {
-              actorUserId: resolvedById,
-              reason: "reschedule declined; original time no longer available",
-              op: "reschedule-decline-park",
-            }),
-          );
-        } catch (parkErr) {
-          reportSentryError(parkErr, {
-            subsystem: "bookings",
-            op: "reschedule-decline-park",
-            extra: { rescheduleRequestId, restoreMiss: String(restoreMiss) },
-          });
-        }
       }
     });
   } catch (err) {

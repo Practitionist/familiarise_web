@@ -124,7 +124,7 @@ describe("push chain", () => {
       fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
     );
     expect(pkg.scripts["db:push"]).toBe(
-      "npm run db:push:schema && npm run db:assert-sidecars",
+      "npm run db:push:schema && npx tsx -r dotenv/config scripts/ci/check-db-sidecars.ts",
     );
     expect(pkg.scripts["db:push:schema"]).toContain("db:sidecars");
   });

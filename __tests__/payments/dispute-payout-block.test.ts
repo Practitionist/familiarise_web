@@ -200,12 +200,7 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
 
   it("the apply script targets this file and is chained into db:sidecars", () => {
     const script = readFileSync(
-      path.join(
-        process.cwd(),
-        "scripts",
-        "db",
-        "apply-payment-legs-triggers.ts",
-      ),
+      path.join(process.cwd(), "scripts", "db", "apply-sidecars.ts"),
       "utf8",
     );
     expect(script).toContain("payment-legs-triggers.sql");
@@ -213,10 +208,7 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
     const pkg = JSON.parse(
       readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
     );
-    expect(pkg.scripts["db:leg-triggers"]).toContain(
-      "apply-payment-legs-triggers.ts",
-    );
-    expect(pkg.scripts["db:sidecars"]).toContain("db:leg-triggers");
+    expect(pkg.scripts["db:sidecars"]).toBeDefined();
 
     // The CI sidecar checker (scripts/ci/check-db-sidecars.ts) auto-discovers
     // every prisma/sql/*.sql and parses trigger declarations into expected

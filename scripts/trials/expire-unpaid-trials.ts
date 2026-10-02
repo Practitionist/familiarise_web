@@ -29,6 +29,7 @@ import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import { notifyTrialCancelled } from "@/lib/novu/service";
+import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
@@ -158,7 +159,9 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
       planTitle: trial.subscriptionPlan.title,
       status: TrialStatus.CANCELLED,
       dateTime: trial.appointment?.occurrences[0]?.startsAt.toISOString(),
-      dashboardUrl: "/dashboard",
+      // The learner's own appointments — the wire renders the dateTime
+      // in their zone, so the ISO here is correct, not a leak.
+      dashboardUrl: goHref("client", "appointments"),
     });
   } catch (error) {
     reportSentryError(error, {

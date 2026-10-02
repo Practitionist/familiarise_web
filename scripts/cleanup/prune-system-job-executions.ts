@@ -32,6 +32,10 @@ import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 const RETENTION_DAYS = 90;
+const FAILED_EMAIL_BODY_SCRUB_DAYS = 7;
+const SENT_OUTBOX_RETENTION_DAYS = 30;
+const DEAD_LETTER_OUTBOX_RETENTION_DAYS = 90;
+const EMAIL_EVENT_RETENTION_DAYS = 30;
 
 /**
  * Six hours. The longest cron lock TTL is 35 minutes (LONG_JOB_TTL_MS) and
@@ -48,10 +52,13 @@ const STRANDED_HOURS = 6;
  * every cron run writes to; a bounded loop keeps each statement short.
  */
 const DELETE_BATCH_SIZE = 5_000;
+const OUTBOX_BATCH_SIZE = 1_000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Rows created before this are past retention and get deleted. */
 export function retentionCutoff(now: Date): Date {
-  return new Date(now.getTime() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  return new Date(now.getTime() - RETENTION_DAYS * DAY_MS);
 }
 
 /** Rows that started before this and are still RUNNING cannot be alive. */
@@ -59,14 +66,191 @@ export function strandedCutoff(now: Date): Date {
   return new Date(now.getTime() - STRANDED_HOURS * 60 * 60 * 1000);
 }
 
+/** SENT FailedEmail bodies older than 7 days have their HTML/text payloads scrubbed. */
+export function failedEmailBodyScrubCutoff(now: Date): Date {
+  return new Date(now.getTime() - FAILED_EMAIL_BODY_SCRUB_DAYS * DAY_MS);
+}
+
+/** SENT outbox rows (FailedEmail, FailedEmailBatch, NotificationOutbox) older than 30 days are deleted. */
+export function sentOutboxRetentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - SENT_OUTBOX_RETENTION_DAYS * DAY_MS);
+}
+
+/** DEAD_LETTER outbox rows older than 90 days are deleted. */
+export function deadLetterOutboxRetentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - DEAD_LETTER_OUTBOX_RETENTION_DAYS * DAY_MS);
+}
+
+/** EmailEvent rows older than 30 days are deleted. */
+export function emailEventRetentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - EMAIL_EVENT_RETENTION_DAYS * DAY_MS);
+}
+
 /** The reason stamped on a run that never reported an outcome. */
 export const STRANDED_ERROR = "stranded (no heartbeat)";
 
-export interface SystemJobExecutionPruneResult {
+export interface MessagingRetentionPruneResult {
+  failedEmailsBodyScrubbed: number;
+  failedEmailsPruned: number;
+  failedEmailBatchesPruned: number;
+  notificationOutboxPruned: number;
+  emailEventsPruned: number;
+}
+
+export interface SystemJobExecutionPruneResult
+  extends Partial<MessagingRetentionPruneResult> {
   pruned: number;
   stranded: number;
   retentionCutoff: string;
   strandedCutoff: string;
+}
+
+async function deleteByIdBatches(
+  findBatch: (take: number) => Promise<{ id: string }[]>,
+  deleteIds: (ids: string[]) => Promise<{ count: number }>,
+  batchSize: number = OUTBOX_BATCH_SIZE,
+): Promise<number> {
+  let totalDeleted = 0;
+  for (;;) {
+    const rows = await findBatch(batchSize);
+    if (rows.length === 0) break;
+    const deleted = await deleteIds(rows.map((r) => r.id));
+    totalDeleted += deleted.count;
+    if (deleted.count === 0 || rows.length < batchSize) break;
+  }
+  return totalDeleted;
+}
+
+/**
+ * #1926 §9 / #1876 §2 — bounded retention pruning for messaging outbox and
+ * event tables (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`,
+ * `EmailEvent`).
+ */
+export async function pruneMessagingRetentionTables(
+  now: Date = new Date(),
+): Promise<MessagingRetentionPruneResult> {
+  const scrubBefore = failedEmailBodyScrubCutoff(now);
+  const sentBefore = sentOutboxRetentionCutoff(now);
+  const deadLetterBefore = deadLetterOutboxRetentionCutoff(now);
+  const emailEventBefore = emailEventRetentionCutoff(now);
+
+  let failedEmailsBodyScrubbed = 0;
+  if (typeof prisma.failedEmail?.findMany === "function") {
+    for (;;) {
+      const toScrub = await prisma.failedEmail.findMany({
+        where: {
+          status: "SENT",
+          updatedAt: { lt: scrubBefore },
+          OR: [{ htmlBody: { not: "" } }, { textBody: { not: null } }],
+        },
+        select: { id: true },
+        take: OUTBOX_BATCH_SIZE,
+      });
+      if (toScrub.length === 0) break;
+      const updated = await prisma.failedEmail.updateMany({
+        where: { id: { in: toScrub.map((r) => r.id) } },
+        data: { htmlBody: "", textBody: null },
+      });
+      failedEmailsBodyScrubbed += updated.count;
+      if (updated.count === 0 || toScrub.length < OUTBOX_BATCH_SIZE) break;
+    }
+  }
+
+  const failedEmailsPruned =
+    typeof prisma.failedEmail?.findMany === "function"
+      ? await deleteByIdBatches(
+          (take) =>
+            prisma.failedEmail.findMany({
+              where: {
+                OR: [
+                  { status: "SENT", updatedAt: { lt: sentBefore } },
+                  {
+                    status: "DEAD_LETTER",
+                    updatedAt: { lt: deadLetterBefore },
+                  },
+                ],
+              },
+              select: { id: true },
+              take,
+            }),
+          (ids) =>
+            prisma.failedEmail.deleteMany({
+              where: { id: { in: ids } },
+            }),
+        )
+      : 0;
+
+  const failedEmailBatchesPruned =
+    typeof prisma.failedEmailBatch?.findMany === "function"
+      ? await deleteByIdBatches(
+          (take) =>
+            prisma.failedEmailBatch.findMany({
+              where: {
+                OR: [
+                  { status: "SENT", updatedAt: { lt: sentBefore } },
+                  {
+                    status: "DEAD_LETTER",
+                    updatedAt: { lt: deadLetterBefore },
+                  },
+                ],
+              },
+              select: { id: true },
+              take,
+            }),
+          (ids) =>
+            prisma.failedEmailBatch.deleteMany({
+              where: { id: { in: ids } },
+            }),
+        )
+      : 0;
+
+  const notificationOutboxPruned =
+    typeof prisma.notificationOutbox?.findMany === "function"
+      ? await deleteByIdBatches(
+          (take) =>
+            prisma.notificationOutbox.findMany({
+              where: {
+                OR: [
+                  { status: "SENT", updatedAt: { lt: sentBefore } },
+                  {
+                    status: "DEAD_LETTER",
+                    updatedAt: { lt: deadLetterBefore },
+                  },
+                ],
+              },
+              select: { id: true },
+              take,
+            }),
+          (ids) =>
+            prisma.notificationOutbox.deleteMany({
+              where: { id: { in: ids } },
+            }),
+        )
+      : 0;
+
+  const emailEventsPruned =
+    typeof prisma.emailEvent?.findMany === "function"
+      ? await deleteByIdBatches(
+          (take) =>
+            prisma.emailEvent.findMany({
+              where: { receivedAt: { lt: emailEventBefore } },
+              select: { id: true },
+              take,
+            }),
+          (ids) =>
+            prisma.emailEvent.deleteMany({
+              where: { id: { in: ids } },
+            }),
+        )
+      : 0;
+
+  return {
+    failedEmailsBodyScrubbed,
+    failedEmailsPruned,
+    failedEmailBatchesPruned,
+    notificationOutboxPruned,
+    emailEventsPruned,
+  };
 }
 
 // #476 — locked at the core so every entry (GitHub Actions / HTTP) shares one
@@ -112,8 +296,15 @@ async function pruneSystemJobExecutionsUnlocked(): Promise<SystemJobExecutionPru
     if (deleted.count === 0 || doomed.length < DELETE_BATCH_SIZE) break;
   }
 
+  const messaging = await pruneMessagingRetentionTables(now);
+
   console.log(
     `[prune-system-job-executions] stranded=${closed.count} pruned=${pruned} ` +
+      `failedEmailsScrubbed=${messaging.failedEmailsBodyScrubbed} ` +
+      `failedEmailsPruned=${messaging.failedEmailsPruned} ` +
+      `failedEmailBatchesPruned=${messaging.failedEmailBatchesPruned} ` +
+      `notificationOutboxPruned=${messaging.notificationOutboxPruned} ` +
+      `emailEventsPruned=${messaging.emailEventsPruned} ` +
       `retentionCutoff=${retention.toISOString()} strandedCutoff=${stranded.toISOString()}`,
   );
 
@@ -122,6 +313,7 @@ async function pruneSystemJobExecutionsUnlocked(): Promise<SystemJobExecutionPru
     stranded: closed.count,
     retentionCutoff: retention.toISOString(),
     strandedCutoff: stranded.toISOString(),
+    ...messaging,
   };
 }
 

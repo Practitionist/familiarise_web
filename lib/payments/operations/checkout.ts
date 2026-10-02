@@ -751,113 +751,6 @@ export async function tombstoneAbortedGatewayOrder(input: {
   }
 }
 
-export class PaymentIntentManager {
-  // intentId -> userId. Bounded FIFO: this Map lives on module scope of a
-  // warm serverless instance, and an entry that never reaches cancelIntent
-  // (caller crash before cleanup) would otherwise grow monotonically for the
-  // life of the instance (#audit: unbounded-cache finding).
-  private static activeIntents = new Map<string, string>(); // intentId -> userId
-  private static readonly MAX_TRACKED_INTENTS = 500;
-
-  /**
-   * Create payment intent with automatic cleanup tracking
-   */
-  static async createWithCleanup(params: {
-    amount: number;
-    currency: string;
-    metadata: {
-      appointmentId: string;
-      appointmentType: string;
-      [key: string]: string;
-    };
-    paymentGateway: PaymentGateway;
-    isMockPayment?: boolean;
-    customerId?: string;
-    holdExpiresAt?: Date;
-  }) {
-    try {
-      // Imported at call time so the checkout bundle does not evaluate the
-      // Razorpay core (and its #1219 test-key guard) at module load.
-      const { createPaymentIntent } = await import("../index");
-      const paymentResponse = await createPaymentIntent(params);
-
-      // Evict oldest entries first (Map iterates in insertion order) so a
-      // warm instance can't accumulate unbounded tracked intents. Eviction
-      // drops cleanup ownership for that intent - only reachable at >500
-      // concurrent un-cancelled intents on one instance, and strictly better
-      // than the previous behaviour (no bound at all) - but surface it so a
-      // sustained-eviction pattern is visible in Sentry, not silent.
-      while (
-        this.activeIntents.size >= PaymentIntentManager.MAX_TRACKED_INTENTS
-      ) {
-        const oldest = this.activeIntents.keys().next().value;
-        if (oldest === undefined) break;
-        this.activeIntents.delete(oldest);
-        reportSentryError(
-          new Error(
-            `PaymentIntentManager evicted tracked intent ${oldest} before cancellation`,
-          ),
-          {
-            subsystem: "payments",
-            level: "warning",
-            expected: true,
-            extra: { evictedIntentId: oldest },
-          },
-        );
-      }
-
-      // Track the intent for potential cleanup
-      this.activeIntents.set(
-        paymentResponse.id,
-        params.metadata.userId || "unknown",
-      );
-
-      return paymentResponse;
-    } catch (error) {
-      console.error("Payment intent creation failed:", error);
-      reportSentryError(error, { subsystem: "payments" });
-      // A typed gateway error (the #1219 test-key guard, an UNKNOWN_GATEWAY)
-      // keeps its code so the route can answer with the right status; only
-      // untyped failures are flattened into the retry-later message.
-      if (error instanceof PaymentError) throw error;
-      throw new Error(
-        "Failed to create payment intent. Please try again later.",
-      );
-    }
-  }
-
-  /**
-   * Cancel a payment intent and clean up tracking
-   */
-  static async cancelIntent(
-    intentId: string,
-    reason: string = "Database operation failed",
-  ) {
-    try {
-      const { cancelPaymentIntent } = await import("../index");
-      await cancelPaymentIntent(intentId, reason);
-    } catch (error) {
-      console.error(`Failed to cancel payment intent ${intentId}:`, error);
-      reportSentryError(error, { subsystem: "payments", level: "warning" });
-      // Don't throw - cleanup should be best-effort
-    } finally {
-      // Untrack regardless of outcome: the tracking map only decides whether
-      // a future cleanup() should re-attempt cancellation. Leaving failed
-      // cancels tracked was a slow memory leak on long-lived instances.
-      this.activeIntents.delete(intentId);
-    }
-  }
-
-  /**
-   * Cleanup tracked payment intent
-   */
-  static async cleanup(intentId: string, reason: string) {
-    if (this.activeIntents.has(intentId)) {
-      await this.cancelIntent(intentId, reason);
-    }
-  }
-}
-
 // ============================================================================
 // Amount Calculation and Validation
 // ============================================================================
@@ -2046,8 +1939,8 @@ async function assertConsulteeHasNoOverlappingSession(
   tx: Tx,
   window: {
     userId: string;
-    startsAt: string;
-    endsAt: string;
+    startsAt: string | Date;
+    endsAt: string | Date;
     /** #1463 — the buyer's own open order for exactly this window. */
     selfHoldAppointmentIds: string[];
   },
@@ -2522,6 +2415,7 @@ async function revalidateInsideLock(
               // `participants` is load-bearing: without it the participant
               // count is silently 0 and this whole recheck is dead.
               include: {
+                occurrences: true,
                 participants: {
                   where: liveParticipant(),
                   select: { userId: true },
@@ -2548,6 +2442,24 @@ async function revalidateInsideLock(
             httpStatus: 409,
             code: "EVENT_FULL",
           });
+        }
+
+        for (const occ of webinar.appointment?.occurrences ?? []) {
+          if (
+            occ.startsAt &&
+            occ.endsAt &&
+            !occ.deletedAt &&
+            occ.completionStatus !== "CANCELLED"
+          ) {
+            await assertConsulteeHasNoOverlappingSession(tx, {
+              userId,
+              startsAt: occ.startsAt,
+              endsAt: occ.endsAt,
+              selfHoldAppointmentIds: webinar.appointment
+                ? [webinar.appointment.id]
+                : [],
+            });
+          }
         }
         break;
       }
@@ -2589,6 +2501,24 @@ async function revalidateInsideLock(
             httpStatus: 409,
             code: "EVENT_FULL",
           });
+        }
+
+        for (const occ of classInstance.appointment?.occurrences ?? []) {
+          if (
+            occ.startsAt &&
+            occ.endsAt &&
+            !occ.deletedAt &&
+            occ.completionStatus !== "CANCELLED"
+          ) {
+            await assertConsulteeHasNoOverlappingSession(tx, {
+              userId,
+              startsAt: occ.startsAt,
+              endsAt: occ.endsAt,
+              selfHoldAppointmentIds: classInstance.appointment
+                ? [classInstance.appointment.id]
+                : [],
+            });
+          }
         }
         break;
       }
@@ -2633,6 +2563,7 @@ export async function handleConsultationCheckout(
    * by the caller so every appointment of one checkout cites the same row.
    */
   cancellationPolicyId: string,
+  paymentOrganizationId: string | null = organizationId,
 ) {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: data.planId },
@@ -2659,7 +2590,7 @@ export async function handleConsultationCheckout(
     data,
     consulteeUserId,
     consultantUserId,
-    organizationId,
+    paymentOrganizationId,
   );
 
   // Create consultation
@@ -3858,6 +3789,14 @@ export async function handleCheckout(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
         );
       }
+      if (consulteeLock) {
+        const consulteeRenewed = await extendLock(consulteeLock, ttl);
+        if (consulteeRenewed === false) {
+          throw new Error(
+            "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
+          );
+        }
+      }
     };
     await renewOrAbort(perAttemptTtl);
 
@@ -3888,7 +3827,8 @@ export async function handleCheckout(
       );
     } else {
       try {
-        paymentResponse = await PaymentIntentManager.createWithCleanup({
+        const { createPaymentIntent } = await import("../index");
+        paymentResponse = await createPaymentIntent({
           amount,
           currency,
           metadata: buildPaymentMetadata(validatedData, userId, {
@@ -4006,6 +3946,13 @@ export async function handleCheckout(
                 organizationId: isOrgSponsoredPayment ? organizationId : null,
               });
 
+            // A PERSONAL-rail booking is paid by the member's own card, so
+            // Appointment.organizationId stays null (keeps the booking on the
+            // buyer's personal dashboard rather than vanishing from personal
+            // scope while Payment.organizationId retains the reporting tag).
+            const appointmentOrganizationId =
+              fundingSource === "PERSONAL" ? null : organizationId;
+
             // Create appointment based on type (with isTentative flag)
             switch (validatedData.appointmentType) {
               case "CONSULTATION": {
@@ -4048,8 +3995,9 @@ export async function handleCheckout(
                   consulteeProfileId,
                   userId,
                   skipPayment,
-                  organizationId,
+                  appointmentOrganizationId,
                   cancellationPolicyId,
+                  organizationId,
                 );
                 createdAppointment = consultationResult.appointment;
                 engagementsForCap = 1;
@@ -4069,7 +4017,7 @@ export async function handleCheckout(
                   validatedData,
                   consulteeProfileId,
                   skipPayment,
-                  organizationId,
+                  appointmentOrganizationId,
                   cancellationPolicyId,
                 );
                 // Use placeholder appointment for payment linkage
@@ -4091,6 +4039,23 @@ export async function handleCheckout(
                     isOrgSponsoredPayment,
                   ),
                 );
+                for (const occ of webinarResult.appointment?.occurrences ?? []) {
+                  if (
+                    occ.startsAt &&
+                    occ.endsAt &&
+                    !occ.deletedAt &&
+                    occ.completionStatus !== "CANCELLED"
+                  ) {
+                    await assertConsulteeHasNoOverlappingSession(tx, {
+                      userId,
+                      startsAt: occ.startsAt,
+                      endsAt: occ.endsAt,
+                      selfHoldAppointmentIds: webinarResult.appointment
+                        ? [webinarResult.appointment.id]
+                        : [],
+                    });
+                  }
+                }
                 createdAppointment = webinarResult.appointment;
                 engagementsForCap = 1;
                 break;
@@ -4108,6 +4073,23 @@ export async function handleCheckout(
                     isOrgSponsoredPayment,
                   ),
                 );
+                for (const occ of classResult.appointment?.occurrences ?? []) {
+                  if (
+                    occ.startsAt &&
+                    occ.endsAt &&
+                    !occ.deletedAt &&
+                    occ.completionStatus !== "CANCELLED"
+                  ) {
+                    await assertConsulteeHasNoOverlappingSession(tx, {
+                      userId,
+                      startsAt: occ.startsAt,
+                      endsAt: occ.endsAt,
+                      selfHoldAppointmentIds: classResult.appointment
+                        ? [classResult.appointment.id]
+                        : [],
+                    });
+                  }
+                }
                 // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
                 engagementsForCap = classResult.engagementsConsumed;
@@ -4843,10 +4825,22 @@ export async function handleCheckout(
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
       if (paymentResponse && !isZeroAmountPayment) {
-        await PaymentIntentManager.cleanup(
-          paymentResponse.id,
-          "Database operation failed - preventing orphaned payment intent",
-        );
+        try {
+          const { cancelPaymentIntent } = await import("../index");
+          await cancelPaymentIntent(
+            paymentResponse.id,
+            "Database operation failed - preventing orphaned payment intent",
+          );
+        } catch (cancelErr) {
+          console.error(
+            `Failed to cancel payment intent ${paymentResponse.id}:`,
+            cancelErr,
+          );
+          reportSentryError(cancelErr, {
+            subsystem: "payments",
+            level: "warning",
+          });
+        }
       }
 
       // #1695 — Razorpay cannot void a minted order, so a buyer who completes

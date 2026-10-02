@@ -34,7 +34,7 @@ jest.mock("../../scripts/appointments/detect-consultant-no-shows", () => ({
 
 import type { NextRequest } from "next/server";
 
-import { POST } from "../../app/api/cleanup/detect-consultant-no-shows/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
 
 const mockDetect = detectConsultantNoShows as jest.Mock;
@@ -64,6 +64,12 @@ function request(
   } as unknown as NextRequest;
 }
 
+function post(req: NextRequest) {
+  return POST(req, {
+    params: Promise.resolve({ job: "detect-consultant-no-shows" }),
+  });
+}
+
 describe("POST /api/cleanup/detect-consultant-no-shows", () => {
   const OLD_ENV = process.env;
 
@@ -77,7 +83,7 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
   });
 
   it("answers 401 without the cron secret and never reaches the detector", async () => {
-    const res = await POST(request(null));
+    const res = await post(request(null));
 
     expect(res.status).toBe(401);
     expect(mockDetect).not.toHaveBeenCalled();
@@ -94,9 +100,11 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       timestamp: "2026-09-13T00:00:00.000Z",
     });
 
-    const res = await POST(request());
+    const res = await post(request());
 
+    // Without `?limit=` the registry's floor still bounds the run.
     expect(mockDetect).toHaveBeenCalledTimes(1);
+    expect(mockDetect).toHaveBeenCalledWith({ maxCandidates: 10 });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ detected: 2, refunded: 2 });
@@ -117,7 +125,7 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       timestamp: "2026-09-13T00:00:00.000Z",
     });
 
-    const res = await POST(request(`Bearer ${SECRET}`, "?limit=4"));
+    const res = await post(request(`Bearer ${SECRET}`, "?limit=4"));
 
     expect(mockDetect).toHaveBeenCalledWith({ maxCandidates: 4 });
     expect(res.status).toBe(200);

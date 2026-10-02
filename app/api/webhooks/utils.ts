@@ -354,6 +354,19 @@ export async function handleOrgPaymentSuccess(
           },
           data: { chargeStatus: "CHARGED" },
         });
+        if (resolvedOrgId) {
+          await tx.organizationEarnings.updateMany({
+            where: { organizationId: resolvedOrgId, status: "PENDING_TRUST" },
+            data: { status: "PENDING" },
+          });
+          await tx.consultantEarnings?.updateMany({
+            where: {
+              payment: { organizationId: resolvedOrgId },
+              status: "PENDING_TRUST",
+            },
+            data: { status: "PENDING" },
+          });
+        }
         return { count: claimed.count };
       });
       claimedCount = txResult.count;

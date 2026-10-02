@@ -1,21 +1,19 @@
 /**
- * Zod schemas for SSO provider registration.
+ * Zod schemas for SSO provider registration. SSO is OIDC-only.
  *
- * `callbackUrl` is deliberately absent from `samlConfigSchema`: BetterAuth
- * auto-derives the ACS URL as `{baseURL}/api/auth/sso/saml2/sp/acs/{providerId}`,
- * and accepting a user-typed override silently breaks SAML when the value
- * drifts from BetterAuth's derived URL. The read-only URL shown in the Add
- * Provider dialog is always in sync because both it and BetterAuth derive
- * from the same `providerId`.
+ * The OIDC redirect path shown in the provider table is verified against
+ * `@better-auth/sso@1.7.6`, not assumed: `dist/index.mjs:4153` mounts
+ * `/sso/callback/:providerId`, and `basePath` is unset in `lib/auth.ts`, so
+ * BetterAuth's `/api/auth` default applies. `lib/sso/derive-urls.ts` is the
+ * single place that string is built. Re-check it in
+ * `node_modules/@better-auth/sso/dist/index.mjs` on every version bump.
  *
- * Extracted from the API route so the shape can be unit-tested and so any
- * future edits to `samlConfigSchema` must touch this single file — which
- * the invariants check in `scripts/verify-sso-invariants.sh` greps for the
- * forbidden `callbackUrl` key.
+ * Extracted from the API route so the shape can be unit-tested.
  */
 
-import { X509Certificate } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { AUTH_PROVIDERS } from "@/lib/auth-providers";
 
 export const oidcConfigSchema = z.object({
   issuer: z.string().url(),
@@ -27,69 +25,71 @@ export const oidcConfigSchema = z.object({
 });
 
 /**
- * Validate a SAML signing certificate as a parseable PEM-encoded X.509.
+ * Provider ids a tenant may not claim, because claiming one hands them
+ * somebody else's sign-in button.
  *
- * Why we validate here, not later:
- *   BetterAuth's underlying SAML adapter (`@node-saml/node-saml`) parses
- *   the cert lazily inside `validatePostResponse` when an assertion
- *   arrives. If the cert is garbage, the call chain crashes with
- *     TypeError: Cannot read properties of undefined (reading 'metadata')
- *   and returns a 500 with an empty body to the user clicking the SSO
- *   button. The UI has no way to recover — there's no error message
- *   to surface. By validating at the schema layer (registration time),
- *   we fail closed with a friendly PEM-format error that the admin
- *   actually sees in the Add Provider dialog.
+ * ## The vulnerability this closes
  *
- * What Node's X509Certificate accepts:
- *   - PEM-encoded with `-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----`
- *     markers and base64 body.
- *   - DER-encoded (binary) — passed as a Buffer.
- *   - Throws `ERR_OSSL_*` or `ERR_INVALID_ARG_TYPE` on anything else.
- *   Wrapping in try/catch normalizes both error families to a boolean.
+ * `providerId` is BetterAuth's URL slug for the whole SSO surface —
+ * `/api/auth/sso/callback/{id}` — and it is a *globally* unique column, not
+ * per-org. When tenants chose it, any tenant with a verified domain could
+ * register `providerId: "google"` and have BetterAuth resolve that slug to
+ * their IdP. Whether that is a cross-tenant takeover or a self-inflicted
+ * outage depends on which row wins the lookup, which no tenant should decide.
  *
- * See audit Phase A.2 + `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md#cert-rotation`.
+ * ## Why it is still checked
+ *
+ * The create route now generates the id itself (`generateProviderId`), so a
+ * tenant cannot pick one at all. The set stays as a second line: the
+ * generated prefix must never produce a member of it, and the DB CHECK
+ * `sso_provider_id_not_reserved` (`prisma/sql/check-constraints.sql`)
+ * refuses the same ids from any other writer. 1.7's `registerSSOProvider`
+ * does reject reserved ids, but that endpoint is disabled in `lib/auth.ts`.
+ *
+ * ## The set
+ *
+ *   - `AUTH_PROVIDERS` (`lib/auth-providers.ts`) — the social/OAuth buttons
+ *     this app renders. Beyond the URL hijack, an `Account.providerId` row
+ *     and an `SsoProvider.providerId` row sharing an id is a genuinely
+ *     ambiguous state for account linking.
+ *   - `facebook` — no longer offered, but `Account` rows with that
+ *     providerId can still exist, so the id stays taken.
+ *   - `credential` — BetterAuth's own id for email+password accounts. The
+ *     `enforceSSO` check in `lib/sso/enforce-session.ts` reasons about
+ *     `Account.providerId`; a provider claiming `credential` would make
+ *     "linked an account with this provider" trivially true.
+ *   - The `sso`-prefixed plugin id itself, so a tenant cannot squat the
+ *     namespace the plugin reserves for future built-ins.
+ *
+ * Matching is case-insensitive because `providerId` is lowercased nowhere in
+ * the write path but BetterAuth's own provider lookup is reached through URLs
+ * that a client may present in any case; refusing `Google` alongside `google`
+ * keeps the slug space unambiguous.
  */
-/**
- * Exported because the same parse-or-fail check needs to run at two
- * additional sites beyond schema registration:
- *
- *   1. The pre-auth `/api/auth/sso/domain-check` endpoint, to short-circuit
- *      with `SSO_PROVIDER_MISCONFIGURED` BEFORE the user is bounced to
- *      BetterAuth's SAML flow (which would crash the request and return
- *      an empty-body 500 — see audit Phase A.2).
- *
- *   2. The daily `sso-cert-expiry-alert` cron, to detect legacy provider
- *      rows whose certs were registered before this validator existed.
- */
-export function validateSamlCert(value: string): boolean {
-  try {
-    // The constructor parses the cert; we don't need the instance.
-    new X509Certificate(value);
-    return true;
-  } catch {
-    return false;
-  }
+export const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "credential",
+  "sso",
+  "facebook",
+  // `AUTH_PROVIDERS[].id` is a `as const` union of already-lowercase ids.
+  ...AUTH_PROVIDERS.map((provider) => provider.id),
+]);
+
+export function isReservedProviderId(providerId: string): boolean {
+  return RESERVED_PROVIDER_IDS.has(providerId.trim().toLowerCase());
 }
 
-export const samlConfigSchema = z.object({
-  issuer: z.string().min(1),
-  entryPoint: z.string().url(),
-  cert: z.string().refine(validateSamlCert, {
-    message:
-      "Invalid X.509 certificate. Paste the PEM block from your IdP — it should start with -----BEGIN CERTIFICATE----- and end with -----END CERTIFICATE-----. If you copied a base64 fingerprint by mistake, your IdP's admin console has a separate 'Certificate (PEM)' download.",
-  }),
-});
+/**
+ * A fresh, unguessable provider slug. The `oidc-` prefix keeps it out of
+ * every reserved id and every social provider id BetterAuth could add, and
+ * hex keeps it inside the `[a-z0-9-]` shape the callback URL expects.
+ */
+export function generateProviderId(): string {
+  return `oidc-${randomBytes(8).toString("hex")}`;
+}
 
 export const createProviderSchema = z.object({
-  providerId: z
-    .string()
-    .trim()
-    .min(2)
-    .max(50)
-    .regex(/^[a-z0-9-]+$/i, "providerId must be alphanumeric"),
   domain: z.string().trim().min(3).max(255),
   issuer: z.string().trim().min(1).max(500),
-  providerType: z.enum(["saml", "oidc"]),
-  samlConfig: samlConfigSchema.optional(),
-  oidcConfig: oidcConfigSchema.optional(),
+  providerType: z.literal("oidc"),
+  oidcConfig: oidcConfigSchema,
 });

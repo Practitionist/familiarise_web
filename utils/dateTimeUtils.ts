@@ -13,50 +13,6 @@ export const DAYS_OF_WEEK = [
 
 export type DayOfWeek = (typeof DAYS_OF_WEEK)[number];
 
-export const convertToUTC = (timeStr: string, dateStr: string): string => {
-  try {
-    // Handle empty time string
-    if (!timeStr) return "";
-
-    // Create a date object in local timezone
-    const localDate = new Date(`${dateStr}T${timeStr}`);
-
-    // Check if date is valid
-    if (isNaN(localDate.getTime())) {
-      return "";
-    }
-
-    // Convert to UTC string
-    return localDate.toISOString();
-  } catch (error) {
-    console.error("Error converting to UTC:", error);
-    return "";
-  }
-};
-
-export const convertToLocalTime = (utcStr: string): string => {
-  try {
-    // Handle empty string
-    if (!utcStr) return "";
-
-    const date = new Date(utcStr);
-
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      return "";
-    }
-
-    return date.toLocaleTimeString("en-US", {
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch (error) {
-    console.error("Error converting to local time:", error);
-    return "";
-  }
-};
-
 export const getLocalDateString = (date: Date): string => {
   const year = date.getFullYear();
   const month = (date.getMonth() + 1).toString().padStart(2, "0");
@@ -70,11 +26,6 @@ export const isOvernight = (startTime: string, endTime: string): boolean =>
 
 export const formatDayDisplay = (day: DayOfWeek): string => {
   return day.charAt(0) + day.slice(1).toLowerCase();
-};
-
-export const getNextDay = (day: DayOfWeek): DayOfWeek => {
-  const index = DAYS_OF_WEEK.indexOf(day);
-  return DAYS_OF_WEEK[(index + 1) % DAYS_OF_WEEK.length];
 };
 
 export const getDaysInMonth = (date: Date): number => {

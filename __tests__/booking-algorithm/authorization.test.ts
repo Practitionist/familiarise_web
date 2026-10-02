@@ -54,6 +54,7 @@ jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   applyRateLimit: jest.fn(async () => null),
   eventMutationLimiter: {},
+  rescheduleAppointmentLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,
@@ -135,6 +136,7 @@ function adminSession() {
   return makeSession({
     id: "admin-user",
     role: "ADMIN",
+    twoFactorEnabled: true,
     consultantProfileId: null,
     consulteeProfileId: null,
     adminProfileId: "admin-001",
@@ -145,6 +147,7 @@ function staffSession() {
   return makeSession({
     id: "staff-user",
     role: "STAFF",
+    twoFactorEnabled: true,
     consultantProfileId: null,
     consulteeProfileId: null,
     staffProfileId: "staff-001",

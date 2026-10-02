@@ -21,16 +21,40 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { systemJobExecution: {}, $disconnect: jest.fn() },
+  default: {
+    systemJobExecution: {},
+    failedEmail: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    failedEmailBatch: {
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    notificationOutbox: {
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    emailEvent: {
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    $disconnect: jest.fn(),
+  },
 }));
 
 import fs from "node:fs";
 import path from "node:path";
 
+import prisma from "../../lib/prisma";
 import {
   retentionCutoff,
+  sentOutboxRetentionCutoff,
+  failedEmailBodyScrubCutoff,
   strandedCutoff,
   STRANDED_ERROR,
+  pruneMessagingRetentionTables,
 } from "../../scripts/cleanup/prune-system-job-executions";
 
 /**
@@ -61,6 +85,15 @@ describe("prune-system-job-executions windows", () => {
     );
   });
 
+  it("keeps thirty days of sent messaging and email events, and scrubs sent email bodies after seven days", () => {
+    expect(sentOutboxRetentionCutoff(NOW).toISOString()).toBe(
+      new Date(NOW.getTime() - 30 * DAY).toISOString(),
+    );
+    expect(failedEmailBodyScrubCutoff(NOW).toISOString()).toBe(
+      new Date(NOW.getTime() - 7 * DAY).toISOString(),
+    );
+  });
+
   it("calls a run stranded after six hours", () => {
     expect(strandedCutoff(NOW).toISOString()).toBe(
       new Date(NOW.getTime() - 6 * HOUR).toISOString(),
@@ -86,5 +119,61 @@ describe("prune-system-job-executions windows", () => {
 
   it("stamps a reason an operator can grep for", () => {
     expect(STRANDED_ERROR).toBe("stranded (no heartbeat)");
+  });
+});
+
+describe("pruneMessagingRetentionTables", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("scrubs 7-day-old SENT FailedEmail bodies and deletes expired FailedEmail, FailedEmailBatch, NotificationOutbox, and EmailEvent rows in bounded batches", async () => {
+    const fe = prisma.failedEmail as unknown as {
+      findMany: jest.Mock;
+      updateMany: jest.Mock;
+      deleteMany: jest.Mock;
+    };
+    const feb = prisma.failedEmailBatch as unknown as {
+      findMany: jest.Mock;
+      deleteMany: jest.Mock;
+    };
+    const outbox = prisma.notificationOutbox as unknown as {
+      findMany: jest.Mock;
+      deleteMany: jest.Mock;
+    };
+    const emailEvent = prisma.emailEvent as unknown as {
+      findMany: jest.Mock;
+      deleteMany: jest.Mock;
+    };
+
+    // 1st findMany on failedEmail is for body scrub; 2nd is for deletion.
+    fe.findMany
+      .mockResolvedValueOnce([{ id: "fe-scrub-1" }])
+      .mockResolvedValueOnce([{ id: "fe-del-1" }]);
+    fe.updateMany.mockResolvedValueOnce({ count: 1 });
+    fe.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+    feb.findMany.mockResolvedValueOnce([{ id: "feb-del-1" }]);
+    feb.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+    outbox.findMany.mockResolvedValueOnce([{ id: "no-del-1" }]);
+    outbox.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+    emailEvent.findMany.mockResolvedValueOnce([{ id: "ee-del-1" }]);
+    emailEvent.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+    const counts = await pruneMessagingRetentionTables(NOW);
+
+    expect(counts).toEqual({
+      failedEmailsBodyScrubbed: 1,
+      failedEmailsPruned: 1,
+      failedEmailBatchesPruned: 1,
+      notificationOutboxPruned: 1,
+      emailEventsPruned: 1,
+    });
+    expect(fe.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["fe-scrub-1"] } },
+      data: { htmlBody: "", textBody: null },
+    });
   });
 });

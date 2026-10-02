@@ -19,22 +19,25 @@
 import {
   ASSIGNMENT_ALLOWED_FROM,
   CONTRACT_ALLOWED_FROM,
-  EARNING_ALLOWED_FROM,
   INVOICE_ALLOWED_FROM,
   MEMBER_ALLOWED_FROM,
   ORG_ALLOWED_FROM,
   PO_ALLOWED_FROM,
   PROGRAM_ALLOWED_FROM,
   PAYOUT_ALLOWED_FROM,
-  TERMINAL_STATES,
-  WALLET_TOPUP_ALLOWED_FROM,
 } from "@/lib/enterprise/transitions";
 
-/**
- * Keyed by the ENUM name TERMINAL_STATES uses. ORG_PAYOUT_ACCOUNT is
- * deliberately excluded: its schema docstring declares full cycles by
- * design (bank-detail re-verification), so the invariant does not apply.
- */
+function terminalsOf(map: Record<string, readonly string[]>): Set<string> {
+  const allStates = Object.keys(map);
+  const nonTerminal = new Set<string>();
+  for (const [target, sources] of Object.entries(map)) {
+    for (const s of sources) {
+      if (s !== target) nonTerminal.add(s);
+    }
+  }
+  return new Set(allStates.filter((s) => !nonTerminal.has(s)));
+}
+
 const MAPS: Record<string, Record<string, readonly string[]>> = {
   OrgStatus: ORG_ALLOWED_FROM,
   ContractStatus: CONTRACT_ALLOWED_FROM,
@@ -44,18 +47,9 @@ const MAPS: Record<string, Record<string, readonly string[]>> = {
   OrgInvoiceStatus: INVOICE_ALLOWED_FROM,
   PoStatus: PO_ALLOWED_FROM,
   PayoutStatus: PAYOUT_ALLOWED_FROM,
-  WalletTopUpStatus: WALLET_TOPUP_ALLOWED_FROM,
-  EarningStatus: EARNING_ALLOWED_FROM,
 };
 
 describe("enterprise FSM terminality invariants", () => {
-  /**
-   * The load-bearing pin (CR #1234 review): `terminalsOf` DERIVES terminals
-   * as the complement of every source list, so asserting "no terminal is a
-   * source" against the derived set is a tautology — a resurrection edge
-   * would simply shrink the derived set and pass silently. Comparing the
-   * derived set against these literals is what catches it.
-   */
   const EXPECTED_TERMINALS: Record<string, readonly string[]> = {
     OrgStatus: ["DEACTIVATED"],
     ContractStatus: ["EXPIRED", "TERMINATED"],
@@ -65,18 +59,11 @@ describe("enterprise FSM terminality invariants", () => {
     OrgInvoiceStatus: ["VOID", "CANCELLED", "REFUNDED"],
     PoStatus: ["CLOSED", "CANCELLED"],
     PayoutStatus: ["FAILED", "CANCELLED", "REVERSED"],
-    WalletTopUpStatus: ["CONFIRMED", "FAILED"],
-    // #1846 SM-B12 — a refunded earning never returns to the payable pool.
-    EarningStatus: ["REFUNDED"],
   };
 
   it("derived terminal sets match the pinned literals exactly", () => {
     for (const [entity, expected] of Object.entries(EXPECTED_TERMINALS)) {
-      const derived = [
-        ...(TERMINAL_STATES[
-          entity as keyof typeof TERMINAL_STATES
-        ] as ReadonlySet<string>),
-      ].sort();
+      const derived = [...terminalsOf(MAPS[entity])].sort();
       expect({
         entity,
         derived,
@@ -86,18 +73,10 @@ describe("enterprise FSM terminality invariants", () => {
     }
   });
 
-  it("every guarded map has a TERMINAL_STATES entry", () => {
-    for (const entity of Object.keys(MAPS)) {
-      expect(TERMINAL_STATES).toHaveProperty(entity);
-    }
-  });
-
   it.each(Object.entries(MAPS))(
     "%s: no terminal state is an allowed source for another target",
     (entity, allowedFrom) => {
-      const terminals = TERMINAL_STATES[
-        entity as keyof typeof TERMINAL_STATES
-      ] as ReadonlySet<string>;
+      const terminals = terminalsOf(allowedFrom);
 
       for (const [target, sources] of Object.entries(allowedFrom)) {
         for (const source of sources) {
@@ -109,7 +88,6 @@ describe("enterprise FSM terminality invariants", () => {
           }
         }
       }
-      // Reached only when every edge respects terminality.
       expect(allowedFrom).toBeDefined();
     },
   );

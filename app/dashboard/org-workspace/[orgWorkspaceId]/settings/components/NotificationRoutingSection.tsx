@@ -68,7 +68,7 @@ export function NotificationRoutingSection({
         <CardTitle className="text-base">Notification routing</CardTitle>
         <CardDescription>
           Where org-lifecycle events (invite-accepted, invoice-issued,
-          payout-completed, SSO-cert-expiring, …) page you. Applies across
+          payout-completed, SSO-provider-deleted, …) page you. Applies across
           all orgs you operate.
         </CardDescription>
       </CardHeader>

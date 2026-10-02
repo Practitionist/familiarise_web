@@ -73,7 +73,12 @@ export async function GET(
     // context; personal scope = the untagged rows.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true, role: true },
+      select: {
+        organizationId: true,
+        status: true,
+        role: true,
+        organization: { select: { status: true } },
+      },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),

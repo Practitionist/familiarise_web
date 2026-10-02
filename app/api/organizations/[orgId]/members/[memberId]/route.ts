@@ -35,7 +35,6 @@ import { removeMember } from "@/lib/enterprise/member-removal";
 import {
   applyMembershipRoleEffects,
   auditPayoutRecipientChange,
-  bumpUserSessionGeneration,
   recomputeIndependenceAcross,
 } from "@/lib/api/organizations/membership-transitions";
 import {
@@ -44,6 +43,7 @@ import {
   type StagedOnboardingEmail,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { getAppUrl } from "@/lib/url";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable but un-PATCH-able
@@ -436,17 +436,6 @@ export async function PATCH(
                   where: { id: memberId },
                 });
 
-          // Role, status and departmentLabel all ride the session payload, so a
-          // change bumps the generation marker instead of waiting up to 24h for
-          // BetterAuth's session rotation (Phase B.5).
-          if (
-            patch.role !== undefined ||
-            patch.status !== undefined ||
-            patch.departmentLabel !== undefined
-          ) {
-            await bumpUserSessionGeneration(tx, current.userId);
-          }
-
           // A4: an EXPERT entering or leaving EXPERT or ACTIVE shifts the
           // consultant's HOST-membership count, which drives
           // ConsultantProfile.isIndependent.
@@ -480,7 +469,9 @@ export async function PATCH(
                   access.session.user.name ??
                   access.session.user.email ??
                   "An operator",
-                dashboardUrl: "/dashboard",
+                // The affected member's org home — not a bare dashboard
+                // bounce that drops them on the wrong tree.
+                dashboardUrl: `${getAppUrl()}/dashboard/organization/${orgId}/home`,
               },
               tx,
             );

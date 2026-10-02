@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
-import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import {
+  applyRateLimit,
+  eventMutationLimiter,
+  rescheduleAppointmentLimiter,
+} from "@/lib/rate-limit";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -111,6 +115,11 @@ export async function POST(
     if (limited) return limited;
 
     const { appointmentId } = await params;
+    const apptLimited = await applyRateLimit(
+      rescheduleAppointmentLimiter,
+      `${session.user.id}:${appointmentId}`,
+    );
+    if (apptLimited) return apptLimited;
     const { searchParams } = new URL(request.url);
     const appointmentType = searchParams.get("type");
 

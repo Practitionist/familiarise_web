@@ -150,6 +150,7 @@ function buildWhere(
     return {
       ...base,
       organizationId: params.scope.orgId,
+      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
       meeting: {
         occurrence: {
           appointment: {

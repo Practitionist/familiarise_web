@@ -100,6 +100,47 @@ describe("resolveOrgScope on a DEACTIVATED org", () => {
     const res = resolveOrgScope(ctx("LEARNER", "DEACTIVATED"));
     expect(res.ok).toBe(false);
   });
+
+  it("refuses when organization.status is passed on the membership row (route select shape)", () => {
+    const res = resolveOrgScope({
+      raw: ORG,
+      memberships: [
+        {
+          ...MEMBER,
+          role: "OWNER",
+          organization: { status: "DEACTIVATED" },
+        },
+      ],
+      userRole: "USER",
+      userId: "u1",
+    });
+    expect(res).toMatchObject({
+      ok: false,
+      status: 403,
+      code: "ORG_DEACTIVATED",
+      message: "Organization has been deactivated",
+    });
+  });
+
+  it("refuses when membership.organization is null (deleted org row)", () => {
+    const res = resolveOrgScope({
+      raw: ORG,
+      memberships: [
+        {
+          ...MEMBER,
+          role: "OWNER",
+          organization: null,
+        },
+      ],
+      userRole: "USER",
+      userId: "u1",
+    });
+    expect(res).toMatchObject({
+      ok: false,
+      status: 403,
+      code: "ORG_DEACTIVATED",
+    });
+  });
 });
 
 describe("resolveOrgScope is otherwise unchanged", () => {

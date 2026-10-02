@@ -89,7 +89,6 @@ reconcile-orphaned-confirmations
 reconcile-pending-refunds
 cascade-refund-earnings
 reconcile-disputes
-handle-lost-disputes
 release-earnings
 sync-payment-earnings
 release-pending-trust-earnings

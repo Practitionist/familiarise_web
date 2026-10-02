@@ -47,7 +47,7 @@ import {
   makeWeeklyAvailabilitySlot,
   makeCustomAvailabilitySlot,
   makeConsultantData,
-} from "./__mocks__/booking.mockData";
+} from "../fixtures/booking.mockData";
 
 // ─── mapWeeklySlots ─────────────────────────────────────────────────────────
 
@@ -97,9 +97,9 @@ describe("mapWeeklySlots", () => {
 
     const slots = mapWeeklySlots(data as any, new Date("2025-01-06"), "week");
     const mondaySlots = slots.filter((s) => s.startTime.getUTCDay() === 1);
-    if (mondaySlots.length > 0) {
-      expect(mondaySlots[0].startTime.getUTCHours()).toBe(14);
-    }
+    expect(
+      mondaySlots.map((s) => s.startTime.getUTCHours()).every((h) => h === 14),
+    ).toBe(true);
   });
 
   it("should handle month view", () => {

@@ -170,17 +170,6 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
       redirect: "dashboardUrl",
     },
   },
-  {
-    workflowId: W.ORG_SSO_CERT_EXPIRING,
-    name: "SSO certificate expiring",
-    description: "Org admins. `severity` is WARN, CRITICAL or EXPIRED.",
-    category: "orgMembership",
-    inApp: {
-      subject: "SSO certificate",
-      body: "{% if payload.severity == 'EXPIRED' %}The SSO certificate for {{payload.orgName}} ({{payload.providerId}}) expired on {{payload.notAfter}} and single sign-on is failing.{% else %}The SSO certificate for {{payload.orgName}} ({{payload.providerId}}) expires on {{payload.notAfter}} — {{payload.daysRemaining}} day{% if payload.daysRemaining != 1 %}s{% endif %} left.{% endif %} Upload a new certificate.",
-      redirect: "dashboardUrl",
-    },
-  },
 
   // ── Programmes ──────────────────────────────────────────────────────────
   {

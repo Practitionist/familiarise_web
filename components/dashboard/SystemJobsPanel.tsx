@@ -82,22 +82,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Every 6 hours",
     category: "Disputes",
   },
-  {
-    id: "handle-lost-disputes",
-    name: "Handle Lost Disputes",
-    description:
-      "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
-    schedule: "Every 6 hours",
-    category: "Disputes",
-  },
   // Earnings
-  {
-    id: "cascade-refund-earnings",
-    name: "Cascade Refund to Earnings",
-    description: "Mark earnings as REFUNDED when associated refund succeeds",
-    schedule: "Every 15 minutes",
-    category: "Earnings",
-  },
   {
     id: "sync-payment-earnings",
     name: "Sync Payment to Earnings",
@@ -111,15 +96,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     description: "Move PENDING earnings to READY after hold period",
     schedule: "Hourly",
     category: "Earnings",
-  },
-  // Appointments
-  {
-    id: "cleanup-invalid-appointments",
-    name: "Cleanup Invalid Appointments",
-    description:
-      "Cancel duplicate and invalid-duration consultations/subscriptions",
-    schedule: "Hourly",
-    category: "Appointments",
   },
   // Payouts
   {
@@ -175,9 +151,9 @@ const SYSTEM_JOBS: SystemJob[] = [
     category: "Cleanup",
   },
   {
-    id: "tentative-slots",
-    name: "Tentative Slot Cleanup",
-    description: "Release slots held for abandoned booking flows >7 days",
+    id: "tentative-occurrences",
+    name: "Tentative Occurrence Cleanup",
+    description: "Release occurrences held for abandoned booking flows >7 days",
     schedule: "Every 2 hours",
     category: "Cleanup",
   },
@@ -196,13 +172,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Weekly",
     category: "Cleanup",
   },
-  {
-    id: "deactivate-expired-discounts",
-    name: "Deactivate Expired Discounts",
-    description: "Deactivate discount codes past expiresAt or at max uses",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
   // Reconciliation
   {
     id: "reconcile-payment-status",
@@ -213,8 +182,8 @@ const SYSTEM_JOBS: SystemJob[] = [
     category: "Reconciliation",
   },
   {
-    id: "reconcile-slot-availability",
-    name: "Reconcile Slot Availability",
+    id: "reconcile-occurrence-availability",
+    name: "Reconcile Occurrence Availability",
     description: "Fix tentative flags, detect double-bookings",
     schedule: "Hourly",
     category: "Reconciliation",
@@ -538,7 +507,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                         {execution.jobName}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        by {execution.triggeredBy.name || "System"} •{" "}
+                        by {execution.triggeredBy?.name || "System"} •{" "}
                         {formatExecutionTime(execution.startedAt)}
                       </p>
                     </div>

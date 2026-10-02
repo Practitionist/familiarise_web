@@ -9,7 +9,7 @@ import {
   createMockChannel,
   createMockLogger,
   createMockChannelCache,
-} from "./__mocks__/stream-mocks";
+} from "../fixtures/stream-mocks";
 import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 
 // Create mock instances

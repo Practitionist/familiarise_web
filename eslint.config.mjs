@@ -19,8 +19,32 @@ export default [
       "out/**",
       "coverage/**",
       "public/static/**",
-      "update-postman-collection.ts",
     ],
+  },
+
+  // No inline escape hatches (owner policy, 2026-10-02): a rule that is wrong
+  // for a path is turned off for that path here, with a reason, never in code.
+  // `@typescript-eslint/ban-ts-comment` below keeps `@ts-ignore`,
+  // `@ts-expect-error` and `@ts-nocheck` out as well.
+  // https://eslint.org/docs/latest/use/configure/rules#disabling-inline-comments
+  {
+    linterOptions: {
+      noInlineConfig: true,
+      reportUnusedDisableDirectives: "error",
+    },
+    // The recommended set only bans @ts-expect-error without a description;
+    // ban all three outright so the type is fixed instead.
+    rules: {
+      "@typescript-eslint/ban-ts-comment": [
+        "error",
+        {
+          "ts-expect-error": true,
+          "ts-ignore": true,
+          "ts-nocheck": true,
+          "ts-check": false,
+        },
+      ],
+    },
   },
 
   // Jest test files configuration
@@ -232,6 +256,25 @@ export default [
             "CallExpression[callee.name='getSession'][arguments.length=1][arguments.0.type='Identifier'][arguments.0.name='undefined']",
           message:
             "getSession(undefined) is the cookie-cached read: use the explicit getCachedSession() so the choice is greppable, or getSession(true). See #1807.",
+        },
+      ],
+    },
+  },
+  // URL writes go through replaceUrl()/pushUrl() in lib/navigation/history:
+  // Next 15 skips its router sync for history state carrying `__NA`, so
+  // passing `window.history.state` moves the address bar but never
+  // `useSearchParams`. Scoped to client code, which never overlaps the
+  // getSession block above (flat config replaces a rule's options per file).
+  {
+    files: ["**/*.tsx", "**/hooks/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(pushState|replaceState)$/][arguments.0.type='MemberExpression'][arguments.0.property.name='state']",
+          message:
+            "Do not pass history.state to pushState/replaceState: Next skips its router sync for state carrying __NA, so useSearchParams never sees the URL. Use replaceUrl()/pushUrl() from @/lib/navigation/history.",
         },
       ],
     },

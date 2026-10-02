@@ -56,7 +56,7 @@ export interface RescheduleProposalExpiryResult {
   timestamp: string;
 }
 
-// #59 — locked at the core so every entry (GH Actions / HTTP) shares one
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open because the work is idempotent.
 //
 // `maxPerRun` is the Netlify ticker's bite (#1583 P1). It bounds a RUN rather
@@ -120,6 +120,11 @@ function expireProposal(tx: Tx, id: string, now: Date): Promise<void> {
   });
 }
 
+interface RestoreMisses {
+  firstError?: unknown;
+  ids: string[];
+}
+
 /**
  * Expire one lapsed proposal and restore its booking, under the appointment
  * lock every other lifecycle writer takes (#1846), so an answer or a cancel
@@ -130,6 +135,7 @@ function expireProposal(tx: Tx, id: string, now: Date): Promise<void> {
 async function expireOneProposal(
   row: RestorableRequest,
   now: Date,
+  misses: RestoreMisses,
 ): Promise<ExpiryOutcome> {
   try {
     return await withAppointmentLock(row.appointmentId, async () => {
@@ -162,15 +168,10 @@ async function expireOneProposal(
         // released and the booking waits in the allocate queue, which is the
         // pre-#1846 behaviour. Without this the row would be skipped on every
         // tick and never expire.
-        // Reported first, so the miss is on record even if the fallback below
-        // loses to an answer or fails.
-        reportSentryError(error, {
-          subsystem: "jobs",
-          op: "reschedule-expiry-overlap",
-          expected: true,
-          level: "warning",
-          extra: { rescheduleRequestId: row.id },
-        });
+        // Recorded first so the miss survives a failing fallback, and
+        // reported once per run by the caller rather than once per row.
+        misses.firstError ??= error;
+        misses.ids.push(row.id);
         await prisma.$transaction((tx) => expireProposal(tx, row.id, now));
         return "unrestored";
       }
@@ -193,6 +194,7 @@ async function expireRescheduleProposalsUnlocked(
   maxPerRun: number,
 ): Promise<RescheduleProposalExpiryResult> {
   const errors: string[] = [];
+  const misses: RestoreMisses = { ids: [] };
   let proposalsExpired = 0;
   let proposalsExpiredUnrestored = 0;
 
@@ -222,7 +224,7 @@ async function expireRescheduleProposalsUnlocked(
       if (stale.length === 0) break;
 
       for (const row of stale) {
-        const outcome = await expireOneProposal(row, now);
+        const outcome = await expireOneProposal(row, now, misses);
         if (outcome !== "skipped") proposalsExpired += 1;
         if (outcome === "unrestored") proposalsExpiredUnrestored += 1;
         processed += 1;
@@ -245,6 +247,17 @@ async function expireRescheduleProposalsUnlocked(
       error instanceof Error ? error : new Error(message),
       { tags: { subsystem: "jobs", job: "expire-reschedule-proposals" } },
     );
+  }
+
+  if (misses.ids.length > 0) {
+    reportSentryError(misses.firstError, {
+      subsystem: "jobs",
+      op: "reschedule-expiry-overlap",
+      expected: true,
+      level: "warning",
+      fingerprint: ["reschedule-expiry-overlap"],
+      extra: { failed: misses.ids.length, sample: misses.ids.slice(0, 10) },
+    });
   }
 
   return {

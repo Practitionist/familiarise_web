@@ -254,9 +254,9 @@ itself.
 
 `event-channel.action.ts` *is* `"use server"`, so its exports are RPCs, and
 they gate themselves. The pattern to copy is `assertCanMintToken` in
-`actions/stream/chat/stream.action.ts`: read the session with the cookie cache
-disabled (`getSession(true)`), so a just-demoted staff member or a just-banned
-user cannot ride a stale cached session; reject banned accounts outright; allow
+`actions/stream/chat/stream.action.ts`: read the session fresh from the database
+(`getSession(true)`), so a just-demoted staff member or a just-banned user
+cannot ride a stale session; reject banned accounts outright; allow
 only self or privileged (`isPrivileged`) callers; throw otherwise.
 `syncUserEventChannels` mirrors it exactly, and the gate fires **before** the
 `force` path clears the sync dedup guard — an unauthenticated call must not be
@@ -274,7 +274,7 @@ created.
 | `__tests__/stream/channel-actions.test.ts` | Explicit-path adoption: losing `create()` still returns the id, `channelData` is null, `assignRoles` and `markChannelExists` still run; non-duplicate failures rethrow; `addMemberToChannel` authz gates. Also the 100-member create ceiling: a 250-seat roster creates with 100 and backfills 100 + 50, an ordinary two-person channel costs no extra request, and an adopted race still backfills. |
 | `__tests__/stream/event-channel-actions.test.ts` | Lazy-path adoption plus the one-shot post-adoption `addMembers` retry; the sync gate (another user as non-privileged → Forbidden, banned user even for self → account suspended). Also the 30-row page cap: a full page forces a second request, offsets advance 0/30/60, a stale DM at position 41 is revoked, the walk sorts by `created_at`, and an offset-capped walk warns instead of claiming a clean sweep. |
 | `__tests__/stream/batch.test.ts` | `queryChannelsPaged` in isolation — the 30 constant, second-page-on-full-page, offset advancing by rows returned, empty page as an empty answer rather than a truncated one, and the `truncated` flag at the 1000 ceiling; plus `createMemberChunk` / `addRemainingMembers` losing and duplicating nobody. |
-| `__tests__/stream/__mocks__/stream-mocks.ts` | Shared mocks; `assignRoles` added so both suites can observe the moderator grant. |
+| `__tests__/fixtures/stream-mocks.ts` | Shared mocks; `assignRoles` added so both suites can observe the moderator grant. |
 
 ---
 

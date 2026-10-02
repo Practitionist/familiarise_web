@@ -18,8 +18,15 @@ jest.mock("better-auth/react", () => ({
     sendVerificationEmail: jest.fn(),
   }),
 }));
+// `jest.mock` REPLACES a module wholesale, so this factory has to enumerate
+// every export `lib/auth-client.ts` imports — not just the ones this test
+// exercises. Adding `twoFactorClient` broke this suite with
+// "(0, _plugins.twoFactorClient) is not a function", which is the price of the
+// pattern; the alternative is `jest.requireActual` spread, which would drag the
+// real plugin initialisers into a suite that only asserts a sign-out wrapper.
 jest.mock("better-auth/client/plugins", () => ({
   customSessionClient: () => ({}),
+  twoFactorClient: () => ({}),
 }));
 jest.mock("@better-auth/sso/client", () => ({ ssoClient: () => ({}) }));
 
@@ -28,7 +35,7 @@ import {
   readAuthedFlag,
   readAuthedIdentity,
   writeAuthedFlag,
-} from "@/lib/auth-broadcast";
+} from "@/lib/auth-remembered";
 
 const mockSignOut = authClient.signOut as unknown as jest.Mock;
 

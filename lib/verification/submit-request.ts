@@ -35,8 +35,6 @@ export interface SubmitVerificationInput {
   documentIds: string[];
   /** Move the previous request's unflagged documents onto the new one. */
   carryOver: boolean;
-  /** Where the admin bell points; the bells are staged inside the transaction. */
-  adminDashboardUrl: string;
 }
 
 export type SubmitRefusalCode =
@@ -237,7 +235,7 @@ export async function submitVerificationRequest(
 
           // The queue item and its notice exist together or not at all.
           const staged = await stageNewApplicationBells(
-            { userId: input.userId, dashboardUrl: input.adminDashboardUrl },
+            { userId: input.userId },
             tx,
           );
 

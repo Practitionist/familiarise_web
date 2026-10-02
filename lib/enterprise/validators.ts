@@ -22,7 +22,6 @@ import { z } from "zod";
  *
  * Used by:
  *   - /api/organizations/[orgId]/domain-claims
- *   - /api/organizations/[orgId]/sso (allowedEmailDomains array)
  */
 export const DOMAIN_REGEX =
   /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
@@ -68,7 +67,5 @@ export function parsePagination(url: URL): PaginationQuery {
     pageSize: url.searchParams.get("pageSize") ?? undefined,
   };
   const result = PaginationQuerySchema.safeParse(raw);
-  return result.success
-    ? result.data
-    : { page: 1, pageSize: 20 };
+  return result.success ? result.data : { page: 1, pageSize: 20 };
 }

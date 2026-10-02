@@ -162,10 +162,10 @@ jobs:
 
 `prisma migrate deploy` needs the session-mode or direct connection in
 `DIRECT_URL`; DDL through the transaction pooler either fails with a prepared
-statement error or hangs. The existing `check-db-sidecars` and `check-db-drift`
-guards in `ci.yaml` stay exactly as they are — after the cutover they are
-checking a stronger invariant, because drift now means someone bypassed the
-migration system.
+statement error or hangs. The `check-db-sidecars` and `check-db-drift` guards
+stay. In `ci.yaml`'s throwaway Postgres, `migrate deploy` replaces `db push`, and
+`prisma migrate diff --exit-code` joins them. In `db-live-drift.yml` they check
+the live database, where drift now means someone bypassed the migration system.
 
 ## Step 7 — Quiesce background work before a heavy migration
 

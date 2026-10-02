@@ -107,23 +107,16 @@ per-row log). Know what each prints so you can build the alert:
 | Wallet floor (notify-only) | `wallet-low-balance` | `scanned / notified` | — (finance notify) |
 | Stuck-webhook re-drive | `sweep-stuck-webhook-events` | `scanned / recovered / stillFailing` + `::warning::` | — |
 | Orphaned top-up captures | `sweep-orphaned-topup-captures` | `scanned / recredited / stillFailing` | — |
-| SSO cert expiry | `sso-cert-expiry-alert` | `scanned / alerted / parseFailures` | `SSO_CERT_EXPIRING` audit row |
 | Outbound webhook dispatch | `dispatch-outbound-webhooks` | `scanned / succeeded / retried / failed` | `WEBHOOK`/WARN `SystemEvent` when backlog > 200 |
 
-Two failure surfaces the v2 crons share, neither of which prints a
-distinct `event:` line:
+One failure surface the v2 crons share does not print a distinct
+`event:` line:
 
 - **Webhook secret rotation** is observable via the `WEBHOOK_SECRET_ROTATED`
   audit action + the 24h dual-sign window (`WEBHOOK_ROTATION_GRACE_MS`,
   `lib/enterprise/outbound-webhooks/signing.ts`). Alert on deliveries
   still failing **after** the grace window elapsed (the consumer never
   swapped to the new secret).
-- **SSO break-glass opened** has **no** dedicated event or audit action —
-  it's a `breakGlassUntil` window on `OrganizationSSOSettings`, vetoed in
-  `lib/sso/enforce-session.ts`. To page on it, watch for `SETTINGS_CHANGED`
-  audit rows carrying the break-glass `details`, or query
-  `OrganizationSSOSettings WHERE breakGlassUntil > now()`. See the
-  warning row added below.
 
 ### Stream jobs on the operator surface (#1270)
 
@@ -185,12 +178,13 @@ Each row describes a condition that signals a degraded but not yet broken state 
 | IRP upload failure rate | `invoice.irp.failed` / `invoice.irp.attempted` > 20% rolling 1h (only meaningful when `ENABLE_IRP_UPLOADER=true`; stub returns are expected sub-₹5cr) |
 | Outbound webhook backlog | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries) |
 | Webhook secret rotation not adopted | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed) |
-| SSO break-glass open | `OrganizationSSOSettings.breakGlassUntil > now()` (SSO enforcement is bypassed for that window — confirm it was intentional) |
 | Overage ceiling wedged | `OverageEvent` `chargeStatus=PENDING`, `overageBehavior=CHARGE_MEMBER`, `createdAt < now() - 14d` count > 0 (timeout cron not draining) |
 | Dunning not escalating | `dunning` summary `markedOverdue + remindersSent = 0` for 48h while OVERDUE invoices with `dunningReminderCount < 3` exist |
 | Wallet floor breached | `BillingAccount` `fundingSource=WALLET`, `walletBalance < minBalancePaise` (notify-only cron; no auto-charge — may need manual top-up) |
 | DPDP sweeper skipped | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` — **and note** the sweeper has no scheduled workflow today (see `runbooks` catalogue ⚠️) |
 | MSME alerts not firing | `msme.alert.logged` count = 0 for 48h |
+| Transactional email or Novu outbox dead-letter (`#1926`, `#531`) | Any Sentry error event with tag `outbox_dead_letter:true` (`subsystem:email` or `subsystem:novu`), or `email.outbox.pending` / `notifications.outbox.pending` gauge > 100 for 15 min |
+| Database pool exhaustion (`#1696`, `#698`, `#1452`) | Sentry events tagged `pool_exhaustion:true` > 5 in 10 min |
 
 ### Info (dashboard only)
 
@@ -200,6 +194,9 @@ These metrics require no immediate action but belong on a live dashboard as lead
 |--------|---------|
 | `webhook.deduplicated` rate | Healthy baseline for vendor retry behaviour |
 | `ledger.transaction.serializable.retry` rate | Rising rate signals contention hotspots |
+| `pg_code:23P01` (`pg_constraint:occurrence_no_confirmed_overlap`) / `pg_code:23505` / `pg_code:40001` Sentry tags (`#1092`) | Tracks slot-overlap exclusion races, unique-constraint races, and serializable retries across booking and finance transactions |
+| `email.outbox.sent` / `retried` / `dead_lettered` / `pending` (`email.outbox.drain` span) | Transactional email & batch outbox relay health (`jobs/email/retry-failed-emails.ts`) |
+| `notifications.outbox.drained` / `retried` / `dead_lettered` / `pending` (`notifications.outbox.drain` span) | Novu notification outbox relay health (`jobs/notifications/drain-notification-outbox.ts`) |
 | MRR / ARPU trends | Business-health dashboard |
 
 ---
