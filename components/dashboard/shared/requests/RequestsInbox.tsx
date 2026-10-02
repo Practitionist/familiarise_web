@@ -604,7 +604,12 @@ export function RequestsInbox({
 
   const loading = query.isPending && !data;
   const refreshing = query.isFetching;
-  const counts = data?.meta.counts;
+  // #1928: the error card must not also blank the tab counts.
+  const lastCountsRef = useRef<
+    NonNullable<typeof data>["meta"]["counts"] | undefined
+  >(undefined);
+  if (data?.meta.counts) lastCountsRef.current = data.meta.counts;
+  const counts = data?.meta.counts ?? lastCountsRef.current;
   const totalPages = data
     ? Math.max(1, Math.ceil(data.meta.total / data.meta.limit))
     : 1;

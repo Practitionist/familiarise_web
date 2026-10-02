@@ -17,7 +17,9 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { useEffect } from "react";
+import { useEffect, useState, startTransition } from "react";
+import { Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/dashboard/ErrorState";
@@ -38,6 +40,11 @@ export interface DashboardRouteErrorProps {
   escape: { href: string; label: string };
 }
 
+// #1928/#1716: a cold instance's connect timeout surfaces as a server-thrown
+// 503; one silent refresh usually heals it, a second failure shows the card.
+const autoRetried = new Map<string, number>();
+const AUTO_RETRY_WINDOW_MS = 30_000;
+
 export function DashboardRouteError({
   error,
   reset,
@@ -49,7 +56,36 @@ export function DashboardRouteError({
   devFallbackMessage,
   escape,
 }: DashboardRouteErrorProps) {
+  const router = useRouter();
+  const retry = () =>
+    startTransition(() => {
+      router.refresh();
+      reset();
+    });
+
+  // Decided once per mount: only server-thrown errors (digest) with no
+  // attempt in the last 30 s are retried; the attempt is recorded first.
+  const [autoRetrying] = useState(() => {
+    if (!error.digest || typeof window === "undefined") return false;
+    const key = `${window.location.pathname}|${error.digest}`;
+    const last = autoRetried.get(key);
+    if (last !== undefined && Date.now() - last < AUTO_RETRY_WINDOW_MS) {
+      return false;
+    }
+    autoRetried.set(key, Date.now());
+    return true;
+  });
+
   useEffect(() => {
+    if (!autoRetrying) return;
+    const t = setTimeout(retry, 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per mount
+  }, []);
+
+  // #1933: a self-healed blip must not spend Sentry quota.
+  useEffect(() => {
+    if (autoRetrying) return;
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "client" } },
@@ -63,7 +99,20 @@ export function DashboardRouteError({
         message: error.message,
       }),
     );
-  }, [error, event, scope, entityKey, entityId]);
+  }, [autoRetrying, error, event, scope, entityKey, entityId]);
+
+  if (autoRetrying) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 p-6 text-sm text-muted-foreground"
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        Reconnecting…
+      </div>
+    );
+  }
 
   // #1527: the shell owns the gutter, so no public-page geometry here.
   return (
@@ -73,7 +122,7 @@ export function DashboardRouteError({
       description="An unexpected error occurred. Please try again."
       error={error.message ? error : devFallbackMessage}
       digest={error.digest}
-      onRetry={reset}
+      onRetry={retry}
       action={
         <Button variant="outline" size="sm" asChild>
           <Link href={escape.href}>{escape.label}</Link>

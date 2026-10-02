@@ -326,6 +326,16 @@ function ReviewList({
   }
   const rows = query.data?.pages.flatMap((p) => p.rows) ?? [];
   if (rows.length === 0) {
+    // #1928: a filtered-empty list is not the never-reviewed state.
+    if (rating && !needsReply) {
+      return (
+        <EmptyState
+          icon={MessageSquareQuote}
+          title={`No ${rating}★ reviews`}
+          description="Try another rating, or clear the filter."
+        />
+      );
+    }
     return (
       <EmptyState
         icon={MessageSquareQuote}
