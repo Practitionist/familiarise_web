@@ -38,3 +38,11 @@ With "require branches to be up to date", every merge makes the others BEHIND. M
 ## 7. Orchestration hygiene that saved the campaign
 
 Executors on cheaper models than the orchestrator (Opus high for money code, Sonnet for E2E/docs/mechanical); one worktree per PR under a sibling path with `node_modules`/`.env` symlinked; every long agent prompt carries "if you approach a session limit: commit what is consistent, push, report"; resume dead agents from their worktree; keep a resume queue (plan file §) updated after every event; monitors emit one terminal line.
+
+## 8. App Router client conventions that fail silently (2026-10-02)
+
+URL-state writes must go through `replaceUrl()` in `lib/navigation/history.ts`, which passes `null` as the history state. Next 15 patches `history.replaceState` and `history.pushState` and skips its router sync when the state carries `__NA`, and `window.history.state` always carries it after hydration, so passing `window.history.state` moves the address bar while `useSearchParams` never changes (PR #1928). ESLint `no-restricted-syntax` now bans passing `.state`; the explore writers are the documented exception until #1927.
+
+Recovering from a server-thrown error in an `error.tsx` boundary needs `startTransition(() => { router.refresh(); reset(); })`, because `reset()` alone re-renders the same failed server payload. `components/dashboard/DashboardRouteError.tsx` retries once automatically, and it reads the retry decision on every render: a decision made once in `useState` spun on "Reconnecting…" forever when the failed retry came back as an update. `__tests__/dashboards/dashboard-route-error.test.tsx` pins this, and a blip that heals itself no longer spends Sentry quota.
+
+Placeholder data (`keepPreviousData`) belongs to the previous tab or filter, so never render the new tab's empty state from it.
