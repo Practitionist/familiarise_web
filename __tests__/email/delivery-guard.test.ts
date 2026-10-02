@@ -90,6 +90,17 @@ describe("pre-launch delivery guard", () => {
     expect(
       heldRecipientDomain(["owner@gmail.com", "stranger@outlook.com"]),
     ).toBe("outlook.com");
+    expect(heldRecipientDomain("a@evilfamiliarisenow.com")).toBe(
+      "evilfamiliarisenow.com",
+    );
+    expect(heldRecipientDomain("a@familiarisenow.com.evil.com")).toBe(
+      "familiarisenow.com.evil.com",
+    );
+    expect(heldRecipientDomain("x@gmail.com, ops@familiarisenow.com")).toBe(
+      "(invalid)",
+    );
+    process.env.EMAIL_ALLOWLIST = "tester.test";
+    expect(heldRecipientDomain("a@tester.test")).toBeNull();
     process.env.EMAIL_DELIVERY_MODE = "live";
     expect(heldRecipientDomain("stranger@outlook.com")).toBeNull();
   });
@@ -99,6 +110,17 @@ describe("pre-launch delivery guard", () => {
     process.env.EMAIL_DELIVERY_MODE = "live";
     await deliver(message, "WELCOME");
     expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds when an allowed to carries a refused bcc", async () => {
+    const withBcc = {
+      ...message,
+      to: "ops@familiarisenow.com",
+      bcc: ["seeded.user@gmail.com"],
+    };
+    const result = await deliver(withBcc, "ALERT");
+    expect(mockSend).not.toHaveBeenCalled();
+    expect((result as { error: unknown }).error).toBeInstanceOf(EmailHeldError);
   });
 
   it("dead-letters a held outbox row instead of retrying it", async () => {

@@ -105,7 +105,7 @@ The boxes in the target diagram are as follows.
 - **`_dmarc`**: starts at `p=none`, ramps to `p=quarantine` after about two weeks of clean reports, and reports to `dmarc@familiarisenow.com`.
 - **Pre-launch guard**: sits inside `deliver()` and the retry job, and holds any message with a recipient outside the allowlist.
 - **Ops alerts**: leave as "Familiarise Ops" from `system@mail.familiarisenow.com` and go to `ops@familiarisenow.com`; the two critical alerts are mirrored to Slack through `SLACK_OPS_WEBHOOK_URL`.
-- **Suppressions**: 77 seeded addresses were suppressed in Resend on 2026-10-03, and the database reset re-seeds users on `@example.test`, which can never be a real inbox.
+- **Suppressions**: all 77 seeded addresses are suppressed in Resend (64 added manually on 2026-10-03, 13 earlier by hard bounces), and the database reset re-seeds users on `@example.test`, which can never be a real inbox.
 - **ImprovMX aliases**: five aliases forward to the owner's Gmail, where filters label each one.
 
 ## 3. Email types
@@ -153,7 +153,7 @@ The guard lives in `lib/email/delivery-guard.ts` and is applied at three points:
 The rules, exactly as implemented, are as follows.
 
 - **Mode**: `EMAIL_DELIVERY_MODE=live` (case-insensitive, trimmed) disables the guard. Any other value, including unset, behaves as `allowlist`.
-- **Allowed recipients**: an address is allowed when its domain is `familiarisenow.com` or any subdomain of it, or when it matches an `EMAIL_ALLOWLIST` entry. The list is comma-separated and each entry is either an exact address or `@domain` for a whole domain. Matching is case-insensitive, and `Name <a@b>` reduces to the bare address.
+- **Allowed recipients**: an address is allowed when its domain is `familiarisenow.com` or any subdomain of it, or when it matches an `EMAIL_ALLOWLIST` entry. The list is comma-separated and each entry is either an exact address or a whole domain, written `@domain` or `domain`. Subdomains of an allowlisted domain are not included. Matching is case-insensitive, `Name <a@b>` reduces to the bare address, and a recipient string that is not exactly one address (a comma-separated list, for example) is always held.
 - **All-recipients rule**: a message is held when any of its `to`, `cc` or `bcc` recipients is refused. One refused recipient holds the whole message, and a batch row is held when any message in it is refused.
 - **Held representation**: a held message has a `FailedEmail` (or `FailedEmailBatch`) row with `status = DEAD_LETTER` and `lastError = "held:pre-launch"`. `stage()` returns `held: true`, and `attempt()` returns an `EmailHeldError` without calling Resend.
 - **Never retried**: the retry job re-checks the guard first and dead-letters any pending held row, so a held row is terminal. Switching to `live` later does not release old held rows, so a held message that matters must be re-triggered by its business flow.
@@ -240,7 +240,7 @@ Hosting is moving from Netlify to Vercel in one to two months. Because the DNS h
 ### Manage suppressions
 
 1. List and edit suppressions in the Resend dashboard or through the API; the app mirrors permanent bounces and complaints into `EmailSuppression` through the webhook.
-2. The 77 seeded addresses were suppressed in Resend on 2026-10-03 as a safety net. Leave them.
+2. All 77 seeded addresses are suppressed in Resend as a safety net: 64 were added manually on 2026-10-03 and 13 were already suppressed by hard bounces. Leave them.
 3. Never suppress a real signup. Check `User` for the address first, because a suppressed customer stops receiving verification and reset mail.
 
 ### Go live at launch

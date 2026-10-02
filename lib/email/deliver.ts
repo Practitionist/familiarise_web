@@ -15,6 +15,7 @@ import {
   HELD_PRE_LAUNCH,
   heldRecipientDomain,
   logHeld,
+  recipientsOf,
 } from "./delivery-guard";
 
 // #474 — the already-RENDERED message a sender handed to Resend. We persist
@@ -170,7 +171,7 @@ export async function stage(
   const payload = withReplyTo(message);
   const idempotencyKey = idempotencyKeyFor(payload, emailType);
   const db = opts.tx ?? prisma;
-  const heldDomain = heldRecipientDomain(payload.to);
+  const heldDomain = heldRecipientDomain(recipientsOf(payload));
   const write = async (): Promise<StagedEmail> => {
     // A held or suppressed recipient is dead-lettered at stage time: the row
     // records the refusal and neither the inline path nor the relay sends.
@@ -277,7 +278,7 @@ export async function attempt(
   if (staged?.held) {
     return { success: false, error: new EmailHeldError(), staged: true };
   }
-  const heldDomain = heldRecipientDomain(message.to);
+  const heldDomain = heldRecipientDomain(recipientsOf(message));
   if (heldDomain) {
     if (!staged) logHeld(emailType, heldDomain);
     return {

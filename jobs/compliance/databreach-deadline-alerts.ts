@@ -169,9 +169,10 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       if (!outcome.success) throw outcome.error;
       emailSent = true;
       console.log(`[DataBreach] alert email sent to ${to}`);
+      const overdueClause = overdue > 0 ? `, ${overdue} of them OVERDUE` : "";
       await postOpsChat(
         `[DPDP] ${atRisk} unreported data breach(es) are approaching or past the 72-hour DPB reporting deadline` +
-          `${overdue > 0 ? `, ${overdue} of them OVERDUE` : ""}. ` +
+          `${overdueClause}. ` +
           `Report each one to the Data Protection Board under Section 8(6) of the DPDP Act and record its DPB reference: ` +
           `${appUrl}/dashboard/admin/compliance?tab=breaches`,
       );

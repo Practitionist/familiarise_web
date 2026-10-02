@@ -3,8 +3,9 @@ import { normaliseEmail } from "./suppression";
 // Until launch, mail goes only to our own domain and EMAIL_ALLOWLIST: the
 // shared database holds seeded users whose faker addresses are real inboxes.
 
-/** The outbox `lastError` of a message the guard withheld; its row is DEAD_LETTER. */
-export const HELD_PRE_LAUNCH = "held:pre-launch";
+import { HELD_PRE_LAUNCH } from "./held";
+
+export { HELD_PRE_LAUNCH };
 
 const OWN_DOMAIN = "familiarisenow.com";
 
@@ -17,7 +18,11 @@ export class EmailHeldError extends Error {
 }
 
 /** Every recipient of a Resend message, accepting both string and list fields. */
-export function recipientsOf(message: Record<string, unknown>): string[] {
+export function recipientsOf(message: {
+  to?: unknown;
+  cc?: unknown;
+  bcc?: unknown;
+}): string[] {
   return [message.to, message.cc, message.bcc].flatMap((field) => {
     if (typeof field === "string") return [field];
     if (Array.isArray(field)) {
@@ -38,13 +43,21 @@ function domainOf(address: string): string {
   return at === -1 ? "" : address.slice(at + 1);
 }
 
+// Exactly one bare address, so a list or malformed string cannot borrow an
+// allowed domain from its last `@`.
+const SINGLE_ADDRESS = /^[^\s@,;<>"]+@[^\s@,;<>"]+$/;
+
+// An entry is an exact address, `@domain`, or a bare `domain`.
+function matchesEntry(address: string, domain: string, entry: string): boolean {
+  if (entry.startsWith("@")) return domain === entry.slice(1);
+  return entry.includes("@") ? address === entry : domain === entry;
+}
+
 function isAllowed(address: string, allowlist: string[]): boolean {
+  if (!SINGLE_ADDRESS.test(address)) return false;
   const domain = domainOf(address);
-  if (!domain) return false;
   if (domain === OWN_DOMAIN || domain.endsWith(`.${OWN_DOMAIN}`)) return true;
-  return allowlist.some((entry) =>
-    entry.startsWith("@") ? domain === entry.slice(1) : address === entry,
-  );
+  return allowlist.some((entry) => matchesEntry(address, domain, entry));
 }
 
 /**
@@ -62,10 +75,12 @@ export function heldRecipientDomain(
     .map(normaliseEmail)
     .filter(Boolean);
   const list = typeof recipients === "string" ? [recipients] : recipients;
-  if (list.length === 0) return null;
+  if (list.length === 0) return "(none)";
   for (const raw of list) {
     const address = addressOf(raw);
-    if (!isAllowed(address, allowlist)) return domainOf(address) || "(none)";
+    if (!isAllowed(address, allowlist)) {
+      return SINGLE_ADDRESS.test(address) ? domainOf(address) : "(invalid)";
+    }
   }
   return null;
 }
