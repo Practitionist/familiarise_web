@@ -26,8 +26,10 @@ import { authClient, useSession } from "@/lib/auth-client";
 import { AUTH_PROVIDERS, type AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
-import { humanizeAuthError } from "@/lib/labels/auth-errors";
-import { normalizeAuthErrorCode } from "@/lib/labels/auth-error-codes";
+import {
+  humanizeAuthError,
+  normalizeAuthErrorCode,
+} from "@/lib/labels/auth-errors";
 
 const MIN_PASSWORD_LENGTH = 8;
 

@@ -18,8 +18,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
-import { AUTH_ERROR_COPY } from "@/lib/labels/auth-errors";
-import { normalizeAuthErrorCode } from "@/lib/labels/auth-error-codes";
+import {
+  AUTH_ERROR_COPY,
+  normalizeAuthErrorCode,
+} from "@/lib/labels/auth-errors";
 import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,

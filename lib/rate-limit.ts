@@ -362,6 +362,27 @@ export const orgDataExportLimiter = makeLimiter(
   "rl:org-data-export",
 );
 
+/** 120 per hour per IP — GET /api/auth/sso/domain-check */
+export const ssoDomainCheckLimiter = makeLimiter(
+  120,
+  "1 h",
+  "rl:sso-domain-check",
+);
+
+/** 60 per hour per IP — POST /api/organizations/invitations/accept */
+export const inviteAcceptIpLimiter = makeLimiter(
+  60,
+  "1 h",
+  "rl:org-invite-accept",
+);
+
+/** 20 per hour per admin — POST /api/admin/team/members and setup-link */
+export const staffCreateLimiter = makeLimiter(
+  20,
+  "1 h",
+  "rl:platform:staff-create",
+);
+
 /**
  * Seconds until the sliding window admits the caller again, floored at one so
  * a client never reads "retry now" off a 429 (#1697).

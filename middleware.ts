@@ -18,17 +18,14 @@ import {
   availabilityLimiter,
   availabilityGridLimiter,
   orgWalletTopUpLimiter,
+  ssoDomainCheckLimiter,
+  inviteAcceptIpLimiter,
   applyRateLimit,
   getClientIp,
   isBypassableIp,
   streamJoinLimiter,
   streamApiLimiter,
 } from "@/lib/rate-limit";
-import {
-  RATE_SCOPE,
-  limiterFor,
-  type RateScope,
-} from "@/lib/rate-limit/policies";
 import { Ratelimit } from "@upstash/ratelimit";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,7 +63,6 @@ const ROUTE_PATTERNS = {
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
   // API routes requiring a session cookie (returns 401 JSON without one).
   AUTHENTICATED_API_PREFIXES: [
-    "/api/inngest/",
     "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
@@ -251,35 +247,25 @@ type RateRule = {
   label: string;
   match: (pathname: string, method: string) => boolean;
   limiter: Ratelimit;
-  /**
-   * The policy this rule spends, when it spends one. Carried as a field rather
-   * than parsed back out of `label` so the scope reported in the 429 body
-   * cannot drift from the limiter that produced it.
-   */
-  scope?: RateScope;
+  scope?: string;
   key?: (pathname: string, clientIp: string) => string | null;
   skipLocalhost: boolean;
 };
 
 const RATE_LIMIT_RULES: RateRule[] = [
   {
-    // An app route, so BetterAuth's limiter never sees it. Pre-login and
-    // returns `enforceSSO` + org name for any recognised domain, so hit in a
-    // loop it enumerates the enterprise customer base.
-    label: `policy: ${RATE_SCOPE.SSO_DOMAIN_CHECK}`,
+    label: "policy: enterprise.sso-domain-check",
     match: (p, m) => m === "GET" && p.startsWith("/api/auth/sso/domain-check"),
-    limiter: limiterFor(RATE_SCOPE.SSO_DOMAIN_CHECK),
-    scope: RATE_SCOPE.SSO_DOMAIN_CHECK,
+    limiter: ssoDomainCheckLimiter,
+    scope: "enterprise.sso-domain-check",
     skipLocalhost: true,
   },
   {
-    // Credential stuffing against stolen invite links. `invitationId` is in the
-    // POST body, which the edge cannot read, so this spends the IP budget only.
-    label: `policy: ${RATE_SCOPE.INVITE_ACCEPT}`,
+    label: "policy: enterprise.org-invite-accept",
     match: (p, m) =>
       m === "POST" && p === "/api/organizations/invitations/accept",
-    limiter: limiterFor(RATE_SCOPE.INVITE_ACCEPT),
-    scope: RATE_SCOPE.INVITE_ACCEPT,
+    limiter: inviteAcceptIpLimiter,
+    scope: "enterprise.org-invite-accept",
     skipLocalhost: true,
   },
   {

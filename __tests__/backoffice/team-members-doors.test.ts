@@ -57,10 +57,6 @@ jest.mock("../../lib/auth-helpers", () => ({
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   applyRateLimit: jest.fn(async () => null),
-}));
-jest.mock("../../lib/rate-limit/policies", () => ({
-  __esModule: true,
-  accountKey: jest.fn(async (id: string) => id),
   staffCreateLimiter: {},
 }));
 jest.mock("../../lib/observability/report", () => ({

@@ -163,32 +163,6 @@ export async function requireAdminAuth(): Promise<
 }
 
 /**
- * Strict STAFF-only auth — rejects ADMIN.
- *
- * Use for routes that are specifically staff-scoped and where an ADMIN
- * should NOT have access (e.g., "my support tickets" viewed by the staff
- * member who owns them, separated from admin's own views). This is
- * deliberately strict — most admin/staff routes want the PRIVILEGED
- * flavor below. If you're refactoring a route that previously allowed
- * both ADMIN and STAFF, use `requirePrivilegedAuth` instead.
- */
-export async function requireStaffAuth(): Promise<
-  { session: Session; error?: never } | { session?: never; error: NextResponse }
-> {
-  const auth = await requireApiAuth();
-  if (auth.error) return { error: auth.error };
-  if (auth.session.user.role !== "STAFF") {
-    return {
-      error: NextResponse.json(
-        { error: "Forbidden — staff access required" },
-        { status: 403 },
-      ),
-    };
-  }
-  return { session: auth.session };
-}
-
-/**
  * Privileged operator auth — ADMIN or STAFF. Use for read endpoints,
  * moderation queues, support operations, and the shared admin/staff
  * dashboard API surface. This is the most common helper for
@@ -217,11 +191,6 @@ export async function requirePrivilegedAuth(): Promise<
  * `requirePrivilegedAuth`. Resolves the caller's UserRole against
  * `BACKOFFICE_PERMISSIONS`, so the API route, the page guard, and the
  * sidebar all agree on who may reach a surface.
- *
- * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
- * merged back-office tree renders: those two only express "is this an
- * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
- * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
  *
  * @see lib/auth/backoffice-permissions.ts for the matrix and its rationale.
  */
@@ -274,13 +243,6 @@ export function checkOwnership(
  */
 export function forbiddenResponse(message = "Forbidden"): NextResponse {
   return NextResponse.json({ error: message }, { status: 403 });
-}
-
-/**
- * Creates a standardized 401 Unauthorized response.
- */
-export function unauthorizedResponse(message = "Unauthorized"): NextResponse {
-  return NextResponse.json({ error: message }, { status: 401 });
 }
 
 /**

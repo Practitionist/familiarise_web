@@ -1,308 +1,582 @@
 /**
- * The single place a Better Auth (or app-rail) failure becomes a sentence.
+ * Single-source authentication error catalog and humanizer.
  *
- * Resolution order, and why:
- *
- *   1. **Code.** `lib/labels/auth-errors.catalog.ts` is exhaustive over
- *      `AuthErrorCode`, so a matched code always has copy. Codes are matched
- *      case-insensitively and trimmed, because a hand-written `Refusal` is not
- *      obliged to match Better Auth's casing.
- *   2. **Flow override.** The same code can read differently per page (see
- *      `AUTH_ERROR_COPY_BY_FLOW`).
- *   3. **Status.** A code-less 429 becomes a timed message; a code-less 401/403
- *      becomes `REQUEST_REJECTED`, not the generic sentence. The previous
- *      version fell through to `GENERIC[flow]`, which turned a `trustedOrigins`
- *      misconfiguration on a deploy preview into "Something went wrong on our
- *      side" — the single most confusing auth failure this app can produce.
- *   4. **Generic**, per flow, as a true last resort.
- *
- * The raw `error.message` is *never* returned. Not for a known code, not for an
- * unknown one, not in a fallback. Better Auth's messages are developer-facing
- * ("Invalid email or password"); `lib/sso/signin-with-toast.ts` used to render
- * one verbatim, and a SAML parse failure surfaced to a customer as
- * `TypeError: Cannot read properties of undefined (reading 'metadata')`.
+ * Maps Better Auth and app-minted error codes to customer-facing copy without
+ * ever echoing raw server/library error strings (`error.message`).
  */
 
-import {
-  AUTH_ERROR_COPY,
-  UNREACHABLE,
-  baseAuthErrorCopy,
-  flowAuthErrorCopy,
-  type AuthErrorCopy,
-  type AuthErrorField,
-  type AuthFlow,
-} from "./auth-errors.catalog";
-import { normalizeAuthErrorCode } from "./auth-error-codes";
+import type { auth } from "@/lib/auth";
 
-// This module is the app's single import seam for the catalog, so the re-exports
-// below are load-bearing for every page. Written as `export … from` rather than
-// "import, then export the local binding" so each name has exactly one
-// declaration — the catalog — and none of them can be renamed here alone.
-export type {
-  AuthErrorAction,
-  AuthErrorCopy,
-  AuthErrorField,
-  AuthFlow,
-} from "./auth-errors.catalog";
-export { AUTH_ERROR_COPY, UNREACHABLE } from "./auth-errors.catalog";
+export type BetterAuthErrorCode =
+  | "USER_NOT_FOUND"
+  | "FAILED_TO_UPDATE_USER"
+  | "INVALID_PASSWORD"
+  | "INVALID_EMAIL"
+  | "INVALID_EMAIL_OR_PASSWORD"
+  | "PROVIDER_NOT_FOUND"
+  | "INVALID_TOKEN"
+  | "TOKEN_EXPIRED"
+  | "EMAIL_NOT_VERIFIED"
+  | "PASSWORD_TOO_SHORT"
+  | "PASSWORD_TOO_LONG"
+  | "USER_ALREADY_EXISTS"
+  | "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"
+  | "CREDENTIAL_ACCOUNT_NOT_FOUND"
+  | "SESSION_EXPIRED"
+  | "FAILED_TO_UNLINK_LAST_ACCOUNT"
+  | "ACCOUNT_NOT_FOUND"
+  | "EMAIL_ALREADY_VERIFIED"
+  | "SESSION_NOT_FRESH"
+  | "INVALID_ORIGIN"
+  | "VALIDATION_ERROR"
+  | "PASSWORD_ALREADY_SET"
+  | "BANNED_USER"
+  | "INVALID_CODE"
+  | "INVALID_BACKUP_CODE"
+  | "INVALID_TWO_FACTOR_COOKIE"
+  | "ACCOUNT_TEMPORARILY_LOCKED"
+  | "PASSWORD_COMPROMISED";
 
-/* -------------------------------------------------------------------------- */
-/* Input                                                                     */
-/* -------------------------------------------------------------------------- */
+type InstalledBetterAuthErrorCode = keyof typeof auth.$ERROR_CODES & string;
+type AssertNoneMissing<T extends never> = T;
+export type StaleBetterAuthErrorCode = AssertNoneMissing<
+  Exclude<BetterAuthErrorCode, InstalledBetterAuthErrorCode>
+>;
 
-/**
- * The shape `authClient.*` returns — the JSON body plus `status` — widened with
- * the fields our own rails add.
- */
+export type AppAuthErrorCode =
+  | "SSO_REQUIRED"
+  | "SSO_PROVIDER_MISCONFIGURED"
+  | "SSO_EMAIL_DOMAIN_MISMATCH"
+  | "RATE_LIMITED"
+  | "SESSION_LOOKUP_FAILED"
+  | "REQUEST_REJECTED"
+  | "TWO_FACTOR_REQUIRED"
+  | "STAFF_PASSWORD_SIGN_IN_ONLY"
+  | "TRUST_DEVICE_DISABLED"
+  | "INVITATION_NOT_FOUND"
+  | "INVITATION_EXPIRED"
+  | "INVITATION_ALREADY_ACCEPTED"
+  | "INVITATION_NOT_FOR_YOU";
+
+export type AuthErrorCode = BetterAuthErrorCode | AppAuthErrorCode;
+
+export const AUTH_ERROR_CODES = {
+  USER_NOT_FOUND: "USER_NOT_FOUND",
+  FAILED_TO_UPDATE_USER: "FAILED_TO_UPDATE_USER",
+  INVALID_PASSWORD: "INVALID_PASSWORD",
+  INVALID_EMAIL: "INVALID_EMAIL",
+  INVALID_EMAIL_OR_PASSWORD: "INVALID_EMAIL_OR_PASSWORD",
+  PROVIDER_NOT_FOUND: "PROVIDER_NOT_FOUND",
+  INVALID_TOKEN: "INVALID_TOKEN",
+  TOKEN_EXPIRED: "TOKEN_EXPIRED",
+  EMAIL_NOT_VERIFIED: "EMAIL_NOT_VERIFIED",
+  PASSWORD_TOO_SHORT: "PASSWORD_TOO_SHORT",
+  PASSWORD_TOO_LONG: "PASSWORD_TOO_LONG",
+  USER_ALREADY_EXISTS: "USER_ALREADY_EXISTS",
+  USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL:
+    "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
+  CREDENTIAL_ACCOUNT_NOT_FOUND: "CREDENTIAL_ACCOUNT_NOT_FOUND",
+  SESSION_EXPIRED: "SESSION_EXPIRED",
+  FAILED_TO_UNLINK_LAST_ACCOUNT: "FAILED_TO_UNLINK_LAST_ACCOUNT",
+  ACCOUNT_NOT_FOUND: "ACCOUNT_NOT_FOUND",
+  EMAIL_ALREADY_VERIFIED: "EMAIL_ALREADY_VERIFIED",
+  SESSION_NOT_FRESH: "SESSION_NOT_FRESH",
+  INVALID_ORIGIN: "INVALID_ORIGIN",
+  VALIDATION_ERROR: "VALIDATION_ERROR",
+  PASSWORD_ALREADY_SET: "PASSWORD_ALREADY_SET",
+  BANNED_USER: "BANNED_USER",
+  INVALID_CODE: "INVALID_CODE",
+  INVALID_BACKUP_CODE: "INVALID_BACKUP_CODE",
+  INVALID_TWO_FACTOR_COOKIE: "INVALID_TWO_FACTOR_COOKIE",
+  ACCOUNT_TEMPORARILY_LOCKED: "ACCOUNT_TEMPORARILY_LOCKED",
+  PASSWORD_COMPROMISED: "PASSWORD_COMPROMISED",
+  SSO_REQUIRED: "SSO_REQUIRED",
+  SSO_PROVIDER_MISCONFIGURED: "SSO_PROVIDER_MISCONFIGURED",
+  SSO_EMAIL_DOMAIN_MISMATCH: "SSO_EMAIL_DOMAIN_MISMATCH",
+  RATE_LIMITED: "RATE_LIMITED",
+  SESSION_LOOKUP_FAILED: "SESSION_LOOKUP_FAILED",
+  REQUEST_REJECTED: "REQUEST_REJECTED",
+  TWO_FACTOR_REQUIRED: "TWO_FACTOR_REQUIRED",
+  STAFF_PASSWORD_SIGN_IN_ONLY: "STAFF_PASSWORD_SIGN_IN_ONLY",
+  TRUST_DEVICE_DISABLED: "TRUST_DEVICE_DISABLED",
+  INVITATION_NOT_FOUND: "INVITATION_NOT_FOUND",
+  INVITATION_EXPIRED: "INVITATION_EXPIRED",
+  INVITATION_ALREADY_ACCEPTED: "INVITATION_ALREADY_ACCEPTED",
+  INVITATION_NOT_FOR_YOU: "INVITATION_NOT_FOR_YOU",
+} as const satisfies Record<AuthErrorCode, AuthErrorCode>;
+
+const KNOWN_CODES: ReadonlySet<string> = new Set(
+  Object.values(AUTH_ERROR_CODES),
+);
+
+export function isAuthErrorCode(value: unknown): value is AuthErrorCode {
+  return typeof value === "string" && KNOWN_CODES.has(value.toUpperCase());
+}
+
+export function normalizeAuthErrorCode(
+  value: string | null | undefined,
+): AuthErrorCode | null {
+  if (!value) return null;
+  const upper = value.trim().toUpperCase();
+  return KNOWN_CODES.has(upper) ? (upper as AuthErrorCode) : null;
+}
+
+export type AuthErrorField =
+  | "email"
+  | "password"
+  | "newPassword"
+  | "referral"
+  | "code";
+
+export type AuthErrorAction =
+  | "forgot-password"
+  | "resend-verification"
+  | "request-new-link"
+  | "switch-to-sso"
+  | "sign-in"
+  | "sign-up"
+  | "retry"
+  | "contact-support"
+  | "enroll-2fa";
+
+export interface AuthErrorCopy {
+  title: string;
+  description: string;
+  field?: AuthErrorField;
+  needsVerification?: boolean;
+  action?: AuthErrorAction;
+}
+
+export type AuthFlowName = "signin" | "signup" | "forgot" | "reset" | "verify";
+export type { AuthFlowName as AuthFlow };
+
+const SUPPORT = "support@familiarisenow.com";
+
+export const UNREACHABLE: AuthErrorCopy = {
+  title: "We couldn't reach the sign-in service",
+  description: "Nothing was changed. Please try again in a moment.",
+  action: "retry",
+};
+
+export const AUTH_ERROR_COPY = {
+  INVALID_EMAIL_OR_PASSWORD: {
+    title: "That email and password don't match",
+    description: "Check both and try again, or use Forgot password?",
+    field: "password",
+    action: "forgot-password",
+  },
+  INVALID_PASSWORD: {
+    title: "That password didn't work",
+    description: "Check for a capital letter or a typo, then try again.",
+    field: "password",
+    action: "forgot-password",
+  },
+  CREDENTIAL_ACCOUNT_NOT_FOUND: {
+    title: "This account has no password",
+    description:
+      "You signed up with Google or GitHub, or through your organisation's SSO. Use that button instead.",
+  },
+  USER_NOT_FOUND: {
+    title: "We couldn't find that account",
+    description: "It may have been deleted. Sign up again to start over.",
+    action: "sign-up",
+  },
+  EMAIL_NOT_VERIFIED: {
+    title: "Verify your email first",
+    description: "Your email isn't verified yet — resend the link below.",
+    needsVerification: true,
+    action: "resend-verification",
+  },
+  BANNED_USER: {
+    title: "This account is suspended",
+    description: `Contact ${SUPPORT} if you think this is a mistake.`,
+    action: "contact-support",
+  },
+  SESSION_EXPIRED: {
+    title: "Your session has expired",
+    description: "For your security, sign in again to continue.",
+    action: "sign-in",
+  },
+  SESSION_NOT_FRESH: {
+    title: "Please sign in again",
+    description:
+      "This is a sensitive action, so we ask you to confirm it's you.",
+    action: "sign-in",
+  },
+  SESSION_LOOKUP_FAILED: UNREACHABLE,
+  USER_ALREADY_EXISTS: {
+    title: "This email already has an account",
+    description: "Sign in instead, or reset your password if you forgot it.",
+    field: "email",
+    action: "sign-in",
+  },
+  USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL: {
+    title: "This email already has an account",
+    description: "Sign in instead, or reset your password if you forgot it.",
+    field: "email",
+    action: "sign-in",
+  },
+  PASSWORD_ALREADY_SET: {
+    title: "This account already has a password",
+    description: "Sign in instead of creating a new account.",
+    field: "email",
+    action: "sign-in",
+  },
+  FAILED_TO_UPDATE_USER: {
+    title: "We couldn't save that change",
+    description: "Nothing was changed. Please try again.",
+    action: "retry",
+  },
+  INVALID_EMAIL: {
+    title: "Check the email address",
+    description: "Enter a valid email address.",
+    field: "email",
+  },
+  PASSWORD_TOO_SHORT: {
+    title: "Password too short",
+    description: "Use at least 8 characters.",
+    field: "password",
+  },
+  PASSWORD_TOO_LONG: {
+    title: "Password too long",
+    description: "Use at most 128 characters.",
+    field: "password",
+  },
+  PASSWORD_COMPROMISED: {
+    title: "Choose a different password",
+    description:
+      "This password has appeared in a data breach, so attackers try it first. Pick one you don't use anywhere else.",
+    field: "password",
+  },
+  INVALID_TOKEN: {
+    title: "This link no longer works",
+    description: "It is invalid or has already been used. Request a new one.",
+    action: "request-new-link",
+  },
+  TOKEN_EXPIRED: {
+    title: "This link has expired",
+    description: "Request a new one — links are single-use and time-limited.",
+    action: "request-new-link",
+  },
+  EMAIL_ALREADY_VERIFIED: {
+    title: "Already verified",
+    description: "This email is verified — you can sign in.",
+    action: "sign-in",
+  },
+  FAILED_TO_UNLINK_LAST_ACCOUNT: {
+    title: "You need one way to sign in",
+    description:
+      "Add a password or another provider before disconnecting this one.",
+  },
+  ACCOUNT_NOT_FOUND: {
+    title: "We couldn't find that connection",
+    description: "Refresh the page and try again.",
+    action: "retry",
+  },
+  PROVIDER_NOT_FOUND: {
+    title: "That sign-in method isn't available",
+    description: "Use your email and password instead.",
+    action: "sign-in",
+  },
+  INVITATION_NOT_FOUND: {
+    title: "This invitation link isn't valid",
+    description:
+      "It may have been revoked. Ask whoever invited you for a new one.",
+    action: "contact-support",
+  },
+  INVITATION_EXPIRED: {
+    title: "This invitation has expired",
+    description: "Ask for a new one — invitations last 14 days.",
+    action: "contact-support",
+  },
+  INVITATION_ALREADY_ACCEPTED: {
+    title: "This invitation was already accepted",
+    description: "Open the organisation from your dashboard to get started.",
+    action: "retry",
+  },
+  INVITATION_NOT_FOR_YOU: {
+    title: "This invitation isn't for you",
+    description: "It was sent to a different email address.",
+    action: "contact-support",
+  },
+  SSO_REQUIRED: {
+    title: "Use your organisation's sign-in",
+    description:
+      "Your organisation requires its own sign-in for this email, so password and Google sign-in are turned off. Use the SSO button below.",
+    field: "email",
+    action: "switch-to-sso",
+  },
+  SSO_PROVIDER_MISCONFIGURED: {
+    title: "Your organisation's sign-in is not set up yet",
+    description: `Ask an administrator to finish the SSO setup, or contact ${SUPPORT}.`,
+    action: "contact-support",
+  },
+  SSO_EMAIL_DOMAIN_MISMATCH: {
+    title: "This email isn't on your organisation's domain",
+    description: `Sign in another way, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
+    action: "contact-support",
+  },
+  RATE_LIMITED: {
+    title: "Too many attempts",
+    description: "Please wait a moment, then try again.",
+    action: "retry",
+  },
+  TWO_FACTOR_REQUIRED: {
+    title: "Set up two-factor authentication",
+    description: "Staff accounts need a second factor before you can continue.",
+    action: "enroll-2fa",
+  },
+  STAFF_PASSWORD_SIGN_IN_ONLY: {
+    title: "Sign in with your password",
+    description:
+      "Staff accounts sign in with email, password and an authenticator code.",
+  },
+  TRUST_DEVICE_DISABLED: {
+    title: "Trusted devices aren't available",
+    description:
+      "Enter a code from your authenticator app each time you sign in.",
+  },
+  INVALID_CODE: {
+    title: "That code isn't right",
+    description: "Check the code and try again.",
+    field: "code",
+  },
+  INVALID_BACKUP_CODE: {
+    title: "That backup code isn't right",
+    description:
+      "Each backup code works once. Try another, or generate new ones.",
+    field: "code",
+  },
+  INVALID_TWO_FACTOR_COOKIE: {
+    title: "Your verification expired",
+    description: "Sign in again to start a new one.",
+    action: "sign-in",
+  },
+  ACCOUNT_TEMPORARILY_LOCKED: {
+    title: "Too many wrong codes",
+    description:
+      "For your security, two-factor sign-in is paused. Wait 15 minutes, then try again.",
+    field: "code",
+    action: "retry",
+  },
+  REQUEST_REJECTED: {
+    title: "This sign-in request was blocked",
+    description:
+      "Our security policy stopped the request before it reached the sign-in service. If you're on a preview deployment, use the main site's address instead.",
+    action: "retry",
+  },
+  INVALID_ORIGIN: {
+    title: "This sign-in request was blocked",
+    description: "The address this page was opened from isn't recognised.",
+    action: "retry",
+  },
+  VALIDATION_ERROR: {
+    title: "Check the form",
+    description: "One of the fields needs fixing.",
+  },
+} as const satisfies Record<AuthErrorCode, AuthErrorCopy>;
+
+export const AUTH_ERROR_COPY_BY_FLOW: Readonly<
+  Partial<
+    Record<AuthFlowName, Readonly<Record<string, Partial<AuthErrorCopy>>>>
+  >
+> = {
+  reset: {
+    INVALID_TOKEN: {
+      title: "This reset link no longer works",
+      description:
+        "Reset links last 30 minutes and work once. Request a new one.",
+      action: "request-new-link" as const,
+    },
+    TOKEN_EXPIRED: {
+      title: "This reset link has expired",
+      description: "Reset links last 30 minutes. Request a new one.",
+      action: "request-new-link" as const,
+    },
+    PASSWORD_COMPROMISED: { field: "newPassword" as const },
+  },
+  verify: {
+    INVALID_TOKEN: {
+      title: "This verification link no longer works",
+      description:
+        "Verification links last 1 hour and work once. Request a fresh one.",
+      action: "resend-verification" as const,
+    },
+    TOKEN_EXPIRED: {
+      title: "This verification link has expired",
+      description: "Verification links last 1 hour. Request a fresh one below.",
+      action: "resend-verification" as const,
+    },
+  },
+  forgot: {},
+};
+
 export interface AuthClientError {
-  code?: string;
-  message?: string;
-  /** Our limiter and route helpers answer `{ error, code }`. */
-  error?: string;
-  status?: number;
-  /**
-   * `Retry-After`, in seconds. Present on our 429s. Better Auth's own
-   * rate-limit error does not carry it, which is why the copy is rewritten at
-   * the call site rather than read from the error object.
-   */
-  retryAfterSeconds?: number;
-  /** Which limiter fired — lets the page name the window ("sign-in", "reset"). */
-  scope?: string;
+  message?: string | null;
+  code?: string | null;
+  status?: number | null;
+  retryAfterSeconds?: number | null;
 }
 
 export interface HumanizeOptions {
-  /** Overrides `error.retryAfterSeconds` — useful when the page parsed a header. */
-  retryAfterSeconds?: number;
+  retryAfterSeconds?: number | null;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Retry-After                                                               */
-/* -------------------------------------------------------------------------- */
-
-/**
- * "in 12 minutes", not "in 731 seconds" and not "in a moment".
- *
- * Rounding is deliberately coarse and *up*: a customer told to come back in
- * "9 minutes" for a 9m30s wait has been told to come back too early, and the
- * natural reaction is to hammer the button — which is exactly the behaviour a
- * rate limit exists to interrupt.
- */
 export function formatRetryAfter(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "a moment";
-  const total = Math.ceil(seconds);
-  if (total < 60) return `${total} second${total === 1 ? "" : "s"}`;
-  const minutes = Math.ceil(total / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  const hours = Math.ceil(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
-  return `${Math.ceil(hours / 24)} days`;
+  if (seconds < 60) {
+    const s = Math.ceil(seconds);
+    return s === 1 ? "1 second" : `${s} seconds`;
+  }
+  if (seconds < 3600) {
+    const m = Math.ceil(seconds / 60);
+    return m === 1 ? "1 minute" : `${m} minutes`;
+  }
+  if (seconds < 86400) {
+    const h = Math.ceil(seconds / 3600);
+    return h === 1 ? "1 hour" : `${h} hours`;
+  }
+  const d = Math.ceil(seconds / 86400);
+  return d === 1 ? "1 day" : `${d} days`;
 }
 
-/** `RATE_LIMITED` gains a real time to wait. */
 function withRetryAfter(
-  copy: AuthErrorCopy,
-  seconds: number | undefined,
+  base: AuthErrorCopy,
+  retryAfterSeconds: number | null | undefined,
 ): AuthErrorCopy {
-  if (seconds === undefined) return copy;
+  if (!retryAfterSeconds || retryAfterSeconds <= 0) return base;
+  const wait = formatRetryAfter(retryAfterSeconds);
   return {
-    ...copy,
-    description: `Try again in ${formatRetryAfter(seconds)}.`,
+    ...base,
+    description: `For your security, please wait ${wait} before trying again.`,
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Validation-message sniffing                                               */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Better Auth validates the request body with zod *before* its own codes
- * apply, so a blank field arrives as `VALIDATION_ERROR` / `MISSING_FIELD` with
- * a message like `[body.email] Invalid email`. Only the field name is read from
- * it — never the value, which is user input and may itself be sensitive.
- */
-function fieldFromValidationMessage(
-  message: string | undefined,
-): AuthErrorField | null {
-  if (!message) return null;
-  if (/\[body\.email\]/i.test(message)) return "email";
-  if (/\[body\.newPassword\]/i.test(message)) return "newPassword";
-  if (/\[body\.(password|currentPassword)\]/i.test(message)) return "password";
-  if (/\[body\.(code|otp|token)\]/i.test(message)) return "code";
-  return null;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Resolution                                                                */
-/* -------------------------------------------------------------------------- */
-
-/** Better Auth validates with zod before its own codes apply. */
-const VALIDATION_CODES = new Set(["VALIDATION_ERROR", "MISSING_FIELD"]);
-
-/**
- * The title/description pair for a field the validation sniffer recovered.
- *
- * A table rather than a chain of conditionals, deliberately: a chain chooses a
- * sentence by fall-through, so the "no field matched" case is whichever branch
- * was written last and a reader has to prove it. Here every field the sniffer
- * can return has its own row, and typing the table over `AuthErrorField` means
- * a *new* field is a compile error in this file rather than a customer reading
- * a sentence nobody chose. That is the same exhaustiveness bargain the catalog
- * itself makes over `AuthErrorCode`.
- */
-const VALIDATION_FIELD_COPY: Record<
-  AuthErrorField,
-  Pick<AuthErrorCopy, "title" | "description">
-> = {
-  email: {
-    title: "Check the email address",
-    description: "Enter a valid email address.",
-  },
-  newPassword: {
-    title: "Enter a new password",
-    description: "This field can't be empty.",
-  },
-  password: {
-    title: "Check this field",
-    description: "This field can't be empty.",
-  },
-  code: {
-    title: "Check this field",
-    description: "Enter the code from your app or email.",
-  },
-  // Unreachable from `fieldFromValidationMessage`, which never sniffs a
-  // referral field. Listed so the table stays exhaustive over `AuthErrorField`
-  // and keeps the generic sentence rather than becoming a runtime miss.
-  referral: {
-    title: "Check this field",
-    description: "This field can't be empty.",
-  },
-};
-
-function copyForCode(
-  flow: AuthFlow,
-  code: string,
-  message: string | undefined,
-): AuthErrorCopy | null {
-  // The validation codes are checked FIRST, and must be, because
-  // `AUTH_ERROR_COPY` has generic entries for them with no `field`. Looking
-  // those up before the sniff would return the generic sentence and the field
-  // would never be recovered — which is the whole value of the code, since
-  // BetterAuth's own zod message ("[body.email] Invalid email") is the only
-  // signal that names the offending input. Only the field *token* is read from
-  // that message; the message itself is never returned.
-  if (VALIDATION_CODES.has(code)) {
-    const field = fieldFromValidationMessage(message);
-    if (!field) return baseAuthErrorCopy(code) ?? null;
-    return { ...VALIDATION_FIELD_COPY[field], field };
-  }
-
-  const perFlow = flowAuthErrorCopy(flow, code);
-  const base = baseAuthErrorCopy(code);
-
-  // A flow override is an *amendment* to the base entry, so a base must exist.
-  // `AUTH_ERROR_COPY` is exhaustive over `AuthErrorCode` and every key of
-  // `AUTH_ERROR_COPY_BY_FLOW` is an `AuthErrorCode`, so this cannot be null for
-  // a code we recognise — but the check keeps a future bad override from
-  // rendering a `{ title: undefined }` toast instead of failing loudly.
-  if (perFlow) {
-    if (!base) {
-      throw new Error(
-        `auth-errors: flow override for "${flow}/${code}" has no base entry in AUTH_ERROR_COPY`,
-      );
-    }
-    return { ...base, ...perFlow };
-  }
-
-  return base ?? null;
-}
-
-const GENERIC: Record<AuthFlow, AuthErrorCopy> = {
-  signin: {
-    title: "Sign-in failed",
-    description: "Something went wrong on our side. Please try again.",
-    action: "retry",
-  },
-  signup: {
-    title: "We couldn't create your account",
-    description: "Something went wrong on our side. Please try again.",
-    action: "retry",
-  },
-  forgot: {
-    title: "We couldn't send the reset link",
-    description: "Please try again in a moment.",
-    action: "retry",
-  },
-  reset: {
-    title: "We couldn't reset your password",
-    description: "Please try again, or request a new link.",
-    action: "request-new-link",
-  },
-  verify: {
-    title: "We couldn't verify that link",
-    description: "Request a fresh one below.",
-    action: "request-new-link",
-  },
-};
-
-/**
- * Status fallback, for a failure that carried no usable code.
- *
- * The 401/403 branch is the important one. Those statuses out of `/api/auth/*`
- * mean the request never reached a handler — a `trustedOrigins` or CSRF
- * rejection at the edge — which is a *deployment* problem, not a customer's
- * password. Answering it with `GENERIC[flow]` told a correct password that
- * "something went wrong on our side", and gave support nothing to look at.
- */
 function copyForStatus(
-  flow: AuthFlow,
-  status: number | undefined,
-  retryAfterSeconds: number | undefined,
+  flow: AuthFlowName,
+  status: number | null | undefined,
+  retryAfterSeconds: number | null | undefined,
 ): AuthErrorCopy {
-  if (status === undefined) return GENERIC[flow];
   if (status === 429) {
     return withRetryAfter(AUTH_ERROR_COPY.RATE_LIMITED, retryAfterSeconds);
   }
-  if (status === 0 || status >= 500) return UNREACHABLE;
-  if (status === 401 || status === 403) return AUTH_ERROR_COPY.REQUEST_REJECTED;
-  if (status === 428) {
-    // "Precondition required" is what the mandatory-2FA gate answers. It is not
-    // currently reachable — the gate always sends `TWO_FACTOR_REQUIRED`, which
-    // the code table catches first — so this is one line of defence against a
-    // future 428 arriving from a route that forgets to set a code. Answering it
-    // as "something went wrong on our side" would be actively misleading: the
-    // request was refused on purpose and the customer has something to do.
-    return AUTH_ERROR_COPY.TWO_FACTOR_REQUIRED;
+  if (status === 401 || status === 403) {
+    return AUTH_ERROR_COPY.REQUEST_REJECTED;
   }
-  if (status === 410) {
-    return {
-      title: "This link is no longer available",
-      description: "It was revoked or has already been used.",
-      action: "request-new-link",
-    };
+  if (status === 0 || (typeof status === "number" && status >= 500)) {
+    return UNREACHABLE;
   }
-  if (status === 409) {
-    return {
-      title: "That conflicts with something already saved",
-      description: "Refresh the page and try again.",
-      action: "retry",
-    };
+  switch (flow) {
+    case "signin":
+      return {
+        title: "Couldn't sign you in",
+        description: "Check the details you entered and try again.",
+        action: "retry",
+      };
+    case "signup":
+      return {
+        title: "Couldn't create your account",
+        description: "Check the details you entered and try again.",
+        action: "retry",
+      };
+    case "forgot":
+      return {
+        title: "Couldn't send the reset link",
+        description: "Check the email address and try again.",
+        action: "retry",
+      };
+    case "reset":
+      return {
+        title: "Couldn't update your password",
+        description:
+          "The reset link may have expired. Request a new one and try again.",
+        action: "request-new-link",
+      };
+    case "verify":
+      return {
+        title: "Couldn't verify your email",
+        description:
+          "The link may have expired. Request a fresh one and try again.",
+        action: "resend-verification",
+      };
   }
-  return GENERIC[flow];
 }
 
-/* -------------------------------------------------------------------------- */
-/* Entry point                                                               */
-/* -------------------------------------------------------------------------- */
+function fieldFromValidationMessage(
+  flow: AuthFlowName,
+  message: string | null | undefined,
+): Partial<AuthErrorCopy> | null {
+  if (!message) return null;
+  if (message.includes("[body.email]")) {
+    return AUTH_ERROR_COPY.INVALID_EMAIL;
+  }
+  if (
+    message.includes("[body.password]") ||
+    message.includes("[body.newPassword]")
+  ) {
+    const field: AuthErrorField =
+      flow === "reset" && message.includes("[body.newPassword]")
+        ? "newPassword"
+        : "password";
+    if (message.includes("Too small")) {
+      return { ...AUTH_ERROR_COPY.PASSWORD_TOO_SHORT, field };
+    }
+    if (message.includes("Too big")) {
+      return { ...AUTH_ERROR_COPY.PASSWORD_TOO_LONG, field };
+    }
+    return {
+      title: "Check the password",
+      description: "Use 8 to 128 characters.",
+      field,
+    };
+  }
+  return null;
+}
+
+function extractError(error: unknown): AuthClientError {
+  if (!error || typeof error !== "object") return {};
+  const e = error as {
+    code?: unknown;
+    status?: unknown;
+    message?: unknown;
+    retryAfterSeconds?: unknown;
+  };
+  return {
+    code: typeof e.code === "string" ? e.code : null,
+    status: typeof e.status === "number" ? e.status : null,
+    message: typeof e.message === "string" ? e.message : null,
+    retryAfterSeconds:
+      typeof e.retryAfterSeconds === "number" ? e.retryAfterSeconds : null,
+  };
+}
 
 export function humanizeAuthError(
-  flow: AuthFlow,
-  error: AuthClientError | null | undefined,
-  options: HumanizeOptions = {},
+  flow: AuthFlowName,
+  error: unknown,
+  options?: HumanizeOptions,
 ): AuthErrorCopy {
-  if (!error) return GENERIC[flow];
+  const { code: rawCode, status, message, retryAfterSeconds } =
+    extractError(error);
+  const wait = options?.retryAfterSeconds ?? retryAfterSeconds;
 
-  const retryAfter = options.retryAfterSeconds ?? error.retryAfterSeconds;
-  const code = normalizeAuthErrorCode(error.code);
-  const byCode = code ? copyForCode(flow, code, error.message) : null;
-  return byCode ?? copyForStatus(flow, error.status, retryAfter);
+  const code = normalizeAuthErrorCode(rawCode);
+  if (code) {
+    if (code === "VALIDATION_ERROR") {
+      const fromField = fieldFromValidationMessage(flow, message);
+      if (fromField?.title && fromField.description) {
+        return fromField as AuthErrorCopy;
+      }
+    }
+    const base = (AUTH_ERROR_COPY as Record<string, AuthErrorCopy>)[code];
+    if (base) {
+      const override = AUTH_ERROR_COPY_BY_FLOW[flow]?.[code];
+      const merged: AuthErrorCopy = override ? { ...base, ...override } : base;
+      if (code === "RATE_LIMITED" || status === 429) {
+        return withRetryAfter(merged, wait);
+      }
+      return merged;
+    }
+  }
+
+  return copyForStatus(flow, status, wait);
 }
