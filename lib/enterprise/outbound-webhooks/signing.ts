@@ -30,7 +30,7 @@
  * the secret over enough requests.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const SIGNATURE_HEADER = "X-Familiarise-Signature";
 
@@ -152,7 +152,5 @@ export function generateEndpointSecret(): string {
   // Next.js server runtime. Avoid Math.random (not cryptographically
   // secure) and Web Crypto's getRandomValues (only available in edge,
   // not the Node runtime that handles webhook CRUD).
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { randomBytes } = require("node:crypto") as typeof import("node:crypto");
   return randomBytes(32).toString("hex");
 }

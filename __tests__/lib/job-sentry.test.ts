@@ -48,10 +48,14 @@ function loadModule(): JobSentryModule & LockErrorsModule {
   let mod!: JobSentryModule;
   let errors!: LockErrorsModule;
   jest.isolateModules(() => {
-    /* eslint-disable @typescript-eslint/no-require-imports */
-    mod = require("../../lib/observability/job-sentry") as JobSentryModule;
-    errors = require("../../lib/cron/cron-lock-errors") as LockErrorsModule;
-    /* eslint-enable @typescript-eslint/no-require-imports */
+    // requireActual resolves through the isolated registry, so each call gets
+    // fresh module state without a bare `require` (no inline disables).
+    mod = jest.requireActual(
+      "../../lib/observability/job-sentry",
+    ) as JobSentryModule;
+    errors = jest.requireActual(
+      "../../lib/cron/cron-lock-errors",
+    ) as LockErrorsModule;
   });
   return { ...mod, ...errors };
 }

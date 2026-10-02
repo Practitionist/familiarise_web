@@ -538,9 +538,10 @@ export async function retryFailedEmails(opts?: {
 if (require.main === module) {
   // tsx doesn't auto-load .env outside the Next.js runtime; without this
   // RESEND_API_KEY/DATABASE_URL are undefined. (Mirrors the webhook wrapper.)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require("dotenv/config");
   runJob("retry-failed-emails", async () => {
+    // Loaded here (not at module top) so importing this file from Next/tests never
+    // reads .env; dynamic import is the ESM form of the old lazy require.
+    await import("dotenv/config");
     await abortIfMaintenance("retry-failed-emails");
     Sentry.logger.info("job:retry-failed-emails started");
     console.log("📧 Retrying dead-lettered transactional emails...");
