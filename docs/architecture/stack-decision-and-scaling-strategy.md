@@ -1,8 +1,8 @@
 # Stack Decision & Scaling Strategy
 
-> Why Next.js/Supabase/Vercel over Java/AWS Microservices, and the path to nationwide scale.
+> Why Next.js/Supabase/Netlify/Upstash over Java/AWS Microservices, and the path to nationwide scale.
 >
-> Date: February 2026 | Stage: Pre-launch | Team: 2-3 engineers
+> Date: February 2026 (Updated October 2026) | Stage: Pre-launch | Team: 2-3 engineers
 
 ---
 
@@ -29,7 +29,7 @@
 
 ## The Decision
 
-We chose **Next.js + Supabase + Vercel** over a **Java + AWS microservices** architecture. The primary reason was speed of execution — we needed to build a feature-rich marketplace with a 2-3 person team, not spend months on infrastructure before shipping a single feature.
+We chose **Next.js + Supabase + Upstash + Netlify** over a **Java + AWS microservices** architecture. The primary reason was speed of execution — we needed to build a feature-rich marketplace with a 2-3 person team, not spend months on infrastructure before shipping a single feature.
 
 This document explains why that decision was correct, what the trade-offs are, and what the path to nationwide scale looks like.
 
@@ -37,19 +37,19 @@ This document explains why that decision was correct, what the trade-offs are, a
 
 ## Current Stack
 
-| Layer              | Technology                                | Role                                                           |
-| ------------------ | ----------------------------------------- | -------------------------------------------------------------- |
-| Frontend + Backend | Next.js 15 + React 18                     | Full-stack framework, API routes, SSR/ISR                      |
-| Styling            | TailwindCSS + Radix UI                    | Component library, design system                               |
-| Database           | PostgreSQL (Supabase)                     | Primary data store, connection pooling via pgbouncer           |
-| ORM                | Prisma 7.3                                | Type-safe database access, migrations                          |
-| Auth               | BetterAuth                                | Authentication and session management                          |
-| Cache              | Upstash Redis                             | Distributed locks, maintenance state, rate limiting            |
-| Video & Chat       | Stream.io                                 | Real-time video calls, messaging, presence                     |
-| Payments           | Stripe + Razorpay                         | Multi-gateway payment processing (2 gateways)                  |
-| Notifications      | Novu + Resend                             | Push notifications, transactional email                        |
-| Storage            | Supabase Storage                          | File uploads, image hosting                                    |
-| Hosting            | Vercel                                    | Edge network, serverless functions, CDN, automatic deployments |
+| Layer              | Technology             | Role                                                           |
+| ------------------ | ---------------------- | -------------------------------------------------------------- |
+| Frontend + Backend | Next.js 15 + React 18  | Full-stack framework, API routes, SSR/ISR                      |
+| Styling            | TailwindCSS + Radix UI | Component library, design system                               |
+| Database           | PostgreSQL (Supabase)  | Primary data store, connection pooling via pgbouncer           |
+| ORM                | Prisma 7.3             | Type-safe database access, migrations                          |
+| Auth               | BetterAuth             | Authentication and session management                          |
+| Cache              | Upstash Redis          | Distributed locks, maintenance state, rate limiting            |
+| Video & Chat       | Stream.io              | Real-time video calls, messaging, presence                     |
+| Payments           | Stripe + Razorpay      | Multi-gateway payment processing (2 gateways)                  |
+| Notifications      | Novu + Resend          | Push notifications, transactional email                        |
+| Storage            | Supabase Storage       | File uploads, image hosting                                    |
+| Hosting            | Netlify                | Edge network, serverless/scheduled functions, CDN, deployments |
 
 ---
 
@@ -127,13 +127,13 @@ A key architectural insight that's easy to miss: **offloading to SaaS providers 
 | Payments      | PCI-DSS compliance, payment routing, reconciliation, refund handling, multi-currency                                | Stripe/Razorpay handle all of it   |
 | Email         | SMTP infrastructure, deliverability optimization, bounce handling, spam compliance                                  | Resend handles all of it           |
 | Notifications | Push notification infra, delivery tracking, preference management, multi-channel routing                            | Novu handles all of it             |
-| CDN/Edge      | CloudFront/CloudFlare setup, origin configuration, cache invalidation, edge compute                                 | Vercel handles all of it           |
+| CDN/Edge      | CloudFront/CloudFlare setup, origin configuration, cache invalidation, edge compute                                 | Netlify handles all of it          |
 | File Storage  | S3 buckets, access policies, CDN integration, image transformation                                                  | Supabase Storage handles all of it |
 
 We get the core benefits of microservices:
 
 - **Fault isolation:** If Stream.io goes down, payments still work
-- **Independent scaling:** Supabase scales the DB independently from Vercel's serverless functions
+- **Independent scaling:** Supabase scales the DB independently from Netlify's serverless functions
 - **Specialized teams:** Stream.io has a dedicated team making video better; Stripe has thousands of engineers on payments
 
 The trade-off is **cost at scale, not capability.** We're paying money (or using free tiers) instead of engineering time. At our stage, engineering time is worth infinitely more than the cost of these services.
@@ -196,7 +196,7 @@ Our marketplace doesn't have components with wildly different scaling profiles. 
 
 If Amazon's recommendation service crashes, you can still buy products. If their payment service is slow, search still works. Each failure is contained to one service.
 
-For us, if the app goes down, the app goes down. At pre-launch with zero users, this is a complete non-issue. When we have paying users who depend on uptime, Vercel and Supabase's SLAs cover us better than we could cover ourselves.
+For us, if the app goes down, the app goes down. At pre-launch with zero users, this is a complete non-issue. When we have paying users who depend on uptime, Netlify and Supabase's SLAs cover us better than we could cover ourselves.
 
 ---
 
@@ -257,15 +257,15 @@ Current cost on managed stack: **~₹10K/mo (~$110)** for all SaaS combined. The
 
 ### What scales fine as-is
 
-| Component                                 | Approximate Ceiling             | Why It Scales                                                                      |
-| ----------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------- |
-| Vercel (Edge + Serverless)                | ~100K+ concurrent users         | Auto-scales serverless functions, CDN serves static assets from 70+ edge locations |
-| Supabase Postgres (with pgbouncer pooler) | ~10K-50K concurrent connections | Already configured with connection pooling on port 6543                            |
-| Stream.io                                 | Their infrastructure handles it | Dedicated video/chat platform designed for millions of concurrent connections      |
-| Stripe/Razorpay                           | Effectively unlimited           | Battle-tested payment infrastructure processing billions of dollars                |
-| Next.js with ISR/SSG                      | Very high                       | Static and ISR pages served from CDN edge — near-zero server cost per request      |
-| Upstash Redis                             | ~100K+ commands/sec             | Serverless Redis, auto-scales with demand                                          |
-| Supabase Storage                          | High                            | CDN-backed file storage                                                            |
+| Component                                 | Approximate Ceiling             | Why It Scales                                                                     |
+| ----------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------- |
+| Netlify (Edge + Serverless)               | ~100K+ concurrent users         | Auto-scales serverless functions, CDN serves static assets from global edge nodes |
+| Supabase Postgres (with pgbouncer pooler) | ~10K-50K concurrent connections | Already configured with connection pooling on port 6543                           |
+| Stream.io                                 | Their infrastructure handles it | Dedicated video/chat platform designed for millions of concurrent connections     |
+| Stripe/Razorpay                           | Effectively unlimited           | Battle-tested payment infrastructure processing billions of dollars               |
+| Next.js with ISR/SSG                      | Very high                       | Static and ISR pages served from CDN edge — near-zero server cost per request     |
+| Upstash Redis                             | ~100K+ commands/sec             | Serverless Redis, auto-scales with demand                                         |
+| Supabase Storage                          | High                            | CDN-backed file storage                                                           |
 
 For context, **Stack Overflow serves 100M+ monthly visitors on a few physical servers running a .NET monolith.** Our stack, which auto-scales and runs on global edge infrastructure, can handle far more than we'll see in the first several years.
 
@@ -277,13 +277,13 @@ There are four scaling walls we'll eventually hit. Each has a known fix that doe
 
 ### Wall 1: Serverless Cold Starts (~1K-5K concurrent users)
 
-Vercel serverless functions have cold start latency of 100-500ms. Under sustained load, functions stay warm and this isn't a problem. Under bursty traffic (e.g., a marketing campaign drives a spike), users will experience inconsistent response times.
+Netlify serverless functions have cold start latency of 100-500ms. Under sustained load, functions stay warm and this isn't a problem. Under bursty traffic (e.g., a marketing campaign drives a spike), users will experience inconsistent response times.
 
 **Fix (no re-architecture needed):**
 
 - Implement ISR/static generation for all public pages (landing, explore, expert profiles)
-- Add server-side caching with `unstable_cache()` or Redis
-- Use Vercel's edge runtime for lightweight hot paths
+- Add server-side caching with `unstable_cache()` or Upstash Redis
+- Use Netlify's edge runtime for lightweight hot paths
 - These are the same fixes needed for the current performance issues (see GitHub Issue #450)
 
 ### Wall 2: Single Database Bottleneck (~10K-50K DAU)
@@ -303,14 +303,14 @@ This isn't a Supabase-specific issue — **any single Postgres instance** will e
 Known cost inflection points:
 
 - **Stream.io:** Free tier → ~₹36K/mo ($400/mo) when hitting ₹8.5L revenue, $100K funding, or >5 team members
-- **Vercel:** Costs scale with serverless invocations, $500-2000+/mo at high traffic
+- **Netlify:** Costs scale with serverless invocations and bandwidth, $500-2000+/mo at high traffic
 - **Supabase:** Free → $25/mo Pro tier is manageable; higher tiers scale with usage
 
 **Fix:** This is a business problem, not a technical one. If traffic is high enough to trigger these costs, revenue should be covering them. The unit economics were analyzed in `docs/finances/11-cfo-master-plan.md`.
 
-### Wall 4: Vercel Costs Exceed Self-Hosting (~100K+ MAU)
+### Wall 4: Managed Serverless Costs Exceed Self-Hosting (~100K+ MAU)
 
-At very high scale, managed platforms charge a premium over self-hosted alternatives. When the Vercel bill exceeds the engineering cost of managing your own infrastructure, it's time to move.
+At very high scale, managed platforms charge a premium over self-hosted alternatives. When the Netlify bill exceeds the engineering cost of managing your own infrastructure, it's time to move.
 
 **Fix (no code rewrite needed):**
 
@@ -348,7 +348,7 @@ If Supabase has an outage, the entire app goes down. This is the trade-off of ma
 Good news — vendor lock-in is actually minimal:
 
 - **Supabase** = standard Postgres. Can migrate to any Postgres host (RDS, Neon, self-hosted) with `pg_dump`
-- **Next.js** = runs anywhere. Not locked to Vercel (can deploy on AWS, Railway, Fly.io, Docker)
+- **Next.js** = runs anywhere. Not locked to Netlify (can deploy on AWS, Railway, Fly.io, Docker)
 - **Prisma** = generates standard SQL. Can switch ORMs without changing the database
 - **Stream.io** = this is the stickiest dependency. But it's a deliberate trade-off (building video/chat infra in-house would take 6+ months)
 - **Stripe/Razorpay** = standard payment APIs. Can add or swap gateways (we already have 4)
@@ -444,7 +444,7 @@ Don't re-evaluate the architecture on a schedule. Re-evaluate when you observe t
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Deploy conflicts between team members become a daily frustration                                                                                  | Team size has outgrown the monolith's deployment model           | Extract services along team boundaries                                                              |
 | Database query latency consistently > 500ms under normal load                                                                                     | Single Postgres instance is the bottleneck                       | Read replicas, Redis caching, query optimization (not microservices)                                |
-| Vercel monthly bill exceeds the cost of one engineer managing infra                                                                               | Managed platform pricing has crossed the self-hosting break-even | Migrate to self-hosted Next.js on AWS/Railway                                                       |
+| Netlify monthly bill exceeds the cost of one engineer managing infra                                                                              | Managed platform pricing has crossed the self-hosting break-even | Migrate to self-hosted Next.js on AWS/Railway                                                       |
 | A specific component needs fundamentally different infrastructure (e.g., ML-based recommendations need GPU, real-time search needs Elasticsearch) | Different scaling profile from the rest of the app               | Extract that one component as an independent service                                                |
 | Multiple teams (3+) need to deploy different parts of the app on independent schedules                                                            | Organizational scaling has outgrown shared deployment            | Begin modular monolith → service extraction                                                         |
 | A component's failure cascades to unrelated parts of the app and this causes real revenue loss                                                    | Fault isolation has become business-critical                     | Extract the problematic component behind an API boundary                                            |
@@ -466,7 +466,7 @@ Don't re-evaluate the architecture on a schedule. Re-evaluate when you observe t
 
 4. **The database is portable.** Supabase is standard Postgres. Prisma generates standard SQL. If we need to move to RDS, Neon, or self-hosted Postgres, it's a connection string change plus minor configuration.
 
-5. **The frontend is portable.** Next.js runs on Vercel, AWS, Railway, Fly.io, Docker, or bare metal. Leaving Vercel is a deployment config change, not a rewrite.
+5. **The frontend is portable.** Next.js runs on Netlify, AWS, Railway, Fly.io, Docker, or bare metal. Leaving Netlify is a deployment config change, not a rewrite.
 
 6. **The precedent is clear.** Shopify runs a $7B business on a Ruby on Rails modular monolith. Stack Overflow serves 100M+ users on a .NET monolith. Basecamp built a multi-million dollar business on Rails and explicitly chose NOT to adopt microservices. The monolith works until it doesn't, and "it doesn't" is a much higher bar than most engineers think.
 
@@ -474,7 +474,7 @@ Don't re-evaluate the architecture on a schedule. Re-evaluate when you observe t
 
 ## Summary
 
-The Next.js/Supabase/Vercel stack was the correct choice for a pre-launch marketplace with a 2-3 person team. Choosing Java/AWS microservices would have been premature architecture — solving problems we don't have at the expense of velocity on problems we do have.
+The Next.js/Supabase/Upstash/Netlify stack was the correct choice for a pre-launch marketplace with a 2-3 person team. Choosing Java/AWS microservices would have been premature architecture — solving problems we don't have at the expense of velocity on problems we do have.
 
 The stack will scale to tens of thousands of daily active users with standard optimizations (server-side rendering, caching, read replicas, query optimization). The path to nationwide scale is **incremental service extraction driven by real, measured bottlenecks** — not a speculative wholesale rewrite to microservices.
 
@@ -484,6 +484,6 @@ Every major tech company started as a monolith. They adopted microservices when 
 
 ---
 
-## Addendum, 2026-09-12: the host is Netlify, and the question was re-examined
+## Addendum, 2026-09-12: Hosting on Netlify Pro + Supabase + Upstash
 
-This document names Vercel as the host; the site has run on Netlify Pro since launch preparation, and the portability claim above is what makes that difference survivable. On 2026-09-12 the "Spring Boot, Vercel, or a broker" question was re-examined against measured production behaviour and current vendor numbers. The evidence supports the monolith, Next.js, and the no-broker posture, and narrows the live question to where the Node process runs — a serverless platform whose instances share a process and offer Mumbai, or one always-on process on a container host. The fact sheet, with sources and a dated reading, is `.claude/skills/deployment/netlify/hosting-alternatives.md`; the per-issue ledger it draws on is `.claude/skills/deployment/netlify/issue-ledger.md`.
+The platform runs in production on **Netlify Pro** (with Netlify Edge Functions, serverless functions, and the scheduled `netlify/functions/cron-tick.mts` ticker), **Supabase Postgres** (with PgBouncer transaction pooler), and **Upstash Redis** (rate limiting, distributed locks, maintenance state). On 2026-09-12 the "Spring Boot, alternative serverless hosts, or a broker" question was re-examined against measured production behaviour and current vendor numbers. The evidence supports the monolith, Next.js, and the no-broker posture, and narrows the live question to where the Node process runs — a serverless platform whose instances share a process and offer Mumbai, or one always-on process on a container host. The fact sheet, with sources and a dated reading, is `.claude/skills/deployment/netlify/hosting-alternatives.md`; the per-issue ledger it draws on is `.claude/skills/deployment/netlify/issue-ledger.md`.
