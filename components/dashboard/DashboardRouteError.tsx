@@ -45,6 +45,17 @@ export interface DashboardRouteErrorProps {
 const autoRetried = new Map<string, number>();
 const AUTO_RETRY_WINDOW_MS = 30_000;
 
+// A server-thrown error needs fresh RSC data before reset() can render past it.
+function refreshAndReset(
+  router: Pick<ReturnType<typeof useRouter>, "refresh">,
+  reset: () => void,
+) {
+  startTransition(() => {
+    router.refresh();
+    reset();
+  });
+}
+
 export function DashboardRouteError({
   error,
   reset,
@@ -57,11 +68,6 @@ export function DashboardRouteError({
   escape,
 }: DashboardRouteErrorProps) {
   const router = useRouter();
-  const retry = () =>
-    startTransition(() => {
-      router.refresh();
-      reset();
-    });
 
   // Read on every render, not decided once per mount: a failed retry can come
   // back as an update of this same instance, and it must then show the card.
@@ -81,11 +87,10 @@ export function DashboardRouteError({
     const t = setTimeout(() => {
       // Recorded when the retry fires, so StrictMode's remount can't spend it.
       autoRetried.set(retryKey, Date.now());
-      retry();
+      refreshAndReset(router, reset);
     }, 1000);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `retry` is a fresh closure each render; keyed on the error instead
-  }, [autoRetrying, retryKey, error]);
+  }, [autoRetrying, retryKey, router, reset]);
 
   // #1933: a self-healed blip must not spend Sentry quota.
   useEffect(() => {
@@ -126,7 +131,7 @@ export function DashboardRouteError({
       description="An unexpected error occurred. Please try again."
       error={error.message ? error : devFallbackMessage}
       digest={error.digest}
-      onRetry={retry}
+      onRetry={() => refreshAndReset(router, reset)}
       action={
         <Button variant="outline" size="sm" asChild>
           <Link href={escape.href}>{escape.label}</Link>
