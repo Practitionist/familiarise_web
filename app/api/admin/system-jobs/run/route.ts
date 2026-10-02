@@ -18,6 +18,7 @@ import {
   cleanupExpiredApprovalPendingPayments,
 } from "@/scripts/payments/cleanup-abandoned-payments";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
+import { reconcileOrphanedPayments } from "@/scripts/payments/reconcile-orphaned-confirmations";
 
 // Refunds
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
@@ -173,6 +174,19 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       orphanedCount: result.totalOrphaned,
       criticalAlerts: result.criticalCount,
       totalAmount: result.totalAmount,
+    };
+  },
+  "reconcile-orphaned-payments": async () => {
+    const result = await reconcileOrphanedPayments();
+    return {
+      success: result.success,
+      totalProcessed: result.scanned,
+      scannedCount: result.scanned,
+      linkedCount: result.linked,
+      refundedCount: result.refunded,
+      escrowedCount: result.escrowed,
+      stillFailingCount: result.stillFailing,
+      errorCount: result.stillFailing,
     };
   },
   "handle-stuck-payouts": async () => {

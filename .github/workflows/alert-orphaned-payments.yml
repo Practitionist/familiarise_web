@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    # Run every 6 hours
-    - cron: "30 */6 * * *"
+    # Daily backstop — the Netlify ticker owns the 15-minute latency now.
+    - cron: "30 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 concurrency:

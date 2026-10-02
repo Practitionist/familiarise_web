@@ -93,16 +93,24 @@ function resolveImport(fromFile: string, spec: string): string | null {
   return fs.existsSync(base) && fs.statSync(base).isFile() ? base : null;
 }
 
+function findAllLocks(
+  src: string | null,
+): { jobName: string; failMode: string }[] {
+  if (!src) return [];
+  const out: { jobName: string; failMode: string }[] = [];
+  const re =
+    /withCronLock\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{([^}]*)\}/g;
+  for (const m of src.matchAll(re)) {
+    const failMode = m[2].match(/failMode:\s*["']([^"']+)["']/);
+    out.push({ jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" });
+  }
+  return out;
+}
+
 function findLock(
   src: string | null,
 ): { jobName: string; failMode: string } | null {
-  if (!src) return null;
-  // No dotAll flag: the options group is `[^}]*`, a negated class that already
-  // spans newlines, so the lock survives being formatted across lines.
-  const m = src.match(/withCronLock\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{([^}]*)\}/);
-  if (!m) return null;
-  const failMode = m[2].match(/failMode:\s*["']([^"']+)["']/);
-  return { jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" };
+  return findAllLocks(src)[0] ?? null;
 }
 
 function extractImports(src: string): string[] {
@@ -140,12 +148,21 @@ function lockFor(
   const own = findLock(entrySrc);
   if (own || !entrySrc || !entryFile)
     return { lock: own, lockedIn: own ? entry : null };
+  // One core file can host two sweeps sharing a module (the orphan
+  // confirmation re-drive plus the orphan payment healer); prefer the lock
+  // whose job matches the twin's own `job:` literal over the first in file.
+  const expectedJob =
+    entrySrc.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
   for (const spec of extractImports(entrySrc)) {
     const resolved = resolveImport(entryFile, spec);
     if (!resolved) continue;
     const rel = path.relative(ROOT, resolved);
     if (!coreDirs.test(rel) || rel.includes("with-cron-lock")) continue;
-    const found = findLock(read(resolved));
+    const all = findAllLocks(read(resolved));
+    if (all.length === 0) continue;
+    const found =
+      (expectedJob ? all.find((l) => l.jobName === expectedJob) : null) ??
+      all[0];
     if (found) return { lock: found, lockedIn: rel };
   }
   return { lock: null, lockedIn: null };
@@ -334,11 +351,19 @@ describe("cron lock registry (#1169)", () => {
 
     const ungated = callers
       .map((file) => {
-        const lock = findLock(read(file));
-        return { file: path.relative(ROOT, file), jobName: lock?.jobName };
+        // One module can host two sweeps (orphan confirmation re-drive plus
+        // the orphan payment healer); the file passes when any of its locks
+        // is a financial job, since that is the lock guarding the refund.
+        const locks = findAllLocks(read(file));
+        const gated = locks.some((l) => FINANCIAL_JOB_NAMES.has(l.jobName));
+        return {
+          file: path.relative(ROOT, file),
+          jobName: locks.map((l) => l.jobName).join(",") || "none",
+          gated: locks.length > 0 && gated,
+        };
       })
-      .filter((r) => !r.jobName || !FINANCIAL_JOB_NAMES.has(r.jobName))
-      .map((r) => `${r.file} → withCronLock("${r.jobName ?? "none"}")`);
+      .filter((r) => !r.gated)
+      .map((r) => `${r.file} → withCronLock("${r.jobName}")`);
 
     expect(ungated).toEqual([]);
   });

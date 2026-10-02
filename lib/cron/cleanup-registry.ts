@@ -188,16 +188,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "alert-orphaned-payments": () =>
       cleanupRoute({
         job: "alert-orphaned-payments",
-        run: async () => {
+        run: async (req) => {
           const { alertOrphanedPayments } = await import(
             "@/scripts/alerts/alert-orphaned-payments"
           );
-          return alertOrphanedPayments();
+          return alertOrphanedPayments({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
           totalOrphaned: r.totalOrphaned,
           criticalCount: r.criticalCount,
           totalAmount: r.totalAmount,
+          sideChargeCount: r.sideChargeCount,
         }),
         status: (r) => (r.totalOrphaned > 0 ? 500 : 200),
         failureMessage: "Failed to check for orphaned payments",
@@ -683,6 +684,33 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor(r, r.channelsFailed > 0),
         failureMessage: "Failed to reconcile orphaned confirmations",
+      }),
+
+    // @cleanup-twin reconcile-orphaned-payments
+    "reconcile-orphaned-payments": () =>
+      cleanupRoute({
+        job: "reconcile-orphaned-payments",
+        run: async (req) => {
+          const { reconcileOrphanedPayments } = await import(
+            "@/scripts/payments/reconcile-orphaned-confirmations"
+          );
+          const limit = parseLimitParam(req);
+          return reconcileOrphanedPayments(
+            limit === undefined ? {} : { limit },
+          );
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          linked: r.linked,
+          refunded: r.refunded,
+          escrowed: r.escrowed,
+          nonGatewaySkipped: r.nonGatewaySkipped,
+          topupSkipped: r.topupSkipped,
+          stillFailing: r.stillFailing,
+        }),
+        status: (r) =>
+          statusFor(r, r.escrowed > 0 || r.stillFailing > 0),
+        failureMessage: "Failed to reconcile orphaned payments",
       }),
 
     // @cleanup-twin reconcile-payment-status
