@@ -5,6 +5,12 @@
  *
  * Finds active meeting sessions, stops any in-progress recordings,
  * notifies participants, and ends calls via Stream server SDK.
+ *
+ * Every Stream call here is addressed on the SESSION'S OWN call type
+ * (`Meeting.callType`), never on a constant: a webinar's call is `livestream:<id>`
+ * and does not exist at `default:<id>`. Ending one against the wrong type would
+ * leave a live broadcast running at the vendor — and this runs immediately before
+ * the platform goes OFFLINE, so nothing afterwards comes back for it.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -15,7 +21,7 @@ import {
   getStreamVideoClient,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { normalizeCallType, toCallId } from "@/lib/stream/call-cid";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
 import {
   chunk,
@@ -175,9 +181,20 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     if (consulteeUserId) allUserIds.add(consulteeUserId);
 
     // Step 1: Stop recording if active
+    //
+    // `session.callType` is passed on BOTH steps below. `streamCallId` on a
+    // Meeting is the BARE id, so it cannot say which of the two call types this
+    // room is — and stopping a recording against the wrong one leaves it running
+    // at the vendor until it expires, on a webinar whose call is `livestream:`.
+    // Maintenance is exactly the wrong moment for that: this is the last action
+    // before the platform goes OFFLINE, so nothing downstream will come back
+    // for it.
     if (session.isRecording) {
       try {
-        await RecordingService.stopRecording(session.streamCallId);
+        await RecordingService.stopRecording(
+          session.streamCallId,
+          session.callType,
+        );
         await prisma.meeting.update({
           where: { id: session.id },
           data: { isRecording: false },
@@ -199,7 +216,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     try {
       const client = getStreamVideoClient();
       const call = client.video.call(
-        STREAM_CALL_TYPE,
+        normalizeCallType(session.callType),
         toCallId(session.streamCallId),
       );
       // #1134 — a `maintenance.draining` custom event used to be sent here, and

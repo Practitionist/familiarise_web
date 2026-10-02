@@ -19,6 +19,16 @@
  * backwards, so a false stamp here cannot be corrected by the real end that
  * arrives afterwards.
  *
+ * ## The room is asked about on ITS OWN call type, not on `default`
+ *
+ * Two call types exist now (`lib/stream/call-cid.ts`) and the type is immutable,
+ * so a webinar's call is `livestream:<id>` and does not exist at
+ * `default:<id>`. Since a 404 is the only answer permitted to close a row above,
+ * a hardcoded type here would not merely lose information — it would manufacture
+ * false ends for every broadcast, on a column nothing can walk back. So the type
+ * is read off the row, and a 404 obtained against a coerced type is demoted to
+ * "we do not know" for the same reason an outage is.
+ *
  * Runs every 30 minutes via cleanup API route.
  */
 
@@ -35,7 +45,11 @@ import {
   streamHttpStatus,
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "../../lib/stream/call-cid";
+import {
+  isKnownCallType,
+  normalizeCallType,
+  toCallId,
+} from "../../lib/stream/call-cid";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
@@ -110,6 +124,31 @@ function isCallMissing(error: unknown): boolean {
   return streamHttpStatus(error) === 404;
 }
 
+/**
+ * Was the lookup aimed at the call type the row actually claims?
+ *
+ * The lookup asks `normalizeCallType(Meeting.callType)`, and `normalizeCallType`
+ * coerces a value it cannot read down to `default`. That is the right coercion
+ * everywhere else — it guarantees the CID names a call type this app owns — but
+ * here it silently changes what a 404 MEANS: a 404 against `default:<id>` says
+ * the room is gone only if `default` is the room. On an unreadable
+ * `Meeting.callType` the honest reading of a 404 is "we asked about the wrong
+ * room", and the answer to that is not to close the row.
+ *
+ * Narrow on purpose. The column is `String @default("default")` and cannot be
+ * NULL today, so this only fires on a value somebody hand-wrote, on a future
+ * writer that widened Stream's vocabulary without widening `ALL_CALL_TYPES` — or
+ * on a query that stopped selecting the column, which is the cheapest mistake of
+ * the three and the one a `select` edit makes without anybody noticing. Which is
+ * exactly the moment a guard earns its keep: by then there are real rows, and the
+ * failure is unrecoverable.
+ */
+function askedTheRowsCallType(callType: string | null | undefined): boolean {
+  return isKnownCallType(
+    typeof callType === "string" ? callType.trim().toLowerCase() : "",
+  );
+}
+
 // #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function reconcileOrphanedSessions(): Promise<ReconciliationResult> {
   return withCronLock("reconcile-orphaned-sessions", { failMode: "open" }, () =>
@@ -154,6 +193,7 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
   let page: Array<{
     id: string;
     streamCallId: string;
+    callType: string;
     occurrence: { endsAt: Date };
   }> = [];
 
@@ -208,9 +248,15 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
           // split on ":" while this passed the raw value straight through, so a
           // prefixed value always 404'd here and the session was silently
           // recorded UNVERIFIED. One helper now owns the split.
+          //
+          // And the TYPE half is read off the row rather than assumed: a
+          // webinar's call exists on `livestream:<id>`, so a hardcoded `default`
+          // 404s a live broadcast — and this file's whole doctrine (#C2) is that
+          // a 404 is the ONLY answer allowed to close a row. Assuming the type
+          // would therefore manufacture false ends, unrecoverably.
           const client = getStreamVideoClient();
           const call = client.video.call(
-            STREAM_CALL_TYPE,
+            normalizeCallType(session.callType),
             toCallId(session.streamCallId),
           );
           // #473 — a Stream outage otherwise means 100 sequential 30s timeouts
@@ -268,6 +314,18 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
           // A definitive 404: the room does not exist, so it cannot be live and
           // billing. The row is closed out on the slot's end, which is the only
           // time we have.
+          //
+          // …but only if the 404 was aimed at this row's own call type. See
+          // `askedTheRowsCallType`: on a value we could not read, the lookup ran
+          // against a coerced `default` and the 404 is evidence about a different
+          // room. That is not an answer, so it is not allowed to be one.
+          if (!askedTheRowsCallType(session.callType)) {
+            result.unconfirmed++;
+            result.details.push(
+              `Session ${session.id} (call: ${session.streamCallId}): Meeting.callType is "${session.callType}", which is not a call type this app owns — the lookup ran against a different room, so nothing was closed`,
+            );
+            continue;
+          }
           endedAt = new Date(session.occurrence.endsAt);
           endedReason = "stream_not_found";
           result.streamNotFound++;

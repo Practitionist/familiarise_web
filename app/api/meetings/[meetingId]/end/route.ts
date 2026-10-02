@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import prisma from "@/lib/prisma";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
   getStreamVideoClient,
@@ -7,7 +8,7 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { normalizeCallType, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -40,6 +41,28 @@ import { reportSentryError } from "@/lib/observability/report";
  * webhook owns it, and it also sets the slot's completionStatus and the
  * session's actual duration — writing `endedAt` first would make that handler
  * treat the event as a duplicate and skip all of it.
+ *
+ * ## The call type is read off the row, not assumed
+ *
+ * There are two call types now (#1134 P1-5). This route used to address
+ * `STREAM_CALL_TYPE` unconditionally, which is a 404 for a webinar or class
+ * once those are minted on `livestream` — and a 404 here is a silent failure
+ * of exactly the kind this subsystem is full of: the room stays open, the host
+ * sees an error, and nothing pages because the route reported the fault
+ * honestly.
+ *
+ * The type comes from `Meeting.callType`, read by `access.meetingId` (the ROW,
+ * not the URL segment — #C8/#C9) and passed through `normalizeCallType`, which
+ * is what keeps a hand-edited column from addressing a call type this app does
+ * not mint on (#1285). It is NOT read out of the cid: `Meeting.streamCallId`
+ * stores the BARE id, which carries no type at all, so that read would answer
+ * `default` for every row and quietly reproduce the bug this removes.
+ *
+ * `default` remains the fallback when the column cannot be read. A row we cannot
+ * type is a row we address conservatively — the type every call before the
+ * cutover is on — and `default` is that type. The read failing is not silent:
+ * a null row means a Meeting the guard just resolved access for is missing,
+ * which is worth a line in the log.
  */
 export async function POST(
   _req: NextRequest,
@@ -70,9 +93,27 @@ export async function POST(
       );
     }
 
+    // Database only, and before any provider call. `access.meetingId` is the row
+    // itself, so this reads whichever room the row points at now — a #1607
+    // rebuild moves `streamCallId` while the open tab still carries the old one.
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: access.meetingId },
+      select: { callType: true },
+    });
+    if (!meeting) {
+      streamLogger.error(
+        "Meeting row vanished between the access check and end",
+        {
+          userId,
+          meetingId,
+        },
+      );
+    }
+    const callType = normalizeCallType(meeting?.callType);
+
     await withStreamCircuitBreaker(() =>
       getStreamVideoClient()
-        .video.call(STREAM_CALL_TYPE, toCallId(access.streamCallId))
+        .video.call(callType, toCallId(access.streamCallId))
         .end(),
     );
 

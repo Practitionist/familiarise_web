@@ -150,7 +150,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Stop recording via Stream API (use DB-stored call ID, never trust client)
-    const result = await RecordingService.stopRecording(meeting.streamCallId);
+    //
+    // The meeting's own call type, for the same reason as the start route: the
+    // stored id is bare, and a stop aimed at the wrong type leaves the recording
+    // running at the vendor with the row already flipped back to
+    // `isRecording: true` — a retry that can never succeed.
+    const result = await RecordingService.stopRecording(
+      meeting.streamCallId,
+      meeting.callType,
+    );
 
     if (!result.success) {
       // Rollback: restore isRecording=true since Stream stop failed

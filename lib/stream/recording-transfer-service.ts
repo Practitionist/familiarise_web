@@ -20,7 +20,8 @@ import {
   getStreamVideoClient,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { toCallId } from "@/lib/stream/call-cid";
+import { resolveRecordingCallType } from "@/lib/stream/recording-service";
 import { deleteRecordingObject } from "@/lib/stream/recording-storage";
 // The LEAF policy module, NOT `recording-listing-access` — that one imports
 // `next/server` and `lib/auth-server` at module scope, and a cron process that
@@ -497,6 +498,16 @@ function sizeRejection(error: {
  * Two round trips instead of one; the alternative was either guessing a session
  * id (deleting the wrong file) or a schema column this bucket does not own.
  *
+ * The call TYPE is the same problem one level up, and the same fix: `streamCallId`
+ * on the row is the BARE id (the webhook writes `toCallId(call_cid)`), so it
+ * carries no type. Addressing `default:<id>` for a webinar recording asks Stream
+ * about a call that does not exist, `listRecordings` comes back empty, `target`
+ * is undefined and this returns TRUE — reporting a deletion that never happened.
+ * That is why `callType` is a parameter and `deleteRecording` passes the type off
+ * the `Meeting` it already selects rather than letting this guess: the orphan
+ * reconciler is the only thing that would notice, and it would notice the
+ * ORIGINAL recording is still on Stream's side fourteen days later.
+ *
  * Returns false on any failure — a missing Stream app, a network fault, a
  * recording Stream has already expired. Callers treat that as "the vendor copy
  * is on its own clock", which it is: Stream deletes the object fourteen days
@@ -505,10 +516,14 @@ function sizeRejection(error: {
 async function deleteStreamRecording(
   streamCallId: string,
   filename: string,
+  callType?: string | null,
 ): Promise<boolean> {
   try {
     const client = getStreamVideoClient();
-    const call = client.video.call(STREAM_CALL_TYPE, toCallId(streamCallId));
+    const call = client.video.call(
+      resolveRecordingCallType(streamCallId, callType),
+      toCallId(streamCallId),
+    );
     const listed = await withStreamCircuitBreaker(() => call.listRecordings());
     const target = listed.recordings.find((r) => r.filename === filename);
     if (!target) {
@@ -528,6 +543,7 @@ async function deleteStreamRecording(
     streamLogger.warn("Stream-side recording delete failed", {
       error: err instanceof Error ? err.message : String(err),
       streamCallId,
+      callType: resolveRecordingCallType(streamCallId, callType),
       filename,
     });
     return false;
@@ -1542,7 +1558,10 @@ export class RecordingTransferService {
         streamCallId: true,
         streamRecordingId: true,
         organizationId: true,
-        meeting: { select: { id: true } },
+        // `callType` alongside the id, not instead of it: the row is already
+        // being read, and `Recording.streamCallId` is bare, so this is the only
+        // thing that can say which Stream call type the vendor copy lives on.
+        meeting: { select: { id: true, callType: true } },
       },
     });
 
@@ -1580,6 +1599,7 @@ export class RecordingTransferService {
       streamDeleted = await deleteStreamRecording(
         recording.streamCallId,
         recording.streamRecordingId,
+        recording.meeting?.callType,
       );
     }
 

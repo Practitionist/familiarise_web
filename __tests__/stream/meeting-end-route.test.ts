@@ -18,8 +18,19 @@
 
 const mockGetSession = jest.fn();
 const mockResolveMeetingAccess = jest.fn();
+const mockMeetingFindUnique = jest.fn();
 const mockEnd = jest.fn();
 const mockVideoCall = jest.fn();
+
+// jest.mock is hoisted above every `const`, so the logger is reached through
+// the lazy form. `mockStreamLogger.error` is asserted directly: a row the guard
+// just granted access for disappearing is worth a line in the log.
+const mockStreamLogger = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
 
 jest.mock("../../lib/auth", () => ({
   auth: { api: { getSession: (...a: unknown[]) => mockGetSession(...a) } },
@@ -31,6 +42,18 @@ jest.mock("next/headers", () => ({
 
 jest.mock("../../lib/meetings/access", () => ({
   resolveMeetingAccess: (...a: unknown[]) => mockResolveMeetingAccess(...a),
+}));
+
+// The route reads the row's call type before it addresses the vendor. Added with
+// the two-call-type change (#1134 P1-5): addressing `STREAM_CALL_TYPE`
+// unconditionally is a 404 for a webinar once those are minted on `livestream`,
+// and a 404 here is a silent failure — the room stays open, the host sees an
+// error, and nothing pages.
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    meeting: { findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a) },
+  },
 }));
 
 // Same shape as the join gate's: the error class has to be built inside the
@@ -60,10 +83,10 @@ jest.mock("../../lib/stream-client", () => ({
 
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
+    info: (...a: unknown[]) => mockStreamLogger.info(...a),
+    warn: (...a: unknown[]) => mockStreamLogger.warn(...a),
+    error: (...a: unknown[]) => mockStreamLogger.error(...a),
+    debug: (...a: unknown[]) => mockStreamLogger.debug(...a),
   },
 }));
 
@@ -91,6 +114,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetSession.mockResolvedValue({ user: { id: "user_1", banned: false } });
   mockResolveMeetingAccess.mockResolvedValue(granted("host"));
+  mockMeetingFindUnique.mockResolvedValue({ callType: "default" });
   mockEnd.mockResolvedValue({});
 });
 
@@ -177,6 +201,79 @@ describe("POST /api/meetings/[meetingId]/end", () => {
     // The whole point of the test: the id came from the session row, not the
     // route param. `params` resolves to `slot-abc`.
     expect(mockVideoCall).toHaveBeenCalledWith("default", "legacy-uuid");
+  });
+
+  it("addresses the call on the type the row recorded", async () => {
+    // A webinar's room exists on `livestream:` and Stream answers a call it
+    // does not hold with a 404, so `default:` here would leave the broadcast
+    // running with no way for anyone to close it.
+    mockResolveMeetingAccess.mockResolvedValue({
+      ...granted("host"),
+      streamCallId: "occurrence-ls-1",
+    });
+    mockMeetingFindUnique.mockResolvedValue({ callType: "livestream" });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockVideoCall).toHaveBeenCalledWith("livestream", "occurrence-ls-1");
+  });
+
+  it("reads the row by its own id, not the URL segment", async () => {
+    // #C8 / #C9: after a #1607 rebuild the segment and the row disagree, and
+    // `access.meetingId` is the row itself.
+    mockResolveMeetingAccess.mockResolvedValue({
+      ...granted("host"),
+      meetingId: "ms-1",
+    });
+
+    await POST(req, { params });
+
+    expect(mockMeetingFindUnique).toHaveBeenCalledWith({
+      where: { id: "ms-1" },
+      select: { callType: true },
+    });
+  });
+
+  it("falls back to `default` for a row it cannot type", async () => {
+    // A missing row means a Meeting the guard just granted access for is gone.
+    // The conservative type is the right answer — it is the type every call
+    // before the cutover is on — and the disappearance is logged rather than
+    // swallowed.
+    mockMeetingFindUnique.mockResolvedValue(null);
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockVideoCall).toHaveBeenCalledWith("default", "slot-abc");
+    expect(mockStreamLogger.error).toHaveBeenCalled();
+  });
+
+  it("coerces a call type this app does not own inward", async () => {
+    // #1285's shape: a hand-edited column must not be able to point this at a
+    // call type we never minted on.
+    mockMeetingFindUnique.mockResolvedValue({ callType: "audio_room" });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockVideoCall).toHaveBeenCalledWith("default", "slot-abc");
+  });
+
+  it("does not read the type out of the call id", async () => {
+    // `Meeting.streamCallId` is stored BARE and carries no type, so a cid read
+    // would answer `default` for every row and quietly reproduce the bug this
+    // column removes.
+    mockResolveMeetingAccess.mockResolvedValue({
+      ...granted("host"),
+      streamCallId: "livestream:occurrence-ls-1",
+    });
+    mockMeetingFindUnique.mockResolvedValue({ callType: "default" });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockVideoCall).toHaveBeenCalledWith("default", "occurrence-ls-1");
   });
 
   it("reports a Stream outage as 503, not 500", async () => {

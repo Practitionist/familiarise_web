@@ -19,12 +19,30 @@
  * pipeline having worked. `report.participants.unique` is the count of distinct
  * participants in the session — so two, in a 1:1 consultation, means both
  * parties were there whatever our rows say.
+ *
+ * ## Which call type this asks about
+ *
+ * `streamCallId` on a `Meeting` is the BARE id, so it cannot say which of the
+ * two call types the room is. Asking the wrong one is quiet and self-inflicted:
+ * Stream 404s a call it does not hold, that surfaces as `null`, and `null` means
+ * "no evidence" — so the no-show detector would refuse every webinar and class
+ * candidate forever, with a refusal reason ("Stream has no report for …") that
+ * names a call which plainly exists. The refusal is fail-safe, which is exactly
+ * why it would have survived review: nobody is wrongly refunded, the feature is
+ * just permanently off for half the product.
+ *
+ * So the type is resolved from the row rather than assumed, and the row is read
+ * here rather than in each of the two callers because they cannot both be right:
+ * `Meeting.streamCallId` is UNIQUE, so one indexed lookup answers it for a value
+ * of unknown provenance, which is what a bare id is. A caller that already holds
+ * the row passes `callType` and skips the read entirely.
  */
 import {
   getStreamVideoClient,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import prisma from "@/lib/prisma";
+import { normalizeCallType, toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 
 export interface CallPresenceEvidence {
@@ -35,19 +53,45 @@ export interface CallPresenceEvidence {
 }
 
 /**
+ * The call type a bare `streamCallId` belongs to, read off the Meeting that
+ * owns it. `null` when there is no such row, which means the same thing it
+ * means everywhere else in this file: we cannot say.
+ */
+async function callTypeForStreamCallId(
+  streamCallId: string,
+): Promise<string | null> {
+  const meeting = await prisma.meeting.findUnique({
+    where: { streamCallId },
+    select: { callType: true },
+  });
+  return meeting?.callType ?? null;
+}
+
+/**
  * What Stream says about attendance for a call, or `null` when it cannot say.
  *
  * `null` is NOT "nobody attended". It means Stream has no report — the call
  * never had a session, or the report has aged out (they expire at roughly six
  * months, while call *stats* are retained far longer). Callers deciding money
  * must treat `null` as "no evidence" and refuse to act, never as absence.
+ *
+ * @param callType `Meeting.callType`, when the caller already holds the row.
+ * Omitting it costs one unique-indexed lookup and nothing else; supplying a
+ * wrong one is the failure described in the header.
  */
 export async function getCallPresenceEvidence(
   streamCallId: string,
+  callType?: string | null,
 ): Promise<CallPresenceEvidence | null> {
   try {
     const client = getStreamVideoClient();
-    const call = client.video.call(STREAM_CALL_TYPE, toCallId(streamCallId));
+    // `normalizeCallType` because `callType` is a `String` column and an
+    // unrecognised value must resolve against a call type this app really owns
+    // rather than produce a CID on somebody else's.
+    const type = normalizeCallType(
+      callType ?? (await callTypeForStreamCallId(streamCallId)),
+    );
+    const call = client.video.call(type, toCallId(streamCallId));
     const response = await withStreamCircuitBreaker(() => call.getCallReport());
     const participants = response.report?.participants;
     if (!participants) return null;

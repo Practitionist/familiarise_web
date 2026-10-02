@@ -17,6 +17,15 @@
  *
  * `Meeting.streamCallId` stores the BARE id (e.g. `occurrence-<occurrenceId>`),
  * never the cid. Stream webhooks send the cid. Keep the two straight.
+ *
+ * ## There are two call types now, and only one of them can be chosen
+ *
+ * `livestream` was added for webinars and classes; `default` stays for
+ * consultations, subscriptions and trials. Because a Stream call's type is
+ * immutable, that split is NEW calls only — there is no migration and there
+ * will never be one, so any code that reads a call type must resolve it from
+ * the row (`Meeting.callType`) rather than from the appointment type, and any
+ * code that WRITES one must get it right the first time.
  */
 
 /**
@@ -29,6 +38,68 @@
  * types later — a livestream, say — is unaffected by this choice.
  */
 export const STREAM_CALL_TYPE = "default";
+
+/**
+ * The broadcast call type, for webinars and classes.
+ *
+ * `livestream` is Stream's built-in, and it is the ONLY way to get HLS: a
+ * `default` call has no egress to fan out from, so `start-hls` is not merely
+ * refused there, it is meaningless. Stream cannot move a call between types, so
+ * this applies to calls minted from here on and never to an existing one — a
+ * `default` call stays full mesh forever.
+ *
+ * The destructive grants this type ships with are another PR's problem:
+ * `scripts/stream/ensure-call-type-grants.ts` revokes the `-owner` variants of
+ * `end-call` / `update-call` / `kick-user` from `user` and `call_member`, which
+ * matters here because there is no host role on a broadcast type — every
+ * attendee is `call_member`. Do not re-derive those grants; read that script.
+ */
+export const LIVESTREAM_CALL_TYPE = "livestream";
+
+/**
+ * Every call type this app mints calls against, in one list.
+ *
+ * The single answer to "is this CID ours?", for callers that must accept both
+ * rather than one — a webhook guard that wants every type this product knows,
+ * as opposed to `isOwnCallType` in `webhook-dispatch.ts`, which wants the one
+ * type a 1:1 is minted on. Two different questions, two different lists; keep
+ * them apart.
+ */
+export const ALL_CALL_TYPES = [STREAM_CALL_TYPE, LIVESTREAM_CALL_TYPE] as const;
+
+export type KnownCallType = (typeof ALL_CALL_TYPES)[number];
+
+/** Exact-match test against the owned set. Case- and whitespace-SENSITIVE. */
+export function isKnownCallType(value: unknown): value is KnownCallType {
+  return (ALL_CALL_TYPES as readonly unknown[]).includes(value);
+}
+
+/**
+ * Coerce anything to a call type this app owns, defaulting to
+ * {@link STREAM_CALL_TYPE}.
+ *
+ * This is the fail-safe door for a value of unknown provenance: a persisted
+ * `Meeting.callType` edited by hand, a Stream-supplied type from a CID built by
+ * someone else, a config string. None of those may produce an UNOWNED cid —
+ * `livestream:occurrence-x` resolving against a type this app does not mint on
+ * is how #1285 happened, and an unrecognised-but-plausible type from a typo
+ * reaches the same place without anybody noticing. Defaulting to `default`
+ * resolves against a call this app really does own, so the worst a malformed
+ * value can do is degrade a broadcast to a full-mesh call.
+ *
+ * Case- and whitespace-insensitive on the way in, because that is the cheap
+ * half of the typo and the forgiving one is right: `"Livestream"` is a row
+ * whose author plainly meant the broadcast type, and coercing it to `default`
+ * would silently downgrade a webinar. `isKnownCallType` stays strict — it
+ * exists to answer "did Stream hand us a type from our own vocabulary", and a
+ * loose answer there is exactly the bug.
+ */
+export function normalizeCallType(
+  value: string | null | undefined,
+): KnownCallType {
+  const candidate = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return isKnownCallType(candidate) ? candidate : STREAM_CALL_TYPE;
+}
 
 /** Bare call id → cid. Idempotent: an already-prefixed value is returned as-is. */
 export function toCallCid(

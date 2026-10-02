@@ -11,7 +11,12 @@ import {
 import prisma from "@/lib/prisma";
 import { Prisma, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  type KnownCallType,
+  callTypeFromCid,
+  normalizeCallType,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import {
   generateRecordingTitle,
@@ -67,6 +72,16 @@ const LIST_RECORDINGS_CEILING = 200;
 export type SyncableSession = {
   id: string;
   streamCallId: string | null;
+  /**
+   * `Meeting.callType` — the type this call was MINTED on.
+   *
+   * Optional because this is a structural type satisfied by several different
+   * query shapes (`syncRecordingsFor*` and the orphan reconciler all select the
+   * whole Meeting row, but a caller may not). When it is absent the fallback is
+   * the CID itself, which is behaviour-preserving for every pre-`livestream`
+   * call — see `resolveRecordingCallType`.
+   */
+  callType?: string | null;
   occurrence: {
     appointment:
       | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> & {
@@ -83,6 +98,48 @@ export type SyncableSession = {
 export interface SyncOutcome {
   ok: boolean;
   reason?: "stream-unreachable" | "persist-failed";
+}
+
+/**
+ * Which call type a recording request has to be addressed to.
+ *
+ * Two sources, in a fixed order, because they are not equally trustworthy.
+ *
+ * 1. The call type PERSISTED on the `Meeting` row, whenever the caller has the
+ *    row. `normalizeCallType`, not a comparison: the column is a `String`, so
+ *    `"Livestream"` is a webinar whose author mis-cased it and `audio_room` is
+ *    a row this app does not own — coercing the first upward and the second
+ *    inward is the whole point, and #1285 is what the inward half is for.
+ * 2. The CID ITSELF, when no row is in hand. `callTypeFromCid`, not
+ *    `STREAM_CALL_TYPE`: a bare id carries no type and answers `default`, which
+ *    is the pre-cutover answer and the correct one for every call minted before
+ *    `livestream` existed, so nothing about a `default` call changes. What it
+ *    stops is a caller that already holds the prefixed value
+ *    (`livestream:occurrence-x`) having it silently retyped to `default`.
+ *
+ * ## Why this is not a detail
+ *
+ * Addressing a call on the wrong type is the quietest failure in this
+ * subsystem, because every layer above it reports success. Stream answers a call
+ * it does not hold with a 404; `startRecording` turns that into
+ * `{ success: false }`; the route reverts `isRecording` and the caller sees an
+ * error — but `recordingStartedAt` has already been stamped, which is precisely
+ * the orphaned-session shape `scripts/stream/reconcile-orphaned-recordings.ts`
+ * exists to repair, and it would ask Stream on the same wrong type and conclude
+ * there was nothing there. Nothing pages. The recording simply is not there.
+ *
+ * The return is a `KnownCallType`, so no input can produce a CID on a type this
+ * app does not mint on. A type is never widened by hand here: the widest thing
+ * this does is coerce a malformed value DOWN to the type every call before the
+ * cutover is on.
+ */
+export function resolveRecordingCallType(
+  streamCallIdOrCid: string,
+  persistedCallType?: string | null,
+): KnownCallType {
+  return persistedCallType
+    ? normalizeCallType(persistedCallType)
+    : normalizeCallType(callTypeFromCid(streamCallIdOrCid));
 }
 
 export class RecordingService {
@@ -103,18 +160,25 @@ export class RecordingService {
      * place where it also burns a Sentry event per attempt: quota exhaustion is
      * not a fault, and a full per-minute budget on `StartRecording` should tell
      * the user to wait rather than tell them we broke.
+     *
+     * @param callType The meeting's OWN call type. Pass it: this function is
+     * handed a bare `streamCallId`, which carries no type, so a caller that
+     * omits it gets `default` — right for a 1:1, and a webinar that records
+     * nothing. See `resolveRecordingCallType`.
      */
+    callType?: string | null,
   ): Promise<{ success: boolean; error?: string; cause?: unknown }> {
     try {
       const client = getStreamVideoClient();
 
       // #1134 P1-5 — one helper owns the `type:id` split; three sites here had
       // each reimplemented it and a fourth (the orphan reconciler) had forgotten.
-      const callType = STREAM_CALL_TYPE;
+      // The TYPE half is no longer a constant either — see the resolver.
+      const type = resolveRecordingCallType(streamCallId, callType);
       const callId = toCallId(streamCallId);
 
       // Get the call and start recording
-      const call = client.video.call(callType, callId);
+      const call = client.video.call(type, callId);
       // #473 — fast-fail while Stream is degraded instead of eating the 30s
       // client timeout. This one matters twice over: the maintenance drain calls
       // stopRecording in a loop of up to MAX_DRAIN_BATCH sessions, so an
@@ -128,6 +192,7 @@ export class RecordingService {
 
       streamLogger.info("Recording started via API", {
         streamCallId: callId,
+        callType: type,
         userId,
       });
 
@@ -148,6 +213,7 @@ export class RecordingService {
       }
       streamLogger.error("Failed to start recording", error, {
         streamCallId,
+        callType: resolveRecordingCallType(streamCallId, callType),
         userId,
       });
       return { success: false, error: errorMessage };
@@ -157,23 +223,26 @@ export class RecordingService {
   /**
    * Stop recording for a call
    * @param streamCallId The Stream call ID
+   * @param callType `Meeting.callType`, when the caller holds the row
    */
   static async stopRecording(
     streamCallId: string,
+    callType?: string | null,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const client = getStreamVideoClient();
 
-      const callType = STREAM_CALL_TYPE;
+      const type = resolveRecordingCallType(streamCallId, callType);
       const callId = toCallId(streamCallId);
 
-      const call = client.video.call(callType, callId);
+      const call = client.video.call(type, callId);
       await withStreamCircuitBreaker(() =>
         call.stopRecording({ recording_type: RECORDING_TYPE }),
       );
 
       streamLogger.info("Recording stopped via API", {
         streamCallId: callId,
+        callType: type,
       });
 
       return { success: true };
@@ -182,6 +251,7 @@ export class RecordingService {
         error instanceof Error ? error.message : "Failed to stop recording";
       streamLogger.error("Failed to stop recording", error, {
         streamCallId,
+        callType: resolveRecordingCallType(streamCallId, callType),
       });
       return { success: false, error: errorMessage };
     }
@@ -190,6 +260,7 @@ export class RecordingService {
   /**
    * Get recordings for a specific call from Stream
    * @param streamCallId The Stream call ID
+   * @param callType `Meeting.callType`, when the caller holds the row
    */
   /**
    * What Stream holds for a call, or `null` when Stream could not be asked.
@@ -211,14 +282,15 @@ export class RecordingService {
    */
   static async getCallRecordingsFromStream(
     streamCallId: string,
+    callType?: string | null,
   ): Promise<StreamRecording[] | null> {
     try {
       const client = getStreamVideoClient();
 
-      const callType = STREAM_CALL_TYPE;
+      const type = resolveRecordingCallType(streamCallId, callType);
       const callId = toCallId(streamCallId);
 
-      const call = client.video.call(callType, callId);
+      const call = client.video.call(type, callId);
       const response = await withStreamCircuitBreaker(() =>
         call.listRecordings(),
       );
@@ -247,6 +319,7 @@ export class RecordingService {
     } catch (error) {
       streamLogger.error("Failed to get call recordings from Stream", error, {
         streamCallId,
+        callType: resolveRecordingCallType(streamCallId, callType),
       });
       return null;
     }
@@ -639,6 +712,10 @@ export class RecordingService {
     try {
       const streamRecordings = await this.getCallRecordingsFromStream(
         session.streamCallId,
+        // Forwarded, never re-derived: the session IS the row, so re-reading a
+        // call type the caller already selected would be a second source of
+        // truth for the one value `call-cid.ts` says must come from the row.
+        session.callType,
       );
 
       // Could not ask Stream. Returning here rather than treating it as an

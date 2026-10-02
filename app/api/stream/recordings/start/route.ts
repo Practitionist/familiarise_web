@@ -213,9 +213,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Start recording via Stream API (use DB-stored call ID, never trust client)
+    //
+    // `meeting.callType` is passed because the stored call id is the BARE id and
+    // so carries no call type: a webinar's room exists at `livestream:<id>` and
+    // not at `default:<id>`, so a start that guessed would 404, revert
+    // `isRecording` and leave the user staring at an error with a recording
+    // that never began.
     const result = await RecordingService.startRecording(
       meeting.streamCallId,
       session.user.id,
+      meeting.callType,
     );
 
     if (!result.success) {

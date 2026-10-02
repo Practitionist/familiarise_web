@@ -5058,6 +5058,33 @@ model Meeting {
   passcode     String?
   hostKeys     String[]
 
+  /// Which Stream call type this row's call was MINTED on — `default` for
+  /// consultations/subscriptions/trials, `livestream` for webinars/classes.
+  /// See `lib/stream/call-cid.ts` for the constants and the normaliser.
+  ///
+  /// Persisted rather than derived from `appointment.type`, because a call's
+  /// type is IMMUTABLE in Stream: there is no migrate-call-type, so the type
+  /// this row was created on is the only type that will ever answer for it. A
+  /// derivation would be wrong on precisely the rows that matter — everything
+  /// that predates the cutover, and any row whose call was minted by the wrong
+  /// arm, which is a mistake you cannot undo after the fact.
+  ///
+  /// `String` with a default rather than a Prisma `enum`, for the same reason
+  /// `platform` above is one: Stream owns the vocabulary and will add call
+  /// types without asking us. The default does the safety work — every
+  /// existing row and every writer that has no opinion stays `default` with no
+  /// backfill, and the column can never be NULL, which is what keeps
+  /// `normalizeCallType`'s input total. A malformed value is coerced to a type
+  /// this app owns rather than producing an unowned CID.
+  ///
+  /// NO INDEX, deliberately. Every Meeting read in the product resolves by the
+  /// unique `streamCallId`, and the one listing query — the org stream-calls
+  /// route — filters (organizationId, createdAt), which is already indexed
+  /// below. Nothing filters on this column, so an index here would be pure
+  /// write cost on every mint for a read that does not exist. Add it with the
+  /// first query that actually filters, in that query's compound form.
+  callType String @default("default")
+
   // Recording state
   isRecording        Boolean   @default(false)
   recordingStartedAt DateTime?

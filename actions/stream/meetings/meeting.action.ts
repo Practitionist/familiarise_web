@@ -30,7 +30,11 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import {
+  normalizeCallType,
+  STREAM_CALL_TYPE,
+  type KnownCallType,
+} from "@/lib/stream/call-cid";
 import {
   rebuiltRoomIdForOccurrence,
   roomIdForOccurrence,
@@ -717,11 +721,14 @@ async function readAppointmentOrganizationId(
  * Creates a new meeting session in the database.
  * @param slot The appointment slot for which to create the session.
  * @param streamCallId The Stream Call ID to associate with the new session.
+ * @param callType The Stream call type to MINT this room on. Optional, and
+ *   `default` when absent — see the note below.
  * @returns The newly created Meeting object.
  */
 export async function createDbMeeting(
   slot: MeetingSlot,
   streamCallId: string,
+  callType: KnownCallType = STREAM_CALL_TYPE,
 ): Promise<Meeting> {
   // The maintenance read, the input validation and the organization lookup
   // all used to sit OUTSIDE this guard. Anything they threw left the server
@@ -750,6 +757,7 @@ export async function createDbMeeting(
     streamLogger.debug("Creating meeting session", {
       slotId: slot.id,
       streamCallId: validatedStreamCallId,
+      callType,
     });
 
     const organizationId = await readAppointmentOrganizationId(
@@ -760,6 +768,15 @@ export async function createDbMeeting(
       data: {
         streamCallId: validatedStreamCallId,
         platform: "STREAM",
+        // #1134 P1-5 — the type is WRITTEN, not merely remembered. A call's
+        // type is immutable in Stream, so this is the one and only moment it
+        // can be chosen: there is no migrate-call-type, and a room minted on the
+        // wrong type stays on it forever. Persisting it here is what lets every
+        // later reader — the join, end and livestream routes, the recording and
+        // presence services — address the call correctly instead of guessing.
+        // `default` when the caller has no opinion, which is every existing
+        // call and every current caller.
+        callType,
         occurrence: {
           connect: { id: slot.id },
         },
@@ -1155,6 +1172,37 @@ export async function provisionAppointmentMeeting(
   }
   const claimedSessionId = claim.sessionId;
 
+  // #1134 P1-5 — WHICH call type this room is minted on, read back off the row
+  // the claim just wrote (or rebound) rather than assumed.
+  //
+  // It has to be the row, for two reasons. A Stream call's type is immutable —
+  // no `migrate-call-type` exists — so the type stored with the claim is the
+  // only type that will ever answer for this room, and addressing the mint on
+  // anything else creates a DIFFERENT call: `livestream:occurrence-x` and
+  // `default:occurrence-x` are two rooms with the same bare id and nothing
+  // reconciles them. And a #1607 rebuild REBINDS an existing row's
+  // `streamCallId` without touching its `callType`, so the rebuilt room keeps
+  // the type of the room it replaced — which is correct, because the old Stream
+  // call is dead and the replacement must be reachable the same way.
+  //
+  // `normalizeCallType` rather than a comparison: `Meeting.callType` is a
+  // `String`, so a malformed value must resolve against a call type this app
+  // really owns instead of producing a CID on somebody else's (#1285). Reading
+  // it out of the cid instead would be worse than wrong — `streamCallId` is
+  // stored BARE, carries no type at all, and would answer `default` for every
+  // row.
+  //
+  // One extra indexed read per mint, deliberately taken HERE rather than
+  // threaded back out of `claimRoomForOccurrence`: that function has two return
+  // shapes (a fresh row and a rebound one) and threading a third field through
+  // both to save one `findUnique` on an infrequent path is how the two shapes
+  // end up disagreeing about which room they describe.
+  const claimedRoom = await prisma.meeting.findUnique({
+    where: { id: claimedSessionId },
+    select: { callType: true },
+  });
+  const callType = normalizeCallType(claimedRoom?.callType);
+
   try {
     await withStreamCircuitBreaker(async () => {
       // Stream refuses a call operation naming a user it does not hold, and a
@@ -1164,10 +1212,7 @@ export async function provisionAppointmentMeeting(
       // them, and already-synced ids are filtered inside.
       await upsertUsersToStream(payload.syncUserIds);
 
-      const call = getStreamVideoClient().video.call(
-        STREAM_CALL_TYPE,
-        streamCallId,
-      );
+      const call = getStreamVideoClient().video.call(callType, streamCallId);
       await call.getOrCreate({ data: payload.data });
     });
   } catch (error) {

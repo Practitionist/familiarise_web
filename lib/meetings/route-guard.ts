@@ -32,8 +32,22 @@ export type MeetingRouteGrant = {
 
 export async function guardMeetingRoute(
   params: Promise<{ meetingId: string }>,
-  /** Named in the two log lines this emits, so a refusal says which route. */
-  op: "admit to" | "end",
+  /**
+   * Named in the two log lines this emits, so a refusal says which route.
+   *
+   * Widen only to add a verb phrase that fits both templates — "cannot `${op}`
+   * meeting" and "Meeting `${op}` refused". The livestream verbs were added
+   * rather than a bespoke preamble in that route because two copies of this
+   * authorization block is the defect this file exists to prevent (see the
+   * header); the honest cost is that `Meeting go live refused` reads a little
+   * stiffly, which is the cheaper half of the trade.
+   */
+  op:
+    | "admit to"
+    | "end"
+    | "go live"
+    | "end the livestream"
+    | "watch the livestream",
 ): Promise<MeetingRouteGrant | MeetingRouteRefusal> {
   const refuse = (body: Record<string, unknown>, status: number) => ({
     ok: false as const,

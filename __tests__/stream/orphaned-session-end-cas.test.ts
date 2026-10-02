@@ -98,9 +98,14 @@ const streamError = (responseCode: number, code?: number) =>
     ...(code === undefined ? {} : { code }),
   });
 
-const session = (id: string) => ({
+const session = (id: string, callType = "default") => ({
   id,
   streamCallId: `occurrence-${id}`,
+  // Every Meeting row carries it — NOT NULL with a default, so a fixture that
+  // omits it models a row that cannot exist. It matters here because the job
+  // reads the type off the row to know which call to ask Stream about, and
+  // refuses to treat a 404 as conclusive unless it asked the type the row names.
+  callType,
   occurrence: { endsAt: SLOT_END },
 });
 

@@ -30,8 +30,29 @@
  * Calls that have already ENDED are left alone. Nobody joins them again, the
  * role there is inert, and the list of them only grows.
  *
+ * ## Both call types, deliberately
+ *
+ * There are two call types now (`lib/stream/call-cid.ts`) and this script scans
+ * BOTH, which used to be an accident of `queryCalls` returning everything and is
+ * now an explicit `type: { $in: ALL_CALL_TYPES }` filter plus a per-type tally in
+ * the report. The two questions that sounds like are different:
+ *
+ *   - Covering `livestream` is REQUIRED, not incidental. A broadcast type has no
+ *     host role at all — every attendee is `call_member` — and
+ *     `ensure-call-type-grants.ts` moves `join-call` onto that role. A webinar
+ *     call left out of this backfill would lock out every person in a class of
+ *     two hundred the moment the grants land.
+ *   - NOT covering anything else is equally deliberate. `audio_room` and
+ *     `development` are Stream built-ins this app never mints on, and
+ *     `harden-unused-call-types.ts` strips what reach they have left. A foreign
+ *     type in the filter would put this script's `updateCallMembers` write
+ *     against a call the product has no opinion about, on the strength of a
+ *     wildcard nobody chose. `--call-type` narrows further, for an operator who
+ *     wants the grants rollout covered one shape at a time.
+ *
  *   npx tsx scripts/stream/backfill-call-member-role.ts
  *   npx tsx scripts/stream/backfill-call-member-role.ts --apply
+ *   npx tsx scripts/stream/backfill-call-member-role.ts --call-type livestream
  *
  * NOTE: a dry run READS production. An apply WRITES member roles to production,
  * and must name the target app — see target-guard.ts.
@@ -42,7 +63,12 @@ import {
   getStreamVideoClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
-import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+import {
+  ALL_CALL_TYPES,
+  type KnownCallType,
+  isKnownCallType,
+  normalizeCallType,
+} from "../../lib/stream/call-cid";
 import { requireNamedTargetApp } from "./target-guard";
 
 type StreamVideoClient = ReturnType<typeof getStreamVideoClient>;
@@ -101,17 +127,24 @@ export interface OpenCall {
  * question. One traversal, two very different appetites, no second copy of the
  * pagination to drift.
  *
- * `ended_at: null` is Stream's documented filter for a live call. The members
- * are fetched per call rather than read off the `queryCalls` response, because
- * that response caps its embedded member list and a truncated roster here would
- * silently leave the un-listed members behind — which is exactly the class of
- * bug this script exists to clean up.
+ * `ended_at: null` is Stream's documented filter for a live call, and the
+ * `type` filter is what makes the scan's coverage a DECISION rather than a
+ * side-effect of the endpoint returning everything — see the header's "Both call
+ * types, deliberately". Narrowing it is also how `--call-type` works, and it
+ * cannot be widened past `ALL_CALL_TYPES` because the filter is built from that
+ * list, never from raw argv.
+ *
+ * The members are fetched per call rather than read off the `queryCalls`
+ * response, because that response caps its embedded member list and a truncated
+ * roster here would silently leave the un-listed members behind — which is
+ * exactly the class of bug this script exists to clean up.
  */
 export async function* iterateOpenCalls(
   client: StreamVideoClient,
+  types: readonly KnownCallType[] = ALL_CALL_TYPES,
 ): AsyncGenerator<OpenCall> {
   const page = await client.video.queryCalls({
-    filter_conditions: { ended_at: null },
+    filter_conditions: { ended_at: null, type: { $in: [...types] } },
     limit: CALL_PAGE_SIZE,
   });
 
@@ -202,24 +235,44 @@ async function readAllMembers(
 export async function anyOpenCallMemberHolds(
   client: StreamVideoClient,
   role: string = MEMBER_ROLE,
+  types: readonly KnownCallType[] = ALL_CALL_TYPES,
 ): Promise<{
   found: boolean;
   callsScanned: number;
   /** Calls holding at least one member WITHOUT the role — the lockout set. */
   callsWithUncoveredMembers: string[];
   membersMissingRole: number;
+  /**
+   * How many calls each scanned type contributed.
+   *
+   * Added with the type filter rather than for its own sake: a pre-flight that
+   * said "84 open calls" while quietly covering only one shape could not be
+   * checked against what the operator believed they were about to change, and
+   * the whole failure this guard exists for is a partial coverage that reads as
+   * complete.
+   */
+  callsByType: Record<string, number>;
 }> {
   let callsScanned = 0;
   let membersWithRole = 0;
   let membersMissingRole = 0;
   const callsWithUncoveredMembers: string[] = [];
+  const callsByType: Record<string, number> = Object.fromEntries(
+    types.map((type) => [type, 0]),
+  );
 
-  for await (const call of iterateOpenCalls(client)) {
+  for await (const call of iterateOpenCalls(client, types)) {
     callsScanned++;
+    callsByType[call.type] = (callsByType[call.type] ?? 0) + 1;
     const missing = call.members.filter((member) => member.role !== role);
     membersWithRole += call.members.length - missing.length;
     if (missing.length > 0) {
       membersMissingRole += missing.length;
+      // The BARE id, which is unambiguous here for a reason worth stating: the
+      // `type` filter above guarantees every scanned call is on a type this app
+      // mints, and `Meeting.streamCallId` is UNIQUE — so no two listed ids can
+      // be two different Stream rooms. `callsByType` is what tells the reader
+      // which shape they are looking at.
       callsWithUncoveredMembers.push(call.id);
     }
   }
@@ -232,6 +285,7 @@ export async function anyOpenCallMemberHolds(
     callsScanned,
     callsWithUncoveredMembers,
     membersMissingRole,
+    callsByType,
   };
 }
 
@@ -239,6 +293,14 @@ export interface Options {
   apply: boolean;
   /** Raw argv, so `--target-app` is honoured alongside the env var. */
   argv: readonly string[];
+  /**
+   * The call types to scan. Defaults to every type this app mints.
+   *
+   * Narrowable, never widenable: `parseArgs` validates through `isKnownCallType`,
+   * so `--call-type audio_room` is a loud refusal rather than a write against a
+   * type this product has no opinion about.
+   */
+  types?: readonly KnownCallType[];
 }
 
 export interface BackfillResult {
@@ -247,21 +309,65 @@ export interface BackfillResult {
   membersUpdated: number;
   /** Open calls that hold no members at all — the join route is their only way in. */
   memberlessCalls: string[];
+  /**
+   * How many open calls each scanned type contributed.
+   *
+   * This is the report's headline rather than a footnote. `livestream` calls are
+   * written to deliberately (see the header), and an operator about to hand a
+   * production credential set to `--apply` needs to see which shapes were in
+   * scope — a `livestream: 0` against a scan that claims to be clean is a
+   * different fact from one that never looked.
+   */
+  callsByType: Record<string, number>;
   ok: boolean;
 }
 
+/**
+ * `--call-type <name>`, validated against the types this app owns.
+ *
+ * Loud on a typo for the reason `isKnownCallType` is strict: an unrecognised
+ * value that fell back to "scan everything" would look like a scoped run that
+ * happened to find nothing, which is the one outcome that must never be
+ * mistaken for a covered one.
+ */
 function parseArgs(argv: string[]): Options {
-  return { apply: argv.includes("--apply"), argv };
+  const at = argv.findIndex(
+    (a) => a === "--call-type" || a.startsWith("--call-type="),
+  );
+  const raw =
+    at === -1
+      ? undefined
+      : argv[at].includes("=")
+        ? argv[at].slice(argv[at].indexOf("=") + 1)
+        : argv[at + 1];
+
+  if (raw !== undefined && !isKnownCallType(raw.trim().toLowerCase())) {
+    throw new Error(
+      `--call-type must be one of ${ALL_CALL_TYPES.join(", ")}; got "${raw}". ` +
+        `The other Stream built-ins are not minted on by this app and are ` +
+        `deliberately out of scope — see harden-unused-call-types.ts.`,
+    );
+  }
+
+  return {
+    apply: argv.includes("--apply"),
+    argv,
+    ...(raw === undefined
+      ? {}
+      : { types: [normalizeCallType(raw)] as readonly KnownCallType[] }),
+  };
 }
 
 export async function backfillCallMemberRole(
   opts: Options,
 ): Promise<BackfillResult> {
+  const types = opts.types ?? ALL_CALL_TYPES;
   const result: BackfillResult = {
     callsScanned: 0,
     callsChanged: 0,
     membersUpdated: 0,
     memberlessCalls: [],
+    callsByType: Object.fromEntries(types.map((type) => [type, 0])),
     ok: false,
   };
 
@@ -289,8 +395,9 @@ export async function backfillCallMemberRole(
     return result;
   }
 
-  for await (const call of iterateOpenCalls(client)) {
+  for await (const call of iterateOpenCalls(client, types)) {
     result.callsScanned++;
+    result.callsByType[call.type] = (result.callsByType[call.type] ?? 0) + 1;
 
     if (call.members.length === 0) {
       result.memberlessCalls.push(`${call.type}:${call.id}`);
@@ -325,12 +432,26 @@ export async function backfillCallMemberRole(
 }
 
 function report(result: BackfillResult, opts: Options): void {
-  console.log(
-    `\nScanned ${result.callsScanned} open ${STREAM_CALL_TYPE}-type calls.`,
-  );
+  const tally = Object.entries(result.callsByType)
+    .map(([type, count]) => `${type}: ${count}`)
+    .join(", ");
+  console.log(`\nScanned ${result.callsScanned} open call(s) across ${tally}.`);
   console.log(
     `${result.callsChanged} call(s) had ${result.membersUpdated} member(s) on the wrong role.`,
   );
+
+  // Only worth saying when the scan was supposed to cover the type and found
+  // none — on a `--call-type livestream` run an empty tally is the answer, and
+  // on a scan that found none at all it is the thing an operator must not read
+  // as "clean".
+  const missing = Object.entries(result.callsByType)
+    .filter(([, count]) => count === 0)
+    .map(([type]) => type);
+  if (missing.length > 0) {
+    console.log(
+      `No open call(s) on: ${missing.join(", ")} — nothing to backfill there.`,
+    );
+  }
 
   if (result.memberlessCalls.length > 0) {
     // Not an error, and worth saying out loud: these are joinable only through
@@ -353,8 +474,10 @@ function report(result: BackfillResult, opts: Options): void {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  const types = opts.types ?? ALL_CALL_TYPES;
   console.log(
-    `Backfilling the ${MEMBER_ROLE} role (${opts.apply ? "LIVE" : "DRY RUN"})...`,
+    `Backfilling the ${MEMBER_ROLE} role on ${types.join(", ")} calls ` +
+      `(${opts.apply ? "LIVE" : "DRY RUN"})...`,
   );
   const result = await backfillCallMemberRole(opts);
   report(result, opts);
