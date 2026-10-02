@@ -1,11 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
 /**
- * BetterAuth → Sentry bridge (#1856).
+ * BetterAuth → Sentry bridge (#1856, #1876).
  *
  * Forwards `error`-level logs to Sentry while suppressing expected
- * authentication outcomes (wrong password, unknown user, etc.) and throttling
- * schema-error message strings.
+ * authentication outcomes (wrong password, unknown user, etc.), scrubbing
+ * submitted email addresses / credentials from console and Sentry logs, and
+ * throttling schema-error message strings.
  */
 type AuthLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -24,13 +26,43 @@ const SCHEMA_MESSAGE_THROTTLE_MS = 5 * 60 * 1000;
 const SCHEMA_MESSAGE_THROTTLE_MAX_KEYS = 100;
 const lastSchemaMessageAtByKey = new Map<string, number>();
 
+const AUTH_SECRET_KEY_RX =
+  /^(?:password|passwd|token|secret|authorization|cookie|code)$/i;
+
+function sanitizeAuthLogArg(arg: unknown, depth = 0): unknown {
+  if (depth > 4) return arg;
+  if (typeof arg === "string") return scrubStringValue(arg);
+  if (arg instanceof Error) return arg;
+  if (Array.isArray(arg)) {
+    return arg.map((item) => sanitizeAuthLogArg(item, depth + 1));
+  }
+  if (arg && typeof arg === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(arg as Record<string, unknown>)) {
+      if (/^email$/i.test(k)) {
+        out[k] =
+          typeof v === "string" ? scrubStringValue(v) : "[REDACTED_EMAIL]";
+      } else if (AUTH_SECRET_KEY_RX.test(k)) {
+        out[k] = "[redacted]";
+      } else {
+        out[k] = sanitizeAuthLogArg(v, depth + 1);
+      }
+    }
+    return out;
+  }
+  return arg;
+}
+
 export function reportAuthLogToSentry(
   level: AuthLogLevel,
   message: string,
   ...args: unknown[]
 ): void {
+  const safeMessage = scrubStringValue(message);
+  const safeArgs = args.map((a) => sanitizeAuthLogArg(a));
+
   if (level === "error") {
-    console.error(`[Better Auth]: ${message}`, ...args);
+    console.error(`[Better Auth]: ${safeMessage}`, ...safeArgs);
 
     if (EXPECTED_AUTH_FAILURE_MESSAGES.has(message)) return;
 
@@ -38,14 +70,14 @@ export function reportAuthLogToSentry(
     if (err) {
       Sentry.captureException(err, {
         tags: { subsystem: "auth" },
-        extra: { authLog: message },
+        extra: { authLog: safeMessage },
       });
       return;
     }
 
     const now = Date.now();
     if (
-      now - (lastSchemaMessageAtByKey.get(message) ?? 0) <
+      now - (lastSchemaMessageAtByKey.get(safeMessage) ?? 0) <
       SCHEMA_MESSAGE_THROTTLE_MS
     ) {
       return;
@@ -60,18 +92,18 @@ export function reportAuthLogToSentry(
         return;
       }
     }
-    lastSchemaMessageAtByKey.set(message, now);
-    Sentry.captureMessage(`[better-auth] ${message}`, {
+    lastSchemaMessageAtByKey.set(safeMessage, now);
+    Sentry.captureMessage(`[better-auth] ${safeMessage}`, {
       tags: { subsystem: "auth" },
       level: "error",
     });
     return;
   }
   if (level === "warn") {
-    console.warn(`[Better Auth]: ${message}`, ...args);
+    console.warn(`[Better Auth]: ${safeMessage}`, ...safeArgs);
     return;
   }
-  console.log(`[Better Auth]: ${message}`, ...args);
+  console.log(`[Better Auth]: ${safeMessage}`, ...safeArgs);
 }
 
 /** Test hook: reset the schema-message throttle between cases. */

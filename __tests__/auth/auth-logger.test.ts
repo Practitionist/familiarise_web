@@ -91,35 +91,51 @@ describe("reportAuthLogToSentry (#1856)", () => {
   // an unauthenticated surface, against a 5,000-error monthly quota.
 
   it.each([
-    ["Invalid password", undefined],
-    ["User not found", { email: "victim@example.com" }],
-    ["Credential account not found", { email: "victim@example.com" }],
-    ["Password not found", { email: "victim@example.com" }],
-    ["Failed to create session", undefined],
-  ])("does not send an auth outcome to Sentry (%s)", (message, args) => {
-    reportAuthLogToSentry("error", message, ...(args ? [args] : []));
+    ["Invalid password", undefined, undefined],
+    [
+      "User not found",
+      { email: "victim@example.com" },
+      { email: "[REDACTED_EMAIL]" },
+    ],
+    [
+      "Credential account not found",
+      { email: "victim@example.com" },
+      { email: "[REDACTED_EMAIL]" },
+    ],
+    [
+      "Password not found",
+      { email: "victim@example.com" },
+      { email: "[REDACTED_EMAIL]" },
+    ],
+    ["Failed to create session", undefined, undefined],
+  ])(
+    "does not send an auth outcome to Sentry and scrubs email in console logs (%s)",
+    (message, inputArgs, expectedLoggedArgs) => {
+      reportAuthLogToSentry("error", message, ...(inputArgs ? [inputArgs] : []));
 
-    expect(captureException).not.toHaveBeenCalled();
-    expect(captureMessage).not.toHaveBeenCalled();
-    // The Netlify function log keeps it — that is the signal an
-    // operator greps during an incident, and it never leaves the box.
-    expect(consoleError).toHaveBeenCalledWith(
-      `[Better Auth]: ${message}`,
-      ...(args ? [args] : []),
-    );
-  });
+      expect(captureException).not.toHaveBeenCalled();
+      expect(captureMessage).not.toHaveBeenCalled();
+      // #1876 §1 — console.error keeps the diagnostic event for operators,
+      // with submitted email addresses scrubbed so PII never lands in logs.
+      expect(consoleError).toHaveBeenCalledWith(
+        `[Better Auth]: ${message}`,
+        ...(expectedLoggedArgs ? [expectedLoggedArgs] : []),
+      );
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
+        "victim@example.com",
+      );
+    },
+  );
 
-  it("never sends the submitted email to Sentry", () => {
+  it("never sends the submitted email to Sentry or console", () => {
     reportAuthLogToSentry("error", "User not found", {
       email: "victim@example.com",
     });
 
-    // The sink forwards only the message string, never `args`. If a
-    // future edit starts passing `args` through, the address reaches
-    // Sentry and the quota event becomes a PII event too.
     for (const call of [
       ...captureMessage.mock.calls,
       ...captureException.mock.calls,
+      ...consoleError.mock.calls,
     ]) {
       expect(JSON.stringify(call)).not.toContain("victim@example.com");
     }

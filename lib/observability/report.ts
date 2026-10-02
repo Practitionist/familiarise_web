@@ -6,7 +6,11 @@
 
 import * as Sentry from "@sentry/nextjs";
 import type { SeverityLevel } from "@sentry/nextjs";
-import { isPoolExhaustion } from "@/lib/db/pg-errors";
+import {
+  isExclusionViolation,
+  isPoolExhaustion,
+  isUniqueViolation,
+} from "@/lib/db/pg-errors";
 
 /**
  * Marker that appears in the message of every event reporting a failed
@@ -86,15 +90,64 @@ function normaliseError(error: unknown): Error {
   return new Error(String(error));
 }
 
+/**
+ * #1696 / #1092 — Extract structured Postgres/Prisma error tags (`pool_exhaustion`,
+ * `pg_code`, `pg_constraint`) so Sentry alert rules and triage searches can filter
+ * on SQLSTATE (`23P01` exclusion overlap, `23505` unique violation, `40001`
+ * serialization failure) even when Prisma wraps raw-SQL constraints in
+ * `PrismaClientUnknownRequestError`.
+ */
+function extractPgErrorTags(error: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (isPoolExhaustion(error)) {
+    out.pool_exhaustion = "true";
+  }
+  const msg =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : "";
+  const metaCode =
+    error && typeof error === "object" && "meta" in error
+      ? (error as { meta?: { code?: unknown } }).meta?.code
+      : undefined;
+  const prismaCode =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+
+  if (isExclusionViolation(error)) {
+    out.pg_code = "23P01";
+    if (msg.includes("occurrence_no_confirmed_overlap")) {
+      out.pg_constraint = "occurrence_no_confirmed_overlap";
+    } else {
+      const match = /constraint "([^"]+)"/i.exec(msg);
+      if (match?.[1]) out.pg_constraint = match[1];
+    }
+  } else if (isUniqueViolation(error)) {
+    out.pg_code = "23505";
+  } else if (
+    prismaCode === "P2034" ||
+    metaCode === "40001" ||
+    msg.includes("40001") ||
+    /could not serialize access/i.test(msg)
+  ) {
+    out.pg_code = "40001";
+  } else if (typeof metaCode === "string" && /^[0-9A-Z]{5}$/.test(metaCode)) {
+    out.pg_code = metaCode;
+  }
+
+  return out;
+}
+
 /** Report a caught fault or modelled outcome. Normalises non-Error throws. */
 export function reportSentryError(error: unknown, opts: ReportOpts): void {
   const normalised = normaliseError(error);
   const context = buildSentryCaptureContext(opts);
-  // #1696 — one tag every pool-timeout carries, whatever route hit it, so an
-  // alert rule can fire on pool exhaustion instead of on N unrelated titles.
-  const tags = isPoolExhaustion(error)
-    ? { ...context.tags, pool_exhaustion: "true" }
-    : context.tags;
+  const pgTags = extractPgErrorTags(error);
+  const tags =
+    Object.keys(pgTags).length > 0
+      ? { ...pgTags, ...context.tags }
+      : context.tags;
   Sentry.captureException(normalised, {
     ...context,
     tags,

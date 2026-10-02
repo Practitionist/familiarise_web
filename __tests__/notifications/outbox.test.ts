@@ -220,4 +220,71 @@ describe("deriveTransactionId", () => {
       deriveTransactionId("refund-requested", ["ops1"], payload, "rf_1"),
     ).toBe(a);
   });
+
+  it("derives entityRef from payload when omitted and sets a 60s inline lease on nextRetryAt (#1876)", async () => {
+    const before = Date.now();
+    mockUpsert.mockImplementation(async (args) => ({
+      id: "nx-lease",
+      ...args.create,
+    }));
+
+    await stageTrigger({
+      workflowId: "appointment-booked",
+      kind: "SINGLE",
+      recipients: ["u1"],
+      payload: { appointmentId: "appt-42", dashboardUrl: "/d" },
+    });
+
+    const createArg = mockUpsert.mock.calls[0][0].create as {
+      entityRef: string;
+      nextRetryAt: Date;
+    };
+    expect(createArg.entityRef).toBe("appointment:appt-42");
+    expect(createArg.nextRetryAt.getTime()).toBeGreaterThanOrEqual(
+      before + 59_000,
+    );
+  });
+
+  it("strips NovuError.body/rawValue before Sentry capture and tags outbox_dead_letter on exhausted retries (#1876, #1926)", async () => {
+    const novuErr = Object.assign(new Error("Unprocessable Entity"), {
+      name: "NovuError",
+      statusCode: 503,
+      body: '{"subscriber":{"email":"secret@example.com"}}',
+      rawValue: { email: "secret@example.com" },
+    });
+    mockTrigger.mockRejectedValue(novuErr);
+    mockUpdate.mockResolvedValue({});
+
+    const res = await attemptTrigger(
+      {
+        id: "nx-dlq",
+        workflowId: "appointment-booked",
+        kind: "SINGLE",
+        recipients: ["u1"],
+        payload,
+        transactionId: "appointment-booked:dlq",
+        attempts: 4,
+        status: "RETRY",
+        notBefore: null,
+      },
+      { relay: true },
+    );
+
+    expect(res).toMatchObject({ success: false, outcome: "DEAD_LETTER" });
+    const [capturedErr, captureCtx] = mockCaptureException.mock.calls[0];
+    expect(capturedErr).toBeInstanceOf(Error);
+    expect("body" in capturedErr).toBe(false);
+    expect("rawValue" in capturedErr).toBe(false);
+    expect(JSON.stringify(mockCaptureException.mock.calls[0])).not.toContain(
+      "secret@example.com",
+    );
+    expect(captureCtx).toMatchObject({
+      level: "error",
+      tags: expect.objectContaining({
+        subsystem: "novu",
+        op: "trigger",
+        outbox_dead_letter: "true",
+      }),
+    });
+  });
 });

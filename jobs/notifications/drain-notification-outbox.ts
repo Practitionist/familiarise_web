@@ -23,6 +23,7 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
 
 const MAX_BATCH = 50;
+export const DRAIN_CONCURRENCY = 5;
 
 export interface NotificationDrainResult {
   scanned: number;
@@ -38,6 +39,7 @@ export interface NotificationOutboxStore {
     findMany(
       args: Prisma.NotificationOutboxFindManyArgs,
     ): Promise<StagedTrigger[]>;
+    count?(args?: Prisma.NotificationOutboxCountArgs): Promise<number>;
   };
 }
 
@@ -49,59 +51,121 @@ export async function runNotificationDrainTick(params: {
   /** Injectable attempt so the drain's own logic can be pinned without Novu. */
   attempt?: typeof attemptTrigger;
 }): Promise<NotificationDrainResult> {
-  const now = params.now ?? (() => Date.now());
-  const attempt = params.attempt ?? attemptTrigger;
-  const nowDate = new Date(now());
-  const result: NotificationDrainResult = {
-    scanned: 0,
-    sent: 0,
-    retried: 0,
-    deadLettered: 0,
-    errors: [],
+  const runBody = async (
+    span?: Sentry.Span,
+  ): Promise<NotificationDrainResult> => {
+    const now = params.now ?? (() => Date.now());
+    const attempt = params.attempt ?? attemptTrigger;
+    const nowDate = new Date(now());
+    const result: NotificationDrainResult = {
+      scanned: 0,
+      sent: 0,
+      retried: 0,
+      deadLettered: 0,
+      errors: [],
+    };
+
+    const dueRows = await params.prisma.notificationOutbox.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { status: "PENDING" },
+              { status: "RETRY", nextRetryAt: { lte: nowDate } },
+            ],
+          },
+          // A zoned or quiet-hours deferral: the row waits until its instant.
+          { OR: [{ notBefore: null }, { notBefore: { lte: nowDate } }] },
+        ],
+      },
+      orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
+      take: params.maxBatch ?? MAX_BATCH,
+      select: {
+        id: true,
+        workflowId: true,
+        kind: true,
+        recipients: true,
+        payload: true,
+        transactionId: true,
+        attempts: true,
+        status: true,
+      },
+    });
+
+    const recordOutcome = (
+      outcome: Awaited<ReturnType<typeof attemptTrigger>>,
+    ): boolean => {
+      result.scanned += 1;
+      if (outcome.outcome === "SENT") result.sent += 1;
+      else if (outcome.outcome === "DEAD_LETTER") result.deadLettered += 1;
+      else if (outcome.outcome === "RETRY") result.retried += 1;
+      else if (outcome.error) {
+        // PENDING with no row change: Novu is not configured, so stop early —
+        // every later row would answer the same way.
+        result.errors.push(String(outcome.error));
+        return false;
+      }
+      return true;
+    };
+
+    // Probe the first row so an unconfigured Novu stops immediately without
+    // fanning out a batch; then drain remaining rows with bounded concurrency.
+    if (dueRows.length > 0) {
+      const firstOutcome = await attempt(dueRows[0], { relay: true, now });
+      if (recordOutcome(firstOutcome)) {
+        const rest = dueRows.slice(1);
+        for (let i = 0; i < rest.length; i += DRAIN_CONCURRENCY) {
+          const chunk = rest.slice(i, i + DRAIN_CONCURRENCY);
+          const outcomes = await Promise.all(
+            chunk.map((row) => attempt(row, { relay: true, now })),
+          );
+          let shouldContinue = true;
+          for (const outcome of outcomes) {
+            if (!recordOutcome(outcome)) {
+              shouldContinue = false;
+              break;
+            }
+          }
+          if (!shouldContinue) break;
+        }
+      }
+    }
+
+    span?.setAttributes?.({
+      "outbox.scanned": result.scanned,
+      "outbox.sent": result.sent,
+      "outbox.retried": result.retried,
+      "outbox.dead_lettered": result.deadLettered,
+    });
+
+    Sentry.metrics?.count?.("notifications.outbox.drained", result.sent);
+    Sentry.metrics?.count?.("notifications.outbox.retried", result.retried);
+    Sentry.metrics?.count?.(
+      "notifications.outbox.dead_lettered",
+      result.deadLettered,
+    );
+
+    if (typeof params.prisma.notificationOutbox.count === "function") {
+      try {
+        const pendingCount = await params.prisma.notificationOutbox.count({
+          where: { status: { in: ["PENDING", "RETRY"] } },
+        });
+        Sentry.metrics?.gauge?.("notifications.outbox.pending", pendingCount);
+      } catch {
+        // Best-effort metric gauge; never fail the drain tick.
+      }
+    }
+
+    return result;
   };
 
-  const dueRows = await params.prisma.notificationOutbox.findMany({
-    where: {
-      AND: [
-        {
-          OR: [
-            { status: "PENDING" },
-            { status: "RETRY", nextRetryAt: { lte: nowDate } },
-          ],
-        },
-        // A zoned or quiet-hours deferral: the row waits until its instant.
-        { OR: [{ notBefore: null }, { notBefore: { lte: nowDate } }] },
-      ],
-    },
-    orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
-    take: params.maxBatch ?? MAX_BATCH,
-    select: {
-      id: true,
-      workflowId: true,
-      kind: true,
-      recipients: true,
-      payload: true,
-      transactionId: true,
-      attempts: true,
-      status: true,
-    },
-  });
-
-  for (const row of dueRows) {
-    result.scanned += 1;
-    const outcome = await attempt(row, { relay: true, now });
-    if (outcome.outcome === "SENT") result.sent += 1;
-    else if (outcome.outcome === "DEAD_LETTER") result.deadLettered += 1;
-    else if (outcome.outcome === "RETRY") result.retried += 1;
-    else if (outcome.error) {
-      // PENDING with no row change: Novu is not configured, so stop early —
-      // every later row would answer the same way.
-      result.errors.push(String(outcome.error));
-      break;
-    }
+  if (typeof Sentry.startSpan === "function") {
+    return Sentry.startSpan(
+      { name: "notifications.outbox.drain", op: "queue.process" },
+      runBody,
+    );
   }
-
-  return result;
+  return runBody(undefined);
 }
 
 // Fail-closed like the email relay (#1230): a held or unavailable lock pages

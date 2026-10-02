@@ -65,7 +65,7 @@ describe("reportSentryError normalises a thrown value before capture", () => {
   });
 });
 
-describe("pool exhaustion is tagged centrally (#1696)", () => {
+describe("pool exhaustion and Postgres SQLSTATE tags (#1696, #1092)", () => {
   it("stamps pool_exhaustion on P2024 and on the interactive-transaction timeout text", () => {
     reportSentryError(
       Object.assign(new Error("Timed out fetching a new connection"), {
@@ -85,5 +85,38 @@ describe("pool exhaustion is tagged centrally (#1696)", () => {
     expect(tagsOf(0).pool_exhaustion).toBe("true");
     expect(tagsOf(1).pool_exhaustion).toBe("true");
     expect(tagsOf(2).pool_exhaustion).toBeUndefined();
+  });
+
+  it("stamps pg_code and pg_constraint on exclusion (23P01), unique (23505), and serialization (40001) errors", () => {
+    reportSentryError(
+      new Error(
+        'Raw query failed. Code: `23P01`. Message: `conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap"`',
+      ),
+      { subsystem: "bookings", op: "confirm" },
+    );
+    reportSentryError(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      { subsystem: "payments", op: "capture" },
+    );
+    reportSentryError(
+      Object.assign(new Error("could not serialize access due to concurrent update"), {
+        code: "P2034",
+      }),
+      { subsystem: "ledger", op: "transfer" },
+    );
+
+    const tagsOf = (i: number) =>
+      (captureException.mock.calls[i]?.[1] as { tags: Record<string, string> })
+        .tags;
+    expect(tagsOf(0)).toMatchObject({
+      pg_code: "23P01",
+      pg_constraint: "occurrence_no_confirmed_overlap",
+    });
+    expect(tagsOf(1)).toMatchObject({
+      pg_code: "23505",
+    });
+    expect(tagsOf(2)).toMatchObject({
+      pg_code: "40001",
+    });
   });
 });
