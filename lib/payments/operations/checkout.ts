@@ -4124,7 +4124,8 @@ export async function handleCheckout(
                 // #828 — unique; a concurrent duplicate attempt dies on P2002
                 // and the route replays this payment's original response.
                 clientIdempotencyKey:
-                  validatedData.clientIdempotencyKey ?? null,
+                  validatedData.clientIdempotencyKey ??
+                  globalThis.crypto.randomUUID(),
                 paymentGateway: validatedData.paymentGateway,
                 // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
                 paymentStatus: skipPayment

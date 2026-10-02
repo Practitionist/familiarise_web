@@ -439,11 +439,20 @@ async function resolveOrgSplit(
 // Earnings Service Functions
 // ============================================
 
+const APPOINTMENT_TYPE_NORMALIZE: Record<
+  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS" | "TRIAL",
+  AppointmentType
+> = {
+  CONSULTATION: "CONSULTATION",
+  SUBSCRIPTION: "SUBSCRIPTION",
+  WEBINAR: "WEBINAR",
+  CLASS: "CLASS",
+  TRIAL: "SUBSCRIPTION",
+};
+
 const rawEarningsAppointmentTypeSchema = z
   .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS", "TRIAL"])
-  .transform(
-    (t): AppointmentType => (t === "TRIAL" ? "SUBSCRIPTION" : t),
-  )
+  .transform((t): AppointmentType => APPOINTMENT_TYPE_NORMALIZE[t])
   .catch("CONSULTATION");
 
 export interface ResolvedEarningsPayment {

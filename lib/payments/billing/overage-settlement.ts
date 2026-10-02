@@ -199,6 +199,7 @@ export async function recordOverageAtCheckout(
         appointmentId: null,
         organizationId,
         parentPaymentId: paymentId,
+        clientIdempotencyKey: `overage:${globalThis.crypto.randomUUID()}`,
       },
     });
     const memberOverageEvent = await tx.overageEvent.create({
