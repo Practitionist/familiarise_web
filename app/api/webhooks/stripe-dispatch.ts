@@ -2,7 +2,6 @@ import * as Sentry from "@sentry/nextjs";
 import { ZodError } from "zod";
 import {
   handlePaymentFailure,
-  handlePaymentSuccess,
   handleRefundCreated,
   handleDisputeCreated,
   handleDisputeUpdated,
@@ -15,6 +14,7 @@ import {
   stripeChargeRefundedEventSchema,
   stripeChargeRefundedObjectSchema,
   stripeCheckoutSessionCompletedEventSchema,
+  stripeCheckoutSessionCompletedObjectSchema,
   stripeCheckoutSessionExpiredEventSchema,
   stripeCheckoutSessionObjectSchema,
   stripeDisputeCreatedEventSchema,
@@ -30,6 +30,24 @@ import {
   stripeTransferObjectSchema,
 } from "../../../schemas/webhooks/stripe";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
+import { routeCapturedPayment } from "./razorpay-dispatch";
+
+/**
+ * The captured amount in paise (the rail is INR-only). Throws (-> 500 ->
+ * Stripe redelivers) rather than confirm a booking without a known captured amount.
+ */
+function requireAmountReceived(pi: {
+  id: string;
+  amount_received?: number | null;
+}): number {
+  const amount = pi.amount_received;
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0) {
+    throw new Error(
+      `Stripe amount_received missing or non-integer on payment_intent.succeeded ${pi.id}; refusing to confirm a booking without a known captured amount`,
+    );
+  }
+  return amount;
+}
 
 export async function dispatchStripeEventByType(
   eventType: string,
@@ -45,15 +63,23 @@ export async function dispatchStripeEventByType(
       const session = isEnvelope
         ? stripeCheckoutSessionCompletedEventSchema.parse(eventOrObject).data
             .object
-        : stripeCheckoutSessionObjectSchema.parse(eventOrObject);
-      await handlePaymentSuccess(
-        session.id,
-        session.metadata || {},
-        session.amount_total ?? undefined,
-        typeof session.payment_intent === "string"
-          ? session.payment_intent
-          : undefined,
-      );
+        : stripeCheckoutSessionCompletedObjectSchema.parse(eventOrObject);
+      // session.id (cs_...) matches Payment.paymentIntent; `payment_intent`
+      // (pi_...) is what refund/dispute webhooks resolve against. Only `paid`
+      // collects money; anything else stays PENDING (200: no re-fire).
+      if (session.payment_status !== "paid") {
+        console.warn(
+          `⚠️ Stripe checkout.session.completed ${session.id}: payment_status="${session.payment_status}" is not "paid" — NOT confirming a booking (no money collected); the Payment row stays PENDING for reconcile-payment-status, or cleanup-abandoned-payments releases the hold if the money never lands`,
+        );
+        break;
+      }
+      // No amount: `amount_total` is the order total, not a captured
+      // amount, so the parity check is skipped on this door.
+      await routeCapturedPayment({
+        orderId: session.id,
+        notes: session.metadata || {},
+        gatewayPaymentId: session.payment_intent ?? undefined,
+      });
       break;
     }
 
@@ -68,18 +94,23 @@ export async function dispatchStripeEventByType(
 
     // Payment Intent events — kept for backward compatibility.
     // If a payment was stored with pi_... (legacy flow), this handler catches it.
-    // Idempotency: handlePaymentSuccess is a no-op if already SUCCEEDED.
+    // routeCapturedPayment no-ops on SUCCEEDED only while the redelivered
+    // amount still matches; a mismatch trips the parity check.
     case "payment_intent.succeeded": {
       const pi = isEnvelope
         ? stripePaymentIntentSucceededEventSchema.parse(eventOrObject).data
             .object
         : stripePaymentIntentObjectSchema.parse(eventOrObject);
-      await handlePaymentSuccess(
-        pi.id,
-        pi.metadata || {},
-        pi.amount_received ?? pi.amount,
-        pi.id,
-      );
+      await routeCapturedPayment({
+        orderId: pi.id,
+        notes: pi.metadata || {},
+        // `amount_received` is what Stripe actually took, which is NOT
+        // `pi.amount` (the authorised figure) on a partial capture.
+        amountPaise: requireAmountReceived(pi),
+        // A PaymentIntent is both the order and the charge-bearing object
+        // on this rail, so its id is both keys.
+        gatewayPaymentId: pi.id,
+      });
       break;
     }
 

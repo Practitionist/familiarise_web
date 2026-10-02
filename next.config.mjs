@@ -353,10 +353,11 @@ const nextConfig = {
       "./node_modules/react/**",
     ],
     "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
+      "./public/fonts/**",
       "./node_modules/react/**",
     ],
     "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
-      ["./node_modules/react/**"],
+      ["./public/fonts/**", "./node_modules/react/**"],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code

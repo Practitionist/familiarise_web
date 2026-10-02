@@ -143,6 +143,20 @@ describe("cron-tick targetRequest", () => {
       timeoutMs: 20_000,
     });
   });
+
+  it("gives the orphaned-payments alert a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "alert-orphaned-payments")).toEqual({
+      url: "https://site.test/api/cleanup/alert-orphaned-payments?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
+
+  it("gives the orphaned-payments healer a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "reconcile-orphaned-payments")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-orphaned-payments?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
 });
 
 // #1686 — six sweeps run on the 15-minute slots only.
@@ -171,6 +185,7 @@ describe("cron-tick dueTargets cadence", () => {
       "dispatch-outbound-webhooks",
       "retry-failed-emails",
       "sync-payment-earnings",
+      "alert-orphaned-payments",
     ];
     const offset5Targets = [
       "release-earnings",
@@ -207,11 +222,20 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("caps every 5-minute tick across the hour to 5–7 targets (#1926)", () => {
+  it("caps every 5-minute tick across the hour to 5–8 targets (#1926)", () => {
     for (const minute of [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]) {
       const due = dueTargets(at(minute));
       expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(7);
+      expect(due.length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it("fires the orphaned-payments healer only at :10/:40", () => {
+    const name = "reconcile-orphaned-payments";
+    expect(dueTargets(at(10))).toContain(name);
+    expect(dueTargets(at(40))).toContain(name);
+    for (const minute of [0, 5, 15, 25, 30]) {
+      expect(dueTargets(at(minute))).not.toContain(name);
     }
   });
 

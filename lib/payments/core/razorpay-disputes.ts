@@ -2,12 +2,17 @@
  * #1771 K-7 — Razorpay dispute evidence over raw HTTP, like the refund calls
  * in razorpay.ts: basic auth, a bounded timeout, typed errors.
  *
+ *   GET   /v1/disputes/{id}            poll one dispute (reconcile-disputes)
  *   POST  /v1/documents              multipart `file` + `purpose=dispute_evidence`
  *   PATCH /v1/disputes/{id}/contest  action draft|submit, amount, summary, lists
  *
+ * https://razorpay.com/docs/api/disputes/fetch/
  * https://razorpay.com/docs/api/documents/create/
  * https://razorpay.com/docs/api/disputes/contest/
  */
+
+import type { DisputeStatus } from "@prisma/client";
+import type { DisputeResult } from "./types";
 
 const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
 const TIMEOUT_MS = 15_000;
@@ -43,6 +48,11 @@ export class RazorpayDisputeError extends Error {
     message: string,
     readonly code: string,
     readonly httpStatus: number,
+    // The gateway's own error code/reason (e.g. BAD_REQUEST_ERROR /
+    // input_validation_failed for an unknown id). Carried alongside — never
+    // in place of — `code`, so existing callers keep their contract.
+    readonly gatewayCode?: string,
+    readonly reason?: string,
   ) {
     super(message);
     this.name = "RazorpayDisputeError";
@@ -85,23 +95,32 @@ async function send<T>(url: string, init: RequestInit): Promise<T> {
     );
   }
   const body = (await res.json().catch(() => null)) as {
-    error?: { code?: string; description?: string };
+    error?: { code?: string; description?: string; reason?: string };
   } | null;
-  if (!res.ok) throw gatewayError(res.status, body?.error?.description);
+  if (!res.ok) throw gatewayError(res.status, body?.error);
   return body as T;
 }
 
 /** A 4xx is Razorpay refusing (the operator's to act on); 401/403 is our
  *  keys and 5xx is Razorpay's — both 502 so the route pages them. */
-function gatewayError(status: number, description?: string) {
-  const message = description ?? `Razorpay answered HTTP ${status}`;
+function gatewayError(
+  status: number,
+  body?: { code?: string; description?: string; reason?: string },
+) {
+  const message = body?.description ?? `Razorpay answered HTTP ${status}`;
   if (status === 401 || status === 403) {
     return new RazorpayDisputeError(message, "GATEWAY_AUTH_FAILED", 502);
   }
   if (status >= 500) {
     return new RazorpayDisputeError(message, "GATEWAY_ERROR", 502);
   }
-  return new RazorpayDisputeError(message, "GATEWAY_REFUSED", 409);
+  return new RazorpayDisputeError(
+    message,
+    "GATEWAY_REFUSED",
+    409,
+    body?.code,
+    body?.reason,
+  );
 }
 
 /** Uploads one evidence file and answers its `doc_…` id. */
@@ -187,4 +206,73 @@ export async function contestDispute(
       }),
     },
   );
+}
+
+/** The GET /v1/disputes/:id entity (only the fields the poll reads). */
+interface RazorpayDisputeEntity {
+  id: string;
+  payment_id?: string;
+  status: string;
+  respond_by?: number | null;
+  evidence?: Record<string, unknown> | null;
+  is_charge_refundable?: boolean;
+  deduct_at_onset?: boolean;
+}
+
+/**
+ * A polled Razorpay dispute: the shared DisputeResult shape plus the gateway
+ * `payment_id` the reconciler joins on. `status` carries the RAW gateway
+ * status (`open`/`under_review`/`won`/`lost`/`closed`) — the caller maps it
+ * through the canonical mapDisputeStatus, the single mapping site.
+ */
+export type RazorpayDisputeResult = DisputeResult & {
+  paymentId: string | null;
+};
+
+/**
+ * True when Razorpay answered a dispute lookup with HTTP 400
+ * `BAD_REQUEST_ERROR` / `input_validation_failed` — the shape it returns for
+ * an id it has never seen (it never answers 404). Such an id cannot become
+ * known on a later poll, so the reconciler flags it for manual review instead
+ * of retrying it forever.
+ */
+export function isRazorpayUnknownDisputeIdError(
+  error: unknown,
+): error is RazorpayDisputeError {
+  return (
+    error instanceof RazorpayDisputeError &&
+    error.gatewayCode === "BAD_REQUEST_ERROR" &&
+    error.reason === "input_validation_failed"
+  );
+}
+
+/** Fetches one dispute for the reconciler (GET-only: no contest/accept here). */
+export async function getRazorpayDispute(
+  disputeId: string,
+): Promise<RazorpayDisputeResult> {
+  const entity = await send<RazorpayDisputeEntity>(
+    `${RAZORPAY_API_BASE}/disputes/${encodeURIComponent(disputeId)}`,
+    {
+      method: "GET",
+      headers: { Authorization: authHeader() },
+    },
+  );
+  const rawStatus = entity.status ?? "";
+  return {
+    disputeId: entity.id ?? disputeId,
+    status: rawStatus as DisputeStatus,
+    evidence: (entity.evidence ?? undefined) as
+      | Record<string, unknown>
+      | undefined,
+    // The fetch entity carries no refundability signal, so derive it the way
+    // the seed does: a lost or refunded charge is no longer refundable.
+    isChargeRefundable:
+      entity.is_charge_refundable ??
+      (typeof entity.deduct_at_onset === "boolean"
+        ? entity.deduct_at_onset === false
+        : !["lost", "charge_refunded"].includes(rawStatus.toLowerCase())),
+    // respond_by is unix seconds, like the webhook entity.
+    dueBy: entity.respond_by ? new Date(entity.respond_by * 1000) : undefined,
+    paymentId: entity.payment_id ?? null,
+  };
 }

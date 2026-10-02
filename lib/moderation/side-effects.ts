@@ -208,6 +208,11 @@ async function banOrSuspendUser(
 // skipped by the release-earnings cron. PAID/REFUNDED rows are untouchable by
 // doctrine — the guard below enforces it per row. Returns undefined when the
 // target has no consultant profile (earningsHeld stays unset, as before).
+//
+// #1020-1 — a ban records the row's PRIOR status in preDisputeStatus like the
+// dispute hold (one CAS group per source status), so release restores
+// PENDING_TRUST instead of READY. Every hold excludes HELD, so the first
+// freeze owns the column.
 async function holdBannedConsultantEarnings(
   tx: Tx,
   targetUserId: string,
@@ -228,14 +233,26 @@ async function holdBannedConsultantEarnings(
   for (const row of holdable) {
     assertEarningStatusTransitionLegal(row.id, row.status, EarningStatus.HELD);
   }
-  const held = await tx.consultantEarnings.updateMany({
-    where: {
-      id: { in: holdable.map((r) => r.id) },
-      status: { in: HOLDABLE },
-    },
-    data: { status: EarningStatus.HELD },
+  const ids = holdable.map((r) => r.id);
+  const heldReady = await tx.consultantEarnings.updateMany({
+    where: { id: { in: ids }, status: EarningStatus.READY },
+    data: { status: EarningStatus.HELD, preDisputeStatus: EarningStatus.READY },
   });
-  return held.count;
+  const heldPending = await tx.consultantEarnings.updateMany({
+    where: { id: { in: ids }, status: EarningStatus.PENDING },
+    data: {
+      status: EarningStatus.HELD,
+      preDisputeStatus: EarningStatus.PENDING,
+    },
+  });
+  const heldTrust = await tx.consultantEarnings.updateMany({
+    where: { id: { in: ids }, status: EarningStatus.PENDING_TRUST },
+    data: {
+      status: EarningStatus.HELD,
+      preDisputeStatus: EarningStatus.PENDING_TRUST,
+    },
+  });
+  return heldReady.count + heldPending.count + heldTrust.count;
 }
 
 async function unverifyProfiles(

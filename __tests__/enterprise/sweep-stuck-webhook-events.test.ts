@@ -46,7 +46,12 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
 }));
 
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryMessage: jest.fn(),
+}));
+
 import prisma from "../../lib/prisma";
+import { reportSentryMessage } from "../../lib/observability/report";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 import { processStripeWebhookEvent } from "../../app/api/webhooks/stripe-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
@@ -119,6 +124,7 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
     expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
+    expect(reportSentryMessage).not.toHaveBeenCalled();
 
     // Razorpay, Stream, and Stripe (#1387), and BOTH stuck shapes.
     const where = mockWe.findMany.mock.calls[0][0].where;
@@ -184,6 +190,12 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(r.recovered).toBe(0);
     expect(r.stillFailing).toBe(1);
     expect(r.errors[0]).toContain("handler boom");
+    // #1756 — exactly one unexpected-error report per run.
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(reportSentryMessage).toHaveBeenCalledWith(
+      expect.stringContaining("1 re-driven webhook event(s) still failing"),
+      expect.objectContaining({ expected: false, level: "error" }),
+    );
   });
 
   it("a throw mid-dispatch is caught + the row force-marked (never re-swept forever)", async () => {

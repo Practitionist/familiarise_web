@@ -70,6 +70,11 @@ const TARGETS = [
   "settle-cancelled-sessions",
   // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
   "retry-auto-refunds",
+  // #1859 M-P0-14 — SUCCEEDED with no appointment: the stranded-money cohort.
+  // Read-only alert; the healer rides `reconcile-orphaned-payments`.
+  "alert-orphaned-payments",
+  // Heals the stranded cohort: links late appointments, refunds the rest.
+  "reconcile-orphaned-payments",
   // #1868 — the Sentry ingest canary. The failure it detects is SILENT: Sentry
   // answers 200 for sessions and transactions while discarding error events
   // once the organisation's error allowance is spent, so nothing else in the
@@ -133,6 +138,11 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // hourly run drains the rest.
   "auto-complete-appointments": 25,
   "detect-consultant-no-shows": 10,
+  // #1859 M-P0-14 — read-only scan, but one Sentry page per orphan row group;
+  // same bite as the money sweeps so it fits the 20 s budget.
+  "alert-orphaned-payments": 10,
+  // Healer makes one gateway round trip per orphan; same bite fits 20 s.
+  "reconcile-orphaned-payments": 10,
 };
 
 /**
@@ -169,23 +179,27 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   // #1792's Upstash budget is the direct line item.
   "auto-complete-appointments": 30,
   "detect-consultant-no-shows": 30,
+  "alert-orphaned-payments": 15,
+  "reconcile-orphaned-payments": 30,
 };
 
 /**
  * #1926 Action 6 — deterministic phase offsets (in minutes, modulo the
- * target's interval) so the 17 fifteen-minute targets, 1 ten-minute target,
- * and 3 thirty-minute targets spread evenly across the 5-minute slots instead
- * of firing all 21 targets simultaneously at `:00`/`:30` and 0 targets at
- * `:05`/`:25`/`:35`/`:55`. Every 5-minute tick now fires 6–7 targets.
+ * target's interval) so the 18 fifteen-minute targets, 1 ten-minute target,
+ * and 4 thirty-minute targets spread evenly across the 5-minute slots instead
+ * of firing all 23 targets simultaneously at `:00`/`:30` and 0 targets at
+ * `:05`/`:25`/`:35`/`:55`. Every 5-minute tick now fires 7–8 targets.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
-  // Phase 0 (:00, :15, :30, :45) — 5 targets + sentry-ingest-canary (:00, :30)
+  // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (:00, :30)
   "sweep-stuck-webhook-events": 0,
   "sweep-orphaned-topup-captures": 0,
   "dispatch-outbound-webhooks": 0,
   "retry-failed-emails": 0,
   "sync-payment-earnings": 0,
   "sentry-ingest-canary": 0,
+  // #1859 M-P0-14 — read-only orphan scan rides phase 0 so no tick exceeds 8.
+  "alert-orphaned-payments": 0,
   // Phase 5 (:05, :20, :35, :50) — 6 targets + drain-notification-outbox (:05, :15, :25, :35, :45, :55)
   "release-earnings": 5,
   "reconcile-refunds": 5,
@@ -194,16 +208,17 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-orphaned-confirmations": 5,
   "expire-unpaid-trials": 5,
   "drain-notification-outbox": 5,
-  // Phase 10 (:10, :25, :40, :55) — 6 targets
+  // Phase 10 (:10, :25, :40, :55) — 6 targets + healer at :10/:40, Novu relay at :25/:55 (7 each)
   "reschedule-proposals": 10,
   "appointment-reminders": 10,
   "tentative-occurrences": 10,
   "expire-stale-requests": 10,
   "settle-cancelled-sessions": 10,
   "retry-auto-refunds": 10,
-  // Thirty-minute session-outcome jobs, on ticks that would otherwise fire 6
+  // Thirty-minute session-outcome jobs and orphan healer on staggered slots
   "auto-complete-appointments": 15,
   "detect-consultant-no-shows": 20,
+  "reconcile-orphaned-payments": 10,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -238,6 +253,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   // One Stream call-report round trip per judged session or candidate.
   "auto-complete-appointments": 20_000,
   "detect-consultant-no-shows": 20_000,
+  "alert-orphaned-payments": 20_000,
+  "reconcile-orphaned-payments": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */

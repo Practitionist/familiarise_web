@@ -2715,6 +2715,12 @@ enum LedgerAccountKind {
   CONSULTANT_PAYABLE // owed to a consultant
   ORG_PAYABLE // owed to a host org
   ORG_RECEIVABLE // an INVOICE-funded org owes us (accrued, cleared on invoice payment)
+  // A consultant owes us money we already disbursed to them and cannot pull
+  // back — a lost dispute or a chargeback on an already-PAID earning. Distinct
+  // from ORG_RECEIVABLE on purpose: that one is an org's invoice receivable,
+  // and a consultant balance parked in an org-scoped kind misreports both the
+  // org-receivables query and the chart of accounts. Always consultant-scoped.
+  CONSULTANT_RECEIVABLE // clawback owed BY a consultant (no inbound recovery path)
   TDS_PAYABLE // TDS withheld, owed to the government
   GST_PAYABLE // GST collected, owed to the government
 }
@@ -5931,6 +5937,16 @@ model ConsultantPayout {
   // submit without a dedupe key.
   idempotencyKey String @unique
 
+  // W1a — clawback counterpart of OrganizationPayout.clawbackAmountPaise.
+  // Raised when an earning already PAID here is later reversed (a lost
+  // dispute). There is no inbound bank-pull path on the consultant rail, so
+  // the amount is booked to CONSULTANT_RECEIVABLE and recovered by hand —
+  // but it is now VISIBLE and reconcilable rather than a lost page. Amount is
+  // NET of TDS: the transfer was net, `recordTdsReversal` owns the tax leg,
+  // and clawing back gross would take back tax the platform never disbursed.
+  clawbackAmountPaise BigInt    @default(0)
+  clawbackInitiatedAt DateTime? @db.Timestamptz
+
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -6154,6 +6170,9 @@ model CreditNote {
   // #738-B — triggering dispute (chargeback LOST), when the CN arises from one.
   // Same idempotency discipline as refundId: one credit note per dispute.
   disputeId      String?              @unique
+  // #1894 — non-refund trigger: an overage base already invoiced and credited
+  // back. A statutory document must name its real trigger, not borrow refundId.
+  overageEventId String?              @unique
   reason         String?
 
   // #778 §D — IRP reports credit/debit notes as their own document types for

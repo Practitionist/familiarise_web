@@ -33,12 +33,7 @@
  * SUCCEEDED payment through.
  */
 
-import {
-  EarningStatus,
-  Prisma,
-  PaymentStatus,
-  RefundStatus,
-} from "@prisma/client";
+import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
 
 async function markParticipantsRefunded(paymentId: string): Promise<void> {
@@ -64,7 +59,6 @@ import {
 } from "@/lib/referrals/service";
 import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
-import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -92,6 +86,11 @@ import {
   RefundValidationError,
   refundPayment,
 } from "./refund";
+
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 /**
  * #1589 N-P0-01 — the payer's notice for a refund that never touches the
@@ -734,36 +733,32 @@ async function reverseFreeCreditSettlement(
   )
     return;
 
-  // Consultant earnings net in full — same cap + legal-transition guard as
-  // cascade Step 6, with the identity proportion (a cancellation is total).
+  // Consultant earnings net in full via the shared CAS writer.
+  // `appliedByEarning` is what each row ACTUALLY absorbed (<= request); the TDS
+  // filing and counter-posting below must read it, never the request.
+  const appliedByEarning = new Map<string, number>();
   for (const earnings of payment.earnings) {
     const delta = part(earnings.consultantSharePaise);
-    const newRefundedShare = Math.min(
-      earnings.consultantSharePaise,
-      earnings.refundedShareAmount + delta,
-    );
-    const fully = newRefundedShare >= earnings.consultantSharePaise;
-    let nextStatus = earnings.status;
-    if (fully && earnings.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        earnings.id,
-        earnings.status,
-        EarningStatus.REFUNDED,
+    // #CASC — the shared writer repeats the cap and legal-source predicate in
+    // the WHERE and asserts the transition itself, so a concurrent refund wins.
+    const reversal = await applyCappedEarningReversal(tx, earnings, delta);
+    appliedByEarning.set(earnings.id, reversal.reversedPaise);
+    if (reversal.lostRace) {
+      console.warn(
+        `Earnings ${earnings.id}: credit-funded cancel CAS lost, ` +
+          `${reversal.reversedPaise} paise applied of ${delta} ` +
+          `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-    await tx.consultantEarnings.update({
-      where: { id: earnings.id },
-      data: { refundedShareAmount: newRefundedShare, status: nextStatus },
-    });
-    if (earnings.payoutId) {
+    if (earnings.payoutId && reversal.reversedPaise > 0) {
       // Full reversal of this share → full TDS reversal for it; the helper's
-      // own dedup + original-cap keeps a re-run bounded.
+      // own dedup + original-cap keeps a re-run bounded. Numerator is the
+      // APPLIED paise; skipped at 0 so a refused CAS nets no withholding out.
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
         earningsId: earnings.id,
-        refundAmountPaise: delta,
+        refundAmountPaise: reversal.reversedPaise,
         paymentAmountPaise: earnings.consultantSharePaise,
         refundId: input.refundId,
       });
@@ -773,36 +768,37 @@ async function reverseFreeCreditSettlement(
   // Org earnings (the consultant's host org / collaborator orgs — not a
   // sponsor; referral credits never fund org-sponsored checkouts). Mirrors
   // cascade Step 7 including the COMPLETED-payout clawback record.
+  //
+  // `appliedByOrgEarning` is the org twin of `appliedByEarning` above.
+  const appliedByOrgEarning = new Map<string, number>();
   for (const orgEarn of payment.organizationEarnings) {
     const orgDelta = part(orgEarn.orgSharePaise);
-    const newRefunded = Math.min(
-      orgEarn.orgSharePaise,
-      orgEarn.refundedAmountPaise + orgDelta,
+    // #CASC — same shared CAS writer as the consultant rows (org column names);
+    // it asserts the transition itself before writing.
+    const orgReversal = await applyCappedOrgEarningReversal(
+      tx,
+      orgEarn,
+      orgDelta,
     );
-    const fully = newRefunded >= orgEarn.orgSharePaise;
-    let nextStatus = orgEarn.status;
-    if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        orgEarn.id,
-        orgEarn.status,
-        EarningStatus.REFUNDED,
+    appliedByOrgEarning.set(orgEarn.id, orgReversal.reversedPaise);
+    if (orgReversal.lostRace) {
+      console.warn(
+        `Org earnings ${orgEarn.id}: credit-funded cancel CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgDelta} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarn.orgSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-    await tx.organizationEarnings.update({
-      where: { id: orgEarn.id },
-      data: { refundedAmountPaise: newRefunded, status: nextStatus },
-    });
+    const orgApplied = orgReversal.reversedPaise;
 
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
-      orgDelta > 0
+      orgApplied > 0
     ) {
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgDelta },
+          clawbackAmountPaise: { increment: orgApplied },
           clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
             ? undefined
             : new Date(),
@@ -814,22 +810,25 @@ async function reverseFreeCreditSettlement(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${orgDelta} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Credit-funded cancellation clawback: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: input.paymentId,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: orgDelta,
+            amountPaise: orgApplied,
             initiatedByUserId: input.initiatedByUserId,
           } as Prisma.InputJsonValue,
         },
       });
       // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
+      // Gated on the APPLIED figure, never the request: a zero (refused CAS, or
+      // a cap that leaves nothing) must post NOTHING, because `postLedgerTxn`
+      // THROWS on a non-positive amount.
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgDelta,
+        amountPaise: orgApplied,
         organizationId: orgEarn.organizationId,
       });
     }
@@ -868,12 +867,14 @@ async function reverseFreeCreditSettlement(
   }
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+  // APPLIED, not requested: `platformPlug` absorbs the un-clawed remainder on
+  // PLATFORM_FEE instead of over-debiting the payables.
   const consRev = payment.earnings.reduce(
-    (s, e) => s + part(e.consultantSharePaise),
+    (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
     0,
   );
   const orgRev = payment.organizationEarnings.reduce(
-    (s, o) => s + part(o.orgSharePaise),
+    (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
     0,
   );
   const gstRev = part(payment.taxAmount ?? 0);
@@ -884,7 +885,10 @@ async function reverseFreeCreditSettlement(
 
   const debits: Posting[] = [];
   for (const earnings of payment.earnings) {
-    const delta = part(earnings.consultantSharePaise);
+    // APPLIED paise, not `part(consultantSharePaise)` (the request) — debiting
+    // the payable for paise the CAS never applied is the ledger-vs-earnings
+    // divergence `reconcile-ledgers` raises as EARNINGS_LEDGER_DRIFT.
+    const delta = appliedByEarning.get(earnings.id) ?? 0;
     if (delta > 0) {
       debits.push({
         account: {
@@ -897,7 +901,10 @@ async function reverseFreeCreditSettlement(
     }
   }
   for (const orgEarn of payment.organizationEarnings) {
-    const orgDelta = part(orgEarn.orgSharePaise);
+    // APPLIED paise, not `part(orgSharePaise)` (the request) — debiting the
+    // payable for paise the CAS never applied is the ledger-vs-earnings
+    // divergence `reconcile-ledgers` raises as EARNINGS_LEDGER_DRIFT.
+    const orgDelta = appliedByOrgEarning.get(orgEarn.id) ?? 0;
     if (orgDelta > 0) {
       debits.push({
         account: {
@@ -1086,7 +1093,11 @@ async function refundInternalFundedPayment(input: {
         );
 
         if (!input.keepSeat) {
-          await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
+          await transitionParticipant(
+            tx,
+            { paymentId: payment.id },
+            "REFUNDED",
+          );
         }
         notice = await stageRefundNotice(tx, payment, requested);
         return {

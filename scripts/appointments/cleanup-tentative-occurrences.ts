@@ -19,7 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 
 // #833 — hours, not days: gateway orders expire well inside a day, so a
@@ -52,7 +52,10 @@ const MAX_SLOTS_PER_RUN = 5000;
  * the next read collects, so a smaller cap is a budget and not a drop.
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+// mutual exclusion; fail-closed: this releases holds and blocks rebooking, so
+// a silent unlocked double-run under a Redis outage is worse than a missed
+// 2-hourly tick (#1859 M-P0-11). The release itself stays CAS-guarded (#829),
+// the lock is what collapses the double-fire to a single run.
 export async function cleanupTentativeOccurrences(opts?: {
   maxPerRun?: number;
 }): Promise<TentativeSlotCleanupResult> {
@@ -62,7 +65,7 @@ export async function cleanupTentativeOccurrences(opts?: {
       : MAX_SLOTS_PER_RUN;
   return withCronLock(
     "cleanup-tentative-occurrences",
-    { failMode: "open" },
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
     () => cleanupTentativeSlotsUnlocked(maxPerRun),
   );
 }

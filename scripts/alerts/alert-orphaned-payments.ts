@@ -14,7 +14,7 @@
  * - jobs/alert-orphaned-payments.ts (GitHub Actions)
  * - app/api/cleanup/alert-orphaned-payments/route.ts (API endpoint)
  *
- * Schedule: Every 6 hours
+ * Schedule: every 15 minutes via the Netlify ticker, daily Actions backstop.
  *
  * #1846 — this detector is the ONLY one in the fleet that reported a P0-class
  * condition through `console.error` alone. Money captured, nothing booked, and
@@ -24,8 +24,8 @@
  * `SystemJobExecution` row, the route's HTTP status, the Actions wrapper's
  * exit code — reported a detector that found a critical condition as a
  * detector that worked. Both are fixed below: a durable `SystemEvent` per
- * payment (the ops trail, deduped so a 6-hourly re-run does not pile up rows)
- * plus a Sentry report, and an honest success flag.
+ * payment (the ops trail, deduped so re-runs do not pile up rows) plus a
+ * Sentry report, and an honest success flag.
  */
 
 import prisma from "../../lib/prisma";
@@ -45,6 +45,8 @@ export interface OrphanedPaymentsAlertResult {
   totalOrphaned: number;
   criticalCount: number;
   totalAmount: number;
+  /** By-design null-appointment side-charges, excluded from the critical cohort. */
+  sideChargeCount: number;
   orphanedPayments: Array<{
     id: string;
     paymentIntent: string | null;
@@ -124,13 +126,17 @@ async function recordOrphanedPayment(payment: {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
-export async function alertOrphanedPayments(): Promise<OrphanedPaymentsAlertResult> {
+export async function alertOrphanedPayments(
+  opts: { limit?: number } = {},
+): Promise<OrphanedPaymentsAlertResult> {
   return withCronLock("alert-orphaned-payments", { failMode: "open" }, () =>
-    alertOrphanedPaymentsUnlocked(),
+    alertOrphanedPaymentsUnlocked(opts),
   );
 }
 
-async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertResult> {
+async function alertOrphanedPaymentsUnlocked(
+  opts: { limit?: number } = {},
+): Promise<OrphanedPaymentsAlertResult> {
   const errors: string[] = [];
   let criticalCount = 0;
   let totalAmount = 0;
@@ -139,11 +145,15 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
     Date.now() - ALERT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // Find all succeeded payments without appointments
+  // Find succeeded payments without appointments, oldest first so a backlog
+  // drains in arrival order. Side-charges carry appointmentId null by design,
+  // so they are excluded from the critical cohort and counted separately.
   const orphanedPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
       appointmentId: null,
+      parentPaymentId: null,
+      NOT: { paymentIntent: { startsWith: "overage:" } },
       createdAt: { gte: sevenDaysAgo },
     },
     include: {
@@ -151,7 +161,20 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
         select: { email: true, name: true },
       },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
+    ...(opts.limit !== undefined ? { take: opts.limit } : {}),
+  });
+
+  const sideChargeCount = await prisma.payment.count({
+    where: {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: null,
+      createdAt: { gte: sevenDaysAgo },
+      OR: [
+        { parentPaymentId: { not: null } },
+        { paymentIntent: { startsWith: "overage:" } },
+      ],
+    },
   });
 
   console.log(
@@ -221,20 +244,25 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
 
     // One report per RUN, not per payment: a large cohort would otherwise
     // spend the month's error allowance on the same incident, which is exactly
-    // what the 2026-09-21 Upstash outage did. The message is FIXED so Sentry
-    // groups every occurrence into one issue — naming the payments in it would
-    // mint a new issue per cohort and bury it — and the detail rides in
-    // `extra`, capped at 25 ids so the event cannot grow without bound.
+    // what the 2026-09-21 Upstash outage did. The message and fingerprint are
+    // FIXED so Sentry groups every occurrence into one issue — naming the
+    // payments in it would mint a new issue per cohort and bury it — and the
+    // detail rides in `extra`, capped at 25 ids so the event cannot grow
+    // without bound.
     reportSentryMessage(
       "Orphaned payments: customers charged with no booking",
       {
         subsystem: "payments",
-        op: "orphaned-payment-alert",
+        op: "alert-orphaned-payments",
         level: "error",
+        fingerprint: ["orphaned-payments"],
         extra: {
           totalOrphaned: orphanedPayments.length,
           newlyRecorded,
+          totalAmount,
           totalAmountPaise: totalAmount,
+          sideChargeCount,
+          sample: formattedOrphaned.slice(0, 10).map((p) => p.id),
           paymentIds: orphanedPayments.slice(0, 25).map((p) => p.id),
         },
       },
@@ -255,6 +283,7 @@ async function alertOrphanedPaymentsUnlocked(): Promise<OrphanedPaymentsAlertRes
     totalOrphaned: orphanedPayments.length,
     criticalCount,
     totalAmount,
+    sideChargeCount,
     orphanedPayments: formattedOrphaned,
     errors,
     timestamp: new Date().toISOString(),

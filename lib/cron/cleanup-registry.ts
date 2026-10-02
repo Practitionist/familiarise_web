@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   cleanupRoute,
   parseLimitParam,
@@ -11,29 +9,11 @@ import { goHref } from "@/lib/dashboard/go";
 import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
-import type { ReconcileRunSnapshot } from "@/scripts/reconcile/reconcile-ledgers";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
   POST: (req: NextRequest) => Promise<NextResponse>;
 };
-
-const ReconcileLedgersQuerySchema = z.object({
-  runId: z.string().uuid().optional(),
-  triggeredById: z.string().min(1).max(64).optional(),
-  abandon: z.string().min(1).max(500).optional(),
-  resume: z.enum(["1", "true"]).optional(),
-});
-
-type ReconcileLedgersTwinResult =
-  | ({ success: true } & ReconcileRunSnapshot)
-  | {
-      success: true;
-      status: "IDLE";
-      runId: null;
-      progress: null;
-      report: null;
-    };
 
 type ExpiringStreamOnly = {
   recordingId: string;
@@ -208,16 +188,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "alert-orphaned-payments": () =>
       cleanupRoute({
         job: "alert-orphaned-payments",
-        run: async () => {
+        run: async (req) => {
           const { alertOrphanedPayments } = await import(
             "@/scripts/alerts/alert-orphaned-payments"
           );
-          return alertOrphanedPayments();
+          return alertOrphanedPayments({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
           totalOrphaned: r.totalOrphaned,
           criticalCount: r.criticalCount,
           totalAmount: r.totalAmount,
+          sideChargeCount: r.sideChargeCount,
         }),
         status: (r) => (r.totalOrphaned > 0 ? 500 : 200),
         failureMessage: "Failed to check for orphaned payments",
@@ -624,65 +605,32 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-ledgers": () =>
       cleanupRoute({
         job: "reconcile-ledgers",
-        run: async (req): Promise<ReconcileLedgersTwinResult> => {
-          const {
-            advanceReconcileRun,
-            findInFlightReconcileRun,
-            markReconcileRunFailed,
-          } = await import("@/scripts/reconcile/reconcile-ledgers");
-          const limit = parseLimitParam(req);
-          const q = ReconcileLedgersQuerySchema.parse({
-            runId: req.nextUrl.searchParams.get("runId") ?? undefined,
-            triggeredById:
-              req.nextUrl.searchParams.get("triggeredById") ?? undefined,
-            abandon: req.nextUrl.searchParams.get("abandon") ?? undefined,
-            resume: req.nextUrl.searchParams.get("resume") ?? undefined,
+        run: async (req) => {
+          const { runReconcileLedgers } = await import(
+            "@/scripts/reconcile/reconcile-ledgers"
+          );
+          const triggeredById =
+            req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const report = await runReconcileLedgers({
+            scope: "full",
+            triggeredById,
           });
-          if (q.abandon && q.runId) {
-            await markReconcileRunFailed(q.runId, q.abandon);
-            return {
-              success: true,
-              runId: q.runId,
-              scope: "full",
-              status: "FAILED",
-              progress: null,
-              report: null,
-              error: q.abandon,
-            };
-          }
-          if (q.resume && !q.runId) {
-            const inFlight = await findInFlightReconcileRun();
-            if (!inFlight) {
-              return {
-                success: true,
-                status: "IDLE",
-                runId: null,
-                progress: null,
-                report: null,
-              };
-            }
-            const snap = await advanceReconcileRun({
-              runId: inFlight,
-              ...(limit === undefined ? {} : { limit }),
-            });
-            return { success: true, ...snap };
-          }
-          const snap = await advanceReconcileRun({
-            runId: q.runId ?? randomUUID(),
-            ...(limit === undefined ? {} : { limit }),
-            createIfMissing: { scope: "full", triggeredById: q.triggeredById },
-          });
-          return { success: true, ...snap };
+          return {
+            success: true,
+            runId: report.id,
+            scope: report.scope,
+            status: "OK" as const,
+            report,
+          };
         },
         summarize: (r) => ({
           runId: r.runId,
           status: r.status,
-          step: r.progress?.step ?? null,
-          calls: r.progress?.calls ?? r.report?.summary.calls ?? null,
-          ok: r.report?.ok ?? null,
+          ok: r.report.ok,
+          discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
         }),
-        status: (r) => statusFor(r, r.report !== null && !r.report.ok),
-        failureMessage: "Failed to advance ledger reconciliation",
+        status: (r) => statusFor(r, !r.report.ok),
+        failureMessage: "Failed to run ledger reconciliation",
       }),
 
     // @cleanup-twin reconcile-occurrence-availability
@@ -730,6 +678,33 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor(r, r.channelsFailed > 0),
         failureMessage: "Failed to reconcile orphaned confirmations",
+      }),
+
+    // @cleanup-twin reconcile-orphaned-payments
+    "reconcile-orphaned-payments": () =>
+      cleanupRoute({
+        job: "reconcile-orphaned-payments",
+        run: async (req) => {
+          const { reconcileOrphanedPayments } = await import(
+            "@/scripts/payments/reconcile-orphaned-confirmations"
+          );
+          const limit = parseLimitParam(req);
+          return reconcileOrphanedPayments(
+            limit === undefined ? {} : { limit },
+          );
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          linked: r.linked,
+          refunded: r.refunded,
+          escrowed: r.escrowed,
+          nonGatewaySkipped: r.nonGatewaySkipped,
+          topupSkipped: r.topupSkipped,
+          stillFailing: r.stillFailing,
+        }),
+        status: (r) =>
+          statusFor(r, r.escrowed > 0 || r.stillFailing > 0),
+        failureMessage: "Failed to reconcile orphaned payments",
       }),
 
     // @cleanup-twin reconcile-payment-status

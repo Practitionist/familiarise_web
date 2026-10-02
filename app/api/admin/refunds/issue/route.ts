@@ -11,10 +11,14 @@ import {
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
+/** 400 copy for a missing/malformed `idempotencyKey` (via withOpsAction). */
+const KEY_REQUIRED_COPY =
+  "idempotencyKey is required and must be a UUID — send the per-dialog key the refund dialog already mints. Without it this door cannot tell a double-click from a second refund, and would mint a fresh one instead, leaving the unique dedupe column inert.";
+
 /**
  * #1771 K-5 — "Issue refund" and "Ladder override". A full refund (no
  * amount), a partial one, or the cancellation quote at an overridden tier;
- * all through the booking front door under the key `ops:<opsActionId>`.
+ * all through the booking front door under the key `ops:<idempotencyKey>`.
  */
 export const POST = withOpsAction(
   "refunds.manage",
@@ -22,8 +26,16 @@ export const POST = withOpsAction(
     body.tierOverridePct === undefined ? "refund.issue" : "refund.override",
   {
     paymentId: z.string().min(1),
-    /** One per dialog: a double-click or retry reuses the first refund. */
-    idempotencyKey: z.string().uuid().optional(),
+    /**
+     * Required, never defaulted: `Refund.dedupeKey @unique` collapses a
+     * double-click only when the key is caller-minted. One key per dialog.
+     */
+    idempotencyKey: z
+      .string({
+        required_error: KEY_REQUIRED_COPY,
+        invalid_type_error: KEY_REQUIRED_COPY,
+      })
+      .uuid(KEY_REQUIRED_COPY),
     amountPaise: z.number().int().positive().optional(),
     tierOverridePct: z.number().min(0).max(100).optional(),
     /** #1834 — a held-seat queue item: the refund carries that session's own key. */
@@ -32,7 +44,7 @@ export const POST = withOpsAction(
   {
     mode: "gateway",
     target: ({ body }) => ({ kind: "Payment", id: body.paymentId }),
-    run: async ({ body, actor, opsActionId }) => {
+    run: async ({ body, actor }) => {
       if (
         body.amountPaise !== undefined &&
         body.tierOverridePct !== undefined
@@ -55,9 +67,11 @@ export const POST = withOpsAction(
         );
       }
       const amountPaise = override?.amountPaise ?? body.amountPaise;
+      // Deterministic in the caller's key, so `Refund.dedupeKey @unique` fires
+      // on a second click. A UUID has no colon: never equals `ops:credits:…`.
       const dedupeKey = body.occurrenceId
         ? occurrenceRefundKey(body.occurrenceId, body.paymentId)
-        : `ops:${body.idempotencyKey ?? opsActionId}`;
+        : `ops:${body.idempotencyKey}`;
       if (body.occurrenceId) {
         await assertSessionRefundable({
           paymentId: body.paymentId,

@@ -18,6 +18,7 @@ import {
   cleanupExpiredApprovalPendingPayments,
 } from "@/scripts/payments/cleanup-abandoned-payments";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
+import { reconcileOrphanedPayments } from "@/scripts/payments/reconcile-orphaned-confirmations";
 
 // Refunds
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
@@ -76,7 +77,9 @@ import {
 } from "@/lib/backoffice/ops-action-log";
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { getMaintenanceState } from "@/lib/maintenance";
+import { getMaintenanceState } from "@/lib/maintenance-edge";
+// #1599 F-P1-03 — one money list: the gate below derives from
+// FINANCIAL_JOB_NAMES instead of a second, drifting copy (11 vs 24 names).
 import { isFinancialJob } from "@/lib/maintenance-cron";
 
 // Job ID to function mapping
@@ -171,6 +174,19 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       orphanedCount: result.totalOrphaned,
       criticalAlerts: result.criticalCount,
       totalAmount: result.totalAmount,
+    };
+  },
+  "reconcile-orphaned-payments": async () => {
+    const result = await reconcileOrphanedPayments();
+    return {
+      success: result.success,
+      totalProcessed: result.scanned,
+      scannedCount: result.scanned,
+      linkedCount: result.linked,
+      refundedCount: result.refunded,
+      escrowedCount: result.escrowed,
+      stillFailingCount: result.stillFailing,
+      errorCount: result.stillFailing,
     };
   },
   "handle-stuck-payouts": async () => {

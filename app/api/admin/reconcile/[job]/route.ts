@@ -15,8 +15,8 @@ import { POST as startLedgerRun } from "@/app/api/admin/reconcile-ledgers/route"
 /**
  * #1771 K-8 — start one reconcile job from the console, with no CRON_SECRET
  * in the browser. Each job runs in-process under its own cron lock (a held
- * lock answers 409 ALREADY_RUNNING); the full ledger run is handed to its
- * background driver exactly as POST /api/admin/reconcile-ledgers does.
+ * lock answers 409 ALREADY_RUNNING); the full ledger run delegates to
+ * POST /api/admin/reconcile-ledgers in-process.
  */
 export const POST = withOpsAction(
   "payouts.manage",
@@ -44,7 +44,7 @@ export const POST = withOpsAction(
         target: { kind: "ReconcileJob", id: job },
         after: batch ? { job, ...batch } : { job },
         response: { job, result, batch },
-        status: job === "ledgers" ? 202 : 200,
+        status: 200,
       };
     },
   },
