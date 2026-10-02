@@ -96,3 +96,5 @@ The high-priority alert workflow 3606037 now filters on `environment: production
 ### Still to do (owner)
 
 The owner still has to create an `org:read` Sentry token and set `SENTRY_STATS_TOKEN` on Netlify production, with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the 10% preview sample should be revisited. Issue #1933 stays open until then.
+
+For the email map, the pre-launch delivery guard and ops alert routing, see [docs/email/README.md](../../../docs/email/README.md).

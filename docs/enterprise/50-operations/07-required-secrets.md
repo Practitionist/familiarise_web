@@ -25,7 +25,8 @@ a secret that has never existed. Payout submission, payout-status reconciliation
 payment-status reconciliation and stuck-payout handling therefore ran with empty
 Razorpay credentials for months while reporting green. Separately, the money-cron
 pager added in #864 has never sent a single alert, because `SLACK_OPS_WEBHOOK_URL`
-was wired into all fifty-six workflows but never provisioned.
+was wired into all fifty-six workflows but never provisioned. The same secret now also feeds the
+application's critical-alert mirror (`lib/observability/ops-chat.ts`, read from the Netlify environment), so it must be set in both places: the GitHub secret and the Netlify environment variable.
 
 This manifest is the fix. Every `secrets.NAME` reference in `.github/workflows/`
 must appear in the table below, and `scripts/ci/check-workflow-hygiene.ts` fails

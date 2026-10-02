@@ -53,3 +53,4 @@
 1. Never add `eslint-disable*`, `@ts-ignore`, `@ts-expect-error` or `@ts-nocheck`; fix the code. If a rule is wrong for a path, turn it off for that path in `eslint.config.mjs` with a one-line reason.
 2. List every effect dependency; never suppress `react-hooks/exhaustive-deps`. Never write `ref.current` during render — React is 18.3 (no `useEffectEvent`), so sync latest-value refs in an effect declared before the one that reads them.
 3. Never capture to Sentry per row inside a loop or sweep; collect failures and report once per run. All errors share the free plan's 5,000/month quota.
+4. Email: every send goes through `deliver()` and the pre-launch guard (`EMAIL_DELIVERY_MODE`); see `docs/email/README.md`.

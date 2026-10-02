@@ -100,3 +100,5 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
 - Statutory retention (tax, accounting) **overrides** erasure. That is not a
   failure to comply; it is the reason the retention engine records a basis
   instead of deleting.
+
+For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
