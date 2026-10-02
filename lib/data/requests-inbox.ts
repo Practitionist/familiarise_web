@@ -868,27 +868,10 @@ async function readCounts(
 }
 
 /**
- * #1527 — the consultant nav badge: the inbox's own tab counts, so badge and
- * tabs cannot disagree. Personal scope by default (#1345: org-funded requests
- * belong to that org's dashboard).
- */
-export async function readRequestsInboxCounts(args: {
-  consultantProfileId: string;
-  orgScope?: Scope;
-  now?: Date;
-}): Promise<Record<InboxType, number>> {
-  return readCounts(
-    args.consultantProfileId,
-    args.orgScope ?? PERSONAL,
-    args.now ?? new Date(),
-    null,
-  );
-}
-
-/**
  * #1928 — rows only this consultant can clear (the REQUESTED state): the nav
  * badge and Home's "requests to answer". Awaiting-payment and next-cycle rows
- * wait on the client, so they stay on the tabs but not on the badge.
+ * wait on the client, so they stay on the tabs but not on the badge. Personal
+ * scope by default (#1345: org-funded requests belong to that org's dashboard).
  */
 export async function readRequestsToAnswerCount(args: {
   consultantProfileId: string;
