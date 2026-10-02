@@ -16,12 +16,229 @@ import {
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import { MAX_WEBHOOK_BODY_BYTES } from "@/lib/webhooks/read-body";
 import {
+  stripeAccountObjectSchema,
+  stripeAccountUpdatedEventSchema,
   stripeBaseEventSchema,
-  stripePaymentIntentSucceededEventSchema,
-  stripePaymentIntentFailedEventSchema,
+  stripeChargeRefundedEventSchema,
+  stripeChargeRefundedObjectSchema,
   stripeCheckoutSessionCompletedEventSchema,
   stripeCheckoutSessionExpiredEventSchema,
+  stripeCheckoutSessionObjectSchema,
+  stripeDisputeCreatedEventSchema,
+  stripeDisputeCreatedObjectSchema,
+  stripeDisputeUpdatedEventSchema,
+  stripeDisputeUpdatedObjectSchema,
+  stripePaymentIntentFailedEventSchema,
+  stripePaymentIntentObjectSchema,
+  stripePaymentIntentSucceededEventSchema,
+  stripePayoutEventSchema,
+  stripePayoutObjectSchema,
+  stripeTransferEventSchema,
+  stripeTransferObjectSchema,
 } from "../../../../schemas/webhooks/stripe";
+import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
+import { ZodError } from "zod";
+
+export async function dispatchStripeEventByType(
+  eventType: string,
+  eventOrObject: unknown,
+  isEnvelope: boolean,
+): Promise<void> {
+  switch (eventType) {
+    // FIX CF-3: Checkout Session events — primary handler for Stripe Checkout flow.
+    // createStripeCheckoutSession stores session.id (cs_...) in Payment.paymentIntent,
+    // so we must handle checkout.session.completed to match by cs_... ID.
+    // NOTE: Ensure these events are enabled in the Stripe Dashboard webhook settings.
+    case "checkout.session.completed": {
+      const session = isEnvelope
+        ? stripeCheckoutSessionCompletedEventSchema.parse(eventOrObject).data
+            .object
+        : stripeCheckoutSessionObjectSchema.parse(eventOrObject);
+      await handlePaymentSuccess(session.id, session.metadata || {});
+      break;
+    }
+
+    case "checkout.session.expired": {
+      const session = isEnvelope
+        ? stripeCheckoutSessionExpiredEventSchema.parse(eventOrObject).data
+            .object
+        : stripeCheckoutSessionObjectSchema.parse(eventOrObject);
+      await handlePaymentFailure(session.id);
+      break;
+    }
+
+    // Payment Intent events — kept for backward compatibility.
+    // If a payment was stored with pi_... (legacy flow), this handler catches it.
+    // Idempotency: handlePaymentSuccess is a no-op if already SUCCEEDED.
+    case "payment_intent.succeeded": {
+      const pi = isEnvelope
+        ? stripePaymentIntentSucceededEventSchema.parse(eventOrObject).data
+            .object
+        : stripePaymentIntentObjectSchema.parse(eventOrObject);
+      await handlePaymentSuccess(pi.id, pi.metadata || {});
+      break;
+    }
+
+    case "payment_intent.payment_failed": {
+      const pi = isEnvelope
+        ? stripePaymentIntentFailedEventSchema.parse(eventOrObject).data.object
+        : stripePaymentIntentObjectSchema.parse(eventOrObject);
+      await handlePaymentFailure(pi.id);
+      break;
+    }
+
+    // Refund events
+    case "charge.refunded": {
+      const refundEvent = isEnvelope
+        ? stripeChargeRefundedEventSchema.parse(eventOrObject).data.object
+        : stripeChargeRefundedObjectSchema.parse(eventOrObject);
+      // Stripe includes the refunds array in the charge object, newest
+      // first. Drive EVERY refund in the array, not just data[0]: with
+      // two refunds on one charge and delayed/out-of-order delivery,
+      // both events resolved data[0] to the newer refund and refund #1
+      // never got a row or a cascade. handleRefundCreated is idempotent
+      // per gateway refund id (unique + terminal-status guard), so
+      // re-processing an already-booked entry is a no-op.
+      const refunds = refundEvent.refunds?.data ?? [];
+      for (const latestRefund of refunds) {
+        await handleRefundCreated(
+          latestRefund.id,
+          refundEvent.payment_intent || refundEvent.id,
+          latestRefund.amount,
+          latestRefund.currency.toUpperCase(),
+          latestRefund.status ?? "pending",
+          "STRIPE",
+          typeof latestRefund.charge === "string"
+            ? latestRefund.charge
+            : (latestRefund.charge?.id ?? refundEvent.id),
+        );
+      }
+      break;
+    }
+
+    // Dispute events
+    case "charge.dispute.created": {
+      const disputeCreatedEvent = isEnvelope
+        ? stripeDisputeCreatedEventSchema.parse(eventOrObject).data.object
+        : stripeDisputeCreatedObjectSchema.parse(eventOrObject);
+      await handleDisputeCreated(
+        disputeCreatedEvent.id,
+        disputeCreatedEvent.charge,
+        disputeCreatedEvent.amount,
+        disputeCreatedEvent.currency.toUpperCase(),
+        disputeCreatedEvent.reason,
+        disputeCreatedEvent.status,
+        disputeCreatedEvent.evidence_details?.due_by || null,
+        disputeCreatedEvent.is_charge_refundable ?? false,
+        "STRIPE",
+      );
+      break;
+    }
+
+    case "charge.dispute.updated": {
+      const disputeUpdatedEvent = isEnvelope
+        ? stripeDisputeUpdatedEventSchema.parse(eventOrObject).data.object
+        : stripeDisputeUpdatedObjectSchema.parse(eventOrObject);
+      await handleDisputeUpdated(
+        disputeUpdatedEvent.id,
+        disputeUpdatedEvent.status,
+        (disputeUpdatedEvent.evidence as Record<string, unknown> | null) || null,
+      );
+      break;
+    }
+
+    case "charge.dispute.closed": {
+      const disputeClosedEvent = isEnvelope
+        ? stripeDisputeUpdatedEventSchema.parse(eventOrObject).data.object
+        : stripeDisputeUpdatedObjectSchema.parse(eventOrObject);
+      await handleDisputeUpdated(
+        disputeClosedEvent.id,
+        disputeClosedEvent.status,
+        null,
+      );
+      break;
+    }
+
+    case "payout.created":
+    case "payout.paid":
+    case "payout.failed":
+    case "payout.canceled": {
+      if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") {
+        console.log(
+          `⏭️  Stripe Connect payout event ${eventType} ignored (ENABLE_STRIPE_PAYOUTS!=true)`,
+        );
+        break;
+      }
+      const payoutEvent = isEnvelope
+        ? stripePayoutEventSchema.parse(eventOrObject).data.object
+        : stripePayoutObjectSchema.parse(eventOrObject);
+      await handleStripePayoutWebhook(eventType, {
+        id: payoutEvent.id,
+        status: payoutEvent.status,
+        failure_code: payoutEvent.failure_code ?? undefined,
+        failure_message: payoutEvent.failure_message ?? undefined,
+      });
+      break;
+    }
+
+    case "account.updated": {
+      if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
+      const accountEvent = isEnvelope
+        ? stripeAccountUpdatedEventSchema.parse(eventOrObject).data.object
+        : stripeAccountObjectSchema.parse(eventOrObject);
+      console.log(`📄 Stripe Connect account updated: ${accountEvent.id}`, {
+        chargesEnabled: accountEvent.charges_enabled,
+        payoutsEnabled: accountEvent.payouts_enabled,
+        detailsSubmitted: accountEvent.details_submitted,
+      });
+      break;
+    }
+
+    case "transfer.created":
+    case "transfer.reversed": {
+      if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
+      const transferEvent = isEnvelope
+        ? stripeTransferEventSchema.parse(eventOrObject).data.object
+        : stripeTransferObjectSchema.parse(eventOrObject);
+      console.log(`📄 Stripe transfer ${eventType}: ${transferEvent.id}`, {
+        amount: transferEvent.amount,
+        destination: transferEvent.destination,
+        reversed: transferEvent.reversed,
+      });
+      break;
+    }
+
+    default:
+      console.log(`📄 Unhandled Stripe event type: ${eventType}`);
+  }
+}
+
+/**
+ * Re-drive a stored `WebhookEvent` row (`provider = "stripe"`) from
+ * `scripts/cleanup/sweep-stuck-webhook-events.ts`. `WebhookEvent.payload`
+ * stores `event.data.object`.
+ */
+export async function processStripeWebhookEvent(
+  payloadObject: unknown,
+  eventType: string,
+  eventId: string,
+  claim?: WebhookClaim,
+): Promise<void> {
+  let processingError: string | undefined;
+  try {
+    await dispatchStripeEventByType(eventType, payloadObject, false);
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    processingError =
+      err instanceof ZodError ? permanentFailure(rawMsg) : rawMsg;
+    Sentry.captureException(err, {
+      tags: { subsystem: "payments", provider: "stripe" },
+      contexts: { webhook: { eventType, eventId } },
+    });
+  } finally {
+    await markWebhookEventProcessed(eventId, processingError, claim);
+  }
+}
 
 export async function POST(req: NextRequest) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -142,185 +359,26 @@ export async function POST(req: NextRequest) {
     let processingError: string | undefined;
 
     try {
-      switch (eventType) {
-        // FIX CF-3: Checkout Session events — primary handler for Stripe Checkout flow.
-        // createStripeCheckoutSession stores session.id (cs_...) in Payment.paymentIntent,
-        // so we must handle checkout.session.completed to match by cs_... ID.
-        // NOTE: Ensure these events are enabled in the Stripe Dashboard webhook settings.
-        case "checkout.session.completed": {
-          const sessionEvent =
-            stripeCheckoutSessionCompletedEventSchema.parse(event);
-          const session = sessionEvent.data.object;
-          // Use session.id (cs_...) which matches Payment.paymentIntent
-          await handlePaymentSuccess(session.id, session.metadata || {});
-          break;
-        }
-
-        case "checkout.session.expired": {
-          const sessionEvent =
-            stripeCheckoutSessionExpiredEventSchema.parse(event);
-          await handlePaymentFailure(sessionEvent.data.object.id);
-          break;
-        }
-
-        // Payment Intent events — kept for backward compatibility.
-        // If a payment was stored with pi_... (legacy flow), this handler catches it.
-        // Idempotency: handlePaymentSuccess is a no-op if already SUCCEEDED.
-        case "payment_intent.succeeded": {
-          const succeededEvent =
-            stripePaymentIntentSucceededEventSchema.parse(event);
-          await handlePaymentSuccess(
-            succeededEvent.data.object.id,
-            succeededEvent.data.object.metadata || {},
-          );
-          break;
-        }
-
-        case "payment_intent.payment_failed": {
-          const failedEvent = stripePaymentIntentFailedEventSchema.parse(event);
-          await handlePaymentFailure(failedEvent.data.object.id);
-          break;
-        }
-
-        // Refund events
-        case "charge.refunded": {
-          const refundEvent = event.data.object;
-          // Stripe includes the refunds array in the charge object, newest
-          // first. Drive EVERY refund in the array, not just data[0]: with
-          // two refunds on one charge and delayed/out-of-order delivery,
-          // both events resolved data[0] to the newer refund and refund #1
-          // never got a row or a cascade. handleRefundCreated is idempotent
-          // per gateway refund id (unique + terminal-status guard), so
-          // re-processing an already-booked entry is a no-op.
-          const refunds = refundEvent.refunds?.data ?? [];
-          for (const latestRefund of refunds) {
-            await handleRefundCreated(
-              latestRefund.id,
-              refundEvent.payment_intent || refundEvent.id,
-              latestRefund.amount,
-              latestRefund.currency.toUpperCase(),
-              latestRefund.status,
-              "STRIPE",
-              // 7th arg — the provider payment id the org-level branches key
-              // on (WalletTopUp / OrganizationInvoice.providerPaymentId); only
-              // the B2C Payment lookup uses `payment_intent`. `ch_<…>` is the
-              // Stripe analogue of the `pay_<…>` razorpay-dispatch passes here.
-              // Org billing mints Razorpay orders today, so nothing matches on
-              // this rail yet; what it changes now is the not-found case, which
-              // stopped silently ACKing (#813/#812 calls that permanent death)
-              // and now 5xxs so Stripe re-delivers.
-              typeof latestRefund.charge === "string"
-                ? latestRefund.charge
-                : (latestRefund.charge?.id ?? refundEvent.id),
-            );
-          }
-          break;
-        }
-
-        // Dispute events
-        case "charge.dispute.created": {
-          const disputeCreatedEvent = event.data.object;
-          await handleDisputeCreated(
-            disputeCreatedEvent.id,
-            disputeCreatedEvent.charge,
-            disputeCreatedEvent.amount,
-            disputeCreatedEvent.currency.toUpperCase(),
-            disputeCreatedEvent.reason,
-            disputeCreatedEvent.status,
-            disputeCreatedEvent.evidence_details?.due_by || null,
-            disputeCreatedEvent.is_charge_refundable,
-            "STRIPE",
-          );
-          break;
-        }
-
-        case "charge.dispute.updated": {
-          const disputeUpdatedEvent = event.data.object;
-          await handleDisputeUpdated(
-            disputeUpdatedEvent.id,
-            disputeUpdatedEvent.status,
-            disputeUpdatedEvent.evidence || null,
-          );
-          break;
-        }
-
-        case "charge.dispute.closed": {
-          const disputeClosedEvent = event.data.object;
-          await handleDisputeUpdated(
-            disputeClosedEvent.id,
-            disputeClosedEvent.status,
-            null,
-          );
-          break;
-        }
-
-        // Stripe Connect Payout/Transfer events.
-        //
-        // Payouts are India-first via RazorpayX; Stripe Connect payout
-        // integration is opt-in. Production environments that haven't
-        // onboarded Connect will otherwise receive noisy webhooks (e.g.
-        // for the platform's own Stripe balance movements). Gate both
-        // the handler and the subsequent `account.updated` /
-        // `transfer.*` logs behind ENABLE_STRIPE_PAYOUTS so we can
-        // enable the full Connect flow atomically once ready.
-        case "payout.created":
-        case "payout.paid":
-        case "payout.failed":
-        case "payout.canceled": {
-          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") {
-            console.log(
-              `⏭️  Stripe Connect payout event ${eventType} ignored (ENABLE_STRIPE_PAYOUTS!=true)`,
-            );
-            break;
-          }
-          const payoutEvent = event.data.object;
-          await handleStripePayoutWebhook(eventType, {
-            id: payoutEvent.id,
-            status: payoutEvent.status,
-            failure_code: payoutEvent.failure_code,
-            failure_message: payoutEvent.failure_message,
-          });
-          break;
-        }
-
-        // Stripe Connect Account events — only meaningful when Connect
-        // payouts are enabled.
-        case "account.updated": {
-          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
-          const accountEvent = event.data.object;
-          console.log(`📄 Stripe Connect account updated: ${accountEvent.id}`, {
-            chargesEnabled: accountEvent.charges_enabled,
-            payoutsEnabled: accountEvent.payouts_enabled,
-            detailsSubmitted: accountEvent.details_submitted,
-          });
-          break;
-        }
-
-        // Transfer events (platform to connected account)
-        case "transfer.created":
-        case "transfer.reversed": {
-          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
-          const transferEvent = event.data.object;
-          console.log(`📄 Stripe transfer ${eventType}: ${transferEvent.id}`, {
-            amount: transferEvent.amount,
-            destination: transferEvent.destination,
-            reversed: transferEvent.reversed,
-          });
-          break;
-        }
-
-        default:
-          console.log(`📄 Unhandled Stripe event type: ${eventType}`);
-      }
+      await dispatchStripeEventByType(eventType, event, true);
     } catch (handlerError) {
-      processingError =
+      const rawMessage =
         handlerError instanceof Error
           ? handlerError.message
           : String(handlerError);
+      processingError =
+        handlerError instanceof ZodError
+          ? permanentFailure(rawMessage)
+          : rawMessage;
       Sentry.captureException(handlerError, {
         tags: { subsystem: "payments", provider: "stripe" },
         contexts: { webhook: { eventType, eventId } },
       });
+      if (handlerError instanceof ZodError) {
+        return NextResponse.json(
+          { error: "Invalid webhook payload" },
+          { status: 400 },
+        );
+      }
       throw handlerError;
     } finally {
       // Mark event as processed
