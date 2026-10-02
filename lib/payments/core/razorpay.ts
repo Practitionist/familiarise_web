@@ -880,6 +880,21 @@ export function isRazorpayUnknownRefundIdError(
 }
 
 /**
+ * True when Razorpay answered with HTTP 404: these keys have no such order, so
+ * no refund exists under it and a new one would fail before money moves.
+ */
+export function isRazorpayUnknownOrderError(
+  error: unknown,
+): error is RefundError {
+  return (
+    error instanceof RefundError &&
+    error.gateway === "RAZORPAY" &&
+    (error.originalError as { statusCode?: unknown } | undefined)
+      ?.statusCode === 404
+  );
+}
+
+/**
  * List all refunds for a payment
  * Note: This function receives an orderId, not a paymentId
  */
@@ -927,11 +942,15 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
-    reportSentryError(error, {
-      subsystem: "payments",
-      tags: { provider: "razorpay" },
-    });
-    throw handleRazorpayRefundError(error);
+    const refundError = handleRazorpayRefundError(error);
+    // The reconciler reports an unknown order once per run, not per row.
+    if (!isRazorpayUnknownOrderError(refundError)) {
+      reportSentryError(error, {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+      });
+    }
+    throw refundError;
   }
 }
 

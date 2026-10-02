@@ -198,11 +198,13 @@ export async function processRazorpayWebhookEvent(
         // #1582 F-P0-01 — the `pay_*` id rides along when Razorpay ships the
         // payment entity; without it the org branch still refuses to mark PAID.
         const paidEntity = paidEvent.payload.payment?.entity;
+        // `amountPaise` is what was captured: only a payment entity supplies it.
+        // Otherwise withheld, so the parity check skips rather than falsely
+        // passing against the order total.
         await routeCapturedPayment({
           orderId: paidEvent.payload.order.entity.id,
           notes: paidEvent.payload.order.entity.notes ?? {},
-          amountPaise:
-            paidEntity?.amount ?? paidEvent.payload.order.entity.amount,
+          amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
         });
         break;

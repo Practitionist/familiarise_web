@@ -136,7 +136,6 @@ export {
   IllegalEarningStatusTransitionError,
   assertEarningStatusTransitionLegal,
 } from "./earning-status";
-import { assertEarningStatusTransitionLegal } from "./earning-status";
 import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
@@ -144,6 +143,12 @@ import {
   subscriptionTranches,
   type SubscriptionTranches,
 } from "@/lib/booking/entitlement";
+
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+  REFUNDABLE_UNPAID_EARNING_SOURCE,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 /**
  * #1766 — the cycle shape a subscription's earnings are split into: one
@@ -1563,19 +1568,25 @@ export async function refundEarnings(
 
     if (orgRefundAmount <= 0) continue;
 
-    const isOrgFullyRefunded =
-      alreadyRefunded + orgRefundAmount >= orgEarning.orgSharePaise;
+    // #CASC — the shared CAS writer pins the legal-source set and prior amount
+    // and writes an absolute value: concurrent writers compose to
+    // min(share, a + b).
+    const orgReversal = await applyCappedOrgEarningReversal(
+      db,
+      orgEarning,
+      orgRefundAmount,
+    );
 
-    await db.organizationEarnings.update({
-      where: { id: orgEarning.id },
-      data: {
-        refundedAmountPaise: { increment: orgRefundAmount },
-        ...(isOrgFullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
+    if (orgReversal.lostRace) {
+      console.warn(
+        `Org earnings ${orgEarning.id}: refundEarnings CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgRefundAmount} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarning.orgSharePaise}).`,
+      );
+    }
 
     console.log(
-      `Org earnings ${orgEarning.id} refunded: ${orgRefundAmount} paise (${isOrgFullyRefunded ? "full" : "partial"})`,
+      `Org earnings ${orgEarning.id} refunded: ${orgReversal.reversedPaise} paise (${orgReversal.fullyRefunded ? "full" : "partial"})`,
     );
   }
 
@@ -1623,11 +1634,7 @@ export async function refundEarnings(
       continue;
     }
 
-    // Determine if this reversal fully exhausts the earning
-    const isFullyRefunded =
-      alreadyRefunded + shareToReverse >= earnings.consultantSharePaise;
-
-    // Handle already-paid earnings (payout completed)
+    // PAID rows reverse only under forceRefund (with the TDS reversal).
     if (earnings.status === EarningStatus.PAID) {
       if (!options?.forceRefund) {
         console.error(
@@ -1635,22 +1642,16 @@ export async function refundEarnings(
         );
         continue;
       }
-      if (isFullyRefunded) {
-        // Defensive double-check: forceRefund is the only path that
-        // writes PAID → REFUNDED, but if another code path ever forgets
-        // the assertion this throws before any state mutates.
-        assertEarningStatusTransitionLegal(
-          earnings.id,
-          earnings.status,
-          EarningStatus.REFUNDED,
-        );
-      }
+      const paidReversal = await applyCappedEarningReversal(
+        db,
+        earnings,
+        shareToReverse,
+      );
 
-      // #813 — force refund of PAID earnings: record the proportional TDS reversal
-      // via the shared helper (integer proportion + dedup/cap + filed-aware
-      // FY/quarter). Previously this path used float ratio math and no cap, and
-      // it diverged from the gateway/cron cascade (operations/refund.ts).
-      if (earnings.payoutId) {
+      // #813 — proportional TDS reversal via the shared helper, AFTER the CAS
+      // and only when `reversedPaise > 0`. The basis stays booking-level
+      // (`refundNumPaise / refundDenPaise`): a compliance figure.
+      if (earnings.payoutId && paidReversal.reversedPaise > 0) {
         await recordTdsReversal(db, {
           payoutId: earnings.payoutId,
           consultantProfileId: earnings.consultantProfileId,
@@ -1659,28 +1660,31 @@ export async function refundEarnings(
           paymentAmountPaise: refundDenPaise,
         });
       }
-
-      // Update earnings: always track refundedShareAmount, set REFUNDED when fully exhausted
-      await db.consultantEarnings.update({
-        where: { id: earnings.id },
-        data: {
-          refundedShareAmount: { increment: shareToReverse },
-          ...(isFullyRefunded && { status: EarningStatus.REFUNDED }),
-        },
-      });
+      if (paidReversal.lostRace) {
+        console.warn(
+          `Earnings ${earnings.id} already reversed by a concurrent refund path; ` +
+            `${paidReversal.reversedPaise} paise applied here ` +
+            `(${paidReversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
+        );
+      }
 
       continue;
     }
 
-    // Update earnings for non-paid earnings (PENDING/HELD/READY):
-    // always track refundedShareAmount, set REFUNDED when fully exhausted
-    await db.consultantEarnings.update({
-      where: { id: earnings.id },
-      data: {
-        refundedShareAmount: { increment: shareToReverse },
-        ...(isFullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
+    // Non-PAID rows: a row that turns PAID mid-flight is refused, not reversed.
+    const reversal = await applyCappedEarningReversal(
+      db,
+      earnings,
+      shareToReverse,
+      REFUNDABLE_UNPAID_EARNING_SOURCE,
+    );
+    if (reversal.lostRace) {
+      console.warn(
+        `Earnings ${earnings.id} CAS lost to a concurrent refund path; ` +
+          `${reversal.reversedPaise} paise applied here ` +
+          `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
+      );
+    }
   }
 
   return true;

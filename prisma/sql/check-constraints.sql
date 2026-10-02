@@ -145,7 +145,7 @@ ALTER TABLE "Dispute" ADD CONSTRAINT "dispute_amount_nonnegative" CHECK ("amount
 ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_amounts_nonnegative";
 -- SPLIT
 ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_amounts_nonnegative"
-  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
+  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND "clawbackAmountPaise" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
 -- SPLIT
 ALTER TABLE "OrganizationPayout" DROP CONSTRAINT IF EXISTS "org_payout_amounts_nonnegative";
 -- SPLIT
@@ -379,13 +379,12 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
     AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
   );
 -- SPLIT
--- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund or a
--- Dispute. Both minters (lib/payments/operations/refund.ts) set exactly one and
--- no seed file writes CreditNote, so the strict XOR is the true shape.
+-- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund, a
+-- Dispute, or an OverageEvent reversal.
 ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
 -- SPLIT
 ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
-  CHECK (("refundId" IS NULL) <> ("disputeId" IS NULL));
+  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1);
 -- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT

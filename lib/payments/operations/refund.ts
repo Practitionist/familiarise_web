@@ -43,7 +43,6 @@ import {
 } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
-  EarningStatus,
   type LedgerAccountKind,
   PaymentStatus,
   Prisma,
@@ -65,7 +64,6 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -86,6 +84,11 @@ import {
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 // ============================================================================
 // Public types
@@ -1224,6 +1227,10 @@ export async function applyRefundCascade(
       : (trancheAbsorb.get(earnings.id) ?? 0);
 
   let consultantEarningsReversed = 0;
+  // What each row ACTUALLY absorbed, by earning id (absent = 0). Step 9's
+  // debits and the TDS filing read this, never `reversalOf(row)`: booking the
+  // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
+  const appliedByEarning = new Map<string, number>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1231,35 +1238,25 @@ export async function applyRefundCascade(
     // a second reversal (e.g. app refund THEN a lost-dispute chargeback creates a
     // new Refund → new cascadedAt → Step 6 re-runs) would otherwise inflate
     // refundedShareAmount past consultantSharePaise and corrupt readyAmount/over-refund math.
-    const newRefundedShare = Math.min(
-      earnings.consultantSharePaise,
-      earnings.refundedShareAmount + shareReversal,
+    // #CASC — the cap and status predicate live in the WHERE
+    // (applyCappedEarningReversal), which also asserts the transition.
+    const reversal = await applyCappedEarningReversal(
+      tx,
+      earnings,
+      shareReversal,
     );
-    const fully = newRefundedShare >= earnings.consultantSharePaise;
-
-    let nextStatus = earnings.status;
-    if (fully && earnings.status !== EarningStatus.REFUNDED) {
-      // Guard the transition. PAID → REFUNDED is allowed; other
-      // sources (PENDING/HELD/READY/PENDING_TRUST) → REFUNDED is
-      // implicitly allowed by the guard. The guard rejects
-      // REFUNDED→anything (already-terminal), which we skip via the
-      // outer `!== REFUNDED` check.
-      assertEarningStatusTransitionLegal(
-        earnings.id,
-        earnings.status,
-        EarningStatus.REFUNDED,
+    appliedByEarning.set(earnings.id, reversal.reversedPaise);
+    if (reversal.lostRace) {
+      // Someone else owns this row's reversal now (or we only got the residual
+      // after a re-read). Report it — and do NOT count the row as reversed by
+      // this cascade unless this call actually moved paise.
+      console.warn(
+        `Earnings ${earnings.id}: refund cascade CAS lost, ` +
+          `${reversal.reversedPaise} paise applied of ${shareReversal} ` +
+          `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-
-    await tx.consultantEarnings.update({
-      where: { id: earnings.id },
-      data: {
-        refundedShareAmount: newRefundedShare,
-        status: nextStatus,
-      },
-    });
-    consultantEarningsReversed++;
+    if (reversal.reversedPaise > 0) consultantEarningsReversed++;
 
     // #813 — refund-driven TDS reversal for an already-paid-out earning, so the
     // quarterly 26Q nets the withholding back out. Previously only admin
@@ -1267,7 +1264,10 @@ export async function applyRefundCascade(
     // left the TDS un-reversed. The shared helper owns the integer proportion,
     // the dedup/cap against double-reversal, and the filed-aware FY/quarter
     // policy (pending CA sign-off).
-    if (earnings.payoutId) {
+    //
+    // Skipped when the CAS applied 0. The basis stays booking-level
+    // (`input.amountPaise / payment.amount`): 26Q is filed per payout.
+    if (earnings.payoutId && reversal.reversedPaise > 0) {
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
@@ -1284,6 +1284,9 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
   let clawbackInitiated = false;
+  // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
+  // `appliedByEarning` above, for the identical reason.
+  const appliedByOrgEarning = new Map<string, number>();
 
   for (const orgEarn of payment.organizationEarnings) {
     // #776 — `refundedAmountPaise` tracks the ORG-SHARE portion only. The
@@ -1302,32 +1305,29 @@ export async function applyRefundCascade(
     // followed by a lost-dispute chargeback that mints a fresh Refund) would
     // otherwise inflate refundedAmountPaise past orgSharePaise and drive the
     // payout readyAmount negative, blocking the whole batch.
-    const newRefunded = Math.min(
-      orgEarn.orgSharePaise,
-      orgEarn.refundedAmountPaise + orgShareRev,
+    //
+    // #CASC — that cap and the legal-source predicate live in the shared CAS
+    // writer's WHERE, which also asserts the transition before writing.
+    const orgReversal = await applyCappedOrgEarningReversal(
+      tx,
+      orgEarn,
+      orgShareRev,
     );
-    // Fully refunded when the org share is exhausted — its sole refundable
-    // portion (platform fee + consultant share are not org receivables).
-    const fully = newRefunded >= orgEarn.orgSharePaise;
-
-    let nextStatus = orgEarn.status;
-    if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        orgEarn.id,
-        orgEarn.status,
-        EarningStatus.REFUNDED,
+    if (orgReversal.lostRace) {
+      // Someone else owns this row's reversal now (or we only got the residual
+      // after a re-read). Report it — and do NOT count the row as reversed by
+      // this cascade unless this call actually moved paise.
+      console.warn(
+        `Org earnings ${orgEarn.id}: refund cascade CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgShareRev} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarn.orgSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-
-    await tx.organizationEarnings.update({
-      where: { id: orgEarn.id },
-      data: {
-        refundedAmountPaise: newRefunded,
-        status: nextStatus,
-      },
-    });
-    organizationEarningsReversed++;
+    // What this row ACTUALLY absorbed; everything below reads it, never
+    // `orgShareRev`. 0 means post nothing (`postLedgerTxn` throws on 0).
+    const orgApplied = orgReversal.reversedPaise;
+    appliedByOrgEarning.set(orgEarn.id, orgApplied);
+    if (orgApplied > 0) organizationEarningsReversed++;
 
     // Clawback: if this earnings row was already rolled into a payout
     // and that payout is COMPLETED (bank wire left), record the
@@ -1335,12 +1335,12 @@ export async function applyRefundCascade(
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
-      orgShareRev > 0
+      orgApplied > 0
     ) {
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgShareRev },
+          clawbackAmountPaise: { increment: orgApplied },
           // Only stamp on the FIRST clawback — preserves the
           // earliest-clawback timestamp across multiple partial
           // refunds against the same payout.
@@ -1356,14 +1356,14 @@ export async function applyRefundCascade(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Refund clawback initiated: ${orgShareRev} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Refund clawback initiated: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: payment.id,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
             amountPaise: input.amountPaise,
-            clawbackAmountPaise: orgShareRev,
+            clawbackAmountPaise: orgApplied,
             initiatedByUserId: input.initiatedByUserId ?? null,
           } as Prisma.InputJsonValue,
         },
@@ -1375,7 +1375,7 @@ export async function applyRefundCascade(
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgShareRev,
+        amountPaise: orgApplied,
         organizationId: orgEarn.organizationId,
       });
 
@@ -1595,9 +1595,15 @@ export async function applyRefundCascade(
 
     const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
     if (fundingTotal > 0) {
-      const consRev = payment.earnings.reduce((s, e) => s + reversalOf(e), 0);
+      // APPLIED total (Step 6); `platformPlug` lands any un-clawed remainder on
+      // PLATFORM_FEE rather than debiting a payable for paise never taken back.
+      const consRev = payment.earnings.reduce(
+        (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
+        0,
+      );
+      // APPLIED (Step 7's `appliedByOrgEarning`), for the same reason as consRev.
       const orgRev = payment.organizationEarnings.reduce(
-        (s, o) => s + proportion(o.orgSharePaise),
+        (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
         0,
       );
       // #812 — default a missing taxAmount to 0. A `null`/`undefined` here would
@@ -1649,7 +1655,9 @@ export async function applyRefundCascade(
       // left collaborators' payables un-reversed in the ledger — an invisible
       // per-account divergence on every multi-collaborator refund.
       for (const earning of payment.earnings) {
-        const earningRev = reversalOf(earning);
+        // #Bugfix — debit what the CAS ACTUALLY applied, not the request;
+        // anything else is unrepairable EARNINGS_LEDGER_DRIFT.
+        const earningRev = appliedByEarning.get(earning.id) ?? 0;
         if (earningRev > 0) {
           debits.push({
             account: {
@@ -1992,13 +2000,18 @@ export async function mintInvoiceRefundCreditNote(
   tx: Tx,
   params: {
     invoiceId: string;
-    refundId: string;
     amountPaise: number;
     reason: string;
-  },
+  } & (
+    | { refundId: string; overageEventId?: never }
+    | { overageEventId: string; refundId?: never }
+  ),
 ): Promise<OrgCreditNoteMintResult> {
+  // Idempotent on whichever trigger raised it (both are @unique).
   const existing = await tx.creditNote.findUnique({
-    where: { refundId: params.refundId },
+    where: params.overageEventId
+      ? { overageEventId: params.overageEventId }
+      : { refundId: params.refundId },
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };
@@ -2035,7 +2048,7 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: params.amountPaise,
-      refundId: params.refundId,
+      refundId: params.refundId ?? params.overageEventId,
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
@@ -2065,7 +2078,8 @@ export async function mintInvoiceRefundCreditNote(
       fiscalYear,
       organizationId: org.id,
       invoiceId: invoice.id,
-      refundId: params.refundId,
+      refundId: params.refundId ?? null,
+      overageEventId: params.overageEventId ?? null,
       reason: params.reason,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,

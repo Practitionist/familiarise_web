@@ -15,7 +15,10 @@ import prisma from "../../lib/prisma";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { getRefund, listRefunds } from "../../lib/payments";
-import { isRazorpayUnknownRefundIdError } from "../../lib/payments/core/razorpay";
+import {
+  isRazorpayUnknownOrderError,
+  isRazorpayUnknownRefundIdError,
+} from "../../lib/payments/core/razorpay";
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
@@ -60,8 +63,8 @@ export interface RefundReconciliationResult {
   skippedFenced: number;
   /**
    * FAMILIARISE_WEB-3V — the subset of `failedCount` whose gateway has no
-   * record of the refund id (unknown id, or a test-mode id read with live
-   * keys). Terminal: the row is moved to FAILED instead of polled forever.
+   * record of the refund id, or of a placeholder's order (unknown id, or a
+   * test-mode id read with live keys). Terminal: moved to FAILED, not polled.
    */
   failedUnknownId: number;
   /**
@@ -130,6 +133,7 @@ async function reconcilePendingRefundsUnlocked(
   let failedGatewayDisabled = 0;
   let totalProcessed = 0;
   const retiredNoClient: string[] = [];
+  const failedUnknownOrder: string[] = [];
 
   /**
    * #1458 — a PENDING refund on a gateway this deployment has fenced off is not
@@ -344,6 +348,33 @@ async function reconcilePendingRefundsUnlocked(
         skippedCount++;
       }
     } catch (error) {
+      // Order 404: no refund exists under these keys and a retry 404s before
+      // money moves, so past 24h FAILED is safe; younger rows wait.
+      if (isRazorpayUnknownOrderError(error)) {
+        if (
+          Date.now() - refund.createdAt.getTime() <=
+          PLACEHOLDER_FAIL_AFTER_MS
+        ) {
+          skippedCount++;
+          continue;
+        }
+        const claim = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
+          data: {
+            status: RefundStatus.FAILED,
+            failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+            failedAt: new Date(),
+          },
+        });
+        if (claim.count === 1) {
+          failedCount++;
+          failedUnknownId++;
+          failedUnknownOrder.push(refund.id);
+        } else {
+          skippedCount++;
+        }
+        continue;
+      }
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       errors.push(`Refund ${refund.id}: ${errorMessage}`);
@@ -532,6 +563,20 @@ async function reconcilePendingRefundsUnlocked(
         expected: true,
         level: "warning",
         extra: { retired: retiredNoClient },
+      },
+    );
+  }
+
+  if (failedUnknownOrder.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: FAILED ${failedUnknownOrder.length} placeholder refund(s) whose order the gateway does not know`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.unknown-order",
+        expected: true,
+        level: "warning",
+        tags: { provider: "razorpay" },
+        extra: { failed: failedUnknownOrder },
       },
     );
   }

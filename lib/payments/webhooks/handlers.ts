@@ -229,20 +229,10 @@ export async function handlePaymentSuccess(
             recovering &&
             payment.paymentStatus === PaymentStatus.SUCCEEDED &&
             payment.appointmentId === null;
-          if (
-            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
-            !recoverable
-          ) {
-            console.log(
-              `Payment ${paymentIntentId} has already been processed.`,
-            );
-            reportSentryMessage("Payment webhook idempotency short-circuit", {
-              subsystem: "payments",
-              expected: true,
-              extra: { paymentIntentId },
-            });
-            return null; // Signal: already processed, skip Phase 2
-          }
+          // The SUCCEEDED short-circuit's own predicate; `recoverable` excluded so
+          // a wrong-amount capture on an unconfirmed recovery still blocks.
+          const alreadyProcessed =
+            payment.paymentStatus === PaymentStatus.SUCCEEDED && !recoverable;
 
           // Late capture on an EXPIRED or FAILED payment: record SUCCEEDED gateway truth and refund in Phase 2.
           if (
@@ -277,6 +267,8 @@ export async function handlePaymentSuccess(
           }
 
           // Amount parity guard: never confirm a booking when captured amount differs from ordered amount.
+          // Runs above the SUCCEEDED short-circuit so a redelivered mismatch is
+          // still caught; remediation stays behind `!alreadyProcessed` so it never refunds twice.
           if (
             gatewayAmountPaise !== undefined &&
             gatewayAmountPaise !== payment.amount
@@ -293,10 +285,38 @@ export async function handlePaymentSuccess(
                     paymentIntentId,
                     paymentId: payment.id,
                     userId: payment.userId,
+                    redelivery: alreadyProcessed,
                   },
                 },
               },
             );
+            if (alreadyProcessed) {
+              // The first delivery already stamped and auto-refunded; acknowledge
+              // the webhook without re-opening the terminal row.
+              console.error(
+                JSON.stringify({
+                  event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH_REDELIVERY",
+                  alert_priority: "P1",
+                  payment_id: payment.id,
+                  payment_intent: paymentIntentId,
+                  user_id: payment.userId,
+                  gateway_amount_paise: gatewayAmountPaise,
+                  expected_amount_paise: payment.amount,
+                  action_required:
+                    "already auto-refunded by the first delivery; re-verify no second refund is owed",
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+              reportSentryMessage(
+                "capture amount mismatch on an already-processed payment",
+                {
+                  subsystem: "payments",
+                  expected: true,
+                  extra: { paymentIntentId, gatewayAmountPaise },
+                },
+              );
+              return null; // Signal: nothing to do, skip Phase 2
+            }
             const stamped = await tx.payment.updateMany({
               where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
               data: {
@@ -336,6 +356,19 @@ export async function handlePaymentSuccess(
               gatewayAmountPaise,
               expectedAmount: payment.amount,
             };
+          }
+
+          // Redelivered webhook whose amount agrees with what was booked (parity ran above).
+          if (alreadyProcessed) {
+            console.log(
+              `Payment ${paymentIntentId} has already been processed.`,
+            );
+            reportSentryMessage("Payment webhook idempotency short-circuit", {
+              subsystem: "payments",
+              expected: true,
+              extra: { paymentIntentId },
+            });
+            return null; // Signal: already processed, skip Phase 2
           }
 
           try {

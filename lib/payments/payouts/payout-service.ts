@@ -15,6 +15,7 @@ import {
   PayoutMethod,
   PaymentGateway,
   EarningStatus,
+  RefundStatus,
   type Prisma,
 } from "@prisma/client";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
@@ -213,6 +214,15 @@ export async function checkPayoutEligibility(
 
 const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
 const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
+
+/**
+ * Refund statuses that must NOT block a payout: FAILED and CANCELLED never
+ * returned the money. Refund-side sibling of `DISPUTE_INACTIVE_FOR_GATING`.
+ */
+const REFUND_INACTIVE_FOR_GATING: RefundStatus[] = [
+  RefundStatus.FAILED,
+  RefundStatus.CANCELLED,
+];
 
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
@@ -831,6 +841,84 @@ async function processSinglePayout(payout: {
         extra: { payoutId: payout.id },
       });
       return { payoutId: payout.id, success: false, skipped: true };
+    }
+
+    // A refund that is PENDING or not yet cascaded onto the earning would be
+    // paid to the consultant AND returned to the buyer. Block until it lands.
+    const refundPendingEarning = await prisma.consultantEarnings.findFirst({
+      where: {
+        payoutId: payout.id,
+        payment: {
+          refunds: {
+            some: {
+              status: { notIn: REFUND_INACTIVE_FOR_GATING },
+              OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (refundPendingEarning) {
+      console.warn(
+        `[Payouts] Payout ${payout.id} blocked — an earning's payment has an uncascaded refund`,
+      );
+      reportSentryMessage("Payout blocked by an uncascaded refund", {
+        subsystem: "payments",
+        expected: true,
+        extra: { payoutId: payout.id },
+      });
+      return { payoutId: payout.id, success: false, skipped: true };
+    }
+
+    // `payout.amount` is frozen at batch time; a reversal landing on a BATCHED
+    // earning afterwards lowers what is owed. Never disburse more than that.
+    const owedAgg = await prisma.consultantEarnings.aggregate({
+      where: { payoutId: payout.id },
+      _sum: { consultantSharePaise: true, refundedShareAmount: true },
+    });
+    const owedPaise =
+      sumPaise(owedAgg._sum.consultantSharePaise) -
+      sumPaise(owedAgg._sum.refundedShareAmount);
+    if (owedPaise < payout.amount) {
+      const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${payout.amount}p`;
+      console.warn(`[Payouts] Payout ${payout.id} failed — ${shortfallReason}`);
+      const failShortfall = async (
+        db: Pick<typeof prisma, "consultantPayout" | "consultantEarnings">,
+      ) => {
+        const failed = await db.consultantPayout.updateMany({
+          where: { id: payout.id, status: PayoutStatus.APPROVED },
+          data: {
+            status: PayoutStatus.FAILED,
+            failureReason: shortfallReason.slice(0, 500),
+            tdsDeducted: 0,
+            netAmount: null,
+            tdsRateAppliedBps: null,
+            tdsFinancialYear: null,
+          },
+        });
+        if (failed.count === 0) return;
+
+        await db.consultantEarnings.updateMany({
+          where: { payoutId: payout.id, status: EarningStatus.BATCHED },
+          data: { payoutId: null, status: EarningStatus.READY },
+        });
+      };
+      if (typeof prisma.$transaction === "function") {
+        await prisma.$transaction((tx) => failShortfall(tx));
+      } else {
+        await failShortfall(prisma);
+      }
+      reportSentryMessage("payout-batch-earnings-shortfall", {
+        subsystem: "payments",
+        level: "error",
+        extra: { payoutId: payout.id, owedPaise, amount: payout.amount },
+      });
+      return {
+        payoutId: payout.id,
+        success: false,
+        error: shortfallReason,
+      };
     }
 
     // Atomic CAS claim APPROVED → PROCESSING so concurrent runners cannot double-submit.

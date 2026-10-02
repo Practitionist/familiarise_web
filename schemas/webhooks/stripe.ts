@@ -105,6 +105,11 @@ export const stripeCheckoutSessionObjectSchema = z
   })
   .passthrough();
 
+export const stripeCheckoutSessionCompletedObjectSchema =
+  stripeCheckoutSessionObjectSchema.extend({
+    payment_status: z.string(),
+  });
+
 export const stripePaymentIntentObjectSchema = paymentIntentSchema.passthrough();
 
 // FIX CF-3: Checkout Session Completed event
@@ -114,7 +119,7 @@ export const stripeCheckoutSessionCompletedEventSchema =
   stripeBaseEventSchema.extend({
     type: z.literal("checkout.session.completed"),
     data: z.object({
-      object: stripeCheckoutSessionObjectSchema,
+      object: stripeCheckoutSessionCompletedObjectSchema,
     }),
   });
 

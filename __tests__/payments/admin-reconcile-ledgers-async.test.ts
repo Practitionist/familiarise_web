@@ -3,11 +3,10 @@
  */
 
 /**
- * #1454 — a full-scope POST /api/admin/reconcile-ledgers must not hold the
- * request open: it opens the run row, hands the run id to the background
- * driver with the cron secret, and answers 202 with that id. An org-scoped
- * POST keeps the synchronous report. Everything below the route is mocked;
- * this pins the route's contract, not the auditor.
+ * #1943 — a full-scope or org-scoped POST /api/admin/reconcile-ledgers runs
+ * `runReconcileLedgers` directly in-process under its cron lock, avoiding the
+ * removed `/.netlify/functions/reconcile-ledgers-background` HTTP hop that
+ * caused a 502 error.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -21,11 +20,9 @@ jest.mock("../../lib/auth-helpers", () => ({
   })),
 }));
 
-jest.mock("../../lib/url", () => ({
-  getAppUrl: () => "https://deploy-preview-1--site.netlify.app",
-}));
-
-const findMany = jest.fn(async (..._args: unknown[]) => []);
+const findMany = jest.fn(
+  async (..._args: unknown[]): Promise<unknown[]> => [],
+);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -35,16 +32,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const createReconcileRun = jest.fn(async (_opts: unknown, id: string) => id);
 const runReconcileLedgers = jest.fn(async (..._args: unknown[]) => ({
-  id: "rep_org",
+  id: "rep_1",
   ok: true,
 }));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => ({
-  createReconcileRun: (...args: [unknown, string]) =>
-    createReconcileRun(...args),
   runReconcileLedgers: (...args: unknown[]) => runReconcileLedgers(...args),
-  markReconcileRunFailed: jest.fn(async () => {}),
   isReconcileRunInProgress: (row: { summary: { status?: string } }) =>
     row.summary?.status === "RUNNING",
   RECONCILE_RUN_STALE_MS: 45 * 60 * 1000,
@@ -52,6 +45,7 @@ jest.mock("../../scripts/reconcile/reconcile-ledgers", () => ({
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/reconcile-ledgers/route";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 const fetchMock = jest.fn(async () => new Response(null, { status: 202 }));
 
@@ -65,34 +59,43 @@ function post(body: unknown) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.CRON_SECRET = "s3cret";
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
 describe("POST /api/admin/reconcile-ledgers", () => {
-  it("answers 202 with the run id after kicking the background driver", async () => {
+  it("runs a full-scope reconciliation in-process and answers 200 with the report", async () => {
     const res = await POST(post({}));
     const body = await res.json();
 
-    expect(res.status).toBe(202);
-    expect(body.data.status).toBe("RUNNING");
-    expect(body.data.reportId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(createReconcileRun).toHaveBeenCalledWith(
-      { scope: "full", triggeredById: "admin_1" },
-      body.data.reportId,
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      `https://deploy-preview-1--site.netlify.app/.netlify/functions/reconcile-ledgers-background?runId=${body.data.reportId}&triggeredById=admin_1`,
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bearer s3cret" }),
-        body: JSON.stringify({
-          runId: body.data.reportId,
-          triggeredById: "admin_1",
-        }),
-      }),
-    );
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ id: "rep_1", ok: true });
+    expect(runReconcileLedgers).toHaveBeenCalledWith({
+      scope: "full",
+      triggeredById: "admin_1",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 when a full-scope run is already in progress", async () => {
+    findMany.mockResolvedValueOnce([
+      { id: "run_active", runAt: new Date(), summary: { status: "RUNNING" } },
+    ]);
+
+    const res = await POST(post({}));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.reportId).toBe("run_active");
     expect(runReconcileLedgers).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 when the reconcile-ledgers cron lock is held", async () => {
+    runReconcileLedgers.mockRejectedValueOnce(
+      new CronLockHeldError("reconcile-ledgers"),
+    );
+
+    const res = await POST(post({}));
+    expect(res.status).toBe(409);
   });
 
   it("keeps an org-scoped run synchronous", async () => {

@@ -570,9 +570,63 @@ export async function processOrgPayout(payoutId: string): Promise<{
           id: true,
           organizationId: true,
           amountPaise: true,
+          netPayoutPaise: true,
           currency: true,
         },
       });
+
+      if (typeof tx.organizationEarnings.aggregate === "function") {
+        const owedAgg = await tx.organizationEarnings.aggregate({
+          where: { orgPayoutId: payoutId },
+          _sum: { orgSharePaise: true, refundedAmountPaise: true },
+        });
+        if (owedAgg?._sum) {
+          const owedPaise =
+            sumPaise(owedAgg._sum.orgSharePaise) -
+            sumPaise(owedAgg._sum.refundedAmountPaise);
+          const expectedNet = payout.netPayoutPaise ?? payout.amountPaise;
+          if (owedPaise < expectedNet) {
+            const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${expectedNet}p`;
+            await tx.organizationPayout.updateMany({
+              where: { id: payoutId, status: "PROCESSING" },
+              data: {
+                status: "FAILED",
+                failureReason: shortfallReason.slice(0, 500),
+                failedAt: new Date(),
+              },
+            });
+            await tx.organizationEarnings.updateMany({
+              where: { orgPayoutId: payoutId, status: "BATCHED" },
+              data: { status: "READY", orgPayoutId: null },
+            });
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: payout.organizationId,
+                actorMembershipId: null,
+                category: "PAYOUT",
+                action: AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+                description: `Payout ${payoutId} failed before disbursement due to post-batch refund shortfall`,
+                details: {
+                  payoutId,
+                  owedPaise,
+                  expectedNetPaise: expectedNet,
+                  reason: shortfallReason,
+                },
+              },
+            });
+            reportSentryMessage("org-payout-batch-earnings-shortfall", {
+              subsystem: "payments",
+              level: "error",
+              extra: { payoutId, owedPaise, expectedNetPaise: expectedNet },
+            });
+            return {
+              status: "FAILED" as PayoutStatus,
+              submittedToGateway: false,
+              claimed: true,
+            };
+          }
+        }
+      }
 
       await tx.orgAuditLog.create({
         data: {

@@ -5,18 +5,11 @@
  * Platform-admin-only ledger auditor.
  *
  *  - `POST` with `{ organizationId }` runs an org-scoped reconciliation
- *    synchronously and returns the resulting report (small enough to answer
- *    inside the edge's wait).
- *  - `POST` with no body runs the full scope, which takes longer than the
- *    ~26 s the Netlify edge waits for a Route Handler's first byte (#1454).
- *    It opens a report row, hands the run id to the background driver
- *    (`netlify/functions/reconcile-ledgers-background/index.mts`) and answers
- *    `202 { reportId }` at once; poll `GET ?id=<reportId>` until
- *    `summary.status` is COMPLETED. If the background function is never
- *    invoked (it is not on any non-production deploy of this site, #1633),
- *    the Netlify ticker advances the run one chunk every five minutes, so it
- *    still completes in about chunks × 5 min. A full-scope run already
- *    RUNNING and younger than the stale window answers 409 with its id.
+ *    synchronously and returns the resulting report.
+ *  - `POST` with no body runs the full-scope reconciliation directly
+ *    in-process under the `reconcile-ledgers` cron lock (#1943). A full-scope
+ *    run already RUNNING and younger than the stale window, or holding the
+ *    cron lock, answers 409.
  *  - `GET` lists the most recent reports (paginated), or one by `?id=`.
  *
  * Access: platform admins only via `requireBackofficeSurface("payouts.manage")`
@@ -29,16 +22,13 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
-import { getAppUrl } from "@/lib/url";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import {
-  createReconcileRun,
   isReconcileRunInProgress,
-  markReconcileRunFailed,
   RECONCILE_RUN_STALE_MS,
   runReconcileLedgers,
 } from "@/scripts/reconcile/reconcile-ledgers";
@@ -46,44 +36,6 @@ import {
 const RunBodySchema = z.object({
   organizationId: z.string().min(1).optional(),
 });
-
-/** Joined to `getAppUrl()`, which keeps a preview off production's driver. */
-const RECONCILE_DRIVER_PATH =
-  "/.netlify/functions/reconcile-ledgers-background";
-
-/** POST the run to the background driver; Netlify answers 202 and runs it. */
-async function kickReconcileDriver(args: {
-  runId: string;
-  triggeredById?: string;
-}): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return { ok: false, reason: "CRON_SECRET is not set" };
-  // The parameters ride in the query as well as the body, so the kick still
-  // names its run if the background invocation is handed the URL alone.
-  const params = new URLSearchParams({ runId: args.runId });
-  if (args.triggeredById) params.set("triggeredById", args.triggeredById);
-  try {
-    const res = await fetch(
-      `${getAppUrl()}${RECONCILE_DRIVER_PATH}?${params}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${secret}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(args),
-      },
-    );
-    return res.status === 202
-      ? { ok: true }
-      : { ok: false, reason: `driver answered ${res.status}` };
-  } catch (err) {
-    return {
-      ok: false,
-      reason: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
 
 export async function POST(req: NextRequest) {
   const auth = await requireBackofficeSurface("payouts.manage");
@@ -106,72 +58,52 @@ export async function POST(req: NextRequest) {
     (auth as unknown as { session?: { user?: { id?: string } } }).session?.user
       ?.id ?? null;
 
-  if (organizationId) {
-    try {
-      const report = await runReconcileLedgers({
-        scope: `org:${organizationId}`,
-        organizationId,
-        triggeredById: triggeredById ?? undefined,
-      });
-      return NextResponse.json({ data: report });
-    } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "admin" } },
-      );
-      console.error("[admin/reconcile-ledgers] run failed", err);
+  if (!organizationId) {
+    const recent = await prisma.ledgerReconciliationReport.findMany({
+      where: {
+        scope: "full",
+        runAt: { gte: new Date(Date.now() - RECONCILE_RUN_STALE_MS) },
+      },
+      orderBy: { runAt: "desc" },
+      take: 5,
+      select: { id: true, summary: true },
+    });
+    const inFlight = recent.find(isReconcileRunInProgress);
+    if (inFlight) {
       return NextResponse.json(
-        {
-          error: "Reconciliation run failed",
-          message: err instanceof Error ? err.message : String(err),
-        },
-        { status: 500 },
+        { error: "RUN_IN_PROGRESS", reportId: inFlight.id },
+        { status: 409 },
       );
     }
   }
 
-  const recent = await prisma.ledgerReconciliationReport.findMany({
-    where: {
-      scope: "full",
-      runAt: { gte: new Date(Date.now() - RECONCILE_RUN_STALE_MS) },
-    },
-    orderBy: { runAt: "desc" },
-    take: 5,
-    select: { id: true, summary: true },
-  });
-  const inFlight = recent.find(isReconcileRunInProgress);
-  if (inFlight) {
-    return NextResponse.json(
-      { error: "RUN_IN_PROGRESS", reportId: inFlight.id },
-      { status: 409 },
-    );
-  }
-
-  const runId = randomUUID();
-  await createReconcileRun(
-    { scope: "full", triggeredById: triggeredById ?? undefined },
-    runId,
-  );
-  const kick = await kickReconcileDriver({
-    runId,
-    triggeredById: triggeredById ?? undefined,
-  });
-  if (!kick.ok) {
-    // The row must not sit RUNNING forever and block the next kick.
-    await markReconcileRunFailed(runId, `driver kick failed: ${kick.reason}`);
+  try {
+    const report = await runReconcileLedgers({
+      scope: organizationId ? `org:${organizationId}` : "full",
+      ...(organizationId ? { organizationId } : {}),
+      triggeredById: triggeredById ?? undefined,
+    });
+    return NextResponse.json({ data: report });
+  } catch (err) {
+    if (err instanceof CronLockHeldError) {
+      return NextResponse.json(
+        { error: "RUN_IN_PROGRESS", message: err.message },
+        { status: 409 },
+      );
+    }
     Sentry.captureException(
-      new Error(`reconcile driver kick failed: ${kick.reason}`),
+      err instanceof Error ? err : new Error(String(err)),
       { tags: { subsystem: "admin" } },
     );
+    console.error("[admin/reconcile-ledgers] run failed", err);
     return NextResponse.json(
-      { error: "DRIVER_KICK_FAILED", reportId: runId, message: kick.reason },
-      { status: 502 },
+      {
+        error: "Reconciliation run failed",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      { status: 500 },
     );
   }
-  return NextResponse.json(
-    { data: { reportId: runId, status: "RUNNING" } },
-    { status: 202 },
-  );
 }
 
 export async function GET(req: NextRequest) {
