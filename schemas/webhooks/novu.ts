@@ -1,4 +1,27 @@
+import crypto from "node:crypto";
 import { z } from "zod";
+
+/**
+ * Verify Novu HMAC-SHA256 webhook signature (`x-novu-signature` or `novu-signature`).
+ * Accepts raw hex or `sha256=<hex>` formats using constant-time comparison.
+ */
+export function verifyNovuWebhookSignature(
+  body: string,
+  signatureHeader: string | null,
+  secret: string,
+): boolean {
+  if (!signatureHeader || !secret) return false;
+  const normalized = signatureHeader.trim().replace(/^sha256=/i, "");
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+
+  const sigBuf = Buffer.from(normalized, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  if (sigBuf.length !== expectedBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expectedBuf);
+}
 
 /**
  * #399 — Novu inbound delivery webhook schema.

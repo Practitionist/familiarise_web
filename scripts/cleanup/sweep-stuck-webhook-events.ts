@@ -236,7 +236,7 @@ async function sweepStuckWebhookEventsUnlocked(
           );
         } else if (ev.provider === "stripe") {
           const { processStripeWebhookEvent } = await import(
-            "@/app/api/webhooks/stripe/route"
+            "@/app/api/webhooks/stripe-dispatch"
           );
           await processStripeWebhookEvent(
             ev.payload,

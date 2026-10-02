@@ -17,31 +17,10 @@ import {
   resolveNovuEventType,
   resolveNovuStatus,
   resolveNovuTransactionId,
+  verifyNovuWebhookSignature,
 } from "@/schemas/webhooks/novu";
 
 export const runtime = "nodejs";
-
-/**
- * Verify Novu HMAC-SHA256 webhook signature (`x-novu-signature` or `novu-signature`).
- * Accepts raw hex or `sha256=<hex>` formats using constant-time comparison.
- */
-export function verifyNovuWebhookSignature(
-  body: string,
-  signatureHeader: string | null,
-  secret: string,
-): boolean {
-  if (!signatureHeader || !secret) return false;
-  const normalized = signatureHeader.trim().replace(/^sha256=/i, "");
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(body)
-    .digest("hex");
-
-  const sigBuf = Buffer.from(normalized, "utf8");
-  const expectedBuf = Buffer.from(expected, "utf8");
-  if (sigBuf.length !== expectedBuf.length) return false;
-  return crypto.timingSafeEqual(sigBuf, expectedBuf);
-}
 
 export async function POST(req: NextRequest) {
   const declaredBytes = Number(req.headers.get("content-length"));

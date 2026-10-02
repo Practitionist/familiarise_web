@@ -767,3 +767,11 @@ BEGIN
     ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
   END IF;
 END $$;
+-- SPLIT
+-- #1926 — Enforce at most one RUNNING SystemJobExecution row per jobName at a time
+-- so concurrent callers (cron-tick.mts vs GitHub Actions) cannot both acquire the
+-- same cron lock in the check-then-insert window.
+CREATE UNIQUE INDEX IF NOT EXISTS "SystemJobExecution_running_jobName_key"
+  ON "SystemJobExecution" ("jobName")
+  WHERE "status" = 'RUNNING';
+

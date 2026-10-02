@@ -30,7 +30,7 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 jest.mock("../../lib/stream/webhook-dispatch", () => ({
   processStreamEvent: jest.fn(),
 }));
-jest.mock("../../app/api/webhooks/stripe/route", () => ({
+jest.mock("../../app/api/webhooks/stripe-dispatch", () => ({
   processStripeWebhookEvent: jest.fn(),
 }));
 
@@ -48,7 +48,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
-import { processStripeWebhookEvent } from "../../app/api/webhooks/stripe/route";
+import { processStripeWebhookEvent } from "../../app/api/webhooks/stripe-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 
 const mockWe = (
