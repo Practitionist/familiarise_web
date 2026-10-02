@@ -116,3 +116,53 @@ describe("maintenance bypass signed cookie (#1487)", () => {
     await expect(validateBypassAsync(req, SECRET, NOW)).resolves.toBe(true);
   });
 });
+
+describe("seed password guard on non-local database hosts (#1487)", () => {
+  it("allows empty/default password on local database hosts in non-production", async () => {
+    const { assertSeedPasswordSafeForEnv, isNonLocalDatabaseUrl } =
+      await import("../../prisma/seedFiles/config");
+
+    expect(
+      isNonLocalDatabaseUrl(
+        "postgresql://postgres:postgres@localhost:5432/familiarise",
+      ),
+    ).toBe(false);
+    expect(
+      isNonLocalDatabaseUrl(
+        "postgresql://postgres:postgres@127.0.0.1:5432/familiarise",
+      ),
+    ).toBe(false);
+
+    expect(() =>
+      assertSeedPasswordSafeForEnv(
+        "",
+        true,
+        "postgresql://postgres:postgres@localhost:5432/familiarise",
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects empty or default password when DATABASE_URL points to a non-local host", async () => {
+    const { assertSeedPasswordSafeForEnv, isNonLocalDatabaseUrl } =
+      await import("../../prisma/seedFiles/config");
+
+    const remoteUrl =
+      "postgresql://postgres:secret@aws-0-ap-south-1.pooler.supabase.com:6543/postgres";
+    expect(isNonLocalDatabaseUrl(remoteUrl)).toBe(true);
+
+    expect(() => assertSeedPasswordSafeForEnv("", true, remoteUrl)).toThrow(
+      /Refusing to seed with an empty or default SEED_PASSWORD/,
+    );
+    expect(() =>
+      assertSeedPasswordSafeForEnv("SeedPass123!", true, remoteUrl),
+    ).toThrow(/Refusing to seed with an empty or default SEED_PASSWORD/);
+
+    expect(() =>
+      assertSeedPasswordSafeForEnv(
+        "StrongUniqueSeedSecret#2026",
+        false,
+        remoteUrl,
+      ),
+    ).not.toThrow();
+  });
+});
